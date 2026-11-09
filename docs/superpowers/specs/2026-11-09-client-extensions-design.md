@@ -2,7 +2,7 @@
 
 - Date: 2026-11-09, written against `feat/client-extensions` at `52279a17` (stacked on
   `feat/ui-slots`; latest kernel migration 0103).
-- Status: implemented on `feat/client-extensions` (2026-11-09); the code is the source of truth and §17 lists every place this text was adjusted to it. Decided under the maintainer's 2026-11-09 autonomy grant.
+- Status: implemented on `feat/client-extensions` (2026-11-09, final fix wave 2026-11-10); the code is the source of truth and §17 lists every place this text was adjusted to it. Decided under the maintainer's 2026-11-09 autonomy grant.
 - Related: themes (`2026-11-08-themes-design.md`, L0, merged), UI slots
   (`2026-11-08-ui-slots-design.md`, L1, §3.3 reserves the fields this spec fills), plugin component
   management (`2026-11-05-plugin-component-management-design.md`: owner, scope, org uploads), the
@@ -161,9 +161,11 @@ interface PluginClientSection {
     (U+180E, U+200B-U+200D, U+2060) or U+FEFF (JavaScript's `trim()` strips an NBSP that CSS and
     the URL parser keep, so `url("\a0 data:/../../v1")` would pass a naive check).
 
-  The kernel re-checks the stored bytes with a tokenizer that follows CSS Syntax (comments,
-  strings, escapes, url tokens) and requires the file to be exactly one `@layer extensions { … }`
-  block (§7.2). It warns `client-css-selector` on a selector that is
+  The rule is one pure module in the SDK (`packages/plugin-sdk/src/client-css.ts`: `clientCssProblem`
+  checks, `wrapClientCss` wraps; shared vectors in `packages/plugin-sdk/test/fixtures/client-css-vectors.json`).
+  The packer and the kernel both import it, so pack and import cannot disagree: the kernel re-checks
+  the stored bytes with a tokenizer that follows CSS Syntax (comments, strings, escapes, url tokens)
+  and requires the file to be exactly one `@layer extensions { … }` block (§7.2). It warns `client-css-selector` on a selector that is
   not built from `[data-cap-part]`, `[data-cap-state]`, the plugin's own classes (prefix
   `cx-<plugin>-`), `:root` custom properties named `--cx-<plugin>-*`, or reads of `--cb-*` tokens;
   the warning is advice, not enforced at runtime (D3).
@@ -171,9 +173,12 @@ interface PluginClientSection {
   `client-api-version` (the packed section's `apiVersion` is not the toolchain's `CLIENT_API_VERSION`),
   `client-undeclared`, `appearance-invalid` (errors) and `client-css-selector`, `ui-part-unknown` (warnings: a
   `data-cap-part` value not in `UI_PARTS`).
-- A **bootstrap plugin may not carry client code** (`check:bootstrap`, designer's call): bootstrap
+- A **bootstrap plugin may not carry client code** (designer's call): bootstrap
   packages may be stored in PG before an object store runs (`extension_packages.blob_store = 'pg'`),
-  and client files are delivered from object storage (§9.1).
+  and client files are delivered from object storage (§9.1). Both halves enforce it: the kernel
+  refuses a bootstrap source with `extension.client` (400 `client.invalid`, naming the plugin,
+  whether or not an object store runs) and `check:bootstrap` reports `bootstrap-client-code`
+  (workspace entries offline; npm entries in the network mode, from the fetched tarball).
 
 ### 4.2 The package (decided by Claude under the 2026-11-09 grant, C2)
 
@@ -302,12 +307,14 @@ Design re-exports (a versioned subset; their props are the design system's, froz
 `ExtensionViewTab` uses). Adding one is compatible; removing one or changing its props needs
 `CLIENT_API_VERSION` 2.
 
-**Versions**: the host accepts a bundle whose `apiVersion` equals its own `CLIENT_API_VERSION`;
+**Versions**: the host accepts a bundle whose `apiVersion` equals its own `CLIENT_API_VERSION`
+(the host stamps its own version into the import map, so the bundle's declared `apiVersion` is a
+check the web repeats, not the real gate);
 while the host moves from N to N+1 it implements both for one minor release after 0.1.0 (before
 0.1.0 no compatibility layers, AGENTS.md). **The kernel's gate is authoritative**: an import
 refuses a section whose `apiVersion` is above the SDK's `CLIENT_API_VERSION` (`client.api_unsupported`,
-400, details `{ apiVersion, supported }`), and the shell reads omit builds whose `api_version` the
-running kernel does not support, so the web never sees one. A bundle the host still cannot run (a
+400, details `{ apiVersion, supported }`), and neither the shell reads nor the delivery route (§9.3)
+offer a build whose `api_version` the running kernel does not support, so the web never sees one. A bundle the host still cannot run (a
 mismatch the web detects itself) is not activated and is reported (`kind: "api"`, §10.4).
 
 ## 5. The `component` kind and permissions
@@ -372,7 +379,7 @@ interface SlotComponentProps {
   "agent.detail.section": { agentId: string };
   "org.settings.section": Record<string, never>;
   "platform.page": Record<string, never>;
-  "shell.brand": { builtin: React.ReactNode; collapsed: boolean };
+  "shell.brand": { builtin: React.ReactNode; collapsed: boolean; panel: "full" | "rail" | "drawer" };
   "shell.overlay": Record<string, never>;
   "conversation.empty": { builtin: React.ReactNode; agentId: string | null; greeting: string };
   "conversation.composer.frame": {
@@ -394,8 +401,14 @@ manifest) (C2): a plugin does not draw its own section, title or box there. Comp
 slots and the overlay draw whatever they like.
 
 A replacement may render `builtin` (to wrap or decorate the default) or replace it entirely; the
-composer frame must render `children` exactly once (the host checks after commit that the
-composer's textarea is in the document; if not, the contribution is treated as crashed, §10.3).
+composer frame must render `children` exactly once, inside the frame (the host checks after every
+commit and on every DOM change inside the slot that it holds exactly one composer textarea: none,
+two, or one portaled out of the frame all count as crashed, §10.3).
+
+`shell.brand` receives `{ builtin, collapsed, panel }` where `panel` is `"full" | "rail" |
+"drawer"`: the design `Sidebar` takes `brand` as a **function of the panel it is drawn in**
+(`(v: { collapsed, panel }) => ReactNode`, called once per drawn panel), so the rail, the drawer and
+the full sidebar each get their own node and a plugin never has to render one element twice.
 
 ### 5.4 Permission review
 
@@ -447,8 +460,8 @@ interface UiSlotSpec {
 | `conversation.composer.frame` | the frame around the composer (`ComposerBox`), on the new-conversation and conversation pages | single, replaceable | org / — | component | guest | `components/conversation/ComposerBar.tsx` |
 | `shell.overlay` | a full-viewport layer over the workspace shell (§7.4) | list, `maxShown: 4` | org / — | component | guest | `components/shell/AppFrame.tsx` |
 
-- `shell.brand` needs the design `Sidebar` to take the brand row's content as a node (`brand?:
-  ReactNode`, default the `Logo` it draws today); `AppFrame` passes `<ExtensionSlot
+- `shell.brand` needs the design `Sidebar` to take the brand row's content (`brand?: (v:
+  SidebarBrandVariant) => ReactNode`, a function of the panel, default the `Logo` it draws today); `AppFrame` passes `<ExtensionSlot
   slot="shell.brand" …>` with the `Logo` as `builtin`. The theme's logo (L0) still reaches the
   built-in through the design context.
 - `conversation.composer.frame`: one `ExtensionSlot` in `ComposerBar.tsx`, used by both pages;
@@ -486,9 +499,13 @@ interface UiSlotSpec {
 - While the winner's module is loading, the slot renders the built-in with `visibility: hidden`
   (design `ReplaceableFrame pending`, keeping the layout) for at most `CLIENT_LIMITS.pendingMs` =
   1 500 ms, then shows the built-in and swaps when the module arrives (designer's call: no flash of
-  the official brand on a normal load, no blank brand on a slow one).
-- In safe mode, under the kill switch, and on the server render before the host has loaded,
-  replaceable slots render the built-in (§9.5).
+  the official brand on a normal load, no blank brand on a slow one). The **server render** already
+  draws the slot pending when the shell lists a delivered winner for it, and the frame's CSS reveals
+  the built-in after 1 500 ms with no script at all, so a document whose scripts never run is never
+  left blank (§17: this replaces the first draft's "the server render shows the built-in").
+- In safe mode and under the kill switch, replaceable slots render the built-in. On the server
+  render, and the first client render before the host has loaded, they render the built-in too
+  (hidden when a delivered winner is listed, above), so hydration never mismatches.
 
 ### 6.5 Suggested appearance (decided by Claude under the 2026-11-09 grant)
 
@@ -525,19 +542,33 @@ interface SuggestedAppearance {
     `POST /api/v1/orgs/:orgId/extensions/:extension/appearance` (`@OrgAction("org.update")`) writes
     the org default theme (`orgs.settings.theme.id`, keeping `personal`) and the org arrangement's
     `use` for each replacement slot.
-  - Body `{ dryRun?: boolean }`; answer `{ theme: { from: string | null; to: string } | null;
-    replacements: { slot: string; from: string | null; to: string }[]; skipped: { what: string;
-    reason: "unknown-slot" | "not-available" | "not-eligible" }[] }`. The web first calls with
+  - Body `{ dryRun?: boolean }`; answer `{ theme: { from: string | null; to: string;
+    followsPlatform?: boolean } | null; replacements: { slot: string; from: string | null; to:
+    string; followsPlatform?: boolean }[]; skipped: { what: string; reason: "unknown-slot" |
+    "not-available" | "not-eligible" }[] }`. At the **org level `from` is the value in effect** (the
+    org's own entry, else the platform's) and `followsPlatform: true` says it is the platform's
+    (the web shows 跟随平台：<name>); an org that follows a platform already using the suggestion
+    gets nothing pinned, and a followed platform theme that is no longer eligible reads as the
+    built-in. Platform-level results carry no `followsPlatform`. Results come **in the author's
+    order** (`suggestedAppearance` as written): prepare stages the key order
+    (`catalog_item_versions.appearance_order`, migration 0105) because the staging jsonb drops it.
+    Two refs to one slot (`shell.brand` and `shell.brand@1`) are refused by the SDK parser; a stored
+    duplicate is skipped as `not-eligible`. The web first calls with
     `dryRun: true` and shows the changes in a confirm dialog; the confirmed call writes everything
     in one transaction (theme lock order of the themes spec §6: catalog item → theme row →
     `uiTheme` row, then the arrangement), or nothing when `theme` would be refused.
   - Refusals follow the existing rules: a platform theme that cannot be the platform default (not
     platform-owned `all`, off in a live org) is `theme.not_available` (400), as `PUT
-    /api/v1/admin/settings` would answer; a replacement whose contribution is not available where
+    /api/v1/admin/settings` would answer (the org route answers the same 400 when the suggested
+    theme is not on in the org); a replacement whose contribution is not available where
     it is set is skipped (`not-available`), not refused, because the arrangement keeps unknown keys
     anyway (§6.3).
   - Shown only when the plugin has a `suggestedAppearance` and the viewer may write the level; org
     members see nothing (roles everywhere).
+  - **A plugin with client code reloads the page after a successful apply** (the document's client
+    set is fixed at its first render, so the new brand would otherwise wait for a manual reload):
+    the confirm dialog says so (此插件带有界面代码：应用后页面会重新加载…) and the document is
+    reloaded once the write succeeds. A theme-only plugin does not reload.
 - Platform operations `plugins.platform-apply-appearance` (`catalog-admin.ops.ts`) and
   `plugins.apply-appearance` (`org-plugins.ops.ts`) mirror the two routes (confirmed, never
   rememberable; `dryRun` is the preview, so it is not an input); `check:platform-ops` covers them.
@@ -652,7 +683,14 @@ interface SuggestedAppearance {
   `position: fixed; inset: 0`, a new layering token `decoration` above every other layer, and
   `pointer-events: none` on the layer and its descendants, except elements marked
   `data-cap-interactive` (a "skip" button of a boot animation).
-- The layer is `aria-hidden="true"`; overlay components must not hold content a person needs.
+- The layer itself is **not** `aria-hidden`: an interactive element under `aria-hidden` would be
+  focusable yet invisible to assistive tech. A layout effect and a `MutationObserver` mark with
+  `aria-hidden` every element that neither is nor holds an interactive element (`data-cap-interactive`
+  or focusable; the layer tags its own marks, so a plugin's `aria-hidden` stays and only the layer's
+  are removed again). Text sitting directly beside an interactive element cannot take `aria-hidden`,
+  and moving a node React owns would break its reconciliation (tried and reverted), so **a plugin
+  marks decorative text beside its interactive elements itself** (wrap it in an element with
+  `aria-hidden="true"`). Overlay components must not hold content a person needs.
 - Contributions render in arrangement order; at most 4 (`limits.maxShown`).
 - The layer is not rendered in safe mode, under the kill switch, or on admin pages (§9.6).
 
@@ -805,7 +843,14 @@ interface ClientExtensionsResponse {
   scripts from this path prefix only (§9.5), and a redirect would leave it. The file is named from
   the **raw** request path, never the decoded wildcard: each segment must already be
   `[A-Za-z0-9._-]` and not `.` / `..`, so `%2F`, `%5C`, `%2e`, a backslash, `//` or a trailing `/`
-  name nothing (404).
+  name nothing (404). "Never redirects" is about the **kernel** route. The web origin still sits in
+  front of it (the web proxies `/api/v1/client/` to the kernel) and **Next answers its own 308**
+  for a trailing or duplicated slash there; that is accepted (the redirect target is the same path
+  prefix on the same host, which the CSP names, and no file name is valid with such a slash anyway).
+- **An unsupported `api_version` is not delivered**: `ClientAccess.fetchable` applies the same
+  `supported()` check as the shell reads, so a build the running kernel cannot support is a 404
+  `client.not_found` for its files too (an older draft served them, with only the reads omitting
+  the build).
 - Client code is not a secret from the people it is served to: it runs in their browser.
 - Headers: `Cache-Control: private, max-age=31536000, immutable`; `X-Content-Type-Options:
   nosniff`; `Cross-Origin-Resource-Policy: same-origin`; content types `text/javascript` (`.mjs`),
@@ -838,7 +883,9 @@ interface ClientExtensionsResponse {
   absent. React stays the one instance inside the Next chunks; the shims only point at it.
 - **Loading** (a change to C6's `<script type="module">`, §17): the layout emits, per entry, a
   classic `preload` (React DOM `preload(url, { as: "script", crossOrigin: "anonymous", integrity })`),
-  so the bytes are fetched and verified in parallel with the page. It is not `modulepreload`: React
+  so the bytes are fetched and verified in parallel with the page. React delivers the call as a
+  **Flight hint** that the client turns into a `<link rel="preload">`, so the link is not in the
+  first server HTML bytes (Task 21 ruling; cost: a slightly later preload, never a failure). It is not `modulepreload`: React
   hoists every preload into `<head>` before the import map, and a module preload that finishes
   before the map is parsed caches the module with its bare imports unresolved (Chromium); the
   classic preload only warms the fetch and `ClientHost`'s `import()` reuses it. `ClientHost`, a client component in the
@@ -906,13 +953,18 @@ interface ClientExtensionsResponse {
   in list slots are skipped (L1 views and embeds still render). The proxy forwards the query (the
   path header carries it), so the server render already omits everything.
 - **Safe mode lasts the browser session** (a change to C7, §17): the proxy sets the session cookie
-  `cap_safe_ui=1` (`Path=/`, no max-age) on any document requested with `?safe-ui=1`, and every
+  `cap_safe_ui=1` (`Path=/`, `HttpOnly`, no max-age) on any document requested with `?safe-ui=1`, and every
   later document render, reload and client navigation stays in safe mode until `?safe-ui=0` (the
   proxy clears the cookie) or the banner's exit, which navigates to the same URL with
   `safe-ui=0`. The request that ends it still carries the cookie, so `safe-ui=0` wins over it.
   `ClientHost` pins the mode at its first render, so a later layout render cannot change it for the
-  document. A thin banner (安全模式：未加载插件界面代码 · 退出) shows while it is on and client code
-  exists for the viewer.
+  document. Because the cookie is `HttpOnly`, script cannot clear it: the exit is always a
+  navigation through the proxy to `?safe-ui=0`.
+- **Safe mode is a shell state**: the banner (安全模式：未加载插件界面代码 · 退出) shows while it is on
+  and client code exists for the viewer, and it is a **row of the App Shell** (the design `AppShell`
+  and `SetupPage` take `banner`; `ClientHost` supplies it through a context, the shell becomes a
+  grid with the banner in row 1 and sets `data-banner="true"`), never an element above the
+  100dvh shell, so it cannot push the status bar or the composer out of the viewport.
 - The root error page, the `(app)` error boundary and the crash-budget notice (§10.3) carry a link
   以安全模式重新加载 to the current URL with `safe-ui=1`.
 
@@ -926,8 +978,12 @@ interface ClientExtensionsResponse {
   should not cost the plugin's tools).
 - A stored value that fails to parse logs a warning and reads as the default (`parseClientExtensions`).
 - Effect: the shell routes return `enabled: false` / omit the plugin, delivery returns 404
-  `client.not_found`; open pages drop the extensions at their next shell read (freshness
-  `deployment`; the admin write invalidates it like the platform theme).
+  `client.not_found`; **open pages drop the extensions at their next client-set read** (30 s
+  freshness, a reconnect, a navigation or a reload; the admin write invalidates the admin's own
+  cache like the platform theme, not other people's tabs). Plugin JavaScript that already ran cannot
+  be unloaded anyway: its components unmount and its sheets are disabled, but a tab keeps what the
+  plugin did outside React until its next document load (Task 21 ruling; cost: an open tab keeps a
+  plugin until its next read).
 - 平台设置 gets a section 插件界面代码 with the switch and the per-plugin list; the admin extension
   detail has a 停用界面代码 action writing `disabled`.
 
@@ -935,6 +991,9 @@ interface ClientExtensionsResponse {
 
 - Every component renders inside its own error boundary (list slots: the existing
   `BlockBoundary` line 加载失败 · 重试; replaceable slots: the built-in; the overlay: nothing).
+- A **crash counts once per contribution per document** (`plugin, build, contribution, kind`, like
+  the reporter): the rail and the open drawer drawing the same brand twice, or a retry loop, spend
+  one unit. Errors of no contribution (listeners, uncaught errors, load failures) count each time.
 - A plugin's **errors** are: a boundary catch in one of its components, a throw in an `events`
   listener, a failed or timed-out load, an unsupported `apiVersion`, and an uncaught `error` /
   `unhandledrejection` whose `filename` or stack names its build URL.
@@ -943,6 +1002,20 @@ interface ClientExtensionsResponse {
   `<plugin>/<build>`): its components unmount to the built-in, its stylesheets are disabled, its
   listeners are dropped. A notice says 「<插件>」的界面代码出错，已在本次会话停用 with the safe-mode
   link. A new build of the plugin is not covered by the old entry.
+- **A client navigation that is not a click** (a router push, back / forward) crossing the boundary
+  of §9.6 leaves plugin code first: in the same layout effect, before `navigate`, the host disables
+  every extension sheet and marks every plugin disabled, so no plugin style outlives the move.
+- **Component pages and sections have designed states** (`ClientComponentBody`): ready draws the
+  component; loading a skeleton; failed (delivered but the entry failed or lacks the component) a
+  load-failed line with retry (a document reload); off (not delivered: safe mode, the kill switch,
+  a plugin outside the document's set, or disabled by the crash budget or a withdrawal) an empty
+  state 此插件界面当前不可用。 with a hint. `org.page` and `platform.page` use it at page size;
+  `agent.detail.section` always draws its section frame with the body inside. **Navigation hides
+  what cannot render**: the sidebar's extension pages, the agent sections and the admin console's
+  platform pages are filtered through the same availability (the admin console has no client set:
+  it reads safe mode from the host, the kill switch and its per-plugin list from the deployment
+  settings, and the session budget when known), and `conversation.panel` is not offered in safe
+  mode or under the kill switch; the host always draws the panel's own frame (title, close).
 - **Stylesheets** are policed by `ClientHost`: React never removes a hoisted `<link>`, so every
   extension sheet (`data-precedence="extensions"`) that does not belong to an active plugin of the
   document's set (all of them in safe mode) is disabled (`link.disabled`), now and on every head
@@ -954,7 +1027,10 @@ interface ClientExtensionsResponse {
 
 ### 10.4 Reports
 
-- The web reports once per document per `(plugin, build, contribution, kind)`:
+- The web reports once per document per `(plugin, build, contribution, kind)`. The server bounds
+  what a member may store: `contribution` is null or must be one of **the build's own component
+  ids** (grammar `^[a-z][a-z0-9-]{0,39}$`; anything else is 400, an id the build lacks is 404
+  `client.not_found`), so reports cannot grow without bound:
   `POST …/ui/client/reports` with `{ plugin, build, contribution: string | null, kind: "load" |
   "render" | "event" | "api" | "budget", message: string }` (`message` ≤ 500 characters, the
   error's message only, no stack or page data; a longer one is 400, not truncated; 204 on success,
@@ -962,11 +1038,15 @@ interface ClientExtensionsResponse {
   throttler).
 - Stored in `extension_client_reports` (same migration): one row per `(plugin, build, org_id,
   contribution, kind)` (`org_id` null for admin pages) with `count`, `first_at`, `last_at`,
-  `last_message`; upsert, no process state. Rows older than 30 days are deleted by a
+  `last_message`; upsert, no process state. `org_id` is not a foreign key: **a report's org may name
+  an org that was deleted since**, which the admin page shows as 已删除的组织 (Deleted organization),
+  admin pages as 管理后台页面. Rows older than 30 days are deleted by a
   `@LockedCron` job under `WorkerModule` (`client-reports-prune`, daily).
 - The admin extension detail (`GET /api/v1/admin/extensions/:name`) gains `client: { build,
   files, sizes, apiVersion } | null` and `clientReports` (the current build's rows, newest first,
-  at most 50); the page shows them under 界面代码.
+  at most 50 **per extension, limited in SQL**; the build is the one a live replica serves, §9.3);
+  the page shows them under 界面代码 with the org names (`adminOrgsQuery`) and, in the catalog item
+  detail and the org extension view, the client files with their sizes.
 
 ## 11. Web integration
 
@@ -974,13 +1054,18 @@ interface ClientExtensionsResponse {
   `clientExtensionsQuery(orgId)` on workspace pages (on `/admin/p/<plugin>/<id>` the admin set,
   limited to that plugin; on other admin pages nothing), as a `section` (a failed read
   loads no client code; the page works). The layout renders, unless safe mode: the import map
-  (with the nonce) at the top of the body, a `modulepreload` per entry, the plugin stylesheets with
+  (with the nonce) at the top of the body, a `preload` per entry (§9.4), the plugin stylesheets with
   `precedence="extensions"` (after `ThemeRoot`'s `precedence="theme"` link, so React orders them
   after it), and `ClientHost` around `AppFrame`.
 - **Hydration**: no plugin code runs on the server. Component contributions in list slots render
   nothing on the server and on the first client render, then appear when their module is
   registered; replaceable slots render the built-in (hidden while pending, §6.4). Nothing differs
-  between the server HTML and the first client render, so hydration never mismatches.
+  between the server HTML and the first client render, so hydration never mismatches. (A winner the
+  shell lists and the document's set delivers is drawn pending on the server, §6.4.)
+- **The set changes while a page is open** (§9.6): `ClientHost` compares the live set with the
+  document's. Client code (an entry or a stylesheet) of a `plugin/build` the document lacks shows
+  one notice per distinct addition, 新的插件界面代码已就绪，重新加载页面后生效。 with a 重新加载
+  action; never in safe mode; a withdrawal or a plugin without code shows nothing.
 - **`ClientHost`** (`apps/web/src/components/client-ext/`): sets the host global, imports the
   entries, keeps the registry (`plugin → { definition, status }`) in React state, delivers client
   events, applies the crash budget, sends reports, mirrors `motion` into `data-cap-state`, and
@@ -1148,14 +1233,15 @@ change (the first five at design time, the rest while implementing):
   are keyed by package sha256 (`deployment/platform/client/<plugin>/<sha256>/`,
   `/api/v1/client/<plugin>/<sha256>/<file>`), not `<version>-<catalogVersion>` (§9.1).
 - **C6, loading**: SSR `<script type="module">` tags would evaluate before Next's async chunks
-  expose React to the shims; entries are `modulepreload`ed with integrity and `import()`ed by
-  `ClientHost` after it sets the host global (§9.4).
+  expose React to the shims; entries are preloaded with integrity (a classic `preload`, below) and
+  `import()`ed by `ClientHost` after it sets the host global (§9.4).
 - **C6, CSP**: the web sends no document CSP today and the App Router's inline flight scripts
   need a nonce; the policy is `script-src 'self' 'nonce-<n>'` per request, not `'self'` plus an
   import-map hash (§9.5).
 - **C7, safe mode lasts the session**: a document-scoped `?safe-ui=1` left a person one reload from
-  the broken UI, so the proxy keeps it in the `cap_safe_ui` cookie until `?safe-ui=0` or the
-  banner's exit (§10.1).
+  the broken UI, so the proxy keeps it in the `cap_safe_ui` cookie (session, `HttpOnly`) until
+  `?safe-ui=0` or the banner's exit, which navigates through the proxy; the banner is a row of the
+  App Shell, not an element above it (§10.1).
 - **C6, access follows the running server code**: client code is served from the build a live
   replica runs (`serving_sha256`), not the install's latest package, so a pending or failed upgrade
   keeps the old build (§9.3); the delivery route never redirects and reads the raw path (§9.3).
@@ -1167,9 +1253,14 @@ change (the first five at design time, the rest while implementing):
 - **Client events**: history emits nothing, but a revisit's catch-up emits events from while the
   page was away as live ones (§7.5).
 - **Kernel gate for the client API**: import refuses `apiVersion` above the SDK's
-  (`client.api_unsupported`) and the shell reads omit unsupported builds (§4.2).
+  (`client.api_unsupported`), and the shell reads **and the delivery route** omit unsupported builds;
+  the kernel's gate is authoritative, the bundle's declared `apiVersion` is a check the web repeats
+  because the host stamps its own version into the import map (§4.2, §9.3).
 - **Client CSS**: only `../assets/<own asset>`, `data:` and `#` urls; URL-making functions and
-  invisible characters refused; the kernel re-tokenizes (§4.1).
+  invisible characters refused; the kernel re-tokenizes (§4.1). The rule lives in `plugin-sdk`
+  (`clientCssProblem` / `wrapClientCss`), not in the kernel: the pack toolchain must not import
+  the kernel (its decorated Nest services break the e2e harness's transform), and one module keeps
+  pack and import identical.
 - **Platform operation ids** are `plugins.platform-apply-appearance` and
   `plugins.apply-appearance`; availability of a replacement is judged on the serving replica (§6.5).
 - **Theme CSS URL** gains a render revision (`r<THEME_CSS_REVISION>`) because the stylesheet moved
@@ -1186,5 +1277,45 @@ theme, with `platform.page` components on their own page as the one exception (�
 Designer's calls open to review: `clientExtensions.disabled` per plugin (§10.2); event payloads without content (§7.5);
 bootstrap plugins without client code (§4.1); the 1 500 ms hidden built-in while a replacement
 loads (§6.4).
+
+Adjustments made by the final fix wave (2026-11-10), each the smallest change:
+
+- **Next 308 on the web origin, none from the kernel**: "the delivery route never redirects" is
+  about the kernel route; the web origin in front of it keeps Next's own 308 for trailing or
+  duplicated slashes on `/api/v1/client/` (§9.3).
+- **Delivery refuses unsupported `api_version` builds** (the draft served their files and only the
+  reads omitted them), so a build the kernel cannot support is nowhere reachable (§9.3).
+- **Flight-hint preload** (Task 21 ruling): the entry preload reaches the browser as a React Flight
+  hint turned into a `<link rel="preload">`, not as a tag in the first server HTML (§9.4).
+- **The kill switch reaches open pages on the next client-set read** (Task 21 ruling), not
+  instantly; already executed plugin JavaScript cannot be unloaded (§10.2).
+- **Reload after applying a client plugin's appearance**, and the "client set changed" notice with
+  a reload action when the live set gains client code the document lacks (§6.5, §11).
+- **Safe mode is a shell state**: a row of the App Shell, a session cookie that is `HttpOnly`,
+  left only through `?safe-ui=0` (§10.1).
+- **Component pages have designed states** (loading, failed, off) and navigation hides entries
+  that cannot render; `conversation.panel` is not offered in safe mode or under the kill switch and
+  its frame is always the host's (§10.3).
+- **Client CSS rule in `plugin-sdk`** (`clientCssProblem`, `wrapClientCss`) (§4.1).
+- **Bootstrap plugins cannot carry client code**, in the kernel (`client.invalid`) and in
+  `check:bootstrap` (`bootstrap-client-code`) (§4.1).
+- **Report contribution is limited to the build's own component ids** (400 / 404), and the admin
+  detail limits reports per extension in SQL (§10.4).
+- **A report's `orgId` may name a deleted org**: it is not a foreign key; the admin page labels it
+  (§10.4).
+- **`apiVersion`: the kernel gate is authoritative**; the web's own comparison is a repeat, because
+  the host stamps its version (§4.2).
+- **Appearance results** come in the author's order (`appearance_order`), and at the org level
+  `from` is the value in effect with `followsPlatform` (§6.5).
+- **`Sidebar` brand is a function of the panel** it is drawn in (`full`, `rail`, `drawer`) (§5.3,
+  §6.2).
+- **The composer frame renders its children exactly once** inside the frame (none, two, or a portal
+  all fall back to the built-in) (§5.3).
+- **Decoration layer**: interactive elements are never under `aria-hidden`; decorative text beside
+  an interactive element is marked by the plugin itself, because rewriting React-owned text nodes
+  was tried and reverted (§7.4).
+- **A crash counts once per contribution per document** (§10.3).
+- **Pending replaceable slots**: the server render draws a pending frame when a winner is listed,
+  and CSS alone reveals the built-in after 1 500 ms (§6.4).
 
 No open questions remain.
