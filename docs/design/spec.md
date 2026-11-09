@@ -31,6 +31,8 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 
 A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-themes-design.md`) replaces values of these tokens for a scope; the names, the contrast pairs and the dark / light split stay. Components never know a theme is on: they read `var(--cb-<token>)`, and the one color a theme adds to the DOM is the `ThemeSwatch` preview (§6.37), applied as data.
 
+**CSS layers** (client extensions spec §7.2): `packages/design/src/styles/index.css` starts with `@layer design, theme, extensions;` and imports every stylesheet with `layer(design)`; theme CSS is emitted inside `@layer theme`; a plugin's CSS is wrapped in `@layer extensions` by the packer. A later layer wins whatever the specificity, so a plugin rule beats the design and theme rules without `!important`, and a new design stylesheet must be imported into `layer(design)` (an unlayered rule would beat every plugin rule). Plugins may read every `--cb-*` token and define `--cx-<plugin>-*` properties; overriding `--cb-*` from plugin CSS works but is outside the compatibility promise (themes are the contract for tokens).
+
 ### 2.1 Colors
 
 | Token | Dark | Light | Purpose |
@@ -211,6 +213,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 ```
 
 - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
+- **The brand slot**: the sidebar's brand row (`Sidebar` prop `brand`, default the `Logo` above, with the wordmark unless the sidebar is the rail) is the replaceable slot `shell.brand`: one chosen plugin `component` may draw the row's content instead (props `builtin`, the default node, and `collapsed`, true on the rail). The row keeps its size and its `data-cap-part="sidebar.brand"`; a failing or still loading replacement shows the built-in (`ReplaceableFrame`, §4.5). The theme's logo (above) still reaches the built-in through the design context.
 - **Brand from a theme**: a theme may replace the logo mark and the wordmark. The web passes the resolved theme's brand to `DesignProvider` (`brand: { markUrl, wordmark }`, either part null), and `Logo` draws it where it draws the pixel capybara: `markUrl` as an `img` as high as the bitmap would be (10 × the pixel unit, so 20 / 30 / 60; its width follows the file; `alt` is the wordmark, or "Logo") instead of the bitmap, `wordmark` as the wordmark text instead of `CAPYBARA` (only where the wordmark is drawn: the rail has none). A null part keeps the built-in one. The sidebar, `AuthPage` and `StatusPage` draw `Logo` and take no props for it.
 - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
 - **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
@@ -388,6 +391,11 @@ Three primitives host plugin interface code (client extensions spec §6, §7.4, 
 - **SafeModeBanner** (`onExit`): one `panel` row with a hairline below, the message and an "exit safe mode" button.
 
 Built-in elements carry `data-cap-part="<name>"` (the public hooks of plugin CSS, `UI_PARTS` in the SDK; `data-part` stays internal); the shell element also carries `data-cap-state` (`AppShell` prop `capState`), and `Sidebar` takes `brand` to draw instead of the Logo.
+
+- **Parts** (`UI_PARTS`, client extensions spec §7.1; table in [docs/guide/ui-parts.md](../guide/ui-parts.md), generated): a part name is public, versioned and carried as a literal `data-cap-part` attribute that may hold several names (`button button.primary`); plugin CSS selects with `[data-cap-part~="<name>"]`. `owner` is the list of files that draw the element (one concept can have several drawers). A part promises only the states in its `states` (`aria-current`, `aria-busy`, `aria-expanded`, `disabled`); the `sidebar` and `section` parts promise no `aria-expanded` (the sidebar mode is a state token). Renaming or removing a part, or dropping a promised state, bumps its `version`; inner markup is not part of the contract (selectors stop at the part). `pnpm check:ui-parts` pins every literal to its owner.
+- **State tokens** (§7.3): `data-cap-state` on the shell element is a space-separated token list in this order: `run=idle|running|waiting|failed`, `theme=<plugin>/<theme file id>` or `theme=builtin`, then after hydration `motion=full|reduced` and `sidebar=rail|full` (the drawer below 960 px counts as `full`). Selected with `[data-cap-state~="run=running"]`.
+
+---
 
 ## 5. Page templates
 
