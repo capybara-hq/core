@@ -1338,6 +1338,44 @@ export interface KernelDatabase {
   org_notices: OrgNoticesTable;
   platform_notices: PlatformNoticesTable;
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
+  extension_client_builds: ExtensionClientBuildsTable;
+  extension_client_reports: ExtensionClientReportsTable;
+}
+
+/**
+ * 0105: the client files of an extension package (client extensions spec §9.1), keyed by the
+ * package sha256 (the build id). Paths are the manifest keys (`./dist/client/...`); the files live
+ * in object storage under `deployment/<object_prefix>`.
+ */
+export interface ExtensionClientBuildsTable {
+  package_sha256: string;
+  plugin: string;
+  /** `./dist/client/client.mjs`, or null for CSS-only decoration. */
+  entry: string | null;
+  styles: ColumnType<string[], string[], string[]>;
+  assets: ColumnType<string[], string[], string[]>;
+  /** Manifest key -> `sha384-<base64>`, checked against the bytes when stored. */
+  integrity: Json<Record<string, string>>;
+  /** Manifest key -> size in bytes. */
+  sizes: Json<Record<string, number>>;
+  api_version: number;
+  /** Relative to `deployment/`: `platform/client/<plugin>/<sha256>/`. */
+  object_prefix: string;
+  created_at: Ts;
+}
+
+/** 0105: crash and load reports of client code (client extensions spec §10.4). */
+export interface ExtensionClientReportsTable {
+  plugin: string;
+  build: string;
+  /** Null for admin pages. */
+  org_id: string | null;
+  contribution: string | null;
+  kind: "load" | "render" | "event" | "api" | "budget";
+  count: Generated<number>;
+  first_at: Ts;
+  last_at: Ts;
+  last_message: string;
 }
 
 /** 0082: one run of the platform components migration job (`catalog/platform-migration.ts`). */

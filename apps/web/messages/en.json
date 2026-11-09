@@ -396,6 +396,11 @@
       "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
       "not_found": "This theme version or file does not exist. Reload the page to load the current theme."
     },
+    "client": {
+      "undeclared": "This plugin ships client code that its extension does not declare (permissions.client). Repack it with capybara-plugin pack and import it again.",
+      "integrity_mismatch": "A client file of this plugin does not match the integrity recorded in its manifest. The package may be damaged or altered; get a fresh copy and import it again.",
+      "invalid": "The client code of this plugin is invalid: a file is missing, unlisted, too large, or a stylesheet is not allowed. Repack it with capybara-plugin pack and import it again."
+    },
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",

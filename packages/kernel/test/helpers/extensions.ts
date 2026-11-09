@@ -7,6 +7,7 @@
 
 import type { Kysely } from "kysely";
 import type { core } from "zod";
+import { ClientBuilds } from "../../src/client/client-builds.service.js";
 import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { ExtensionApprovals } from "../../src/extensions/approvals.js";
@@ -152,11 +153,13 @@ export function blobsFor(
   o: { maxBytes: number; storage?: StorageService },
 ): ExtensionBlobs {
   const h = handlesFor(db);
+  const storage = o.storage ?? ({ available: false } as unknown as StorageService);
   return new ExtensionBlobs(
     h.db,
     h.txHost,
-    o.storage ?? ({ available: false } as unknown as StorageService),
+    storage,
     { get: () => ({ packages: { maxBytes: o.maxBytes } }) } as unknown as KernelConfigService,
+    new ClientBuilds(h.db, h.txHost, storage),
   );
 }
 

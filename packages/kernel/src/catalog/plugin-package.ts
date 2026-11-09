@@ -50,13 +50,16 @@ export { LEGACY_FORMAT_MESSAGE, packagePath };
 
 /**
  * Codes of {@link PluginPackageError}: `theme.invalid` / `theme.unreadable` when the package's only
- * problems are in its themes (themes spec §5: a failing theme refuses the whole plugin).
+ * problems are in its themes (themes spec §5: a failing theme refuses the whole plugin);
+ * `client.undeclared` for an `extension.client` section whose manifest lacks
+ * `permissions.client: true` (client extensions spec §5.4: client code is always reviewed).
  */
 export type PluginPackageErrorCode =
   | "catalog.invalid_manifest"
   | "catalog.legacy_format"
   | "theme.invalid"
-  | "theme.unreadable";
+  | "theme.unreadable"
+  | "client.undeclared";
 
 /** The problems of one theme of a refused plugin (English; `unreadable:` lines for readability). */
 export interface PluginThemeProblem {
@@ -75,9 +78,11 @@ export class PluginPackageError extends Error {
     super(
       code === "catalog.legacy_format"
         ? (issues[0] ?? LEGACY_FORMAT_MESSAGE)
-        : code === "theme.invalid" || code === "theme.unreadable"
-          ? `Theme ${themes?.[0]?.theme ?? "?"} ${code === "theme.invalid" ? "is invalid" : "is not readable"}: ${issues[0] ?? "unknown problem"}`
-          : `Invalid plugin package: ${issues[0] ?? "unknown problem"}`,
+        : code === "client.undeclared"
+          ? (issues[0] ?? code)
+          : code === "theme.invalid" || code === "theme.unreadable"
+            ? `Theme ${themes?.[0]?.theme ?? "?"} ${code === "theme.invalid" ? "is invalid" : "is not readable"}: ${issues[0] ?? "unknown problem"}`
+            : `Invalid plugin package: ${issues[0] ?? "unknown problem"}`,
     );
     this.name = "PluginPackageError";
     this.code = code;
@@ -221,6 +226,25 @@ export function iconProblem(path: string, data: Uint8Array): string | undefined 
 }
 
 /** package.json parsed, or undefined when it is not valid (only used to name a legacy package). */
+/**
+ * Client code the extension manifest does not declare (an `extension.client` section without
+ * `permissions.client: true`), read from the raw plugin.json before it is parsed, so the refusal
+ * names it (`client.undeclared`) instead of being one parse problem among others.
+ */
+function clientUndeclared(text: string): string | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const ext = isObj(raw) ? raw.extension : undefined;
+  if (!isObj(ext) || ext.client === undefined) return undefined;
+  const perms = isObj(ext.manifest) ? ext.manifest.permissions : undefined;
+  if (isObj(perms) && perms.client === true) return undefined;
+  return `${PLUGIN_MANIFEST_FILE}: extension.client ships client code, but the extension manifest does not declare permissions.client: true; client code must be declared so it is reviewed (capybara-plugin pack writes both)`;
+}
+
 const parsedOrUndefined = (data: Uint8Array): unknown => {
   try {
     return parsePackageJsonFile({ data });
@@ -381,6 +405,8 @@ export function readPluginFiles(
   else {
     const text = decode(manifestBytes);
     if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
+    const undeclared = clientUndeclared(text);
+    if (undeclared !== undefined) throw new PluginPackageError("client.undeclared", [undeclared]);
     const parsed = parsePluginManifest(text);
     if ("errors" in parsed) {
       return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE}: ${e}`));

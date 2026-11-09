@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
 import { ChannelsModule } from "./channels/channels.module.js";
+import { ClientModule } from "./client/client.module.js";
 import type { KernelConfig } from "./config/schema.js";
 import { TitlesModule } from "./conversations/titles.js";
 import { DevicesModule } from "./devices/devices.module.js";
@@ -110,6 +111,8 @@ export class KernelModule {
         TitlesModule,
         UsageReportModule,
         ChannelsModule,
+        // client extensions: the client builds stored with extension packages
+        ClientModule,
         // the @device sandbox provider, registered on every role (any replica may relay to a machine)
         DevicesModule,
         // the Platform tool's operation registry and actor facts

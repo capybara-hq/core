@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ClientModule } from "../client/client.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -16,7 +17,14 @@ import { ExtensionRegistryModule } from "./registry.js";
  * part into its own provider both sides inject). `ExtensionsModule` re-exports it.
  */
 @Module({
-  imports: [ExtensionRegistryModule, SuperAdminLockModule, OrgLockModule, StorageModule],
+  imports: [
+    ExtensionRegistryModule,
+    SuperAdminLockModule,
+    OrgLockModule,
+    StorageModule,
+    // a package with client code stores its client build (`ExtensionBlobs`)
+    ClientModule,
+  ],
   providers: [ExtensionApprovals, ExtensionBlobs, ExtensionInstalls, EffectiveConfigs],
   exports: [
     ExtensionRegistryModule,

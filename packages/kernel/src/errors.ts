@@ -133,6 +133,23 @@ export const ERROR_CODES = {
    * a removed theme's versions are still served.
    */
   "theme.not_found": 404,
+  /**
+   * An `extension.client` section whose extension manifest lacks `permissions.client: true`
+   * (client extensions spec §5.4: client code is always declared and reviewed).
+   */
+  "client.undeclared": 400,
+  /**
+   * A client file's sha384 is not the integrity its plugin.json records (spec §9.1); details
+   * `[{ file }]` (the manifest key).
+   */
+  "client.integrity_mismatch": 400,
+  /**
+   * The client section or a client file fails the import checks (spec §4.1, §9.1: a listed file
+   * missing, a file not listed, a key that cannot be looked up exactly, a size limit, a stylesheet
+   * not wrapped in `@layer extensions` or with `@import` / an absolute `url()`); details
+   * `[{ file, reason }]`.
+   */
+  "client.invalid": 400,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,
