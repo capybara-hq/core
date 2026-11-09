@@ -50,11 +50,13 @@ async function fakeClient(page: Page): Promise<ShellItem> {
   return item as ShellItem;
 }
 
-/** Records every request to the client file route the page makes. */
+/** Records every request for plugin code the page makes: the client file route and the host shims. */
 function clientRequests(page: Page): string[] {
   const seen: string[] = [];
   page.on("request", (r) => {
-    if (new URL(r.url()).pathname.startsWith("/api/v1/client/")) seen.push(r.url());
+    const path = new URL(r.url()).pathname;
+    if (path.startsWith("/api/v1/client/") || path.startsWith("/_capybara/client-host/"))
+      seen.push(r.url());
   });
   return seen;
 }
@@ -197,15 +199,27 @@ test("apply appearance picks the brand replacement and the theme", async ({ brow
   const before = await rootToken(page, "--cb-accent");
   expect(before).not.toBe(FAKE_DARK_ACCENT);
 
-  await page.getByRole("row").filter({ hasText: "fake-client" }).first().click();
+  // the extension's row by its name (`fake-client v<version> …`), never fake-client-broken's
+  await page.getByRole("row", { name: /^fake-client v/ }).click();
   const sheet = page.getByRole("dialog");
   await sheet.getByRole("button", { name: /^应用 .+ 的外观$/ }).click();
   const confirm = page.getByRole("dialog", { name: /^应用 .+ 的外观？$/ });
   await expect(confirm).toBeVisible();
+  // the plugin has client code: the dialog says the page reloads after the apply
+  await expect(confirm.getByText(zh.applyAppearance.reloadHint)).toBeVisible();
+  await page.evaluate(() => {
+    (window as { __beforeApply?: boolean }).__beforeApply = true;
+  });
+  const reloaded = page.waitForEvent("framenavigated", (f) => f === page.mainFrame());
   await confirm.getByRole("button", { name: zh.applyAppearance.apply, exact: true }).click();
-  await expect(confirm).toBeHidden();
 
-  // the replacement wraps the official brand; the theme's tokens apply, without a reload
+  // a new document: the replacement wraps the official brand, the theme's tokens apply
+  await reloaded;
+  await page.waitForLoadState("load");
+  expect(
+    await page.evaluate(() => (window as { __beforeApply?: boolean }).__beforeApply),
+  ).toBeUndefined();
+  await hydrated(page);
   await expect(brandRow(page).getByTestId("fake-client-brand")).toBeVisible();
   await expect(brandRow(page).locator(".cb-logo")).toBeVisible();
   await expect.poll(() => rootToken(page, "--cb-accent")).toBe(FAKE_DARK_ACCENT);
@@ -244,6 +258,13 @@ test("safe mode loads zero plugin code", async ({ browser }) => {
       ),
   ).toEqual([]);
   expect(requests).toEqual([]);
+  // the exit loads the page with safe-ui=0: the proxy clears the session cookie, the plugin is back
+  await page.getByRole("button", { name: designZh("safeMode.exit") }).click();
+  await expect(page).toHaveURL(/safe-ui=0/);
+  await hydrated(page);
+  await expect(banner).toHaveCount(0);
+  await expect(brandRow(page).getByTestId("fake-client-brand")).toBeVisible();
+  expect((await page.context().cookies()).some((c) => c.name === "cap_safe_ui")).toBe(false);
   await page.context().close();
 });
 
@@ -298,6 +319,7 @@ test("a broken plugin is disabled after three errors and the conversation still 
   )?.build;
   expect(build).toBeTruthy();
   // 1: the greeting replacement throws; the built-in greeting stands in
+  await expect(page.locator('[data-part="greeting"]')).toBeVisible();
   await expect(composer(page)).toBeEditable();
   // 2: the run.started listener throws
   await send(page, "echo:still works");

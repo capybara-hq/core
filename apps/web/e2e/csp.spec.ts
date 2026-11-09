@@ -6,9 +6,10 @@ import { signIn } from "./support/sign-in";
 /**
  * The document CSP (client extensions spec §9.5, with the review rulings): every document carries
  * `script-src <host>/_next/ <host>/api/v1/client/ <host>/_capybara/client-host/ 'nonce-<n>';
- * object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'` with a fresh nonce (dev adds `'unsafe-eval'`). Next
- * puts the server's nonce on its own scripts, so every page boots without a single violation; a
- * script without the nonce, or from a same-origin path outside those prefixes, does not run.
+ * object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'` with a fresh
+ * nonce (dev adds `'unsafe-eval'`). Next puts the server's nonce on its own scripts, so every page
+ * boots without a single violation; a script without the nonce, or from a same-origin path outside
+ * those prefixes, does not run.
  */
 
 const VIOLATIONS = "__cspViolations";

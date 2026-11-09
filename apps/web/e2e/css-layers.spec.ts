@@ -31,7 +31,7 @@ const rootVar = (page: Page, name: string) =>
   page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
 
 test.describe("CSS cascade layers", () => {
-  test("the design stylesheet declares the layer order first", async ({ page }) => {
+  test("the page's effective layer order is design, theme, extensions", async ({ page }) => {
     await primaryButton(page);
     // The page's layer order as the cascade computes it: top-level layers in order of first
     // appearance across the sheets. The bundler emits the imported files' `@layer design { … }`
