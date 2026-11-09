@@ -670,6 +670,12 @@ async function bundleExtension(
       extension.configSchemas = config.schemas;
     }
     const client = await buildClient(dir, stage);
+    if (client === null && m.permissions?.client === true) {
+      throw new PackRuleError(
+        "client-undeclared",
+        `${label}: the extension declares permissions.client: true but the plugin has no client code (src/client.ts[x] or client/styles/*.css)`,
+      );
+    }
     if (client !== null) {
       if (m.permissions?.client !== true) {
         throw new PackRuleError(

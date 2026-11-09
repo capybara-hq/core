@@ -122,6 +122,75 @@ describe("pack builds client code", () => {
     };
     const rm2 = () => rm(dir, { recursive: true, force: true });
 
+    const stub = async (name: string, file = "index.js", code = "export default 1;\n") => {
+      const d = join(dir, "node_modules", name);
+      await mkdir(d, { recursive: true });
+      await writeFile(
+        join(d, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", type: "module", main: file }),
+      );
+      await writeFile(join(d, file), code);
+    };
+    const entry = (imports: string) =>
+      writeFile(join(dir, "src/client.ts"), `${imports}\nexport default 1;\n`);
+    const packFor = async (imports: string, tag: string) => {
+      await rm(join(dir, "src/client.tsx"));
+      await entry(imports);
+      return packPlugin(dir, join(out, tag)).catch((e) => e);
+    };
+
+    it.each([
+      ["react-dom/server", 'import "react-dom/server";'],
+      ["react-dom/client", 'import "react-dom/client";'],
+      ["react/jsx-dev-runtime", 'import "react/jsx-dev-runtime";'],
+      ["@capybara-hq/plugin-sdk", 'import "@capybara-hq/plugin-sdk";'],
+      ["@capybara-hq/plugin-client/testing", 'import "@capybara-hq/plugin-client/testing";'],
+      ["node:fs", 'import "node:fs";'],
+    ])("%s is client-import-forbidden even when it resolves", async (spec, imports) => {
+      await gen();
+      try {
+        await stub("react-dom", "index.js");
+        await stub("react-dom/server", "index.js");
+        await stub("react-dom/client", "index.js");
+        await stub("react/jsx-dev-runtime", "index.js");
+        await stub("@capybara-hq/plugin-sdk");
+        await stub("@capybara-hq/plugin-client/testing");
+        const err = await packFor(imports, "resolving");
+        expect(err.rule).toBe("client-import-forbidden");
+        expect(err.message).toContain(spec);
+      } finally {
+        await rm2();
+      }
+    });
+
+    it("a bare builtin name is refused unless an npm package of that name resolves", async () => {
+      await gen();
+      try {
+        const err = await packFor('import "events";', "b1");
+        expect(err.rule).toBe("client-import-forbidden");
+        expect(err.message).toContain("events");
+        await stub("events", "index.js", "export const x = 1;\n");
+        const ok = await packPlugin(dir, join(out, "b2"));
+        expect(ok.manifest.extension?.client?.entry).toBe("./dist/client/client.mjs");
+      } finally {
+        await rm2();
+      }
+    });
+
+    it("permissions.client without client code is client-undeclared", async () => {
+      await gen();
+      try {
+        await rm(join(dir, "src/client.tsx"));
+        await rm(join(dir, "client"), { recursive: true });
+        const err = await packPlugin(dir, join(out, "rev")).catch((e) => e);
+        expect(err).toBeInstanceOf(PackRuleError);
+        expect(err.rule).toBe("client-undeclared");
+        expect(err.message).toContain("no client code");
+      } finally {
+        await rm2();
+      }
+    });
+
     it("an entry over the limit is client-size", async () => {
       await gen();
       try {
@@ -198,5 +267,18 @@ describe("client helpers", () => {
     expect(cssRemoteProblem("a { background: url(https://x.test/a.png); }")).toMatch(/url/);
     expect(cssRemoteProblem("a { background: url(//x.test/a.png); }")).toMatch(/url/);
     expect(cssRemoteProblem("a { background: url(/a.png); }")).toMatch(/url/);
+    expect(cssRemoteProblem('a { background: image-set("https://x.test/a.png" 1x); }')).toMatch(
+      /url/,
+    );
+    expect(cssRemoteProblem("a { background: image-set(url(https://x.test/a.png) 1x); }")).toMatch(
+      /url/,
+    );
+    expect(cssRemoteProblem('a { background: -webkit-image-set("//x.test/a.png" 1x); }')).toMatch(
+      /url/,
+    );
+    expect(cssRemoteProblem('a { background: image-set("../assets/a.png" 1x); }')).toBeUndefined();
+    expect(cssRemoteProblem("a { background: u\\72l(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
+    expect(cssRemoteProblem("a { background: url(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
+    expect(cssRemoteProblem("\\40import 'x.css';")).toMatch(/@import/);
   });
 });

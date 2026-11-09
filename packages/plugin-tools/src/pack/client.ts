@@ -84,15 +84,33 @@ export async function hasClientSources(dir: string): Promise<boolean> {
  * `data:`). Returns the problem text, or undefined.
  */
 export function cssRemoteProblem(css: string): string | undefined {
-  const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  // escapes (`\68 ttps:`, `u\72l(`) are decoded first, so a spelled-out URL is read as it would be
+  const bare = css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\\([0-9a-f]{1,6})[ \t\n]?|\\([^\n])/gi, (_m, hex?: string, ch?: string) => {
+      if (hex === undefined) return ch ?? "";
+      const cp = Number.parseInt(hex, 16);
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "\ufffd";
+    });
   if (/@import\b/i.test(bare)) {
     return "@import is not allowed (a remote stylesheet is not integrity-pinned); inline the rules";
   }
+  const remote = (u: string) =>
+    u !== "" &&
+    !u.startsWith("data:") &&
+    !u.startsWith("#") &&
+    (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith("//") || u.startsWith("/"));
+  const refused = (u: string) =>
+    `url(${u}) is not allowed; use a relative path under ../assets/ or a data: URL`;
   for (const m of bare.matchAll(/url\(\s*(["']?)([^)"']*)\1\s*\)/gi)) {
     const u = (m[2] ?? "").trim();
-    if (u === "" || u.startsWith("data:") || u.startsWith("#")) continue;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith("//") || u.startsWith("/")) {
-      return `url(${u}) is not allowed; use a relative path under ../assets/ or a data: URL`;
+    if (remote(u)) return refused(u);
+  }
+  // image-set() takes plain strings as URLs
+  for (const m of bare.matchAll(/(?:-webkit-)?image-set\(([^;{}]*)\)/gi)) {
+    for (const q of (m[1] ?? "").matchAll(/(["'])((?:\\.|(?!\1)[^\\])*)\1/g)) {
+      const u = (q[2] ?? "").trim();
+      if (remote(u)) return refused(u);
     }
   }
   return undefined;
@@ -134,6 +152,26 @@ async function importIssues(code: string): Promise<string[]> {
 }
 
 const BUILTINS = new Set(builtinModules.filter((m) => !m.startsWith("_")));
+
+const SKIP = Symbol("capybara-skip");
+
+/**
+ * Specifiers the client bundle must never contain even when they resolve (a second React or the
+ * SDK inside the bundle): `node:*`, `react-dom` subpaths (`react-dom/server`, `/client`), `react`
+ * subpaths other than `react/jsx-runtime`, and every `@capybara-hq/*` but `@capybara-hq/plugin-client`.
+ */
+function forbiddenSpecifier(spec: string): string | undefined {
+  const refuse = (why: string) => `import "${spec}" is not allowed: ${why}`;
+  if (spec.startsWith("node:")) return `Node builtin "${spec}" is not available in the browser`;
+  if (spec.startsWith("react-dom/")) return refuse("only react-dom itself is provided by the host");
+  if (spec.startsWith("react/") && spec !== "react/jsx-runtime") {
+    return refuse("only react and react/jsx-runtime are provided by the host");
+  }
+  if (spec.startsWith("@capybara-hq/") && spec !== "@capybara-hq/plugin-client") {
+    return refuse("a client bundle may import only @capybara-hq/plugin-client");
+  }
+  return undefined;
+}
 
 const forbidden = (message: string) => new PackRuleError("client-import-forbidden", message);
 
@@ -187,15 +225,27 @@ export async function buildClient(dir: string, stage: string): Promise<PluginCli
           {
             name: "capybara-client-no-builtins",
             setup(b) {
-              b.onResolve({ filter: /^[^./]/ }, (args) => {
-                const bare = args.path.replace(/^node:/, "");
-                const top = bare.split("/")[0] as string;
-                if (args.path.startsWith("node:") || BUILTINS.has(top)) {
-                  return {
-                    errors: [
-                      { text: `Node builtin "${args.path}" is not available in the browser` },
-                    ],
-                  };
+              b.onResolve({ filter: /^[^./]/ }, async (args) => {
+                if (args.pluginData === SKIP) return undefined;
+                const bad = forbiddenSpecifier(args.path);
+                if (bad !== undefined) return { errors: [{ text: bad }] };
+                // a bare builtin name (`events`, `buffer`) is allowed when an npm package of that
+                // name resolves; `node:*` never is
+                const top = args.path.split("/")[0] as string;
+                if (!args.path.startsWith("node:") && BUILTINS.has(top)) {
+                  const r = await b.resolve(args.path, {
+                    resolveDir: args.resolveDir,
+                    importer: args.importer,
+                    kind: args.kind,
+                    pluginData: SKIP,
+                  });
+                  if (r.errors.length > 0) {
+                    return {
+                      errors: [
+                        { text: `Node builtin "${args.path}" is not available in the browser` },
+                      ],
+                    };
+                  }
                 }
                 return undefined;
               });
@@ -212,7 +262,7 @@ export async function buildClient(dir: string, stage: string): Promise<PluginCli
       const errors = (e as BuildFailure).errors;
       if (Array.isArray(errors) && errors.length > 0) {
         const texts = errors.map((x) => x.text);
-        if (texts.every((t) => /Could not resolve|Node builtin/.test(t))) {
+        if (texts.every((t) => /Could not resolve|Node builtin|is not allowed/.test(t))) {
           throw forbidden(`client entry: ${texts.join("; ")}`);
         }
         throw new Error(`client entry: esbuild failed: ${texts.join("; ")}`);
