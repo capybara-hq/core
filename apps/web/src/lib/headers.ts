@@ -20,16 +20,48 @@ export const NONCE_HEADER = "x-nonce";
 export const CSP_HEADER = "content-security-policy";
 
 /**
- * The document CSP (client extensions spec §9.5): scripts only from this origin or carrying the
- * request's nonce (Next puts it on its own inline flight scripts), no plugins (`<object>`,
- * `<embed>`), no `<base>`. Dev adds `'unsafe-eval'`, which React's dev build and Turbopack's
- * hot reload need; production never allows eval or `'unsafe-inline'`. `style-src`, `connect-src`,
- * `img-src`, `font-src` and `frame-src` stay unrestricted for now (full trust, D2; the design system
- * uses inline styles); `/plugin-ui` embeds are separate documents with their own sandbox CSP.
+ * The same-origin paths document scripts may load from (besides the nonce): Next's chunks and the
+ * client extension bundles (client extensions spec §9.2). Never all of `'self'`: the origin also
+ * serves user content (object-store proxy objects, artifacts) that must not run as script.
  */
-export function documentPolicy(nonce: string, dev: boolean): string {
-  const script = ["'self'", `'nonce-${nonce}'`, ...(dev ? ["'unsafe-eval'"] : [])];
-  return [`script-src ${script.join(" ")}`, "object-src 'none'", "base-uri 'none'"].join("; ");
+export const SCRIPT_PATHS: readonly string[] = ["/_next/", "/api/v1/client/"];
+
+/** A host a CSP host-source can name: a DNS name or IPv4 address, optionally with a port. */
+const CSP_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;
+
+/**
+ * The document CSP (client extensions spec §9.5, with the 2026-11-09 review rulings):
+ * - `script-src`: {@link SCRIPT_PATHS} on the document's host, plus the request's nonce (Next puts it
+ *   on its own inline and chunk scripts). The sources carry no scheme, so they follow the page's
+ *   (an https page loads https only), which keeps them right behind a TLS-terminating proxy. A host
+ *   a CSP source cannot name (an IPv6 literal, garbage) gets no path sources: only the nonce.
+ *   Dev adds `'unsafe-eval'` (React's dev Flight client evals); production never allows eval or
+ *   `'unsafe-inline'`.
+ * - `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'self'` (no framing by other sites),
+ *   `form-action 'self'` (every form posts to its own page).
+ * `style-src`, `connect-src`, `img-src`, `font-src` and `frame-src` stay unrestricted for now (full
+ * trust, D2; the design system uses inline styles); `/plugin-ui` embeds are separate documents with
+ * their own sandbox CSP.
+ */
+export function documentPolicy({
+  nonce,
+  host,
+  dev,
+}: {
+  nonce: string;
+  /** The document's host as the browser addressed it (the `Host` header). */
+  host: string;
+  dev: boolean;
+}): string {
+  const paths = CSP_HOST.test(host) ? SCRIPT_PATHS.map((p) => `${host.toLowerCase()}${p}`) : [];
+  const script = [...paths, `'nonce-${nonce}'`, ...(dev ? ["'unsafe-eval'"] : [])];
+  return [
+    `script-src ${script.join(" ")}`,
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'self'",
+    "form-action 'self'",
+  ].join("; ");
 }
 
 /** A fresh nonce: 16 random bytes, base64 (Web Crypto, so it runs wherever the proxy runs). */

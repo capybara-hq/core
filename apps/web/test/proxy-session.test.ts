@@ -351,8 +351,21 @@ describe("proxy: matcher", () => {
   const [matcher] = getMiddlewareMatchers(config.matcher, {});
   const re = new RegExp(matcher?.regexp ?? "^$");
 
-  it("runs for pages, never for /api, /plugin-ui, /_next, /dev or files", () => {
-    for (const p of ["/", "/agents", "/agents/a1", "/apiary", "/devices", "/zh/agents", "/login"]) {
+  it("runs for every page, dotted or not; never for /api, /plugin-ui, /_next, /dev/ui or the icon", () => {
+    for (const p of [
+      "/",
+      "/agents",
+      "/agents/a1",
+      "/apiary",
+      "/devices",
+      "/zh/agents",
+      "/login",
+      // any of these can render the (app) layout through a dynamic segment or [...rest]
+      "/chat/x.y",
+      "/a/b.png",
+      "/favicon.ico",
+      "/dev/x",
+    ]) {
       expect(re.test(p), p).toBe(true);
     }
     for (const p of [
@@ -361,8 +374,8 @@ describe("proxy: matcher", () => {
       "/plugin-ui/todo/x",
       "/_next/static/chunk.js",
       "/dev/ui",
-      "/favicon.ico",
-      "/a/b.png",
+      "/dev/ui/display",
+      "/icon.svg",
     ]) {
       expect(re.test(p), p).toBe(false);
     }

@@ -4,10 +4,11 @@ import { hydrated } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /**
- * The document CSP (client extensions spec §9.5): every document carries
- * `script-src 'self' 'nonce-<n>'; object-src 'none'; base-uri 'none'` with a fresh nonce (dev adds
- * `'unsafe-eval'`). Next puts the nonce on its own scripts, so every page boots without a single
- * violation, and a script injected without the nonce does not run.
+ * The document CSP (client extensions spec §9.5, with the review rulings): every document carries
+ * `script-src <host>/_next/ <host>/api/v1/client/ 'nonce-<n>'; object-src 'none'; base-uri 'none';
+ * frame-ancestors 'self'; form-action 'self'` with a fresh nonce (dev adds `'unsafe-eval'`). Next
+ * puts the server's nonce on its own scripts, so every page boots without a single violation; a
+ * script without the nonce, or from a same-origin path outside those prefixes, does not run.
  */
 
 const VIOLATIONS = "__cspViolations";
@@ -29,15 +30,30 @@ const violations = (page: Page) =>
     VIOLATIONS,
   );
 
-/** Opens `path` and returns the nonce of the document's CSP response header. */
+/**
+ * Opens `path` and returns the nonce of the document's CSP response header, after checking the
+ * policy's shape and that Next's scripts in the document carry that same (server) nonce.
+ */
 async function visit(page: Page, path: string): Promise<string> {
   const res = await page.goto(path);
   expect(res, path).not.toBeNull();
   const csp = (await res?.allHeaders())?.["content-security-policy"] ?? "";
-  const nonce = /^script-src 'self' 'nonce-([A-Za-z0-9+/]+={0,2})'/.exec(csp)?.[1];
+  const host = new URL(page.url()).host;
+  const sources = `script-src ${host}/_next/ ${host}/api/v1/client/ 'nonce-`;
+  expect(csp.startsWith(sources), `${path}: ${csp}`).toBe(true);
+  const nonce = /'nonce-([A-Za-z0-9+/]+={0,2})'/.exec(csp)?.[1];
   expect(nonce, `${path}: ${csp}`).toBeDefined();
-  expect(csp).toContain("object-src 'none'");
-  expect(csp).toContain("base-uri 'none'");
+  expect(csp.split("; ")[0]).not.toContain("'self'");
+  for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'self'"]) {
+    expect(csp).toContain(d);
+  }
+  expect(csp).toContain("form-action 'self'");
+  // the browser hides nonce attributes; the `nonce` property keeps the value Next rendered
+  const rendered = await page.evaluate(() =>
+    [...document.scripts].map((s) => s.nonce).filter((n) => n !== ""),
+  );
+  expect(rendered.length, path).toBeGreaterThan(0);
+  expect(new Set(rendered), path).toEqual(new Set([nonce]));
   return nonce as string;
 }
 
@@ -76,6 +92,10 @@ test("every page boots under the CSP", async ({ page }) => {
   await page.getByRole("navigation", { name: "主导航" }).getByRole("link").first().click();
   await hydrated(page);
   expect(await violations(page)).toEqual([]);
+  // the same document again: a new nonce (nothing serves a cached copy)
+  nonces.add(await visit(page, "/admin"));
+  await hydrated(page);
+  expect(await violations(page)).toEqual([]);
 
   // the sign-in page (signed out, so dark): only hydrated React moves <html> to the light scheme
   await page.context().clearCookies();
@@ -90,7 +110,26 @@ test("every page boots under the CSP", async ({ page }) => {
   expect(await violations(page)).toEqual([]);
 
   // a fresh nonce per document
-  expect(nonces.size).toBe(5);
+  expect(nonces.size).toBe(6);
+});
+
+test("a dotted app path renders under the CSP with the server's nonce, never the client's", async ({
+  page,
+}) => {
+  await recordViolations(page);
+  await signIn(page);
+  // a client-chosen nonce and policy, sent on every request of this page
+  await page.setExtraHTTPHeaders({
+    "x-nonce": "Zm9yZ2VkLW5vbmNlLXZhbHVl",
+    "content-security-policy": "script-src 'nonce-Zm9yZ2VkLW5vbmNlLXZhbHVl'",
+  });
+  for (const path of ["/chat/x.y", "/agents/a.b"]) {
+    const nonce = await visit(page, path);
+    expect(nonce).not.toBe("Zm9yZ2VkLW5vbmNlLXZhbHVl");
+    // the signed-in shell (its not-found page inside the frame) hydrated without a violation
+    await hydrated(page);
+    expect(await violations(page), path).toEqual([]);
+  }
 });
 
 test("an inline script without the nonce is blocked", async ({ page }) => {
@@ -113,4 +152,41 @@ test("an inline script without the nonce is blocked", async ({ page }) => {
   expect(ran).toEqual({ script: false, handler: false });
   const seen = await violations(page);
   expect(seen.some((v) => v.startsWith("script-src"))).toBe(true);
+});
+
+test("a same-origin script outside the allowed paths is blocked", async ({ page }) => {
+  await recordViolations(page);
+  await visit(page, "/login");
+  await expect(page.getByRole("textbox").first()).toBeVisible();
+  const loads = await page.evaluate(async () => {
+    /** How a script element ends: `load`, `error` (fetched, failed) or `blocked` (CSP). */
+    const attempt = (src: string) =>
+      new Promise<string>((resolve) => {
+        const s = document.createElement("script");
+        const onViolation = (e: SecurityPolicyViolationEvent) => {
+          if (e.blockedURI.endsWith(src)) resolve("blocked");
+        };
+        document.addEventListener("securitypolicyviolation", onViolation);
+        s.onload = () => resolve("load");
+        s.onerror = () => setTimeout(() => resolve("error"), 100);
+        s.src = src;
+        document.body.append(s);
+      });
+    return {
+      // same origin, but user content or API space: never script
+      icon: await attempt("/icon.svg"),
+      api: await attempt("/api/v1/me"),
+      // inside the allowed prefixes the browser fetches (`error` on a 404; the dev server may
+      // answer a missing chunk with something loadable): anything but `blocked`
+      next: await attempt("/_next/static/csp-probe-missing.js"),
+      client: await attempt("/api/v1/client/csp-probe/missing.js"),
+    };
+  });
+  expect(loads.icon).toBe("blocked");
+  expect(loads.api).toBe("blocked");
+  expect(["load", "error"]).toContain(loads.next);
+  expect(["load", "error"]).toContain(loads.client);
+  const seen = await violations(page);
+  expect(seen.filter((v) => v.includes("/icon.svg")).length).toBeGreaterThan(0);
+  expect(seen.some((v) => v.includes("/_next/static/csp-probe-missing.js"))).toBe(false);
 });

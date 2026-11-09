@@ -96,7 +96,7 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
  * a credential page with form fields in its query is redirected to the page without them.
- * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/*` and files never come here.
+ * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/ui/*` and `/icon.svg` never come here (`config`).
  */
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const legacy = localeRedirect(req);
@@ -112,7 +112,12 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   headers.delete(SESSION_STATE_HEADER);
   headers.set(PATH_HEADER, `${pathname}${search}`);
   const nonce = newNonce();
-  const policy = documentPolicy(nonce, process.env.NODE_ENV !== "production");
+  const policy = documentPolicy({
+    nonce,
+    // the host the browser addressed (lib/form-post.ts's same-origin check trusts it too)
+    host: req.headers.get("host") ?? req.nextUrl.host,
+    dev: process.env.NODE_ENV !== "production",
+  });
   headers.set(CSP_HEADER, policy);
   // Next falls back to the report-only header for the nonce: never let a client supply one
   headers.delete(`${CSP_HEADER}-report-only`);
@@ -189,6 +194,9 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Every page: not /api, /plugin-ui, /_next, /dev, nor any path with a dot (files).
-  matcher: ["/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev(?:/|$)|.*\\.).*)"],
+  // Every document. Skipped are only routes that are never an app page: /api and /plugin-ui (route
+  // handlers), /_next, the design catalog /dev/ui and the metadata icon /icon.svg. Any other path,
+  // dotted or not (`/chat/x.y`, `/dev/x`, `/a/b.png`), can land in the (app) layout through a
+  // dynamic segment or `[...rest]`, so it must get the CSP and a nonce the client cannot choose.
+  matcher: ["/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev/ui(?:/|$)|icon\\.svg$).*)"],
 };
