@@ -273,6 +273,11 @@ export interface OrgComponent {
   linkedIds?: string[];
   /** The platform, or the org that owns it (an org's upload; absent from older kernels). */
   owner?: Owner;
+  /**
+   * Connector templates only: the template's setup guide in its plugin's latest version, null
+   * without one (setup guides v2 spec §9.3; other kinds and older kernels: absent).
+   */
+  guide?: { itemId: string; guideId: string } | null;
 }
 
 /**

@@ -28,7 +28,11 @@ type RenderOpts = Parameters<typeof renderRoute>[2];
 /** `/connectors` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderList = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/connectors", lastStubRoutes(), opts);
-const detailPage = () => ConnectorDetailPage({ params: Promise.resolve({ connectorId: "app1" }) });
+const detailPage = () =>
+  ConnectorDetailPage({
+    params: Promise.resolve({ connectorId: "app1" }),
+    searchParams: Promise.resolve({}),
+  });
 /** `/connectors/app1` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderDetail = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/connectors/app1", lastStubRoutes(), opts);

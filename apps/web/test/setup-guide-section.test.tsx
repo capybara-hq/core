@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { setupGuideQuery } from "../src/lib/query/channels";
+import { setupGuideQuery } from "../src/lib/query/setup";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";

@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { SetupGuideRef } from "./setup-guides";
 
 /**
  * 内核连接器 API 的类型（`packages/kernel/src/tools/connectors.controller.ts` / `connectors.service.ts`；
@@ -107,6 +108,16 @@ export interface ConnectorSummary {
   platformTemplateId?: string | null;
   /** The icon of the plugin its template came from (an org icon route; null or absent: none). */
   icon?: string | null;
+  /**
+   * Its template's setup guide the org may see, at the item's latest version (setup guides v2
+   * spec §9.3); null for a custom connector or a template without one (older: absent).
+   */
+  setupGuide?: (SetupGuideRef & { version: string }) | null;
+  /**
+   * The plugin changed the guide's code blocks or checks since the connector was set up (its
+   * ack): the version acked and the current one (the notice and 「我已更新应用」); null otherwise.
+   */
+  guideDrift?: { from: string; to: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -261,6 +272,16 @@ export const updateConnector = (orgId: string, connectorId: string, input: Updat
   apiFetch<{ connector: ConnectorDetail }>(one(orgId, connectorId), {
     method: "PATCH",
     body: JSON.stringify(input),
+  });
+
+/**
+ * 「我已更新应用」: records the template's current guide as the one the connector is set up with.
+ * `hash` is the admin hash of the guide shown; 409 `connector.guide_changed` when it moved on.
+ */
+export const ackConnectorGuide = (orgId: string, connectorId: string, hash: string) =>
+  apiFetch<{ connector: ConnectorDetail }>(`${one(orgId, connectorId)}/guide-ack`, {
+    method: "POST",
+    body: JSON.stringify({ hash }),
   });
 
 export const deleteConnector = (orgId: string, connectorId: string) =>

@@ -1894,7 +1894,8 @@
         "tools": "工具",
         "review": "复核",
         "credentials": "凭据",
-        "settings": "设置"
+        "settings": "设置",
+        "guide": "接入指南"
       },
       "refresh": "刷新工具",
       "refreshed": "工具列表已刷新。"
@@ -2414,7 +2415,16 @@
     },
     "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
     "driftAck": "我已更新 {plugin} 应用",
-    "driftAcked": "已记录：应用与插件的接入配置一致。"
+    "driftAcked": "已记录：应用与插件的接入配置一致。",
+    "connectorDriftNotice": "{plugin} 插件更新了连接器的接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest。",
+    "templateHint": "先按下面的说明在第三方平台注册应用，拿到客户端信息后再填写下方的字段。",
+    "connectorHint": "这个连接器的模板附带的接入指南，内容已按本组织和这个连接器填好。",
+    "openGuide": "查看接入指南",
+    "howToConnect": "如何连接",
+    "howToConnectTitle": "如何连接 {name}",
+    "adminGuideLink": "查看管理员接入指南",
+    "close": "关闭",
+    "platformHint": "组织管理员配置这个模板时看到的接入指南。组织名称、连接器名称在各组织里填上；检查要等组织创建了连接器才运行，这里不显示。"
   },
   "extensions": {
     "title": "扩展",
@@ -4899,7 +4909,8 @@
       "tabsLabel": "组件",
       "tabs": {
         "versions": "版本",
-        "orgs": "组织"
+        "orgs": "组织",
+        "guide": "接入指南"
       },
       "fields": {
         "from": "来自",

@@ -1,11 +1,5 @@
 import { getChannel, getChannelSchema, listChannels } from "../channels";
 import { getOrgOverrides, listOrgExtensions, listOrgToolSwitches } from "../extensions";
-import {
-  getAdminSetupGuide,
-  getSetupGuide,
-  type SetupGuideQuery,
-  type SetupGuideRef,
-} from "../setup-guides";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -42,32 +36,6 @@ export const channelGuideRefQuery = (orgId: string, plugin: string) =>
     key: keys.org(orgId).channelGuideRef(plugin),
     fn: () => getChannelSchema(orgId, plugin).then((r) => r.guide ?? null),
     freshness: "orgConfig",
-  });
-
-/**
- * A plugin's setup guide rendered for the org: a target (a connection, the name typed so far, a
- * connector), a mode, an audience and the language.
- */
-export const setupGuideQuery = (orgId: string, ref: SetupGuideRef, q: SetupGuideQuery = {}) =>
-  defineQuery({
-    key: keys.org(orgId).setupGuide(ref.itemId, ref.guideId, ref.version ?? "", {
-      connectionId: q.connectionId ?? "",
-      name: q.name ?? "",
-      connectorId: q.connectorId ?? "",
-      mode: q.mode ?? "",
-      audience: q.audience ?? "",
-      locale: q.locale ?? "",
-    }),
-    fn: () => getSetupGuide(orgId, ref, q).then((r) => r.guide),
-    freshness: "orgConfig",
-  });
-
-/** A template's setup guide as the super admin sees it (spec §9.3): no org, no target. */
-export const adminSetupGuideQuery = (ref: SetupGuideRef, locale: "en" | "zh") =>
-  defineQuery({
-    key: keys.deployment().adminSetupGuide(ref.itemId, ref.guideId, ref.version ?? "", locale),
-    fn: () => getAdminSetupGuide(ref, { locale }).then((r) => r.guide),
-    freshness: "deployment",
   });
 
 /** The org's extensions (`{ extensions }`): which channel plugins it can connect. */

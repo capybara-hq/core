@@ -1906,7 +1906,8 @@
         "tools": "Tools",
         "review": "Review",
         "credentials": "Credentials",
-        "settings": "Settings"
+        "settings": "Settings",
+        "guide": "Setup guide"
       },
       "refresh": "Refresh tools",
       "refreshed": "Tool list refreshed."
@@ -2426,7 +2427,16 @@
     },
     "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
     "driftAck": "I updated the {plugin} app",
-    "driftAcked": "Recorded: the app matches the plugin's setup."
+    "driftAcked": "Recorded: the app matches the plugin's setup.",
+    "connectorDriftNotice": "The {plugin} plugin changed the connector's setup ({from} → {to}): update the manifest in your {plugin} app.",
+    "templateHint": "Register the app with the third party as described below first, then enter the client it gives you in the fields below.",
+    "connectorHint": "The setup guide that comes with this connector's template, filled in for your org and this connector.",
+    "openGuide": "Open the setup guide",
+    "howToConnect": "How to connect",
+    "howToConnectTitle": "How to connect {name}",
+    "adminGuideLink": "Open the admin setup guide",
+    "close": "Close",
+    "platformHint": "The setup guide org admins see when they configure this template. Org and connector names are filled in per org; checks run only once an org has created its connector, so they are not shown here."
   },
   "extensions": {
     "title": "Extensions",
@@ -4911,7 +4921,8 @@
       "tabsLabel": "Component",
       "tabs": {
         "versions": "Versions",
-        "orgs": "Organizations"
+        "orgs": "Organizations",
+        "guide": "Setup guide"
       },
       "fields": {
         "from": "From",

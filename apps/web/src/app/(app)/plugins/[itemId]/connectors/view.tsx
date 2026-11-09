@@ -13,6 +13,7 @@ import {
   TemplateStep,
 } from "../../../../../components/CatalogInstallWizard";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
+import { TemplateGuideSection } from "../../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
@@ -215,10 +216,8 @@ function Wizard({
               },
       }}
     >
-      {/*
-        Slot: the template's setup guide (setup guides v2, a later task) goes here, above the
-        template's input, so the admin reads where to get the OAuth client or endpoint first.
-      */}
+      {/* The template's setup guide above its input: where to get the OAuth client first */}
+      {template !== undefined && <TemplateGuideSection orgId={orgId} template={template} />}
       {template !== undefined && draft !== undefined && (
         <TemplateStep
           template={template}

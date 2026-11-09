@@ -1,12 +1,19 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
+import type { OrgCatalogDetail } from "../catalog";
 import type { ChannelConnection } from "../channels";
-import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
+import {
+  maybeOwnTemplate,
+  type OrgComponent,
+  type PlatformComponent,
+  usableRows,
+} from "../components";
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
 import { codeParam, defaultDeviceOrg } from "../devices";
 import type { EvalSetDetail } from "../evals";
+import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
@@ -85,6 +92,7 @@ import {
   pluginInstallsQuery,
   serviceTokensQuery,
 } from "./settings";
+import { memberGuideQuery, setupGuideQuery } from "./setup";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
@@ -149,17 +157,25 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
     // The list names the personal connectors: their details (this person's credential status).
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId }, qc) => {
+    then: async ({ orgId, locale }, qc) => {
       if (orgId === null) return;
       const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
         connectorsQuery(orgId).queryKey,
       );
       if (list === undefined) return;
-      await Promise.all(
-        personalConnectors(list.connectors).map((a) =>
-          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
-        ),
-      );
+      const personal = personalConnectors(list.connectors);
+      await Promise.all([
+        ...personal.map((a) => qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false })),
+        // and their templates' member guides (whether 如何连接 shows)
+        ...personal
+          .filter((a) => a.setupGuide)
+          .map((a) =>
+            qc.prefetchQuery({
+              ...memberGuideQuery(orgId, a, labelLocale(locale)),
+              retry: false,
+            }),
+          ),
+      ]);
     },
   },
   {
@@ -272,6 +288,17 @@ export const ROUTES: readonly RouteEntry[] = [
             q(adminOrgsQuery()),
           ]
         : [],
+    // Its item names the template's setup guide (the 接入指南 tab).
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, params }, qc) => {
+      if (!superAdmin(me) || params.id === undefined) return;
+      const list = qc.getQueryData<{ components: PlatformComponent[] }>(
+        adminComponentsQuery("connector_template").queryKey,
+      );
+      const itemId = list?.components.find((c) => c.id === params.id)?.itemId;
+      if (itemId == null) return;
+      await qc.prefetchQuery({ ...catalogItemQuery(itemId), retry: false });
+    },
   },
   {
     pattern: "/admin/agent-templates",
@@ -588,17 +615,25 @@ export const ROUTES: readonly RouteEntry[] = [
           ],
     // The personal connectors' cards show the viewer's own connection: their details
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId }, qc) => {
+    then: async ({ orgId, locale }, qc) => {
       if (orgId === null) return;
       const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
         connectorsQuery(orgId).queryKey,
       );
       if (list === undefined) return;
-      await Promise.all(
-        personalConnectors(list.connectors).map((a) =>
-          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
-        ),
-      );
+      const personal = personalConnectors(list.connectors);
+      await Promise.all([
+        ...personal.map((a) => qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false })),
+        // and their templates' member guides (whether 如何连接 shows)
+        ...personal
+          .filter((a) => a.setupGuide)
+          .map((a) =>
+            qc.prefetchQuery({
+              ...memberGuideQuery(orgId, a, labelLocale(locale)),
+              retry: false,
+            }),
+          ),
+      ]);
     },
   },
   {
@@ -799,6 +834,20 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.itemId === undefined || !atLeast(me, "admin")
         ? []
         : [q(orgCatalogItemQuery(orgId, params.itemId))],
+    // The first step's template names its setup guide, shown above its input.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params, locale }, qc) => {
+      if (orgId === null || params.itemId === undefined || !atLeast(me, "admin")) return;
+      const detail = qc.getQueryData<OrgCatalogDetail>(
+        orgCatalogItemQuery(orgId, params.itemId).queryKey,
+      );
+      const guide = detail?.missingTemplates?.[0]?.guide;
+      if (!guide) return;
+      await qc.prefetchQuery({
+        ...setupGuideQuery(orgId, guide, { audience: "admin", locale: labelLocale(locale) }),
+        retry: false,
+      });
+    },
   },
   {
     pattern: "/plugins/[itemId]/enable",

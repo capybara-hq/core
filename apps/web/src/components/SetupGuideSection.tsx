@@ -16,8 +16,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiClientError } from "../lib/api";
 import { labelLocale } from "../lib/extension-label";
-import { adminSetupGuideQuery, setupGuideQuery } from "../lib/query/channels";
 import { keys } from "../lib/query/keys";
+import { adminSetupGuideQuery, setupGuideQuery } from "../lib/query/setup";
 import type {
   RenderedSetupGuide,
   SetupGuideAudience,
@@ -98,6 +98,7 @@ export function SetupGuideSection({
           query={q}
           drift={drift}
           plugin={pluginLabel ?? g.plugin}
+          place={g.place}
         />
       ) : null}
       <Text variant="h3">{g.title}</Text>
@@ -115,7 +116,8 @@ export function SetupGuideSection({
       <GuideDocument
         blocks={g.blocks}
         renderCheck={(c) =>
-          saved ? (
+          // the platform view has no target to check (spec §9.3): no rows
+          admin ? null : saved ? (
             <CheckRow label={c.label} state={{ status: "not_run" }} />
           ) : (
             <CheckRow
@@ -153,12 +155,14 @@ function DriftNotice({
   query,
   drift,
   plugin,
+  place,
 }: {
   orgId: string;
   guide: SetupGuideRef;
   query: SetupGuideSectionProps["query"] & { locale: "en" | "zh" };
   drift: NonNullable<SetupGuideSectionProps["drift"]>;
   plugin: string;
+  place: RenderedSetupGuide["place"];
 }) {
   const t = useTranslations("setupGuide");
   const qc = useQueryClient();
@@ -186,7 +190,11 @@ function DriftNotice({
       tone="warn"
       action={{ label: t("driftAck", { plugin }), onSelect: () => void confirm() }}
     >
-      {t("driftNotice", { plugin, from: versionLabel(drift.from), to: versionLabel(drift.to) })}
+      {t(place === "connector-template" ? "connectorDriftNotice" : "driftNotice", {
+        plugin,
+        from: versionLabel(drift.from),
+        to: versionLabel(drift.to),
+      })}
     </Callout>
   );
 }

@@ -105,9 +105,15 @@ const TEMPLATES = [
 ];
 const AGENTS = [comp({ kind: "agent_template", id: "a1", name: "researcher", version: "1" })];
 
+/** A connector template's item, read for its setup guide: here none to show (setup guides v2). */
+const noItem = () =>
+  json(404, { error: { code: "catalog.item_not_found", message: "Catalog item not found" } });
+
 const base: Routes = {
   // the skill upload checks the session first
   "GET /api/v1/me": () => json(200, ME),
+  [`GET /api/v1/admin/catalog/items/${ITEM}`]: noItem,
+  "GET /api/v1/admin/catalog/items/i-slack": noItem,
   "GET /api/v1/admin/orgs": () => json(200, ORGS),
   "GET /api/v1/admin/components?kind=skill": () => json(200, { components: SKILLS }),
   "GET /api/v1/admin/components?kind=connector_template": () =>

@@ -18,6 +18,7 @@ import {
   CredentialFields,
   EMPTY_CREDENTIAL,
 } from "../../../../components/ConnectorForm";
+import { ConnectorGuideSheet, useMemberGuides } from "../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
@@ -26,6 +27,7 @@ import { useStartConnect } from "../../../../lib/connect";
 import {
   type ConnectorDetail,
   type CredentialValue,
+  canManageConnectors,
   clearMyCredential,
   personalConnectors,
   setMyCredential,
@@ -49,10 +51,10 @@ import NotFound from "../../not-found";
 export default function ConnectionsView() {
   const ws = useWorkspace({ setup: "step" });
   if (ws.kind !== "ok") return null;
-  return <Connections orgId={ws.orgId} />;
+  return <Connections orgId={ws.orgId} admin={canManageConnectors(ws.me)} />;
 }
 
-function Connections({ orgId }: { orgId: string }) {
+function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
   const scope = usePagePath("home");
   const t = useTranslations("connections");
   const nav = useAccountNav();
@@ -64,6 +66,9 @@ function Connections({ orgId }: { orgId: string }) {
       return { ...q, retryOnMount: retryOnMountOf(q.queryKey) };
     }),
   });
+  // the connectors whose template's guide has a member section: 如何连接 opens it in a sheet
+  const memberGuides = useMemberGuides(orgId, personal);
+  const [howTo, setHowTo] = useState<string | null>(null);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const header = {
@@ -90,13 +95,29 @@ function Connections({ orgId }: { orgId: string }) {
     return <ErrorFrame reset={() => failed.forEach((d) => void d.refetch())} />;
   }
   const shown = details.flatMap((d) => (d.data === undefined || refused(d.error) ? [] : [d.data]));
+  const guideOf = howTo === null ? undefined : shown.find((a) => a.id === howTo);
   return (
     <SettingsPage header={header} nav={nav} activeNav="connections">
       {shown.length === 0 ? (
         // The settings content area has nothing to show: the page empty state (spec §6.18)
         <EmptyState text={t("empty")} hint={t("emptyHint")} />
       ) : (
-        shown.map((app) => <ConnectorConnection key={app.id} orgId={orgId} app={app} />)
+        shown.map((app) => (
+          <ConnectorConnection
+            key={app.id}
+            orgId={orgId}
+            app={app}
+            {...(memberGuides.has(app.id) ? { onHowTo: () => setHowTo(app.id) } : {})}
+          />
+        ))
+      )}
+      {guideOf !== undefined && (
+        <ConnectorGuideSheet
+          orgId={orgId}
+          connector={guideOf}
+          admin={admin}
+          onClose={() => setHowTo(null)}
+        />
       )}
     </SettingsPage>
   );
@@ -121,8 +142,18 @@ function ConnectionStatus({ app, connected }: { app: ConnectorDetail; connected:
 /** A personal connector's section while it loads: its status line and a credential field. */
 const LOADING_FIELDS = [{}, {}];
 
-function ConnectorConnection({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
+function ConnectorConnection({
+  orgId,
+  app,
+  onHowTo,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  /** Its template's guide has a member section: 如何连接 opens it. */
+  onHowTo?: () => void;
+}) {
   const t = useTranslations("connections");
+  const tg = useTranslations("setupGuide");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [values, setValues] = useState(EMPTY_CREDENTIAL);
@@ -139,6 +170,12 @@ function ConnectorConnection({ orgId, app }: { orgId: string; app: ConnectorDeta
   });
   const auth = app.auth;
   if (auth.type === "none" || auth.type === "oauth_client") return null;
+  const howTo =
+    onHowTo === undefined ? null : (
+      <Button variant="ghost" onClick={onHowTo}>
+        {tg("howToConnect")}
+      </Button>
+    );
   const connected = app.credential.status === "connected";
 
   if (auth.type === "oauth_code") {
@@ -176,6 +213,7 @@ function ConnectorConnection({ orgId, app }: { orgId: string; app: ConnectorDeta
               {t("disconnect")}
             </Button>
           )}
+          {howTo}
         </Stack>
       </FormSection>
     );
@@ -226,6 +264,7 @@ function ConnectorConnection({ orgId, app }: { orgId: string; app: ConnectorDeta
             {t("clear")}
           </Button>
         )}
+        {howTo}
       </Stack>
     </FormSection>
   );
