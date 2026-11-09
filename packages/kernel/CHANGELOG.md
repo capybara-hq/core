@@ -1,5 +1,69 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.13
+
+### Minor Changes
+
+- c12e7a7: Org admins and the super admin can hide and reorder extension contributions per UI slot: the org
+  setting `uiArrangement` and the deployment setting `uiArrangement` (an org's entry replaces the
+  platform's for that slot). Hidden means not listed: the contribution lists apply it, the view,
+  action and embed routes do not. `GET /orgs/:orgId/ui/arrangement` and `GET /admin/ui/arrangement`
+  list the slots with their items for the arrangement page.
+  The lists are grouped by anchor in the slot's anchor order also for a slot no arrangement names.
+- 17fdfb1: `GET /api/v1/ui/slots` lists the UI slot catalog for any signed-in person, and the Platform
+  operation `ui.slots` (new `ui` domain) lets an agent read it.
+- 0e765e2: The extension host resolves each UI contribution's slot once per load: a contribution to an unknown
+  slot or slot version is dropped (the extension still loads), logged once, and listed as `uiDropped`
+  on the admin extension view. Contributions still on the deprecated `place` load unchanged (info
+  log). The contribution list no longer carries `legacyPlace`, and contributions to slots without a
+  place (agent, org settings, platform) are not listed or served through the org routes yet.
+  A file previewer whose embed names a dropped contribution is left out (one warn per load) instead
+  of failing the extension.
+- 18defa0: `platform.page` contributions are served to super admins on org-less routes under
+  `/api/v1/admin/ui/` (`contributions`, `views/:plugin/:id`, `actions/:plugin/:id`,
+  `embeds/:plugin/:id/token`, `stream`): the extension must be running (no org enablement applies)
+  and gets the platform's deployment config. `UiRenderArgs` / `UiActionArgs` become unions narrowed
+  on `scope`: the platform variant has `role: "superAdmin"` and no `orgId`. `EmbedClaims` gain
+  `scope: "org" | "platform"` (`orgId` absent exactly for the platform scope); a platform token
+  verifies only for a `platform.page` contribution while the account is still an active super admin,
+  and an org token never verifies for one. `ctx.ui.invalidate` takes no `orgId` for a `platform.page`
+  contribution (refreshing the admin console's stream) and throws when one is given.
+- cf93278: The org UI routes gate every contribution by its slot: the slot's `minRole` (`org.settings.section`
+  admin and above, `org.page` member and above, conversation and agent slots any member), then its
+  scope (a readable conversation; an agent the caller can read in this org). `platform.page` is never
+  listed or served through an org route. `GET /orgs/:orgId/ui/contributions` takes `?slot=` and lists
+  `slot` and the resolved `after` anchor instead of `place`, ordered by extension name, then manifest
+  order. Views, actions and embed tokens take `agentId` for `agent.detail.section`; embed claims carry
+  it, and `ctx.ui.verifyEmbedToken` returns null when the current role no longer meets the slot's
+  `minRole`. `UiRenderArgs` gains `slot`, `scope` and `agentId`; `EmbedClaims` gains `agentId`.
+
+### Patch Changes
+
+- 0a5b15d: One name: devices. Environments become devices everywhere in the kernel: migration 0105 renames the
+  tables (`devices`, `device_instances`, `device_defaults`, `device_machines`), the `device_id` columns,
+  indexes and constraints, turns `source` `device` into `local`, the provider `@device` into `@local`
+  and the log event `environment_paths` into `device_paths`. Config `environments.*` becomes
+  `devices.maxPersonal` and `devices.local.*` (`CAPYBARA_DEVICES__…`); error codes `environment.*`
+  become `device.*` and the sign-in codes become `device_sign_in.*`; routes move to
+  `orgs/:orgId/devices…`, Platform operations to `devices.*`, the IM command to `/device`, sandbox
+  file systems to `cap-device-<id>` (existing cloud files under `cap-env-<id>` are left behind) and
+  the sign-in `verificationUri` to `<web>/devices/link`.
+  
+  Upgrading: sandbox jobs queued by the previous kernel (instance destroys, file resets) are dropped
+  (the hourly sweep still cleans deleted devices; a file reset must be requested again), and audit
+  rows written before the upgrade keep their `environment.*` action names.
+- 199f895: UI contributions name a slot (`slot: "conversation.panel"`, optionally `@<n>`, plus `after` for
+  slots with anchors); `place` stays accepted as a deprecated input. `validateUiContributions` now
+  covers only structural problems, and the new `resolveUiSlots` drops a contribution to an unknown
+  slot or version instead of failing the extension. `normalizePlace` is removed.
+- Updated dependencies [ec79610]
+- Updated dependencies [d495d7d]
+- Updated dependencies [18defa0]
+- Updated dependencies [0a35407]
+- Updated dependencies [cf93278]
+- Updated dependencies [199f895]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.9
+
 ## 0.1.0-rc.12
 
 ### Patch Changes

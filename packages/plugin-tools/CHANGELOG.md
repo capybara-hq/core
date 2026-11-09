@@ -1,5 +1,26 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.10
+
+### Minor Changes
+
+- adfc0af: `capybara-plugin check` reports UI slot problems: a slot this SDK does not know (`ui-slot-unknown`), an `after` that is no anchor of the slot (`ui-slot-anchor`) and a deprecated `place` (`ui-place-deprecated`, a warning).
+
+### Patch Changes
+
+- Updated dependencies [ec79610]
+- Updated dependencies [0a5b15d]
+- Updated dependencies [c12e7a7]
+- Updated dependencies [17fdfb1]
+- Updated dependencies [0e765e2]
+- Updated dependencies [d495d7d]
+- Updated dependencies [18defa0]
+- Updated dependencies [0a35407]
+- Updated dependencies [cf93278]
+- Updated dependencies [199f895]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.9
+  - @capybara-hq/kernel@0.1.0-rc.13
+
 ## 0.1.0-rc.9
 
 ### Minor Changes
