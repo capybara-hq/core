@@ -91,7 +91,9 @@ export function useClientComponent(c: ComponentRef | undefined): ComponentLookup
  * The contributions a page may offer (a title-bar entry, a list): views and embeds, and components
  * the document's client set delivers and that are not off (safe mode, the kill switch, a withdrawn
  * plugin or a spent crash budget offer none). A component whose load failed is still offered: it
- * shows its failure line.
+ * shows its failure line. The session's crash-budget list is read by the host's first layout
+ * effect, so on the server and in the first client render a session-disabled component is still
+ * offered (hydration stays consistent); it drops out before the first paint of a client navigation.
  */
 export function useOfferedContributions(items: UiContributionItem[]): UiContributionItem[] {
   const registry = useClientRegistry();

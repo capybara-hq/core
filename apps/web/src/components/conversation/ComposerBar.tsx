@@ -23,6 +23,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type Ref,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -37,6 +38,7 @@ import {
   renderConnectorPrompt,
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
+import { focusWhenPossible } from "../../lib/deferred-focus";
 import {
   connectorPromptsQuery,
   connectorResourcesQuery,
@@ -636,6 +638,14 @@ export function ComposerBar({
   const undoFill = useRef<{ before: string; text: string } | null>(null);
   const textNow = useRef(text);
   textNow.current = text;
+  // A pending composer frame hides the composer for up to 1.5 s (focus() is a no-op then): the
+  // focus waits for the reveal or the winner's composer (client extensions spec §6.3)
+  const cancelFocus = useRef<() => void>(() => {});
+  const focusText = useCallback(() => {
+    cancelFocus.current();
+    cancelFocus.current = focusWhenPossible(() => textEl.current);
+  }, []);
+  useEffect(() => () => cancelFocus.current(), []);
   useImperativeHandle(
     control,
     () => ({
@@ -646,13 +656,13 @@ export function ComposerBar({
         setText(next);
         // a value set from outside puts the caret after the text; on a touch device the text is
         // only placed, never focused (focus would pop the keyboard for a tap on a quick action)
-        if (!isTouchPointer()) textEl.current?.focus();
+        if (!isTouchPointer()) focusText();
       },
       focus() {
-        textEl.current?.focus();
+        focusText();
       },
     }),
-    [],
+    [focusText],
   );
 
   // The built-in composer: framed, the frame slot's default; bare (`frame={false}`), the inputs a

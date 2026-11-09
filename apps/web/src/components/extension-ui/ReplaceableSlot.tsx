@@ -61,17 +61,18 @@ function ComposerGuard({ scope }: { scope: HTMLDivElement | null }) {
 
 /**
  * A replaceable single slot (client extensions spec §6.3, §6.4): the winner the kernel lists (at
- * most one) or the built-in. The built-in renders when there is no winner, in safe mode, under the
- * kill switch, before the client host has loaded (the server render and the first client render,
- * so hydration never mismatches), and when the winner fails to load, is off or lacks the component.
- * While the winner's module loads (or, with client code for the slot, the read naming the winner)
- * the built-in is hidden in a `ReplaceableFrame` (its layout kept) for at most 1 500 ms, then
- * shown until the module arrives. When the layout prefetched a winner the document's set delivers,
- * the server render is already pending; the frame's CSS reveals the built-in after 1 500 ms even
- * without scripts. A winner that throws, or a composer
- * frame that drops the composer, falls back to the built-in for this mount, reported once (and
- * counted against the plugin's crash budget). The winner gets `builtin`, `extra` and the base
- * props.
+ * most one) or the built-in. The built-in is what renders when there is no winner, in safe mode,
+ * under the kill switch, and when the winner fails to load, is off or lacks the component. Before
+ * the client host has loaded (the server render and the first client render, so hydration never
+ * mismatches) the built-in renders too, hidden when the layout prefetched a winner the document's
+ * set delivers. While the winner's module loads (or, with client code for the slot, the read
+ * naming the winner) the built-in is hidden in a `ReplaceableFrame` (its layout kept) for at most
+ * 1 500 ms, then shown until the module arrives; the frame's CSS reveals it after 1 500 ms even
+ * without scripts. A winner that throws, or a composer frame that does not render the composer
+ * (its `children`) exactly once inside the slot, falls back to the built-in for this mount,
+ * reported once (and counted against the plugin's crash budget). A composer frame that portals
+ * `children` out of its slot counts as dropping them: they must render inside the frame. The
+ * winner gets `builtin`, `extra` and the base props.
  */
 export function ReplaceableSlot({
   slot,
