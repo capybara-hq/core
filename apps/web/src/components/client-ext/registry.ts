@@ -27,6 +27,10 @@ export interface ClientApi {
 /** `ClientExtension` of `@capybara-hq/plugin-client`: an entry module's default export. */
 export interface ClientExtension {
   name: string;
+  /**
+   * Stamped by the host's own `defineClientExtension` (the import map resolves the plugin's call to
+   * it), so it is the host's version: see {@link validateEntry}.
+   */
   readonly apiVersion: number;
   components?: Record<string, ClientComponent>;
   events?: Partial<Record<CapybaraEvent["type"], (e: CapybaraEvent, api: ClientApi) => void>>;
@@ -99,7 +103,7 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 /**
  * Checks an entry module against the set's item (spec §9.4): the default export must be a
- * `ClientExtension` named as the plugin, built against `apiVersion`; each component must be a
+ * `ClientExtension` named as the plugin, stamped with `apiVersion`; each component must be a
  * contribution the item lists for the viewer, bound to the same slot. A component the item does not
  * list (another role's, or none) is left out silently; one bound to another slot is left out and
  * reported. A bad entry activates nothing.
@@ -134,6 +138,9 @@ export function validateEntry(
       ],
     };
   }
+  // Defence in depth: a real bundle's `defineClientExtension` resolves to the host's, which stamps
+  // the host's version, so only a hand-made default export can differ here. The gate that holds is
+  // the kernel's (it delivers only builds of the client API version it supports, spec §4.2).
   if (def.apiVersion !== apiVersion) {
     return {
       definition: null,

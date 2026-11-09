@@ -38,7 +38,13 @@ export interface ClientExtensionDefinition {
 }
 
 export interface ClientExtension extends ClientExtensionDefinition {
-  /** CLIENT_API_VERSION at build time. */
+  /**
+   * The client API version, stamped by `defineClientExtension`. In a browser that call resolves to
+   * the host's own implementation (the import map points `@capybara-hq/plugin-client` at the host),
+   * so this is the host's version, not the one the bundle was built against. The real gate is the
+   * kernel's: it records the build's version from the package and delivers only builds of the
+   * version it supports. The host's comparison is defence in depth.
+   */
   readonly apiVersion: number;
 }
 
