@@ -3,6 +3,7 @@
 import {
   AppShell,
   initialOf,
+  Logo,
   type MenuItem,
   OverviewPage,
   SetupPage,
@@ -42,6 +43,8 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { RunStateProvider, useRunStateValue } from "../client-ext/run-state";
+import { useSlotHasClientCode } from "../extension-ui/ClientComponentBlock";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
 import { useResolvedTheme } from "../theme-root";
@@ -113,6 +116,26 @@ function useCapState(): string {
   const theme = useResolvedTheme()?.key ?? "builtin";
   const motion = useMotionToken();
   return `run=${run} theme=${theme}${motion === null ? "" : ` motion=${motion}`}`;
+}
+
+/** The sidebar's rail width (960-1279, AppShell's breakpoints). */
+const RAIL = "(min-width: 960px) and (max-width: 1279px)";
+
+/**
+ * Whether the sidebar is the rail (a `shell.brand` replacement's `collapsed`): false in the server
+ * render and the first hydration, the browser's value afterwards.
+ */
+function useRail(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      if (typeof window.matchMedia !== "function") return () => {};
+      const mql = window.matchMedia(RAIL);
+      mql.addEventListener("change", notify);
+      return () => mql.removeEventListener("change", notify);
+    },
+    () => typeof window.matchMedia === "function" && window.matchMedia(RAIL).matches,
+    () => false,
+  );
 }
 
 /**
@@ -261,7 +284,9 @@ function ShellFrame({
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const capState = useCapState();
+  const rail = useRail();
   const orgId = currentOrg?.orgId ?? null;
+  const brandCode = useSlotHasClientCode("shell.brand");
   const conversations = sections?.conversations ?? noOrgConversations(pathname);
   const pending = sections?.pending ?? NO_PENDING;
   const { primary, more, inbox, adminHref, commands } = useNav(
@@ -564,6 +589,18 @@ function ShellFrame({
   // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
   // for a super admin: anyone else gets the 403 beside the workspace sidebar.
   const inAdmin = adminContext;
+  // Org client code only on workspace pages (client extensions spec §9.6): the admin console
+  // (anything under /admin) keeps the official brand and draws no overlay. Without client code for
+  // the brand (and before the host loads) the sidebar draws its own Logo, right in every variant.
+  const workspaceOrg = under(pathname, "/admin") ? null : orgId;
+  const brand =
+    workspaceOrg === null || !brandCode ? undefined : (
+      <ExtensionSlot
+        slot="shell.brand"
+        args={{ orgId: workspaceOrg }}
+        host={{ builtin: <Logo scale={2} wordmark={!rail} />, collapsed: rail }}
+      />
+    );
   const context: SidebarContext = inAdmin
     ? {
         kind: "admin",
@@ -594,6 +631,7 @@ function ShellFrame({
         conversations,
         account: { name: me.account.displayName, menu: personalMenu },
         ...schemeToggle,
+        ...(brand === undefined ? {} : { brand }),
       }}
       commands={commands}
       status={status}
@@ -606,6 +644,9 @@ function ShellFrame({
         </SetupContext.Provider>
         {dialogs}
       </SessionContext.Provider>
+      {workspaceOrg === null ? null : (
+        <ExtensionSlot slot="shell.overlay" args={{ orgId: workspaceOrg }} />
+      )}
     </AppShell>
   );
 }

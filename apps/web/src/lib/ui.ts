@@ -28,7 +28,8 @@ export interface UiOpen {
   contribution: string;
   item?: string;
 }
-export type UiKind = "view" | "embed";
+/** `component`: client code of the plugin (client extensions spec §5), drawn by the client host. */
+export type UiKind = "view" | "embed" | "component";
 
 /** One item of `GET .../ui/contributions` (the kernel's `UiContributionItem`, `ui/views.ts`). */
 export interface UiContributionItem {
@@ -93,6 +94,8 @@ export interface UiView {
   /** The ⤢ of an inline card's title row and a properties section's header. */
   open?: UiOpen;
   blocks: UiBlock[];
+  /** A component's server view only: data for its client code (client extensions spec §5.2). */
+  data?: unknown;
 }
 
 export type UiLocale = "zh" | "en";

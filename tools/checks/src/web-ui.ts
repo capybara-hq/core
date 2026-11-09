@@ -52,13 +52,19 @@ const FORBIDDEN_PKG = new RegExp(
     "react-icons",
   ].join("|")})(?:/|$))`,
 );
-/** Extension UI blocks that only `<ExtensionSlot>` (components/extension-ui) may draw. */
+/**
+ * Extension UI blocks that only `<ExtensionSlot>` (components/extension-ui) may draw: the view and
+ * embed blocks, and the client component and replaceable slot renderers (client extensions spec §11).
+ */
 const EXTENSION_BLOCKS = new Set([
   "ExtensionPanel",
   "ExtensionSection",
   "ExtensionCard",
   "ExtensionViewTab",
   "EmbedTab",
+  "ClientComponentBlock",
+  "ReplaceableSlot",
+  "ReplaceableFrame",
 ]);
 const CREATE_ELEMENT = new Set(["createElement", "jsx", "jsxs", "jsxDEV"]);
 const DESIGN_PKG = "@capybara-hq/design";

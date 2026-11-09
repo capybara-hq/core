@@ -1,6 +1,15 @@
 "use client";
 
-import { FormSection, type RightPanelSwitcher, Stack, Text } from "@capybara-hq/design";
+import {
+  DecorationLayer,
+  FormSection,
+  InlineCard,
+  PropertySection,
+  RightPanel,
+  type RightPanelSwitcher,
+  Stack,
+  Text,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -18,7 +27,9 @@ import {
   uiLocale,
 } from "../../lib/ui";
 import { UI_SLOT_SPECS } from "../../lib/ui-slots.generated";
+import type { RunState } from "../client-ext/run-state";
 import { BlockBoundary } from "../conversation/BlockBoundary";
+import { ClientComponentBlock, useSlotHasClientCode } from "./ClientComponentBlock";
 import { EmbedTab } from "./EmbedTab";
 import {
   type BlockContext,
@@ -27,6 +38,7 @@ import {
   ExtensionSection,
 } from "./ExtensionBlocks";
 import { ExtensionViewTab, useExtensionViews, useUiAction } from "./ExtensionViewTab";
+import { ReplaceableSlot } from "./ReplaceableSlot";
 
 /** What each slot's contributions are rendered with (the slot's scope args, UI slots spec §6). */
 export type SlotArgs = {
@@ -47,7 +59,7 @@ export type SlotArgs = {
   "org.settings.section": { orgId: string };
   /** `direct`: as for `org.page`, the page a platform arrangement hides from the list. */
   "platform.page": { direct?: UiContributionItem };
-  /** The four client-extension slots are not rendered yet (client extensions plan, Task 18). */
+  /** The client-extension slots (client extensions spec §6.2): org scope, no args. */
   "shell.brand": { orgId: string };
   "shell.overlay": { orgId: string };
   "conversation.empty": { orgId: string };
@@ -81,10 +93,21 @@ export type SlotHost = {
   "agent.detail.section": Record<string, never>;
   "org.settings.section": Record<string, never>;
   "platform.page": Record<string, never>;
-  "shell.brand": Record<string, never>;
+  /** `builtin`: the brand row's default (the `Logo`); `collapsed`: the sidebar is the rail. */
+  "shell.brand": { builtin: ReactNode; collapsed: boolean };
   "shell.overlay": Record<string, never>;
-  "conversation.empty": Record<string, never>;
-  "conversation.composer.frame": Record<string, never>;
+  /** `builtin`: the new conversation's hero (`Greeting`); `greeting`: its line ("" until picked). */
+  "conversation.empty": { builtin: ReactNode; agentId: string | null; greeting: string };
+  /**
+   * `builtin` and `children`: the built-in composer (the winner must render it exactly once: the
+   * host checks after commit that the composer's textarea is in the document).
+   */
+  "conversation.composer.frame": {
+    builtin: ReactNode;
+    children: ReactNode;
+    conversationId: string | null;
+    runState: RunState;
+  };
 };
 
 type SlotProps<S extends UiSlotId> = {
@@ -111,17 +134,19 @@ const NONE: UiContributionItem[] = [];
 
 /**
  * The org's contributions of one slot, in the kernel's (arranged) order. A failed read (not read
- * again on mount) lists none; `pending` while the first read is on its way.
+ * again on mount) lists none; `pending` while the first read is on its way. `enabled` false: no
+ * read, none listed (the shell slots read only when the document has client code for them).
  */
 export function useSlotContributions(
   orgId: string,
   slot: UiSlotId,
+  enabled = true,
 ): { items: UiContributionItem[]; pending: boolean } {
   const q = contributionsQuery(orgId);
-  const r = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
-  const all = r.data;
+  const r = useQuery({ ...q, enabled, retryOnMount: retryOnMountOf(q.queryKey) });
+  const all = enabled ? r.data : undefined;
   const items = useMemo(() => (all ? all.filter((c) => c.slot === slot) : NONE), [all, slot]);
-  return { items, pending: all === undefined && r.error === null };
+  return { items, pending: enabled && all === undefined && r.error === null };
 }
 
 /** The anchor a contribution goes after: its own, else the slot's first. */
@@ -133,8 +158,10 @@ const matches = (c: UiContributionItem, select: { plugin: string; id: string } |
 
 /**
  * The only way to render extension UI (UI slots spec §7): the slot's contributions (`select`: that
- * one; `anchor`: those placed after it; else all), each view or embed failing alone in its own
- * block. Draws nothing when nothing matches.
+ * one; `anchor`: those placed after it; else all), each view, embed or client component failing
+ * alone in its own block. Draws nothing when nothing matches. A replaceable single slot
+ * (`shell.brand`, `conversation.empty`, `conversation.composer.frame`) draws its winner or the
+ * built-in `host.builtin` (client extensions spec §6).
  */
 export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNode {
   const p = props as unknown as AnySlotProps;
@@ -159,10 +186,70 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
       return p.select ? <AgentSectionSlot args={p.args} select={p.select} /> : null;
     case "platform.page":
       return p.select ? <PlatformPageSlot args={p.args} select={p.select} /> : null;
+    case "shell.overlay":
+      return <OverlaySlot args={p.args} />;
+    case "shell.brand":
+      return p.host ? (
+        <ReplaceableSlot
+          slot="shell.brand"
+          args={p.args}
+          builtin={p.host.builtin}
+          extra={{ collapsed: p.host.collapsed }}
+        />
+      ) : null;
+    case "conversation.empty":
+      return p.host ? (
+        <ReplaceableSlot
+          slot="conversation.empty"
+          args={p.args}
+          builtin={p.host.builtin}
+          extra={{ agentId: p.host.agentId, greeting: p.host.greeting }}
+        />
+      ) : null;
+    case "conversation.composer.frame":
+      return p.host ? (
+        <ReplaceableSlot
+          slot="conversation.composer.frame"
+          args={p.args}
+          builtin={p.host.builtin}
+          extra={{
+            children: p.host.children,
+            conversationId: p.host.conversationId,
+            runState: p.host.runState,
+          }}
+        />
+      ) : null;
     default:
       return null;
   }
 }
+
+/**
+ * The overlay's components (slot `shell.overlay`, at most 4 in arrangement order, client extensions
+ * spec §7.4) in the decoration layer, drawn only when the slot lists one. A crashing overlay
+ * component draws nothing. The caller renders the slot only on workspace pages (spec §9.6).
+ */
+function OverlaySlot({ args }: { args: SlotArgs["shell.overlay"] }) {
+  const code = useSlotHasClientCode("shell.overlay");
+  const { items } = useSlotContributions(args.orgId, "shell.overlay", code);
+  const shown = items.filter((c) => c.kind === "component").slice(0, 4);
+  if (shown.length === 0) return null;
+  return (
+    <DecorationLayer>
+      {shown.map((c) => (
+        <ClientComponentBlock
+          key={uiKey(c.plugin, c.id)}
+          c={c}
+          args={{ orgId: args.orgId }}
+          hostProps={NO_PROPS}
+          quiet
+        />
+      ))}
+    </DecorationLayer>
+  );
+}
+
+const NO_PROPS: Record<string, unknown> = {};
 
 type Select = { plugin: string; id: string } | undefined;
 
@@ -175,9 +262,40 @@ function PanelSlot({
   select: Select;
   host: SlotHost["conversation.panel"];
 }) {
+  const locale = useLocale();
   const { items } = useSlotContributions(args.orgId, "conversation.panel");
   const c = items.find((x) => matches(x, select));
   if (!c) return null;
+  if (c.kind === "component") {
+    const title = c.title[uiLocale(locale)];
+    return (
+      <ClientComponentBlock
+        key={`${uiKey(c.plugin, c.id)}/${args.item ?? ""}`}
+        c={c}
+        args={{
+          orgId: args.orgId,
+          conversationId: args.conversationId,
+          ...(args.item !== undefined && { item: args.item }),
+        }}
+        hostProps={{
+          conversationId: args.conversationId,
+          ...(args.item !== undefined && { item: args.item }),
+          close: host.onClose,
+        }}
+        frame={(block) => (
+          <RightPanel
+            title={title}
+            {...(host.switcher ? { switcher: host.switcher } : {})}
+            onClose={host.onClose}
+            onFullscreen={host.onFullscreen}
+            body="pad"
+          >
+            {block}
+          </RightPanel>
+        )}
+      />
+    );
+  }
   const ctx: BlockContext = {
     orgId: args.orgId,
     conversationId: args.conversationId,
@@ -207,6 +325,7 @@ function SectionSlot({
   anchor: string | undefined;
   host: SlotHost["conversation.properties.section"];
 }) {
+  const locale = uiLocale(useLocale());
   const { items } = useSlotContributions(args.orgId, "conversation.properties.section");
   const shown = items.filter(
     (c) => matches(c, select) && (anchor === undefined || anchorOf(c) === anchor),
@@ -219,9 +338,23 @@ function SectionSlot({
   };
   return (
     <>
-      {shown.map((c) => (
-        <ExtensionSection key={uiKey(c.plugin, c.id)} ctx={ctx} c={c} />
-      ))}
+      {shown.map((c) =>
+        c.kind === "component" ? (
+          <ClientComponentBlock
+            key={uiKey(c.plugin, c.id)}
+            c={c}
+            args={{ orgId: args.orgId, conversationId: args.conversationId }}
+            hostProps={{ conversationId: args.conversationId }}
+            frame={(block) => (
+              <div data-extension-section={uiKey(c.plugin, c.id)}>
+                <PropertySection title={c.title[locale]}>{block}</PropertySection>
+              </div>
+            )}
+          />
+        ) : (
+          <ExtensionSection key={uiKey(c.plugin, c.id)} ctx={ctx} c={c} />
+        ),
+      )}
     </>
   );
 }
@@ -237,8 +370,29 @@ function CardSlot({
 }) {
   const cards = useSlotContributions(args.orgId, "conversation.tool-result.card").items;
   const panels = useSlotContributions(args.orgId, "conversation.panel").items;
+  const locale = uiLocale(useLocale());
   const c = cards.find((x) => matches(x, select));
   if (!c) return null;
+  if (c.kind === "component") {
+    const card = {
+      callId: args.card.callId,
+      ...(args.card.key !== undefined && { key: args.card.key }),
+    };
+    return (
+      <ClientComponentBlock
+        c={c}
+        args={{ orgId: args.orgId, conversationId: args.conversationId, card }}
+        hostProps={{ conversationId: args.conversationId, card }}
+        frame={(block) => (
+          <div data-extension-card={uiKey(c.plugin, c.id)}>
+            <InlineCard source={c.title[locale]} state="ready">
+              {block}
+            </InlineCard>
+          </div>
+        )}
+      />
+    );
+  }
   const ctx: BlockContext = {
     orgId: args.orgId,
     conversationId: args.conversationId,
@@ -272,6 +426,10 @@ function OrgPageSlot({
   const c = items.find((x) => matches(x, select)) ?? args.direct;
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
+  if (c.kind === "component")
+    return (
+      <ClientComponentBlock key={key} c={c} args={{ orgId: args.orgId }} hostProps={NO_PROPS} />
+    );
   return (
     <BlockBoundary name={c.title[locale]}>
       {c.kind === "embed" ? (
@@ -313,6 +471,8 @@ function PlatformPageSlot({
   const c = items.find((x) => matches(x, select)) ?? args.direct;
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
+  if (c.kind === "component")
+    return <ClientComponentBlock key={key} c={c} args={{ orgId: null }} hostProps={NO_PROPS} />;
   return (
     <BlockBoundary name={c.title[locale]}>
       {c.kind === "embed" ? (
@@ -343,6 +503,20 @@ function OrgSettingsSlot({ args }: { args: SlotArgs["org.settings.section"] }) {
 function OrgSettingsSection({ orgId, c }: { orgId: string; c: UiContributionItem }) {
   const locale = uiLocale(useLocale());
   const title = c.title[locale];
+  if (c.kind === "component") {
+    return (
+      <ClientComponentBlock
+        c={c}
+        args={{ orgId }}
+        hostProps={NO_PROPS}
+        frame={(block) => (
+          <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+            <div data-extension-section={uiKey(c.plugin, c.id)}>{block}</div>
+          </FormSection>
+        )}
+      />
+    );
+  }
   // `flush`: a view may hold a table, which runs to the card's edges (spec §1, web-ui-box-in-box)
   return (
     <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
@@ -378,6 +552,21 @@ function AgentSectionSlot({
   if (!c) return null;
   const title = c.title[locale];
   const key = uiKey(c.plugin, c.id);
+  if (c.kind === "component") {
+    return (
+      <ClientComponentBlock
+        key={`${key}/${args.agentId}`}
+        c={c}
+        args={{ orgId: args.orgId, agentId: args.agentId }}
+        hostProps={{ agentId: args.agentId }}
+        frame={(block) => (
+          <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+            <div data-extension-section={key}>{block}</div>
+          </FormSection>
+        )}
+      />
+    );
+  }
   return (
     <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
       <div data-extension-section={key}>

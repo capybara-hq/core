@@ -45,6 +45,8 @@ import {
 import { useAppMutation } from "../../lib/query/mutation";
 import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useRunStateValue } from "../client-ext/run-state";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
 import type { SendResult } from "./useConversation";
 
@@ -625,6 +627,7 @@ export function ComposerBar({
   ];
 
   const hint = running ? t("runningHint") : undefined;
+  const runState = useRunStateValue().state;
   const textEl = useRef<HTMLTextAreaElement>(null);
   /**
    * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
@@ -652,53 +655,64 @@ export function ComposerBar({
     [],
   );
 
+  // The built-in composer: the frame slot's default and what a replacement wraps (the host checks
+  // its textarea is in the document after a replacement commits).
+  const box = (
+    <ComposerBox
+      value={text}
+      onChange={(v) => onChange(v, textEl.current)}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      {...(hint !== undefined ? { hint } : {})}
+      {...(skill !== null
+        ? {
+            token: {
+              label: `/${skill.name}`,
+              ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
+              onRemove: () => setSkill(null),
+            },
+          }
+        : {})}
+      {...(strip.length > 0
+        ? {
+            attachments: (
+              // biome-ignore lint/a11y/useSemanticElements: a labelled group of draft files (no styles in web)
+              <div role="group" aria-label={t("files")}>
+                <AttachmentStrip items={strip} />
+              </div>
+            ),
+          }
+        : {})}
+      onAttach={() => {
+        if (!drafts.limits.available) toast.error(t("filesUnavailable"));
+        else fileInput.current?.click();
+      }}
+      attachDisabled={!drafts.limits.available}
+      pickers={pickers}
+      {...(quickActions !== undefined ? { quickActions } : {})}
+      {...(agents !== undefined ? { agents } : {})}
+      send={
+        running && stop
+          ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
+          : {
+              // Never busy: the message is pending in the thread, not in the composer.
+              mode: "send",
+              disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
+              onClick: () => void submit(),
+            }
+      }
+      textareaRef={textEl}
+    />
+  );
+
   return (
     <>
       <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
-        <ComposerBox
-          value={text}
-          onChange={(v) => onChange(v, textEl.current)}
-          onKeyDown={onKeyDown}
-          placeholder={placeholder}
-          {...(hint !== undefined ? { hint } : {})}
-          {...(skill !== null
-            ? {
-                token: {
-                  label: `/${skill.name}`,
-                  ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
-                  onRemove: () => setSkill(null),
-                },
-              }
-            : {})}
-          {...(strip.length > 0
-            ? {
-                attachments: (
-                  // biome-ignore lint/a11y/useSemanticElements: a labelled group of draft files (no styles in web)
-                  <div role="group" aria-label={t("files")}>
-                    <AttachmentStrip items={strip} />
-                  </div>
-                ),
-              }
-            : {})}
-          onAttach={() => {
-            if (!drafts.limits.available) toast.error(t("filesUnavailable"));
-            else fileInput.current?.click();
-          }}
-          attachDisabled={!drafts.limits.available}
-          pickers={pickers}
-          {...(quickActions !== undefined ? { quickActions } : {})}
-          {...(agents !== undefined ? { agents } : {})}
-          send={
-            running && stop
-              ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
-              : {
-                  // Never busy: the message is pending in the thread, not in the composer.
-                  mode: "send",
-                  disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
-                  onClick: () => void submit(),
-                }
-          }
-          textareaRef={textEl}
+        {/* a plugin may draw the frame around the composer (client extensions spec §6.2) */}
+        <ExtensionSlot
+          slot="conversation.composer.frame"
+          args={{ orgId }}
+          host={{ builtin: box, children: box, conversationId: conversationId ?? null, runState }}
         />
       </FileDrop>
       <input

@@ -33,6 +33,7 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
 import { HOME_PATH } from "../../lib/routes";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
 import {
@@ -216,15 +217,26 @@ export function useNewConversationPage(
       ? { thread: <PendingBubbles items={pending.shown} />, working: true }
       : {
           newConversation: {
+            // a plugin may replace the hero (client extensions spec §6.2); Greeting is the default
             greeting: (
-              <Greeting
-                text={greeting}
-                // one usable agent draws no row: nothing to choose, so the line names it
-                sub={
-                  usable.length === 1 && agent
-                    ? t("greeting.subOne", { agent: name })
-                    : t("greeting.sub")
-                }
+              <ExtensionSlot
+                slot="conversation.empty"
+                args={{ orgId }}
+                host={{
+                  builtin: (
+                    <Greeting
+                      text={greeting}
+                      // one usable agent draws no row: nothing to choose, so the line names it
+                      sub={
+                        usable.length === 1 && agent
+                          ? t("greeting.subOne", { agent: name })
+                          : t("greeting.sub")
+                      }
+                    />
+                  ),
+                  agentId: agent?.id ?? null,
+                  greeting: greeting ?? "",
+                }}
               />
             ),
             agents: (

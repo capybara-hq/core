@@ -120,6 +120,13 @@ describe("checkWebUi", () => {
   it("<iframe> 元素 -> web-ui-iframe", () => one("iframe-element", "web-ui-iframe", 6));
   it("Extension* blocks outside extension-ui -> web-ui-extension-slot", () =>
     one("extension-slot-outside", "web-ui-extension-slot", 7));
+  it("ClientComponentBlock outside extension-ui is refused", () => {
+    const f = run("extension-slot-client");
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["web-ui-extension-slot", 8],
+      ["web-ui-extension-slot", 9],
+    ]);
+  });
   it("blocks inside extension-ui and a locally declared name pass", () =>
     expect(run("extension-slot-ok")).toEqual([]));
   it('createElement("iframe") -> web-ui-iframe', () =>

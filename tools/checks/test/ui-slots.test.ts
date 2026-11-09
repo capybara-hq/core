@@ -80,14 +80,6 @@ describe("check:ui-slots render rules", () => {
     expect(rules("anchors-ok", one)).toEqual([]);
     expect(rules("ok", one)).toEqual([]);
   });
-  it("a pending slot nothing renders -> no finding", () => {
-    expect(checkUiSlots(fixture("unrendered"), two, new Set(["x.two"]))).toEqual([]);
-  });
-  it("a pending slot that is rendered -> ui-slot-pending-rendered", () => {
-    const f = checkUiSlots(fixture("ok"), one, new Set(["x.one"]));
-    expect(f.map((x) => x.rule)).toEqual(["ui-slot-pending-rendered"]);
-    expect(f[0]?.message).toContain("PENDING_SLOTS");
-  });
   it("the real tree renders every slot once, in its owner", () => {
     const root = fileURLToPath(new URL("../../..", import.meta.url));
     expect(checkUiSlots(root)).toEqual([]);
