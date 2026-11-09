@@ -3,6 +3,7 @@ export * from "./agent-template.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
 export * from "./channel.js";
+export * from "./client-css.js";
 export * from "./client-section.js";
 export * from "./config-ui.js";
 export * from "./connector.js";

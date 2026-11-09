@@ -275,8 +275,13 @@ describe("pack builds client code", () => {
   });
 });
 
-/** The stylesheet vectors the kernel's import check runs too (packages/kernel/test/client/client-css.test.ts). */
-const sharedCss = JSON.parse(readFileSync(fixture("client-css-vectors.json"), "utf8")) as {
+/** The stylesheet vectors of the SDK's rule (packages/plugin-sdk/test/client-css.test.ts). */
+const sharedCss = JSON.parse(
+  readFileSync(
+    new URL("../../plugin-sdk/test/fixtures/client-css-vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as {
   assets: string[];
   vectors: { css: string; ok: boolean; note: string }[];
 };

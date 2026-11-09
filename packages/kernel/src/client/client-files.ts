@@ -4,11 +4,11 @@ import {
   CLIENT_ASSET_TYPES,
   CLIENT_ENTRY_PATH,
   CLIENT_LIMITS,
+  clientCssProblem,
   type PluginClientSection,
   validateClientSection,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
-import { clientCssProblem } from "./client-css.js";
 
 /**
  * The client files of a plugin package (client extensions spec §4.1, §9.1), checked against its

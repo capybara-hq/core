@@ -145,6 +145,11 @@ describe("checkClientFiles", () => {
       "client.invalid",
       { file: "./dist/client/styles/a.css", reason: expect.stringContaining("not allowed") },
     ]);
+    // the SDK's tokenizer runs here too: a brace that ends the layer early is refused
+    expect(refusal(...withCss("a { b: c } } .evil { color: red }"))).toEqual([
+      "client.invalid",
+      { file: "./dist/client/styles/a.css", reason: expect.stringContaining("outside") },
+    ]);
   });
 });
 

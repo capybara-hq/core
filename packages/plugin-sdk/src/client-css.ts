@@ -1,29 +1,36 @@
 /**
- * The import check of a client stylesheet (client extensions spec §4.1, §7.2): the packer wraps
- * every file in `@layer extensions { … }`, refuses `@import` and lets a URL name only an asset of
- * the plugin (`../assets/<path>`, a file of `client.assets`), a `data:` URL or a `#fragment`; the
- * kernel re-checks the stored bytes, because a tgz can be written by hand. Any other URL, relative
- * ones included, is refused: the stylesheet is served from `/api/v1/client/<plugin>/<build>/styles/`,
- * so `../../../../…` would reach the kernel's own routes with the viewer's cookies.
+ * The client stylesheet rule (client extensions spec §4.1, §7.2): one function both sides run, so
+ * a stylesheet that packs cleanly imports cleanly. `capybara-plugin pack` wraps every file in
+ * `@layer extensions { … }` ({@link wrapClientCss}) and checks the wrapped text; the kernel checks
+ * the stored bytes again at import, because a tgz can be written by hand. A file must be one
+ * `@layer extensions` block, may not `@import`, and a URL may name only an asset of the plugin
+ * (`../assets/<path>`, a file of `client.assets`), a `data:` URL or a `#fragment`. Any other URL,
+ * relative ones included, is refused: the stylesheet is served from
+ * `/api/v1/client/<plugin>/<build>/styles/`, so `../../../../…` would reach the kernel's own
+ * routes with the viewer's cookies.
  *
- * The packer (`capybara-plugin`, `pack/client.ts`) runs this same function on the file as it will
- * store it, so a stylesheet that packs cleanly imports cleanly. Two checks, both must pass:
- * - {@link cssRemoteProblem}: a plain-text pass over the escape-decoded file;
+ * Two passes, both must pass:
+ * - a plain-text pass over the escape-decoded file (`cssRemoteProblem`);
  * - a tokenizer that follows the CSS Syntax tokenization (comments, strings, escapes, url tokens)
  *   closely enough that every brace it skips is one a browser skips too: the file must start with
  *   `@layer extensions {` and the block that opens must close at the file's last character, so no
  *   rule lands outside the layer. Every `url(…)` (token or string) is checked after decoding
  *   escapes, and an `@import` at-keyword is refused however it is spelled.
  *
- * Two rules close the spellings a plain string check would miss, in both checks and in the packer:
+ * Two rules close the spellings a plain string check would miss:
  * - URLs are trimmed with CSS whitespace only (space, tab, LF, CR, FF), and a file holding any other
  *   whitespace, a zero-width character (U+200B-U+200D, U+2060) or U+FEFF anywhere, escaped or not,
  *   is refused: JavaScript's `trim()` strips an NBSP that CSS and the URL parser keep, so
  *   `url("\a0 data:/../../v1")` would pass as `data:` and resolve to `/api/v1`;
  * - functions that turn a plain string (or a `var()`) into a URL or reach outside the stylesheet are
- *   refused outright ({@link REFUSED_FUNCTIONS}): `image-set(var(--u) 1x)` takes its URL from a
- *   custom property no string check can see. Plugins write `url(../assets/x)` directly.
+ *   refused outright: `image-set(var(--u) 1x)` takes its URL from a custom property no string check
+ *   can see. Plugins write `url(../assets/x)` directly.
  */
+
+/** A stylesheet as the packer stores it: wrapped in `@layer extensions { … }` (spec §4.1). */
+export function wrapClientCss(css: string): string {
+  return `@layer extensions {\n${css.trimEnd()}\n}\n`;
+}
 
 /** CSS whitespace (CSS Syntax §4.2): only these are trimmed from a URL. */
 const CSS_SPACE = "[ \\t\\n\\r\\f]";
@@ -65,7 +72,7 @@ const functionRefused = (name: string) =>
  * `@import`, and every `url()` is {@link cssUrlProblem}-free. `assets` are the plugin's asset paths
  * relative to `assets/` (`a.png`, `fx/boot.ogg`). Returns the problem, or undefined.
  */
-export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
+function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
   const bare = css
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\\([0-9a-f]{1,6})[ \t\n]?|\\([^\n])/gi, (_m, hex?: string, ch?: string) => {
@@ -94,7 +101,7 @@ const ASSETS_URL = "../assets/";
  * The problem of one URL of a stylesheet (escapes decoded, CSS whitespace trimmed), or undefined
  * when it is a `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` exactly.
  */
-export function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | undefined {
+function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | undefined {
   if (u.startsWith("#") || /^data:/i.test(u)) return undefined;
   if (u.startsWith(ASSETS_URL) && assets.has(u.slice(ASSETS_URL.length))) return undefined;
   return `url(${u}) is not allowed; use ../assets/<a file of client/assets>, a data: URL or a #fragment`;

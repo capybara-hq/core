@@ -23,7 +23,6 @@ export {
   readPluginPackage,
 } from "./catalog/plugin-package.js";
 export { gatewayReplicasKey } from "./channels/supervisor.js";
-export { clientCssProblem } from "./client/client-css.js";
 export { envName, renderConfigDocs } from "./config/docs.js";
 export { envOverrides } from "./config/env.js";
 export { type ConfigField, changedPaths, configFields, secretValues } from "./config/fields.js";

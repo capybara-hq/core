@@ -3,12 +3,13 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { dirname, join, posix } from "node:path";
-import { clientCssProblem } from "@capybara-hq/kernel";
 import {
   CLIENT_API_VERSION,
   CLIENT_ASSET_TYPES,
   CLIENT_LIMITS,
+  clientCssProblem,
   type PluginClientSection,
+  wrapClientCss,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { type BuildFailure, build } from "esbuild";
@@ -80,19 +81,16 @@ export async function hasClientSources(dir: string): Promise<boolean> {
   );
 }
 
-/** A stylesheet as the packer stores it: wrapped in `@layer extensions { … }` (spec §4.1). */
-export const wrapClientCss = (css: string): string => `@layer extensions {\n${css.trimEnd()}\n}\n`;
-
 /**
- * CSS rule of the packer (spec §4.1): the kernel's import check (`clientCssProblem`, the same
- * tokenizer, not a mirror) run on the file as it will be stored ({@link wrapClientCss}), so a
- * stylesheet that packs cleanly imports cleanly. It refuses non-ASCII whitespace, zero-width
+ * CSS rule of the packer (spec §4.1): the SDK's `clientCssProblem`, which the kernel's import check
+ * runs too, on the file as it will be stored (`wrapClientCss`), so a stylesheet that packs cleanly
+ * imports cleanly. It refuses non-ASCII whitespace, zero-width
  * characters and U+FEFF, the URL-making functions (`image-set`, `cross-fade`, `src`, `image`,
  * `element`, `paint`), `@import`, any URL other than `../assets/<a file of client/assets>`, a
  * `data:` URL or a `#fragment` (escapes decoded, broken url tokens included), and a brace that
  * would end the layer early. `assets` are paths relative to `client/assets/`. The shared vectors
- * (`test/fixtures/client-css-vectors.json`) run against both. Returns the problem text, or
- * undefined.
+ * (packages/plugin-sdk/test/fixtures/client-css-vectors.json) run here too. Returns the problem
+ * text, or undefined.
  */
 export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
   return clientCssProblem(wrapClientCss(css), assets);

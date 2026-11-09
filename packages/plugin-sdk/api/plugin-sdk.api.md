@@ -389,6 +389,9 @@ export const CLIENT_LIMITS: {
 };
 
 // @public
+export function clientCssProblem(css: string, assets: ReadonlySet<string>): string | undefined;
+
+// @public
 export function clipMediaName(name: string, max?: number): string;
 
 // @public
@@ -3544,6 +3547,9 @@ export interface WebSearchResult {
     title: string;
     url: string;
 }
+
+// @public
+export function wrapClientCss(css: string): string;
 
 // (No @packageDocumentation comment for this package)
 

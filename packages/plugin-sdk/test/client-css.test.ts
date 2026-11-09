@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { clientCssProblem } from "../../src/client/client-css.js";
+import { clientCssProblem, wrapClientCss } from "../src/index.js";
 
 /**
- * The client stylesheet rule shared with the packer, which runs this function on the file it stores
- * (plugin-tools' `cssRemoteProblem`, packages/plugin-tools/test/pack-client.test.ts runs the same
- * vectors). Here each vector is wrapped as the packer stores it.
+ * The client stylesheet rule the packer and the kernel's import both run (plugin-tools'
+ * `cssRemoteProblem` and the kernel's `checkClientFiles` run the shared vectors too). Here each
+ * vector is wrapped as the packer stores it.
  */
 
 interface Vectors {
@@ -14,16 +14,13 @@ interface Vectors {
 }
 
 const shared = JSON.parse(
-  readFileSync(
-    new URL("../../../plugin-tools/test/fixtures/client-css-vectors.json", import.meta.url),
-    "utf8",
-  ),
+  readFileSync(new URL("./fixtures/client-css-vectors.json", import.meta.url), "utf8"),
 ) as Vectors;
 
 const WRAPPED = (css: string) => `@layer extensions {\n${css}\n}\n`;
 const assets = new Set(shared.assets);
 
-describe("clientCssProblem: the layer and the tokenizer (kernel only)", () => {
+describe("clientCssProblem: the layer and the tokenizer", () => {
   const ok = (css: string) => expect(clientCssProblem(css, assets), css).toBeUndefined();
   const bad = (css: string, like: RegExp) =>
     expect(clientCssProblem(css, assets), css).toMatch(like);
@@ -63,10 +60,16 @@ describe("clientCssProblem: the layer and the tokenizer (kernel only)", () => {
   });
 });
 
+describe("wrapClientCss", () => {
+  it("wraps the file in one @layer extensions block, trailing space trimmed", () => {
+    expect(wrapClientCss("a { b: c }\n\n")).toBe("@layer extensions {\na { b: c }\n}\n");
+  });
+});
+
 describe("clientCssProblem: the shared vectors", () => {
   for (const v of shared.vectors) {
     it(`${v.ok ? "accepts" : "refuses"} ${v.note}`, () => {
-      const problem = clientCssProblem(WRAPPED(v.css), assets);
+      const problem = clientCssProblem(wrapClientCss(v.css), assets);
       if (v.ok) expect(problem, v.css).toBeUndefined();
       else expect(problem, v.css).toBeDefined();
     });
