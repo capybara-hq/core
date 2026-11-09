@@ -181,7 +181,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-sheet` | `-16px 0 40px rgba(0,0,0,.40)` | `-4px 0 16px rgba(10,10,10,.08)` | Sheet |
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer, the sidebar drawer |
 
-- Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 (`--cb-z-*`).
+- Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 · Decoration 80 (`--cb-z-*`; the decoration layer of §4.5 sits above everything).
 - Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
 - Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only. A ring never follows a mouse click: a text field (input, textarea, stepper, the composer) keeps its halo while it has focus, since it is being typed in, but every other control, the Select's button included, draws it under `:focus-visible` (the Select also while its list is open); a tab a pointer focused carries `data-pointer-focus` and draws no ring whatever the browser's heuristics say, until a key press (a modifier alone does not count) or a blur (acceptance issue Y); the mark is set only when focus arrives from that press (or at once when the pressed tab already has focus, since Chrome keeps that focus's keyboard origin), so a press that gives no focus (WebKit and Firefox on macOS do not focus a clicked button) never hides a later keyboard ring. `packages/design/test/focus-rings.test.ts` checks the stylesheets.
 
@@ -378,6 +378,16 @@ States: `unsaved-errors`, `clean`
 | button[data-variant=primary] | clean | color | color.disabled |
 
 ---
+
+### 4.5 Plugin decoration primitives
+
+Three primitives host plugin interface code (client extensions spec §6, §7.4, §9.6); the design system draws them, apps/web only places them.
+
+- **DecorationLayer**: `position: fixed; inset: 0` at `z.decoration` (80, above every other layer), `aria-hidden="true"`, `pointer-events: none` on the layer and its descendants except `[data-cap-interactive]`. Not a box; it holds no content a person needs.
+- **ReplaceableFrame** (`pending`): wraps a built-in region a plugin component may replace; while `pending` it is `visibility: hidden` (and `inert`, `aria-hidden`), so the region keeps its size and nothing jumps. It draws no box of its own (`display: contents`).
+- **SafeModeBanner** (`onExit`): one `panel` row with a hairline below, the message and an "exit safe mode" button.
+
+Built-in elements carry `data-cap-part="<name>"` (the public hooks of plugin CSS, `UI_PARTS` in the SDK; `data-part` stays internal); the shell element also carries `data-cap-state` (`AppShell` prop `capState`), and `Sidebar` takes `brand` to draw instead of the Logo.
 
 ## 5. Page templates
 

@@ -226,6 +226,7 @@ export function PageHeader(p: PageHeaderProps) {
     <header
       className="cb-pageheader"
       data-part="page-header"
+      data-cap-part="page-header"
       aria-busy={loading && announces ? "true" : undefined}
     >
       {loading && announces ? <SkeletonAnnouncement /> : null}

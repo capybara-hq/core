@@ -1,3 +1,4 @@
+export { UI_PART_NAMES, type UiPartName } from "../ui-parts.generated";
 export {
   BOX_EXCEPTIONS,
   BOXES,

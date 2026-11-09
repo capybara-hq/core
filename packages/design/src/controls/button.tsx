@@ -32,6 +32,7 @@ export function Button({
       type={type}
       className={rest.className ? `cb-btn ${rest.className}` : "cb-btn"}
       data-part={part}
+      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       data-variant={variant}
       data-density={step}
       // As a Menu / Popover trigger, Radix passes data-state (open / closed); keep it.
@@ -86,6 +87,7 @@ export function LinkButton({
       href={href}
       className={`cb-btn cb-btn-link cb-btn-link-${variant}`}
       data-part="button"
+      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       data-variant={variant}
       data-density={step}
       {...(tabIndex !== undefined ? { tabIndex } : {})}

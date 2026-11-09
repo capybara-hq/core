@@ -111,6 +111,11 @@ export type SidebarContext =
 
 export type SidebarProps = {
   context: SidebarContext;
+  /**
+   * Drawn in the brand row instead of the Logo (a plugin's `shell.brand` contribution); the row
+   * keeps its size and `data-cap-part="sidebar.brand"`.
+   */
+  brand?: ReactNode;
   /** The "New conversation" item of the work context (label from design i18n). */
   newConversation?: { href: string };
   /**
@@ -295,12 +300,13 @@ function SidebarPanel({
     <aside
       className="cb-sidebar"
       data-part="sidebar"
+      data-cap-part="sidebar"
       data-mode={rail ? "rail" : "full"}
       data-context={ctx.kind}
       data-responsive={responsive ? "true" : undefined}
     >
-      <div className="cb-sidebar-top" data-part="brand-row">
-        <Logo scale={2} wordmark={!rail} />
+      <div className="cb-sidebar-top" data-part="brand-row" data-cap-part="sidebar.brand">
+        {p.brand ?? <Logo scale={2} wordmark={!rail} />}
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
@@ -606,6 +612,7 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
         href={n.href}
         className="cb-sidebar-item"
         data-part={part}
+        data-cap-part="sidebar.item"
         data-depth={depth}
         data-rove={key}
         tabIndex={roving.tabIndexOf(key, keys)}
@@ -840,6 +847,7 @@ function SetupNav({
       href={ctx.home.href}
       className="cb-sidebar-item"
       data-part="nav-item"
+      data-cap-part="sidebar.item"
       data-rove="home"
       tabIndex={roving.tabIndexOf("home", keys)}
       {...(p.activeNav === "home" ? { "aria-current": "page" as const } : {})}

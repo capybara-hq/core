@@ -324,7 +324,12 @@ export function ConversationPage({
   ) : (
     <div className="cb-conv-center">
       <div ref={scroll} className="cb-conv-scroll">
-        <div className="cb-conv-thread" data-part="thread">
+        <div
+          className="cb-conv-thread"
+          data-part="thread"
+          data-cap-part="thread"
+          aria-busy={loading?.thread ? true : undefined}
+        >
           {loading?.thread ? (
             <LoadingThread />
           ) : (

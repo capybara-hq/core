@@ -693,3 +693,34 @@ a.cb-stat-card:focus-visible {
 .cb-shell-main:focus {
   outline: none;
 }
+
+/* Decoration layer (client extensions spec §7.4): over every layer, never takes the pointer. */
+.cb-decoration {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-decoration);
+  pointer-events: none;
+}
+.cb-decoration [data-cap-interactive] {
+  pointer-events: auto;
+}
+
+/* Replaceable frame (spec §6): hidden but laid out while the replacement loads; no box of its own. */
+.cb-replaceable {
+  display: contents;
+}
+.cb-replaceable[data-pending="true"] {
+  visibility: hidden;
+}
+
+/* Safe mode banner (spec §9.6): one hairline-ruled row above the page. */
+.cb-safe-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
+  border-bottom: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+}

@@ -107,6 +107,7 @@ export function InlineCard({
       <div
         className="cb-icard"
         data-part="inline-card"
+        data-cap-part="card"
         data-embed={embed ? "true" : undefined}
         data-state={state}
       >
@@ -150,6 +151,7 @@ export function PropertiesPanel({ children }: { children?: ReactNode }): JSX.Ele
     <aside
       className="cb-properties"
       data-part="properties"
+      data-cap-part="properties-panel"
       aria-label={t("props.label")}
       tabIndex={-1}
     >
@@ -196,6 +198,7 @@ export function PropertySection({
     <section
       className="cb-property-section"
       data-part="property-section"
+      data-cap-part="section"
       data-state={state}
       data-inset={inBox ? "box" : undefined}
     >
@@ -428,6 +431,7 @@ export function RightPanel({
       <aside
         className="cb-rpanel"
         data-part="right-panel"
+        data-cap-part="right-panel"
         aria-label={label ?? title}
         tabIndex={-1}
       >

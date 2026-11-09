@@ -3291,7 +3291,7 @@ export interface UiPartSpec {
         zh: string;
     };
     name: UiPartName;
-    owner: string;
+    owner: readonly string[];
     states: readonly UiPartState[];
     version: number;
 }

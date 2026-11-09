@@ -37,8 +37,11 @@ export interface UiPartSpec {
   name: UiPartName;
   /** Bumped when the part is renamed, removed or drops a promised state. */
   version: number;
-  /** File (relative to the repository root) that renders the element. */
-  owner: string;
+  /**
+   * The files (relative to the repository root) that render the element: one concept can be drawn
+   * by several components (a sidebar row, a card). `check:ui-parts` pins each literal to one of them.
+   */
+  owner: readonly string[];
   states: readonly UiPartState[];
   description: { en: string; zh: string };
 }
@@ -47,7 +50,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "shell",
     version: 1,
-    owner: "packages/design/src/shell/app-shell.tsx",
+    owner: ["packages/design/src/shell/app-shell.tsx"],
     states: [],
     description: {
       en: "The App Shell root.",
@@ -57,17 +60,17 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "sidebar",
     version: 1,
-    owner: "packages/design/src/shell/sidebar.tsx",
-    states: ["aria-expanded"],
+    owner: ["packages/design/src/shell/sidebar.tsx"],
+    states: [],
     description: {
-      en: "The left sidebar (aria-expanded: full versus rail).",
-      zh: "左侧边栏（aria-expanded 区分展开与收起）。",
+      en: "The left sidebar.",
+      zh: "左侧边栏。",
     },
   },
   {
     name: "sidebar.brand",
     version: 1,
-    owner: "packages/design/src/shell/sidebar.tsx",
+    owner: ["packages/design/src/shell/sidebar.tsx"],
     states: [],
     description: {
       en: "The brand row of the sidebar.",
@@ -77,7 +80,10 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "sidebar.item",
     version: 1,
-    owner: "packages/design/src/shell/sidebar.tsx",
+    owner: [
+      "packages/design/src/shell/sidebar.tsx",
+      "packages/design/src/shell/sidebar-conversations.tsx",
+    ],
     states: ["aria-current"],
     description: {
       en: "A navigation or conversation row of the sidebar.",
@@ -87,7 +93,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "title-bar",
     version: 1,
-    owner: "packages/design/src/conversation/title-bar.tsx",
+    owner: ["packages/design/src/conversation/title-bar.tsx"],
     states: [],
     description: {
       en: "The conversation title bar.",
@@ -97,7 +103,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "page-header",
     version: 1,
-    owner: "packages/design/src/shell/page-header.tsx",
+    owner: ["packages/design/src/shell/page-header.tsx"],
     states: [],
     description: {
       en: "The header of a page.",
@@ -107,7 +113,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "thread",
     version: 1,
-    owner: "packages/design/src/templates/conversation-page.tsx",
+    owner: ["packages/design/src/templates/conversation-page.tsx"],
     states: ["aria-busy"],
     description: {
       en: "The conversation stream.",
@@ -117,7 +123,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "message.user",
     version: 1,
-    owner: "packages/design/src/conversation/bubble.tsx",
+    owner: ["packages/design/src/conversation/bubble.tsx"],
     states: [],
     description: {
       en: "A person's message.",
@@ -127,7 +133,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "message.assistant",
     version: 1,
-    owner: "apps/web/src/components/conversation/Thread.tsx",
+    owner: ["apps/web/src/components/conversation/Thread.tsx"],
     states: [],
     description: {
       en: "An assistant turn.",
@@ -137,7 +143,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "tool-row",
     version: 1,
-    owner: "packages/design/src/conversation/tool-row.tsx",
+    owner: ["packages/design/src/conversation/tool-row.tsx"],
     states: ["aria-expanded"],
     description: {
       en: "A tool call line.",
@@ -147,7 +153,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "composer",
     version: 1,
-    owner: "packages/design/src/conversation/composer.tsx",
+    owner: ["packages/design/src/conversation/composer.tsx"],
     states: ["aria-busy"],
     description: {
       en: "The composer box.",
@@ -157,7 +163,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "properties-panel",
     version: 1,
-    owner: "packages/design/src/conversation/panels.tsx",
+    owner: ["packages/design/src/conversation/panels.tsx"],
     states: [],
     description: {
       en: "The conversation properties panel.",
@@ -167,8 +173,11 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "section",
     version: 1,
-    owner: "packages/design/src/conversation/panels.tsx",
-    states: ["aria-expanded"],
+    owner: [
+      "packages/design/src/conversation/panels.tsx",
+      "packages/design/src/templates/form-page.tsx",
+    ],
+    states: [],
     description: {
       en: "A property section or form section.",
       zh: "属性分区或表单分区。",
@@ -177,7 +186,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "right-panel",
     version: 1,
-    owner: "packages/design/src/conversation/panels.tsx",
+    owner: ["packages/design/src/conversation/panels.tsx"],
     states: [],
     description: {
       en: "A full-height right pane.",
@@ -187,7 +196,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "status-bar",
     version: 1,
-    owner: "packages/design/src/shell/status-bar.tsx",
+    owner: ["packages/design/src/shell/status-bar.tsx"],
     states: [],
     description: {
       en: "The status bar.",
@@ -197,7 +206,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "button",
     version: 1,
-    owner: "packages/design/src/controls/button.tsx",
+    owner: ["packages/design/src/controls/button.tsx"],
     states: ["disabled"],
     description: {
       en: "Every button.",
@@ -207,7 +216,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "button.primary",
     version: 1,
-    owner: "packages/design/src/controls/button.tsx",
+    owner: ["packages/design/src/controls/button.tsx"],
     states: ["disabled"],
     description: {
       en: "A primary button (carried together with `button`).",
@@ -217,7 +226,11 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "card",
     version: 1,
-    owner: "packages/design/src/layout/index.tsx",
+    owner: [
+      "packages/design/src/layout/index.tsx",
+      "packages/design/src/conversation/panels.tsx",
+      "packages/design/src/display/card-grid.tsx",
+    ],
     states: [],
     description: {
       en: "A card, inline card or object card.",
@@ -227,7 +240,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "input",
     version: 1,
-    owner: "packages/design/src/controls/inputs.tsx",
+    owner: ["packages/design/src/controls/inputs.tsx", "packages/design/src/controls/select.tsx"],
     states: ["disabled"],
     description: {
       en: "Text inputs, textareas and selects.",
@@ -237,7 +250,7 @@ export const UI_PARTS: readonly UiPartSpec[] = [
   {
     name: "dialog",
     version: 1,
-    owner: "packages/design/src/overlays/dialog.tsx",
+    owner: ["packages/design/src/overlays/dialog.tsx", "packages/design/src/overlays/sheet.tsx"],
     states: [],
     description: {
       en: "A dialog or sheet.",

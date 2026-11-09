@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { UI_PARTS, type UiPartSpec } from "@capybara-hq/plugin-sdk";
-import type { Finding } from "./source.js";
+import {
+  type Finding,
+  isParseError,
+  listSourceFiles,
+  type Node,
+  parseFile,
+  walk,
+} from "./source.js";
 
 export type { Finding };
 
@@ -59,7 +66,7 @@ export function renderUiPartsDoc(parts: readonly UiPartSpec[]): string {
       "",
       `- Version: ${p.version}`,
       `- States: ${code(p.states)}`,
-      `- Owner: \`${p.owner}\``,
+      `- Owner: ${code(p.owner)}`,
       `- Selector: \`[data-cap-part~="${p.name}"]\``,
       "",
     ].join("\n"),
@@ -107,10 +114,128 @@ function staleFindings(root: string, parts: readonly UiPartSpec[]): Finding[] {
   return out;
 }
 
+/** The trees scanned for `data-cap-part`; `dev/` pages of apps/web are not the product's own UI. */
+const SCAN_DIRS = ["packages/design/src", "apps/web/src"];
+
+interface Render {
+  file: string;
+  line: number;
+  /** Repository-relative, forward slashes. */
+  rel: string;
+  tokens: string[];
+}
+
+/** The string a literal value (or a template without expressions) holds, else undefined. */
+function stringOf(n: Node | null | undefined): string | undefined {
+  if (!n) return undefined;
+  if (n.type === "Literal" && typeof n.value === "string") return n.value;
+  if (n.type === "TemplateLiteral" && (n.expressions as Node[]).length === 0) {
+    const cooked = ((n.quasis as Node[])[0]?.value as { cooked?: string } | undefined)?.cooked;
+    return typeof cooked === "string" ? cooked : undefined;
+  }
+  return undefined;
+}
+
 /**
- * check:ui-parts. This task: the generated copies and the docs page equal what gen:ui-parts renders
- * from the SDK catalog (`ui-parts-stale`). The render rules arrive with the data-cap-part attributes.
+ * Every literal the attribute can hold: a string, or a conditional whose branches are strings (a
+ * `button.primary` that depends on the variant is still statically known). Undefined = dynamic.
+ */
+function literalsOf(value: Node | null | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const inner = value.type === "JSXExpressionContainer" ? (value.expression as Node) : value;
+  const one = stringOf(inner);
+  if (one !== undefined) return [one];
+  if (inner.type === "ConditionalExpression") {
+    const a = literalsOf(inner.consequent as Node);
+    const b = literalsOf(inner.alternate as Node);
+    return a && b ? [...a, ...b] : undefined;
+  }
+  return undefined;
+}
+
+/** Every `data-cap-part` JSX attribute under the scanned trees; a non-literal value is reported. */
+function collectRenders(root: string, out: Finding[]): Render[] {
+  const renders: Render[] = [];
+  for (const dir of SCAN_DIRS) {
+    const base = join(root, dir);
+    for (const { file } of listSourceFiles(base)) {
+      if (!file.endsWith(".tsx")) continue;
+      if (dir.startsWith("apps/web") && relative(base, file).split(sep)[0] === "dev") continue;
+      const p = parseFile(file);
+      if (isParseError(p)) {
+        out.push(p);
+        continue;
+      }
+      const rel = relative(root, file).split(sep).join("/");
+      walk(p.program, (n) => {
+        if (n.type !== "JSXAttribute") return;
+        const name = n.name as Node;
+        if (name.type !== "JSXIdentifier" || name.name !== "data-cap-part") return;
+        const line = p.lineOf(n.start);
+        const lits = literalsOf(n.value as Node | null | undefined);
+        if (lits === undefined) {
+          out.push({
+            file,
+            line,
+            rule: "ui-part-literal",
+            message:
+              'data-cap-part must be a string literal (or a conditional of literals) so the check can match it to the catalog; write data-cap-part="<name>"',
+          });
+          return;
+        }
+        renders.push({
+          file,
+          line,
+          rel,
+          tokens: lits.flatMap((l) => l.split(/\s+/).filter(Boolean)),
+        });
+      });
+    }
+  }
+  return renders;
+}
+
+/**
+ * check:ui-parts: every `data-cap-part` literal under packages/design/src and apps/web/src names a
+ * catalog part (`ui-part-undeclared`) and sits in one of that part's owner files (`ui-part-owner`);
+ * every catalog part has a literal in an owner file (`ui-part-unrendered`); a value that is not a
+ * literal is refused (`ui-part-literal`). Against the real catalog the generated copies and the
+ * docs page must equal what gen:ui-parts renders (`ui-parts-stale`).
  */
 export function checkUiParts(root: string, parts: readonly UiPartSpec[] = UI_PARTS): Finding[] {
-  return staleFindings(root, parts);
+  const out: Finding[] = [];
+  const renders = collectRenders(root, out);
+  const byName = new Map(parts.map((p) => [p.name as string, p]));
+  const rendered = new Set<string>();
+  for (const r of renders) {
+    for (const token of new Set(r.tokens)) {
+      const spec = byName.get(token);
+      if (!spec) {
+        out.push({
+          file: r.file,
+          line: r.line,
+          rule: "ui-part-undeclared",
+          message: `"${token}" is not a part of the catalog (packages/plugin-sdk/src/ui-parts.ts); add it there first`,
+        });
+      } else if (!spec.owner.includes(r.rel)) {
+        out.push({
+          file: r.file,
+          line: r.line,
+          rule: "ui-part-owner",
+          message: `part "${token}" belongs to ${spec.owner.join(", ")}; render it there or add this file to its owner list`,
+        });
+      } else rendered.add(token);
+    }
+  }
+  for (const spec of parts) {
+    if (rendered.has(spec.name)) continue;
+    out.push({
+      file: join(root, spec.owner[0] ?? ""),
+      line: 1,
+      rule: "ui-part-unrendered",
+      message: `part "${spec.name}" has no literal data-cap-part="${spec.name}" in its owner files; render it there`,
+    });
+  }
+  if (parts === UI_PARTS) out.push(...staleFindings(root, parts));
+  return out;
 }

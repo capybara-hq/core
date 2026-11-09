@@ -15,7 +15,10 @@ describe("ui part catalog", () => {
 
   it("owners are under packages/design/src or apps/web/src", () => {
     for (const p of UI_PARTS) {
-      expect(p.owner).toMatch(/^(packages\/design\/src|apps\/web\/src)\/.+\.tsx$/);
+      expect(p.owner.length).toBeGreaterThan(0);
+      for (const o of p.owner) {
+        expect(o).toMatch(/^(packages\/design\/src|apps\/web\/src)\/.+\.tsx$/);
+      }
     }
   });
 

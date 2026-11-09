@@ -22,9 +22,21 @@ import { ConvMenu, type ConvMenuEntry } from "./menu";
 // the control row with the pickers and send / stop.
 
 /** The composer box: `raised`, 1px `line`, radius `md`, `shadow-float`; accent + halo on focus. */
-export function ComposerFrame({ children }: { children?: ReactNode }): JSX.Element {
+export function ComposerFrame({
+  busy,
+  children,
+}: {
+  /** A send or stop is in flight: `aria-busy` for plugin CSS. */
+  busy?: boolean;
+  children?: ReactNode;
+}): JSX.Element {
   return (
-    <div className="cb-composer" data-part="composer">
+    <div
+      className="cb-composer"
+      data-part="composer"
+      data-cap-part="composer"
+      aria-busy={busy ? true : undefined}
+    >
       {children}
     </div>
   );
@@ -306,7 +318,7 @@ export function ComposerBox({
     />
   );
   return (
-    <ComposerFrame>
+    <ComposerFrame busy={send.busy === true}>
       {attachments}
       <label className="cb-sr-only" htmlFor={id}>
         {t("composer.message")}

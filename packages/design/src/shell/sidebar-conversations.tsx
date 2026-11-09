@@ -652,6 +652,7 @@ function Row({
             href={x.href}
             className="cb-sidebar-conv"
             data-part="conversation"
+            data-cap-part="sidebar.item"
             data-rove={key}
             tabIndex={tab(key)}
             title={text}

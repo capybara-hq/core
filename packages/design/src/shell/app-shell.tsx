@@ -28,6 +28,11 @@ export type AppShellProps = {
    * full-height right panel sits beside it); the shell then draws none.
    */
   ownStatusBar?: boolean;
+  /**
+   * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
+   * rendered as `data-cap-state` on the shell element.
+   */
+  capState?: string;
   children?: ReactNode;
 };
 
@@ -43,6 +48,7 @@ export function AppShell({
   title,
   reference,
   ownStatusBar,
+  capState,
   children,
 }: AppShellProps) {
   const t = useDesignT();
@@ -125,7 +131,7 @@ export function AppShell({
 
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
-      <div ref={shellRef} className="cb-shell">
+      <div ref={shellRef} className="cb-shell" data-cap-part="shell" data-cap-state={capState}>
         {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
         <a className="cb-skip-link" href={`#${mainId}`}>
           {t("shell.skipToContent")}

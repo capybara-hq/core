@@ -8,7 +8,7 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | Part | Version | States | Element |
 |---|---|---|---|
 | `shell` | 1 | none | The App Shell root. |
-| `sidebar` | 1 | `aria-expanded` | The left sidebar (aria-expanded: full versus rail). |
+| `sidebar` | 1 | none | The left sidebar. |
 | `sidebar.brand` | 1 | none | The brand row of the sidebar. |
 | `sidebar.item` | 1 | `aria-current` | A navigation or conversation row of the sidebar. |
 | `title-bar` | 1 | none | The conversation title bar. |
@@ -19,7 +19,7 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | `tool-row` | 1 | `aria-expanded` | A tool call line. |
 | `composer` | 1 | `aria-busy` | The composer box. |
 | `properties-panel` | 1 | none | The conversation properties panel. |
-| `section` | 1 | `aria-expanded` | A property section or form section. |
+| `section` | 1 | none | A property section or form section. |
 | `right-panel` | 1 | none | A full-height right pane. |
 | `status-bar` | 1 | none | The status bar. |
 | `button` | 1 | `disabled` | Every button. |
@@ -39,10 +39,10 @@ The App Shell root.
 
 ## `sidebar`
 
-The left sidebar (aria-expanded: full versus rail).
+The left sidebar.
 
 - Version: 1
-- States: `aria-expanded`
+- States: none
 - Owner: `packages/design/src/shell/sidebar.tsx`
 - Selector: `[data-cap-part~="sidebar"]`
 
@@ -61,7 +61,7 @@ A navigation or conversation row of the sidebar.
 
 - Version: 1
 - States: `aria-current`
-- Owner: `packages/design/src/shell/sidebar.tsx`
+- Owner: `packages/design/src/shell/sidebar.tsx`, `packages/design/src/shell/sidebar-conversations.tsx`
 - Selector: `[data-cap-part~="sidebar.item"]`
 
 ## `title-bar`
@@ -141,8 +141,8 @@ The conversation properties panel.
 A property section or form section.
 
 - Version: 1
-- States: `aria-expanded`
-- Owner: `packages/design/src/conversation/panels.tsx`
+- States: none
+- Owner: `packages/design/src/conversation/panels.tsx`, `packages/design/src/templates/form-page.tsx`
 - Selector: `[data-cap-part~="section"]`
 
 ## `right-panel`
@@ -187,7 +187,7 @@ A card, inline card or object card.
 
 - Version: 1
 - States: none
-- Owner: `packages/design/src/layout/index.tsx`
+- Owner: `packages/design/src/layout/index.tsx`, `packages/design/src/conversation/panels.tsx`, `packages/design/src/display/card-grid.tsx`
 - Selector: `[data-cap-part~="card"]`
 
 ## `input`
@@ -196,7 +196,7 @@ Text inputs, textareas and selects.
 
 - Version: 1
 - States: `disabled`
-- Owner: `packages/design/src/controls/inputs.tsx`
+- Owner: `packages/design/src/controls/inputs.tsx`, `packages/design/src/controls/select.tsx`
 - Selector: `[data-cap-part~="input"]`
 
 ## `dialog`
@@ -205,5 +205,5 @@ A dialog or sheet.
 
 - Version: 1
 - States: none
-- Owner: `packages/design/src/overlays/dialog.tsx`
+- Owner: `packages/design/src/overlays/dialog.tsx`, `packages/design/src/overlays/sheet.tsx`
 - Selector: `[data-cap-part~="dialog"]`
