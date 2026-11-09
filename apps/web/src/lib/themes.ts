@@ -9,6 +9,8 @@ export type ThemeScheme = "dark" | "light";
  */
 export interface ThemeRef {
   id: string;
+  /** `<plugin>/<theme file id>`: the `theme=` state token's value (`useTheme().key`). */
+  key: string;
   version: string;
   name: { en: string; zh?: string };
   /** The schemes the theme defines, `dark` first. */

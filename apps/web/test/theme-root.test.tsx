@@ -16,6 +16,7 @@ const { ThemeLink } = await import("../src/components/theme-link");
 
 const NIGHT_CITY: ThemeRef = {
   id: "t-night",
+  key: "neon/night-city",
   version: "1.0.0",
   name: { en: "Night City", zh: "夜之城" },
   schemes: ["dark"],
@@ -29,6 +30,7 @@ const NIGHT_CITY: ThemeRef = {
 };
 const PAPER: ThemeRef = {
   id: "t-paper",
+  key: "paper/paper",
   version: "2.0.0",
   name: { en: "Paper" },
   schemes: ["dark", "light"],

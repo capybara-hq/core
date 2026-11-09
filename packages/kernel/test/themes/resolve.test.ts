@@ -50,6 +50,7 @@ describe("theme resolution", () => {
     const r = await themes.resolve(env.orgId, env.memId);
     expect(r).toEqual({
       id: a,
+      key: "neon/night-city",
       version: "1",
       name: { en: "night-city en", zh: "night-city zh" },
       schemes: ["dark"],

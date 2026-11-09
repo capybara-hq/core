@@ -30,7 +30,9 @@ export type AppShellProps = {
   ownStatusBar?: boolean;
   /**
    * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
-   * rendered as `data-cap-state` on the shell element.
+   * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
+   * or `sidebar=full` after hydration (the drawer below 960 counts as `full`: it is the full
+   * panel).
    */
   capState?: string;
   children?: ReactNode;
@@ -60,6 +62,18 @@ export function AppShell({
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
   const narrow = useMediaQuery("(max-width: 959px)");
+  const railWidth = useMediaQuery("(max-width: 1279px)");
+  // Public mirror of the sidebar's mode (`data-mode` is internal); none before hydration, when
+  // both panels are drawn and CSS picks one.
+  const sidebarMode = !hydrated
+    ? null
+    : railRef || (reference === undefined && railWidth && !narrow)
+      ? "rail"
+      : "full";
+  const stateTokens =
+    sidebarMode === null
+      ? capState
+      : [capState, `sidebar=${sidebarMode}`].filter(Boolean).join(" ");
 
   const searchable = commands !== undefined;
   useEffect(() => {
@@ -131,7 +145,7 @@ export function AppShell({
 
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
-      <div ref={shellRef} className="cb-shell" data-cap-part="shell" data-cap-state={capState}>
+      <div ref={shellRef} className="cb-shell" data-cap-part="shell" data-cap-state={stateTokens}>
         {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
         <a className="cb-skip-link" href={`#${mainId}`}>
           {t("shell.skipToContent")}

@@ -29,6 +29,11 @@ const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];
 export interface ThemeRef {
   /** The `platform_themes` id (what settings and picks store). */
   id: string;
+  /**
+   * `"<plugin>/<theme file id>"`: the name the web's `theme=` state token and `useTheme()` carry
+   * (client extensions spec §7.3). Stable across versions, unlike `id`.
+   */
+  key: string;
   /** Its current version. */
   version: string;
   name: LocalizedName;
@@ -77,11 +82,20 @@ export function themeUrl(id: string, version: string, asset?: string): string {
     : `${base}/assets/${encodeURIComponent(packagePath(asset))}`;
 }
 
-/** The {@link ThemeRef} of version `version` of theme `id`. */
-export function themeRefOf(id: string, version: string, def: ParsedTheme): ThemeRef {
+/**
+ * The {@link ThemeRef} of version `version` of theme `id` of plugin `plugin` (null only for a row
+ * without provenance: the key is then the file id alone).
+ */
+export function themeRefOf(
+  id: string,
+  version: string,
+  def: ParsedTheme,
+  plugin: string | null,
+): ThemeRef {
   const url = (ref: string | undefined) => (ref === undefined ? null : themeUrl(id, version, ref));
   return {
     id,
+    key: plugin === null ? def.id : `${plugin}/${def.id}`,
     version,
     name: def.name,
     schemes: SCHEMES.filter((s) => def.schemes[s] !== undefined),
@@ -113,24 +127,35 @@ export function themeSwatches(def: ParsedTheme): Partial<Record<ThemeScheme, The
   return out;
 }
 
+/** A live theme's current definition and its plugin (null: no provenance). */
+export interface ThemeDefinition {
+  version: string;
+  definition: ParsedTheme;
+  plugin: string | null;
+}
+
 /** The current definitions of live themes `ids`, by id. */
 export async function themeDefinitions(
   db: KernelSchemaDb,
   ids: readonly string[],
-): Promise<Map<string, { version: string; definition: ParsedTheme }>> {
-  const out = new Map<string, { version: string; definition: ParsedTheme }>();
+): Promise<Map<string, ThemeDefinition>> {
+  const out = new Map<string, ThemeDefinition>();
   if (ids.length === 0) return out;
   const rows = await db
     .selectFrom("platform_themes as p")
     .innerJoin("platform_theme_versions as v", (j) =>
       j.onRef("v.theme_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
     )
-    .select(["p.id", "p.current_version", "v.definition"])
+    .select(["p.id", "p.current_version", "p.plugin_name", "v.definition"])
     .where("p.id", "in", [...ids])
     .where("p.deleted_at", "is", null)
     .execute();
   for (const r of rows) {
-    out.set(r.id, { version: String(r.current_version), definition: r.definition as ParsedTheme });
+    out.set(r.id, {
+      version: String(r.current_version),
+      definition: r.definition as ParsedTheme,
+      plugin: r.plugin_name,
+    });
   }
   return out;
 }

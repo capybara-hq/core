@@ -79,7 +79,44 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       </DesignProvider>,
     );
     const shell = container.querySelector('[data-cap-part~="shell"]') as HTMLElement;
-    expect(shell.getAttribute("data-cap-state")).toBe("run=idle theme=builtin");
+    // jsdom has no matchMedia: the wide window, so the full sidebar.
+    expect(shell.getAttribute("data-cap-state")).toBe("run=idle theme=builtin sidebar=full");
+  });
+
+  it("AppShell publishes the sidebar mode as sidebar=rail|full (the drawer counts as full)", () => {
+    const real = window.matchMedia;
+    const widthOf = (px: number) =>
+      ((query: string) => {
+        const max = /max-width: (\d+)px/.exec(query)?.[1];
+        return {
+          matches: max !== undefined && px <= Number(max),
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        };
+      }) as unknown as typeof window.matchMedia;
+    const stateAt = (px: number) => {
+      window.matchMedia = widthOf(px);
+      const { container, unmount } = render(
+        <DesignProvider locale="zh">
+          <AppShell
+            sidebar={sidebarProps()}
+            status={{ context: "demo", version: "0.1.0", timeZone: "UTC" }}
+          />
+        </DesignProvider>,
+      );
+      const v = (container.querySelector('[data-cap-part~="shell"]') as HTMLElement).getAttribute(
+        "data-cap-state",
+      );
+      unmount();
+      return v;
+    };
+    try {
+      expect(stateAt(1440)).toBe("sidebar=full");
+      expect(stateAt(1100)).toBe("sidebar=rail");
+      expect(stateAt(800)).toBe("sidebar=full");
+    } finally {
+      window.matchMedia = real;
+    }
   });
 
   it("a primary Button carries button and button.primary; the others only button", () => {
