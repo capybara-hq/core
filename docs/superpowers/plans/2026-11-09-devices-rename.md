@@ -35,7 +35,7 @@
   - the package and binary name `capybara-device`;
   - applied migrations 0088/0093/0094 (immutable), CHANGELOG files, and spec §1-§14 (history);
   - "environment variable" (环境变量) wherever it means that.
-- **Migration** `0104_devices_rename.sql` uses `ALTER TABLE … RENAME` and `ALTER INDEX … RENAME`, with `IF EXISTS` where Postgres supports it, plus `UPDATE`s for `source`, `provider` and the event type. Destructive statements carry the exemption comment the writing-migrations skill requires.
+- **Migration** `0105_devices_rename.sql` uses `ALTER TABLE … RENAME` and `ALTER INDEX … RENAME`, with `IF EXISTS` where Postgres supports it, plus `UPDATE`s for `source`, `provider` and the event type. Destructive statements carry the exemption comment the writing-migrations skill requires.
 - **Replay:** run the zero-drift tests (`reconstruct.test.ts`, `rename-compat.test.ts`) before and after Task 3. The event rename is a log data change, not a new model input, so no `DriftReason`.
 - **Repository rules:**
   - Multi-replica and kernel conventions hold (`pnpm check:kernel-conventions`).
@@ -46,7 +46,7 @@
 
 ## Review Focus
 
-1. **A deployment upgraded across 0104** must keep every device, instance, default, machine, conversation binding and background task. Cloud files under the old `cap-env-` names are orphaned by decision; new instances use `cap-device-`. → Task 1 test "0104 keeps every row and its links".
+1. **A deployment upgraded across 0105** must keep every device, instance, default, machine, conversation binding and background task. Cloud files under the old `cap-env-` names are orphaned by decision; new instances use `cap-device-`. → Task 1 test "0105 keeps every row and its links".
 2. **Old conversation logs that hold `environment_paths`** must render identically after the rename. → Task 1 (migration updates rows) and Task 3 (the zero-drift tests plus a test that a migrated `device_paths` row renders the same line).
 3. **A local device already signed in before the upgrade** keeps connecting: its credential hash row moves tables, and `@device` rows become `@local`. → Task 1 test, plus Task 2's gateway tests on migrated data.
 4. **`capybara-device` 0.1.0-rc.1 talking to the renamed kernel:** the program parses the sign-in error codes. Program and kernel must agree after the rename. An old rc.1 program is out of support before 0.1.0, but the new program must handle the new codes. → Task 4 tests against the renamed codes.
@@ -57,20 +57,20 @@
 ### Task 1: Migration, schema types, config, error codes (risk: high, migration)
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0104_devices_rename.sql`
+- Create: `packages/kernel/src/migrations/0105_devices_rename.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts`, `packages/kernel/src/config/schema.ts`, `packages/kernel/src/config/docs.ts`, `packages/kernel/src/infra/config/kernel-config.service.ts` (hot appliers), `packages/kernel/src/errors.ts`, `docs/config.md` (regenerated), `apps/web/messages/{zh,en}.json` (the `errors.*` keys only)
-- Test: `packages/kernel/test/migrations/0104.test.ts`; config tests renamed
+- Test: `packages/kernel/test/migrations/0105.test.ts`; config tests renamed
 
 **Interfaces:**
 - Produces: the names of spec §15.2 for tables, columns, values, the event type, config keys and error codes. Kysely types `devices`, `device_instances`, `device_defaults`, `device_machines`.
 
-- [ ] Step 1: Write the test `0104 keeps every row and its links`.
+- [ ] Step 1: Write the test `0105 keeps every row and its links`.
   - Seed at 0094: one personal cloud environment with an instance, a default, a conversation, a background task, a local environment with a machine (provider `@device`), and an `environment_paths` event.
   - Migrate, then assert the same counts and ids under the new names, `source` `local`, provider `@local`, and event type `device_paths`.
-  - Assert that a rerun of 0104 is a no-op.
+  - Assert that a rerun of 0105 is a no-op.
 - [ ] Step 2: Run it. It fails.
-- [ ] Step 3: Write 0104, rename the Kysely types, the config keys (with descriptions) and the error codes, and add the web `errors.*` copy for the renamed codes.
-- [ ] Step 4: Run the 0104 test, the config tests, `pnpm gen:config-docs`, `pnpm check:migrations` and `pnpm check:i18n`. All pass.
+- [ ] Step 3: Write 0105, rename the Kysely types, the config keys (with descriptions) and the error codes, and add the web `errors.*` copy for the renamed codes.
+- [ ] Step 4: Run the 0105 test, the config tests, `pnpm gen:config-docs`, `pnpm check:migrations` and `pnpm check:i18n`. All pass.
 - [ ] Step 5: Commit `refactor(kernel)!: devices rename — migration, schema, config, error codes`. The kernel does not compile until Task 2; commit with `--no-verify` only if a hook blocks, and say so in the report.
 
 ### Task 2: Kernel modules, routes, Platform ops, IM (risk: high)

@@ -1,5 +1,5 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
-import type { PluginScope, ScopeConflict, ThemePreview } from "./catalog";
+import type { LocalizedName, PluginScope, ScopeConflict, ThemePreview } from "./catalog";
 import { type ThemeScheme, type ThemeSwatch, themeName } from "./themes";
 
 /**
@@ -43,7 +43,12 @@ export type Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: s
 export interface PlatformComponent {
   kind: PlatformComponentKind;
   id: string;
+  /** Skill or template name; a connector template's id. */
   name: string;
+  /** A connector template's localized display name (null or absent: show `name`). */
+  displayName?: LocalizedName | null;
+  /** Its plugin's icon (the admin icon route; null without one). */
+  icon?: string | null;
   description: string | null;
   /** The plugin it came from (null: none). */
   plugin: string | null;
@@ -79,9 +84,12 @@ export interface PlatformComponent {
   };
 }
 
-/** A component's name as the UI shows it: a theme's own name in the locale, else `name`. */
+/**
+ * A component's name as the UI shows it: a theme's own name in the locale, else its localized
+ * display name (a connector template), else `name`.
+ */
 export const componentName = (c: PlatformComponent, locale: string): string =>
-  c.theme !== undefined ? themeName(c.theme, locale) : c.name;
+  c.theme !== undefined ? themeName(c.theme, locale) : componentLabel(c, locale);
 
 /**
  * An org's own skill or agent template not promoted yet (the org row's id, ruling P3-23): not a
@@ -156,6 +164,12 @@ export interface UploadedComponentVersion {
   name: string;
   version: number;
 }
+
+/** A component's name in the reader's language: a connector template's display name, else its name. */
+export const componentLabel = (
+  c: { name: string; displayName?: LocalizedName | null },
+  locale: string,
+): string => (c.displayName ? (locale === "zh" ? c.displayName.zh : c.displayName.en) : c.name);
 
 const enc = encodeURIComponent;
 const base = "/api/v1/admin/components";
@@ -233,7 +247,12 @@ export const uploadAgentTemplateVersion = (id: string, content: string) =>
 export interface OrgComponent {
   kind: PlatformComponentKind;
   id: string;
+  /** Skill or template name; a connector template's id. */
   name: string;
+  /** A connector template's localized display name (null or absent: show `name`). */
+  displayName?: LocalizedName | null;
+  /** Its plugin's icon on the org's icon route (null without one or when the org cannot see it). */
+  icon?: string | null;
   description: string | null;
   plugin: string | null;
   itemId: string | null;

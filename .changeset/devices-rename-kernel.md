@@ -3,7 +3,7 @@
 "@capybara-hq/web": patch
 ---
 
-One name: devices. Environments become devices everywhere in the kernel: migration 0104 renames the
+One name: devices. Environments become devices everywhere in the kernel: migration 0105 renames the
 tables (`devices`, `device_instances`, `device_defaults`, `device_machines`), the `device_id` columns,
 indexes and constraints, turns `source` `device` into `local`, the provider `@device` into `@local`
 and the log event `environment_paths` into `device_paths`. Config `environments.*` becomes

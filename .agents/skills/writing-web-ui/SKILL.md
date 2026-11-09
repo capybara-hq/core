@@ -103,7 +103,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - The three 外观 levels (`/account/preferences`, `/settings/appearance`, `/admin/settings`) pick a theme with `components/ThemePicker` (the design `ThemeSwatchGroup` in the page's scheme; the built-in theme draws `BUILTIN_THEME_SWATCHES`); a platform default change runs `invalidatePlatformTheme` (every cached org's themes). A preview that takes a theme away renders its `themes` block with `useThemeImpactGroup` (`components/ThemeImpact`).
 - Permission review (install confirmation page, org extension settings, plugin review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
 - After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
-- Phones (below 640, spec §4.3) are the design package's job, never a page's: every `DataTable` stacks its rows (the first column is the card's title, the others `header value` lines, so give every column a real `header`), StatCards go 2 × 2, tabs scroll, tap targets are 40 px and the conversation page loses its minimum width. Pages add no narrow variant of their own.
+- Phones (below 640, spec §4.3) are the design package's job, never a page's: every `DataTable` stacks its rows (the first column is the card's title, the others `header value` lines, so give every column a real `header`), StatCards go 2 × 2, tabs scroll, tap targets are 40 px (compact buttons through an invisible ring), the conversation page loses its minimum width, `ObjectRow`s go compact (⋯ on the name line, the state at the end of the meta line, the action at its right), the page head stacks (description wrapping, actions under it), a SettingsPage sub-nav sticks under the head, and the sidebar drawer lists 更多 in place and scrolls its middle as one region. Pages add no narrow variant of their own: give `ObjectRow` its `state` and `action` as usual and the design package lays them out.
 
 ### The conversation page
 
@@ -113,6 +113,15 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - Extension blocks (inline card, properties section, right panel, previewer) fail alone: "Failed to load · Retry" in that block, the stream and the composer keep working.
 - The right area lives in the URL hash (`lib/right-area.ts`: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`, `#file=`, `#output=`, `#subagent=`), one thing at a time, so a reload keeps it and another conversation never inherits it. Back in a sub-agent panel returns to what was open before it (e.g. the properties panel), else closes. The properties sections render in the spec §6.16.17 order (Context, extension sections, Files, Background tasks); Files includes the sub-agents' deliveries, marked with the sub-agent.
 - A new conversation (`/`) creates nothing on the kernel before the first send.
+- Phones (below 640) on the conversation page are the design package's (spec §4.3, §5.4, §6.16.2):
+  the new conversation pins the composer at the bottom with the greeting and a sideways-scrolling
+  agents row at the top; the page passes the agent's quick actions twice, as the composer's
+  `QuickActions` and as `newConversation.quickActions` (a `QuickActionList`, listed on a phone, the
+  same `onPick`); the composer collapses its device / model / effort pickers into one options
+  button and bottom sheet by itself (pass the pickers as usual). On a touch device
+  (`isTouchPointer()`, read at the tap) a choice never focuses the composer, and a quick action
+  fills it without focus. The shell lifts the conversation column above the iOS keyboard
+  (`--cb-keyboard-inset`); pages add nothing for it.
 - A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).

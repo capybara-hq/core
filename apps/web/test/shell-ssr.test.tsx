@@ -67,7 +67,11 @@ describe("first paint from the layout's props", () => {
         groups: {
           groups: [
             {
-              agent: { id: "a1", name: "研究助手" },
+              agent: {
+                id: "a1",
+                name: "研究助手",
+                profile: { avatar: null, updatedAt: "2026-10-20T06:32:00.000Z" },
+              },
               latestAt: "2026-10-20T06:32:00.000Z",
               conversations: [],
               more: false,

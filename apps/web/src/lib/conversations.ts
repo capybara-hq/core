@@ -1,3 +1,4 @@
+import type { AgentProfile } from "./agents";
 import { apiFetch } from "./api";
 import type { OrgRole } from "./members";
 
@@ -55,7 +56,14 @@ export interface ToolDisplay {
 }
 
 /** Which rule asked for an approval (kernel `ApprovalPolicySource`). */
-export type ApprovalPolicy = "agent" | "connector" | "default" | "role" | "org" | "fixed";
+export type ApprovalPolicy =
+  | "agent"
+  | "connector"
+  | "member"
+  | "default"
+  | "role"
+  | "org"
+  | "fixed";
 
 /** `tool_result.view` (kernel `ToolViewSchema`): display only. */
 export type ToolView =
@@ -658,7 +666,8 @@ export const deleteConversation = (orgId: string, id: string) =>
 
 /** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
 export interface ConversationGroup {
-  agent: { id: string; name: string };
+  /** The agent's name and the avatar half of its profile, as the agents API returns them. */
+  agent: { id: string; name: string; profile: Pick<AgentProfile, "avatar" | "updatedAt"> };
   /** The group's latest activity (ISO). */
   latestAt: string;
   /** At most `perGroup`, newest first. */

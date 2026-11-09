@@ -349,7 +349,7 @@ describe("device_paths: a migrated row", () => {
       "tool_use",
       1,
     );
-    // the row as migration 0104 leaves it: only the type name differs from the old log
+    // the row as migration 0105 leaves it: only the type name differs from the old log
     log.add({ type: "device_paths", payload: { roots: ROOTS } });
     log.add({
       type: "tool_result",

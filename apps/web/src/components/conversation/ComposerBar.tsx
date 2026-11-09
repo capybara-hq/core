@@ -11,6 +11,7 @@ import {
   Field,
   FileDrop,
   Input,
+  isTouchPointer,
   type PickerProps,
   Stack,
   useToast,
@@ -112,7 +113,8 @@ export type ComposerDraft = {
 /** What a page may do to its composer from outside (the new conversation's quick actions). */
 export type ComposerControl = {
   /**
-   * Replaces the text with `text` and focuses the input. The text it replaced is one undo step:
+   * Replaces the text with `text` and focuses the input (not on a touch device: the keyboard would
+   * pop up). The text it replaced is one undo step:
    * the next ⌘Z / Ctrl+Z, before any other edit, brings it back.
    */
   fill(text: string): void;
@@ -639,8 +641,9 @@ export function ComposerBar({
         undoFill.current = before === next ? null : { before, text: next };
         textNow.current = next;
         setText(next);
-        // a value set from outside puts the caret after the text
-        textEl.current?.focus();
+        // a value set from outside puts the caret after the text; on a touch device the text is
+        // only placed, never focused (focus would pop the keyboard for a tap on a quick action)
+        if (!isTouchPointer()) textEl.current?.focus();
       },
       focus() {
         textEl.current?.focus();

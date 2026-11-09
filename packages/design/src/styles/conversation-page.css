@@ -416,6 +416,184 @@ span.cb-title-btn {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A short value (an effort, 「高」) never gives way: the long labels take the ellipsis, so one
+ * glyph is never cut in half (acceptance 2026-11-09). */
+.cb-composer-bar .cb-picker.cb-btn[data-short="true"] {
+  flex: none;
+}
+/* 640 and up the pickers sit in the row; the options button is a phone's (§6.16.2). */
+.cb-composer-pickers {
+  display: contents;
+}
+.cb-composer-bar > .cb-composer-options.cb-btn {
+  display: none;
+  min-width: 0;
+  padding: 0 var(--cb-space-2);
+  color: var(--cb-muted);
+}
+.cb-composer-options.cb-btn .cb-btn-body {
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-composer-options.cb-btn[aria-expanded="true"] {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-options-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-options-value[data-part="options-effort"] {
+  flex: none;
+}
+.cb-options-value[data-part="options-device"] {
+  flex: 0 1 auto;
+  max-width: 6em;
+}
+.cb-options-sep {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-composer-options.cb-btn .cb-icon {
+  flex: none;
+}
+@media (max-width: 639px) {
+  .cb-composer-pickers {
+    display: none;
+  }
+  .cb-composer-bar > .cb-composer-options.cb-btn {
+    display: inline-flex;
+  }
+}
+/* The options sheet (§6.16.2, phones): a bottom sheet over a scrim, the three picker groups. */
+.cb-bsheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-sheet);
+  background: var(--cb-scrim);
+  animation: cb-fade var(--cb-motion) ease-out;
+}
+.cb-bsheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--cb-z-sheet);
+  display: flex;
+  flex-direction: column;
+  max-height: 85dvh;
+  border-top: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md) var(--cb-radius-md) 0 0;
+  background: var(--cb-panel);
+  box-shadow: var(--cb-shadow-1);
+  outline: none;
+  animation: cb-fade-in var(--cb-motion) ease-out;
+}
+.cb-bsheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) var(--cb-space-1) var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-bsheet .cb-grow {
+  flex: 1;
+  min-width: 0;
+}
+.cb-bsheet-head .cb-icon-btn {
+  min-width: 40px;
+  min-height: 40px;
+}
+.cb-bsheet-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 600;
+}
+.cb-bsheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + env(safe-area-inset-bottom));
+}
+.cb-options-group + .cb-options-group {
+  margin-top: var(--cb-space-2);
+  padding-top: var(--cb-space-2);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-options-title {
+  margin: 0;
+  padding: var(--cb-space-2) var(--cb-space-2) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  font-weight: 500;
+}
+.cb-options-label {
+  padding: var(--cb-space-2) var(--cb-space-2) var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-options-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: 40px;
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-options-item:hover {
+  background: var(--cb-hover);
+}
+.cb-options-item[data-checked="true"] {
+  background: var(--cb-selected);
+}
+.cb-options-item[data-disabled="true"] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-options-item:has(:focus-visible) {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-options-check {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-options-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-options-locked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin: 0;
+  padding: var(--cb-space-1) var(--cb-space-2) var(--cb-space-2);
+}
+.cb-options-locked-value {
+  color: var(--cb-ink);
+}
+.cb-options-hint,
+.cb-options-note {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-options-note {
+  margin: var(--cb-space-1) 0 0;
+  padding: 0 var(--cb-space-2);
+}
 @media (max-width: 639px) {
   .cb-agents-chip-label,
   .cb-agents-chip-activity {
@@ -690,6 +868,15 @@ button.cb-property-row {
   min-width: 0;
   min-height: 0;
   height: 100%;
+  /* the on-screen keyboard's height (below) */
+  padding-bottom: var(--cb-keyboard-inset, 0px);
+}
+/* The on-screen keyboard (spec §4.3): iOS keeps the layout viewport, so the shell measures the
+   keyboard's height over its bottom (`--cb-keyboard-inset`, 0 without one) and the page lifts its
+   column by it: the composer stays above the keyboard and the thread above it shrinks. The status
+   bar gives its line to the thread while the keyboard is open. */
+.cb-shell[data-keyboard="open"] .cb-conv-page .cb-statusbar {
+  display: none;
 }
 .cb-conv-main {
   display: flex;
@@ -784,17 +971,21 @@ button.cb-property-row {
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
 }
-.cb-conv-new > .cb-composer,
-.cb-conv-new > .cb-file-drop {
+.cb-conv-new-composer > .cb-composer,
+.cb-conv-new-composer > .cb-file-drop {
   margin-top: var(--cb-space-3);
+}
+/* The quick actions listed on the page are a phone's (below); 640 and up the zap menu offers them. */
+.cb-conv-new-quick {
+  display: none;
 }
 /* With the greeting (§5.4, agent profile design §4): greeting, agents row, quick actions and the
    composer, space.4 apart. */
 .cb-conv-new[data-start="true"] {
   gap: var(--cb-space-4);
 }
-.cb-conv-new[data-start="true"] > .cb-composer,
-.cb-conv-new[data-start="true"] > .cb-file-drop {
+.cb-conv-new[data-start="true"] > .cb-conv-new-composer > .cb-composer,
+.cb-conv-new[data-start="true"] > .cb-conv-new-composer > .cb-file-drop {
   margin-top: 0;
 }
 .cb-conv-panel {
@@ -841,6 +1032,100 @@ button.cb-property-row {
   .cb-title-btn {
     height: 40px;
   }
+  /* The new conversation (§5.4, maintainer decision 2026-11-09): the greeting and the agents row
+     at the top, the quick actions listed under them, the composer pinned at the bottom. */
+  .cb-conv-scroll[data-center="true"] {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+  .cb-conv-new {
+    flex: 1 0 auto;
+    max-width: none;
+    padding-top: var(--cb-space-4);
+  }
+  .cb-conv-new-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: auto;
+    padding-bottom: var(--cb-space-3);
+    background: var(--cb-bg);
+  }
+  .cb-conv-new-quick {
+    display: block;
+  }
+  .cb-conv-new[data-quick="true"] .cb-composer-bar [data-part="quick-actions"] {
+    display: none;
+  }
+  /* The agents row is one line scrolling sideways, bleeding to the window's edges. */
+  .cb-conv-new .cb-agent-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-inline: calc(-1 * var(--cb-space-4));
+    padding: 2px var(--cb-space-4);
+    scroll-padding-inline: var(--cb-space-4);
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .cb-conv-new .cb-agent-row::-webkit-scrollbar {
+    display: none;
+  }
+  .cb-conv-new .cb-agent-chip {
+    flex: none;
+    scroll-snap-align: start;
+  }
+}
+/* The quick actions listed on a phone's new conversation (§6.16.27): a heading over plain rows. */
+.cb-quick-list-title {
+  margin: 0 0 var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  font-weight: 500;
+}
+.cb-quick-list-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-quick-list-row + .cb-quick-list-row {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-quick-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  text-align: left;
+  cursor: pointer;
+}
+.cb-quick-list-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-quick-list-item:hover > .cb-quick-list-mark {
+  color: var(--cb-ink);
+}
+.cb-quick-list-item:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
+.cb-quick-list-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cb-conv-resize {
   position: absolute;

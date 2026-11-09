@@ -15,6 +15,7 @@ import {
 import { Button, IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import { ComposerOptions } from "./composer-options";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 
 // The composer (spec §6.16.2): the floating frame that holds the attachment strip, the textarea and
@@ -76,6 +77,14 @@ export type PickerProps = {
   referenceOpen?: boolean;
 };
 
+/**
+ * A value this short (an effort, 「高」) never gives way in a short row: its button keeps its width
+ * and the long labels (the model's) take the ellipsis, so one glyph is never cut in half.
+ */
+export function isShortPickerValue(value: string): boolean {
+  return [...value].length <= 3;
+}
+
 /** A composer picker (§6.16.3): a ghost button opening a grouped menu above it. */
 export function Picker({
   label,
@@ -129,6 +138,7 @@ export function Picker({
           aria-label={`${label}: ${value}`}
           title={value}
           disabled={disabled}
+          data-short={isShortPickerValue(value) ? "true" : undefined}
         >
           {/* a long label (the model's) gives way with an ellipsis on a phone (AC3 fix round 1) */}
           <span className="cb-picker-value" data-part="picker-value">
@@ -223,8 +233,10 @@ function ComposerTokenChip({
 
 /**
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
- * control row: ＋ · agent · model · effort (hidden without efforts) · quick actions (only when the
- * agent has some) · the agents chip (once the conversation has a sub-agent) · send / stop.
+ * control row: ＋ · agent · device · model · effort (hidden without efforts) · quick actions
+ * (only when the agent has some) · the agents chip (once the conversation has a sub-agent) · send /
+ * stop. Below 640 the device, model and effort pickers are one options button
+ * (`ComposerOptions`) opening a bottom sheet with the three groups.
  */
 export function ComposerBox({
   value,
@@ -322,9 +334,17 @@ export function ComposerBox({
           onClick={onAttach}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
-        {pickers.device ? <Picker {...pickers.device} /> : null}
-        <Picker {...pickers.model} />
-        {pickers.effort ? <Picker {...pickers.effort} /> : null}
+        {/* 640 and up: the three pickers; a phone: one options button and its bottom sheet (CSS) */}
+        <span className="cb-composer-pickers" data-part="composer-pickers">
+          {pickers.device ? <Picker {...pickers.device} /> : null}
+          <Picker {...pickers.model} />
+          {pickers.effort ? <Picker {...pickers.effort} /> : null}
+        </span>
+        <ComposerOptions
+          {...(pickers.device ? { device: pickers.device } : {})}
+          model={pickers.model}
+          {...(pickers.effort ? { effort: pickers.effort } : {})}
+        />
         {quickActions ?? null}
         {agents ?? null}
         <span className="cb-grow" />

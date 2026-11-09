@@ -284,7 +284,7 @@ export interface ConversationsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
   subagent_depth: ColumnType<number, number | undefined, number>;
-  /** 0088, renamed in 0104: the device the conversation runs in; null = not chosen yet. */
+  /** 0088, renamed in 0105: the device the conversation runs in; null = not chosen yet. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -461,6 +461,19 @@ export interface ConnectorsTable {
   >;
   /** 0081: the platform connector template this connector was made from (null = none). */
   platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/**
+ * 0104: a member's own policy for one tool of a personal-credential connector, for calls made with
+ * their own connection (maintainer decision 2026-11-09).
+ */
+export interface ConnectorToolAccountPoliciesTable {
+  org_id: string;
+  connector_id: string;
+  account_id: string;
+  tool_name: string;
+  policy: "allow" | "ask" | "deny";
+  updated_at: Ts;
 }
 
 /** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
@@ -840,7 +853,7 @@ export interface BackgroundTasksTable {
   read_offset: ColumnType<string, number | string | undefined, number | string>;
   /** Set while a stop is under way (0072); the poller skips such a task. */
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0088, renamed in 0104: the device the task runs in. */
+  /** 0088, renamed in 0105: the device the task runs in. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -882,7 +895,7 @@ type InstanceHandle = ColumnType<
 >;
 
 /**
- * 0088_environments.sql, renamed in 0104: a device. A cloud device is one instance plus a kept file
+ * 0088_environments.sql, renamed in 0105: a device. A cloud device is one instance plus a kept file
  * system; a local device is a person's machine (device_machines).
  */
 export interface DevicesTable {
@@ -892,7 +905,7 @@ export interface DevicesTable {
   owner_account_id: string;
   name: ColumnType<string | null, string | null | undefined, string | null>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0093, renamed in 0104: `local` is a person's machine (device_machines). */
+  /** 0093, renamed in 0105: `local` is a person's machine (device_machines). */
   source: "cloud" | "local";
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
@@ -902,7 +915,7 @@ export interface DevicesTable {
   deleted_at: TsNullable;
 }
 
-/** 0088_environments.sql, renamed in 0104: the instance and file system of a device. */
+/** 0088_environments.sql, renamed in 0105: the instance and file system of a device. */
 export interface DeviceInstancesTable {
   device_id: string;
   org_id: string;
@@ -938,7 +951,7 @@ export interface DeviceInstancesTable {
 }
 
 /**
- * 0093_connected_environments.sql, renamed in 0104: the machine of a local device. At most one
+ * 0093_connected_environments.sql, renamed in 0105: the machine of a local device. At most one
  * unrevoked row per device; revoking sets `revoked_at` and keeps the row.
  */
 export interface DeviceMachinesTable {
@@ -965,7 +978,7 @@ export interface DeviceMachinesTable {
   revoked_at: TsNullable;
 }
 
-/** 0088_environments.sql, renamed in 0104: the device a member's new conversations use by default. */
+/** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
 export interface DeviceDefaultsTable {
   org_id: string;
   account_id: string;
@@ -1260,6 +1273,7 @@ export interface KernelDatabase {
   lg_checkpoint_writes: LgCheckpointWritesTable;
   connectors: ConnectorsTable;
   connector_tools: ConnectorToolsTable;
+  connector_tool_account_policies: ConnectorToolAccountPoliciesTable;
   tool_grants: ToolGrantsTable;
   conversation_tool_grants: ConversationToolGrantsTable;
   approvals: ApprovalsTable;

@@ -84,7 +84,9 @@ export type ConversationPageProps = {
   /**
    * A new conversation (nothing created yet; spec §5.4, agent profile design §4): top to bottom
    * the greeting (else the agent's name and description), the agents row and the composer (the
-   * selected agent's quick actions are a button in the composer's control row, §6.16.27).
+   * selected agent's quick actions are a button in the composer's control row, §6.16.27). Below
+   * 640 the greeting and the agents row (one scrolling line) sit at the top, the quick actions are
+   * listed under them and the composer is pinned at the bottom, as on a conversation.
    */
   newConversation?: {
     agentName?: string;
@@ -93,6 +95,12 @@ export type ConversationPageProps = {
     greeting?: ReactNode;
     /** `AgentRow` (§6.16.26), under the greeting. */
     agents?: ReactNode;
+    /**
+     * `QuickActionList` (§6.16.27): the selected agent's quick actions listed between the agents
+     * row and the composer, below 640 only (a phone, where the composer has no `zap` button);
+     * 640 and up the composer's `zap` menu offers them. Absent when the agent has none.
+     */
+    quickActions?: ReactNode;
   };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
@@ -289,6 +297,7 @@ export function ConversationPage({
               ? "true"
               : undefined
           }
+          data-quick={newConversation.quickActions ? "true" : undefined}
         >
           {newConversation.greeting ?? (
             <>
@@ -301,7 +310,14 @@ export function ConversationPage({
             </>
           )}
           {loading?.agents ? <AgentRowLoading /> : (newConversation.agents ?? null)}
-          {composerNode}
+          {newConversation.quickActions ? (
+            <div className="cb-conv-new-quick" data-part="new-quick-actions">
+              {newConversation.quickActions}
+            </div>
+          ) : null}
+          <div className="cb-conv-new-composer" data-part="new-composer">
+            {composerNode}
+          </div>
         </div>
       </div>
     </div>

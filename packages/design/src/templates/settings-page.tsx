@@ -72,14 +72,19 @@ export function SettingsPage({
   const { description, tabs, activeTab, ...head } = header;
   const Link = useDesignLink();
   const t = useDesignT();
-  // On phones the sub-nav is one scrolling row above the content: keep the current item in view.
+  // On phones the sub-nav is one scrolling row, sticky above the content: keep the current item
+  // in view (on first paint and whenever the current item changes). The nav is sticky, so it is
+  // its items' offset parent; measure with the client rects instead.
   const navRef = useRef<HTMLElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rerun when the current item changes
   useEffect(() => {
     const nav = navRef.current;
     const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
     if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
-    nav.scrollLeft = current.offsetLeft - nav.offsetLeft;
-  }, []);
+    const box = nav.getBoundingClientRect();
+    const item = current.getBoundingClientRect();
+    if (item.left < box.left || item.right > box.right) nav.scrollLeft += item.left - box.left;
+  }, [activeNav]);
   const rail = (
     <nav
       ref={navRef}

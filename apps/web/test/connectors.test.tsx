@@ -87,30 +87,328 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("连接器列表（ListPage）", () => {
-  it.each(LOCALES)("列出连接器；管理员有「添加连接器」，点击行进入详情（%s）", async (locale) => {
+const COMPONENTS = "GET /api/v1/orgs/o1/components?kind=connector_template";
+
+describe("连接器列表（ListPage，卡片）", () => {
+  it.each(LOCALES)("列出连接器；管理员有「添加连接器」，点击卡片进入详情（%s）", async (locale) => {
     const m = msgs[locale];
-    stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }) });
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+    });
     const { container } = await renderList({ locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const list = await screen.findByRole("list", { name: m.connectors.title });
-    const row = within(list).getByRole("listitem");
-    expect(within(row).getByText(m.connectors.auth.none)).toBeTruthy();
-    expect(within(row).getByText(m.connectors.status.active)).toBeTruthy();
+    const card = within(list).getByRole("listitem");
+    expect(card.textContent).toContain(m.connectors.auth.none);
+    expect(within(card).getByText(m.connectors.status.active)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.connectors.new }).getAttribute("href")).toBe(
       "/connectors/install",
     );
-    expect(within(row).getByRole("link", { name: "Fixture" }).getAttribute("href")).toBe(
+    expect(within(card).getByRole("link", { name: "Fixture" }).getAttribute("href")).toBe(
       "/connectors/app1",
     );
   });
 
   it("普通成员看不到「添加连接器」；空状态", async () => {
-    stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }) });
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+    });
     await renderList({ me: MEMBER });
     expect(await screen.findByText(en.connectors.empty)).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.connectors.new })).toBeNull();
     expect(screen.queryByRole("button", { name: en.connectors.new })).toBeNull();
+  });
+});
+
+describe("/connectors: a card per connector and per template of a plugin on in the org", () => {
+  const ITEM = "11111111-1111-4111-8111-111111111111";
+  const ICON = `/api/v1/orgs/o1/catalog/${ITEM}/icon?v=0.1.0`;
+  const SETUP = `/plugins/${ITEM}/connectors?from=connectors`;
+  /** An offered connector template (Slack, shipped off: defaultEnabled false). */
+  const template = (over: Record<string, unknown> = {}) => ({
+    kind: "connector_template",
+    id: "t-slack",
+    name: "slack",
+    displayName: { zh: "Slack 工作区", en: "Slack workspace" },
+    description: "Read and post Slack messages.",
+    plugin: "slack",
+    itemId: ITEM,
+    version: "0.1.0-rc.4",
+    scopeMode: "follow",
+    switch: null,
+    on: false,
+    locked: false,
+    pluginOn: true,
+    switchable: true,
+    platformDefault: false,
+    linkedIds: [],
+    owner: { kind: "platform" },
+    icon: ICON,
+    ...over,
+  });
+  const OAUTH = {
+    type: "oauth_code",
+    ownership: "personal",
+    discovery: "manual",
+    client: "manual",
+  };
+  const cardOf = async (name: string, label = en.connectors.title) => {
+    const list = await screen.findByRole("list", { name: label });
+    const card = within(list)
+      .getAllByRole("listitem")
+      .find((li) => within(li).queryByText(name, { exact: true }) !== null);
+    if (card === undefined) throw new Error(`no card ${name}`);
+    return card as HTMLElement;
+  };
+  const imageOf = (card: HTMLElement) =>
+    card.querySelector('[data-part="mark-image"]')?.getAttribute("src") ?? null;
+
+  it.each(LOCALES)(
+    "an org admin sees a template that is off as a card: display name, plugin icon, 未启用 and 启用 (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const browser = expectNoFirstPaintFetch();
+      await renderRouteWithCache(
+        "/connectors",
+        {
+          "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
+          [COMPONENTS]: () => json(200, { components: [template()] }),
+        },
+        { locale },
+      );
+      const name = locale === "zh" ? "Slack 工作区" : "Slack workspace";
+      const card = await cardOf(name, m.connectors.title);
+      expect(screen.queryByText(m.connectors.empty)).toBeNull();
+      expect(imageOf(card)).toBe(ICON);
+      expect(card.textContent).toContain(m.orgComponents.kind.connector_template);
+      expect(card.textContent).toContain("slack");
+      expect(within(card).getByText(m.orgComponents.state.off)).toBeTruthy();
+      expect(
+        within(card).getByRole("button", { name: m.orgComponents.action.enable }),
+      ).toBeTruthy();
+      await settle();
+      expect(browser).toEqual([]);
+    },
+  );
+
+  it("启用 switches the template on, then goes straight to entering its input (补充配置, back to /connectors)", async () => {
+    let on = false;
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
+      [COMPONENTS]: () => json(200, { components: [template({ on, switch: on || null })] }),
+      "PUT /api/v1/orgs/o1/components/connector_template/t-slack/switch": () => {
+        on = true;
+        return json(200, { component: { ...template(), on: true, switch: true } });
+      },
+    });
+    await renderList();
+    const card = await cardOf("Slack workspace");
+    await userEvent
+      .setup()
+      .click(within(card).getByRole("button", { name: en.orgComponents.action.enable }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith(SETUP));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true });
+    expect(
+      await screen.findByText(en.orgComponents.toast.enabled.replace("{name}", "Slack workspace")),
+    ).toBeTruthy();
+  });
+
+  it("on without a connector: 需要配置 with 配置; a template with a connector is that connector's card", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, {
+          connectors: [
+            summary({ id: "c-gh", name: "GitHub", platformTemplateId: "t-gh", icon: ICON }),
+          ],
+        }),
+      [COMPONENTS]: () =>
+        json(200, {
+          components: [
+            template({ on: true, switch: true }),
+            template({ id: "t-gh", name: "gh", displayName: { zh: "GitHub", en: "GitHub" } }),
+            // a plugin that is off in the org: no card
+            template({
+              id: "t-crm",
+              name: "crm",
+              displayName: { zh: "CRM", en: "CRM" },
+              pluginOn: false,
+            }),
+          ],
+        }),
+    });
+    await renderList();
+    const slack = await cardOf("Slack workspace");
+    expect(within(slack).getByText(en.connectors.templates.needsConfig)).toBeTruthy();
+    expect(
+      within(slack)
+        .getByRole("link", { name: en.connectors.templates.configure })
+        .getAttribute("href"),
+    ).toBe(SETUP);
+    const list = screen.getByRole("list", { name: en.connectors.title });
+    expect(within(list).getAllByText("GitHub")).toHaveLength(1);
+    expect(within(list).queryByText("CRM")).toBeNull();
+    const gh = await cardOf("GitHub");
+    expect(within(gh).getByRole("link", { name: "GitHub" }).getAttribute("href")).toBe(
+      "/connectors/c-gh",
+    );
+    expect(imageOf(gh)).toBe(ICON);
+  });
+
+  it("members read the template cards without actions", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
+      [COMPONENTS]: () =>
+        json(200, {
+          components: [
+            template(),
+            template({
+              id: "t-gh",
+              name: "gh",
+              displayName: { zh: "GitHub", en: "GitHub" },
+              on: true,
+            }),
+          ],
+        }),
+    });
+    await renderList({ me: MEMBER });
+    const slack = await cardOf("Slack workspace");
+    expect(within(slack).getByText(en.orgComponents.state.off)).toBeTruthy();
+    expect(within(slack).queryByRole("button")).toBeNull();
+    const gh = await cardOf("GitHub");
+    expect(within(gh).getByText(en.connectors.templates.needsConfig)).toBeTruthy();
+    expect(within(gh).queryByRole("link", { name: en.connectors.templates.configure })).toBeNull();
+  });
+
+  it("a personal OAuth connector: 连接 starts the connect flow; once connected the card offers 权限", async () => {
+    let connected = false;
+    const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH, icon: ICON });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal] }),
+      "GET /api/v1/orgs/o1/connectors/c-slack": () =>
+        json(200, {
+          connector: {
+            ...detail(),
+            ...personal,
+            credential: { ownership: "personal", status: connected ? "connected" : "missing" },
+          },
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+      "POST /api/v1/orgs/o1/connectors/c-slack/connect": () =>
+        json(200, { authorizationUrl: "https://slack.example/oauth?x=1" }),
+    });
+    await renderList({ me: MEMBER });
+    const card = await cardOf("Slack");
+    expect(within(card).getByText(en.connectors.cards.notConnected)).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(within(card).getByRole("button", { name: en.connectors.cards.connect }));
+    await vi.waitFor(() =>
+      expect(navigateBrowser).toHaveBeenCalledWith("https://slack.example/oauth?x=1"),
+    );
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/connect"))).toBe(true);
+    cleanup();
+    connected = true;
+    await renderRouteWithCache("/connectors", lastStubRoutes(), { me: MEMBER });
+    const again = await cardOf("Slack");
+    expect(within(again).getByText(en.connectors.cards.connected)).toBeTruthy();
+    expect(
+      within(again).getByRole("button", { name: en.connectors.cards.permissions }),
+    ).toBeTruthy();
+  });
+
+  it("权限: three choices per tool with the default marked, org locks shown, only changes saved", async () => {
+    const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH });
+    const P = en.connectors.permissions;
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal] }),
+      "GET /api/v1/orgs/o1/connectors/c-slack": () =>
+        json(200, {
+          connector: {
+            ...detail(),
+            ...personal,
+            credential: { ownership: "personal", status: "connected" },
+          },
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+      "GET /api/v1/orgs/o1/connectors/c-slack/tool-policies/me": () =>
+        json(200, {
+          tools: [
+            {
+              name: "send_message",
+              key: "mcp__slack__send_message",
+              title: "Send message",
+              description: "Send.",
+              defaultPolicy: "ask",
+              annotationPolicy: "ask",
+              policy: null,
+              locked: null,
+            },
+            {
+              name: "delete_message",
+              key: "mcp__slack__delete_message",
+              title: "Delete message",
+              description: "Delete.",
+              defaultPolicy: "ask",
+              annotationPolicy: "ask",
+              policy: null,
+              locked: "disabled",
+            },
+          ],
+        }),
+      "PUT /api/v1/orgs/o1/connectors/c-slack/tool-policies/me": () => json(200, { tools: [] }),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(
+      within(await cardOf("Slack")).getByRole("button", { name: en.connectors.cards.permissions }),
+    );
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText(P.hint)).toBeTruthy();
+    const list = await within(sheet).findByRole("list", { name: P.listLabel });
+    const send = within(list).getByRole("group", { name: "Send message" });
+    expect(within(send).getByText(P.defaultMark.replace("{label}", P.ask))).toBeTruthy();
+    // the org turned delete_message off: locked, no choices
+    expect(within(list).getByText(P.locked.disabled)).toBeTruthy();
+    expect(within(list).queryByRole("group", { name: "Delete message" })).toBeNull();
+    await user.click(within(send).getByRole("radio", { name: P.deny }));
+    await user.click(within(sheet).getByRole("button", { name: P.save }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+        tools: { send_message: "deny" },
+      }),
+    );
+    expect(await screen.findByText(P.saved)).toBeTruthy();
+  });
+
+  it("the connector detail leads with its template's plugin icon", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail({ icon: ICON }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+    const mark = document.querySelector('[data-part="object-mark"]');
+    expect(mark?.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(ICON);
+  });
+
+  it("guests see the connectors only: no template read", async () => {
+    const GUEST_ME: Me = {
+      ...ME,
+      memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+    };
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, { connectors: [summary({ platformTemplateId: "t-gh", icon: ICON })] }),
+      [COMPONENTS]: () => json(200, { components: [template()] }),
+    });
+    await renderList({ me: GUEST_ME });
+    expect(imageOf(await cardOf("Fixture"))).toBe(ICON);
+    await settle();
+    expect(screen.queryByText("Slack workspace")).toBeNull();
+    expect(calls.map((c) => c.url)).not.toContain(
+      "/api/v1/orgs/o1/components?kind=connector_template",
+    );
   });
 });
 
@@ -698,6 +996,7 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
   const routes = {
     "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }),
     "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+    "GET /api/v1/orgs/o1/components?kind=connector_template": () => json(200, { components: [] }),
   };
 
   it("/connectors: a first render from the hydrated cache makes no browser read (guests too)", async () => {

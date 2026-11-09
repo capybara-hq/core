@@ -272,6 +272,25 @@ function SidebarPanel({
   const t = useDesignT();
   const rail = variant === "rail";
   const ctx = p.context;
+  const middle = (
+    <>
+      {ctx.kind === "admin" ? (
+        <AdminBlock back={ctx.back} rail={rail} />
+      ) : ctx.org ? (
+        <OrgSwitcher org={ctx.org} rail={rail} />
+      ) : null}
+      {ctx.kind === "setup" ? (
+        <SetupNav p={p} ctx={ctx} rail={rail} />
+      ) : (
+        <SidebarNav p={p} rail={rail} inDrawer={variant === "panel"} />
+      )}
+      {ctx.kind === "work" && !rail && p.conversations ? (
+        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
+      ) : (
+        <div className="cb-sidebar-fill" />
+      )}
+    </>
+  );
   return (
     <aside
       className="cb-sidebar"
@@ -307,20 +326,15 @@ function SidebarPanel({
           {ctx.kind === "work" ? <BrandTools p={p} rail /> : null}
         </div>
       ) : null}
-      {ctx.kind === "admin" ? (
-        <AdminBlock back={ctx.back} rail={rail} />
-      ) : ctx.org ? (
-        <OrgSwitcher org={ctx.org} rail={rail} />
-      ) : null}
-      {ctx.kind === "setup" ? (
-        <SetupNav p={p} ctx={ctx} rail={rail} />
+      {variant === "panel" ? (
+        // The drawer (maintainer decision 2026-11-09): the top row and the bottom block stay put,
+        // everything between scrolls as one region, so an expanded 更多 pushes the conversations
+        // down instead of squeezing their list.
+        <div className="cb-sidebar-scroll" data-part="drawer-scroll">
+          {middle}
+        </div>
       ) : (
-        <SidebarNav p={p} rail={rail} />
-      )}
-      {ctx.kind === "work" && !rail && p.conversations ? (
-        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
-      ) : (
-        <div className="cb-sidebar-fill" />
+        middle
       )}
       {ctx.kind !== "admin" && ctx.adminHref !== undefined ? (
         <AdminEntry href={ctx.adminHref} rail={rail} />
@@ -538,7 +552,13 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
   );
 }
 
-function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
+/**
+ * The nav items. `inDrawer` (the drawer, the sidebar's touch form): 更多 is a disclosure that
+ * lists its items in place under it, one level in (a flyout to the right would land over the
+ * scrim and past the screen's edge; maintainer decision 2026-11-09); the full sidebar and the
+ * rail keep the flyout.
+ */
+function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inDrawer?: boolean }) {
   const t = useDesignT();
   const Link = useDesignLink();
   const ctx = p.context;
@@ -549,11 +569,16 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
   const hasMore = work && more.length + moreExtensions.length > 0;
   const activeInMore = [...more, ...moreExtensions].some((n) => n.id === p.activeNav);
   const [moreOpen, setMoreOpen] = useState(p.moreOpen ?? false);
+  // In the drawer 更多 opens expanded while the current page is one of its items.
+  const [expanded, setExpanded] = useState(activeInMore || (p.moreOpen ?? false));
+  const subId = `cb-sidebar-more-${useId().replace(/[^\w-]/g, "")}`;
+  const sub = inDrawer && hasMore && expanded ? [...more, ...moreExtensions] : [];
   const newHref = work ? p.newConversation?.href : undefined;
   const keys = [
     ...(newHref !== undefined ? ["new"] : []),
     ...primary.map((n) => n.id),
     ...(hasMore ? ["more"] : []),
+    ...sub.map((n) => n.id),
   ];
   const roving = useRoving(p.activeNav === "" ? undefined : p.activeNav);
   const tip = (key: string, label: string, node: ReactElement) =>
@@ -568,6 +593,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
     key: string,
     n: { label: string; href: string; icon: IconName; count?: number; countMore?: boolean },
     part: "nav-item" | "new-conversation" = "nav-item",
+    depth?: 1,
   ) => {
     const count = n.count ? countText(n) : null;
     const name =
@@ -580,6 +606,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
         href={n.href}
         className="cb-sidebar-item"
         data-part={part}
+        data-depth={depth}
         data-rove={key}
         tabIndex={roving.tabIndexOf(key, keys)}
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
@@ -655,7 +682,43 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
         ? item("new", { label: t("sidebar.new"), href: newHref, icon: "plus" }, "new-conversation")
         : null}
       {primary.map((n) => item(n.id, n))}
-      {hasMore ? (
+      {hasMore && inDrawer ? (
+        <>
+          <button
+            type="button"
+            className="cb-sidebar-item"
+            data-part="more-toggle"
+            data-rove="more"
+            data-active={activeInMore && !expanded ? "true" : undefined}
+            aria-expanded={expanded}
+            aria-controls={subId}
+            tabIndex={roving.tabIndexOf("more", keys)}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <Icon name="more-horizontal" />
+            <span className="cb-sidebar-label">{moreLabel}</span>
+            <span className="cb-sidebar-chevron" data-part="more-chevron" aria-hidden="true">
+              <Icon name="chevron-right" size={12} />
+            </span>
+          </button>
+          {expanded ? (
+            // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control group
+            <div
+              id={subId}
+              className="cb-sidebar-sub"
+              data-part="more-items"
+              role="group"
+              aria-label={moreLabel}
+            >
+              {more.map((n) => item(n.id, n, "nav-item", 1))}
+              {more.length > 0 && moreExtensions.length > 0 ? (
+                <hr className="cb-sidebar-sub-sep" />
+              ) : null}
+              {moreExtensions.map((n) => item(n.id, n, "nav-item", 1))}
+            </div>
+          ) : null}
+        </>
+      ) : hasMore ? (
         <Menu
           key="more"
           items={moreItems}

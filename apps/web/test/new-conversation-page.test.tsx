@@ -81,8 +81,13 @@ const AGENTS = {
   ],
 };
 
-const group = (id: string, name: string, latestAt: string) => ({
-  agent: { id, name },
+const group = (
+  id: string,
+  name: string,
+  latestAt: string,
+  avatar: AgentProfile["avatar"] = null,
+) => ({
+  agent: { id, name, profile: { avatar, updatedAt: "2026-10-20T06:32:00.000Z" } },
   latestAt,
   conversations: [],
   more: false,
@@ -167,7 +172,10 @@ describe("the new conversation page (agent profile design §4)", () => {
     const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
     expect(bar.contains(quick())).toBe(true);
     const parts = [...bar.children].map((e) => e.getAttribute("data-part"));
-    expect(parts[parts.indexOf("quick-actions") - 1]).toBe("picker");
+    // after the pickers (640 and up) and the options button that stands for them on a phone
+    expect(parts.slice(parts.indexOf("quick-actions") - 2, parts.indexOf("quick-actions"))).toEqual(
+      ["composer-pickers", "composer-options"],
+    );
     expect(await titles(userEvent.setup())).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
     // the composer has no agent picker; the model picker stays
     expect(bar.textContent).not.toContain("Beta");
@@ -333,13 +341,12 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(link.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("16");
     cleanup();
 
-    // the sidebar group titles (16), from the cached agents; a group with no cached agent: its name
+    // the sidebar group titles (16), from the avatars the groups carry (no agents list cached)
     const client = testQueryClient();
-    client.setQueryData(agentsQuery("o1").queryKey, plain);
     client.setQueryData(conversationGroupsQuery("o1").queryKey, {
       groups: [
         { ...group("ag1", "echo agent", "2026-11-03T08:00:00.000Z") },
-        { ...group("ag2", "Beta", "2026-11-02T08:00:00.000Z") },
+        { ...group("ag2", "Beta", "2026-11-02T08:00:00.000Z", { kind: "preset", id: "owl" }) },
         { ...group("ag9", "gone agent", "2026-11-01T08:00:00.000Z") },
       ].map((g) => ({
         ...g,
@@ -376,7 +383,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     );
     expect(initialIn(head("gone agent"))).toBe("G");
     // nothing read the agents for the sidebar
-    expect(client.getQueryState(agentsQuery("o1").queryKey)?.fetchStatus).toBe("idle");
+    expect(client.getQueryState(agentsQuery("o1").queryKey)).toBeUndefined();
   });
 });
 
@@ -535,3 +542,52 @@ function SidebarHarness() {
   const conversations = useConversationGroups("o1", "/");
   return <Sidebar {...sidebarBase} conversations={conversations} mode="full" />;
 }
+
+describe("the new conversation on a touch device (phones, maintainer decision 2026-11-09)", () => {
+  const original = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = original;
+  });
+  /** A coarse primary pointer, no fine one (a phone). */
+  const touch = () => {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("coarse"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  };
+
+  it("lists the agent's quick actions on the page; a tap fills the composer without focusing it", async () => {
+    expectNoFirstPaintFetch();
+    touch();
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    const list = document.querySelector('[data-part="quick-action-list"]') as HTMLElement;
+    expect(
+      within(list)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
+    await user.click(within(list).getByRole("button", { name: "Review" }));
+    expect(input()).toHaveProperty("value", "Review body");
+    // no keyboard popping up for a tap that only placed the text
+    expect(document.activeElement).not.toBe(input());
+  });
+
+  it("choosing an agent does not focus the composer", async () => {
+    touch();
+    await renderRouteWithCache("/", routes());
+    const user = userEvent.setup();
+    await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
+    expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
+    expect(document.activeElement).not.toBe(input());
+    // the list follows the agent
+    const list = document.querySelector('[data-part="quick-action-list"]') as HTMLElement;
+    expect(
+      within(list)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Summarize", "Translate"]);
+  });
+});

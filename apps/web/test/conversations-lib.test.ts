@@ -30,7 +30,11 @@ beforeEach(() => vi.unstubAllGlobals());
 afterEach(() => vi.unstubAllGlobals());
 
 const GROUP: ConversationGroup = {
-  agent: { id: "ag 1", name: "研究助手" },
+  agent: {
+    id: "ag 1",
+    name: "研究助手",
+    profile: { avatar: null, updatedAt: "2026-10-20T06:32:00.000Z" },
+  },
   latestAt: "2026-10-26T12:20:00.000Z",
   conversations: [
     {

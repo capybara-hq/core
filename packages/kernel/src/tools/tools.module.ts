@@ -20,6 +20,7 @@ import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { WebPages } from "./builtins/web/page-cache.js";
+import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { Credentials } from "./credentials.js";
@@ -78,6 +79,7 @@ import { ToolRegistry } from "./registry.js";
     ConnectorContent,
     ToolPipeline,
     ConnectorsService,
+    ConnectorAccountPolicies,
     OAuthFlow,
     ConversationToolInfo,
     OrgExtensionTools,
@@ -95,6 +97,7 @@ import { ToolRegistry } from "./registry.js";
     ConnectorContent,
     ToolPipeline,
     ConnectorsService,
+    ConnectorAccountPolicies,
     OAuthFlow,
     ConversationToolInfo,
     OrgExtensionTools,

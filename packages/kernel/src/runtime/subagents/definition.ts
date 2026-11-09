@@ -62,11 +62,12 @@ const isPolicy = (p: unknown): p is Policy => p === "ask" || p === "deny";
 
 /**
  * `base` with `over` applied on top, the stricter value winning per key (`deny` > `ask`). Values
- * other than `ask` / `deny` (stored template data is not re-validated) are skipped on both sides.
+ * other than `ask` / `deny` (stored template data is not re-validated; an agent's connector-tool
+ * `allow`, which the policy check reads from the agent's current version) are skipped on both sides.
  */
 export function stricterPolicies(
-  base: Record<string, Policy>,
-  over: Record<string, Policy>,
+  base: Record<string, string>,
+  over: Record<string, string>,
 ): Record<string, Policy> {
   const out: Record<string, Policy> = {};
   for (const [key, p] of Object.entries(base)) if (isPolicy(p)) out[key] = p;
