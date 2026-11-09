@@ -183,11 +183,15 @@ export const PENDING_SLOTS: ReadonlySet<string> = new Set([
 
 /**
  * check:ui-slots: every catalog slot is rendered once, by its owner file, through `<ExtensionSlot>`
- * (`ui-slot-literal`, `ui-slot-undeclared`, `ui-slot-unrendered`, `ui-slot-owner`, `ui-slot-twice`),
+ * (`ui-slot-literal`, `ui-slot-undeclared`, `ui-slot-unrendered`, `ui-slot-pending-rendered`, `ui-slot-owner`, `ui-slot-twice`),
  * and the generated web copy and docs page equal what gen:ui-slots renders from the SDK catalog
  * (`ui-slots-stale`, only against the real catalog).
  */
-export function checkUiSlots(root: string, slots: readonly UiSlotSpec[] = UI_SLOTS): Finding[] {
+export function checkUiSlots(
+  root: string,
+  slots: readonly UiSlotSpec[] = UI_SLOTS,
+  pending: ReadonlySet<string> = PENDING_SLOTS,
+): Finding[] {
   const out: Finding[] = [];
   const renders = collectRenders(root, out);
   const webSrc = join(root, "apps/web/src");
@@ -213,7 +217,7 @@ export function checkUiSlots(root: string, slots: readonly UiSlotSpec[] = UI_SLO
   for (const spec of slots) {
     const mine = renders.filter((r) => r.slot === spec.id);
     if (mine.length === 0) {
-      if (PENDING_SLOTS.has(spec.id)) continue;
+      if (pending.has(spec.id)) continue;
       out.push({
         file: join(webSrc, spec.owner),
         line: 1,
@@ -221,6 +225,14 @@ export function checkUiSlots(root: string, slots: readonly UiSlotSpec[] = UI_SLO
         message: `slot "${spec.id}" has no <${SLOT_ELEMENT}> in apps/web/src; render it in its owner`,
       });
       continue;
+    }
+    if (pending.has(spec.id)) {
+      out.push({
+        file: mine[0]?.file ?? join(webSrc, spec.owner),
+        line: mine[0]?.line ?? 1,
+        rule: "ui-slot-pending-rendered",
+        message: `slot "${spec.id}" is rendered now; remove it from PENDING_SLOTS in tools/checks/src/ui-slots.ts`,
+      });
     }
     // Several anchor renders of one list slot (one per built-in part) count as one.
     const anchored = mine.filter((r) => r.anchored);
