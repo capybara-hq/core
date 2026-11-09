@@ -140,7 +140,13 @@ export function ClientHost({
     [navigate],
   );
 
-  /** One error of a plugin: reported once per kind and contribution, counted by the budget. */
+  /**
+   * One error of a plugin: reported once per kind and contribution, counted by the budget. A
+   * contribution's error counts once per document like its report (one brand drawn in the rail and
+   * in the open drawer must not spend the budget on its first crash); an error of no contribution
+   * (a listener, an uncaught error) counts each time.
+   */
+  const counted = useRef(new Set<string>());
   const fail = useCallback(
     (
       item: ClientExtensionItem,
@@ -149,6 +155,11 @@ export function ClientHost({
       message: string,
     ) => {
       report({ plugin: item.plugin, build: item.build, contribution, kind, message });
+      if (contribution !== null) {
+        const key = JSON.stringify([item.plugin, item.build, contribution, kind]);
+        if (counted.current.has(key)) return;
+        counted.current.add(key);
+      }
       if (!counter.hit(item.plugin, item.build)) return;
       disableForSession(item.plugin, item.build);
       report({

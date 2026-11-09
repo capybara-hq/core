@@ -4,4 +4,5 @@
 ---
 
 Client host fixes: a layout refresh no longer remounts the page after a client navigation from a
-workspace page without client code into the admin console.
+workspace page without client code into the admin console. A contribution's crash counts
+once per document toward the crash budget, however many places draw it.

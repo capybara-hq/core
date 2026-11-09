@@ -281,9 +281,15 @@ describe("ClientHost", () => {
     renderPage(host(setOf(item())));
     await flush();
     expect(registryText()).toBe("fake-client:ready[hud]");
+    // one contribution's crash counts once per document, however many places draw it (the
+    // brand in the rail and in the open drawer)
     await act(async () => {
-      controls?.reportError("fake-client", "hud", "render", new Error("boom"));
-      controls?.reportError("fake-client", "hud", "render", new Error("boom"));
+      for (let i = 0; i < 3; i++)
+        controls?.reportError("fake-client", "hud", "render", new Error("boom"));
+    });
+    expect(registryText()).toBe("fake-client:ready[hud]");
+    await act(async () => {
+      controls?.reportError("fake-client", "side", "render", new Error("boom"));
     });
     expect(registryText()).toBe("fake-client:ready[hud]");
     expect(sessionStorage.getItem(DISABLED_KEY)).toBeNull();
@@ -297,6 +303,7 @@ describe("ClientHost", () => {
     // one report per (contribution, kind), plus the budget's; the notice offers safe mode
     expect(reports().map((r) => (r as { kind: string }).kind)).toEqual([
       "render",
+      "render",
       "event",
       "budget",
     ]);
@@ -305,6 +312,17 @@ describe("ClientHost", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Reload in safe mode/ }));
     expect(navigate).toHaveBeenCalledWith("/agents?safe-ui=1");
+  });
+
+  it("errors of no contribution (listeners, uncaught) each count", async () => {
+    ClientHost.load = vi.fn(async () => ext());
+    renderPage(host(setOf(item())));
+    await flush();
+    await act(async () => {
+      for (let i = 0; i < 3; i++)
+        controls?.reportError("fake-client", null, "event", new Error("bang"));
+    });
+    expect(registryText()).toBe("fake-client:disabled[]");
   });
 
   it("an uncaught error whose file is the plugin's build counts against it", async () => {
