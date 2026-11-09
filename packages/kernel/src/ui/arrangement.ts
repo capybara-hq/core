@@ -76,14 +76,14 @@ const keyOf = (i: UiContributionItem) => `${i.plugin}/${i.id}`;
 
 /**
  * Orders the items of one slot (hidden ones stay in place): grouped by anchor in the slot's anchor
- * order; within a group the keys of `entry.order` come first in that order, the rest in base order.
- * Unknown keys are ignored, so an order never moves an item across anchors.
+ * order, also without an entry (the lists match what the page renders per anchor); within a group
+ * the keys of `entry.order` come first in that order, the rest in base order. Unknown keys are
+ * ignored, so an order never moves an item across anchors.
  */
 export function orderItems(
   items: UiContributionItem[],
   entry: UiArrangementEntry,
 ): UiContributionItem[] {
-  if (entry.order.length === 0) return items;
   const anchors = items[0] === undefined ? undefined : uiSlot(items[0].slot)?.anchors;
   const groupOf = (i: UiContributionItem) =>
     anchors === undefined ? 0 : Math.max(0, anchors.indexOf(i.after ?? anchors[0] ?? ""));
@@ -114,7 +114,8 @@ export function arrange(
 
 /**
  * Applies the per-slot entries to a mixed list: each slot's items are arranged and written back
- * into the positions that slot occupied, so a slot without an entry keeps its base order.
+ * into the positions that slot occupied (a slot without an entry: its base order, grouped by
+ * anchor).
  */
 export function arrangeBySlot(
   items: UiContributionItem[],

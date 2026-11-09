@@ -7,3 +7,4 @@ setting `uiArrangement` and the deployment setting `uiArrangement` (an org's ent
 platform's for that slot). Hidden means not listed: the contribution lists apply it, the view,
 action and embed routes do not. `GET /orgs/:orgId/ui/arrangement` and `GET /admin/ui/arrangement`
 list the slots with their items for the arrangement page.
+The lists are grouped by anchor in the slot's anchor order also for a slot no arrangement names.
