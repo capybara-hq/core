@@ -49,6 +49,7 @@ import {
   type OAuthClientDraft,
   OAuthClientFields,
 } from "./ConnectorForm";
+import { TemplateGuideSection } from "./ConnectorGuides";
 import { ConfigForm } from "./config-form/ConfigForm";
 import { hasConfigFields } from "./config-form/model";
 import { orgConfig } from "./config-form/org";
@@ -484,6 +485,8 @@ function Wizard({
     actionRow,
     body: (
       <>
+        {/* The template's setup guide above its input (setup guides v2 spec §9.3) */}
+        {template !== undefined && <TemplateGuideSection orgId={orgId} template={template} />}
         {template !== undefined && draft !== undefined && (
           <TemplateStep template={template} draft={draft} onChange={setDraft} />
         )}

@@ -302,6 +302,7 @@ describe("named throttler table", () => {
       ["device-authorize-ip", 20, 900_000],
       ["device-token-ip", 600, 900_000],
       ["device-code-account", 10, 900_000],
+      ["setup-check", 30, 60_000],
     ]);
   });
 });

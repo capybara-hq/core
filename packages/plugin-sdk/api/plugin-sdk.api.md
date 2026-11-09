@@ -1059,6 +1059,9 @@ export interface ExtensionContext {
         get(orgId: string, key: string): Promise<string | null>;
         set(orgId: string, key: string, value: string): Promise<void>;
     };
+    setup: {
+        check(id: string, def: SetupCheckDefinition): void;
+    };
     signal: AbortSignal;
     storage: ExtensionStorage;
     tools: {
@@ -1161,6 +1164,7 @@ export interface ExtensionPermissions {
     network?: string[];
     policyHooks?: PolicyHook[];
     secrets?: boolean;
+    setupChecks?: string[];
     storage?: boolean;
     tools?: string[];
     ui?: {
@@ -2010,6 +2014,15 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
 
 // @public
+export interface ParsedSetupGuide {
+    checks: SetupGuideCheckLine[];
+    codeBlocks: SetupGuideCodeBlock[];
+    issues: SetupGuideParseIssue[];
+    sections: SetupGuideSection[];
+    title: string | null;
+}
+
+// @public
 export interface ParsedSkillMd {
     body: string;
     description: string;
@@ -2058,6 +2071,9 @@ export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): Dev
 export function parsePluginManifest(json: unknown): PluginManifest | {
     errors: string[];
 };
+
+// @public
+export function parseSetupGuide(source: string): ParsedSetupGuide;
 
 // @public
 export function parseSkillArguments(args: string): string[];
@@ -2190,11 +2206,9 @@ export const PluginManifestSchema: z.ZodType<PluginManifest>;
 
 // @public
 export interface PluginSetupGuide {
-    files?: SetupGuideFile[];
     id: string;
     place: SetupGuidePlace;
-    steps?: SetupGuideStep[];
-    title: SetupGuideText;
+    template?: string;
 }
 
 // @public
@@ -2284,10 +2298,26 @@ export interface RenderedPrompt {
 }
 
 // @public
-export function renderSetupGuideText(text: string, values: Readonly<Record<string, string | null | undefined>>, language: SetupGuideLanguage, known?: readonly string[]): {
-    text: string;
+export interface RenderedSetupGuideDoc {
+    audiences: SetupGuideAudience[];
+    blocks: SetupGuideBlock[];
+    checks: {
+        id: string;
+        label: string;
+        source: "plugin" | "kernel";
+    }[];
+    modes: string[];
+    title: string;
     unresolved: string[];
-};
+}
+
+// @public
+export function renderSetupGuide(source: string, input: {
+    place: SetupGuidePlace;
+    mode: string | null;
+    audience: SetupGuideAudience;
+    values: Readonly<Record<string, string | null | undefined>>;
+}): RenderedSetupGuideDoc;
 
 // @public
 export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string, skillsRoot?: string): string;
@@ -2449,63 +2479,168 @@ export function secret<T extends z.ZodTypeAny>(schema: T): T;
 export const SEMVER_VERSION_RE: RegExp;
 
 // @public
-export const SETUP_GUIDE_FILE_RE: RegExp;
+export const SETUP_CHECK_ID_RE: RegExp;
 
 // @public
-export const SETUP_GUIDE_LANGUAGES: readonly ["yaml", "json", "text"];
+export const SETUP_CHECK_LIMITS: Readonly<{
+    readonly timeoutMs: 10000;
+    readonly reasonChars: 300;
+    readonly fixChars: 500;
+    readonly freshMs: 300000;
+    readonly cooldownMs: 10000;
+    readonly orgConcurrency: 8;
+    readonly perAccountPerMinute: 30;
+    readonly idsPerExtension: 32;
+}>;
 
 // @public
 export const SETUP_GUIDE_LIMITS: {
     readonly guides: 8;
-    readonly steps: 20;
-    readonly files: 8;
-    readonly stepChars: 2000;
+    readonly docBytes: 65536;
+    readonly codeBlocks: 24;
+    readonly checks: 16;
+    readonly sections: 16;
     readonly titleChars: 100;
-    readonly fileBytes: number;
+    readonly checkLabelChars: 80;
+    readonly fenceTitleChars: 100;
+    readonly depth: 16;
 };
 
 // @public
-export const SETUP_GUIDE_MODES: Readonly<Record<SetupGuidePlace, readonly string[]>>;
+export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuidePlaceInfo>>;
 
 // @public
-export const SETUP_GUIDE_PLACES: readonly ["channel-connection"];
+export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template"];
 
 // @public
-export const SETUP_GUIDE_VARIABLES: Readonly<Record<SetupGuidePlace, readonly string[]>>;
-
-// @public
-export interface SetupGuideFile {
-    language: SetupGuideLanguage;
-    mode?: string;
-    path: string;
-    title: SetupGuideText;
+export interface SetupCheckArgs {
+    readonly config: unknown;
+    readonly locale: "en" | "zh";
+    readonly mode: string | null;
+    readonly orgId: string;
+    readonly signal: AbortSignal;
+    readonly target: SetupCheckTarget;
 }
 
 // @public
-export function setupGuideFileProblem(path: string, data: Uint8Array | undefined): string | undefined;
+export interface SetupCheckDefinition {
+    place: SetupGuidePlace;
+    run(args: SetupCheckArgs): Promise<SetupCheckResult>;
+}
 
 // @public
-export type SetupGuideLanguage = (typeof SETUP_GUIDE_LANGUAGES)[number];
+export interface SetupCheckResult {
+    readonly fix?: SetupCheckText;
+    readonly reason?: SetupCheckText;
+    readonly status: SetupCheckStatus;
+}
 
 // @public
-export function setupGuideModes(guide: PluginSetupGuide): string[];
+export type SetupCheckStatus = "ok" | "failing" | "unknown";
+
+// @public
+export type SetupCheckTarget = {
+    readonly kind: "channel-connection";
+    readonly connectionId: string;
+    readonly config: unknown;
+} | {
+    readonly kind: "connector";
+    readonly connectorId: string;
+    readonly templateId: string;
+    readonly clientId: string | null;
+    readonly accountId: string | null;
+};
+
+// @public
+export interface SetupCheckText {
+    readonly en: string;
+    readonly zh?: string;
+}
+
+// @public
+export type SetupGuideAudience = "admin" | "member";
+
+// @public
+export type SetupGuideBlock = {
+    kind: "markdown";
+    text: string;
+} | {
+    kind: "code";
+    language: string;
+    title: string | null;
+    text: string;
+} | {
+    kind: "check";
+    id: string;
+    label: string;
+};
+
+// @public
+export interface SetupGuideCheckLine {
+    id: string;
+    label: string;
+    line: number;
+    section: number | null;
+    source: "plugin" | "kernel";
+}
+
+// @public
+export interface SetupGuideCodeBlock {
+    language: string;
+    line: number;
+    section: number | null;
+    text: string;
+    title: string | null;
+}
+
+// @public
+export function setupGuideDocPath(id: string, locale: "en" | "zh"): string;
+
+// @public
+export function setupGuideDocProblem(path: string, data: Uint8Array | undefined): string | undefined;
+
+// @public
+export function setupGuideHash(enSource: string, input: {
+    place: SetupGuidePlace;
+    guideId: string;
+    mode: string | null;
+    audience: SetupGuideAudience;
+}): string;
+
+// @public
+export interface SetupGuideIssue {
+    level: "error" | "warning";
+    message: string;
+}
+
+// @public
+export interface SetupGuideParseIssue {
+    level: "error" | "warning";
+    line?: number;
+    message: string;
+}
 
 // @public
 export type SetupGuidePlace = (typeof SETUP_GUIDE_PLACES)[number];
 
 // @public
-export function setupGuidePlaceholders(text: string): string[];
-
-// @public
-export interface SetupGuideStep extends SetupGuideText {
-    mode?: string;
+export interface SetupGuidePlaceInfo {
+    audiences: readonly SetupGuideAudience[];
+    drift: boolean;
+    modes: readonly string[];
+    variables: Readonly<Record<string, SetupGuideVariableType>>;
 }
 
 // @public
-export interface SetupGuideText {
-    en: string;
-    zh?: string;
+export interface SetupGuideSection {
+    line: number;
+    parent: number | null;
+    type: "mode" | "audience";
+    value: string;
 }
+
+// @public
+export type SetupGuideVariableType = "url" | "text" | "token";
 
 // @public
 export const SHA512_INTEGRITY_RE: RegExp;
@@ -3290,9 +3425,6 @@ export interface UiView {
 }
 
 // @public
-export function unknownSetupGuidePlaceholders(text: string, place: SetupGuidePlace): string[];
-
-// @public
 export type UsagePurpose = ModelCallPurpose | "embedding";
 
 // @public
@@ -3362,6 +3494,21 @@ export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];
 
 // @public
 export function validateSandboxPathShape(p: string): string[];
+
+// Warning: (ae-forgotten-export) The symbol "Problem" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function validateSetupCheckResult(x: unknown): SetupCheckResult | Problem;
+
+// @public
+export function validateSetupGuide(input: {
+    place: SetupGuidePlace;
+    en: string;
+    zh?: string;
+    pluginChecks?: readonly string[];
+    id?: string;
+    allowUnknownVariables?: boolean;
+}): SetupGuideIssue[];
 
 // @public
 export function validateSkillPackage(files: {

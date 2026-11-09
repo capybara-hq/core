@@ -185,6 +185,7 @@
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
       "slug_taken": "This slug is already used by another connector.",
+      "guide_changed": "The setup guide changed after you opened it. Review the new guide before confirming.",
       "kind_unavailable": "The plugin providing this connector type is not enabled in this organization.",
       "connect_failed": "Could not connect to the connector's server. Check the URL and credential.",
       "tool_not_found": "The tool does not exist in this connector.",
@@ -266,7 +267,8 @@
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
       "not_owned": "Only your organization's own skills and agent templates can be shared.",
-      "guide_not_found": "The plugin has no such setup guide."
+      "guide_not_found": "The plugin has no such setup guide.",
+      "check_not_found": "This check is not part of the setup guide shown here. Reload the page."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -1905,7 +1907,8 @@
         "tools": "Tools",
         "review": "Review",
         "credentials": "Credentials",
-        "settings": "Settings"
+        "settings": "Settings",
+        "guide": "Setup guide"
       },
       "refresh": "Refresh tools",
       "refreshed": "Tool list refreshed."
@@ -2405,19 +2408,45 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
+    }
+  },
+  "setupGuide": {
+    "title": "Setup guide",
+    "hint": "Create the app on the platform with the plugin's instructions; the text below is filled in for this channel, ready to copy and paste.",
+    "modeLabel": "Inbound mode",
+    "modes": {
+      "long_connection": "Long connection",
+      "webhook": "Webhook"
     },
-    "guide": {
-      "title": "Setup guide",
-      "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
-      "modeLabel": "Inbound mode",
-      "stepsLabel": "Setup steps",
-      "unresolved": "{names} have no value yet and are shown as written.",
-      "unresolvedOnSave": "{names} have no value yet and are shown as written: they are filled in once the channel is saved.",
-      "unresolvedPublicUrl": "{names} have no value yet and are shown as written: a super admin needs to set the platform's public address (http.publicUrl) in the deployment settings.",
-      "unresolvedWebhookBase": "{names} has no value yet and is shown as written: a super admin needs to set the webhook address (channels.webhookBaseUrl) in the deployment settings.",
-      "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
-      "driftAck": "I updated the {plugin} app",
-      "driftAcked": "Recorded: the app matches the plugin's setup."
+    "checkAfterSave": "Checked after saving",
+    "checksRateLimited": "Too many checks in a short time. Try again in a minute; the rows show the last results.",
+    "checksUnavailable": "Check results cannot be read right now. Reload the page later.",
+    "unresolved": {
+      "not_saved": "{names} appear once saved and are shown as written for now.",
+      "public_url": "{names} are shown as written: a super admin needs to set http.publicUrl (the platform's public address).",
+      "webhook_base": "{names} are shown as written: a super admin needs to set channels.webhookBaseUrl (the webhook address).",
+      "no_connector": "{names} appear once the connector is created and are shown as written for now.",
+      "no_org": "{names} are filled in per org and are shown as written here."
+    },
+    "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
+    "driftAck": "I updated the {plugin} app",
+    "driftAcked": "Recorded: the app matches the plugin's setup.",
+    "connectorDriftNotice": "The {plugin} plugin changed the connector's setup ({from} → {to}): update the manifest in your {plugin} app.",
+    "templateHint": "Register the app with the third party as described below first, then enter the client it gives you in the fields below.",
+    "connectorHint": "The setup guide that comes with this connector's template, filled in for your org and this connector.",
+    "openGuide": "Open the setup guide",
+    "howToConnect": "How to connect",
+    "howToConnectTitle": "How to connect {name}",
+    "adminGuideLink": "Open the admin setup guide",
+    "close": "Close",
+    "platformHint": "The setup guide org admins see when they configure this template. Org and connector names are filled in per org; checks run only once an org has created its connector, so they are not shown here.",
+    "askAgent": {
+      "action": "Ask an agent",
+      "draft": "Help me finish setting up “{title}” for {target}.",
+      "reference": "Setup guide: {guideId} from the {plugin} plugin (catalog item {itemId}, place {place}, audience {audience}); target: {target}. Read it with the Platform setup operations, walk me through the step I am on and run its checks; I enter every secret on the page myself.",
+      "targetConnection": "channel connection {id}",
+      "targetConnector": "connector {id}",
+      "targetNone": "not saved yet"
     }
   },
   "extensions": {
@@ -4945,7 +4974,8 @@
       "tabsLabel": "Component",
       "tabs": {
         "versions": "Versions",
-        "orgs": "Organizations"
+        "orgs": "Organizations",
+        "guide": "Setup guide"
       },
       "fields": {
         "from": "From",

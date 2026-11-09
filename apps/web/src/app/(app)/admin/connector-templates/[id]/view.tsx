@@ -1,6 +1,6 @@
 "use client";
 
-import { DetailPage, ObjectMark, Stack, Text, versionLabel } from "@capybara-hq/design";
+import { Card, DetailPage, ObjectMark, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -14,16 +14,21 @@ import {
 } from "../../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
+import { SetupGuideSection } from "../../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../../components/shell/path";
+import { templateGuideIn } from "../../../../../lib/catalog";
 import { componentLabel, type PlatformComponent } from "../../../../../lib/components";
+import { catalogItemQuery } from "../../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { useAdmin } from "../../../../../lib/query/workspace";
+import type { SetupGuideRef } from "../../../../../lib/setup-guides";
 import NotFound from "../../../not-found";
 
 const TABS = ["versions", "orgs"] as const;
-type Tab = (typeof TABS)[number];
+/** The tabs, and 接入指南 when the template's plugin has a setup guide for it. */
+type Tab = (typeof TABS)[number] | "guide";
 
 /**
  * `/admin/connector-templates/[id]` (super admins; spec §9): one platform connector template. Head: its
@@ -83,6 +88,16 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
   const vq = componentVersionsQuery("connector_template", c.id);
   const versions = useQuery({ ...vq, retryOnMount: retryOnMountOf(vq.queryKey) }).data?.versions;
   const { actions, dialog } = useComponentActions(c, orgId);
+  // Its setup guide: the connector-template guide naming it in its item's latest version
+  const iq = catalogItemQuery(c.itemId ?? "");
+  const item = useQuery({
+    ...iq,
+    enabled: c.itemId !== null,
+    retryOnMount: retryOnMountOf(iq.queryKey),
+  }).data;
+  const guide = item === undefined ? null : templateGuideIn(item, c.name);
+  const tabs: Tab[] = guide !== null ? [...TABS, "guide"] : [...TABS];
+  const shown: Tab = tabs.includes(tab) ? tab : "versions";
   return (
     <>
       <DetailPage
@@ -101,8 +116,8 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
         }}
         tabs={{
           label: t("tabsLabel"),
-          items: TABS.map((x) => ({ id: x, label: t(`tabs.${x}`) })),
-          value: tab,
+          items: tabs.map((x) => ({ id: x, label: t(`tabs.${x}`) })),
+          value: shown,
           onChange: (x) => setTab(x as Tab),
         }}
       >
@@ -115,7 +130,9 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
           )}
           <ComponentNotes c={c} />
           <ComponentFacts c={c} />
-          {tab === "versions" ? (
+          {shown === "guide" && guide !== null ? (
+            <PlatformGuide guide={guide} />
+          ) : shown === "versions" ? (
             <ComponentVersions versions={versions ?? null} />
           ) : (
             <ComponentOrgs c={c} />
@@ -124,5 +141,24 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
       </DetailPage>
       {dialog}
     </>
+  );
+}
+
+/**
+ * 接入指南 (setup guides v2 spec §9.3, decided 2026-11-09): the template's guide as org admins read
+ * it, with no org and no target: org and connector names stay as written, and there are no check
+ * rows (they need a target) and no drift notice.
+ */
+function PlatformGuide({ guide }: { guide: SetupGuideRef }) {
+  const t = useTranslations("setupGuide");
+  return (
+    <Card title={t("title")}>
+      <Stack gap={16}>
+        <Text variant="prose" tone="muted">
+          {t("platformHint")}
+        </Text>
+        <SetupGuideSection orgId="" guide={guide} query={{}} admin />
+      </Stack>
+    </Card>
   );
 }

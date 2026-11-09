@@ -20,7 +20,7 @@ import { channelConfig } from "../../../../components/config-form/channel";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
-import { SetupGuideBody } from "../../../../components/SetupGuide";
+import { SetupGuideSection } from "../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
@@ -143,6 +143,7 @@ function NewChannelForm({
   const ta = useTranslations("agents");
   const t = useTranslations("channels");
   const tc = useTranslations("common");
+  const tg = useTranslations("setupGuide");
   const lang = labelLocale(useLocale());
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -261,8 +262,8 @@ function NewChannelForm({
         </Field>
       </FormSection>
       {plugin !== "" && guideRef.data ? (
-        <FormSection id="guide" title={t("guide.title")} description={t("guide.hint")}>
-          <SetupGuideBody
+        <FormSection id="guide" title={tg("title")} description={tg("hint")}>
+          <SetupGuideSection
             key={plugin}
             orgId={orgId}
             guide={guideRef.data}

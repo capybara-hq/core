@@ -77,6 +77,9 @@ import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
+import { SetupModule } from "../setup/setup.module.js";
+import { SetupChecksController } from "../setup/setup-checks.controller.js";
+import { SetupGuidesController } from "../setup/setup-guides.controller.js";
 import {
   AgentSkillsController,
   InboxController,
@@ -166,6 +169,8 @@ const CONTROLLERS: Type[] = [
   EvalRunsController,
   ModelPurposesController,
   OrgCatalogController,
+  SetupChecksController,
+  SetupGuidesController,
   OrgPluginUploadsController,
   OrgOwnedPluginsController,
   OrgComponentsController,
@@ -205,6 +210,7 @@ const CONTROLLERS: Type[] = [
     UiModule,
     InboxModule,
     ThemesModule,
+    SetupModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],

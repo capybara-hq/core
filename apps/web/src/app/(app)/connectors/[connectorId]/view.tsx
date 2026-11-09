@@ -21,9 +21,10 @@ import {
   Text,
   Textarea,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
-import { useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   buildCredential,
@@ -35,9 +36,12 @@ import {
 } from "../../../../components/ConnectorForm";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
+import { SetupGuideSection } from "../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
+import { displayNameOf } from "../../../../lib/catalog";
 import {
+  ackConnectorGuide,
   type ConnectorDetail,
   type ConnectorTool,
   canManageConnectors,
@@ -50,16 +54,21 @@ import {
   type UpdateConnectorInput,
   updateConnector,
 } from "../../../../lib/connectors";
+import { labelLocale } from "../../../../lib/extension-label";
+import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
+import { retryOnMountOf } from "../../../../lib/query/client";
 import { connectorQuery } from "../../../../lib/query/conversation";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
+import { setupGuideQuery } from "../../../../lib/query/setup";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 const TABS = ["tools", "review", "credentials", "settings"] as const;
-type Tab = (typeof TABS)[number];
+/** The tabs, and 接入指南 for org admins on a connector whose template has a setup guide. */
+type Tab = (typeof TABS)[number] | "guide";
 const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy[];
 
 /** Saves a change to the connector; resolves with the connector the kernel answered. */
@@ -72,7 +81,14 @@ type Update = (input: UpdateConnectorInput) => Promise<ConnectorDetail>;
  * on a first load); a missing connector is the not-found state. A change the kernel answers with
  * the connector replaces the cached one; a credential change reads it again.
  */
-export default function ConnectorView({ connectorId }: { connectorId: string }) {
+export default function ConnectorView({
+  connectorId,
+  tab,
+}: {
+  connectorId: string;
+  /** `?tab=guide`: open on 接入指南 (the member sheet's link for org admins). */
+  tab?: string | undefined;
+}) {
   const ws = useWorkspace();
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
@@ -82,6 +98,7 @@ export default function ConnectorView({ connectorId }: { connectorId: string }) 
       orgId={ws.orgId}
       connectorId={connectorId}
       manage={canManageConnectors(ws.me)}
+      initialTab={tab === "guide" ? "guide" : "tools"}
     />
   );
 }
@@ -90,25 +107,27 @@ function Connector({
   orgId,
   connectorId,
   manage,
+  initialTab,
 }: {
   orgId: string;
   connectorId: string;
   manage: boolean;
+  initialTab: Tab;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<Tab>("tools");
+  const [requested, setTab] = useState<Tab>(initialTab);
   const read = usePageQuery(connectorQuery(orgId, connectorId));
   const key = connectorQuery(orgId, connectorId).queryKey;
   const saved = (next: ConnectorDetail) => qc.setQueryData(key, next);
   // The kernel answers a change with the connector: it replaces the cached one; the list (names,
-  // status) is read again when shown.
+  // status) is read again when shown, and so are the setup checks' states (a new input reruns them).
   const save = useAppMutation({
     fn: (input: UpdateConnectorInput) => updateConnector(orgId, connectorId, input),
-    invalidates: () => [keys.org(orgId).connectors()],
+    invalidates: () => [keys.org(orgId).connectors(), keys.org(orgId).setupChecksAll()],
     onSuccess: (r) => saved(r.connector),
   });
   const update: Update = (input) => save.mutateAsync(input).then((r) => r.connector);
@@ -141,7 +160,7 @@ function Connector({
         tabs={{
           label: t("detail.tabsLabel"),
           items: TABS.map((id) => ({ id, label: t(`detail.tabs.${id}`) })),
-          value: tab,
+          value: requested === "guide" ? "tools" : requested,
           onChange: (id) => setTab(id as Tab),
         }}
         // The facts (connector, endpoint, auth, credential; ownership comes with the data), then
@@ -169,6 +188,11 @@ function Connector({
     );
   }
   const app = read.data;
+  // 接入指南: the admin text with the drift notice, for those who manage connectors (members read
+  // the member text on their connection's 如何连接 sheet)
+  const guide = manage ? (app.setupGuide ?? null) : null;
+  const tabs: Tab[] = guide !== null ? [...TABS, "guide"] : [...TABS];
+  const tab: Tab = tabs.includes(requested) ? requested : "tools";
 
   return (
     <DetailPage
@@ -187,7 +211,7 @@ function Connector({
       }}
       tabs={{
         label: t("detail.tabsLabel"),
-        items: TABS.map((id) => ({
+        items: tabs.map((id) => ({
           id,
           label: t(`detail.tabs.${id}`),
           ...(id === "tools" ? { count: app.tools.length } : {}),
@@ -198,7 +222,18 @@ function Connector({
       }}
       facts={<ConnectorFacts app={app} />}
     >
-      {tab === "tools" ? (
+      {guide !== null && tab !== "guide" && app.guideDrift ? (
+        <GuideDriftCallout
+          orgId={orgId}
+          connectorId={app.id}
+          guide={guide}
+          drift={app.guideDrift}
+          onOpen={() => setTab("guide")}
+        />
+      ) : null}
+      {tab === "guide" && guide !== null ? (
+        <GuideTab orgId={orgId} app={app} guide={guide} onSaved={saved} />
+      ) : tab === "tools" ? (
         <ToolsTab
           app={app}
           manage={manage}
@@ -213,6 +248,117 @@ function Connector({
         <SettingsTab orgId={orgId} app={app} manage={manage} update={update} />
       )}
     </DetailPage>
+  );
+}
+
+/**
+ * The plugin's display name for the drift notice, from the org's catalog; when the item cannot be
+ * read, the plugin's name from the guide rendered for the connector (the guide tab's read).
+ */
+function usePluginLabel(
+  orgId: string,
+  connectorId: string,
+  guide: NonNullable<ConnectorDetail["setupGuide"]>,
+): string | undefined {
+  const locale = useLocale();
+  const q = orgCatalogItemQuery(orgId, guide.itemId);
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const gq = setupGuideQuery(orgId, guide, {
+    connectorId,
+    audience: "admin",
+    locale: labelLocale(locale),
+  });
+  const fallback = useQuery({
+    ...gq,
+    enabled: read.isError,
+    retryOnMount: retryOnMountOf(gq.queryKey),
+  }).data?.plugin;
+  const item = read.data?.item;
+  return item === undefined ? fallback : displayNameOf(item, locale);
+}
+
+/**
+ * On the other tabs, the plugin changed the template's setup since the connector was set up: the
+ * notice, leading to 接入指南 where 「我已更新应用」 records it.
+ */
+function GuideDriftCallout({
+  orgId,
+  connectorId,
+  guide,
+  drift,
+  onOpen,
+}: {
+  orgId: string;
+  connectorId: string;
+  guide: NonNullable<ConnectorDetail["setupGuide"]>;
+  drift: { from: string; to: string };
+  onOpen(): void;
+}) {
+  const t = useTranslations("setupGuide");
+  const plugin = usePluginLabel(orgId, connectorId, guide);
+  if (plugin === undefined) return null;
+  return (
+    <Callout tone="warn" action={{ label: t("openGuide"), onSelect: onOpen }}>
+      {t("connectorDriftNotice", {
+        plugin,
+        from: versionLabel(drift.from),
+        to: versionLabel(drift.to),
+      })}
+    </Callout>
+  );
+}
+
+/**
+ * 接入指南 (setup guides v2 spec §9.3, §11): the template's guide rendered for this connector, the
+ * admin text, with the notice when an upgrade changed its code or checks since the connector was
+ * set up and 「我已更新应用」 (records the shown guide by its hash).
+ */
+function GuideTab({
+  orgId,
+  app,
+  guide,
+  onSaved,
+}: {
+  orgId: string;
+  app: ConnectorDetail;
+  guide: NonNullable<ConnectorDetail["setupGuide"]>;
+  onSaved(next: ConnectorDetail): void;
+}) {
+  const t = useTranslations("setupGuide");
+  const plugin = usePluginLabel(orgId, app.id, guide);
+  const ack = useAppMutation({
+    fn: (hash: string) => ackConnectorGuide(orgId, app.id, hash),
+    invalidates: () => [keys.org(orgId).connectors()],
+    onSuccess: (r) => onSaved(r.connector),
+  });
+  const drift = app.guideDrift ?? null;
+  return (
+    <Card title={t("title")}>
+      <Stack gap={16}>
+        <Text variant="prose" tone="muted">
+          {t("connectorHint")}
+        </Text>
+        <SetupGuideSection
+          key={guide.version}
+          orgId={orgId}
+          guide={guide}
+          query={{ connectorId: app.id, audience: "admin" }}
+          targetLabel={app.name}
+          checks="live"
+          {...(plugin !== undefined ? { pluginLabel: plugin } : {})}
+          drift={
+            drift === null
+              ? null
+              : {
+                  ...drift,
+                  onAck: async (hash) => {
+                    await ack.mutateAsync(hash);
+                  },
+                }
+          }
+        />
+      </Stack>
+    </Card>
   );
 }
 
@@ -390,7 +536,7 @@ function CredentialsTab({
   const setCredential = useAppMutation({
     fn: (credential: Parameters<typeof setOrgCredential>[2]) =>
       setOrgCredential(orgId, app.id, credential),
-    invalidates: () => [keys.org(orgId).connector(app.id)],
+    invalidates: () => [keys.org(orgId).connector(app.id), keys.org(orgId).setupChecksAll()],
   });
   const status = (
     <StatusMark
@@ -643,7 +789,7 @@ function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
   const [pending, setPending] = useState(false);
   const setClient = useAppMutation({
     fn: (client: Parameters<typeof setOrgCredential>[2]) => setOrgCredential(orgId, app.id, client),
-    invalidates: () => [keys.org(orgId).connector(app.id)],
+    invalidates: () => [keys.org(orgId).connector(app.id), keys.org(orgId).setupChecksAll()],
   });
   const clientFlow = app.auth.type === "oauth_client";
   const value = buildOAuthClient(values);

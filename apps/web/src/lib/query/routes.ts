@@ -1,12 +1,19 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
+import type { OrgCatalogDetail } from "../catalog";
 import type { ChannelConnection } from "../channels";
-import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
+import {
+  maybeOwnTemplate,
+  type OrgComponent,
+  type PlatformComponent,
+  usableRows,
+} from "../components";
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
 import { codeParam, defaultDeviceOrg } from "../device-sign-in";
 import type { EvalSetDetail } from "../evals";
+import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
@@ -85,6 +92,8 @@ import {
   pluginInstallsQuery,
   serviceTokensQuery,
 } from "./settings";
+import { memberGuideQuery, setupGuideQuery } from "./setup";
+import { setupCheckStatesQuery } from "./setup-checks";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
@@ -148,23 +157,53 @@ const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery()
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
  * Patterns are string literals: the query checks read them statically.
  */
+/**
+ * The admin text of the setup guide of a catalog item's first connector template (setup guides v2
+ * spec §9.3): the install wizards (`templates`) and 补充配置 (`missingTemplates`) open on that
+ * template's step, with the guide above its input.
+ */
+async function prefetchFirstTemplateGuide(
+  qc: QueryClient,
+  orgId: string,
+  itemId: string,
+  locale: UiLocale,
+  list: "templates" | "missingTemplates",
+): Promise<void> {
+  const detail = qc.getQueryData<OrgCatalogDetail>(orgCatalogItemQuery(orgId, itemId).queryKey);
+  if (detail === undefined || (list === "templates" && detail.item.state === "on")) return;
+  const guide = detail[list]?.[0]?.guide;
+  if (!guide) return;
+  await qc.prefetchQuery({
+    ...setupGuideQuery(orgId, guide, { audience: "admin", locale: labelLocale(locale) }),
+    retry: false,
+  });
+}
+
 export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/account/connections",
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
     // The list names the personal connectors: their details (this person's credential status).
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId }, qc) => {
+    then: async ({ orgId, locale }, qc) => {
       if (orgId === null) return;
       const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
         connectorsQuery(orgId).queryKey,
       );
       if (list === undefined) return;
-      await Promise.all(
-        personalConnectors(list.connectors).map((a) =>
-          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
-        ),
-      );
+      const personal = personalConnectors(list.connectors);
+      await Promise.all([
+        ...personal.map((a) => qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false })),
+        // and their templates' member guides (whether 如何连接 shows)
+        ...personal
+          .filter((a) => a.setupGuide)
+          .map((a) =>
+            qc.prefetchQuery({
+              ...memberGuideQuery(orgId, a, labelLocale(locale)),
+              retry: false,
+            }),
+          ),
+      ]);
     },
   },
   {
@@ -299,6 +338,17 @@ export const ROUTES: readonly RouteEntry[] = [
             q(adminOrgsQuery()),
           ]
         : [],
+    // Its item names the template's setup guide (the 接入指南 tab).
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, params }, qc) => {
+      if (!superAdmin(me) || params.id === undefined) return;
+      const list = qc.getQueryData<{ components: PlatformComponent[] }>(
+        adminComponentsQuery("connector_template").queryKey,
+      );
+      const itemId = list?.components.find((c) => c.id === params.id)?.itemId;
+      if (itemId == null) return;
+      await qc.prefetchQuery({ ...catalogItemQuery(itemId), retry: false });
+    },
   },
   {
     pattern: "/admin/agent-templates",
@@ -623,17 +673,25 @@ export const ROUTES: readonly RouteEntry[] = [
           ],
     // The personal connectors' cards show the viewer's own connection: their details
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId }, qc) => {
+    then: async ({ orgId, locale }, qc) => {
       if (orgId === null) return;
       const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
         connectorsQuery(orgId).queryKey,
       );
       if (list === undefined) return;
-      await Promise.all(
-        personalConnectors(list.connectors).map((a) =>
-          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
-        ),
-      );
+      const personal = personalConnectors(list.connectors);
+      await Promise.all([
+        ...personal.map((a) => qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false })),
+        // and their templates' member guides (whether 如何连接 shows)
+        ...personal
+          .filter((a) => a.setupGuide)
+          .map((a) =>
+            qc.prefetchQuery({
+              ...memberGuideQuery(orgId, a, labelLocale(locale)),
+              retry: false,
+            }),
+          ),
+      ]);
     },
   },
   {
@@ -642,6 +700,39 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.connectorId === undefined
         ? []
         : [q(connectorQuery(orgId, params.connectorId))],
+    // Those who manage connectors: the drift notice names the plugin (its catalog item), and
+    // `?tab=guide` opens on the template's admin guide for this connector.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params, search, locale }, qc) => {
+      const id = params.connectorId;
+      if (orgId === null || id === undefined || me === null || !canManageConnectors(me)) return;
+      const app = qc.getQueryData<ConnectorSummary>(connectorQuery(orgId, id).queryKey);
+      const guide = app?.setupGuide;
+      if (!guide) return;
+      const onGuide = search.get("tab") === "guide";
+      await Promise.all([
+        ...(onGuide || app.guideDrift
+          ? [qc.prefetchQuery({ ...orgCatalogItemQuery(orgId, guide.itemId), retry: false })]
+          : []),
+        ...(onGuide
+          ? [
+              qc.prefetchQuery({
+                ...setupGuideQuery(orgId, guide, {
+                  connectorId: id,
+                  audience: "admin",
+                  locale: labelLocale(locale),
+                }),
+                retry: false,
+              }),
+              // and its checks' cached states (the live rows; reading them runs nothing)
+              qc.prefetchQuery({
+                ...setupCheckStatesQuery(orgId, guide, { connectorId: id, audience: "admin" }),
+                retry: false,
+              }),
+            ]
+          : []),
+      ]);
+    },
   },
   {
     pattern: "/devices",
@@ -662,6 +753,13 @@ export const ROUTES: readonly RouteEntry[] = [
       return itemId === ""
         ? [q(connectorKindsQuery(orgId))]
         : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
+    },
+    // A template's first step names its setup guide, shown above its input.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, search, locale }, qc) => {
+      const itemId = search.get("template") ?? "";
+      if (orgId === null || itemId === "" || !atLeast(me, "admin")) return;
+      await prefetchFirstTemplateGuide(qc, orgId, itemId, locale, "templates");
     },
   },
   {
@@ -840,6 +938,12 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.itemId === undefined || !atLeast(me, "admin")
         ? []
         : [q(orgCatalogItemQuery(orgId, params.itemId))],
+    // The first step's template names its setup guide, shown above its input.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params, locale }, qc) => {
+      if (orgId === null || params.itemId === undefined || !atLeast(me, "admin")) return;
+      await prefetchFirstTemplateGuide(qc, orgId, params.itemId, locale, "missingTemplates");
+    },
   },
   {
     pattern: "/plugins/[itemId]/enable",
@@ -848,6 +952,12 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.itemId === undefined || !atLeast(me, "admin")
         ? []
         : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
+    // The first step's template names its setup guide, shown above its input.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params, locale }, qc) => {
+      if (orgId === null || params.itemId === undefined || !atLeast(me, "admin")) return;
+      await prefetchFirstTemplateGuide(qc, orgId, params.itemId, locale, "templates");
+    },
   },
   {
     pattern: "/settings/members",

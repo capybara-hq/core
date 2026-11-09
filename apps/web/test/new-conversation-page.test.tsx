@@ -387,6 +387,25 @@ describe("the new conversation page (agent profile design §4)", () => {
   });
 });
 
+describe("?draft= (a setup guide's 让智能体协助)", () => {
+  it("prefills the composer once and sends nothing until the person sends", async () => {
+    const calls = stubApi(routes());
+    const draft = "Help me finish setting up “Create the Slack app” for Acme Bot.\n\nSetup guide";
+    await renderRouteWithCache(`/?draft=${encodeURIComponent(draft)}`, routes());
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", draft));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(router.replace).not.toHaveBeenCalled();
+    // the agent the home picks (the most recent one)
+    expect(input().getAttribute("placeholder")).toBe("What should Beta do?");
+  });
+
+  it("a blank draft leaves the composer empty", async () => {
+    await renderRouteWithCache("/?draft=%20%20", routes());
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", ""));
+  });
+});
+
 describe("the device picker (environments design §4.1)", () => {
   const picker = () =>
     screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) });
@@ -572,6 +591,13 @@ describe("the new conversation on a touch device (phones, maintainer decision 20
     await user.click(within(list).getByRole("button", { name: "Review" }));
     expect(input()).toHaveProperty("value", "Review body");
     // no keyboard popping up for a tap that only placed the text
+    expect(document.activeElement).not.toBe(input());
+  });
+
+  it("a ?draft= prefills the phone composer without focusing it", async () => {
+    touch();
+    await renderRouteWithCache("/?draft=Help%20me", routes());
+    await vi.waitFor(() => expect(input()).toHaveProperty("value", "Help me"));
     expect(document.activeElement).not.toBe(input());
   });
 

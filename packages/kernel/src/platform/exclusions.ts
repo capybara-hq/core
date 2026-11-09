@@ -105,6 +105,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
+    route: "GET /api/v1/admin/catalog/:itemId/guides/:guideId",
+    category: "internal",
+    reason:
+      "The super admin's preview of a plugin's setup guide for the admin console, with no org and no target; agents assist with the org guides an org member sees",
+  },
+  {
     route: "POST /api/v1/admin/catalog/items/:id/confirm",
     category: "human-only",
     reason: "Confirms a catalog item's reviewed changes, an approval decision",
@@ -136,12 +142,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",
     category: "transport",
     reason: "Serves icon image bytes",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId",
-    category: "internal",
-    reason:
-      "A plugin's setup guide (an app manifest, URLs, steps) for the web's setup section; a person pastes it into the third-party platform's console, which an agent cannot reach",
   },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
@@ -625,6 +625,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PATCH /api/v1/orgs/:orgId/connectors/:connectorId",
     category: "secret",
     reason: "Edits connector endpoint config that can carry credentials",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack",
+    category: "human-only",
+    reason:
+      "A person confirms they updated the app on the third-party platform after a connector template's setup guide changed; only that person knows it was done",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/tools/:name/review",

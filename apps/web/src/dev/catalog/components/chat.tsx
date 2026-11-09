@@ -3,11 +3,14 @@ import {
   AttachmentPreview,
   Card,
   Checklist,
+  CheckRow,
   CodeBlock,
   EmbedFrame,
   FileButton,
   FileDrop,
   Grid,
+  type GuideBlock,
+  GuideDocument,
   ImageBlock,
   InstructionList,
   IoBlock,
@@ -19,6 +22,7 @@ import {
   Timeline,
   TimelineItem,
   ToolCallRow,
+  useNow,
 } from "@capybara-hq/design";
 import { useState } from "react";
 import { Row, Section } from "../frame";
@@ -47,6 +51,56 @@ const TASKS = [
  * 截图稳定、不依赖外网内容。
  */
 const SAMPLE_IMAGE = "https://example.com/capybara-chart.png";
+
+const GUIDE_BLOCKS: GuideBlock[] = [
+  {
+    kind: "markdown",
+    text: "## 1. 从 manifest 创建应用\n\n打开 [Slack API](https://api.slack.com/apps)，选择 **Create New App → From a manifest**。",
+  },
+  {
+    kind: "code",
+    language: "yaml",
+    title: "应用 manifest",
+    text: 'display_information:\n  name: "Sales bot"\nsettings:\n  socket_mode_enabled: true',
+  },
+  { kind: "check", id: "bot-token", label: "机器人令牌可用" },
+  { kind: "markdown", text: "安装到工作区后，复制机器人令牌。" },
+];
+
+/** CheckRow in every state; times are relative to the render's clock, so they always read alike. */
+function CheckRows() {
+  const now = useNow(0);
+  const checkedAt = new Date(now - 5 * 60_000).toISOString();
+  const cooldownUntil = new Date(now + 60 * 60_000).toISOString();
+  return (
+    <Grid columns={1} gap={8}>
+      <CheckRow
+        label="机器人令牌可用"
+        state={{ status: "ok", reason: "Slack 接受了工作区 Acme 的令牌。", checkedAt }}
+        onRecheck={noop}
+      />
+      <CheckRow
+        label="应用级令牌可用"
+        state={{
+          status: "failing",
+          reason: "Slack 拒绝了令牌：invalid_auth。",
+          fix: "在应用的 Basic Information 页重新生成 App-Level Token 并保存。",
+          checkedAt,
+          cooldownUntil,
+        }}
+        onRecheck={noop}
+      />
+      <CheckRow
+        label="公开地址可访问"
+        state={{ status: "unknown", reason: "Slack 暂时不可用，稍后再试。", checkedAt }}
+        onRecheck={noop}
+      />
+      <CheckRow label="签名密钥正确" state={{ status: "running" }} onRecheck={noop} />
+      <CheckRow label="事件订阅已开启" state={{ status: "not_run" }} onRecheck={noop} />
+      <CheckRow label="回调地址已登记" state={{ status: "static" }} />
+    </Grid>
+  );
+}
 
 const PANEL_TABS = [
   { id: "run", label: "运行", alert: true },
@@ -189,6 +243,20 @@ export function ChatSection() {
             "粘贴下面的 manifest，安装到工作区。",
           ]}
         />
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          设置指南 GuideDocument · 正文、带标题可复制的代码、检查行（默认为静态）
+        </Text>
+        <Card title="创建 Slack 应用">
+          <GuideDocument blocks={GUIDE_BLOCKS} />
+        </Card>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          检查行 CheckRow · 通过 / 未通过（冷却中）/ 无法确定 / 检查中 / 未检查 / 静态
+        </Text>
+        <CheckRows />
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">

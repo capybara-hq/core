@@ -159,6 +159,8 @@ export const ERROR_CODES = {
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,
   "catalog.guide_not_found": 404,
+  /** The check is not in the setup guide rendered for that mode and audience (setup guides v2 §10.3). */
+  "catalog.check_not_found": 404,
   "marketplace.not_found": 404,
   "marketplace.entry_not_found": 404,
   "marketplace.fetch_failed": 502,
@@ -246,6 +248,8 @@ export const ERROR_CODES = {
   "background_task.output_unavailable": 409,
   "connector.not_found": 404,
   "connector.slug_taken": 409,
+  /** The connector template's setup guide moved on since the person was shown it (guide-ack). */
+  "connector.guide_changed": 409,
   "connector.kind_unavailable": 409,
   "connector.connect_failed": 502,
   "connector.tool_not_found": 404,

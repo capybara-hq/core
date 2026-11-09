@@ -13,6 +13,7 @@ import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
+import { SetupModule } from "../setup/setup.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ThemesModule } from "../themes/themes.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -42,6 +43,7 @@ import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
 import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
+import { SetupOperations } from "./ops/setup.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { ThemesOperations } from "./ops/themes.ops.js";
 import { UiOperations } from "./ops/ui.ops.js";
@@ -87,6 +89,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   AgentSkillsOperations,
   // themes (themes spec §9)
   ThemesOperations,
+  // setup guide checks (setup guides v2 §12; plan task 13 adds the rest of the domain)
+  SetupOperations,
   // UI slot catalog (UI slots spec §3)
   UiOperations,
 ] as const;
@@ -116,6 +120,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     BackgroundModule,
     FilesModule,
     ThemesModule,
+    SetupModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

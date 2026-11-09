@@ -15,6 +15,7 @@ import {
 } from "./runtime/subagents/messages.js";
 import { USAGE_REPORT_RETRY, type UsageReportRetry } from "./runtime/usage-report.js";
 import { SANDBOX_LEASE_TIMINGS, type SandboxLeaseTimings } from "./sandbox/leases.js";
+import { SETUP_CHECK_TIMEOUT } from "./setup/setup-checks.service.js";
 import { TOOL_PIPELINE_HOOKS, type ToolPipelineHooks } from "./tools/pipeline.js";
 import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
 
@@ -28,7 +29,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `TOOL_PIPELINE_HOOKS`: the tool pipeline's hooks and policy decision;
  * - `SUBAGENT_MESSAGES_HOOKS`: the sub-agent message tools' hooks (a send raced by a run's end);
  * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
- *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`: shorter timings;
+ *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`, `SETUP_CHECK_TIMEOUT`: shorter timings;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
  * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
  *   `CurrentTime` builtin the time;
@@ -46,6 +47,7 @@ interface KernelSeams {
   [USAGE_REPORT_RETRY]: UsageReportRetry;
   [SANDBOX_LEASE_TIMINGS]: Partial<SandboxLeaseTimings>;
   [CHANNEL_WEBHOOK_TIMINGS]: Partial<ChannelWebhookTimings>;
+  [SETUP_CHECK_TIMEOUT]: number;
   [EMBED_TOKEN_CLOCK]: () => number;
   [RUN_CONTEXT_CLOCK]: () => number;
   [APP_INTERCEPTOR]: NestInterceptor;
@@ -73,6 +75,7 @@ const SEAM_TOKENS = [
   USAGE_REPORT_RETRY,
   SANDBOX_LEASE_TIMINGS,
   CHANNEL_WEBHOOK_TIMINGS,
+  SETUP_CHECK_TIMEOUT,
   EMBED_TOKEN_CLOCK,
   RUN_CONTEXT_CLOCK,
   APP_INTERCEPTOR,

@@ -61,6 +61,11 @@ export const OrgPluginSwitchBody = z
 /** `:itemId` as the routes take it (`@Param`). */
 export const CatalogItemPathParams = z.object({ itemId: z.string().min(1) });
 
+/** `:itemId` / `:guideId` of the guide route (`@Param`). */
+export const CatalogGuidePathParams = CatalogItemPathParams.extend({
+  guideId: z.string().min(1).max(64),
+});
+
 /** `:installId` as the uninstall route takes it (`@Param`). */
 export const PluginInstallPathParams = z.object({ installId: z.string().min(1) });
 
@@ -70,20 +75,30 @@ export const CatalogRequestsListQuery = z.object({
 });
 
 /**
- * `GET catalog/:itemId/guides/:guideId`: the mode to render (the place's modes, checked by the
- * service), a channel connection to render for, or the name typed so far on 新建渠道.
+ * `GET catalog/:itemId/guides/:guideId` (spec 2026-11-09-setup-guides-v2-design.md §7.2): the mode
+ * and audience to render (the place's, checked by the service), the document language, and the
+ * target: a channel connection or the name typed so far on 新建渠道 (`channel-connection`), a
+ * connector made from the template (`connector-template`).
  */
 export const CatalogGuideQuery = z
   .object({
     mode: z.string().min(1).max(64).optional(),
+    audience: z.enum(["admin", "member"]).optional(),
+    locale: z.enum(["en", "zh"]).optional(),
     connectionId: z.string().min(1).max(100).optional(),
     name: z.string().max(100).optional(),
+    connectorId: z.string().min(1).max(100).optional(),
   })
   .strict();
 
 export const ORG_CATALOG_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/catalog" },
   { route: "GET /api/v1/orgs/:orgId/catalog/:itemId", params: CatalogItemPathParams },
+  {
+    route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId",
+    params: CatalogGuidePathParams,
+    query: CatalogGuideQuery,
+  },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/requests",
     params: CatalogItemPathParams,

@@ -1,4 +1,5 @@
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
+import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
 import { UI_ICONS, type UiContribution, type UiPlace } from "./ui.js";
 import { PLACE_SLOTS, parseSlotRef, uiSlot } from "./ui-slots.js";
 
@@ -35,6 +36,13 @@ export interface ExtensionPermissions {
    * `embeds` 卡加载、需批准，并标为敏感项。
    */
   ui?: { views?: string[]; embeds?: string[] };
+  /**
+   * Setup check ids registered with `ctx.setup.check` (each matches `SETUP_CHECK_ID_RE`, at most
+   * `SETUP_CHECK_LIMITS.idsPerExtension`). Recorded in the snapshot and shown at review as
+   * `setupCheck:<id>`, but never blocks loading: a check receives only data the extension already
+   * receives for the same target.
+   */
+  setupChecks?: string[];
 }
 
 /** hook 挂载点（封闭列表，见总设计 2.4）。 */
@@ -80,6 +88,7 @@ const KEYS = new Set([
   "storage",
   "network",
   "ui",
+  "setupChecks",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -179,6 +188,17 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
       for (const id of views) {
         if (embeds.includes(id)) errs.push(`permissions.ui id "${id}" is in both views and embeds`);
       }
+    }
+  }
+  if (p.setupChecks !== undefined) {
+    const ids = strList("permissions.setupChecks", p.setupChecks, errs);
+    for (const id of ids) {
+      if (!SETUP_CHECK_ID_RE.test(id)) {
+        errs.push(`permissions.setupChecks id "${id}" must match ${SETUP_CHECK_ID_RE}`);
+      }
+    }
+    if (ids.length > SETUP_CHECK_LIMITS.idsPerExtension) {
+      errs.push(`permissions.setupChecks has more than ${SETUP_CHECK_LIMITS.idsPerExtension} ids`);
     }
   }
   if (p.models !== undefined) {

@@ -998,10 +998,11 @@ describe("bootstrap plugins with an icon and setup guides, no object store", {
       url: `/api/v1/orgs/${orgId}/catalog/${id}/guides/fake-im-app?mode=webhook`,
     });
     expect(guide.statusCode, guide.body).toBe(200);
-    const g = guide.json().guide as { version: string; files: { content: string }[] };
+    const g = guide.json().guide as { version: string; blocks: { kind: string; text?: string }[] };
     expect(g.version).toBe(version);
-    expect(g.files).toHaveLength(1);
-    expect(g.files[0]?.content.length).toBeGreaterThan(0);
+    const code = g.blocks.filter((b) => b.kind === "code");
+    expect(code).toHaveLength(1);
+    expect(code[0]?.text?.length).toBeGreaterThan(0);
     // the bytes are in PG, keyed by the sha256 the version row records
     const v = await db
       .selectFrom("catalog_item_versions")

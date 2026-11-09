@@ -44,6 +44,12 @@ export interface PermissionSet {
      * `embeds` 与其他权限一样卡加载。旧快照没有这一项（按空处理）。
      */
     ui: { views: string[]; embeds: string[] };
+    /**
+     * Setup check ids (`permissions.setupChecks`, setup guides v2 §10.2): recorded and shown at
+     * review but never blocking loading, like `ui.views` (a check gets only data the extension
+     * already gets for the same target). Absent when none are declared (and in older snapshots).
+     */
+    setupChecks?: string[];
   };
   /**
    * 安装记录包迁移警告的摘要（`warningsDigest`，Ruling P4）；没有警告或不是安装记录时省略。
@@ -180,6 +186,10 @@ export function buildPermissionSet(input: {
         .sort((a, b) => cmp(a.purpose, b.purpose)),
       network: sortedUnique(p.network),
       ui: { views: sortedUnique(p.ui?.views), embeds: sortedUnique(p.ui?.embeds) },
+      // only when declared: sets (and snapshots) of plugins without setup checks stay as they were
+      ...(p.setupChecks && p.setupChecks.length > 0
+        ? { setupChecks: sortedUnique(p.setupChecks) }
+        : {}),
     },
     ...(input.warningsDigest ? { warningsDigest: input.warningsDigest } : {}),
   };
@@ -215,6 +225,7 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const d of p.network ?? []) keys.push(`permissions.network:${d}`);
   for (const v of p.ui?.views ?? []) keys.push(`${UI_VIEW_KEY_PREFIX}${v}`);
   for (const e of p.ui?.embeds ?? []) keys.push(`ui.embed:${e}`);
+  for (const c of p.setupChecks ?? []) keys.push(`${SETUP_CHECK_KEY_PREFIX}${c}`);
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
 }
@@ -229,11 +240,22 @@ export const POLICY_HOOK_KEY_PREFIX = "permissions.hooks.policy:";
 export const UI_VIEW_KEY_PREFIX = "ui.view:";
 
 /**
- * 新增项里需要批准（卡加载）的部分：除 `ui.view:*` 之外的全部。视图只是把插件已有的数据交给内核组件来画，
- * 不给插件新能力（spec §4.1），升级多出视图时插件照常加载、快照自动补上。
+ * Key prefix of a setup check id (`permissions.setupChecks`): recorded but never blocking
+ * ({@link blockingKeys}). Lower-case letters and dots before the colon, as catalog permission keys
+ * require (`PERMISSION_KEY_RE` of the marketplace format).
+ */
+export const SETUP_CHECK_KEY_PREFIX = "setup.check:";
+
+/**
+ * 新增项里需要批准（卡加载）的部分：除 `ui.view:*` 与 `setup.check:*` 之外的全部。视图只是把插件已有的数据交给
+ * 内核组件来画，不给插件新能力（spec §4.1）；setup checks get only data the extension already gets
+ * for the same target (setup guides v2 §10.2). An upgrade adding either loads as usual and the
+ * snapshot takes them.
  */
 export function blockingKeys(added: readonly string[]): string[] {
-  return added.filter((k) => !k.startsWith(UI_VIEW_KEY_PREFIX));
+  return added.filter(
+    (k) => !k.startsWith(UI_VIEW_KEY_PREFIX) && !k.startsWith(SETUP_CHECK_KEY_PREFIX),
+  );
 }
 
 /** 两份权限集合的差异（按 {@link permissionKeys}）；`prev` 为空（无快照）时全部算新增。 */

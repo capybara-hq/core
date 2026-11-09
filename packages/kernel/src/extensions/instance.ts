@@ -16,6 +16,7 @@ import {
   type KernelDeps,
   type KernelExtensionContext,
   LiveConfig,
+  type RegisteredSetupCheck,
   type RegisteredTool,
   type Route,
 } from "../ctx/create-ctx.js";
@@ -189,6 +190,14 @@ export class ExtensionInstance {
   }
   get uiActions(): ReadonlyMap<string, UiActionHandler> {
     return this.ctx.uiActions;
+  }
+  /** Setup checks registered through `ctx.setup.check` (empty after revocation). */
+  get setupChecks(): ReadonlyMap<string, RegisteredSetupCheck> {
+    return this.ctx.setupChecks;
+  }
+  /** The instance's `ctx.signal`: aborted when it is revoked or disposed. */
+  get signal(): AbortSignal {
+    return this.ctx.signal;
   }
   /** 账上仍在的登记（撤销后为空）。 */
   registrations(): Registration[] {

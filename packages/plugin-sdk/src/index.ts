@@ -23,7 +23,17 @@ export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./sandbox.js";
 export * from "./secret.js";
+export * from "./setup-check.js";
 export * from "./setup-guide.js";
+export {
+  type ParsedSetupGuide,
+  parseSetupGuide,
+  type SetupGuideCheckLine,
+  type SetupGuideCodeBlock,
+  type SetupGuideParseIssue,
+  type SetupGuideSection,
+} from "./setup-guide-parse.js";
+export * from "./setup-guide-render.js";
 export * from "./skill.js";
 export * from "./skill-invocation.js";
 export * from "./storage.js";

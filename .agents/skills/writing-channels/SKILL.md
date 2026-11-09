@@ -1,6 +1,6 @@
 ---
 name: writing-channels
-description: 'Use when changing the kernel side of channel@1 / identity-source@1 / directory@1 (packages/kernel/src/channels, the SSO login flow, directory sync) or their SDK contracts: the identity key <plugin>:<tenant>, the inbound conventions the kernel relies on (messageId / threadId / tenantId, the stripped bot @, commands and skill invocations, ack only after onEvent resolves, card_action and card re-authorization), webhook inbound (the gateway route, dedupe, channel.webhook_retry, webhookBaseUrl), the gateway role, leader election and fair sharing (shareSlack), durable inbound / outbound queues, ChannelSendError and features, the card spec (validateChannelCard, renderCardAsText), sub-agent cards, the identity-source checks (state, nonce, PKCE, source), the directory sync guards, and kernel tests with fake-im, startFakeChannelServer / startFakeSlack / startFakeLark / startFakeTelegram and dual-replica. To write a channel extension (slack, lark) see writing-channels in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of channel@1 / identity-source@1 / directory@1 (packages/kernel/src/channels, the SSO login flow, directory sync) or their SDK contracts: the identity key <plugin>:<tenant>, the inbound conventions the kernel relies on (messageId / threadId / tenantId, the stripped bot @, commands and skill invocations, ack only after onEvent resolves, card_action and card re-authorization), webhook inbound (the gateway route, dedupe, channel.webhook_retry, webhookBaseUrl), setup guides and checks, the gateway role, leader election and fair sharing (shareSlack), durable inbound / outbound queues, ChannelSendError and features, the card spec (validateChannelCard, renderCardAsText), sub-agent cards, the identity-source checks (state, nonce, PKCE, source), the directory sync guards, kernel tests with fake-im, startFakeChannelServer / startFakeSlack / startFakeLark / startFakeTelegram and dual-replica. To write a channel extension (slack, lark) see writing-channels in capybara-hq/plugins.'
 ---
 
 # Channels, login and directory: the kernel side
@@ -41,16 +41,31 @@ interface Channel {
 }
 ```
 
-### Setup guides and drift (spec `2026-11-08-plugin-setup-guides-design.md`)
+### Setup guides, checks and drift (spec `2026-11-09-setup-guides-v2-design.md`)
 
-A channel plugin may ship a `channel-connection` setup guide (writing-plugins: `setupGuides`): the
-channel pages show it rendered for the connection. `channel_connections.guide_ack` (0099) records
-`{ guideId, version, hash, mode }` of the guide the connection was set up with: on create (the
-default mode), on a PATCH that switches `inboundMode`, and by `POST channels/:id/guide-ack
-{ hash }` (409 `channel.guide_changed` when the hash shown is no longer current). The connection
-views carry `setupGuide` and `guideDrift` (`PluginGuides.connectionStates`): drift = an ack exists,
-the plugin's current guide has its id, and the template hash for the ack's mode differs. No ack,
-no notice. All state is in PG.
+A channel plugin may ship one `channel-connection` guide (writing-plugins: `setupGuides`,
+`guides/<id>.md`): modes `long_connection` / `webhook` (`::: mode` sections), audience admin only
+(`channels.manage`), variables `webhookUrl`, `signInCallbackUrl`, `connectionName` plus the common
+ones (§6.3). 新建渠道 renders it with the name typed so far and no target (check rows say "checked
+after saving"); the channel detail renders it for the connection in its stored `inbound_mode`, with
+live check rows. `GET channels/schema/:plugin` carries `guide: { itemId, guideId } | null`; the
+connection views carry `setupGuide` and `guideDrift` (`PluginGuides.connectionStates`).
+
+- **Checks** (§10): the plugin's own (`ctx.setup.check`, `place: "channel-connection"`; the target
+  carries the connection config as `verify` / `connect` get it, writing-extensions) and the
+  kernel's `capybara:public-url`, `capybara:webhook-public` (`channels.webhookBaseUrl` set and
+  https), `capybara:webhook-received` (the seen marker below, within 7 days) and
+  `capybara:connection-active` (`status` active with a `bot_user_id` and no `last_error`; a
+  recorded `last_error` is redacted again by the connection's secrets, cut to 200 characters and
+  validated, else a generic reason).
+- **Drift** (§11): `channel_connections.guide_ack` records `{ guideId, version, hash, mode }` of the
+  guide the connection was set up with: on create (the default mode), on a PATCH that switches
+  `inboundMode` only when there is no ack or the ack shows no drift (**a mode switch never clears
+  drift**), and by `POST channels/:id/guide-ack { hash }` (409 `channel.guide_changed` when the
+  hash shown is no longer current). Drift = an ack exists, the plugin's current guide has its id,
+  and the v2 hash (code blocks and check lines only) for the ack's mode differs. No ack, no notice.
+  Migration 0106 cleared every v1 ack (a v1 hash can never equal a v2 one). The ack route is a
+  `human-only` Platform exclusion; all state is in PG.
 
 ### Conventions for inbound events (`InboundEvent`)
 
@@ -85,6 +100,7 @@ Inbound is a **long connection by default** (M4 shipped long connection only; si
 - **Dedupe reuses the long connection's keys**: `messageId` for messages, `eventId` for card clicks. Keep them identical in both modes, so a redelivery or a switch of mode cannot process a message twice.
 - **Keep it quick**: the platform's ack deadline is a few seconds. Parse, verify and return; no slow lookups.
 - **What the kernel answers itself**: 404 `channel.webhook_not_found` (unknown, disabled, not in webhook mode or extension off for the org; the same body for all), 503 `extension.unavailable` (extension not loaded on this replica), 413 above `channels.webhookMaxBodyBytes` (1 MiB), 415 for a malformed `Content-Type`, and 500 when `handle` throws. Every response carries `x-content-type-options: nosniff` and `content-security-policy: default-src 'none'`; plugin-set `set-cookie` and framing headers are dropped.
+- **The seen marker**: an accepted `events` result sets the Redis key `capk:channel-webhook-seen:<connectionId>` (ISO time, TTL 7 days) at most once a minute per connection (`SET … NX EX 60` on a minute key), never a PG write and never inside a transaction; a Redis error is logged and never fails the request. The setup check `capybara:webhook-received` reads it (`packages/kernel/src/setup/kernel-checks.ts`).
 - **Deployment**: the route is served only by the `gateway` role, on the kernel HTTP port and outside `/api`; `channels.webhookBaseUrl` (public https origin) is set on `api`, which shows each connection's callback URL. See `docs/deploy/README.md`, "IM channels: inbound modes".
 - **Tests**: `@capybara-hq/testing` signs requests like the platform does: `signFakeWebhook(body, secret)` (the `fake-im` extension's HMAC header `x-fake-signature`, with `fakeWebhookEvents` / `fakeWebhookChallenge` bodies), `signSlackWebhook(body, signingSecret, ts)` (`x-slack-request-timestamp` + `x-slack-signature`) and `encryptLarkWebhook(payload, encryptKey)` (AES-256-CBC body `{"encrypt": ...}`). Cover: a bad signature and a stale timestamp are rejected, the challenge is answered, no ack when `onEvent` rejects, and a redelivered event is processed once. Kernel side: `packages/kernel/test/channels/webhook.test.ts` and `webhook.dual.test.ts` (on `fake-im`).
 

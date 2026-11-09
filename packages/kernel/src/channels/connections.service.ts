@@ -10,7 +10,7 @@ import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { z } from "zod";
-import { configFields, getPath, secretValues } from "../config/fields.js";
+import { configFields, getPath, secretScalars, secretValues } from "../config/fields.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import { ApiError } from "../errors.js";
@@ -34,6 +34,7 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import { createRedactor, type KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
+import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { adaptToFeatures } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
@@ -218,7 +219,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     /** Secret values handled here (written or decrypted) are redacted from the logs (`addOrgSecrets`). */
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "addOrgSecrets">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The setup guide acks (spec 2026-11-08-plugin-setup-guides-design.md §6). */
+    /** The setup guide acks (spec 2026-11-09-setup-guides-v2-design.md §11). */
     @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "currentAck" | "ackDrifted">,
   ) {
     this.unsubscribe = [
@@ -482,7 +483,9 @@ export class ChannelConnections implements OnApplicationShutdown {
     const id = randomUUID();
     const { plain, secrets } = split(schema, full);
     // the guide the 新建渠道 page showed: the plugin's current one, for the default mode
-    const guideAck = await this.guides.currentAck(input.plugin, "long_connection");
+    const guideAck = await this.guides.currentAck(input.plugin, "channel-connection", {
+      mode: "long_connection",
+    });
     const row = await this.insertIn({
       orgId,
       id,
@@ -602,12 +605,18 @@ export class ChannelConnections implements OnApplicationShutdown {
     // A mode switch sets the platform app up for the new mode: the guide of that mode is the one
     // on the page. Only an ack without drift moves on: a drifted one stays until the person
     // confirms through guide-ack, so switching modes never clears the update notice (spec
-    // 2026-11-08-plugin-setup-guides-design.md §6)
+    // 2026-11-09-setup-guides-v2-design.md §11)
     const guideAck =
       modeChanged &&
       patch.inboundMode !== undefined &&
-      !(await this.guides.ackDrifted(current.plugin, current.guide_ack ?? null))
-        ? await this.guides.currentAck(current.plugin, patch.inboundMode)
+      !(await this.guides.ackDrifted(
+        current.plugin,
+        "channel-connection",
+        current.guide_ack ?? null,
+      ))
+        ? await this.guides.currentAck(current.plugin, "channel-connection", {
+            mode: patch.inboundMode,
+          })
         : undefined;
     const row = await this.updateIn({
       orgId,
@@ -710,20 +719,26 @@ export class ChannelConnections implements OnApplicationShutdown {
 
   /**
    * 「我已更新应用」: records the plugin's current channel-connection guide for the connection's
-   * mode as the one it is set up with. `hash` is the template hash of the guide the person was
+   * mode as the one it is set up with. `hash` is the drift hash of the guide the person was
    * shown; when the plugin has moved on since, 409 `channel.guide_changed` (show the new guide
-   * first). A plugin without a guide -> 404 `catalog.guide_not_found`.
+   * first). A plugin without a guide, or whose item the org's catalog does not show -> 404
+   * `catalog.guide_not_found`.
    */
   async ackGuide(
-    orgId: string,
+    org: { orgId: string; role: OrgRole },
     id: string,
     hash: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<ChannelConnectionView> {
+    const { orgId } = org;
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
     if (!current) throw notFound();
-    const ack = await this.guides.currentAck(current.plugin, current.inbound_mode);
+    // the guide read's visibility: an item the org's catalog does not show has no guide to ack
+    const ack = await this.guides.currentAck(current.plugin, "channel-connection", {
+      mode: current.inbound_mode,
+      org,
+    });
     if (ack === null) {
       throw new ApiError("catalog.guide_not_found", "The plugin has no channel setup guide");
     }
@@ -881,6 +896,42 @@ export class ChannelConnections implements OnApplicationShutdown {
       return;
     }
     for (const r of rows) await this.changed(r.id, true);
+  }
+
+  /**
+   * For setup checks (setup guides v2 §10.4): the input revision of a live connection of the org
+   * on `plugin`: the `updated_at` of its row and of its secrets row (ISO), never a value. Missing,
+   * deleted, of another org or plugin -> `channel.not_found`.
+   */
+  async checkRevision(orgId: string, plugin: string, id: string): Promise<string> {
+    const row = await this.live(orgId)
+      .where("id", "=", id)
+      .where("plugin", "=", plugin)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const secretRow = await this.db
+      .selectFrom("secrets")
+      .select("updated_at")
+      .where("namespace", "=", SECRETS_NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "=", connectionSecretKey(id))
+      .executeTakeFirst();
+    const iso = (d: Date | string) => new Date(d).toISOString();
+    return `${iso(row.updated_at)}|${secretRow ? iso(secretRow.updated_at) : "-"}`;
+  }
+
+  /**
+   * For setup checks (setup guides v2 §10.8): the stored secret values of a live connection of the
+   * org on `plugin` (every secret field, decrypted), what a check's result is redacted by. Missing,
+   * deleted, of another org or plugin -> `channel.not_found`. Never echo them.
+   */
+  async checkSecrets(orgId: string, plugin: string, id: string): Promise<string[]> {
+    const row = await this.live(orgId)
+      .where("id", "=", id)
+      .where("plugin", "=", plugin)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    return secretScalars(Object.values(await this.readSecrets(orgId, id)));
   }
 
   /**

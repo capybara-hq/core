@@ -9,14 +9,19 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { Button, IconButton } from "../controls/button";
+import { Callout } from "../display/callout";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { useDesignT } from "../provider";
+import { isTouchPointer } from "../shell/pointer";
 import { ComposerOptions } from "./composer-options";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
+import { findTokenLikeSpans, removeSpans, type TokenLikeKind } from "./token-like";
 
 // The composer (spec §6.16.2): the floating frame that holds the attachment strip, the textarea and
 // the control row with the pickers and send / stop.
@@ -187,6 +192,12 @@ export type ComposerBoxProps = {
    */
   agents?: ReactNode;
   send: { mode: "send" | "stop"; disabled?: boolean; busy?: boolean; onClick(): void };
+  /**
+   * Sends the draft as ↵ does, for the token warning's 「仍然发送」 (setup guides v2 spec §12.1)
+   * while a run is going and the button is Stop. Without it 「仍然发送」 uses `send.onClick` in
+   * send mode, and in stop mode only dismisses the warning (the next ↵ sends).
+   */
+  onSend?(): void;
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
   autoFocus?: boolean;
@@ -197,6 +208,19 @@ export type ComposerBoxProps = {
    */
   token?: ComposerToken;
 };
+
+/** The order the warning names kinds in (the vendor ones before the entropy guess). */
+const TOKEN_KINDS: TokenLikeKind[] = [
+  "slack-token",
+  "slack-app-token",
+  "github-token",
+  "api-key",
+  "aws-key",
+  "google-key",
+  "private-key",
+  "jwt",
+  "high-entropy",
+];
 
 /** The composer's chip (§6.16.2, state `skill`). */
 export type ComposerToken = { label: string; hint?: string; onRemove(): void };
@@ -252,11 +276,37 @@ export function ComposerBox({
   quickActions,
   agents,
   send,
+  onSend,
   textareaRef,
   autoFocus,
   token,
 }: ComposerBoxProps): JSX.Element {
   const t = useDesignT();
+  // The token paste warning (setup guides v2 spec §12.1): raised by a paste holding token-like
+  // text or by a send whose draft holds some; a guard against a slip, never a block. The draft is
+  // scanned here in the browser only: nothing is logged or sent anywhere.
+  const [warn, setWarn] = useState(false);
+  const spans = useMemo(() => (warn ? findTokenLikeSpans(value) : []), [warn, value]);
+  const warning = warn && spans.length > 0;
+  // An edit that leaves no token-like text clears it (a paste raises it before its text arrives,
+  // so only a change of the draft can clear it).
+  const warnNow = useRef(warn);
+  warnNow.current = warn;
+  useEffect(() => {
+    if (warnNow.current && findTokenLikeSpans(value).length === 0) setWarn(false);
+  }, [value]);
+  /** A send: the first one with token-like text shows the warning instead; one while it shows sends. */
+  const gate = (): boolean => {
+    if (warning) {
+      setWarn(false);
+      return true;
+    }
+    if (findTokenLikeSpans(value).length > 0) {
+      setWarn(true);
+      return false;
+    }
+    return true;
+  };
   const id = useId();
   const tokenLabelId = `${id}-token`;
   const inner = useRef<HTMLTextAreaElement | null>(null);
@@ -279,6 +329,10 @@ export function ComposerBox({
   }, [token]);
   const keyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
+    if (onKeyDown && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !gate()) {
+      e.preventDefault();
+      return;
+    }
     if (
       token &&
       e.key === "Backspace" &&
@@ -302,11 +356,56 @@ export function ComposerBox({
       autoFocus={autoFocus}
       onChange={(e) => onChange(e.target.value)}
       {...(onKeyDown || token ? { onKeyDown: keyDown } : {})}
-      {...(onPaste ? { onPaste } : {})}
+      onPaste={(e) => {
+        if (findTokenLikeSpans(e.clipboardData?.getData("text/plain") ?? "").length > 0) {
+          setWarn(true);
+        }
+        onPaste?.(e);
+      }}
     />
   );
+  const refocusText = () => {
+    // a tap on a touch device never pops the keyboard
+    if (!isTouchPointer()) inner.current?.focus();
+  };
+  const sendAnyway = onSend ?? (send.mode === "send" ? send.onClick : undefined);
+  const kinds = TOKEN_KINDS.filter((k) => spans.some((s) => s.kind === k));
+  const tokenWarning = warning ? (
+    <BoxScope kind="composer">
+      <Callout
+        tone="warn"
+        actions={[
+          {
+            label: t("composer.tokenWarning.remove"),
+            onSelect: () => {
+              setWarn(false);
+              onChange(removeSpans(value, spans));
+              refocusText();
+            },
+          },
+          {
+            label: t("composer.tokenWarning.sendAnyway"),
+            onSelect: () => {
+              setWarn(false);
+              if (sendAnyway) sendAnyway();
+              else refocusText();
+            },
+          },
+        ]}
+      >
+        {t("composer.tokenWarning").replace(
+          "{kinds}",
+          kinds
+            .map((k) => t(`composer.tokenWarning.kind.${k}`))
+            .join(t("composer.tokenWarning.join")),
+        )}
+        {t("composer.tokenHint")}
+      </Callout>
+    </BoxScope>
+  ) : null;
   return (
     <ComposerFrame>
+      {tokenWarning}
       {attachments}
       <label className="cb-sr-only" htmlFor={id}>
         {t("composer.message")}
@@ -368,7 +467,9 @@ export function ComposerBox({
             icon={<Icon name="arrow-up" size={16} />}
             disabled={send.disabled || send.busy}
             aria-busy={send.busy ? true : undefined}
-            onClick={send.onClick}
+            onClick={() => {
+              if (gate()) send.onClick();
+            }}
           />
         )}
       </div>

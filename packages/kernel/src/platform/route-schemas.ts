@@ -20,6 +20,8 @@ import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
+import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
+import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
@@ -78,6 +80,9 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ME_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
+  // setup guide checks (setup guides v2 §10.3, §12)
+  ...SETUP_CHECK_ROUTES,
+  ...SETUP_GUIDE_ROUTES,
   // UI slots (UI slots spec §3)
   ...UI_ROUTES,
 ];

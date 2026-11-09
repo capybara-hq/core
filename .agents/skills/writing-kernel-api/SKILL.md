@@ -368,6 +368,17 @@ pointer to the web page.
 id to the domain list asserted in `test/tools/platform-tool.test.ts`; tests go in
 `test/platform/ops-<domain>.test.ts` against PG with the real services.
 
+**The `setup` domain** (setup guides v2 spec §12, `platform/ops/setup.ops.ts`): `setup.guides`
+(mirrors `GET /api/v1/orgs/:orgId/setup-guides`, `SetupGuidesService.list`), `setup.read` (the org
+guide route, rendered as one Markdown document with `- [check <id>] <label>` lines, the `webPath`
+and the handover), `setup.status` and `setup.check` (the check routes). All four are `read` class,
+`setup.check` included (a check never writes; cache, cooldown, throttle and the org cap bound it),
+and none takes a value. Which guides and targets a role sees is the guide route's (place and
+audience actions; members get only member sections of connector template guides, without drift,
+pointed at `/account/connections`). What stays with the person is excluded: both guide-ack routes
+are `human-only`, secrets and OAuth consent stay `secret` / `human-only`, and the super admin's
+template guide preview is `internal`. The agent reads the `setup` docs topic first.
+
 **Docs topics.** What the agent reads with `Platform` `read` is `packages/plugin-sdk/agent-docs/` (served by
 `AgentDocs`); a new extension point needs its topic there and `pnpm gen:agent-docs` renders the field tables
 (`check:agent-docs`; hand-written tables are checked for orphans only).

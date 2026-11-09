@@ -19,10 +19,17 @@ export function channelWebhooksFor(d: {
   connections: Pick<ChannelConnections, "row" | "runtime">;
   inbound: Pick<ChannelInbound, "onEvent">;
   log: Pick<Logger, "warn">;
+  /**
+   * The webhook marker's Redis: `gate` takes the minute gate, `redis` writes the marker (default:
+   * a gate that is always taken, so no marker is written).
+   */
+  marker?: { gate: Redis; redis: Pick<Redis, "set"> };
   handleTimeoutMs?: number;
   runtimeCacheMs?: number;
 }): ChannelWebhooks {
-  return new ChannelWebhooks(d.connections, d.inbound, d.log, {
+  const locks = d.marker ? new LockService(d.marker.gate, quiet) : { lease: async () => false };
+  const redis = d.marker?.redis ?? ({ set: async () => null } as unknown as Pick<Redis, "set">);
+  return new ChannelWebhooks(d.connections, d.inbound, d.log, locks, redis, {
     ...(d.handleTimeoutMs !== undefined && { handleTimeoutMs: d.handleTimeoutMs }),
     ...(d.runtimeCacheMs !== undefined && { runtimeCacheMs: d.runtimeCacheMs }),
   });

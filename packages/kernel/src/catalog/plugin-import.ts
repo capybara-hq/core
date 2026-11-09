@@ -2045,7 +2045,7 @@ export class PluginImport {
       keep(path);
       if (stored.has(path)) objectPaths.add(path);
     };
-    // The plugin icon and the setup guide templates (rendered by PluginGuides): display files
+    // The plugin icon and the setup guide documents (rendered by PluginGuides): display files
     const displayPaths = displayFilePaths(
       m,
       pkg.connectorTemplates.flatMap((c) => (c.file.icon === undefined ? [] : [c.file.icon])),

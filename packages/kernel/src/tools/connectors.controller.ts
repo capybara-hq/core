@@ -1,6 +1,7 @@
 import { ConnectorAuthSchema } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
+import type { ConnectionGuideState } from "../extensions/plugin-guides.js";
 import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
@@ -16,7 +17,11 @@ import {
   ConnectorAccountPolicies,
   type MemberToolPolicyView,
 } from "./connector-account-policies.js";
-import { CredentialValue, MemberToolPoliciesBody } from "./connectors.schemas.js";
+import {
+  ConnectorGuideAckSchema,
+  CredentialValue,
+  MemberToolPoliciesBody,
+} from "./connectors.schemas.js";
 import {
   type ConnectorDetail,
   type ConnectorPreview,
@@ -99,6 +104,19 @@ class MemberToolPoliciesDto extends createZodDto(
   "MemberToolPoliciesBody",
 ) {}
 
+class ConnectorGuideAckBody extends createZodDto(
+  ConnectorGuideAckSchema,
+  "ConnectorGuideAckBody",
+) {}
+
+/**
+ * A connector as the org's pages show it: with its plugin's icon (`icon`, see `withIcons`), its
+ * template's setup guide and the drift since it was set up (`setupGuide`, `guideDrift`; spec
+ * 2026-11-09-setup-guides-v2-design.md §9.3, §11).
+ */
+export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T &
+  ConnectionGuideState & { icon: string | null };
+
 /**
  * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
  * 组织凭据用 `connectors.manage`（管理员起）；两者都仅限用户主体。
@@ -132,9 +150,34 @@ export class ConnectorsController {
   @OrgAction("connectors.use")
   async list(
     @CurrentOrg() org: OrgContext,
-  ): Promise<{ connectors: (ConnectorSummary & { icon: string | null })[] }> {
-    const rows = (await this.connectors.list(org.orgId)).map((a) => forViewer(org, a));
-    return { connectors: await this.withIcons(org, rows) };
+  ): Promise<{ connectors: ConnectorPage<ConnectorSummary>[] }> {
+    const list = (await this.connectors.list(org.orgId)).map((a) => forViewer(org, a));
+    return { connectors: await this.withGuides(org, list) };
+  }
+
+  /** Adds the icon and the setup guide fields to connector views (one lookup each for all). */
+  private async withGuides<T extends ConnectorSummary>(
+    org: OrgContext,
+    views: T[],
+  ): Promise<ConnectorPage<T>[]> {
+    const [withIcons, states] = await Promise.all([
+      this.withIcons(org, views),
+      this.connectors.guideStates(
+        org,
+        views.map((v) => v.id),
+      ),
+    ]);
+    return withIcons.map((v) => ({
+      ...v,
+      ...(states.get(v.id) ?? { setupGuide: null, guideDrift: null }),
+    }));
+  }
+
+  private async withGuide<T extends ConnectorSummary>(
+    org: OrgContext,
+    view: T,
+  ): Promise<ConnectorPage<T>> {
+    return (await this.withGuides(org, [view]))[0] as ConnectorPage<T>;
   }
 
   /**
@@ -155,9 +198,10 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZBody(ConnectorCreateBody) body: z.infer<typeof CreateBody>,
-  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
+  ): Promise<{ connector: ConnectorPage; issues: ToolIssue[] }> {
     const p = requireUser(principal);
-    return this.connectors.create(org.orgId, p.account.id, body, patTokenId(p));
+    const r = await this.connectors.create(org.orgId, p.account.id, body, patTokenId(p));
+    return { ...r, connector: await this.withGuide(org, r.connector) };
   }
 
   /**
@@ -182,11 +226,10 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-  ): Promise<{ connector: ConnectorDetail & { icon: string | null } }> {
+  ): Promise<{ connector: ConnectorPage }> {
     const p = requireUser(principal);
-    const c = forViewer(org, await this.connectors.get(org.orgId, connectorId, p.account.id));
-    const [connector] = await this.withIcons(org, [c]);
-    return { connector: connector as ConnectorDetail & { icon: string | null } };
+    const view = forViewer(org, await this.connectors.get(org.orgId, connectorId, p.account.id));
+    return { connector: await this.withGuide(org, view) };
   }
 
   @Patch(":connectorId")
@@ -196,17 +239,16 @@ export class ConnectorsController {
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
     @ZBody(ConnectorUpdateBody) body: z.infer<typeof UpdateBody>,
-  ): Promise<{ connector: ConnectorDetail }> {
+  ): Promise<{ connector: ConnectorPage }> {
     const p = requireUser(principal);
-    return {
-      connector: await this.connectors.update(
-        org.orgId,
-        connectorId,
-        p.account.id,
-        body,
-        patTokenId(p),
-      ),
-    };
+    const view = await this.connectors.update(
+      org.orgId,
+      connectorId,
+      p.account.id,
+      body,
+      patTokenId(p),
+    );
+    return { connector: await this.withGuide(org, view) };
   }
 
   @Delete(":connectorId")
@@ -229,12 +271,13 @@ export class ConnectorsController {
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
   ): Promise<{
-    connector: ConnectorDetail;
+    connector: ConnectorPage;
     issues: ToolIssue[];
     changes: { added: string[]; removed: string[]; changed: string[] };
   }> {
     const p = requireUser(principal);
-    return this.connectors.refresh(org.orgId, connectorId, p.account.id, patTokenId(p));
+    const r = await this.connectors.refresh(org.orgId, connectorId, p.account.id, patTokenId(p));
+    return { ...r, connector: await this.withGuide(org, r.connector) };
   }
 
   /** 复核待复核的工具（漂移检测，spec 7.3）：approve 采用新定义并启用，reject 停用并保留旧定义。 */
@@ -247,18 +290,43 @@ export class ConnectorsController {
     @Param("connectorId") connectorId: string,
     @Param("name") name: string,
     @ZBody(ConnectorToolReviewBody) body: z.infer<typeof ReviewBody>,
-  ): Promise<{ connector: ConnectorDetail }> {
+  ): Promise<{ connector: ConnectorPage }> {
     const p = requireUser(principal);
-    return {
-      connector: await this.connectors.reviewTool(
-        org.orgId,
-        connectorId,
-        name,
-        body.action,
-        p.account.id,
-        patTokenId(p),
-      ),
-    };
+    const view = await this.connectors.reviewTool(
+      org.orgId,
+      connectorId,
+      name,
+      body.action,
+      p.account.id,
+      patTokenId(p),
+    );
+    return { connector: await this.withGuide(org, view) };
+  }
+
+  /**
+   * 「我已更新应用」: the org admin updated the third-party app to the connector template's current
+   * setup guide (`{ hash }` of the guide shown) -> 200 `{ connector }`; 409
+   * `connector.guide_changed` when the guide moved on since, 404 `catalog.guide_not_found` for a
+   * connector without a template guide.
+   */
+  @Post(":connectorId/guide-ack")
+  @HttpCode(200)
+  @OrgAction("connectors.manage")
+  async ackGuide(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+    @ZBody(ConnectorGuideAckBody) body: z.infer<typeof ConnectorGuideAckSchema>,
+  ): Promise<{ connector: ConnectorPage }> {
+    const p = requireUser(principal);
+    const view = await this.connectors.ackGuide(
+      { orgId: org.orgId, role: org.role },
+      connectorId,
+      body.hash,
+      p.account.id,
+      patTokenId(p),
+    );
+    return { connector: await this.withGuide(org, view) };
   }
 
   @Put(":connectorId/credentials/org")

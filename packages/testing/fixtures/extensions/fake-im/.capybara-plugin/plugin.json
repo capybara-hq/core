@@ -7,33 +7,7 @@
   "setupGuides": [
     {
       "id": "fake-im-app",
-      "place": "channel-connection",
-      "title": { "en": "Create the fake IM app", "zh": "创建 fake IM 应用" },
-      "steps": [
-        {
-          "en": "Open the fake platform console and create an app from the manifest below.",
-          "zh": "打开 fake 平台控制台，用下面的 manifest 创建应用。"
-        },
-        {
-          "mode": "webhook",
-          "en": "The platform posts events to `{{webhookUrl}}`.",
-          "zh": "平台把事件发到 `{{webhookUrl}}`。"
-        }
-      ],
-      "files": [
-        {
-          "path": "./guides/app.long-connection.yaml.tmpl",
-          "title": { "en": "App manifest", "zh": "应用 manifest" },
-          "language": "yaml",
-          "mode": "long_connection"
-        },
-        {
-          "path": "./guides/app.webhook.json.tmpl",
-          "title": { "en": "App manifest", "zh": "应用 manifest" },
-          "language": "json",
-          "mode": "webhook"
-        }
-      ]
+      "place": "channel-connection"
     }
   ]
 }

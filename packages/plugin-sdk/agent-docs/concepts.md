@@ -5,6 +5,7 @@ Read this first. It explains the vocabulary the other topics use.
 The other topics are for *authoring*: writing an extension, building a plugin, skills, templates,
 connector templates, tool naming and extension points. To *use* the platform (install, switch on,
 configure, manage), use the operations: `browse`, `search`, `describe` and `call`.
+To help a person through a plugin's setup guide, read `setup` first.
 
 ## Platform and org
 

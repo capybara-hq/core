@@ -18,8 +18,8 @@ import type { Finding } from "./source.js";
  *   hand, or the source changed);
  * - agent-docs-missing: an extension point without its topic or table row, a fixed topic without
  *   its file, a generated section a topic must carry, a field of plugin.v1 / connector-template.v1 /
- *   the agent template absent from its table, or a title not starting with 'Authoring:' (`concepts`
- *   aside; using the platform is covered by operations);
+ *   the agent template absent from its table, or a title not starting with 'Authoring:' (the usage
+ *   topics `concepts` and `setup` aside; using the platform is otherwise covered by operations);
  * - agent-docs-orphan: a topic, or a row (generated or in a hand-written table), for an extension
  *   point or plugin-format field that no longer exists in the code.
  *
@@ -41,7 +41,15 @@ export const FIXED_TOPICS = [
   "connector-templates",
   "tool-naming",
   "extensions",
+  "setup",
 ] as const;
+
+/**
+ * The topics about using the platform rather than authoring for it, exempt from the 'Authoring:'
+ * title: the vocabulary, and how an agent helps a person through a plugin's setup guide (setup
+ * guides v2 spec §12).
+ */
+const USAGE_TOPICS: ReadonlySet<string> = new Set(["concepts", "setup"]);
 
 /** The generated section a topic must carry, by topic id (extension points: see below). */
 const REQUIRED_SECTIONS: Record<string, string> = {
@@ -279,7 +287,7 @@ export function checkAgentDocs(root: string, opts: AgentDocsOptions = {}): Findi
       }
     }
     const title = /^#\s+(.+)$/m.exec(text)?.[1] ?? "";
-    if (id !== "concepts" && !title.startsWith("Authoring:")) {
+    if (!USAGE_TOPICS.has(id) && !title.startsWith("Authoring:")) {
       add(
         "agent-docs-missing",
         path,

@@ -141,6 +141,11 @@ export interface PluginManifest {
   connectorTemplates?: { path: string }[];
   /** Agent templates (`agents/<name>.md`, phase C). */
   agents?: { path: string }[];
+  /**
+   * Setup guides (setup guides v2 spec §4.1): `guides/<id>.md` rendered for a place; a
+   * connector-template guide names its template.
+   */
+  setupGuides?: { id: string; place: string; template?: string }[];
   extension?: {
     entry: string;
     manifest: StaticExtensionManifest;
@@ -804,6 +809,11 @@ export interface OrgCatalogTemplate {
   editableEndpoint: string[];
   auth: Record<string, unknown>;
   ownership: "org" | "personal" | null;
+  /**
+   * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
+   * wizard shows it above the template's input. Null without one (older kernels: absent).
+   */
+  guide?: { itemId: string; guideId: string } | null;
 }
 
 /** `GET /orgs/:orgId/catalog/:itemId` (kernel `OrgCatalogDetail`, latest version). */
@@ -1409,7 +1419,25 @@ export const descriptionOf = (
 ): string =>
   locale === "zh" && typeof i.descriptionZh === "string" ? i.descriptionZh : i.description;
 
-/** 显示名：有双语名按界面语言取，否则用条目名。 */
+/**
+ * A connector template's setup guide in an item's latest version (the super admin's template
+ * page, setup guides v2 spec §9.3): the `connector-template` guide naming the template, as the
+ * kernel resolves it; null without one.
+ */
+export function templateGuideIn(
+  detail: CatalogItemDetail,
+  templateId: string,
+): { itemId: string; guideId: string; version: string } | null {
+  const v = detail.versions.find((x) => x.version === detail.item.latestVersion);
+  const g = (v?.manifest.setupGuides ?? []).find(
+    (x) => x.place === "connector-template" && x.template === templateId,
+  );
+  return g === undefined || v === undefined
+    ? null
+    : { itemId: detail.item.id, guideId: g.id, version: v.version };
+}
+
+/** The display name: the bilingual name in the UI language when there is one, else the item name. */
 export const displayNameOf = (
   i: { name: string; displayName: LocalizedName | null },
   locale: string,

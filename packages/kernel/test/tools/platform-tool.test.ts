@@ -297,6 +297,7 @@ describe("browse, search, describe, read", () => {
       "channels",
       "org-settings",
       "devices",
+      "setup",
       "themes",
       "ui",
     ]);

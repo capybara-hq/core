@@ -250,6 +250,11 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
       "Your own cloud devices (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
   },
   {
+    id: "setup",
+    description:
+      "Plugin setup guides: list the guides you may help with, read one as Markdown, the state of its checks for a channel connection or a connector, and running one check. Entering secrets, connecting an account and confirming the app was updated stay with the person on the web; read the docs topic `setup` first.",
+  },
+  {
     id: "themes",
     description:
       "The themes on in this org, the one in effect for you and the org's theme setting: list. Themes are set through your preferences, the org settings and the deployment settings.",

@@ -126,6 +126,28 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).
 
+### Setup guides (spec `docs/superpowers/specs/2026-11-09-setup-guides-v2-design.md` §7.3, §9, §10.4)
+
+- One component for every place: `apps/web/src/components/SetupGuideSection.tsx` (v1's
+  `SetupGuideBody` is gone). It reads the guide the kernel rendered (`setupGuideQuery` /
+  `adminSetupGuideQuery` in `lib/query/setup.ts`, types in `lib/setup-guides.ts`) and draws the
+  drift notice and ack, the title, a `Segmented` mode switch when the guide has more than one mode
+  (starting at the target's mode), the design `GuideDocument` (prose through `Markdown`, copyable
+  `CodeBlock`s with titles, `CheckRow`s) and a muted line per `unresolved[].reason`. The web never
+  parses guide Markdown or directives and never substitutes variables: the kernel sends blocks.
+- It draws no box: the page puts it in its section card (a `FormSection` or a `Card`); the drift
+  notice is a line in it. The connector places are in `components/ConnectorGuides.tsx`
+  (`TemplateGuideSection` above a template's input in the wizards, the member's 如何连接 `Sheet` on
+  `/account/connections`, with a link to the admin guide for org admins).
+- Checks: without a saved target the rows are static ("checked after saving"); `checks="live"` with a
+  target reads the cached states (`setupCheckStatesQuery`), runs the rows without a fresh result
+  (at most 4 at a time, no `force`), polls once a second while a row is `running`, and 重新检查
+  runs with `force` (the kernel's cooldown answers `cooldownUntil`). Reasons and fixes are plain
+  text in the UI language (`zh` falls back to `en`).
+- 让智能体协助 / Ask an agent opens the new conversation with a draft (`draftConversationPath`),
+  never sent. Secrets stay in their fields on the page; the composer warns before sending
+  token-like text.
+
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
 ## Pages and the query cache (spec `docs/superpowers/specs/2026-11-03-web-query-cache-design.md`)

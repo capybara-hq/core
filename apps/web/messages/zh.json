@@ -185,6 +185,7 @@
     "connector": {
       "not_found": "连接器不存在或已被删除。",
       "slug_taken": "该 slug 已被其他连接器使用。",
+      "guide_changed": "接入指南在你查看后又变了，请先看新的指南再确认。",
       "kind_unavailable": "该连接器类型所属的插件未在本组织启用。",
       "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
       "tool_not_found": "该连接器没有这个工具。",
@@ -266,7 +267,8 @@
       "item_removed": "这个插件已被删除。",
       "preview_stale": "删除这个插件的影响在预览之后发生了变化，请重新预览后再确认。",
       "not_owned": "只能共享本组织自己的技能和智能体模板。",
-      "guide_not_found": "插件没有这份接入指南。"
+      "guide_not_found": "插件没有这份接入指南。",
+      "check_not_found": "这项检查不在当前显示的接入指南里，请刷新页面。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -1893,7 +1895,8 @@
         "tools": "工具",
         "review": "复核",
         "credentials": "凭据",
-        "settings": "设置"
+        "settings": "设置",
+        "guide": "接入指南"
       },
       "refresh": "刷新工具",
       "refreshed": "工具列表已刷新。"
@@ -2393,19 +2396,45 @@
     "tabs": {
       "all": "全部",
       "error": "出错"
+    }
+  },
+  "setupGuide": {
+    "title": "接入指南",
+    "hint": "按插件的说明在平台上创建应用；下面的内容已按这个渠道填好，复制后粘贴即可。",
+    "modeLabel": "接入方式",
+    "modes": {
+      "long_connection": "长连接",
+      "webhook": "Webhook"
     },
-    "guide": {
-      "title": "接入指南",
-      "hint": "按插件提供的步骤在平台上创建应用；下面的文件已按这个渠道填好，复制后粘贴即可。",
-      "modeLabel": "接入方式",
-      "stepsLabel": "接入步骤",
-      "unresolved": "{names} 现在还没有值，原样显示。",
-      "unresolvedOnSave": "{names} 现在还没有值，原样显示：保存渠道后才会填上。",
-      "unresolvedPublicUrl": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置平台的公开地址（http.publicUrl）。",
-      "unresolvedWebhookBase": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置 Webhook 回调地址（channels.webhookBaseUrl）。",
-      "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
-      "driftAck": "我已更新 {plugin} 应用",
-      "driftAcked": "已记录：应用与插件的接入配置一致。"
+    "checkAfterSave": "保存后检查",
+    "checksRateLimited": "检查次数太多，请一分钟后再重新检查；各项显示的是上次的结果。",
+    "checksUnavailable": "暂时读不到检查结果，请稍后刷新页面。",
+    "unresolved": {
+      "not_saved": "{names} 保存后显示，现在原样显示。",
+      "public_url": "{names} 现在原样显示：需要超级管理员设置 http.publicUrl（平台的公开地址）。",
+      "webhook_base": "{names} 现在原样显示：需要超级管理员设置 channels.webhookBaseUrl（Webhook 回调地址）。",
+      "no_connector": "{names} 创建连接器后显示，现在原样显示。",
+      "no_org": "{names} 在各组织里填上，这里原样显示。"
+    },
+    "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
+    "driftAck": "我已更新 {plugin} 应用",
+    "driftAcked": "已记录：应用与插件的接入配置一致。",
+    "connectorDriftNotice": "{plugin} 插件更新了连接器的接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest。",
+    "templateHint": "先按下面的说明在第三方平台注册应用，拿到客户端信息后再填写下方的字段。",
+    "connectorHint": "这个连接器的模板附带的接入指南，内容已按本组织和这个连接器填好。",
+    "openGuide": "查看接入指南",
+    "howToConnect": "如何连接",
+    "howToConnectTitle": "如何连接 {name}",
+    "adminGuideLink": "查看管理员接入指南",
+    "close": "关闭",
+    "platformHint": "组织管理员配置这个模板时看到的接入指南。组织名称、连接器名称在各组织里填上；检查要等组织创建了连接器才运行，这里不显示。",
+    "askAgent": {
+      "action": "让智能体协助",
+      "draft": "帮我完成 {target} 的「{title}」接入设置。",
+      "reference": "接入指南：{plugin} 插件的 {guideId}（目录项 {itemId}，位置 {place}，对象 {audience}）；目标：{target}。请用 Platform 的 setup 操作读取指南，带我完成当前这一步并运行检查；所有密钥我会自己在页面上填写。",
+      "targetConnection": "渠道连接 {id}",
+      "targetConnector": "连接器 {id}",
+      "targetNone": "尚未保存"
     }
   },
   "extensions": {
@@ -4933,7 +4962,8 @@
       "tabsLabel": "组件",
       "tabs": {
         "versions": "版本",
-        "orgs": "组织"
+        "orgs": "组织",
+        "guide": "接入指南"
       },
       "fields": {
         "from": "来自",

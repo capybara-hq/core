@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import { templateTypeClashes, templateTypeOf } from "../agents/templates.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { PluginGuides } from "../extensions/plugin-guides.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { notifyItemShared } from "../inbox/org-notices.js";
@@ -214,6 +215,11 @@ export interface OrgOfferedComponentView extends OrgComponentView {
    * name as its owner (本组织 for the viewing org's own, the owner's name for another org's).
    */
   owner: Owner;
+  /**
+   * Connector templates only: the template's setup guide in its plugin's latest version (`GET
+   * …/catalog/:itemId/guides/:guideId`), null without one (spec 2026-11-09-setup-guides-v2 §9.3).
+   */
+  guide?: { itemId: string; guideId: string } | null;
 }
 
 /** The result of an org switch: the component, or (switching off without `confirm`) the preview. */
@@ -397,6 +403,8 @@ export class ComponentScopeService {
     /** Promote on share (ruling P3-3): an org row shown or associated becomes a platform row. */
     @Inject(ComponentPromotion) private readonly promotion: ComponentPromotion,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The connector templates' setup guides (the org list's `guide`). */
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "templateGuides">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -532,6 +540,14 @@ export class ComponentScopeService {
         this.db,
         comps.flatMap((c) => (c.ownerOrgId === null ? [] : [c.ownerOrgId])),
       );
+      const guides =
+        kind === "connector_template"
+          ? await this.guides.templateGuides(
+              comps.flatMap((c) =>
+                c.itemId === null ? [] : [{ itemId: c.itemId, templateId: c.name }],
+              ),
+            )
+          : undefined;
       const rows: OrgOfferedComponentView[] = [];
       for (const c of comps) {
         const p = pluginFactsOf(st, c.itemId, orgId);
@@ -560,6 +576,7 @@ export class ComponentScopeService {
             !locked && (c.scopeMode === "follow" ? p?.scope === "all" : c.scope === "all"),
           linkedIds: linked.get(c.id) ?? [],
           owner: ownerOf(c.ownerOrgId, owners),
+          ...(guides !== undefined && { guide: guides.get(`${c.itemId}/${c.name}`) ?? null }),
         });
       }
       rows.sort((a, b) =>
