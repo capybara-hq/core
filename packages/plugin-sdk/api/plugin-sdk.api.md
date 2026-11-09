@@ -1144,6 +1144,7 @@ export class ExtensionPermissionError extends Error {
 
 // @public
 export interface ExtensionPermissions {
+    client?: boolean;
     hooks?: HookMountPoint[];
     http?: {
         method: "GET" | "POST" | "PUT" | "DELETE";
@@ -1166,6 +1167,7 @@ export interface ExtensionPermissions {
     ui?: {
         views?: string[];
         embeds?: string[];
+        components?: string[];
     };
 }
 
@@ -1523,6 +1525,11 @@ export function isThemeFontFamily(v: unknown): v is string;
 
 // @public
 export type JsonSchema = Record<string, unknown>;
+
+// @public
+export type JsonValue = string | number | boolean | null | JsonValue[] | {
+    [key: string]: JsonValue;
+};
 
 // @public
 export interface KernelCancel {
@@ -3076,6 +3083,7 @@ export const UI_LIMITS: {
     readonly checklistItems: 100;
     readonly textChars: 20000;
     readonly payloadBytes: 2000;
+    readonly componentDataBytes: 32768;
 };
 
 // @public
@@ -3297,6 +3305,7 @@ export interface UiSlotSpec {
 export interface UiView {
     badge?: string;
     blocks: UiBlock[];
+    data?: JsonValue;
     open?: UiOpen;
 }
 
@@ -3399,7 +3408,9 @@ export function validateToolSpec(spec: ToolSpec): string[];
 export function validateUiContributions(ui: unknown, permissions: unknown): string[];
 
 // @public
-export function validateUiView(v: unknown): string[];
+export function validateUiView(v: unknown, opts?: {
+    component?: boolean;
+}): string[];
 
 // @public
 export const WEB_FETCH_EXTENSION_POINT = "web-fetch@1";

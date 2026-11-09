@@ -657,3 +657,101 @@ describe("EmbedInitContext narrows on scope", () => {
     init({ scope: "org" });
   });
 });
+
+describe("component contributions (client extensions spec §5.1)", () => {
+  const title = { zh: "徽标", en: "Brand" };
+  const component = (over: Record<string, unknown> = {}) => ({
+    id: "a",
+    title,
+    slot: "org.page",
+    kind: "component",
+    ...over,
+  });
+
+  it("a component must be listed in permissions.ui.components", () => {
+    expect(validateUiContributions([component()], { client: true })).toEqual([
+      'ui "a" is a component; list it in permissions.ui.components',
+    ]);
+  });
+
+  it("permissions.ui.components must name a component contribution", () => {
+    expect(validateUiContributions([], { client: true, ui: { components: ["a"] } })).toEqual([
+      'permissions.ui.components lists "a", which is not a component contribution',
+    ]);
+  });
+
+  it("an id in both views and components is refused", () => {
+    expect(
+      validateUiContributions([component()], {
+        client: true,
+        ui: { views: ["a"], components: ["a"] },
+      }),
+    ).toEqual(['ui "a" is listed in more than one of permissions.ui.views / embeds / components']);
+  });
+
+  it("a component with a path is refused", () => {
+    expect(
+      validateUiContributions([component({ path: "/ui/a" })], {
+        client: true,
+        ui: { components: ["a"] },
+      }),
+    ).toEqual(['ui "a" is a component and cannot have a path']);
+  });
+
+  it("components need permissions.client", () => {
+    expect(validateUiContributions([component()], { ui: { components: ["a"] } })).toEqual([
+      "permissions.ui.components needs permissions.client: true",
+    ]);
+    expect(
+      validateUiContributions([component()], { client: false, ui: { components: ["a"] } }),
+    ).toEqual(["permissions.ui.components needs permissions.client: true"]);
+  });
+
+  it("a component in file.preview is a structural error", () => {
+    expect(
+      validateUiContributions([component({ slot: "file.preview" })], {
+        client: true,
+        ui: { components: ["a"] },
+      }),
+    ).toEqual(['ui "a" slot file.preview does not accept kind component']);
+  });
+
+  it("a component in an unknown slot is not structural", () => {
+    expect(
+      validateUiContributions([component({ slot: "nowhere.at-all" })], {
+        client: true,
+        ui: { components: ["a"] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("validatePermissions accepts client and ui.components and checks their shape", () => {
+    expect(validatePermissions("p", { client: true, ui: { components: ["a"] } })).toEqual([]);
+    expect(validatePermissions("p", { client: "yes" })).toEqual([
+      "permissions.client must be a boolean",
+    ]);
+    expect(validatePermissions("p", { ui: { components: "a" } })).toEqual([
+      "permissions.ui.components must be an array",
+    ]);
+  });
+
+  it("view data is refused for views and accepted for components", () => {
+    const v = { blocks: [], data: { run: "running", steps: [1, 2] } };
+    expect(validateUiView(v)).toEqual(["view data is only allowed for component views"]);
+    expect(validateUiView(v, { component: false })).toEqual([
+      "view data is only allowed for component views",
+    ]);
+    expect(validateUiView(v, { component: true })).toEqual([]);
+    expect(validateUiView({ blocks: [] }, { component: true })).toEqual([]);
+  });
+
+  it("view data over 32768 bytes is refused", () => {
+    expect(UI_LIMITS.componentDataBytes).toBe(32768);
+    // a JSON string adds its two quotes
+    const at = (n: number) => ({ blocks: [], data: "x".repeat(n - 2) });
+    expect(validateUiView(at(32768), { component: true })).toEqual([]);
+    expect(validateUiView(at(32769), { component: true })).toEqual([
+      "view data is 32769 bytes; the limit is 32768",
+    ]);
+  });
+});
