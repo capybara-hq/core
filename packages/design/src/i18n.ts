@@ -578,7 +578,8 @@ const en: Record<DesignKey, string> = {
   "shell.filter": "Filters",
   "settings.nav": "Settings navigation",
   "shell.skipToContent": "Skip to main content",
-  "safeMode.message": "Safe mode: plugin interface code is off; only the built-in interface is shown.",
+  "safeMode.message":
+    "Safe mode: plugin interface code is off; only the built-in interface is shown.",
   "safeMode.exit": "Exit safe mode",
   "shell.details": "Details",
   "shell.metrics": "Metrics",
