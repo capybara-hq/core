@@ -18,29 +18,66 @@ function withStyles(): HTMLStyleElement {
 }
 
 describe("DecorationLayer", () => {
-  it("is aria-hidden and passes clicks through", () => {
+  it("passes clicks through; decoration is hidden from assistive tech, interactive parts are not", () => {
     const style = withStyles();
     try {
       const { container } = render(
         <DesignProvider locale="zh">
           <DecorationLayer>
             <span data-testid="plain">flare</span>
-            <button type="button" data-testid="skip" data-cap-interactive="true">
-              skip
-            </button>
+            <div data-testid="boot">
+              <span data-testid="scan">scanlines</span>
+              <button type="button" data-testid="skip" data-cap-interactive="true">
+                skip
+              </button>
+            </div>
           </DecorationLayer>
         </DesignProvider>,
       );
       const layer = container.querySelector(".cb-decoration") as HTMLElement;
-      expect(layer.getAttribute("aria-hidden")).toBe("true");
       expect(getComputedStyle(layer).pointerEvents).toBe("none");
       const plain = container.querySelector('[data-testid="plain"]') as HTMLElement;
       const skip = container.querySelector("[data-cap-interactive]") as HTMLElement;
       expect(getComputedStyle(plain).pointerEvents).toBe("none");
       expect(getComputedStyle(skip).pointerEvents).toBe("auto");
+      // an interactive element never sits under aria-hidden (the layer itself is not hidden)
+      expect(layer.hasAttribute("aria-hidden")).toBe(false);
+      expect(skip.closest('[aria-hidden="true"]')).toBeNull();
+      // the decoration around it is
+      expect(plain.getAttribute("aria-hidden")).toBe("true");
+      const scan = container.querySelector('[data-testid="scan"]') as HTMLElement;
+      expect(scan.getAttribute("aria-hidden")).toBe("true");
+      expect(
+        (container.querySelector('[data-testid="boot"]') as HTMLElement).hasAttribute(
+          "aria-hidden",
+        ),
+      ).toBe(false);
     } finally {
       style.remove();
     }
+  });
+
+  it("keeps up with a plugin's later DOM: new decoration is hidden, a new focusable is not", async () => {
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <DecorationLayer>
+          <div data-testid="host" />
+        </DecorationLayer>
+      </DesignProvider>,
+    );
+    const host = container.querySelector('[data-testid="host"]') as HTMLElement;
+    expect(host.getAttribute("aria-hidden")).toBe("true");
+    // a plugin draws a link into its decoration: focusable, so its subtree leaves aria-hidden
+    const a = document.createElement("a");
+    a.href = "#skip";
+    a.textContent = "skip";
+    host.append(a);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(a.closest('[aria-hidden="true"]')).toBeNull();
+    // and back: once the link is gone, the host is decoration again
+    a.remove();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(host.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("covers the viewport above every other layer (z token `decoration`)", () => {
