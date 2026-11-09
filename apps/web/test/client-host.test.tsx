@@ -553,12 +553,25 @@ describe("ClientHost", () => {
     expect(navigate).toHaveBeenCalledWith("/admin/accounts?q=1");
     expect(routed).not.toHaveBeenCalled();
     a.remove();
-    // a programmatic push (or Back) is caught when the path changes
+    // a programmatic push (or Back) is caught when the path changes: before the document load,
+    // in the same layout effect, the plugin's stylesheets go off and its components unmount, so
+    // the admin console never shows under org plugin code
     navigate.mockClear();
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "/api/v1/client/fake-client/x/styles/a.css";
+    css.setAttribute("data-precedence", "extensions");
+    document.head.append(css);
+    let atNavigate: [string | null, boolean] | null = null;
+    navigate.mockImplementation(() => {
+      atNavigate = [registryText(), css.disabled];
+    });
     window.history.pushState(null, "", "/admin");
     pathname.current = "/admin";
     view.rerender(pageElement(host(setOf(item()))));
     expect(navigate).toHaveBeenCalledWith("/admin");
+    expect(atNavigate?.[1]).toBe(true);
+    expect(registryText()).toBe("fake-client:disabled[]");
     document.body.removeEventListener("click", routed);
   });
 

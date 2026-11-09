@@ -109,6 +109,9 @@ export function ClientHost({
   );
   const loaded = docItems.length > 0;
   const [registry, setRegistry] = useState<ClientRegistry>({});
+  // A non-click navigation crossed the boundary: the new page committed in this document, which
+  // the client code must leave (every plugin off) until the document load replaces it.
+  const [leaving, setLeaving] = useState(false);
   const reportScope: ClientReportScope | null =
     scope === "admin" ? { kind: "admin" } : orgId === null ? null : { kind: "org", orgId };
   const [report] = useState(() => createReporter(reportScope));
@@ -123,10 +126,10 @@ export function ClientHost({
   const exposed = useMemo<ClientRegistry>(() => {
     const out: ClientRegistry = {};
     for (const [plugin, entry] of Object.entries(registry)) {
-      out[plugin] = listed.has(plugin) ? entry : { status: "disabled" };
+      out[plugin] = listed.has(plugin) && !leaving ? entry : { status: "disabled" };
     }
     return out;
-  }, [registry, listed]);
+  }, [registry, listed, leaving]);
   const exposedRef = useRef(exposed);
   exposedRef.current = exposed;
   const itemOf = useCallback(
@@ -303,7 +306,7 @@ export function ClientHost({
     return [...hrefs].sort().join("\n");
   }, [docItems, exposed, listed]);
   useLayoutEffect(() => {
-    const active = new Set(safe || activeSheets === "" ? [] : activeSheets.split("\n"));
+    const active = new Set(safe || leaving || activeSheets === "" ? [] : activeSheets.split("\n"));
     const police = () => {
       for (const link of document.querySelectorAll<HTMLLinkElement>(EXTENSION_SHEETS)) {
         const off = !active.has(link.getAttribute("href") ?? "");
@@ -314,7 +317,7 @@ export function ClientHost({
     const observer = new MutationObserver(police);
     observer.observe(document.head, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [activeSheets, safe]);
+  }, [activeSheets, safe, leaving]);
 
   // Client code the live read lists but the document's set lacks (a plugin turned on or applied,
   // a new build, the kill switch lifted) cannot load into this document (spec §9.6): a
@@ -376,7 +379,14 @@ export function ClientHost({
     },
     [qc, orgId],
   );
-  useClientBoundary({ safe, loaded, targetHasCode, navigate });
+  const leave = useCallback(() => {
+    // synchronously, before the navigation starts: the state update unmounts the components
+    // before the next paint, the sheets go off now
+    for (const link of document.querySelectorAll<HTMLLinkElement>(EXTENSION_SHEETS))
+      link.disabled = true;
+    setLeaving(true);
+  }, []);
+  useClientBoundary({ safe, loaded, targetHasCode, navigate, leave });
 
   const hostScope = useMemo(() => ({ scope, orgId }), [scope, orgId]);
   return (

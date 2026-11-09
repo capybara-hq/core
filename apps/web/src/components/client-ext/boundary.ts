@@ -46,6 +46,11 @@ export function useClientBoundary(o: {
   loaded: boolean;
   targetHasCode(key: ClientScopeKey): boolean;
   navigate(href: string): void;
+  /**
+   * Called before a non-click crossing's `navigate`: the new page already committed in this
+   * document, so the host turns its client code off (stylesheets, components) until it unloads.
+   */
+  leave(): void;
 }): void {
   const pathname = usePathname();
   const latest = useRef(o);
@@ -71,6 +76,9 @@ export function useClientBoundary(o: {
   useLayoutEffect(() => {
     const from = documentScope.current ?? "org";
     if (!crossesBoundary(from, clientScopeOf(pathname), latest.current)) return;
+    // `location.assign` keeps this document until the response arrives: the page across the
+    // boundary (the admin console) must not show under the old scope's client code meanwhile
+    latest.current.leave();
     const loc = window.location;
     // The router updates the address before layout effects run; if not, the path alone.
     latest.current.navigate(
