@@ -332,8 +332,8 @@ function clientChange(
 /**
  * 插件界面代码 (client extensions spec §10.2): one switch for all client code, then one per plugin
  * with client code (the deployment's extensions with a client build, and any plugin still listed as
- * stopped); a plugin's switch off stops its client code alone, its server side keeps running.
- * Saved with the page's ActionRow.
+ * stopped); a plugin's switch off stops its client code alone, its server side keeps running. With
+ * the switch for all off, no plugin row says it runs. Saved with the page's ActionRow.
  */
 function ClientCodeSection({
   value,
@@ -375,7 +375,8 @@ function ClientCodeSection({
               key={p.name}
               title={p.label}
               {...(p.label !== p.name && { code: p.name })}
-              meta={t(on ? "pluginOnHint" : "pluginOffHint")}
+              // the kill switch off stops every plugin's code, whatever its own switch says
+              meta={t(!on ? "pluginOffHint" : value.enabled ? "pluginOnHint" : "pluginAllOffHint")}
               actions={
                 <Switch
                   label={t("pluginLabel", { name: p.label })}

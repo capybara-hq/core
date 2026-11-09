@@ -2522,6 +2522,7 @@
     "syncStarted": "Directory sync started.",
     "review": {
       "network": "Declared only; the platform does not enforce it",
+      "clientItem": "Runs plugin code in the browser",
       "added": "Added permissions",
       "removed": "Removed permissions",
       "none": "No permissions declared.",
@@ -3573,6 +3574,7 @@
         "allOffHint": "Stopped: no page loads any plugin interface code.",
         "pluginLabel": "Run the interface code of {name}",
         "pluginOnHint": "Running",
+        "pluginAllOffHint": "Stopped: the switch above turns off all plugin interface code.",
         "pluginOffHint": "Stopped: only its interface code; its server side keeps running."
       }
     },
@@ -4053,8 +4055,12 @@
           "extension": "Extension",
           "skill": "Skill",
           "connectorTemplate": "Connector template",
-          "agentTemplate": "Agent template"
+          "agentTemplate": "Agent template",
+          "component": "Interface component",
+          "clientCode": "Client code",
+          "theme": "Theme"
         },
+        "clientFiles": "{files, plural, one {# file} other {# files}}",
         "componentsEmpty": "This version has no components.",
         "orgsHint": {
           "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",

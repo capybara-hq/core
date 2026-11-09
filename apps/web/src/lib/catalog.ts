@@ -144,6 +144,8 @@ export interface PluginManifest {
   connectorTemplates?: { path: string }[];
   /** Agent templates (`agents/<name>.md`, phase C). */
   agents?: { path: string }[];
+  /** Themes (`themes/<id>.json`). */
+  themes?: { path: string }[];
   /**
    * Setup guides (setup guides v2 spec §4.1): `guides/<id>.md` rendered for a place; a
    * connector-template guide names its template.

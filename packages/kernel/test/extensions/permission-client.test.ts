@@ -58,7 +58,7 @@ describe("client code and components in the permission set (client extensions sp
     ]);
   });
 
-  it("the review groups show a sensitive client group and components in the UI group", () => {
+  it("the review groups show a sensitive client group and components in their own group", () => {
     const groups = permissionGroups(
       setOf({ client: true, ui: { views: ["tasks"], components: ["hud"] } }),
     );
@@ -70,13 +70,17 @@ describe("client code and components in the permission set (client extensions sp
     });
     expect(groups.find((g) => g.category === "ui")).toEqual({
       category: "ui",
-      sensitive: true,
-      items: ["view:tasks", "component:hud"],
-      entries: [
-        { value: "view:tasks", sensitive: false },
-        { value: "component:hud", sensitive: true, reason: "ui_component" },
-      ],
+      sensitive: false,
+      items: ["view:tasks"],
+      entries: [{ value: "view:tasks", sensitive: false }],
     });
+    expect(groups.find((g) => g.category === "components")).toEqual({
+      category: "components",
+      sensitive: true,
+      items: ["hud"],
+      entries: [{ value: "hud", sensitive: true, reason: "ui_component" }],
+    });
+    expect(groups.map((g) => g.category)).toEqual(["ui", "components", "client"]);
   });
 
   it("an upgrade adding a component blocks loading", () => {

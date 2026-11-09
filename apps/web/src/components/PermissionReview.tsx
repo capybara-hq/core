@@ -26,8 +26,12 @@ import type { PermissionGroup, PermissionItem } from "../lib/extensions";
  * - 给了 `warnings`（迁移里的破坏性语句、DO 块）时逐条列出，同样算敏感：the last row, its hint a warn
  *   line with the `circle-alert` icon, its body each statement's place and its (borderless) code;
  * - given `clientFiles` (the build's files, client extensions spec §5.4), the 客户端代码 row lists
- *   each file with its size and the total under the group's key.
+ *   each file with its size and the total under the group's key; client components have their own
+ *   row (界面组件), apart from views and embeds.
  */
+/** The one item of the kernel's `client` group (`permissions.client`). */
+const CLIENT_ITEM = "client code";
+
 export function PermissionReview({
   plugin,
   groups,
@@ -47,6 +51,9 @@ export function PermissionReview({
   const t = useTranslations("extensions");
   const label = (category: string) =>
     t.has(`category.${category}`) ? t(`category.${category}`) : category;
+  /** An item as shown: the client group's one item (the kernel's "client code") is translated. */
+  const itemText = (category: string, value: string): string =>
+    category === "client" && value === CLIENT_ITEM ? t("review.clientItem") : value;
   const reasonText = (item: PermissionItem): string | null => {
     if (item.reason === undefined) return null;
     const key = `review.reason.${item.reason}`;
@@ -93,7 +100,7 @@ export function PermissionReview({
                     <Stack gap={4}>
                       {g.entries.map((e) => (
                         <Text key={e.value} variant="small" tone="muted">
-                          {`· ${e.value}`}
+                          {`· ${itemText(g.category, e.value)}`}
                         </Text>
                       ))}
                       {g.category === "client" && clientFiles !== undefined && (

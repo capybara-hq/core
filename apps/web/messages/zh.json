@@ -2510,6 +2510,7 @@
     "syncStarted": "已开始同步通讯录。",
     "review": {
       "network": "声明，平台不拦截",
+      "clientItem": "在浏览器中运行插件代码",
       "added": "新增的权限",
       "removed": "减少的权限",
       "none": "没有声明任何权限。",
@@ -3561,6 +3562,7 @@
         "allOffHint": "已停用：所有页面都不加载插件界面代码。",
         "pluginLabel": "运行 {name} 的界面代码",
         "pluginOnHint": "运行中",
+        "pluginAllOffHint": "已停用：上面的总开关停用了所有插件界面代码。",
         "pluginOffHint": "已停用：只停用界面代码，服务端功能照常运行。"
       }
     },
@@ -4041,8 +4043,12 @@
           "extension": "扩展",
           "skill": "技能",
           "connectorTemplate": "连接器模板",
-          "agentTemplate": "智能体模板"
+          "agentTemplate": "智能体模板",
+          "component": "界面组件",
+          "clientCode": "客户端代码",
+          "theme": "主题"
         },
+        "clientFiles": "{files} 个文件",
         "componentsEmpty": "这个版本没有组件。",
         "orgsHint": {
           "all": "全部组织：每个组织默认启用；组织管理员可以在本组织关掉。",

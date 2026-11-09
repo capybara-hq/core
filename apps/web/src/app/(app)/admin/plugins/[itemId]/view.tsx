@@ -46,6 +46,7 @@ import {
   type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
+  clientFilesOf,
   compareSemver,
   declaredPermissions,
   descriptionOf,
@@ -527,16 +528,29 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
 type ComponentRow = {
   key: string;
   name: string;
-  kind: "extension" | "skill" | "connectorTemplate" | "agentTemplate";
+  kind:
+    | "extension"
+    | "component"
+    | "clientCode"
+    | "skill"
+    | "connectorTemplate"
+    | "agentTemplate"
+    | "theme";
   version: string;
+  /** The client code row: its file count (the name is drawn from it). */
+  files?: number;
 };
 
 /** The platform component kind of a manifest row (an extension has none). */
 const PLATFORM_KIND: Record<ComponentRow["kind"], PlatformComponentKind | null> = {
   extension: null,
+  component: null,
+  clientCode: null,
   skill: "skill",
   connectorTemplate: "connector_template",
   agentTemplate: "agent_template",
+  // themes are listed without a link (this page reads no theme list)
+  theme: null,
 };
 
 /** The plugin's platform components of each kind (sections: empty while they load or failed). */
@@ -561,12 +575,33 @@ function usePluginComponents(itemId: string): (row: ComponentRow) => PlatformCom
   };
 }
 
-/** The components of a version (its plugin.json): the extension, skills, templates. */
+/**
+ * The components of a version (its plugin.json): the extension with its client components and
+ * client code (client extensions spec §5), skills, templates and themes.
+ */
 function componentsOf(m: PluginManifest): ComponentRow[] {
   const ext = m.extension?.manifest;
+  const client = m.extension?.client;
   return [
     ...(ext
       ? [{ key: `e:${ext.name}`, name: ext.name, kind: "extension" as const, version: ext.version }]
+      : []),
+    ...(ext?.permissions.ui?.components ?? []).map((id) => ({
+      key: `u:${id}`,
+      name: id,
+      kind: "component" as const,
+      version: ext?.version ?? m.version,
+    })),
+    ...(client !== undefined
+      ? [
+          {
+            key: "client",
+            name: "",
+            kind: "clientCode" as const,
+            version: ext?.version ?? m.version,
+            files: clientFilesOf(client).length,
+          },
+        ]
       : []),
     ...(m.skills ?? []).map((s) => ({
       key: `s:${s.path}`,
@@ -584,6 +619,12 @@ function componentsOf(m: PluginManifest): ComponentRow[] {
       key: `a:${a.path}`,
       name: agentTemplateNameOf(a.path),
       kind: "agentTemplate" as const,
+      version: m.version,
+    })),
+    ...(m.themes ?? []).map((th) => ({
+      key: `t:${th.path}`,
+      name: templateIdOf(th.path),
+      kind: "theme" as const,
       version: m.version,
     })),
   ];
@@ -613,6 +654,7 @@ function ComponentsTab({
       key: "name",
       header: t("componentColumns.name"),
       cell: (row) => {
+        if (row.kind === "clientCode") return t("clientFiles", { files: row.files ?? 0 });
         const c = componentOf(row);
         return c === undefined ? (
           row.name

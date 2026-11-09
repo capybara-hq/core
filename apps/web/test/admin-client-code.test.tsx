@@ -145,9 +145,17 @@ describe("插件界面代码 on /admin/settings", () => {
       within(section).getByRole("switch", { name: fill(K.pluginLabel, { name: "Neon theme" }) }),
     ).toBeTruthy();
     expect(within(section).queryByText("plain")).toBeNull();
+    const neonRow = () =>
+      within(section)
+        .getByRole("switch", { name: fill(K.pluginLabel, { name: "Neon theme" }) })
+        .closest("li") as HTMLElement;
+    expect(within(neonRow()).getByText(K.pluginOnHint)).toBeTruthy();
     const user = userEvent.setup();
     await user.click(within(section).getByRole("switch", { name: K.all }));
     expect(within(section).getByText(K.allOffHint)).toBeTruthy();
+    // with every plugin's interface code off, no plugin row says it is running
+    expect(within(neonRow()).queryByText(K.pluginOnHint)).toBeNull();
+    expect(within(neonRow()).getByText(K.pluginAllOffHint)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
