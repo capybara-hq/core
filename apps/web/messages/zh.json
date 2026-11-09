@@ -4599,7 +4599,11 @@
       "filePreview": "文件预览",
       "agentSection": "智能体页面区块",
       "orgSettingsSection": "组织设置区块",
-      "platformPage": "平台页面"
+      "platformPage": "平台页面",
+      "shellBrand": "侧边栏品牌",
+      "shellOverlay": "全屏图层",
+      "conversationEmpty": "新对话主视觉",
+      "composerFrame": "输入框边框"
     }
   },
   "filePreviewers": {

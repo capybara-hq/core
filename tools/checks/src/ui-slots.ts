@@ -173,6 +173,14 @@ function collectRenders(root: string, out: Finding[]): Render[] {
   return renders;
 }
 
+/** Slots not rendered yet (client extensions plan, removed in Task 18). */
+export const PENDING_SLOTS: ReadonlySet<string> = new Set([
+  "shell.brand",
+  "shell.overlay",
+  "conversation.empty",
+  "conversation.composer.frame",
+]);
+
 /**
  * check:ui-slots: every catalog slot is rendered once, by its owner file, through `<ExtensionSlot>`
  * (`ui-slot-literal`, `ui-slot-undeclared`, `ui-slot-unrendered`, `ui-slot-owner`, `ui-slot-twice`),
@@ -205,6 +213,7 @@ export function checkUiSlots(root: string, slots: readonly UiSlotSpec[] = UI_SLO
   for (const spec of slots) {
     const mine = renders.filter((r) => r.slot === spec.id);
     if (mine.length === 0) {
+      if (PENDING_SLOTS.has(spec.id)) continue;
       out.push({
         file: join(webSrc, spec.owner),
         line: 1,

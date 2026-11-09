@@ -47,6 +47,11 @@ export type SlotArgs = {
   "org.settings.section": { orgId: string };
   /** `direct`: as for `org.page`, the page a platform arrangement hides from the list. */
   "platform.page": { direct?: UiContributionItem };
+  /** The four client-extension slots are not rendered yet (client extensions plan, Task 18). */
+  "shell.brand": { orgId: string };
+  "shell.overlay": { orgId: string };
+  "conversation.empty": { orgId: string };
+  "conversation.composer.frame": { orgId: string };
 };
 
 /** Opens an open target: `contribution` is a `conversation.panel` of the same extension. */
@@ -76,6 +81,10 @@ export type SlotHost = {
   "agent.detail.section": Record<string, never>;
   "org.settings.section": Record<string, never>;
   "platform.page": Record<string, never>;
+  "shell.brand": Record<string, never>;
+  "shell.overlay": Record<string, never>;
+  "conversation.empty": Record<string, never>;
+  "conversation.composer.frame": Record<string, never>;
 };
 
 type SlotProps<S extends UiSlotId> = {

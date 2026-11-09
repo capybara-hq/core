@@ -13,6 +13,10 @@ export const UI_SLOT_IDS = [
   "agent.detail.section",
   "org.settings.section",
   "platform.page",
+  "shell.brand",
+  "shell.overlay",
+  "conversation.empty",
+  "conversation.composer.frame",
 ] as const;
 
 export type UiSlotId = (typeof UI_SLOT_IDS)[number];
@@ -26,7 +30,12 @@ export interface UiSlotSpec {
   owner: string;
   scope: UiSlotScope;
   accepts: readonly UiKind[];
-  cardinality: "list";
+  /** `single`: one winner replaces the built-in; `list`: every contribution is shown. */
+  cardinality: "list" | "single";
+  /** A single slot replaces a built-in block (client extensions spec §6.1). */
+  replaceable?: true;
+  /** What a replaceable slot shows without a winner. */
+  builtin?: { en: string; zh: string };
   minRole: UiSlotRole;
   /** Context ids passed to render (`conversationId`, `agentId`, …). */
   args: readonly string[];
@@ -44,7 +53,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "components/conversation/RightArea.tsx",
     scope: "conversation",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "guest",
     args: ["conversationId", "item"],
@@ -60,7 +69,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "components/conversation/PropertiesSections.tsx",
     scope: "conversation",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "guest",
     args: ["conversationId"],
@@ -77,7 +86,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "components/conversation/RightArea.tsx",
     scope: "conversation",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "guest",
     args: ["conversationId", "card"],
@@ -93,7 +102,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "app/(app)/p/[plugin]/[id]/view.tsx",
     scope: "org",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "member",
     args: [],
@@ -125,7 +134,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "components/agent/AgentPage.tsx",
     scope: "agent",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "guest",
     args: ["agentId"],
@@ -141,7 +150,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "app/(app)/settings/organization/view.tsx",
     scope: "org",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "admin",
     args: [],
@@ -157,7 +166,7 @@ const SLOT_DATA = [
     version: 1,
     owner: "app/(app)/admin/p/[plugin]/[id]/view.tsx",
     scope: "platform",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     cardinality: "list",
     minRole: "superAdmin",
     args: [],
@@ -166,6 +175,77 @@ const SLOT_DATA = [
     description: {
       en: "A full page in the platform administration.",
       zh: "平台管理中的完整页面。",
+    },
+  },
+  {
+    id: "shell.brand",
+    version: 1,
+    owner: "components/shell/AppFrame.tsx",
+    scope: "org",
+    accepts: ["component"],
+    cardinality: "single",
+    replaceable: true,
+    builtin: { en: "The logo and wordmark in the sidebar.", zh: "侧边栏中的标志与字标。" },
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    icon: "none",
+    description: {
+      en: "The brand row of the sidebar (the mark of the collapsed rail).",
+      zh: "侧边栏的品牌行（收起后的窄栏标记）。",
+    },
+  },
+  {
+    id: "shell.overlay",
+    version: 1,
+    owner: "components/shell/AppFrame.tsx",
+    scope: "org",
+    accepts: ["component"],
+    cardinality: "list",
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    icon: "none",
+    limits: { maxShown: 4 },
+    description: {
+      en: "A full-viewport layer over the workspace shell.",
+      zh: "覆盖工作区外壳的全视口图层。",
+    },
+  },
+  {
+    id: "conversation.empty",
+    version: 1,
+    owner: "components/conversation/NewConversation.tsx",
+    scope: "org",
+    accepts: ["component"],
+    cardinality: "single",
+    replaceable: true,
+    builtin: { en: "The greeting of the new-conversation page.", zh: "新对话页的问候区。" },
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    icon: "none",
+    description: {
+      en: "The hero of the new-conversation page.",
+      zh: "新对话页的主视觉区。",
+    },
+  },
+  {
+    id: "conversation.composer.frame",
+    version: 1,
+    owner: "components/conversation/ComposerBar.tsx",
+    scope: "org",
+    accepts: ["component"],
+    cardinality: "single",
+    replaceable: true,
+    builtin: { en: "The frame around the message composer.", zh: "消息输入框外的边框。" },
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    icon: "none",
+    description: {
+      en: "The frame around the composer, on the new-conversation and conversation pages.",
+      zh: "新对话页与对话页中输入框外的边框。",
     },
   },
 ] as const satisfies readonly UiSlotSpec[];
@@ -198,6 +278,16 @@ export const PLACE_SLOTS: Readonly<Record<UiPlace, UiSlotId>> = {
 export const UI_ARRANGEABLE_SLOTS: readonly UiSlotId[] = UI_SLOT_IDS.filter(
   (id) => id !== "file.preview",
 );
+
+/** Slots with one winner that replaces a built-in block. */
+export const UI_SINGLE_SLOTS: readonly UiSlotId[] = UI_SLOTS.filter(
+  (s) => s.cardinality === "single",
+).map((s) => s.id);
+
+/** Slots that accept the `component` kind. */
+export const UI_COMPONENT_SLOTS: readonly UiSlotId[] = UI_SLOTS.filter((s) =>
+  s.accepts.includes("component"),
+).map((s) => s.id);
 
 export const UI_CONTRIBUTION_KEY_RE = /^[a-z][a-z0-9-]{1,40}\/[a-z][a-z0-9-]{0,39}$/;
 

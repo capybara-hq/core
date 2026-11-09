@@ -4611,7 +4611,11 @@
       "filePreview": "File previews",
       "agentSection": "Agent page sections",
       "orgSettingsSection": "Org settings sections",
-      "platformPage": "Platform pages"
+      "platformPage": "Platform pages",
+      "shellBrand": "Sidebar brand",
+      "shellOverlay": "Full-screen overlays",
+      "conversationEmpty": "New-conversation hero",
+      "composerFrame": "Composer frame"
     }
   },
   "filePreviewers": {

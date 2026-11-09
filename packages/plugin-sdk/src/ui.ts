@@ -41,7 +41,7 @@ export interface UiOpen {
 }
 
 /** 界面贡献的种类：`view` = 渲染 schema（由我们的组件画）；`embed` = 插件自己的页面放进 iframe。 */
-export type UiKind = "view" | "embed";
+export type UiKind = "view" | "embed" | "component";
 
 /**
  * 插件清单 `ui` 里的一项界面贡献。`id` 必须同时出现在 `permissions.ui.views`（kind view）

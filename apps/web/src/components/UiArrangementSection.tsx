@@ -35,6 +35,10 @@ const SLOT_NAME: Record<UiSlotId, string> = {
   "agent.detail.section": "agentSection",
   "org.settings.section": "orgSettingsSection",
   "platform.page": "platformPage",
+  "shell.brand": "shellBrand",
+  "shell.overlay": "shellOverlay",
+  "conversation.empty": "conversationEmpty",
+  "conversation.composer.frame": "composerFrame",
 };
 
 type Item = UiArrangementSlot["items"][number];

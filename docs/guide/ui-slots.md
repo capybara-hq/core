@@ -7,14 +7,18 @@ of UI it accepts, the lowest role that sees it and the arguments it passes to th
 
 | Slot | Scope | Accepts | Min role | Args | Density |
 |---|---|---|---|---|---|
-| `conversation.panel` | conversation | `view`, `embed` | guest | `conversationId`, `item` | regular |
-| `conversation.properties.section` | conversation | `view`, `embed` | guest | `conversationId` | dense |
-| `conversation.tool-result.card` | conversation | `view`, `embed` | guest | `conversationId`, `card` | regular |
-| `org.page` | org | `view`, `embed` | member | none | regular |
+| `conversation.panel` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `item` | regular |
+| `conversation.properties.section` | conversation | `view`, `embed`, `component` | guest | `conversationId` | dense |
+| `conversation.tool-result.card` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `card` | regular |
+| `org.page` | org | `view`, `embed`, `component` | member | none | regular |
 | `file.preview` | file | `embed` | guest | `conversationId`, `fileId` | regular |
-| `agent.detail.section` | agent | `view`, `embed` | guest | `agentId` | regular |
-| `org.settings.section` | org | `view`, `embed` | admin | none | regular |
-| `platform.page` | platform | `view`, `embed` | superAdmin | none | regular |
+| `agent.detail.section` | agent | `view`, `embed`, `component` | guest | `agentId` | regular |
+| `org.settings.section` | org | `view`, `embed`, `component` | admin | none | regular |
+| `platform.page` | platform | `view`, `embed`, `component` | superAdmin | none | regular |
+| `shell.brand` | org | `component` | guest | none | regular |
+| `shell.overlay` | org | `component` | guest | none | regular |
+| `conversation.empty` | org | `component` | guest | none | regular |
+| `conversation.composer.frame` | org | `component` | guest | none | regular |
 
 ## `conversation.panel`
 
@@ -22,7 +26,7 @@ A panel beside the conversation, opened from the right area.
 
 - Version: 1
 - Scope: conversation
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: guest
 - Args: `conversationId`, `item`
 - Density: regular
@@ -35,7 +39,7 @@ A section in the conversation properties list.
 
 - Version: 1
 - Scope: conversation
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: guest
 - Args: `conversationId`
 - Density: dense
@@ -48,7 +52,7 @@ A card a tool result opens in the conversation.
 
 - Version: 1
 - Scope: conversation
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: guest
 - Args: `conversationId`, `card`
 - Density: regular
@@ -61,7 +65,7 @@ A full page in the organization navigation.
 
 - Version: 1
 - Scope: org
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: member
 - Args: none
 - Density: regular
@@ -87,7 +91,7 @@ A section on the detail page of an agent.
 
 - Version: 1
 - Scope: agent
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: guest
 - Args: `agentId`
 - Density: regular
@@ -100,7 +104,7 @@ A section on the organization settings page.
 
 - Version: 1
 - Scope: org
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: admin
 - Args: none
 - Density: regular
@@ -113,9 +117,61 @@ A full page in the platform administration.
 
 - Version: 1
 - Scope: platform
-- Accepts: `view`, `embed`
+- Accepts: `view`, `embed`, `component`
 - Minimum role: superAdmin
 - Args: none
 - Density: regular
 - Anchors: none
 - Owner: `apps/web/src/app/(app)/admin/p/[plugin]/[id]/view.tsx`
+
+## `shell.brand`
+
+The brand row of the sidebar (the mark of the collapsed rail).
+
+- Version: 1
+- Scope: org
+- Accepts: `component`
+- Minimum role: guest
+- Args: none
+- Density: regular
+- Anchors: none
+- Owner: `apps/web/src/components/shell/AppFrame.tsx`
+
+## `shell.overlay`
+
+A full-viewport layer over the workspace shell.
+
+- Version: 1
+- Scope: org
+- Accepts: `component`
+- Minimum role: guest
+- Args: none
+- Density: regular
+- Anchors: none
+- Owner: `apps/web/src/components/shell/AppFrame.tsx`
+
+## `conversation.empty`
+
+The hero of the new-conversation page.
+
+- Version: 1
+- Scope: org
+- Accepts: `component`
+- Minimum role: guest
+- Args: none
+- Density: regular
+- Anchors: none
+- Owner: `apps/web/src/components/conversation/NewConversation.tsx`
+
+## `conversation.composer.frame`
+
+The frame around the composer, on the new-conversation and conversation pages.
+
+- Version: 1
+- Scope: org
+- Accepts: `component`
+- Minimum role: guest
+- Args: none
+- Density: regular
+- Anchors: none
+- Owner: `apps/web/src/components/conversation/ComposerBar.tsx`

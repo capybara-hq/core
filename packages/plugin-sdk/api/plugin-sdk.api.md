@@ -3061,6 +3061,9 @@ export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;
 export const UI_ARRANGEABLE_SLOTS: readonly UiSlotId[];
 
 // @public
+export const UI_COMPONENT_SLOTS: readonly UiSlotId[];
+
+// @public
 export const UI_CONTRIBUTION_KEY_RE: RegExp;
 
 // @public
@@ -3076,7 +3079,10 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properties.section", "conversation.tool-result.card", "org.page", "file.preview", "agent.detail.section", "org.settings.section", "platform.page"];
+export const UI_SINGLE_SLOTS: readonly UiSlotId[];
+
+// @public
+export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properties.section", "conversation.tool-result.card", "org.page", "file.preview", "agent.detail.section", "org.settings.section", "platform.page", "shell.brand", "shell.overlay", "conversation.empty", "conversation.composer.frame"];
 
 // @public
 export const UI_SLOTS: readonly UiSlotSpec[];
@@ -3189,7 +3195,7 @@ export type UiDropReason = "unknown-slot" | "unsupported-version";
 export type UiIcon = (typeof UI_ICONS)[number];
 
 // @public
-export type UiKind = "view" | "embed";
+export type UiKind = "view" | "embed" | "component";
 
 // @public
 export interface UiOpen {
@@ -3265,7 +3271,11 @@ export interface UiSlotSpec {
     accepts: readonly UiKind[];
     anchors?: readonly string[];
     args: readonly string[];
-    cardinality: "list";
+    builtin?: {
+        en: string;
+        zh: string;
+    };
+    cardinality: "list" | "single";
     density: "dense" | "regular";
     description: {
         en: string;
@@ -3278,6 +3288,7 @@ export interface UiSlotSpec {
     };
     minRole: UiSlotRole;
     owner: string;
+    replaceable?: true;
     scope: UiSlotScope;
     version: number;
 }
