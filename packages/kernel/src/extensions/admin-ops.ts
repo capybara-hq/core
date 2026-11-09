@@ -209,6 +209,19 @@ export class ExtensionAdminOps {
   }> {
     const db = this.db;
     await this.authorize(actor, opts.owner);
+    // The source item's row before the install lock (the global lock order: the item, then the
+    // install lock; ruling P3-50): the catalog source and install rows written below check it by
+    // foreign key (FOR KEY SHARE), and an org deletion or an item removal holds it FOR UPDATE
+    // while it waits for the install lock (CatalogService.removeIn). Taken after the install lock
+    // instead, the two deadlock (40P01).
+    if (opts.catalogItemId !== undefined) {
+      await db
+        .selectFrom("catalog_items")
+        .select("id")
+        .where("id", "=", opts.catalogItemId)
+        .forKeyShare()
+        .execute();
+    }
     const row = await this.lockRow(name);
     // 不经目录重装时保留原来的来源条目（不清空，C22）
     const catalogItemId = opts.catalogItemId ?? row?.catalog_item_id ?? null;

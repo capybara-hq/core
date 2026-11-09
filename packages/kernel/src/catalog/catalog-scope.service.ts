@@ -509,6 +509,10 @@ export class CatalogScopeService {
       if (installedHere && !(await this.confirmed(itemId))) {
         await this.takeOut(itemId, name, actor, opts);
       }
+      // Removed meanwhile: whichever step failed (the removal's cleanup job may have taken the
+      // extension out under this confirmation, so a step answers extension.not_found), the answer
+      // is the removal
+      if (await this.removed(itemId)) throw itemRemovedError(name);
       throw e;
     }
     return version;
@@ -522,6 +526,16 @@ export class CatalogScopeService {
       .where("id", "=", itemId)
       .executeTakeFirst();
     return row !== undefined && row.deleted_at === null && !row.awaiting_confirmation;
+  }
+
+  /** The item is gone or soft-deleted. */
+  private async removed(itemId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select("deleted_at")
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    return row === undefined || row.deleted_at !== null;
   }
 
   /** Clears the pending state of a version an earlier confirmation applied already. */

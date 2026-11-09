@@ -3,6 +3,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
+import { PluginInstallLock } from "../../src/extensions/locks.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -490,6 +493,66 @@ describe("org deletion and what the org owns", { timeout: 180_000 }, () => {
       expect(errorOf(c)).toEqual([409, "catalog.item_removed"]);
       expect((await itemRow(itemId)).deleted_at).not.toBeNull();
       await cleanedUp("del-race-own");
+    });
+
+    it("a deletion waiting on the confirmation's install lock deadlocks neither", async () => {
+      const { orgX, itemId, digest } = await pendingIn("del-race-lock");
+      // The confirmation's install holds the per-name install lock; the org deletion starts then
+      // and is let block on that transaction before the install writes on (its catalog source
+      // row checks the item row the deletion locks)
+      const lock = env.k.app.get(PluginInstallLock);
+      const kdb = env.k.app.get(KernelDb);
+      const original = lock.lock.bind(lock);
+      let deletion: Promise<{ statusCode: number; body: string }> | undefined;
+      vi.spyOn(lock, "lock").mockImplementation(async (name) => {
+        await original(name);
+        if (deletion !== undefined || name !== "del-race-lock") return;
+        // the install's transaction: kdb.db is its connection here
+        const holder = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(kdb.db))
+          .rows[0]?.pid;
+        deletion = runOutsideTransaction(() => deleteOrg(orgX));
+        await waitFor(
+          async () => {
+            const { rows } = await sql<{ n: number }>`
+              SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE ${holder}::int = ANY (pg_blocking_pids(pid))`.execute(env.db);
+            return (rows[0]?.n ?? 0) > 0;
+          },
+          10_000,
+          "the deletion blocked by the install",
+        );
+      });
+      const c = await confirmUpload(itemId, digest);
+      expect(deletion).toBeDefined();
+      const d = await (deletion as Promise<{ statusCode: number; body: string }>);
+      // no deadlock (40P01 -> 500) on either side
+      expect(d.statusCode, d.body).toBe(204);
+      expect(errorOf(c)).toEqual([409, "catalog.item_removed"]);
+      await cleanedUp("del-race-lock");
+    });
+
+    it("an extension taken out under the confirmation still answers item_removed", async () => {
+      const { orgX, itemId, digest } = await pendingIn("del-race-gone");
+      // The deletion and its cleanup job (which uninstalls the extension) both land between the
+      // confirmation's last pending check and its approval
+      const admin = env.k.app.get(ExtensionAdmin);
+      const original = admin.approve.bind(admin);
+      const spy = vi.spyOn(admin, "approve").mockImplementationOnce(async (...args) => {
+        await runOutsideTransaction(async () => {
+          expect((await deleteOrg(orgX)).statusCode).toBe(204);
+          await waitFor(
+            async () => (await installRow("del-race-gone")) === undefined,
+            30_000,
+            "the cleanup job took the extension out",
+          );
+        });
+        return original(...args);
+      });
+      const c = await confirmUpload(itemId, digest);
+      expect(spy).toHaveBeenCalled();
+      expect(errorOf(c)).toEqual([409, "catalog.item_removed"]);
+      expect((await itemRow(itemId)).deleted_at).not.toBeNull();
+      await cleanedUp("del-race-gone");
     });
 
     it("a confirmation and a deletion sent together leave nothing installed", async () => {
