@@ -6,3 +6,5 @@
 from assistive tech and leaves interactive ones (marked `data-cap-interactive`, or focusable) and
 their ancestors exposed, keeping up with the plugins' later DOM changes, so an interactive element
 never sits under `aria-hidden`.
+Text directly under an exposed container (beside an interactive element) is carried into hidden
+spans, so no decoration text is read out either.
