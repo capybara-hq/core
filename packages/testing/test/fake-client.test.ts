@@ -85,14 +85,7 @@ describe("client fixtures", () => {
     for (const name of ["fake-client", "fake-client-broken"] as const) {
       const dir = fakeExtensionDir(name);
       for (const c of pluginChecks({ plugins: [dir], root: dir })) {
-        // Tolerated known toolchain gaps (not fixture defects): the dependency boundary does not
-        // yet know @capybara-hq/plugin-client, and client-css-selector reads the part name
-        // "button.primary" inside the attribute value as a class.
-        const findings = (await c.run()).filter(
-          (f) =>
-            !(f.rule === "plugin-imports-kernel" && f.message.includes("plugin-client")) &&
-            !(f.rule === "client-css-selector" && f.message.includes("button.primary")),
-        );
+        const findings = await c.run();
         expect(findings, `${name}: ${c.name}`).toEqual([]);
       }
     }

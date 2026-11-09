@@ -13,6 +13,8 @@ export type { Finding };
 
 const SCOPE = "@capybara-hq/";
 const SDK = "@capybara-hq/plugin-sdk";
+/** The browser-side SDK of a plugin's client code (`src/client.tsx`): a plugin depends on it. */
+const PLUGIN_CLIENT = "@capybara-hq/plugin-client";
 const TESTING = "@capybara-hq/testing";
 /** The scripted model provider that stays in core: plugin tests load it to drive agent runs. */
 const MODEL_FAKE = "@capybara-hq/plugin-model-fake";
@@ -42,11 +44,12 @@ const PLUGIN_RULES: Rules = {
   pkgRule: "plugin-imports-kernel",
   outsideRule: "plugin-imports-outside",
   pkgMessage: (what) =>
-    `a plugin may depend only on ${SDK} and third-party npm packages, not on ${what}; what it needs comes through ctx (extend the plugin-sdk contract if it is missing)`,
+    `a plugin may depend only on ${SDK}, ${PLUGIN_CLIENT} and third-party npm packages, not on ${what}; what it needs comes through ctx (extend the plugin-sdk contract if it is missing)`,
   outsideMessage: (what) =>
     `${what} points outside the plugin directory, which bypasses the package check and depends on kernel sources directly; a plugin may reference only files inside its own directory`,
   allowed: (pkg, where) =>
     pkg === SDK ||
+    pkg === PLUGIN_CLIENT ||
     ((pkg === TESTING || pkg === MODEL_FAKE || pkg === PLUGIN_TOOLS) &&
       (where === "devDependencies" || where === "test")),
 };
