@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   DesignProvider,
+  IconButton,
   Input,
   Sidebar,
   type SidebarProps,
@@ -175,5 +176,21 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       "button",
     );
     expect(parts()).toEqual(new Set(["button", "button.primary", "input", "card"]));
+  });
+
+  it("an IconButton is a button too (the composer's send and stop among them)", () => {
+    render(
+      <DesignProvider locale="zh">
+        <IconButton label="send" icon={null} part="send" />
+        <IconButton label="go" icon={null} variant="primary" />
+      </DesignProvider>,
+    );
+    const send = screen.getByRole("button", { name: "send" });
+    expect(send.getAttribute("data-cap-part")).toBe("button");
+    // its own data-part stays (the design's styling and the app's tests read it)
+    expect(send.getAttribute("data-part")).toBe("send");
+    expect(screen.getByRole("button", { name: "go" }).getAttribute("data-cap-part")).toBe(
+      "button button.primary",
+    );
   });
 });

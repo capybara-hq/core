@@ -120,6 +120,7 @@ export function IconButton({
       type={type}
       className={rest.className ? `cb-btn cb-icon-btn ${rest.className}` : "cb-btn cb-icon-btn"}
       data-part={part}
+      data-cap-part={variant === "primary" ? "button button.primary" : "button"}
       data-variant={variant}
       data-density={step}
       aria-label={label}
