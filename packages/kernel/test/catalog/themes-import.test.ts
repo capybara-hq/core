@@ -35,7 +35,7 @@ const LOGO =
 
 const theme = (over: Record<string, unknown> = {}, dark: Record<string, string> = {}) =>
   JSON.stringify({
-    name: { en: "Night City", zh: "夜之城" },
+    name: { en: "Neon Grid", zh: "霓虹网格" },
     description: { en: "Neon on black.", zh: "黑底霓虹。" },
     schemes: {
       dark: {
@@ -52,7 +52,7 @@ const theme = (over: Record<string, unknown> = {}, dark: Record<string, string> 
     fonts: [
       { family: "Fixture", file: "./fonts/Fixture-Regular.woff2", weight: 400, role: "prose" },
     ],
-    logo: { mark: "./logo.svg", wordmark: "NIGHT CITY" },
+    logo: { mark: "./logo.svg", wordmark: "NEON GRID" },
     ...over,
   });
 
@@ -70,7 +70,7 @@ const themePlugin = (
     manifest: { name, ...(o.version !== undefined && { version: o.version }) },
     files: {
       ...(o.noTheme !== true && {
-        "themes/night-city.json": o.themeJson ?? theme(),
+        "themes/neon-grid.json": o.themeJson ?? theme(),
         "fonts/Fixture-Regular.woff2": o.font ?? FONT,
         "logo.svg": LOGO,
       }),
@@ -106,14 +106,14 @@ describe("readPluginFiles reads themes", () => {
 
   it("a themes-only plugin carries its parsed theme and sanitized assets", () => {
     const c = read({
-      "themes/night-city.json": theme(),
+      "themes/neon-grid.json": theme(),
       "fonts/Fixture-Regular.woff2": FONT,
       "logo.svg": LOGO,
     });
     expect(c.themes).toHaveLength(1);
     const t = c.themes[0];
-    expect(t?.id).toBe("night-city");
-    expect(t?.path).toBe("themes/night-city.json");
+    expect(t?.id).toBe("neon-grid");
+    expect(t?.path).toBe("themes/neon-grid.json");
     expect(t?.theme.schemes.dark?.color?.accent).toBe("#FCE300");
     expect([...(t?.assets.keys() ?? [])].sort()).toEqual([
       "fonts/Fixture-Regular.woff2",
@@ -132,30 +132,30 @@ describe("readPluginFiles reads themes", () => {
 
   it("an invalid theme is theme.invalid naming the theme", () => {
     const e = failure({
-      "themes/night-city.json": theme({}, { "no-such-token": "#000000" }),
+      "themes/neon-grid.json": theme({}, { "no-such-token": "#000000" }),
       "fonts/Fixture-Regular.woff2": FONT,
       "logo.svg": LOGO,
     });
     expect(e.code).toBe("theme.invalid");
     expect(e.themes).toEqual([
-      { theme: "night-city", problems: [expect.stringContaining("no-such-token")] },
+      { theme: "neon-grid", problems: [expect.stringContaining("no-such-token")] },
     ]);
   });
 
   it("a missing asset is theme.invalid", () => {
-    const e = failure({ "themes/night-city.json": theme(), "logo.svg": LOGO });
+    const e = failure({ "themes/neon-grid.json": theme(), "logo.svg": LOGO });
     expect(e.code).toBe("theme.invalid");
     expect(e.themes?.[0]?.problems.join("\n")).toContain("Fixture-Regular.woff2");
   });
 
   it("an unreadable theme is theme.unreadable listing the failing pairs", () => {
     const e = failure({
-      "themes/night-city.json": theme({}, { bg: "#8E8E89" }),
+      "themes/neon-grid.json": theme({}, { bg: "#8E8E89" }),
       "fonts/Fixture-Regular.woff2": FONT,
       "logo.svg": LOGO,
     });
     expect(e.code).toBe("theme.unreadable");
-    expect(e.themes?.[0]?.theme).toBe("night-city");
+    expect(e.themes?.[0]?.theme).toBe("neon-grid");
     expect(e.themes?.[0]?.problems.some((p) => p.includes("muted on bg"))).toBe(true);
   });
 
@@ -201,7 +201,7 @@ describe("themes as platform components", () => {
       payload: Buffer.from(bytes),
     });
 
-  const themeRow = (name = "night-city") =>
+  const themeRow = (name = "neon-grid") =>
     env.db
       .selectFrom("platform_themes")
       .selectAll()
@@ -243,8 +243,8 @@ describe("themes as platform components", () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().review.themes).toEqual([
       {
-        id: "night-city",
-        name: { en: "Night City", zh: "夜之城" },
+        id: "neon-grid",
+        name: { en: "Neon Grid", zh: "霓虹网格" },
         schemes: ["dark"],
         fonts: 1,
         logo: true,
@@ -265,7 +265,7 @@ describe("themes as platform components", () => {
     const v = await versionRow(row.id, 1);
     expect(v.catalog_version).toBe("1.0.0");
     expect(v.object_prefix).toBe(`platform/themes/${row.id}/1-1.0.0/`);
-    expect(v.definition).toMatchObject({ id: "night-city", logo: { wordmark: "NIGHT CITY" } });
+    expect(v.definition).toMatchObject({ id: "neon-grid", logo: { wordmark: "NEON GRID" } });
     expect(await stored(`${v.object_prefix}fonts/Fixture-Regular.woff2`)).toEqual(FONT);
     const logo = new TextDecoder().decode(
       (await stored(`${v.object_prefix}logo.svg`)) ?? undefined,
@@ -325,7 +325,7 @@ describe("themes as platform components", () => {
       details: { theme: string; issues: string[] }[];
     };
     expect(err.code).toBe("theme.unreadable");
-    expect(err.details[0]?.theme).toBe("night-city");
+    expect(err.details[0]?.theme).toBe("neon-grid");
     expect(err.details[0]?.issues.some((i) => i.includes("muted on bg"))).toBe(true);
     expect(await env.db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
     expect(await env.db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
@@ -339,7 +339,7 @@ describe("themes as platform components", () => {
     const err = r.json().error as { code: string; details: { theme: string; errors: string[] }[] };
     expect(err.code).toBe("theme.invalid");
     expect(err.details).toEqual([
-      { theme: "night-city", errors: [expect.stringContaining("no-such-token")] },
+      { theme: "neon-grid", errors: [expect.stringContaining("no-such-token")] },
     ]);
   });
 
@@ -359,7 +359,7 @@ describe("themes as platform components", () => {
       expect.objectContaining({
         kind: "theme",
         id: first.id,
-        name: "night-city",
+        name: "neon-grid",
         change: "upgrade",
         from: "1.0.0",
         to: "2.0.0",
@@ -479,7 +479,7 @@ describe("themes as platform components", () => {
     await rewriteCatalogFile(
       itemId,
       "2.0.0",
-      "themes/night-city.json",
+      "themes/neon-grid.json",
       theme({}, { accent: "#FFD000", bg: "#8E8E89" }),
     );
     await updateTo(itemId, "2.0.0");
@@ -489,7 +489,7 @@ describe("themes as platform components", () => {
     await rewriteCatalogFile(
       itemId,
       "3.0.0",
-      "themes/night-city.json",
+      "themes/neon-grid.json",
       theme({}, { "renamed-away": "#000000" }),
     );
     const r = await env.root({

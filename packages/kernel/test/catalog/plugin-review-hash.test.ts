@@ -92,8 +92,8 @@ describe("pluginReviewHash", () => {
     expect(base).toBe("3f63a443424588630ce9b3c175adda79");
     expect(hash({ themes: [] })).toBe(base);
     const night = {
-      id: "night-city",
-      name: { en: "Night City", zh: "夜之城" },
+      id: "neon-grid",
+      name: { en: "Neon Grid", zh: "霓虹网格" },
       schemes: ["dark" as const],
       fonts: 1,
       logo: true,

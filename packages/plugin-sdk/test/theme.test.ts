@@ -15,8 +15,8 @@ import {
 } from "../src/index.js";
 
 /** The spec §4 example. */
-const nightCity = (): Record<string, unknown> => ({
-  name: { en: "Night City", zh: "夜之城" },
+const neonGrid = (): Record<string, unknown> => ({
+  name: { en: "Neon Grid", zh: "霓虹网格" },
   description: { en: "Neon yellow on deep blue-black." },
   schemes: {
     dark: {
@@ -26,7 +26,7 @@ const nightCity = (): Record<string, unknown> => ({
     },
   },
   fonts: [{ family: "MiSans", file: "./fonts/MiSans-Regular.woff2", weight: 400, role: "prose" }],
-  logo: { mark: "./logo.svg", wordmark: "NIGHT CITY" },
+  logo: { mark: "./logo.svg", wordmark: "NEON GRID" },
 });
 
 /** A theme overriding one dark token group. */
@@ -35,7 +35,7 @@ const dark = (over: Record<string, unknown>): Record<string, unknown> => ({
   schemes: { dark: over },
 });
 
-const parsed = (json: unknown, id = "night-city"): ParsedTheme => {
+const parsed = (json: unknown, id = "neon-grid"): ParsedTheme => {
   const r = parseThemeFile(id, json);
   if ("errors" in r) throw new Error(r.errors.join("\n"));
   return r;
@@ -48,8 +48,8 @@ const errorsOf = (json: unknown, id = "t"): string[] => {
 
 describe("parseThemeFile", () => {
   it("parses the spec example: dark only is single-scheme", () => {
-    const t = parsed(nightCity());
-    expect(t.id).toBe("night-city");
+    const t = parsed(neonGrid());
+    expect(t.id).toBe("neon-grid");
     expect(t.singleScheme).toBe("dark");
     // the parsed theme holds the file's own values only; the built-ins are merged at use time
     expect(t).not.toHaveProperty("merged");
@@ -66,7 +66,7 @@ describe("parseThemeFile", () => {
     expect(m?.shadow["shadow-1"]).toBe("0 0 12px rgba(0,240,255,0.25)");
     expect(t.schemes.dark?.shadow?.["shadow-1"]).toBe("0 0 12px rgba(0,240,255,0.25)");
     expect(t.fonts?.[0]?.family).toBe("MiSans");
-    expect(t.logo?.wordmark).toBe("NIGHT CITY");
+    expect(t.logo?.wordmark).toBe("NEON GRID");
   });
 
   it("both schemes: not single-scheme", () => {
@@ -76,15 +76,15 @@ describe("parseThemeFile", () => {
   });
 
   it("accepts the file text, rejects invalid JSON and an oversized file", () => {
-    expect(parsed(JSON.stringify(nightCity())).singleScheme).toBe("dark");
+    expect(parsed(JSON.stringify(neonGrid())).singleScheme).toBe("dark");
     expect(errorsOf("{")[0]).toMatch(/not valid JSON/);
-    const big = JSON.stringify({ ...nightCity(), pad: "x".repeat(THEME_LIMITS.fileBytes) });
+    const big = JSON.stringify({ ...neonGrid(), pad: "x".repeat(THEME_LIMITS.fileBytes) });
     expect(errorsOf(big)[0]).toMatch(/larger than 65536 bytes/);
     expect(errorsOf([])[0]).toMatch(/must be a JSON object/);
   });
 
   it("rejects an invalid id", () => {
-    expect(errorsOf(nightCity(), "Night City")[0]).toMatch(/theme id/);
+    expect(errorsOf(neonGrid(), "Neon Grid")[0]).toMatch(/theme id/);
   });
 
   it("an avatar color is not overridable, naming the token", () => {
@@ -146,7 +146,7 @@ describe("parseThemeFile", () => {
 
   it("asset paths: every segment of letters, digits, '.', '_' or '-'", () => {
     const withFile = (file: string) => ({
-      ...nightCity(),
+      ...neonGrid(),
       fonts: [{ family: "A", file, weight: 400, role: "prose" }],
     });
     for (const file of [
@@ -171,10 +171,10 @@ describe("parseThemeFile", () => {
       "./logo%2e.png",
       "./'.svg",
     ]) {
-      expect(errorsOf({ ...nightCity(), logo: { mark } }).join("\n"), mark).toMatch(
+      expect(errorsOf({ ...neonGrid(), logo: { mark } }).join("\n"), mark).toMatch(
         /^logo\.mark: /m,
       );
-      expect(errorsOf({ ...nightCity(), logo: { favicon: mark } }).join("\n"), mark).toMatch(
+      expect(errorsOf({ ...neonGrid(), logo: { favicon: mark } }).join("\n"), mark).toMatch(
         /^logo\.favicon: /m,
       );
     }
@@ -182,19 +182,19 @@ describe("parseThemeFile", () => {
 
   it("free text rejects control, format, separator and lone surrogate characters", () => {
     for (const bad of ["A\u202EB", "A\u0000B", "A\u2028B", "A\u2029B", "A\uD800B"]) {
-      expect(errorsOf({ ...nightCity(), name: { en: bad, zh: "T" } }).join("\n")).toMatch(
+      expect(errorsOf({ ...neonGrid(), name: { en: bad, zh: "T" } }).join("\n")).toMatch(
         /^name\.en: /m,
       );
-      expect(errorsOf({ ...nightCity(), name: { en: "T", zh: bad } }).join("\n")).toMatch(
+      expect(errorsOf({ ...neonGrid(), name: { en: "T", zh: bad } }).join("\n")).toMatch(
         /^name\.zh: /m,
       );
-      expect(errorsOf({ ...nightCity(), description: { en: bad } }).join("\n")).toMatch(
+      expect(errorsOf({ ...neonGrid(), description: { en: bad } }).join("\n")).toMatch(
         /^description\.en: /m,
       );
-      expect(errorsOf({ ...nightCity(), description: { en: "x", zh: bad } }).join("\n")).toMatch(
+      expect(errorsOf({ ...neonGrid(), description: { en: "x", zh: bad } }).join("\n")).toMatch(
         /^description\.zh: /m,
       );
-      expect(errorsOf({ ...nightCity(), logo: { wordmark: bad } }).join("\n")).toMatch(
+      expect(errorsOf({ ...neonGrid(), logo: { wordmark: bad } }).join("\n")).toMatch(
         /^logo\.wordmark: /m,
       );
     }
@@ -202,12 +202,12 @@ describe("parseThemeFile", () => {
 
   it("the file size limit holds for an object input too", () => {
     const big = {
-      ...nightCity(),
+      ...neonGrid(),
       description: { en: "x".repeat(1000) },
       pad: "y".repeat(THEME_LIMITS.fileBytes),
     };
     expect(errorsOf(big)[0]).toMatch(/larger than 65536 bytes/);
-    const cyclic: Record<string, unknown> = nightCity();
+    const cyclic: Record<string, unknown> = neonGrid();
     cyclic.self = cyclic;
     expect(errorsOf(cyclic)[0]).toMatch(/must be a JSON object/);
   });
@@ -268,7 +268,7 @@ describe("parseThemeFile", () => {
 
   it("font family grammar", () => {
     const font = (family: string) => ({
-      ...nightCity(),
+      ...neonGrid(),
       fonts: [{ family, file: "./fonts/a.woff2", weight: 400, role: "mono" }],
     });
     expect(errorsOf(font("x;}*{")).join("\n")).toMatch(/^fonts\.0\.family: /m);
@@ -279,7 +279,7 @@ describe("parseThemeFile", () => {
 
   it("font file, weight, style, role and count", () => {
     const withFont = (f: Record<string, unknown>) => ({
-      ...nightCity(),
+      ...neonGrid(),
       fonts: [{ family: "A", file: "./fonts/a.woff2", weight: 400, role: "prose", ...f }],
     });
     expect(errorsOf(withFont({ file: "./fonts/a.ttf" })).join("\n")).toMatch(/fonts\.0\.file/);
@@ -295,21 +295,21 @@ describe("parseThemeFile", () => {
       weight: 100 * (i + 1),
       role: "prose",
     }));
-    expect(errorsOf({ ...nightCity(), fonts }).join("\n")).toMatch(/^fonts: /m);
-    expect(errorsOf({ ...nightCity(), fonts: fonts.slice(0, 8) })).toEqual([]);
+    expect(errorsOf({ ...neonGrid(), fonts }).join("\n")).toMatch(/^fonts: /m);
+    expect(errorsOf({ ...neonGrid(), fonts: fonts.slice(0, 8) })).toEqual([]);
     const dup = [fonts[0], { ...fonts[0], file: "./fonts/b.woff2" }];
-    expect(errorsOf({ ...nightCity(), fonts: dup }).join("\n")).toMatch(/duplicate font/);
+    expect(errorsOf({ ...neonGrid(), fonts: dup }).join("\n")).toMatch(/duplicate font/);
   });
 
   it("logo paths and wordmark", () => {
-    const logo = (l: Record<string, unknown>) => ({ ...nightCity(), logo: l });
+    const logo = (l: Record<string, unknown>) => ({ ...neonGrid(), logo: l });
     expect(errorsOf(logo({ mark: "./logo.gif" })).join("\n")).toMatch(/logo\.mark/);
     expect(errorsOf(logo({ favicon: "../f.png" })).join("\n")).toMatch(/logo\.favicon/);
     expect(errorsOf(logo({ wordmark: "W".repeat(25) })).join("\n")).toMatch(/logo\.wordmark/);
     expect(errorsOf(logo({ wordmark: "A‮B" })).join("\n")).toMatch(/logo\.wordmark/);
     expect(errorsOf(logo({ wordmark: "A\nB" })).join("\n")).toMatch(/logo\.wordmark/);
     expect(errorsOf(logo({ wordmark: " " })).join("\n")).toMatch(/logo\.wordmark/);
-    expect(errorsOf(logo({ wordmark: "夜之城".repeat(8), favicon: "./f.png" }))).toEqual([]);
+    expect(errorsOf(logo({ wordmark: "霓虹网格".repeat(6), favicon: "./f.png" }))).toEqual([]);
     expect(errorsOf(logo({ extra: 1 })).join("\n")).toMatch(/extra/);
   });
 
@@ -337,17 +337,17 @@ describe("parseThemeFile", () => {
   });
 
   it("shape: name, description, unknown keys", () => {
-    expect(errorsOf({ ...nightCity(), name: { en: "X" } }).join("\n")).toMatch(/^name/m);
-    expect(errorsOf({ ...nightCity(), description: { zh: "x" } }).join("\n")).toMatch(
+    expect(errorsOf({ ...neonGrid(), name: { en: "X" } }).join("\n")).toMatch(/^name/m);
+    expect(errorsOf({ ...neonGrid(), description: { zh: "x" } }).join("\n")).toMatch(
       /^description/m,
     );
-    expect(errorsOf({ ...nightCity(), extra: 1 }).join("\n")).toMatch(/extra/);
+    expect(errorsOf({ ...neonGrid(), extra: 1 }).join("\n")).toMatch(/extra/);
     expect(errorsOf(dark({ font: {} })).join("\n")).toMatch(/font/);
   });
 
   it("themeIdOf takes the file's base name", () => {
-    expect(themeIdOf("themes/night-city.json")).toBe("night-city");
-    expect(themeIdOf("./themes/night-city.json")).toBe("night-city");
+    expect(themeIdOf("themes/neon-grid.json")).toBe("neon-grid");
+    expect(themeIdOf("./themes/neon-grid.json")).toBe("neon-grid");
   });
 
   it("limits", () => {
@@ -371,9 +371,9 @@ describe("theme.v1 JSON Schema", () => {
   );
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
   it.each([
-    ["the spec example", nightCity()],
-    ["unknown key", { ...nightCity(), extra: 1 }],
-    ["missing name", { ...nightCity(), name: undefined }],
+    ["the spec example", neonGrid()],
+    ["unknown key", { ...neonGrid(), extra: 1 }],
+    ["missing name", { ...neonGrid(), name: undefined }],
     ["radius out of range", dark({ radius: { md: 17 } })],
   ])("agrees with zod: %s", (_label, json) => {
     const clean = JSON.parse(JSON.stringify(json));

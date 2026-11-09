@@ -52,19 +52,19 @@ describe("checkThemes", () => {
     const rules = () => checkThemes([dir]).map((x) => x.rule);
 
     it("a file that is not JSON is theme-invalid", async () => {
-      await writeFile(join(dir, "themes/night-city.json"), "{ nope");
+      await writeFile(join(dir, "themes/neon-grid.json"), "{ nope");
       expect(rules()).toEqual(["theme-invalid"]);
     });
 
     it("a file over the size limit is theme-invalid", async () => {
-      await writeFile(join(dir, "themes/night-city.json"), theme({ pad: "x".repeat(70_000) }));
+      await writeFile(join(dir, "themes/neon-grid.json"), theme({ pad: "x".repeat(70_000) }));
       expect(rules()).toEqual(["theme-invalid"]);
     });
 
     it("a theme listed by the manifest but missing is theme-invalid", async () => {
       const file = join(dir, ".capybara-plugin/plugin.json");
       const m = JSON.parse(await readFile(file, "utf8"));
-      m.themes = [{ path: "./themes/night-city.json" }, { path: "./themes/gone.json" }];
+      m.themes = [{ path: "./themes/neon-grid.json" }, { path: "./themes/gone.json" }];
       await writeFile(file, JSON.stringify(m));
       const f = checkThemes([dir]);
       expect(f.map((x) => x.rule)).toEqual(["theme-invalid"]);
@@ -79,7 +79,7 @@ describe("checkThemes", () => {
     });
 
     it("assets summed over the plugin's themes may not exceed the plugin limit", async () => {
-      await rm(join(dir, "themes/night-city.json"));
+      await rm(join(dir, "themes/neon-grid.json"));
       await mkdir(join(dir, "fonts"), { recursive: true });
       const font = Buffer.concat([Buffer.from("wOF2"), Buffer.alloc(1_500_000)]);
       for (const id of ["a", "b"]) {
@@ -100,7 +100,7 @@ describe("checkThemes", () => {
     it("an asset shared by two themes counts once", async () => {
       await writeFile(
         join(dir, "themes/second.json"),
-        await readFile(join(dir, "themes/night-city.json")),
+        await readFile(join(dir, "themes/neon-grid.json")),
       );
       expect(rules()).toEqual([]);
     });

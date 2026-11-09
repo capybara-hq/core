@@ -1,5 +1,5 @@
 {
-  "name": { "en": "Night City", "zh": "夜之城" },
+  "name": { "en": "Neon Grid", "zh": "霓虹网格" },
   "schemes": {
     "dark": {
       "color": { "bg": "#05070D", "panel": "#0A0E18", "accent": "#FCE300", "on-accent": "#141200" },
@@ -9,5 +9,5 @@
   "fonts": [
     { "family": "FakeSans", "file": "./fonts/FakeSans.woff2", "weight": 400, "role": "prose" }
   ],
-  "logo": { "mark": "./logo.svg", "wordmark": "NIGHT CITY" }
+  "logo": { "mark": "./logo.svg", "wordmark": "NEON GRID" }
 }

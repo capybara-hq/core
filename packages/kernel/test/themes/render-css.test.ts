@@ -13,16 +13,16 @@ import { renderThemeCss } from "../../src/themes/render-css.js";
  */
 
 const parse = (file: Record<string, unknown>): ParsedTheme => {
-  const r = parseThemeFile("night-city", file);
+  const r = parseThemeFile("neon-grid", file);
   if ("errors" in r) throw new Error(r.errors.join("; "));
   return r;
 };
 
 const DARK = { bg: "#05070D", panel: "#0A0E18", accent: "#FCE300", "on-accent": "#141200" };
 
-const nightCity = () =>
+const neonGrid = () =>
   parse({
-    name: { en: "Night City", zh: "夜之城" },
+    name: { en: "Neon Grid", zh: "霓虹网格" },
     schemes: { dark: { color: DARK, radius: { sm: 2 } } },
     fonts: [
       { family: "MiSans", file: "./fonts/MiSans.woff2", weight: 400, role: "prose" },
@@ -42,7 +42,7 @@ function block(css: string, selector: string): string | undefined {
 
 describe("renderThemeCss", () => {
   it("a single-scheme theme writes the same block under both selectors with color-scheme", () => {
-    const css = renderThemeCss(nightCity(), url);
+    const css = renderThemeCss(neonGrid(), url);
     const dark = block(css, ':root[data-theme="dark"]');
     const light = block(css, ':root[data-theme="light"]');
     expect(dark).toBeDefined();
@@ -73,7 +73,7 @@ describe("renderThemeCss", () => {
   });
 
   it("fonts: @font-face rules from asset URLs and the families first in their role's stack", () => {
-    const css = renderThemeCss(nightCity(), url);
+    const css = renderThemeCss(neonGrid(), url);
     expect(css).toContain(
       '@font-face { font-family: "MiSans"; src: url("/assets/fonts%2FMiSans.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }',
     );
@@ -94,7 +94,7 @@ describe("renderThemeCss", () => {
   });
 
   it("re-validates stored values: tampered values are skipped and reported once", () => {
-    const t = nightCity();
+    const t = neonGrid();
     // A database row changed after parse
     const dark = t.schemes.dark as NonNullable<ParsedTheme["schemes"]["dark"]>;
     (dark.color as Record<string, string>).bg = "#000;}x{";
@@ -149,7 +149,7 @@ describe("renderThemeCss", () => {
     // Client extensions spec §7.2: unlayered CSS beats every layer, so the theme sits in the
     // `theme` layer the design stylesheet declares (design, theme, extensions).
     for (const theme of [
-      nightCity(),
+      neonGrid(),
       parse({ name: { en: "Empty", zh: "空" }, schemes: { dark: {}, light: {} } }),
     ]) {
       const css = renderThemeCss(theme, url);
@@ -166,14 +166,14 @@ describe("renderThemeCss", () => {
       }
       expect(depth).toBe(0);
     }
-    const css = renderThemeCss(nightCity(), url);
+    const css = renderThemeCss(neonGrid(), url);
     expect(css).toContain("@font-face {");
     expect(block(css, ':root[data-theme="dark"]')).toContain("--cb-accent: #FCE300;");
   });
 
   it("reports nothing for a clean theme", () => {
     const reports: string[][] = [];
-    renderThemeCss(nightCity(), url, (s) => reports.push(s));
+    renderThemeCss(neonGrid(), url, (s) => reports.push(s));
     expect(reports).toEqual([]);
   });
 });

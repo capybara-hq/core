@@ -12,7 +12,7 @@ import { signIn } from "./support/sign-in";
  * single-scheme theme (§10).
  *
  * Seeding: the super admin imports the fixture plugin `fake-theme` (`CAPYBARA_E2E_THEME_TGZ`,
- * packed by global-setup; themes `night-city`: dark only, wordmark `NIGHT CITY`; `paper`: light and
+ * packed by global-setup; themes `neon-grid`: dark only, wordmark `NEON GRID`; `paper`: light and
  * dark) with scope `all`, then sets the levels through the settings APIs; each case puts its level
  * back, so the other specs see the built-in theme.
  */
@@ -24,14 +24,14 @@ interface Listed {
   cssUrl: string;
 }
 
-/** Night City's dark `bg` and Paper's dark `accent` (fixture `fake-theme`, its theme files). */
-const NIGHT_CITY_BG = "#05070d";
+/** Neon Grid's dark `bg` and Paper's dark `accent` (fixture `fake-theme`, its theme files). */
+const NEON_GRID_BG = "#05070d";
 const PAPER_DARK_ACCENT = "#e0a070";
-/** Night City's dark accent. */
-const NIGHT_CITY_ACCENT = "#fce300";
+/** Neon Grid's dark accent. */
+const NEON_GRID_ACCENT = "#fce300";
 
 /** Imports `fake-theme` once (scope `all`); returns the `platform_themes` ids by English name. */
-async function themeIds(page: Page): Promise<{ nightCity: Listed; paper: Listed }> {
+async function themeIds(page: Page): Promise<{ neonGrid: Listed; paper: Listed }> {
   const orgId = await currentOrg(page);
   const list = async () => {
     const r = await page.request.get(`/api/v1/orgs/${orgId}/themes`);
@@ -39,7 +39,7 @@ async function themeIds(page: Page): Promise<{ nightCity: Listed; paper: Listed 
     return ((await r.json()) as { themes: Listed[] }).themes;
   };
   const byName = (themes: Listed[], en: string) => themes.find((t) => t.name.en === en);
-  if (byName(await list(), "Night City") === undefined) {
+  if (byName(await list(), "Neon Grid") === undefined) {
     const tgz = process.env.CAPYBARA_E2E_THEME_TGZ;
     expect(tgz, "global-setup writes CAPYBARA_E2E_THEME_TGZ").toBeTruthy();
     const staged = await page.request.post("/api/v1/admin/catalog/import/file", {
@@ -57,17 +57,17 @@ async function themeIds(page: Page): Promise<{ nightCity: Listed; paper: Listed 
     );
     expect(confirmed.status(), await confirmed.text()).toBe(201);
   }
-  let found: { nightCity: Listed; paper: Listed } | null = null;
+  let found: { neonGrid: Listed; paper: Listed } | null = null;
   await expect
     .poll(async () => {
       const themes = await list();
-      const nightCity = byName(themes, "Night City");
+      const neonGrid = byName(themes, "Neon Grid");
       const paper = byName(themes, "Paper");
-      found = nightCity && paper ? { nightCity, paper } : null;
+      found = neonGrid && paper ? { neonGrid, paper } : null;
       return found !== null;
     })
     .toBe(true);
-  return found as unknown as { nightCity: Listed; paper: Listed };
+  return found as unknown as { neonGrid: Listed; paper: Listed };
 }
 
 async function setOrgTheme(page: Page, id: string | null): Promise<void> {
@@ -149,16 +149,16 @@ test.describe("first paint", () => {
     browser,
   }) => {
     await signIn(page);
-    const { nightCity } = await themeIds(page);
-    await setPlatformTheme(page, nightCity.id);
+    const { neonGrid } = await themeIds(page);
+    await setPlatformTheme(page, neonGrid.id);
     const visitor = await anonymousPage(browser);
     try {
       const firstPaint = await recordFirstPaint(visitor);
       const res = await visitor.goto("/login");
       expect(res?.status()).toBe(200);
       const seen = await firstPaint();
-      expect(seen).toMatchObject({ bg: NIGHT_CITY_BG, themeLinkInHead: true });
-      expect(seen.text).toContain("NIGHT CITY");
+      expect(seen).toMatchObject({ bg: NEON_GRID_BG, themeLinkInHead: true });
+      expect(seen.text).toContain("NEON GRID");
       expect(seen.text).not.toContain("CAPYBARA");
       // a single-scheme theme: the PreferenceBar keeps the language, without the scheme toggle
       await expect(visitor.locator('[data-part="preferences"]')).toBeVisible();
@@ -289,7 +289,7 @@ test.describe("appearance pages", () => {
         bg: await rootToken(page, "--cb-bg"),
         accent: await rootToken(page, "--cb-accent"),
       };
-      expect(builtin.bg).not.toBe(NIGHT_CITY_BG);
+      expect(builtin.bg).not.toBe(NEON_GRID_BG);
       expect(builtin.accent).not.toBe(PAPER_DARK_ACCENT);
       // a marker on the window: a reload would drop it
       await page.evaluate(() => {
@@ -304,23 +304,23 @@ test.describe("appearance pages", () => {
         bg: await rootToken(page, "--cb-bg"),
         accent: await rootToken(page, "--cb-accent"),
       });
-      const nightCity = { bg: NIGHT_CITY_BG, accent: NIGHT_CITY_ACCENT };
+      const neonGrid = { bg: NEON_GRID_BG, accent: NEON_GRID_ACCENT };
       // Paper overrides the dark accent only, so the bg stays the built-in one
       const paper = { bg: builtin.bg, accent: PAPER_DARK_ACCENT };
 
       // a theme, then the built-in theme: nothing of the theme stays applied
-      await pick(/夜之城/);
-      await expect.poll(tokens).toEqual(nightCity);
+      await pick(/霓虹网格/);
+      await expect.poll(tokens).toEqual(neonGrid);
       await pick(new RegExp(AP.followPlatform));
       await expect.poll(tokens).toEqual(builtin);
 
       // A → B → A: B leaves no A token behind, and A wins again on the way back
-      await pick(/夜之城/);
-      await expect.poll(tokens).toEqual(nightCity);
+      await pick(/霓虹网格/);
+      await expect.poll(tokens).toEqual(neonGrid);
       await pick(/纸张/);
       await expect.poll(tokens).toEqual(paper);
-      await pick(/夜之城/);
-      await expect.poll(tokens).toEqual(nightCity);
+      await pick(/霓虹网格/);
+      await expect.poll(tokens).toEqual(neonGrid);
 
       expect(await page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept)).toBe(
         true,
@@ -330,7 +330,7 @@ test.describe("appearance pages", () => {
     }
   });
 
-  test("an org admin sets Night City with 允许成员自选 off: the member sees the lock line, 组织设置 › 外观 read only, no scheme toggle", async ({
+  test("an org admin sets Neon Grid with 允许成员自选 off: the member sees the lock line, 组织设置 › 外观 read only, no scheme toggle", async ({
     page,
     browser,
   }) => {
@@ -347,13 +347,13 @@ test.describe("appearance pages", () => {
       await expect(schemeToggle).toBeVisible();
       await page
         .getByRole("radiogroup", { name: AP.org.label })
-        .getByRole("radio", { name: /夜之城/ })
+        .getByRole("radio", { name: /霓虹网格/ })
         .click();
       await page.getByRole("switch", { name: AP.org.personal }).click();
       await page.getByRole("button", { name: AP.save }).click();
       await expect(page.getByText(AP.saved)).toBeVisible();
-      // the whole workspace is Night City now: dark only, so the account row has no scheme toggle
-      await expect.poll(() => rootToken(page, "--cb-bg")).toBe(NIGHT_CITY_BG);
+      // the whole workspace is Neon Grid now: dark only, so the account row has no scheme toggle
+      await expect.poll(() => rootToken(page, "--cb-bg")).toBe(NEON_GRID_BG);
       await expect(schemeToggle).toHaveCount(0);
 
       // the member: the lock line instead of the cards
@@ -364,7 +364,7 @@ test.describe("appearance pages", () => {
       // 组织设置 › 外观, read only: the choice shown, every control disabled, no save
       await member.goto("/settings/appearance");
       const picker = member.getByRole("radiogroup", { name: AP.org.label });
-      await expect(picker.getByRole("radio", { name: /夜之城/ })).toHaveAttribute(
+      await expect(picker.getByRole("radio", { name: /霓虹网格/ })).toHaveAttribute(
         "aria-checked",
         "true",
       );
@@ -388,7 +388,7 @@ test.describe("appearance pages", () => {
     await page.getByRole("link", { name: zh.admin.nav.themes, exact: true }).click();
     await expect(page).toHaveURL(/\/admin\/themes$/);
     const table = page.getByRole("table", { name: zh.adminComponents.titles.theme });
-    await expect(table.getByRole("link", { name: "夜之城", exact: true })).toBeVisible();
+    await expect(table.getByRole("link", { name: "霓虹网格", exact: true })).toBeVisible();
     await expect(table.getByRole("link", { name: "纸张", exact: true })).toBeVisible();
 
     // Paper gets its own `optional` scope: no longer offered as the platform default
@@ -409,7 +409,7 @@ test.describe("appearance pages", () => {
     try {
       await page.goto("/admin/settings");
       const picker = page.getByRole("radiogroup", { name: AP.platform.label });
-      await expect(picker.getByRole("radio", { name: /夜之城/ })).toBeVisible();
+      await expect(picker.getByRole("radio", { name: /霓虹网格/ })).toBeVisible();
       await expect(picker.getByRole("radio", { name: AP.builtin })).toBeVisible();
       await expect(picker.getByRole("radio")).toHaveCount(2);
     } finally {

@@ -23,13 +23,13 @@ describe("ThemeRef.key", () => {
   });
 
   it("ThemeRef.key is plugin/file id", async () => {
-    const { id } = await importTheme(env, "neon", "night-city");
+    const { id } = await importTheme(env, "neon", "neon-grid");
     await setThemeScope(env, id, "all");
     await writeUiTheme(env, id);
     // The listing, the platform default and the resolved theme all carry the same key (not the
     // `platform_themes` uuid).
-    expect((await themes.listForOrg(env.orgId)).map((t) => t.key)).toEqual(["neon/night-city"]);
-    expect((await themes.platformDefault())?.key).toBe("neon/night-city");
-    expect((await themes.resolve(env.orgId, env.memId))?.key).toBe("neon/night-city");
+    expect((await themes.listForOrg(env.orgId)).map((t) => t.key)).toEqual(["neon/neon-grid"]);
+    expect((await themes.platformDefault())?.key).toBe("neon/neon-grid");
+    expect((await themes.resolve(env.orgId, env.memId))?.key).toBe("neon/neon-grid");
   });
 });

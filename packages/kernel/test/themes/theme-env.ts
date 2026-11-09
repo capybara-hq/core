@@ -13,7 +13,7 @@ const DARK = {
 const LOGO =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>';
 
-/** Theme `themeId` of plugin `plugin`: `dark` (the Night City colors, a logo) or `both` schemes. */
+/** Theme `themeId` of plugin `plugin`: `dark` (the Neon Grid colors, a logo) or `both` schemes. */
 export const themePlugin = (plugin: string, themeId: string, shape: "dark" | "both" = "dark") =>
   pluginTgz({
     manifest: { name: plugin },
@@ -24,7 +24,7 @@ export const themePlugin = (plugin: string, themeId: string, shape: "dark" | "bo
           shape === "dark"
             ? { dark: DARK }
             : { dark: { radius: { sm: 2 } }, light: { radius: { md: 4 } } },
-        ...(shape === "dark" && { logo: { mark: "./brand/logo.svg", wordmark: "NIGHT CITY" } }),
+        ...(shape === "dark" && { logo: { mark: "./brand/logo.svg", wordmark: "NEON GRID" } }),
       }),
       ...(shape === "dark" && { "brand/logo.svg": LOGO }),
     },

@@ -19,7 +19,7 @@ const SWATCHES = { bg: "#05070D", panel: "#0B1020", ink: "#E6F1FF", accent: "#F3
 function swatch(props: Partial<React.ComponentProps<typeof ThemeSwatch>> = {}) {
   return render(
     <DesignProvider locale="en">
-      <ThemeSwatch name="Night City" swatches={SWATCHES} scheme="dark" {...props} />
+      <ThemeSwatch name="Neon Grid" swatches={SWATCHES} scheme="dark" {...props} />
     </DesignProvider>,
   );
 }
@@ -27,7 +27,7 @@ function swatch(props: Partial<React.ComponentProps<typeof ThemeSwatch>> = {}) {
 describe("ThemeSwatch", () => {
   it("is a radio named by the theme, aria-checked follows selected", () => {
     const { unmount } = swatch();
-    const r = screen.getByRole("radio", { name: /Night City/ });
+    const r = screen.getByRole("radio", { name: /Neon Grid/ });
     expect(r.getAttribute("aria-checked")).toBe("false");
     unmount();
     swatch({ selected: true });
@@ -72,7 +72,7 @@ describe("BUILTIN_THEME_SWATCHES", () => {
 describe("ThemeSwatchGroup", () => {
   const ITEMS = [
     { value: "builtin", name: "Built-in", swatches: BUILTIN_THEME_SWATCHES },
-    { value: "night", name: "Night City", swatches: { dark: SWATCHES } },
+    { value: "night", name: "Neon Grid", swatches: { dark: SWATCHES } },
     { value: "paper", name: "Paper", swatches: { light: SWATCHES, dark: SWATCHES } },
   ];
 
@@ -149,7 +149,7 @@ describe("ThemeSwatchGroup", () => {
     const schemes = [...container.querySelectorAll('[data-part="theme-swatch"]')].map((e) =>
       e.getAttribute("data-scheme"),
     );
-    // the built-in and Paper have light; Night City is dark only
+    // the built-in and Paper have light; Neon Grid is dark only
     expect(schemes).toEqual(["light", "dark", "light"]);
   });
 });

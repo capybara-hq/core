@@ -13,9 +13,9 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 const NEON: ThemeRef = {
   id: "t-neon",
-  key: "neon/night-city",
+  key: "neon/neon-grid",
   version: "1",
-  name: { en: "Night City" },
+  name: { en: "Neon Grid" },
   schemes: ["dark"],
   singleScheme: "dark",
   logo: null,
@@ -58,7 +58,7 @@ describe("data-cap-state", () => {
   it("the server render writes run=idle and the theme token", () => {
     const html = renderToString(frameElement(shellOf(ME, { theme: NEON })));
     const state = /data-cap-state="([^"]*)"/.exec(html)?.[1] ?? "";
-    expect(state.split(" ")).toEqual(["run=idle", "theme=neon/night-city"]);
+    expect(state.split(" ")).toEqual(["run=idle", "theme=neon/neon-grid"]);
     const builtin = /data-cap-state="([^"]*)"/.exec(renderToString(frameElement(shellOf(ME))));
     expect(builtin?.[1]).toBe("run=idle theme=builtin");
   });
@@ -101,7 +101,7 @@ describe("data-cap-state", () => {
   it("publishes the sidebar mode next to run, theme and motion", () => {
     mediaMock(false);
     renderFrame(shellOf(ME, { theme: NEON }));
-    expect(tokens()).toEqual(["run=idle", "theme=neon/night-city", "motion=full", "sidebar=full"]);
+    expect(tokens()).toEqual(["run=idle", "theme=neon/neon-grid", "motion=full", "sidebar=full"]);
   });
 
   it("no motion token where there is no matchMedia (the server's first paint)", () => {
