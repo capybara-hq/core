@@ -16,6 +16,7 @@ import { checkSyncedSkills } from "../synced-skills.js";
 import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
 import { checkTokens } from "../tokens.js";
+import { checkUiParts } from "../ui-parts.js";
 import { checkUiSlots } from "../ui-slots.js";
 import { checkWebUi } from "../web-ui.js";
 import { corePluginScope, requireScanTargets } from "./dirs.js";
@@ -44,6 +45,7 @@ const checks: NamedCheck[] = [
   },
   { name: "Design tokens", run: () => checkTokens(root) },
   { name: "UI slots", run: () => checkUiSlots(root) },
+  { name: "UI parts", run: () => checkUiParts(root) },
   {
     name: "Web UI rules",
     run: () => checkWebUi(join(root, "apps/web/src"), join(root, "packages/design/src")),

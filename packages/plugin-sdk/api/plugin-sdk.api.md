@@ -3130,6 +3130,12 @@ export const UI_LIMITS: {
 };
 
 // @public
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog"];
+
+// @public
+export const UI_PARTS: readonly UiPartSpec[];
+
+// @public
 export const UI_SINGLE_SLOTS: readonly UiSlotId[];
 
 // @public
@@ -3271,6 +3277,27 @@ export interface UiOrgRenderArgs extends UiRenderArgsBase {
     role: UiRole;
     scope: Exclude<UiSlotScope, "platform">;
 }
+
+// @public
+export function uiPart(name: string): UiPartSpec | undefined;
+
+// @public
+export type UiPartName = (typeof UI_PART_NAMES)[number];
+
+// @public
+export interface UiPartSpec {
+    description: {
+        en: string;
+        zh: string;
+    };
+    name: UiPartName;
+    owner: string;
+    states: readonly UiPartState[];
+    version: number;
+}
+
+// @public
+export type UiPartState = "aria-current" | "aria-selected" | "aria-expanded" | "aria-busy" | "disabled";
 
 // @public
 export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";

@@ -6,15 +6,15 @@ import {
   PLUGIN_MANIFEST_FILE,
   type PluginClientSection,
   type PluginManifest,
+  UI_PARTS,
 } from "@capybara-hq/plugin-sdk";
 import { clientEntrySource, type PackRuleError } from "../pack/client.js";
 import type { Finding } from "./source.js";
 
 /**
- * The parts the host marks with `data-cap-part` (the SDK's `UI_PARTS` catalog arrives with the
- * UI-parts task; until then this is empty and `ui-part-unknown` stays silent).
+ * The parts the host marks with `data-cap-part`: the names of the SDK's `UI_PARTS` catalog.
  */
-export const KNOWN_UI_PARTS: readonly string[] = [];
+export const KNOWN_UI_PARTS: readonly string[] = UI_PARTS.map((p) => p.name);
 
 /** The finding a {@link PackRuleError} of the packer stands for (`client-size`, `client-undeclared`, …). */
 export function ruleErrorFinding(file: string, e: PackRuleError): Finding {
@@ -135,7 +135,9 @@ function selectorList(sel: string): string[] {
  */
 function selectorProblem(selector: string, plugin: string): string | undefined {
   const own = `cx-${plugin}-`;
-  const classes = [...selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((m) => m[1] as string);
+  // Attribute values (`[data-cap-part~="button.primary"]`) are not classes.
+  const bare = selector.replace(/\[[^\]]*\]/g, "[]");
+  const classes = [...bare.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((m) => m[1] as string);
   const foreign = classes.find((c) => !c.startsWith(own));
   if (foreign !== undefined) return `uses the class .${foreign}`;
   if (/#[_a-zA-Z]/.test(selector.replace(/\[[^\]]*\]/g, ""))) return "uses an id";

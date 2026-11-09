@@ -81,7 +81,7 @@ describe("client findings of check", () => {
 @keyframes spin { from { opacity: 0; } 50% { opacity: .5; } to { opacity: 1; } }
 @font-face { font-family: X; src: url("../assets/a.woff2"); }
 [data-cap-part="a"][data-cap-state~="b"], .cx-p-y > span { content: "}{"; }`;
-      expect(await scan(css)).toEqual([]);
+      expect(await scan(css, ["shell", "a"])).toEqual([]);
     });
 
     it("warns on foreign classes, ids, bare tags and foreign :root variables", async () => {
@@ -105,8 +105,12 @@ describe("client findings of check", () => {
       expect(f[0]?.severity).toBe("warning");
     });
 
-    it("ui-part-unknown is silent while the parts catalog is empty", async () => {
-      expect(await scan('[data-cap-part~="anything"] { a: b; }')).toEqual([]);
+    it("ui-part-unknown defaults to the SDK catalog and is silent with no known parts", async () => {
+      expect(await scan('[data-cap-part~="anything"] { a: b; }', [])).toEqual([]);
+      expect(rules(await scan('[data-cap-part~="anything"] { a: b; }'))).toEqual([
+        "ui-part-unknown",
+      ]);
+      expect(await scan('[data-cap-part~="button.primary"] { a: b; }')).toEqual([]);
     });
   });
 
