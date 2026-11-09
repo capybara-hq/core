@@ -1,6 +1,6 @@
 ---
 name: writing-connectors
-description: 'Use when changing the kernel side of connector@1 (packages/kernel/src/tools: connectors, preview, drift, elicitation, OAuth, redaction) or the contract in the SDK: the terms "connector / connector extension / connector template", no stdio MCP support, endpointSchema validation and the credential checks, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged and drift checks, onElicit and elicitation resumption, resources / prompts, connector templates, OAuth and credentials, redaction, and kernel tests with the fake-connector / fake-openapi extensions and startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer. To write a connector extension (connector-mcp, connector-openapi) see writing-connectors in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of connector@1 (packages/kernel/src/tools: connectors, preview, drift, elicitation, OAuth, redaction) or the contract in the SDK: the terms "connector / connector extension / connector template", no stdio MCP support, endpointSchema validation and the credential checks, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged and drift checks, onElicit and elicitation resumption, resources / prompts, connector templates and their setup guides (guide_ack, the token endpoint probe), OAuth and credentials, redaction, and kernel tests with the fake-connector / fake-openapi extensions and startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer. To write a connector extension (connector-mcp, connector-openapi) see writing-connectors in capybara-hq/plugins.'
 ---
 
 # Connectors: the kernel side of `connector@1`
@@ -128,6 +128,33 @@ A connector template spares the org from endpoint details: a super admin imports
 - Template import and org install both validate against the connector extension **loaded on this replica** and its `Connector.kind` (not loaded -> import rejected with `catalog.invalid_manifest`, unless the connector is the importing plugin's own extension or comes from one of its dependencies, in which case only the static checks run at import / install `catalog.not_deployed`); the paths in `editableEndpoint` must be findable in your `endpointSchema` (`schemaHasPath` in `catalog/schema-path.ts`: walks object fields, records, union / intersection branches, strips wrappers such as optional / default / the input side of pipe, and **does not enter array elements**). So put fields an org may need to change on object paths and keep field names stable: renaming invalidates already published templates.
 - No credentials in the endpoint (a template's presets are visible to every org); anything that needs a credential goes through the auth settings.
 - When the deployment setting `customConnectors` is `deny`, an org can create connectors only from the catalog (templates), and manual install returns 403 `catalog.custom_disabled`.
+
+### Connector template setup guides (spec `2026-11-09-setup-guides-v2-design.md` §9.3, §10, §11)
+
+A template's plugin may ship a `connector-template` guide (`setupGuides` entry with `template`,
+writing-plugins). The template's plugin (slack) is usually not the connector extension
+(connector-mcp); the guide, its checks and its drift belong to the template, not to the protocol.
+
+- **Places**: admin audience (`connectors.manage`) above the template's input in the install wizard
+  and on 补充配置 / `/connectors/install?template=` (no target, rows "checked after saving"), and on
+  `/connectors/<id>` (接入指南 tab: live checks, drift notice and ack); member audience
+  (`connectors.use`) on `/account/connections`, the connector row's 如何连接 sheet. Variables:
+  `oauthCallbackUrl`, `signInCallbackUrl`, `templateId`, `templateName`, `connectorName`.
+- **How a page finds the guide**: org catalog templates (`connectors.templates`, `GET
+  …/catalog/:itemId`) carry `guide: { itemId, guideId } | null`; connector views carry `setupGuide`
+  and `guideDrift`, resolved through `connectors.platform_template_id` to the template.
+- **Drift**: `connectors.guide_ack` (migration 0105) records `{ guideId, version, hash, mode: null }`
+  when a connector is created from the template, and `POST
+  /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack { hash }` (`connectors.manage`, 409
+  `connector.guide_changed`, audited `connector.guide_confirmed`; a `human-only` Platform exclusion)
+  confirms the app was updated. Only the admin audience has drift.
+- **Checks never get a secret**: a plugin check on a connector gets the connector id, the template
+  id, a manual client's **id** and (member checks) the viewing account id; never the client secret
+  or a member's token, which stay with the kernel and the connector extension's `auth()`. Kernel
+  checks: `capybara:oauth-client` (manual client id and secret stored), `capybara:connector-tools`
+  (a tool snapshot exists), `capybara:connector-connected` (member: the viewer holds a credential)
+  and `capybara:oauth-token-endpoint` (the probe below). Results are redacted by
+  `Credentials.checkMaterial`, which lists the stored values and the forms they are sent in.
 
 ## A member's own tool policies (decision 2026-11-09)
 

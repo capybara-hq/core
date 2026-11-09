@@ -2,7 +2,10 @@
 
 - Date: 2026-11-09, written against `main` at `3c853865`.
 - Status: approved by the maintainer on 2026-11-09, with the answers to the review questions
-  recorded in §18 and folded into the sections they change. Plan:
+  recorded in §18 and folded into the sections they change. Implemented on `docs/setup-guides-v2`;
+  the visual baselines, the release gate and the Slack plugin migration (plan tasks 17–19) follow. The
+  skills writing-plugins, writing-extensions, writing-connectors, writing-channels,
+  writing-extension-ui, writing-web-ui and writing-kernel-api describe the result. Plan:
   `docs/superpowers/plans/2026-11-09-setup-guides-v2.md`. Supersedes `2026-11-08-plugin-setup-guides-design.md` (v1,
   shipped) wherever they differ; v1's routes, ack semantics and visibility rules carry over unless
   a section here says otherwise.

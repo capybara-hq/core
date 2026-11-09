@@ -1,6 +1,6 @@
 ---
 name: writing-extensions
-description: 'Use when changing the kernel extension host or the extension contract it enforces (packages/kernel/src/extensions): defineExtension and the manifest, the permission manifest and approval (capybara extensions review / approve, extensionPermissions.autoApprove), the trust model (in-process, full trust; approval is governance, not a sandbox), ctx.extensionPoints and orgScoped, deployment / org / channel-connection config and secret() storage, the ctx items, the multi-replica checks (timers, module-level state), extension routes, packages and the no-restart lifecycle (install, enable, upgrade, uninstall, revocation, dispose, ctx.signal, drain, expand-only migrations, bootstrap plugins, name ownership), the hook dispatcher (ctx.hooks: observe vs policy, policyHooks, fail-closed, usage.report), and the dual-replica harness and kernel helpers in @capybara-hq/testing. To write an extension see writing-extensions in capybara-hq/plugins; UI: writing-extension-ui; plugins and the catalog: writing-plugins.'
+description: 'Use when changing the kernel extension host or the extension contract it enforces (packages/kernel/src/extensions): defineExtension and the manifest, the permission manifest and approval (capybara extensions review / approve, autoApprove), the trust model (in-process, full trust; approval is governance, not a sandbox), ctx.extensionPoints and orgScoped, deployment / org / channel-connection config and secret() storage, the ctx items, ctx.setup.check (setupChecks), the multi-replica checks (timers, module state), extension routes, packages and the no-restart lifecycle (install, enable, upgrade, uninstall, revocation, dispose, ctx.signal, drain, expand-only migrations, bootstrap plugins, name ownership), the hook dispatcher (ctx.hooks: observe vs policy, policyHooks, fail-closed, usage.report), and the dual-replica harness and kernel helpers in @capybara-hq/testing. To write an extension see writing-extensions in capybara-hq/plugins; UI: writing-extension-ui; plugins and the catalog: writing-plugins.'
 ---
 
 # Writing extensions
@@ -20,7 +20,7 @@ In core, extensions are exercised by `plugins/model-fake` and by the fake extens
 | May only import `@capybara-hq/plugin-sdk`, `zod` and other third-party npm packages; **may not** import `@capybara-hq/kernel` or files outside the extension directory. Tests may use the devDependency `@capybara-hq/testing` | `pnpm check:deps` | `plugin-imports-kernel`, `plugin-imports-outside` |
 | Must not use `setTimeout` / `setInterval` / `setImmediate` / `node:timers` | `pnpm check:extension-state` | `plugin-timer` |
 | No top-level `let` / `var` / `new Map/Set/WeakMap/WeakSet` / array literals at module level | `pnpm check:extension-state` | `plugin-module-state` |
-| `ctx.secrets` / `ctx.storage` / `ctx.models` / `ctx.http.route` / `ctx.tools.register` / `ctx.extensionPoints` / `ctx.ui.view` / `ctx.ui.action` used in `setup(ctx)` must be declared in the manifest | `pnpm check:extension-permissions` | `perm-secrets`, `perm-storage`, `perm-models`, `perm-http`, `perm-tools`, `perm-extension-point`, `perm-ui`, `perm-reserved` (access that cannot be confirmed) |
+| `ctx.secrets` / `ctx.storage` / `ctx.models` / `ctx.http.route` / `ctx.tools.register` / `ctx.extensionPoints` / `ctx.ui.view` / `ctx.ui.action` / `ctx.setup.check` used in `setup(ctx)` must be declared in the manifest | `pnpm check:extension-permissions` | `perm-secrets`, `perm-storage`, `perm-models`, `perm-http`, `perm-tools`, `perm-extension-point`, `perm-ui`, `perm-setup-check`, `perm-reserved` (access that cannot be confirmed) |
 | `ctx.kv` writes must carry `ttlSeconds` (enforced at the type level) | `pnpm typecheck` | — |
 | Queue names and job ids contain no `:` (a BullMQ limit) | Runtime: `ctx.queue.define` / `add` throw `TypeError` directly | — |
 
@@ -92,6 +92,7 @@ The items (all governance information, which the deployer sees when approving):
 | `storage` | `storage: true` | Required to use `ctx.storage` (object storage: the first parameter of every method is `orgId` (must be a UUID, normalized to lower case), and keys are automatically confined under `plugins/<plugin name>/<orgId>/`; a key must not be empty, must not start with `/`, and must not have `.` / `..` segments, `\`, control characters or `${`, and after the prefix is added it must be <= 1024 bytes, otherwise `StorageKeyError` is thrown; the presigned `ttlSeconds` is clamped to 1..604800; the keys `list` returns have the prefix stripped. `presignPut` returns `{ method, url, headers, fields? }`: the S3 implementation is a direct `POST` form upload, and the size is limited by the store); using it undeclared reports `perm-storage`. When the deployment has no `object-store@1` provider installed (such as `object-store-s3`), an extension that declares it **does not load** (pending, reason dependency) |
 | `hooks` | `["model.request", "usage.report"]` | Mount points of `ctx.hooks.on` (five are registrable, see `HOOKS_AVAILABLE`); sensitive at review. `check:extension-permissions` reports an undeclared mount as `perm-hooks`. See "Hooks" below |
 | `policyHooks` | `["model.request"]` | Mount points where the extension registers `mode: "policy"` hooks: only `model.request` / `tool.preExecute`, each also listed in `hooks`. Deployment state reads it to fail calls closed where the extension is not loaded (see "Hooks"); a policy hook on an undeclared mount throws `ExtensionPermissionError` and is reported as `perm-hooks` |
+| `setupChecks` | `["bot-token"]` | The id of each `ctx.setup.check` (`^[a-z0-9][a-z0-9-]{0,47}$`, ≤ 32). Recorded in the snapshot as `setupCheck:<id>` and shown at review, but **never blocks loading** (a check receives only data the extension already gets for the same target). Registering an undeclared id throws `ExtensionPermissionError`; `check:extension-permissions` reports it as `perm-setup-check`, and `capybara-plugin pack` refuses a guide's plugin check id missing here. See "Setup checks" below |
 | `models` | `[{ purpose: "<name>.memory", kind: "embedding", label: { zh, en } }]` | Model purposes (key `<extension name>.<name>`); org admins map each to a model of its kind on `/settings/models` (the super admin sets the deployment default). Required to use `ctx.models` (`perm-models`); `ctx.models.embed` / `describe` accept only the `embedding` purposes declared here (`model.purpose_unknown`), only for an org that enabled the extension (`extension.not_enabled`). See "`ctx.models`" below |
 
 **Extension point consumption (`requires` / `optional`)**: `ctx.extensionPoints.get / list(ref)` can only take refs declared in `requires` / `optional` (or the extension's own `provides`); any other ref reports `perm-extension-point`. Only pass-through extension points (`channel`, `directory`, `identity-source` and so on) can be taken; brokered extension points (model providers, connectors, sandboxes, secret stores, object stores) can only be used through platform API, and taking one directly throws a plain `Error` (declaring it does not help and no audit is recorded). If the provider of a `requires` is missing, this extension does not load; if an `optional` is missing it loads as usual, and on use `list` is empty and `get` throws `ExtensionPointUnavailableError`. For a multi-select extension point, `get` must be given the provider name.
@@ -175,6 +176,7 @@ The `sdk` range is validated by the kernel against `SDK_VERSION` (equal to the p
 | `ctx.provide` | Expose an extension point implementation | Must match the manifest `provides` |
 | `ctx.tools` | Provide tools to agents | `register(spec, handler)` can only be called in `setup`; the model-visible name is `<extension name>__<spec.name>`; **only available in orgs that enabled this extension** (the org admin `PUT /api/v1/orgs/:orgId/extensions/<name> {"enabled": true}`); when not enabled the runtime treats it as an unavailable tool. For the rules on descriptions and error text, default policy, `ToolError` and `InputRequired` see `.agents/skills/writing-tools` |
 | `ctx.ui` | Right-panel tabs on the conversation page / org pages under "Extensions" in the top bar | `view` / `action` (render schema views; can only be registered in `setup`; `render` and `action` must respond to `signal` and have a 5-second timeout), `invalidate` (refreshes across replicas through the bus), `verifyEmbedToken` (the data routes of an embed verify the token first). For the building blocks, the limits and the security rules of embeds see `.agents/skills/writing-extension-ui` |
+| `ctx.setup` | Live check rows of the plugin's setup guides | `check(id, { place, run })` only in `setup`, ids from `permissions.setupChecks`; a duplicate id throws. The kernel runs, caches and redacts; see "Setup checks" below |
 | `ctx.storage` | Files, large objects (isolated per org) | Needs the manifest `permissions.storage` (`perm-storage`); the first parameter of every method is `orgId`, and keys land under `plugins/<plugin name>/<orgId>/`, invisible to other extensions and the kernel (`kernel/<orgId>/`) and vice versa. Use `presignPut` for browser uploads (returns `{ method, url, headers, fields? }`; send a PUT or a POST form according to `method`) and `presignGet` for downloads (user-uploaded content uses `inline` only for images / PDF); after an org is deleted its objects are cleaned up periodically by the kernel. When there is no store provider the extension does not load. For writing store providers see `.agents/skills/writing-object-store-providers` |
 | `ctx.models` | Embeddings by purpose (model platform spec B §5.4) | Needs the manifest `permissions.models` (`perm-models`). `embed({ orgId, purpose, input, dimensions?, inputType? })` uses the org's effective model for the purpose (enabled there and of kind `embedding`; else `model.unconfigured`), splits `input` by the model's `maxBatch`, checks every result (a wrong count or dimension is a `ModelError` of kind `server`) and returns `{ vectors, model, dimensions }`; no kernel retries; aborted by `ctx.signal` or the request's optional `signal`, each batch limited by `models.embedTimeoutMs` (`ModelError` kind `timeout`). `describe({ orgId, purpose })` returns `{ provider, id, kind, embedding }` or null when unconfigured: store the model with the vectors, a changed model invalidates them. Each `embed` call writes a `model_usage` row (kernel `ModelEmbeddings`, `models/embeddings.ts`) delivered through `usage.report` with purpose `embedding` (job `usage-model-<rowId>`, `eventId` = the row id, no conversation fields; the sweep re-enqueues rows of its window that are neither reported nor given up (`report_failed_at`, set when the job fails after its last attempt)) |
 | `ctx.secrets` | Store and fetch secrets per org | Stored encrypted |
@@ -214,6 +216,41 @@ The signature is fixed: `ctx.http.route(method, path, (req: Request) => Promise<
 ### UI (views and embeds)
 
 An extension adding UI to the web app (right-panel tabs on the conversation page, org pages under "Extensions" in the top bar) has two tiers: schema-rendered views (`ctx.ui.view`, e.g. the official [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo)) and embeds in a sandboxed iframe (routes under the extension's `/ui/` + `ctx.ui.verifyEmbedToken`, e.g. [`example-board`](https://github.com/capybara-hq/plugins/tree/main/plugins/example-board)). The manifest, approval rules, building blocks and limits, embed tokens, the `/plugin-ui` proxy, the message bridge and how to write tests are all in `.agents/skills/writing-extension-ui`.
+
+### Setup checks (`ctx.setup.check`, spec `2026-11-09-setup-guides-v2-design.md` §10)
+
+A setup guide's `::check <id> <label>` line (writing-plugins) is a live row. A plugin check is
+registered in `setup` with `ctx.setup.check(id, { place, run })` (SDK `setup-check.ts`) and listed in
+`permissions.setupChecks`; `capybara:*` checks are the kernel's (`packages/kernel/src/setup/kernel-checks.ts`).
+
+- **What `run` gets** (`SetupCheckArgs`): `orgId`, the extension's effective `config` for the org,
+  `locale`, `mode`, `signal` and the target. A `channel-connection` target carries the connection
+  config as `channel@1` `verify` / `connect` receive it; a `connector` target carries only the
+  connector id, the template id, the manual OAuth client id and, for member checks, the viewing
+  account id. **A check never gets the OAuth client secret or a member's token** (they stay with
+  the kernel and the connector extension's `auth()`), and runs only for targets of its own plugin.
+- **What it returns** (`SetupCheckResult`, `validateSetupCheckResult`): `ok` (verified now),
+  `failing` (needs a `reason`, should have a `fix`) or `unknown` (could not tell; never something
+  the person must act on), with `{ en, zh? }` plain-text reason (≤ 300) and fix (≤ 500). No other
+  field: there is no details field for a token to hide in.
+- **Contract rules** (review and kernel redaction back them, not isolation; trust model above): a
+  check **never writes**, at the third party or in Capybara, and stays cheap (one or two reads);
+  pass `signal` to every request (aborted at `SETUP_CHECK_LIMITS.timeoutMs`, 10 s); no retries
+  inside the check; **never put a secret in a reason or fix**.
+- **What the kernel does** (`SetupChecksService`, `setup-check-registry.ts`): runs a check only when
+  a person or an agent asks (never in the background), from the guide routes' authorization;
+  caches the result 5 minutes per input fingerprint (an HMAC of revisions, never of values) in
+  Redis (`capk:setup-check:*`, every key with a TTL), single-flights runs across replicas
+  (`capk:setup-check-run:*`), caps 8 concurrent runs per org, one forced rerun per 10 s per check
+  and target, 30 runs a minute per account. Member-audience results are cached per account. An
+  unloaded or disabled extension, `needsConfig`, an unregistered id, a throw, a timeout or an
+  invalid result becomes `unknown` with a fixed kernel reason; the extension's error text never
+  leaves the kernel. Every result is redacted by the target's and the org config's secret values
+  (`redact-check.ts`, ≥ 8 characters) and validated again before it is cached or returned.
+- **Tests**: the `fake-im` fixture registers checks (`packages/testing/fixtures/extensions/fake-im/src/checks.ts`);
+  kernel cases in `packages/kernel/test/setup/` (`setup-checks.http.test.ts`, `.connector`, `.dual`,
+  `kernel-checks*.test.ts`, `oauth-token-probe.test.ts`) assert that secrets are absent from every
+  response, cache entry and log line.
 
 ### Hooks (`ctx.hooks`)
 

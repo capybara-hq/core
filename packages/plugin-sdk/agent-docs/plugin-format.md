@@ -56,17 +56,41 @@ Rules that the schema cannot show:
 - `agents`: at most 64 templates (see `agent-templates`).
 - `themes`: at most 10 `<id>.json` files; the id is the file's base name. A theme file is checked
   by `parseThemeFile` (schema `https://capybarahq.com/schemas/theme.v1.schema.json`).
-- `setupGuides` (at most 8): setup material shown where a person configures what the plugin
-  brings. Each guide has an `id`, a `place` (`channel-connection`: 新建渠道 and the channel detail;
-  the plugin's extension must provide `channel@1`), a `title` and `steps` (`{ en, zh? }`, plain
-  text, a backtick pair shows as inline code) and `files` (`./` paths ending in `.tmpl`, `.yaml`,
-  `.yml`, `.json` or `.txt`, at most 64 KiB of text, with a `title` and a `language` of `yaml`,
-  `json` or `text`). A step or file may carry `mode` (`long_connection` or `webhook`) to apply to
-  that inbound mode only; ship one file per mode instead of conditionals. The kernel fills
-  `{{publicUrl}}`, `{{webhookUrl}}`, `{{signInCallbackUrl}}`, `{{connectionName}}`, `{{orgName}}`,
-  `{{pluginName}}`, `{{pluginVersion}}` and `{{mode}}` (never a secret); in YAML and JSON put a
-  placeholder inside double quotes. `capybara-plugin pack` refuses any other placeholder.
+- `setupGuides` (at most 8): `{ id, place, template? }`. Each guide is a Markdown document at
+  `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (Chinese, optional), shown where a
+  person sets up what the plugin brings. `place` is `channel-connection` (新建渠道 and the channel
+  detail; the extension must provide `channel@1`; one per plugin) or `connector-template`
+  (`template` names one of the plugin's `connectors/<id>.json`; one per template). See "Setup
+  guides" below.
 - `extension` is written by the packer; never write it by hand.
+
+## Setup guides
+
+A guide is CommonMark + GFM:
+
+- It starts with exactly one `# Title` (the guide's title, at most 100 characters); use `##` to
+  `####` below it.
+- `{{name}}` variables come from the place, and none is ever a secret: everywhere `publicUrl`,
+  `orgName`, `pluginName`, `pluginVersion`, `mode`; `channel-connection` adds `webhookUrl`,
+  `signInCallbackUrl`, `connectionName`; `connector-template` adds `oauthCallbackUrl`,
+  `signInCallbackUrl`, `templateId`, `templateName`, `connectorName`. In `yaml` / `json` code put a
+  variable inside double quotes. Directive lines and fence info strings hold no variables.
+- Sections: a line `::: mode webhook` (modes `long_connection`, `webhook`; channel guides) or
+  `::: audience member` (audiences `admin`, `member`; connector template guides) opens one, `:::`
+  closes it, both in column 0. Only a mode section may sit inside an audience section. Text outside
+  every section applies to all.
+- Checks: a line `::check <id> <label>` is a live status row. `<id>` is one of the extension's own
+  checks (registered with `ctx.setup.check` and listed in `permissions.setupChecks`; see
+  `extensions`) or a platform check `capybara:<id>` (`public-url`, `webhook-public`,
+  `webhook-received`, `connection-active`, `oauth-client`, `connector-tools`,
+  `connector-connected`, `oauth-token-endpoint`). The label is plain text, at most 80 characters.
+- Code fences: `<language> title="<text>"`; every block gets a copy button. Indented code blocks are
+  refused. Raw HTML shows as text, images are never loaded, and only `https:` links stay links.
+- The zh document has the same sections, the same check ids and byte-equal code blocks.
+- Limits: 64 KiB per document, 24 code blocks, 16 checks, 16 sections.
+
+`capybara-plugin pack` and `check` validate the documents; `capybara-plugin guide <id> [--locale zh]
+[--mode m] [--audience a] [--var name=value]` prints a guide as an admin will see it.
 
 ## Importing
 
