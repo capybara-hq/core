@@ -8,9 +8,17 @@ import {
   readExtensionPackage,
   readPluginPackage,
 } from "@capybara-hq/kernel";
-import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { SDK_VERSION, themeIdOf } from "@capybara-hq/plugin-sdk";
+import { clientStyleNames, PackRuleError } from "../pack/client.js";
 import { packPlugin } from "../pack/pack.js";
+import {
+  appearanceFindings,
+  clientApiVersionFindings,
+  clientFindings,
+  ruleErrorFinding,
+} from "./client.js";
 import type { Finding } from "./source.js";
+import { themePathsOf } from "./themes.js";
 import { uiSlotFindings } from "./ui-slots.js";
 
 /**
@@ -50,7 +58,20 @@ export async function checkPluginPack(pluginDirs: string[]): Promise<Finding[]> 
         const plugin = await readPluginPackage(bytes, opts);
         findings.push(...uiSlotFindings(file, plugin.manifest.extension?.manifest.ui));
         if (plugin.manifest.extension !== undefined) await readExtensionPackage(bytes, opts);
+        findings.push(
+          ...clientApiVersionFindings(file, plugin.manifest.extension?.client),
+          ...appearanceFindings(
+            file,
+            plugin.manifest,
+            themePathsOf(dir).paths.map((p) => themeIdOf(p)),
+          ),
+          ...clientFindings(dir, await clientStyleNames(dir), plugin.manifest.name),
+        );
       } catch (e) {
+        if (e instanceof PackRuleError) {
+          findings.push(ruleErrorFinding(file, e));
+          continue;
+        }
         const message =
           e instanceof ExtensionPackageError || e instanceof PluginPackageError
             ? `the plugin package is invalid: ${e.issues.join("; ")}`

@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import {
   AGENT_TEMPLATE_LIMITS,
+  appearanceIssues,
   checkEntryImports,
   defineExtension,
   type ExtensionManifest,
@@ -32,6 +33,7 @@ import {
   parsePluginManifest,
   parseThemeFile,
   SDK_VERSION,
+  type SuggestedAppearance,
   setupGuideFileProblem,
   staticManifestOf,
   THEME_LIMITS,
@@ -44,6 +46,7 @@ import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
 import { assetRefs, themePathsOf } from "../check/themes.js";
+import { buildClient, hasClientSources, PackRuleError } from "./client.js";
 import { extensionConfigSchemas, formatConfigSchemaProblem } from "./config-schemas.js";
 
 /** The extension entry the packer writes (relative to the package root). */
@@ -326,6 +329,14 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const stripDot = (p: string) => p.replace(/^\.\//, "");
 
+/** The error for a manifest that does not parse: `appearance-invalid` when it is about suggestedAppearance. */
+function manifestError(where: string, errors: string[]): Error {
+  const message = `${where}: ${errors.join("; ")}`;
+  return errors.some((e) => e.startsWith("suggestedAppearance"))
+    ? new PackRuleError("appearance-invalid", message)
+    : new Error(message);
+}
+
 /**
  * Reads and validates the source `.capybara-plugin/plugin.json` (without `extension`, which the
  * packer writes).
@@ -347,9 +358,14 @@ async function readSourceManifest(dir: string, label: string): Promise<PluginMan
       `${label}: ${PLUGIN_MANIFEST_FILE}: extension is written by the packer; remove it from the source`,
     );
   }
-  const m = parsePluginManifest(data);
-  if ("errors" in m) throw new Error(`${label}: ${PLUGIN_MANIFEST_FILE}: ${m.errors.join("; ")}`);
-  return m;
+  // suggestedAppearance names the plugin's own components and themes, which only the packed
+  // manifest knows: it is validated with the final parse ({@link manifestError})
+  const { suggestedAppearance, ...rest } = isObj(data) ? data : { suggestedAppearance: undefined };
+  const m = parsePluginManifest(isObj(data) ? rest : data);
+  if ("errors" in m) throw manifestError(`${label}: ${PLUGIN_MANIFEST_FILE}`, m.errors);
+  return suggestedAppearance === undefined
+    ? m
+    : { ...m, suggestedAppearance: suggestedAppearance as SuggestedAppearance };
 }
 
 /**
@@ -581,6 +597,17 @@ export async function importPluginExtension(pluginDir: string): Promise<Extensio
   }
 }
 
+/** The files {@link buildClient} wrote, keyed by their package path (`dist/client/…`). */
+async function readClientFiles(stage: string): Promise<Map<string, Buffer>> {
+  const root = join(stage, "package");
+  const out = new Map<string, Buffer>();
+  for (const f of await listFiles(join(root, "dist", "client"))) {
+    const rel = posix.join("dist/client", f);
+    out.set(rel, await readFile(join(root, rel)));
+  }
+  return out;
+}
+
 /**
  * Bundles the extension `src/index.ts`:
  * 1. esbuild bundles it into the single-file ESM `dist/index.mjs` (platform node, target node24),
@@ -642,6 +669,17 @@ async function bundleExtension(
     if (config.schemas.deployment !== undefined || config.schemas.org !== undefined) {
       extension.configSchemas = config.schemas;
     }
+    const client = await buildClient(dir, stage);
+    if (client !== null) {
+      if (m.permissions?.client !== true) {
+        throw new PackRuleError(
+          "client-undeclared",
+          `${label}: the plugin has client code (src/client.ts[x], client/) but its extension does not declare permissions.client: true`,
+        );
+      }
+      for (const [path, data] of await readClientFiles(stage)) files.set(path, data);
+      extension.client = client;
+    }
     const notices = await thirdPartyNotices(dir, inputs);
     if (notices !== undefined) files.set(NOTICES_FILE, Buffer.from(notices));
     return { files, extension };
@@ -687,6 +725,12 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       `${label}: a plugin must contain an extension, a skill, a connector template, an agent template or a theme (src/index.ts, skills/<name>/SKILL.md, connectors/<id>.json, agents/<name>.md or themes/<id>.json)`,
     );
   }
+  if (!hasExtension && (await hasClientSources(dir))) {
+    throw new PackRuleError(
+      "client-undeclared",
+      `${label}: client code needs the plugin's extension (src/index.ts) with permissions.client: true`,
+    );
+  }
   const ext = hasExtension ? await bundleExtension(dir, label, srcPkg.version) : undefined;
   if (ext === undefined && source.setupGuides?.some((g) => g.place === "channel-connection")) {
     throw new Error(
@@ -702,7 +746,15 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     ext === undefined ? source : { ...source, extension: ext.extension };
   const parsed = parsePluginManifest(manifest);
   if ("errors" in parsed) {
-    throw new Error(`${label}: packed ${PLUGIN_MANIFEST_FILE}: ${parsed.errors.join("; ")}`);
+    throw manifestError(`${label}: packed ${PLUGIN_MANIFEST_FILE}`, parsed.errors);
+  }
+  // the theme ids are known only after the scan (the manifest may omit `themes`)
+  const themeIssues = appearanceIssues(
+    parsed,
+    themePathsOf(dir).paths.map((p) => themeIdOf(p)),
+  );
+  if (themeIssues.length > 0) {
+    throw new PackRuleError("appearance-invalid", `${label}: ${themeIssues.join("; ")}`);
   }
 
   const deps = (srcPkg.dependencies ?? {}) as Record<string, string>;

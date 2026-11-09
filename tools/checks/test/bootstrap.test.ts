@@ -75,6 +75,12 @@ describe("checkBootstrap", () => {
     expect(f[0]?.message).toContain('packs the plugin "demo"');
   });
 
+  it("a bootstrap plugin with client code is refused", async () => {
+    const f = await checkBootstrap(fixture("client-code/bootstrap.json"), fixture("client-code"));
+    expect(f.map((x) => x.rule)).toEqual(["bootstrap-client-code"]);
+    expect(f[0]?.message).toContain("client-code");
+  });
+
   it("reports a path that does not pack", async () => {
     const f = await checkBootstrap(fixture("pack-fails.json"), dir);
     expect(f.map((x) => x.rule)).toEqual(["bootstrap-pack"]);

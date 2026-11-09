@@ -48,6 +48,9 @@ function lineOf(text: string, name: string): number {
  *   `bootstrap-name`, and a version or sha512 that differs from the pack's is `bootstrap-stale`
  *   (the message gives the expected value; `write` updates them in the file instead).
  *
+ * A bootstrap plugin may not carry client code (`bootstrap-client-code`): its package can be stored
+ * in PG before an object store runs, and client files are served from object storage.
+ *
  * `source: "npm"` entries need the network, so they are checked only with `network`
  * ({@link checkBootstrapNetwork}): published on the registry at the pinned version with the pinned
  * sha512 (`bootstrap-npm`: unpublished, a tampered tarball, or registry metadata that disagrees)
@@ -90,6 +93,7 @@ export async function checkBootstrap(
       if (e.source !== "workspace") continue;
       const line = lineOf(text, e.name);
       let packed: { name: string; version: string; integrity: string };
+      let hasClient = false;
       try {
         const r = await packPlugin(join(repoRoot, e.path), out);
         packed = {
@@ -97,6 +101,7 @@ export async function checkBootstrap(
           version: r.manifest.version,
           integrity: integrityOf(new Uint8Array(await readFile(r.file))),
         };
+        hasClient = r.manifest.extension?.client !== undefined;
         await rm(r.file, { force: true });
       } catch (err) {
         findings.push(
@@ -104,6 +109,16 @@ export async function checkBootstrap(
             line,
             "bootstrap-pack",
             `${e.name}: packing ${e.path} failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+        continue;
+      }
+      if (hasClient) {
+        findings.push(
+          at(
+            line,
+            "bootstrap-client-code",
+            `${e.name}: ${e.path} carries client code; a bootstrap plugin may not (its package can be stored in PG before an object store runs, and client files are served from object storage)`,
           ),
         );
         continue;
