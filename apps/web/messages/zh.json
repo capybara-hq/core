@@ -2326,7 +2326,10 @@
       "openExtensions": "打开扩展页",
       "nameLabel": "名称",
       "configSection": "机器人凭据",
-      "configHint": "字段由扩展定义。保存时会先向平台校验凭据。",
+      "configHint": "保存时会先向平台校验凭据。",
+      "webhookDefaultLong": "Webhook 需要平台有公网 HTTPS 地址，本部署还没有，所以默认使用长连接。",
+      "webhookNotPublic": "本部署的 Webhook 回调地址不是公网 HTTPS 地址，平台可能无法访问。",
+      "webhookUnavailable": "无法使用 Webhook：部署没有公网 HTTPS 回调地址（channels.webhookBaseUrl）。请改用长连接，或请超级管理员设置。",
       "pickPluginFirst": "请先选择扩展。",
       "agentSection": "智能体",
       "agentSectionHint": "回复发给这个机器人的消息的智能体。",
@@ -2383,6 +2386,7 @@
       "callbackUrlHint": "在平台的应用设置里把此地址填为事件 / 请求地址。",
       "saveInbound": "保存接收方式",
       "inboundSaved": "接收方式已保存。",
+      "inboundFieldsHint": "切换到{mode}还需要填写下面的字段，会和接收方式一起保存。",
       "webhookNoUrlWarning": "该渠道处于 Webhook 模式，但部署未配置回调地址（channels.webhookBaseUrl），平台无法把消息送达机器人。请配置该地址，或切回长连接。"
     },
     "inboundMode": {
@@ -2401,16 +2405,17 @@
   "setupGuide": {
     "title": "接入指南",
     "hint": "按插件的说明在平台上创建应用；下面的内容已按这个渠道填好，复制后粘贴即可。",
-    "modeLabel": "接入方式",
+    "modeLabel": "接收方式",
     "modes": {
       "long_connection": "长连接",
       "webhook": "Webhook"
     },
-    "checkAfterSave": "保存后检查",
+    "checksAfterSave": "保存后可以逐项检查。",
     "checksRateLimited": "检查次数太多，请一分钟后再重新检查；各项显示的是上次的结果。",
     "checksUnavailable": "暂时读不到检查结果，请稍后刷新页面。",
     "unresolved": {
       "not_saved": "{names} 保存后显示，现在原样显示。",
+      "no_name": "{names} 填写名称后显示，现在原样显示。",
       "public_url": "{names} 现在原样显示：需要超级管理员设置 http.publicUrl（平台的公开地址）。",
       "webhook_base": "{names} 现在原样显示：需要超级管理员设置 channels.webhookBaseUrl（Webhook 回调地址）。",
       "no_connector": "{names} 创建连接器后显示，现在原样显示。",

@@ -25,6 +25,12 @@ export type ConfigWidget =
   | "tags"
   | "json";
 
+/** How a channel connection receives events: a long connection (default) or webhooks. */
+export type ChannelInboundMode = "long_connection" | "webhook";
+
+/** Every channel inbound mode, in the order forms list them. */
+export const CHANNEL_INBOUND_MODES: readonly ChannelInboundMode[] = ["long_connection", "webhook"];
+
 /** A labelled value of an enum (or boolean) field. */
 export interface ConfigUiOption {
   value: string | number | boolean;
@@ -92,6 +98,13 @@ export interface ConfigUiHints {
   sections?: ConfigUiSection[];
   /** Root only: localized messages for custom issues (`params: { ui: key }`). */
   messages?: Record<string, LocalizedName>;
+  /**
+   * Channel connection config only, top-level fields only: the inbound modes the field belongs to.
+   * Forms draw it only in those modes and require it there; the kernel refuses a connection whose
+   * mode requires it without a value (channel inbound mode fields spec §2, §3). The zod schema keeps
+   * the field optional, since the other modes do not use it.
+   */
+  inboundModes?: ChannelInboundMode[];
 }
 
 /** Limits of config UI hints and of the JSON Schemas a plugin package carries. */
@@ -264,10 +277,19 @@ const HINT_KEYS = new Set([
   "secrets",
   "sections",
   "messages",
+  "inboundModes",
 ]);
 
 /** The only hints a secret node may carry. */
-const SECRET_HINT_KEYS = new Set(["label", "help", "placeholder", "order", "section", "advanced"]);
+const SECRET_HINT_KEYS = new Set([
+  "label",
+  "help",
+  "placeholder",
+  "order",
+  "section",
+  "advanced",
+  "inboundModes",
+]);
 
 const ITEM_KEYS = new Set(["title", "subtitle", "addLabel", "reorder"]);
 
@@ -422,7 +444,7 @@ export function validateConfigUi(
     if (raw !== undefined) {
       hintsBytes += utf8Bytes(JSON.stringify(raw));
       if (!isObj(raw)) report("x-ui must be an object");
-      else checkHints(raw, node, isRoot, report, text);
+      else checkHints(raw, node, isRoot, depth, report, text);
     }
 
     const shape = shapeOf(node);
@@ -449,6 +471,7 @@ export function validateConfigUi(
     h: Record<string, unknown>,
     node: JsonSchema,
     isRoot: boolean,
+    depth: number,
     report: (message: string) => void,
     text: (value: unknown, what: string, max: number, plainOk?: boolean) => void,
   ): void => {
@@ -465,7 +488,7 @@ export function validateConfigUi(
       const bad = Object.keys(h).filter((k) => HINT_KEYS.has(k) && !SECRET_HINT_KEYS.has(k));
       if (bad.length > 0) {
         report(
-          `a secret field allows only label, help, placeholder, order, section and advanced hints, not ${bad.join(", ")}`,
+          `a secret field allows only label, help, placeholder, order, section, advanced and inboundModes hints, not ${bad.join(", ")}`,
         );
       }
     }
@@ -479,6 +502,24 @@ export function validateConfigUi(
     }
     if (h.advanced !== undefined && typeof h.advanced !== "boolean") {
       report("advanced must be a boolean");
+    }
+    if (h.inboundModes !== undefined) {
+      const modes = h.inboundModes;
+      if (level !== "connection") {
+        report(`inboundModes is only allowed at the connection level, not ${level}`);
+      } else if (depth !== 1) {
+        report("inboundModes is only allowed on a top-level field of the config");
+      } else if (!Array.isArray(modes) || modes.length === 0) {
+        report("inboundModes must be a non-empty array");
+      } else {
+        modes.forEach((m, i) => {
+          if (!(CHANNEL_INBOUND_MODES as readonly unknown[]).includes(m)) {
+            report(`inboundModes[${i}] must be one of ${CHANNEL_INBOUND_MODES.join(", ")}`);
+          } else if (modes.indexOf(m) !== i) {
+            report(`inboundModes[${i}] "${String(m)}" is listed twice`);
+          }
+        });
+      }
     }
 
     if (h.section !== undefined) {
@@ -700,4 +741,35 @@ export function validateConfigUi(
     });
   }
   return problems;
+}
+
+/**
+ * The top-level fields of a connection config's JSON Schema ({@link configJsonSchema}) that carry
+ * an `inboundModes` hint, with their modes (unknown modes dropped). Pure; fields without the hint
+ * belong to every mode and are not listed.
+ */
+export function inboundModeFields(schema: JsonSchema): Record<string, ChannelInboundMode[]> {
+  const out: Record<string, ChannelInboundMode[]> = {};
+  for (const [key, node] of Object.entries(properties(schema))) {
+    const hints = isObj(node) ? node["x-ui"] : undefined;
+    const modes = isObj(hints) ? hints.inboundModes : undefined;
+    if (!Array.isArray(modes)) continue;
+    const known = CHANNEL_INBOUND_MODES.filter((m) => modes.includes(m));
+    if (known.length > 0) out[key] = known;
+  }
+  return out;
+}
+
+/**
+ * The fields `mode` requires ({@link inboundModeFields}) for which `has(field)` is false, in schema
+ * order: what the kernel refuses on a channel connection create or config / mode change.
+ */
+export function missingInboundModeFields(
+  schema: JsonSchema,
+  mode: ChannelInboundMode,
+  has: (field: string) => boolean,
+): string[] {
+  return Object.entries(inboundModeFields(schema))
+    .filter(([key, modes]) => modes.includes(mode) && !has(key))
+    .map(([key]) => key);
 }

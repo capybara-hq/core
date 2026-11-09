@@ -235,6 +235,9 @@ export interface Channel {
 export const CHANNEL_EXTENSION_POINT = "channel@1";
 
 // @public
+export const CHANNEL_INBOUND_MODES: readonly ChannelInboundMode[];
+
+// @public
 export type ChannelCard = {
     kind: "approval";
     id: string;
@@ -273,6 +276,9 @@ export interface ChannelConnectArgs {
     onEvent(e: InboundEvent): Promise<void>;
     signal: AbortSignal;
 }
+
+// @public
+export type ChannelInboundMode = "long_connection" | "webhook";
 
 // @public
 export interface ChannelSendArgs {
@@ -388,6 +394,7 @@ export function configJsonSchema(schema: z.ZodTypeAny): JsonSchema;
 export interface ConfigUiHints {
     advanced?: boolean;
     help?: LocalizedName;
+    inboundModes?: ChannelInboundMode[];
     item?: {
         title?: string;
         subtitle?: string;
@@ -1458,6 +1465,9 @@ export type InboundEvent = {
 };
 
 // @public
+export function inboundModeFields(schema: JsonSchema): Record<string, ChannelInboundMode[]>;
+
+// @public
 export interface InboundSender {
     avatarUrl?: string;
     displayName?: string;
@@ -1701,6 +1711,9 @@ export type MergedScheme = {
 
 // @public
 export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
+
+// @public
+export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
 
 // @public
 export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";

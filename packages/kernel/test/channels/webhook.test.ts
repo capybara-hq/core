@@ -326,6 +326,102 @@ describe("channel webhook route (single replica, api + gateway)", () => {
     expect(ok.statusCode).toBe(400);
   });
 
+  it("POST with inboundMode webhook creates a webhook connection (no long connection)", async () => {
+    const res = await owner({
+      method: "POST",
+      url: channels(),
+      payload: {
+        plugin: "fake-im",
+        name: "hook from the start",
+        agentId,
+        inboundMode: "webhook",
+        config: {
+          platformUrl: im.url,
+          appId: "cli_hook_new",
+          appSecret: "cli_hook_new-secret",
+          webhookToken: TOKEN,
+        },
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const view = (res.json() as { channel: { id: string; inboundMode: string } }).channel;
+    expect(view.inboundMode).toBe("webhook");
+    const body = fakeWebhookEvents([fakeDm("hook-new-1", "u-1", "hi")]);
+    expect((await hook(view.id, body, signFakeWebhook(body, TOKEN))).statusCode).toBe(200);
+    expect(im.active(view.id)).toHaveLength(0);
+  });
+
+  it("a field the mode requires (x-ui.inboundModes) without a value → 400 on create and switch", async () => {
+    const create = await owner({
+      method: "POST",
+      url: channels(),
+      payload: {
+        plugin: "fake-im",
+        name: "hook without token",
+        agentId,
+        inboundMode: "webhook",
+        config: { platformUrl: im.url, appId: "cli_hook_bad", appSecret: "cli_hook_bad-s" },
+      },
+    });
+    expect(create.statusCode).toBe(400);
+    expect(errCode(create)).toBe("extension.config_invalid");
+    expect((create.json() as { error: { details: { path: string }[] } }).error.details).toEqual([
+      expect.objectContaining({ path: "webhookToken", segments: ["webhookToken"] }),
+    ]);
+    // long connection does not need it
+    const plain = await createChannel("fake-im", "cli_hook_plain");
+    const sw = await patch(plain, { inboundMode: "webhook" });
+    expect(sw.statusCode).toBe(400);
+    expect(errCode(sw)).toBe("extension.config_invalid");
+    // the switch with the field in the same PATCH works (the stored secrets are kept)
+    const ok = await patch(plain, {
+      inboundMode: "webhook",
+      config: { platformUrl: im.url, appId: "cli_hook_plain", webhookToken: TOKEN },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    // clearing it while in webhook mode is refused; a rename needs no check
+    const clear = await patch(plain, {
+      config: { platformUrl: im.url, appId: "cli_hook_plain", webhookToken: null },
+    });
+    expect(clear.statusCode).toBe(400);
+    expect((await patch(plain, { name: "renamed hook" })).statusCode).toBe(200);
+  });
+
+  it("GET schema/:plugin says whether webhook inbound is usable", async () => {
+    const info = async (plugin: string) =>
+      (
+        (await owner({ method: "GET", url: `${channels()}/schema/${plugin}` })).json() as {
+          inbound: Record<string, boolean>;
+        }
+      ).inbound;
+    expect(await info("fake-im")).toEqual({
+      webhookSupported: true,
+      webhookAvailable: true,
+      webhookPublic: true,
+    });
+    expect(await info("chan-mini")).toEqual({
+      webhookSupported: false,
+      webhookAvailable: false,
+      webhookPublic: false,
+    });
+  });
+
+  it("POST with inboundMode webhook for a plugin without webhook support → 409", async () => {
+    const res = await owner({
+      method: "POST",
+      url: channels(),
+      payload: {
+        plugin: "chan-mini",
+        name: "mini hook",
+        agentId,
+        inboundMode: "webhook",
+        config: { platformUrl: im.url, appId: "cli_mini_hook", appSecret: "x-secret" },
+      },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("channel.webhook_unavailable");
+  });
+
   it("PATCH inboundMode webhook for a plugin without webhook support → 409", async () => {
     const mini = await createChannel("chan-mini", "cli_mini");
     const view = (

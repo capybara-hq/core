@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import * as React from "react";
@@ -260,6 +262,31 @@ describe("Tabs: no focus ring after a pointer (issue Y)", () => {
 });
 
 describe("Segmented", () => {
+  // Spec §6.4: a Segmented hugs its segments or is `fill`; a stretching parent never widens the frame
+  it("hugs its segments unless fill (max-width: max-content; fill lifts it)", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/display.css"), "utf8");
+    const rule = (selector: string) => {
+      const at = css.indexOf(`${selector} {`);
+      expect(at, selector).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    expect(rule(".cb-segmented")).toMatch(/max-width:\s*max-content/);
+    expect(rule('.cb-segmented[data-fill="true"]')).toMatch(/max-width:\s*none/);
+    expect(rule('.cb-segmented[data-fill="true"]')).toMatch(/width:\s*100%/);
+    wrap(
+      <Segmented
+        label="v"
+        value="a"
+        onChange={() => {}}
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("radiogroup").getAttribute("data-fill")).toBeNull();
+  });
+
   it("radiogroup、选中、onChange", async () => {
     const onChange = vi.fn();
     wrap(

@@ -11,6 +11,8 @@ export const ChannelCreateSchema = z
     agentId: z.string().min(1).max(100),
     config: Config,
     unboundPolicy: Policy.optional(),
+    // default long_connection; webhook needs plugin support and channels.webhookBaseUrl (409)
+    inboundMode: z.enum(["long_connection", "webhook"]).optional(),
   })
   .strict();
 

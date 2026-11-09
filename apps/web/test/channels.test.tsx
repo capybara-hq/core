@@ -314,6 +314,8 @@ describe("新建渠道连接（FormPage）", () => {
         appSecret: "acme-secret",
       },
       unboundPolicy: "anonymous",
+      // no guide with modes: the default mode, sent as such
+      inboundMode: "long_connection",
     });
   });
 
@@ -549,6 +551,69 @@ describe("渠道连接详情（DetailPage）", () => {
         appId: "cli_acme",
         tenant: "t1",
         appSecret: "rotated-secret",
+      },
+    });
+  });
+
+  // Channel inbound mode fields spec §5: fields with x-ui.inboundModes follow the mode
+  const MODE_SCHEMA = {
+    ...SCHEMA,
+    properties: {
+      ...SCHEMA.properties,
+      webhookToken: { type: "string", "x-secret": true, "x-ui": { inboundModes: ["webhook"] } },
+    },
+  };
+
+  it("凭据: a field of another inbound mode is not drawn", async () => {
+    routes({
+      [`GET ${BASE}/channels/schema/fake-im`]: () =>
+        json(200, { plugin: "fake-im", schema: MODE_SCHEMA }),
+    });
+    await renderDetail();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: en.channels.detail.tabs.credentials }));
+    expect(screen.getByLabelText(/^appSecret/)).toBeTruthy();
+    expect(screen.queryByLabelText(/^webhookToken/)).toBeNull();
+  });
+
+  it("inbound mode: switching to a mode asks for its missing fields and saves them with it", async () => {
+    const calls = routes({
+      [`GET ${BASE}/channels/schema/fake-im`]: () =>
+        json(200, { plugin: "fake-im", schema: MODE_SCHEMA }),
+      [`GET ${BASE}/channels/ch1`]: () =>
+        json(200, {
+          channel: {
+            ...CHANNEL,
+            secrets: [
+              { path: "appSecret", set: true },
+              { path: "webhookToken", set: false },
+            ],
+          },
+        }),
+      [`PATCH ${BASE}/channels/ch1`]: (c) =>
+        json(200, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
+    });
+    await renderDetail();
+    const d = en.channels.detail;
+    const user = userEvent.setup();
+    const save = await screen.findByRole("button", { name: d.saveInbound });
+    expect(screen.queryByLabelText(/^webhookToken/)).toBeNull();
+    await user.click(
+      screen.getByRole("radio", { name: new RegExp(`^${en.channels.inboundMode.webhook}`) }),
+    );
+    const token = await screen.findByLabelText(/^webhookToken/);
+    expect(save).toHaveProperty("disabled", true);
+    await user.type(token, "hook-secret");
+    await vi.waitFor(() => expect(save).toHaveProperty("disabled", false));
+    await user.click(save);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      inboundMode: "webhook",
+      config: {
+        platformUrl: "http://im.test",
+        appId: "cli_acme",
+        tenant: "t1",
+        webhookToken: "hook-secret",
       },
     });
   });
