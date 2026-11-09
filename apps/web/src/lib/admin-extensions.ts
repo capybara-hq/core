@@ -114,6 +114,11 @@ export interface AdminExtension {
   /** 包读不到时的说明（此时 status 为 failed、权限为空）。 */
   error?: string;
   /**
+   * UI contributions the loaded instance left out at load (UI slots spec §3.2): a slot the catalog
+   * does not know, or not at that version. `[]` when the extension is not loaded.
+   */
+  uiDropped: { id: string; ref: string; reason: "unknown-slot" | "unsupported-version" }[];
+  /**
    * Only with status `conflict`: the single-provider extension point (`sandbox@2`) and the other
    * extensions providing it; disabling them loads this one, no restart.
    */

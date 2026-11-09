@@ -189,7 +189,8 @@
       "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
       "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
-      "resources_disabled": "该连接器已关闭读取资源。"
+      "resources_disabled": "该连接器已关闭读取资源。",
+      "not_personal": "该连接器整个组织共用一个凭据，没有按成员设置的工具权限。"
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
@@ -520,6 +521,7 @@
       "extensionToolOffInOrg": "已在本组织关闭",
       "policiesLabel": "策略",
       "policy": {
+        "allow": "允许",
         "default": "默认",
         "ask": "需审批",
         "deny": "禁止"
@@ -643,6 +645,7 @@
       "sheetTools": "{name} 的工具",
       "sheetDone": "完成",
       "sheetHint": "默认全部开启，取消勾选即对这个智能体关闭；全部取消即整体关闭（之后新增的工具也关闭）。策略只能收紧。修改随本页的保存一起生效。",
+      "connectorPolicyHint": "连接器工具也可以对这个智能体设为允许，覆盖组织默认和成员自己的「询问」；成员在自己的连接上设为「禁止」的工具，对他仍然禁止。",
       "loadingTools": "正在读取工具…",
       "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。"
     },
@@ -1651,6 +1654,7 @@
     "policy": {
       "agent": "智能体的设置要求审批",
       "connector": "连接器的策略要求审批",
+      "member": "你在这个连接器上的设置要求审批",
       "default": "该工具默认需要审批",
       "role": "需要有权限的成员审批",
       "org": "组织策略要求审批",
@@ -2076,6 +2080,35 @@
     "tabs": {
       "all": "全部",
       "disabled": "已停用"
+    },
+    "cards": {
+      "connect": "连接",
+      "connected": "已连接",
+      "notConnected": "未连接",
+      "permissions": "权限"
+    },
+    "permissions": {
+      "title": "{name} 的权限",
+      "hint": "只对你自己的连接生效，用于你使用的所有智能体。智能体可单独覆盖，但你设为「禁止」的工具不会被覆盖。",
+      "listLabel": "工具权限",
+      "allow": "允许",
+      "ask": "询问",
+      "deny": "禁止",
+      "defaultMark": "{label}（默认）",
+      "default": "默认：{label}",
+      "locked": {
+        "disabled": "组织已停用这个工具",
+        "org_deny": "组织已禁止这个工具"
+      },
+      "empty": "这个连接器没有工具。",
+      "save": "保存",
+      "cancel": "取消",
+      "saved": "已保存权限。",
+      "loading": "正在读取工具…"
+    },
+    "templates": {
+      "needsConfig": "需要配置",
+      "configure": "配置"
     }
   },
   "connections": {
@@ -3240,7 +3273,8 @@
       "agent-templates": "智能体模板",
       "themes": "主题",
       "models": "模型",
-      "plugins": "插件"
+      "plugins": "插件",
+      "extensionPages": "扩展"
     },
     "overview": {
       "intro": "管理整个部署：账号、组织、扩展与部署设置。",
@@ -3522,6 +3556,17 @@
         "consistent": "副本一致 {ok}/{n}",
         "diverged": "副本不一致 {ok}/{n}",
         "none": "无副本上报"
+      },
+      "uiDropped": {
+        "title": "未生效的界面",
+        "description": "这个扩展声明的下列界面没有生效：它们指向的插槽在本平台不存在，或插槽版本不受支持。扩展的其他功能不受影响。",
+        "columns": {
+          "id": "界面",
+          "slot": "插槽",
+          "reason": "原因"
+        },
+        "unknownSlot": "插槽不存在",
+        "unsupportedVersion": "插槽版本不受支持"
       },
       "detail": {
         "tabsLabel": "扩展详情",
@@ -4525,6 +4570,36 @@
     "owner": {
       "self": "本组织",
       "platform": "平台"
+    }
+  },
+  "uiArrangement": {
+    "title": "界面位置",
+    "description": "扩展在哪些位置展示页面和区块。隐藏后不再列出，也可以调整顺序。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
+    "descriptionReadonly": "扩展在哪些位置展示页面和区块。只有组织管理员可以修改。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
+    "followsPlatform": "跟随平台",
+    "resetOrg": "跟随平台",
+    "resetPlatform": "恢复默认",
+    "resetLabel": "重置{slot}",
+    "hideLabel": "隐藏 {name}",
+    "hiddenState": "已隐藏",
+    "shownState": "显示中",
+    "moveUp": "上移 {name}",
+    "moveDown": "下移 {name}",
+    "columns": {
+      "title": "标题",
+      "extension": "扩展",
+      "hidden": "隐藏",
+      "move": "顺序"
+    },
+    "slots": {
+      "conversationPanel": "对话面板",
+      "conversationProperties": "对话属性区块",
+      "conversationCard": "工具结果卡片",
+      "orgPage": "组织页面",
+      "filePreview": "文件预览",
+      "agentSection": "智能体页面区块",
+      "orgSettingsSection": "组织设置区块",
+      "platformPage": "平台页面"
     }
   },
   "filePreviewers": {

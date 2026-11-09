@@ -288,6 +288,7 @@ describe("/admin/orgs（ListPage）", () => {
     stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     });
     await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale: "zh" });
     const hint = await screen.findByText(zh.admin.orgs.hint);
@@ -301,6 +302,7 @@ describe("/admin/orgs（ListPage）", () => {
     const calls = stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
         json(200, {
           ...SETTINGS,
@@ -356,6 +358,7 @@ describe("/admin/orgs（ListPage）", () => {
     const calls = stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
         json(200, { ...SETTINGS, runConcurrencyOverrides: {}, sandboxLimitOverrides: {} }),
     });
@@ -504,6 +507,7 @@ describe("/admin/orgs（ListPage）", () => {
     stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
         json(400, { error: { code: "validation_failed", message: "x" } }),
     });
@@ -536,6 +540,7 @@ describe("/admin/settings（FormPage）", () => {
       const s = m.admin.settings;
       const calls = stubApi({
         "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+        "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
         ...THEME_ROUTES,
         "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
       });
@@ -566,7 +571,11 @@ describe("/admin/settings（FormPage）", () => {
   );
 
   it("warns super admins with the operator details only on an insecure origin", async () => {
-    stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS), ...THEME_ROUTES });
+    stubApi({
+      "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
+      ...THEME_ROUTES,
+    });
     vi.stubGlobal("isSecureContext", false);
     await renderRouteWithCache("/admin/settings", lastStubRoutes());
     const note = await screen.findByText(/CAPYBARA_AUTH__COOKIE_SECURE=false/);
@@ -582,6 +591,7 @@ describe("/admin/settings（FormPage）", () => {
   it("币种不合法时不能保存", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,
     });
     await renderRouteWithCache("/admin/settings", lastStubRoutes());

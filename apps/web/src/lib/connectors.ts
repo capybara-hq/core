@@ -105,6 +105,8 @@ export interface ConnectorSummary {
   status: "active" | "disabled";
   /** The platform connector template it was made from; null for a custom one (older: absent). */
   platformTemplateId?: string | null;
+  /** The icon of the plugin its template came from (an org icon route; null or absent: none). */
+  icon?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -282,6 +284,36 @@ export const setMyCredential = (orgId: string, connectorId: string, value: Crede
   apiFetch<void>(`${one(orgId, connectorId)}/credentials/me`, {
     method: "PUT",
     body: JSON.stringify(value),
+  });
+
+/** One tool on the viewer's 权限 sheet (kernel `MemberToolPolicyView`). */
+export interface MemberToolPolicy {
+  name: string;
+  key: string;
+  title: string | null;
+  description: string;
+  /** What applies without the viewer's setting (the org default). */
+  defaultPolicy: ToolPolicy;
+  annotationPolicy: "allow" | "ask";
+  /** The viewer's own setting (null: the default). */
+  policy: ToolPolicy | null;
+  /** Locked by the org: denied whatever the viewer sets. */
+  locked: "disabled" | "org_deny" | null;
+}
+
+/** The viewer's own tool policies for their connection of a personal connector. */
+export const getMyToolPolicies = (orgId: string, connectorId: string) =>
+  apiFetch<{ tools: MemberToolPolicy[] }>(`${one(orgId, connectorId)}/tool-policies/me`);
+
+/** Sets (or, with null, clears) the viewer's own policies for some tools; answers the sheet. */
+export const setMyToolPolicies = (
+  orgId: string,
+  connectorId: string,
+  tools: Record<string, ToolPolicy | null>,
+) =>
+  apiFetch<{ tools: MemberToolPolicy[] }>(`${one(orgId, connectorId)}/tool-policies/me`, {
+    method: "PUT",
+    body: JSON.stringify({ tools }),
   });
 
 /** 发起 OAuth 连接：返回授权服务器的授权地址（随后整页跳转过去）；`returnTo` 为授权结束后回到的站内路径。 */

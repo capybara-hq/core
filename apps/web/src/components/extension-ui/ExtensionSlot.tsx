@@ -8,7 +8,7 @@ import type { EmbedFile } from "../../lib/embed-bridge";
 import { retryOnMountOf } from "../../lib/query/client";
 import { contributionsQuery } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
-import { refreshUiViews } from "../../lib/query/ui";
+import { adminUiContributionsQuery, refreshUiViews } from "../../lib/query/ui";
 import {
   openUiStream,
   type UiContributionItem,
@@ -37,11 +37,16 @@ export type SlotArgs = {
     conversationId: string;
     card: { callId: string; key?: string };
   };
-  "org.page": { orgId: string };
+  /**
+   * `direct`: the page's contribution when an arrangement hides it from the list (hidden means not
+   * listed; the direct URL still renders, UI slots spec §5).
+   */
+  "org.page": { orgId: string; direct?: UiContributionItem };
   "file.preview": { orgId: string; conversationId: string; fileId: string };
   "agent.detail.section": { orgId: string; agentId: string };
   "org.settings.section": { orgId: string };
-  "platform.page": Record<string, never>;
+  /** `direct`: as for `org.page`, the page a platform arrangement hides from the list. */
+  "platform.page": { direct?: UiContributionItem };
 };
 
 /** Opens an open target: `contribution` is a `conversation.panel` of the same extension. */
@@ -143,7 +148,8 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
       return <OrgSettingsSlot args={p.args} />;
     case "agent.detail.section":
       return p.select ? <AgentSectionSlot args={p.args} select={p.select} /> : null;
-    // platform.page: rendered from Task 14
+    case "platform.page":
+      return p.select ? <PlatformPageSlot args={p.args} select={p.select} /> : null;
     default:
       return null;
   }
@@ -254,7 +260,7 @@ function OrgPageSlot({
 }) {
   const locale = uiLocale(useLocale());
   const { items } = useSlotContributions(args.orgId, "org.page");
-  const c = items.find((x) => matches(x, select));
+  const c = items.find((x) => matches(x, select)) ?? args.direct;
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
   return (
@@ -263,6 +269,47 @@ function OrgPageSlot({
         <OrgPageEmbed key={key} orgId={args.orgId} c={c} />
       ) : (
         <OrgPageView key={key} orgId={args.orgId} c={c} />
+      )}
+    </BlockBoundary>
+  );
+}
+
+/**
+ * The platform's page contributions (slot `platform.page`, super admins), in the kernel's order. A
+ * failed read (not read again on mount) lists none; `pending` while the first read is on its way.
+ */
+export function usePlatformPages(enabled = true): {
+  items: UiContributionItem[];
+  pending: boolean;
+} {
+  const q = adminUiContributionsQuery();
+  const r = useQuery({ ...q, enabled, retryOnMount: retryOnMountOf(q.queryKey) });
+  const items = r.data ?? NONE;
+  return { items, pending: enabled && r.data === undefined && r.error === null };
+}
+
+/**
+ * A platform page's body (admin console): a schema view from the query cache refreshed by the
+ * platform UI stream, or an embed; the same as an org page, on the org-less admin routes.
+ */
+function PlatformPageSlot({
+  args,
+  select,
+}: {
+  args: SlotArgs["platform.page"];
+  select: { plugin: string; id: string };
+}) {
+  const locale = uiLocale(useLocale());
+  const { items } = usePlatformPages();
+  const c = items.find((x) => matches(x, select)) ?? args.direct;
+  if (!c) return null;
+  const key = uiKey(c.plugin, c.id);
+  return (
+    <BlockBoundary name={c.title[locale]}>
+      {c.kind === "embed" ? (
+        <OrgPageEmbed key={key} orgId={null} c={c} />
+      ) : (
+        <OrgPageView key={key} orgId={null} c={c} />
       )}
     </BlockBoundary>
   );
@@ -370,7 +417,7 @@ function AgentSectionView({
   );
 }
 
-function OrgPageEmbed({ orgId, c }: { orgId: string; c: UiContributionItem }) {
+function OrgPageEmbed({ orgId, c }: { orgId: string | null; c: UiContributionItem }) {
   const locale = uiLocale(useLocale());
   return <EmbedTab orgId={orgId} plugin={c.plugin} id={c.id} title={c.title[locale]} />;
 }
@@ -380,7 +427,7 @@ function OrgPageEmbed({ orgId, c }: { orgId: string; c: UiContributionItem }) {
  * when this contribution changes, and once after a reconnect: refreshes may have been missed
  * meanwhile).
  */
-function useOrgView(orgId: string, c: UiContributionItem) {
+function useOrgView(orgId: string | null, c: UiContributionItem) {
   const locale = uiLocale(useLocale());
   const { plugin, id } = c;
   const targets = useMemo(() => [{ plugin, id }], [plugin, id]);
@@ -391,12 +438,14 @@ function useOrgView(orgId: string, c: UiContributionItem) {
   // ssr-exempt: live updates after first paint (the UI stream)
   useEffect(() => {
     setLiveLost(false);
+    // `orgId` null: the platform stream and the deployment scope's views
+    const viewsOf = (p?: string, i?: string) =>
+      orgId === null ? keys.deployment().uiViews(p, i) : keys.org(orgId).uiViews("org", p, i);
     return openUiStream(orgId, {
       onUi: (r) => {
-        if (r.plugin === plugin && r.contribution === id)
-          refreshUiViews(qc, keys.org(orgId).uiViews("org", plugin, id));
+        if (r.plugin === plugin && r.contribution === id) refreshUiViews(qc, viewsOf(plugin, id));
       },
-      onReconnect: () => refreshUiViews(qc, keys.org(orgId).uiViews("org")),
+      onReconnect: () => refreshUiViews(qc, viewsOf()),
       onError: () => setLiveLost(true),
     });
   }, [orgId, plugin, id, qc]);
@@ -425,7 +474,7 @@ function OrgViewBody({ live }: { live: ReturnType<typeof useOrgView> }) {
   );
 }
 
-function OrgPageView({ orgId, c }: { orgId: string; c: UiContributionItem }) {
+function OrgPageView({ orgId, c }: { orgId: string | null; c: UiContributionItem }) {
   return <OrgViewBody live={useOrgView(orgId, c)} />;
 }
 

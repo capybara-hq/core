@@ -643,3 +643,17 @@ describe("contributions name a slot (UI slots spec §3.2, §4)", () => {
     ).toMatch(/place must be one of/);
   });
 });
+
+describe("EmbedInitContext narrows on scope", () => {
+  it("an org context names its org, a platform one has none", () => {
+    const init = (context: Extract<EmbedParentMessage, { type: "init" }>["context"]) => context;
+    const c = init({ scope: "org", orgId: "o1", conversationId: "c1" });
+    if (c.scope === "org") expectTypeOf(c.orgId).toEqualTypeOf<string>();
+    const p = init({ scope: "platform" });
+    expect(p.orgId).toBeUndefined();
+    // @ts-expect-error a platform context carries no org
+    init({ scope: "platform", orgId: "o1" });
+    // @ts-expect-error an org context needs its org
+    init({ scope: "org" });
+  });
+});

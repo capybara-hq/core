@@ -68,6 +68,7 @@ describe("SettingsService", () => {
     expect(await s.get()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
+      uiArrangement: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
       subagentLimitOverrides: {},

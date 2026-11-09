@@ -38,8 +38,15 @@ const conv = (id: string, agentId: string, title: string | null = null) => ({
   updatedAt: "2026-10-20T06:32:00.000Z",
 });
 type Row = ReturnType<typeof conv> & { activity?: "running" | "waiting" | null };
-const group = (agentId: string, name: string, convs: Row[], more = false) => ({
-  agent: { id: agentId, name },
+type Avatar = ConversationGroupsPage["groups"][number]["agent"]["profile"]["avatar"];
+const group = (
+  agentId: string,
+  name: string,
+  convs: Row[],
+  more = false,
+  avatar: Avatar = { kind: "preset", id: "fox" },
+) => ({
+  agent: { id: agentId, name, profile: { avatar, updatedAt: "2026-10-20T06:32:00.000Z" } },
   latestAt: "2026-10-20T06:32:00.000Z",
   conversations: convs,
   more,
@@ -95,6 +102,39 @@ describe("useConversationGroups", () => {
     expect(row.getAttribute("aria-current")).toBe("page");
     expect(within(section()).getByText(/^未命名会话 · /)).toBeTruthy();
     expect(screen.getByRole("button", { name: "研究助手" })).toBeTruthy();
+  });
+
+  it("group titles show the avatars the groups carry, with no agents list cached or read", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        json(200, {
+          groups: [
+            group("a1", "研究助手", [conv("c1", "a1", "一")], false, { kind: "preset", id: "owl" }),
+            group("a2", "客服分流", [conv("c2", "a2", "二")], false, {
+              kind: "upload",
+              uploadId: "u1",
+            }),
+            group("a3", "echo agent", [conv("c3", "a3", "三")], false, null),
+          ],
+          next: null,
+        }),
+    });
+    // a page that reads no agents: the cache has none when the sidebar paints
+    show("o1", "/connectors");
+    await screen.findByRole("link", { name: "一" });
+    const head = (name: string) =>
+      screen
+        .getByRole("button", { name })
+        .closest('[data-part="group-label"]')
+        ?.querySelector('[data-part="avatar"]');
+    expect(head("研究助手")?.getAttribute("data-preset")).toBe("owl");
+    expect(head("客服分流")?.getAttribute("data-kind")).toBe("image");
+    expect(head("客服分流")?.querySelector("img")?.getAttribute("src")).toBe(
+      "/api/v1/orgs/o1/agents/a2/avatar?v=2026-10-20T06%3A32%3A00.000Z",
+    );
+    expect(head("echo agent")?.getAttribute("data-kind")).toBe("initial");
+    expect(head("echo agent")?.textContent).toBe("E");
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/conversations/groups"]);
   });
 
   it("More loads the group's next conversations after the last one", async () => {

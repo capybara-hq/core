@@ -50,7 +50,9 @@ type DisabledToolRef =
   from the current version is not re-checked, so a connector deleted or an extension uninstalled
   later never blocks other edits (the pattern of `assertSubagents`) **(designer's call)**. A
   request carrying the old `tools` field, or `subagentTools` (§4), is refused.
-- `toolPolicies` stays, tighten-only (`ask` / `deny`), keyed by tool key **(decided)**. Its keys
+- `toolPolicies` stays, tighten-only (`ask` / `deny`), keyed by tool key **(decided)**. Amended
+  2026-11-09: a connector tool may also be `allow`, below the org's and the member's own deny
+  (`2026-11-09-connector-cards-and-member-policies-design.md` §4). Its keys
   are checked against every tool the agent could have (all builtins, the tools of the loaded
   extensions, the tools of the org's live connectors in any status), not only the ones on now, so
   a policy on a turned-off tool is kept and applies again when the tool is turned back on

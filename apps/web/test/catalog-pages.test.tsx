@@ -772,6 +772,7 @@ describe("/extensions: the switch follows the plugin", () => {
           : json(200, { extension: { ...EXT, enabled: false } }),
       [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
     });
     await renderRouteWithCache("/extensions", lastStubRoutes());
     expect(template("ListPage")).not.toBeNull();
@@ -806,6 +807,7 @@ describe("/extensions: the switch follows the plugin", () => {
           }),
         [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
         [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+        [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       expect(await screen.findByText(msgs[locale].plugins.state.platform)).toBeTruthy();
@@ -828,6 +830,7 @@ describe("/extensions: the switch follows the plugin", () => {
           }),
         [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
         [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+        [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch");
@@ -2528,6 +2531,7 @@ describe("/extensions: switching on refused by the plugin", () => {
       const m = msgs[locale];
       stubApi({
         [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+        [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
         [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
         [`GET ${ORG}/extensions`]: () =>
           json(200, {

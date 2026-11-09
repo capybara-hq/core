@@ -4,6 +4,7 @@ import {
   Button,
   EmptyState,
   FormSection,
+  ObjectMark,
   SettingsPage,
   Stack,
   StatusMark,
@@ -101,6 +102,22 @@ function Connections({ orgId }: { orgId: string }) {
   );
 }
 
+/**
+ * A connection's status line, led by its template's plugin icon (the name's initial without one).
+ */
+function ConnectionStatus({ app, connected }: { app: ConnectorDetail; connected: boolean }) {
+  const t = useTranslations("connections");
+  return (
+    <Stack direction="row" gap={8} align="center">
+      <ObjectMark size={24} text={app.name} image={app.icon ?? null} />
+      <StatusMark
+        status={connected ? "success" : "waiting"}
+        label={connected ? t("connected") : t("missing")}
+      />
+    </Stack>
+  );
+}
+
 /** A personal connector's section while it loads: its status line and a credential field. */
 const LOADING_FIELDS = [{}, {}];
 
@@ -139,10 +156,7 @@ function ConnectorConnection({ orgId, app }: { orgId: string; app: ConnectorDeta
     }
     return (
       <FormSection id={`app-${app.id}`} title={app.name} description={t("oauthHint")}>
-        <StatusMark
-          status={connected ? "success" : "waiting"}
-          label={connected ? t("connected") : t("missing")}
-        />
+        <ConnectionStatus app={app} connected={connected} />
         <Stack direction="row" gap={8}>
           <Button
             variant="secondary"
@@ -190,10 +204,7 @@ function ConnectorConnection({ orgId, app }: { orgId: string; app: ConnectorDeta
 
   return (
     <FormSection id={`app-${app.id}`} title={app.name} description={t("sectionHint")}>
-      <StatusMark
-        status={connected ? "success" : "waiting"}
-        label={connected ? t("connected") : t("missing")}
-      />
+      <ConnectionStatus app={app} connected={connected} />
       <CredentialFields auth={auth} values={values} onChange={setValues} />
       <Stack direction="row" gap={8}>
         {/* 每个连接器一个分组：保存按钮用次级样式，页面不出现多个主操作 */}

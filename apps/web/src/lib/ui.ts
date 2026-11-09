@@ -133,12 +133,41 @@ export function isHttpUrl(url: string): boolean {
 /** UI 语言（next-intl 的 locale）→ 接口的 `locale`。 */
 export const uiLocale = (locale: string): UiLocale => (locale === "zh" ? "zh" : "en");
 
-const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/ui`;
+/**
+ * The UI routes of a scope: an org's, or the platform's (`orgId` null: the org-less
+ * `/api/v1/admin/ui/*` routes of the admin console, super admins only; slot `platform.page`).
+ */
+const base = (orgId: string | null) =>
+  orgId === null ? "/api/v1/admin/ui" : `/api/v1/orgs/${encodeURIComponent(orgId)}/ui`;
 const target = (plugin: string, id: string) =>
   `${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 export const listUiContributions = (orgId: string) =>
   apiFetch<{ items: UiContributionItem[] }>(`${base(orgId)}/contributions`);
+
+/** The platform's page contributions (slot `platform.page`; super admins). */
+export const listAdminUiContributions = () =>
+  apiFetch<{ items: UiContributionItem[] }>(`${base(null)}/contributions`);
+
+/** One slot's arrangement entry: the hidden contributions and the order, keyed `<plugin>/<id>`. */
+export interface UiArrangementEntry {
+  hidden: string[];
+  order: string[];
+}
+
+/** One slot of `GET .../ui/arrangement`: where its entry comes from and its items in order. */
+export interface UiArrangementSlot {
+  slot: UiSlotId;
+  source: "org" | "platform" | "none";
+  items: (UiContributionItem & { hidden: boolean })[];
+}
+
+export const getUiArrangement = (orgId: string) =>
+  apiFetch<{ slots: UiArrangementSlot[] }>(`${base(orgId)}/arrangement`);
+
+/** The platform default arrangement (super admins). */
+export const getAdminUiArrangement = () =>
+  apiFetch<{ slots: UiArrangementSlot[] }>(`${base(null)}/arrangement`);
 
 /** How long one extension block may take to load before it shows "Failed to load · Retry". */
 export const UI_VIEW_TIMEOUT_MS = 10_000;
@@ -149,7 +178,7 @@ export const UI_VIEW_TIMEOUT_MS = 10_000;
  * {@link UI_VIEW_TIMEOUT_MS} with `ui.timeout`, and on `signal` (an unmount).
  */
 export async function getUiView(
-  orgId: string,
+  orgId: string | null,
   plugin: string,
   id: string,
   opts: {
@@ -185,7 +214,7 @@ export async function getUiView(
 }
 
 export const postUiAction = (
-  orgId: string,
+  orgId: string | null,
   plugin: string,
   id: string,
   body: UiActionRequest & { conversationId?: string; agentId?: string; locale: UiLocale },
@@ -197,7 +226,7 @@ export const postUiAction = (
 
 /** 取嵌入令牌：对话嵌入带 `conversationId`，组织页面不带。 */
 export const requestEmbedToken = (
-  orgId: string,
+  orgId: string | null,
   plugin: string,
   id: string,
   opts: { conversationId?: string; agentId?: string; fileId?: string } = {},
@@ -212,7 +241,7 @@ export const requestEmbedToken = (
   });
 
 /** 组织级刷新流的 URL（SSE，经同源代理）。 */
-export const uiStreamUrl = (orgId: string) => `${base(orgId)}/stream`;
+export const uiStreamUrl = (orgId: string | null) => `${base(orgId)}/stream`;
 
 /** 解析 `event: ui` 帧的 data；形状不对返回 undefined。 */
 export function parseUiRefresh(data: unknown): UiRefresh | undefined {
@@ -230,7 +259,7 @@ export function parseUiRefresh(data: unknown): UiRefresh | undefined {
  * 没有 `code` 表示浏览器放弃了重连。返回关闭函数。
  */
 export function openUiStream(
-  orgId: string,
+  orgId: string | null,
   handlers: {
     onUi(r: UiRefresh): void;
     onReconnect?(): void;

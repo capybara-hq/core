@@ -147,6 +147,55 @@ describe("ObjectRow", () => {
     expect(lone.getAttribute("aria-busy")).toBe("true");
   });
 
+  it("phones: the DOM the narrow layout relies on (state on the meta line, tab order)", () => {
+    zh(
+      <ObjectList label="l">
+        <ObjectRow
+          mark={{ text: "J" }}
+          name="Jina"
+          href="/plugins/jina"
+          description="Web search"
+          meta={["1 个扩展", "平台", "组织自选"]}
+          state={{ label: "已启用", tone: "ok" }}
+          action={{ label: "组织配置", href: "/plugins/jina/config" }}
+          menu={[
+            { label: "停用", danger: true, onSelect: () => {} },
+            { label: "详情", href: "/d" },
+          ]}
+        />
+        <ObjectRow mark={{ text: "s" }} name="s" state={{ label: "不可用", tone: "warn" }} />
+        <ObjectRow mark={{ text: "n" }} name="n" />
+      </ObjectList>,
+    );
+    const [full, stateOnly, bare] = screen.getAllByRole("listitem") as HTMLElement[];
+    // The meta line carries the state for the CSS; the label itself stays one node
+    const meta = full?.querySelector(".cb-object-meta") as HTMLElement;
+    expect(meta.getAttribute("data-state")).toBe("已启用");
+    expect(meta.getAttribute("data-state-tone")).toBe("ok");
+    expect(meta.hasAttribute("data-empty")).toBe(false);
+    expect(meta.textContent).toBe("1 个扩展 · 平台 · 组织自选");
+    expect(within(full as HTMLElement).getAllByText("已启用")).toHaveLength(1);
+    // The row action sits in its group, the menu is the row's last child (named 更多操作)
+    const group = full?.querySelector(".cb-object-actions") as HTMLElement;
+    expect(within(group).getByRole("link", { name: "组织配置" })).toBeTruthy();
+    const menu = within(full as HTMLElement).getByRole("button", { name: "更多操作" });
+    expect(menu.classList.contains("cb-object-menu")).toBe(true);
+    expect(full?.lastElementChild).toBe(menu);
+    // Tab order: name link, action, menu
+    const focusable = [...(full as HTMLElement).querySelectorAll("a, button")].map(
+      (el) => el.textContent || el.getAttribute("aria-label"),
+    );
+    expect(focusable).toEqual(["Jina", "组织配置", "更多操作"]);
+    // A state without meta keeps an empty meta line (drawn on phones only)
+    const empty = stateOnly?.querySelector(".cb-object-meta") as HTMLElement;
+    expect(empty.getAttribute("data-empty")).toBe("true");
+    expect(empty.getAttribute("data-state")).toBe("不可用");
+    expect(empty.textContent).toBe("");
+    // No meta, no state, no action: no meta line and no action group
+    expect(bare?.querySelector(".cb-object-meta")).toBeNull();
+    expect(bare?.querySelector(".cb-object-actions")).toBeNull();
+  });
+
   it("warn mark and chip use the warn tone", () => {
     zh(
       <ObjectList label="l">

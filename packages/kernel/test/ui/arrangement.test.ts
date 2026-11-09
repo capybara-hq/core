@@ -63,6 +63,38 @@ describe("arrange", () => {
   });
 });
 
+describe("base order (no arrangement entry)", () => {
+  const none = entry({});
+
+  it("is still grouped by anchor in the slot's anchor order", () => {
+    // base order (extension name, then manifest order) puts `aa`'s files section first
+    const base = [
+      item("aa", "files-one", "files"),
+      item("bb", "ctx-one", "context"),
+      item("bb", "bg-one", "background"),
+      item("cc", "ctx-two"),
+    ];
+    expect(keys(arrange(base, none))).toEqual([
+      "bb/ctx-one",
+      "cc/ctx-two",
+      "aa/files-one",
+      "bb/bg-one",
+    ]);
+  });
+
+  it("keeps base order within an anchor and in a slot without anchors", () => {
+    expect(keys(arrange([item("aa", "one", "files"), item("bb", "two", "files")], none))).toEqual([
+      "aa/one",
+      "bb/two",
+    ]);
+    const pages = [
+      { ...item("bb", "x"), slot: "org.page" as const },
+      { ...item("aa", "y"), slot: "org.page" as const },
+    ];
+    expect(keys(arrange(pages, none))).toEqual(["bb/x", "aa/y"]);
+  });
+});
+
 describe("effectiveEntry", () => {
   const platform: UiArrangement = {
     "org.page": { hidden: ["aa/x"], order: [] },

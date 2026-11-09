@@ -6,6 +6,7 @@ import { getConversationEnvironment } from "../artifacts";
 import { getAttachmentLimits } from "../attachments";
 import {
   getConnector,
+  getMyToolPolicies,
   listConnectorKinds,
   listConnectorPrompts,
   listConnectorResources,
@@ -359,6 +360,14 @@ export const connectorQuery = (orgId: string, connectorId: string) =>
     key: keys.org(orgId).connector(connectorId),
     fn: () => getConnector(orgId, connectorId).then((r) => r.connector),
     freshness: "orgConfig",
+  });
+
+/** The viewer's own tool policies for their connection of one connector (the card's 权限). */
+export const myToolPoliciesQuery = (orgId: string, connectorId: string) =>
+  defineQuery({
+    key: keys.org(orgId).connectorMyPolicies(connectorId),
+    fn: () => getMyToolPolicies(orgId, connectorId),
+    freshness: "mine",
   });
 
 /** The connectors' prompts for the composer's `/` menu. */

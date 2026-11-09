@@ -93,6 +93,26 @@ export function AgentRow({
   const [open, setOpen] = useState(false);
   // A pick in the panel leaves the focus where `onSelect` put it (the page's composer), not on 更多.
   const picked = useRef(false);
+  // On a phone the row is one scrolling line (§6.16.26): the selected chip is scrolled into view
+  // (within the row only, never the page) when it changes.
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row || selected === undefined || row.scrollWidth <= row.clientWidth) return;
+    const chip = Array.from(row.querySelectorAll<HTMLElement>('[data-part="agent-chip"]')).find(
+      (c) => c.dataset.agent === selected,
+    );
+    if (!chip) return;
+    const start =
+      chip.getBoundingClientRect().left - row.getBoundingClientRect().left + row.scrollLeft;
+    const end = start + chip.offsetWidth;
+    // the row's 16 px bleed padding stays around the chip
+    const pad = Number.parseFloat(getComputedStyle(row).paddingLeft) || 0;
+    if (start - pad < row.scrollLeft) row.scrollLeft = start - pad;
+    else if (end + pad > row.scrollLeft + row.clientWidth) {
+      row.scrollLeft = end + pad - row.clientWidth;
+    }
+  }, [selected]);
   if (agents.length <= 1) return null;
   const shown = visibleAgents(agents, Math.max(1, max), selected);
   const hidden = agents.length - shown.length;
@@ -118,6 +138,7 @@ export function AgentRow({
       type="button"
       className="cb-agent-chip"
       data-part="agent-chip"
+      data-agent={a.id}
       aria-pressed={a.id === selected}
       title={a.description || undefined}
       onClick={() => onSelect(a.id)}
@@ -141,6 +162,7 @@ export function AgentRow({
   const row = (trigger: ReactNode) => (
     // biome-ignore lint/a11y/useSemanticElements: a row of buttons, not a form control group
     <div
+      ref={rowRef}
       className="cb-agent-row"
       data-part="agent-row"
       role="group"

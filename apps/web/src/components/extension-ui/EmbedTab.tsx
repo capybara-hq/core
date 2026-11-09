@@ -42,7 +42,8 @@ export function EmbedTab({
   file,
   failed,
 }: {
-  orgId: string;
+  /** `null`: a platform page (the admin routes, no org). */
+  orgId: string | null;
   plugin: string;
   id: string;
   title: string;
@@ -118,7 +119,14 @@ export function EmbedTab({
         return r;
       },
       locale,
-      context: { orgId, ...(conversationId !== undefined && { conversationId }) },
+      context:
+        orgId === null
+          ? { scope: "platform" }
+          : {
+              scope: "org",
+              orgId,
+              ...(conversationId !== undefined && { conversationId }),
+            },
       readTheme: () => ({ theme: readTheme(document), tokens: readDesignTokens(document) }),
       onResize: setHeight,
       onNavigate: (path) => latest.current.router.push(path),

@@ -58,7 +58,7 @@ const readOf = (t: ViewTarget): UiViewTarget => ({
  * that failed there is not read again on mount (its retry reads it).
  */
 export function useExtensionViews(
-  orgId: string,
+  orgId: string | null,
   targets: readonly ViewTarget[],
   opts: { conversationId?: string; agentId?: string; locale: UiLocale },
 ): {
@@ -112,7 +112,7 @@ export function useExtensionViews(
  * 失败时抛出带界面文案的 Error（由视图渲染器显示）。
  */
 export function useUiAction(
-  orgId: string,
+  orgId: string | null,
   opts: {
     conversationId?: string;
     agentId?: string;

@@ -105,6 +105,7 @@ const ROUTES: Routes = {
     json(200, { items: [ITEM("c1", "Clean up"), ITEM("c2", null)], next: null }),
   [`GET ${O}/trajectories/c1`]: () => json(200, DETAIL()),
   [`GET ${UI}/contributions`]: () => json(200, { items: [BOARD, LIVE] }),
+  [`GET ${UI}/arrangement`]: () => json(200, { slots: [] }),
   [`GET ${UI}/views/board/overview`]: () =>
     json(200, { view: { blocks: [{ type: "heading", text: "Cards" }] } }),
 };

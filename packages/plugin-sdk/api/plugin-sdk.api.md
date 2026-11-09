@@ -909,6 +909,17 @@ export interface EmbeddingRequestHookPayload {
 }
 
 // @public
+export type EmbedInitContext = {
+    scope: "org";
+    orgId: string;
+    conversationId?: string;
+} | {
+    scope: "platform";
+    orgId?: undefined;
+    conversationId?: undefined;
+};
+
+// @public
 export type EmbedParentMessage = {
     protocol: typeof EMBED_PROTOCOL;
     type: "init";
@@ -916,10 +927,7 @@ export type EmbedParentMessage = {
     locale: Locale;
     theme: "dark" | "light";
     tokens: Record<string, string>;
-    context: {
-        orgId: string;
-        conversationId?: string;
-    };
+    context: EmbedInitContext;
 } | {
     protocol: typeof EMBED_PROTOCOL;
     type: "token";

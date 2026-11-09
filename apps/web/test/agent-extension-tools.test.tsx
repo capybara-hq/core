@@ -6,7 +6,7 @@ import zh from "../messages/zh.json";
 import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { pickOption } from "./support/select";
+import { optionLabels, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -356,16 +356,47 @@ describe("agent page Tools section: connectors", () => {
       tool("create", "Create document"),
       tool("drop", null, "disabled"),
     ],
+    auth: { type: "bearer", ownership: "org" },
     credential: { ownership: null, status: "connected" },
   };
-  const routes = (disabled: unknown[], policies: Record<string, string> = {}) => {
+  const routes = (
+    disabled: unknown[],
+    policies: Record<string, string> = {},
+    connector: typeof DOCS = DOCS,
+  ) => {
     const agent = agentWith(disabled, policies);
     return {
       ...routesWith(agent, []),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [DOCS] }),
-      [`GET ${ORG}/connectors/cn1`]: () => json(200, { connector: DOCS }),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [connector] }),
+      [`GET ${ORG}/connectors/cn1`]: () => json(200, { connector }),
     };
   };
+
+  it("允许 is offered only on a personal-credential connector's tools; an org credential's only tighten", async () => {
+    const m = en.agents.form;
+    stubApi(routes([]));
+    await renderEditAgent({ section: "tools" });
+    let sheet = await openGroup("Docs");
+    const orgSelect = await within(sheet).findByRole("combobox", {
+      name: "Policy for Search documents",
+    });
+    expect(await optionLabels(orgSelect)).toEqual([m.policy.default, m.policy.ask, m.policy.deny]);
+    expect(within(sheet).queryByText(m.connectorPolicyHint)).toBeNull();
+    cleanup();
+    stubApi(routes([], {}, { ...DOCS, auth: { type: "bearer", ownership: "personal" } }));
+    await renderEditAgent({ section: "tools" });
+    sheet = await openGroup("Docs");
+    const personalSelect = await within(sheet).findByRole("combobox", {
+      name: "Policy for Search documents",
+    });
+    expect(await optionLabels(personalSelect)).toEqual([
+      m.policy.default,
+      m.policy.allow,
+      m.policy.ask,
+      m.policy.deny,
+    ]);
+    expect(within(sheet).getByText(m.connectorPolicyHint)).toBeTruthy();
+  });
 
   it("an org connector is on for the agent: its enabled tools all ticked; unticking one turns it off", async () => {
     const m = en.agents.form;

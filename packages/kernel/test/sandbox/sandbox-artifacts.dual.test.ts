@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
@@ -71,8 +68,23 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
-/** A sleep only this test runs (found with `pgrep` after the takeover). */
+/** The step 4 command's sleep: longer than the lease TTL and the test, so only a kill ends it. */
 const LONG_SLEEP = "sleep 3017";
+
+/**
+ * Whether a process group still has a live member. The fake runs each command in its own process
+ * group led by its shell, so the group names one command of this test; a host-wide match on the
+ * command line would also see another run's command (a parallel run, or one left by an aborted
+ * run, which lives for the whole sleep).
+ */
+const groupAlive = (pgid: number): boolean => {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 const SANDBOX_TOOLS = ["Bash", "Read", "Deliver"];
 const CSV = "fruit,qty\napple,3\npear,5\nplum,7\n";
@@ -96,6 +108,8 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
   let redis: Redis;
   let base = "";
   const cookies = new Map<string, string>();
+  /** The process group of the step 4 command (killed in afterAll if the test failed before). */
+  let step4Group: number | undefined;
 
   /** 指定副本发请求（带登录 cookie，不跟随重定向）。 */
   async function at(i: 0 | 1, method: string, path: string, body?: unknown): Promise<Res> {
@@ -163,8 +177,8 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
 
   afterAll(async () => {
     await h?.stop();
-    // the commands the fake ran on this host
-    await promisify(execFile)("pkill", ["-f", `^${LONG_SLEEP}`]).catch(() => undefined);
+    // the command the fake ran on this host (only this run's: others may be running theirs)
+    if (step4Group !== undefined && groupAlive(step4Group)) process.kill(-step4Group, "SIGKILL");
     redis?.disconnect();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
@@ -225,12 +239,6 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const id = (row.handle as { id: string }).id;
     return { id, state: await fakeSandboxState(root, id) };
   };
-  /** Whether the long sleep is still running on this host (the fake runs commands for real). */
-  const longSleepAlive = async () =>
-    promisify(execFile)("pgrep", ["-f", `^${LONG_SLEEP}`]).then(
-      () => true,
-      () => false,
-    );
 
   /** The environment the conversation is bound to (its owner's default). */
   const envOf = async (convId: string): Promise<string> =>
@@ -330,15 +338,21 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     // 命令比锁的 TTL（60 秒）长、在默认超时（120 秒）之内：接手时它还在跑，必须由接手方杀掉
     await send(0, convId, "Bash", {
       description: "Test step",
-      command: `touch /workspace/step4-started && ${LONG_SLEEP} && touch /workspace/step4-finished`,
+      // `$$` is the shell's pid, which leads the command's process group (the fake runs it for real)
+      command: `echo $$ > /workspace/step4-started && ${LONG_SLEEP} && touch /workspace/step4-finished`,
     });
     // 命令确实在沙箱里跑起来了（沙箱锁在执行副本手里）
-    await waitFor(
-      async () => existsSync(join(fakeWorkspaceDir(root, c2.id), "step4-started")),
+    const started = join(fakeWorkspaceDir(root, c2.id), "step4-started");
+    step4Group = await waitFor(
+      async () => {
+        const pid = Number((await readFile(started, "utf8").catch(() => "")).trim());
+        return Number.isInteger(pid) && pid > 0 ? pid : null;
+      },
       60_000,
       "step 4 command running",
       200,
     );
+    expect(groupAlive(step4Group)).toBe(true);
     const running = await db
       .selectFrom("runs")
       .select(["id", "job_id", "trigger_seq"])
@@ -399,7 +413,10 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     });
     const r4c = await finished(convId, 6, 60_000);
     expect(r4c.result.isError, r4c.result.content).toBe(false);
-    expect(await longSleepAlive()).toBe(false);
+    // killed by the takeover (the sleep cannot end on its own); the dead group may take a moment
+    // to be reaped
+    const group = step4Group;
+    await waitFor(async () => !groupAlive(group), 5000, "step 4 command killed", 50);
     expect(
       (await readFakeSandboxOps(root)).some(([op, id]) => op === "kill-tagged" && id === c2.id),
     ).toBe(true);

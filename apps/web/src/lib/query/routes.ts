@@ -89,7 +89,12 @@ import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
-import { uiViewQuery } from "./ui";
+import {
+  adminUiArrangementQuery,
+  adminUiContributionsQuery,
+  uiArrangementQuery,
+  uiViewQuery,
+} from "./ui";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -203,6 +208,28 @@ export const ROUTES: readonly RouteEntry[] = [
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
+  },
+  {
+    pattern: "/admin/p/[plugin]/[id]",
+    // Super admins: the platform's UI contributions, then the page's view when it is a schema view
+    // (an embed's token handshake stays in the browser).
+    queries: ({ me }) => (superAdmin(me) ? [q(adminUiContributionsQuery())] : []),
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, params, locale }, qc) => {
+      const { plugin, id } = params;
+      if (!superAdmin(me) || plugin === undefined || id === undefined) return;
+      const items = qc.getQueryData<UiContributionItem[]>(adminUiContributionsQuery().queryKey);
+      const page = items?.find(
+        (c) => c.plugin === plugin && c.id === id && c.slot === "platform.page",
+      );
+      // not listed: the platform arrangement may hide it (the direct URL still renders)
+      if (items !== undefined && page === undefined) {
+        await qc.prefetchQuery({ ...adminUiArrangementQuery(), retry: false });
+        return;
+      }
+      if (page?.kind !== "view") return;
+      await qc.prefetchQuery({ ...uiViewQuery(null, { plugin, id }, { locale }), retry: false });
+    },
   },
   {
     pattern: "/admin/inbox",
@@ -358,7 +385,13 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/admin/settings",
     // The settings and the themes (外观's eligible ones, with their names and swatches).
     queries: ({ me }) =>
-      superAdmin(me) ? [q(deploymentSettingsQuery()), q(adminComponentsQuery("theme"))] : [],
+      superAdmin(me)
+        ? [
+            q(deploymentSettingsQuery()),
+            q(adminComponentsQuery("theme")),
+            q(adminUiArrangementQuery()),
+          ]
+        : [],
   },
   {
     pattern: "/agents",
@@ -577,8 +610,31 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/connectors",
-    // Guests read the list too.
-    queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
+    // Guests read the list too; members up also the connector templates offered to the org (a
+    // section: the cards of the ones without a connector here, with the admins' switches)
+    queries: ({ orgId, me }) =>
+      orgId === null
+        ? []
+        : [
+            q(connectorsQuery(orgId)),
+            ...(atLeast(me, "member")
+              ? [q(orgComponentsQuery(orgId, { kind: "connector_template" }))]
+              : []),
+          ],
+    // The personal connectors' cards show the viewer's own connection: their details
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId }, qc) => {
+      if (orgId === null) return;
+      const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
+        connectorsQuery(orgId).queryKey,
+      );
+      if (list === undefined) return;
+      await Promise.all(
+        personalConnectors(list.connectors).map((a) =>
+          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
+        ),
+      );
+    },
   },
   {
     pattern: "/connectors/[connectorId]",
@@ -691,16 +747,17 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/extensions",
     // Members: the extensions' state; org admins also the default providers and the file
-    // previewers (sections).
+    // previewers (sections); everyone the 界面位置 listing.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
         : !atLeast(me, "admin")
-          ? [q(orgExtensionsQuery(orgId))]
+          ? [q(orgExtensionsQuery(orgId)), q(uiArrangementQuery(orgId))]
           : [
               q(orgExtensionsQuery(orgId)),
               q(extensionPointDefaultsQuery(orgId)),
               q(orgFilePreviewersQuery(orgId)),
+              q(uiArrangementQuery(orgId)),
             ],
   },
   {
@@ -739,6 +796,11 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || plugin === undefined || id === undefined) return;
       const items = qc.getQueryData<UiContributionItem[]>(contributionsQuery(orgId).queryKey);
       const page = items?.find((c) => c.plugin === plugin && c.id === id && c.slot === "org.page");
+      // not listed: an arrangement may hide it (the direct URL still renders), which the view reads
+      if (items !== undefined && page === undefined) {
+        await qc.prefetchQuery({ ...uiArrangementQuery(orgId), retry: false });
+        return;
+      }
       if (page?.kind !== "view") return;
       await qc.prefetchQuery({ ...uiViewQuery(orgId, { plugin, id }, { locale }), retry: false });
     },

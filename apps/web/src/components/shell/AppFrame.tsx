@@ -39,6 +39,7 @@ import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
@@ -227,10 +228,13 @@ function ShellFrame({
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
   // path change.
   const adminContext = me.account.isSuperAdmin && under(pathname, "/admin");
-  const adminItems = useAdminItems({
-    inbox: useAdminInboxCount(adminContext),
-    plugins: usePluginPendingCount(adminContext),
-  });
+  const adminItems = useAdminItems(
+    {
+      inbox: useAdminInboxCount(adminContext),
+      plugins: usePluginPendingCount(adminContext),
+    },
+    useAdminExtensionPages(adminContext),
+  );
   const preferences = usePreferences();
   // The account row's scheme toggle; usePreferences leaves it out under a single-scheme theme.
   const schemeToggle = preferences.theme ? { theme: preferences.theme } : {};

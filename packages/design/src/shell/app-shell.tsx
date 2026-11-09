@@ -1,8 +1,9 @@
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
+import { keyboardInset } from "./pointer";
 import { Sidebar, type SidebarProps } from "./sidebar";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
 import { useHydrated, useMediaQuery } from "./use-media-query";
@@ -72,14 +73,30 @@ export function AppShell({
   // head then sits under the status bar and cannot be tapped. Once the keyboard is closed (the visual
   // viewport is the full window again; without visualViewport: no text field focused), put the
   // document back at the top.
+  // iOS also keeps the layout viewport when the keyboard opens, so a composer pinned at the bottom
+  // sat behind it (spec §4.3): the keyboard's height over the shell's bottom is the shell's
+  // `--cb-keyboard-inset` (with `data-keyboard="open"`), which the conversation page lifts its
+  // column by. While the keyboard is open the document is not scrolled; the inset does the work.
+  const shellRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (reference !== undefined) return;
     const vv = window.visualViewport;
     let frame = 0;
-    const restore = () => {
+    const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (vv) {
+          const shell = shellRef.current;
+          const rect = shell?.getBoundingClientRect();
+          const inset = keyboardInset(
+            vv,
+            rect && rect.height > 0 ? rect.bottom : window.innerHeight,
+          );
+          if (shell) {
+            shell.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            if (inset > 0) shell.dataset.keyboard = "open";
+            else delete shell.dataset.keyboard;
+          }
           if (vv.height < window.innerHeight - 120) return;
         } else {
           const active = document.activeElement;
@@ -92,12 +109,14 @@ export function AppShell({
         if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
       });
     };
-    document.addEventListener("focusout", restore);
-    vv?.addEventListener("resize", restore);
+    document.addEventListener("focusout", update);
+    vv?.addEventListener("resize", update);
+    vv?.addEventListener("scroll", update);
     return () => {
       cancelAnimationFrame(frame);
-      document.removeEventListener("focusout", restore);
-      vv?.removeEventListener("resize", restore);
+      document.removeEventListener("focusout", update);
+      vv?.removeEventListener("resize", update);
+      vv?.removeEventListener("scroll", update);
     };
   }, [reference]);
 
@@ -106,7 +125,7 @@ export function AppShell({
 
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
-      <div className="cb-shell">
+      <div ref={shellRef} className="cb-shell">
         {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
         <a className="cb-skip-link" href={`#${mainId}`}>
           {t("shell.skipToContent")}
