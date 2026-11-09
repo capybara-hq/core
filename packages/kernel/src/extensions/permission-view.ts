@@ -45,11 +45,12 @@ export interface PermissionGroup {
     | "models"
     | "network"
     | "ui"
+    | "components"
     | "client";
   /**
-   * Sensitive category: secrets, public routes, tools, hooks, client code; also the "provides" group
-   * when it holds one of {@link SENSITIVE_EXTENSION_POINTS}, and the "UI" group when it holds an
-   * embedded app (embed: the extension's own page in an iframe) or a client component.
+   * Sensitive category: secrets, public routes, tools, hooks, client components, client code; also
+   * the "provides" group when it holds one of {@link SENSITIVE_EXTENSION_POINTS}, and the "UI" group
+   * (views and embeds) when it holds an embedded app (embed: the extension's own page in an iframe).
    */
   sensitive: boolean;
   items: string[];
@@ -112,6 +113,7 @@ const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
   "publicRoutes",
   "tools",
   "hooks",
+  "components",
   "client",
 ]);
 
@@ -120,14 +122,15 @@ const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
   publicRoutes: "public_routes",
   tools: "tools",
   hooks: "hooks",
+  components: "ui_component",
   client: "client_code",
 };
 
 /**
  * Why an item in a category is sensitive (undefined when it is not; shared by the grouped list, the
  * per-item `added` and the CLI markers): secrets, public routes, tools, hooks and client code are
- * always sensitive; {@link SENSITIVE_EXTENSION_POINTS} in "provides"; embedded apps (`embed:<id>`)
- * and client components (`component:<id>`) in "UI".
+ * always sensitive, and so are client components (their own group, items are the component ids);
+ * {@link SENSITIVE_EXTENSION_POINTS} in "provides"; embedded apps (`embed:<id>`) in "UI".
  */
 function itemReason(category: Category, item: string): SensitiveReason | undefined {
   // storage 不算敏感：ctx.storage 的键由内核加前缀 `plugins/<插件>/<orgId>/`，插件只能读写自己的前缀
@@ -138,7 +141,6 @@ function itemReason(category: Category, item: string): SensitiveReason | undefin
   }
   if (category === "ui") {
     if (item.startsWith("embed:")) return "ui_embed";
-    if (item.startsWith("component:")) return "ui_component";
     return undefined;
   }
   return ALWAYS_SENSITIVE.has(category) ? CATEGORY_REASON[category] : undefined;
@@ -163,7 +165,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     ["permissions.hooks:", "hooks", ""],
     ["permissions.hooks.policy:", "hooks", "policy:"],
     ["ui.embed:", "ui", "embed:"],
-    [UI_COMPONENT_KEY_PREFIX, "ui", "component:"],
+    [UI_COMPONENT_KEY_PREFIX, "components", ""],
     ["ui.view:", "ui", "view:"],
   ];
   for (const [prefix, category, itemPrefix] of table) {
@@ -238,12 +240,9 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
     { category: "network", items: p.network },
     {
       category: "ui",
-      items: [
-        ...ui.views.map((v) => `view:${v}`),
-        ...ui.embeds.map((e) => `embed:${e}`),
-        ...components.map((c) => `component:${c}`),
-      ],
+      items: [...ui.views.map((v) => `view:${v}`), ...ui.embeds.map((e) => `embed:${e}`)],
     },
+    { category: "components", items: components },
     { category: "client", items: p.client === true ? [CLIENT_ITEM] : [] },
   ];
   return groups

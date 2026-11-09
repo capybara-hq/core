@@ -42,12 +42,13 @@ capybara-plugin guide <id> [--locale en|zh] [--mode <mode>] [--audience <audienc
 - **check**: every plugin check, on the plugins under `<root>/plugins/*` (or `--plugins <glob>`, or
   the root itself when it is a plugin): the dependency boundary (a plugin depends only on
   `@capybara-hq/plugin-sdk` and third-party packages), extension state under multiple replicas (no
-  timers, no module-level mutable state), the permission manifest (hooks, UI, storage, HTTP,
+  timers and no module-level mutable state outside browser-only client modules), the permission
+  manifest (hooks, UI, storage, HTTP,
   secrets, tools), packing into a valid plugin package, the tool design rules (English
   descriptions, actionable errors), the migrations (naming, idempotent, no unmarked destructive
   statements, one file per number in a directory), the plugin tests' imports (`plugin-test-imports`: a file under `<plugin>/test` uses
-  only `@capybara-hq/plugin-sdk`, `@capybara-hq/testing`, `@capybara-hq/plugin-model-fake`, the
-  plugin itself and files inside the plugin, by import, package-name string or path) and the
+  only `@capybara-hq/plugin-sdk`, `@capybara-hq/plugin-client` (and its `/testing` fake host),
+  `@capybara-hq/testing`, `@capybara-hq/plugin-model-fake`, the plugin itself and files inside the plugin, by import, package-name string or path) and the
   release metadata (`plugin-release-metadata`: a public plugin has a `description`, a `license`, an
   https `homepage` and `repository` `{ type: "git", url: <the root package.json's
   repository.url>, directory: <its dir> }`; `example-*` plugins are private; its `plugin.json`

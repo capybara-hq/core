@@ -13,7 +13,7 @@ function themeSwatchBlocks(): ReactNode {
     <>
       <RefBlock id="theme-swatch-default" width={200} pad>
         <ThemeSwatch
-          name="Night City"
+          name="Neon Grid"
           scheme="dark"
           swatches={{
             bg: "var(--cb-bg)",
@@ -49,7 +49,7 @@ function themeSwatchGroupBlocks(): ReactNode {
       <ThemeSwatchGroup
         label="组织默认主题"
         scheme="dark"
-        value="night-city"
+        value="neon-grid"
         onChange={noop}
         items={[
           {
@@ -65,8 +65,8 @@ function themeSwatchGroupBlocks(): ReactNode {
             },
           },
           {
-            value: "night-city",
-            name: "夜之城",
+            value: "neon-grid",
+            name: "霓虹网格",
             swatches: {
               dark: {
                 bg: "var(--cb-panel-2)",

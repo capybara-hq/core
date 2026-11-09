@@ -1165,7 +1165,7 @@ describe("fake-theme (a declarative plugin, no extension)", () => {
       expect(list).toEqual(
         expect.arrayContaining([
           ".capybara-plugin/plugin.json",
-          "themes/night-city.json",
+          "themes/neon-grid.json",
           "themes/paper.json",
           "fonts/FakeSans.woff2",
           "logo.svg",

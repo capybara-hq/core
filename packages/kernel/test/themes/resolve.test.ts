@@ -36,7 +36,7 @@ describe("theme resolution", () => {
   beforeEach(async () => {
     await resetOrgCatalog(env);
     await clearThemeLevels(env);
-    a = (await importTheme(env, "neon", "night-city")).id;
+    a = (await importTheme(env, "neon", "neon-grid")).id;
     b = (await importTheme(env, "paper", "paper", "both")).id;
     c = (await importTheme(env, "dusk", "dusk", "both")).id;
     for (const id of [a, b, c]) await setThemeScope(env, id, "all");
@@ -51,14 +51,14 @@ describe("theme resolution", () => {
     const r = await themes.resolve(env.orgId, env.memId);
     expect(r).toEqual({
       id: a,
-      key: "neon/night-city",
+      key: "neon/neon-grid",
       version: "1",
-      name: { en: "night-city en", zh: "night-city zh" },
+      name: { en: "neon-grid en", zh: "neon-grid zh" },
       schemes: ["dark"],
       singleScheme: "dark",
       logo: {
         markUrl: `/api/v1/themes/${a}/1/assets/brand%2Flogo.svg`,
-        wordmark: "NIGHT CITY",
+        wordmark: "NEON GRID",
         faviconUrl: null,
       },
       cssUrl: `/api/v1/themes/${a}/1/r${THEME_CSS_REVISION}/theme.css`,

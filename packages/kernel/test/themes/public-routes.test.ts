@@ -56,15 +56,15 @@ describe("theme delivery routes", () => {
     const bytes = await pluginTgz({
       manifest: { name: "neon" },
       files: {
-        "themes/night-city.json": JSON.stringify({
-          name: { en: "Night City", zh: "夜之城" },
+        "themes/neon-grid.json": JSON.stringify({
+          name: { en: "Neon Grid", zh: "霓虹网格" },
           schemes: {
             dark: {
               color: { bg: "#05070D", panel: "#0A0E18", accent: "#FCE300", "on-accent": "#141200" },
             },
           },
           fonts: [{ family: "MiSans", file: "./fonts/MiSans.woff2", weight: 400, role: "prose" }],
-          logo: { mark: "./brand/logo.svg", wordmark: "NIGHT CITY", favicon: "./brand/icon.png" },
+          logo: { mark: "./brand/logo.svg", wordmark: "NEON GRID", favicon: "./brand/icon.png" },
         }),
         "fonts/MiSans.woff2": FONT,
         "brand/logo.svg": LOGO,
@@ -165,7 +165,7 @@ describe("theme delivery routes", () => {
       `/api/v1/themes/${id}/1/r${THEME_CSS_REVISION + 1}/theme.css`,
       `/api/v1/themes/${id}/1/2/theme.css`,
       `/api/v1/themes/${id}/1/assets/fonts%2FOther.woff2`,
-      `/api/v1/themes/${id}/1/assets/themes%2Fnight-city.json`,
+      `/api/v1/themes/${id}/1/assets/themes%2Fneon-grid.json`,
       `/api/v1/themes/${id}/1/assets/..%2F..%2Fsecret.png`,
       `/api/v1/themes/${id}/2/assets/fonts%2FMiSans.woff2`,
     ]) {
@@ -203,7 +203,7 @@ describe("theme delivery routes", () => {
       cssUrl: `/api/v1/themes/${id}/1/${REV}/theme.css`,
       logo: {
         markUrl: `/api/v1/themes/${id}/1/assets/brand%2Flogo.svg`,
-        wordmark: "NIGHT CITY",
+        wordmark: "NEON GRID",
         faviconUrl: `/api/v1/themes/${id}/1/assets/brand%2Ficon.png`,
       },
     });

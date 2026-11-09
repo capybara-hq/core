@@ -45,7 +45,7 @@ describe("theme settings", () => {
   beforeEach(async () => {
     await resetOrgCatalog(env);
     await clearThemeLevels(env);
-    on = (await importTheme(env, "neon", "night-city")).id;
+    on = (await importTheme(env, "neon", "neon-grid")).id;
     off = (await importTheme(env, "paper", "paper", "both")).id;
     await setThemeScope(env, on, "all");
     await setThemeScope(env, off, "optional");
@@ -297,8 +297,8 @@ describe("theme settings", () => {
         en: `Change your theme from "follow the org" to "${off}"`,
       });
       expect(await summary("platform.set-preferences", { theme: on }, env.memId)).toEqual({
-        zh: "把你的主题从「跟随组织」改为「night-city zh」",
-        en: 'Change your theme from "follow the org" to "night-city en"',
+        zh: "把你的主题从「跟随组织」改为「neon-grid zh」",
+        en: 'Change your theme from "follow the org" to "neon-grid en"',
       });
     });
 
@@ -306,8 +306,8 @@ describe("theme settings", () => {
       expect(
         await summary("org-settings.update", { theme: { id: on, personal: "locked" } }, env.bossId),
       ).toEqual({
-        zh: "修改组织设置：theme → night-city zh（个人选择：锁定）",
-        en: "Update the org settings: theme → night-city en (personal picks locked)",
+        zh: "修改组织设置：theme → neon-grid zh（个人选择：锁定）",
+        en: "Update the org settings: theme → neon-grid en (personal picks locked)",
       });
       expect(
         await summary(
@@ -317,8 +317,8 @@ describe("theme settings", () => {
         ),
       ).toMatchObject({ en: `Update the org settings: theme → ${off} (personal picks allowed)` });
       expect(await summary("admin.update-settings", { uiTheme: { id: on } }, env.rootId)).toEqual({
-        zh: "修改平台部署设置：uiTheme=night-city zh",
-        en: "Change the deployment settings: uiTheme=night-city en",
+        zh: "修改平台部署设置：uiTheme=neon-grid zh",
+        en: "Change the deployment settings: uiTheme=neon-grid en",
       });
       expect(await summary("admin.update-settings", { uiTheme: { id: null } }, env.rootId)).toEqual(
         {

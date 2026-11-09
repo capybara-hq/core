@@ -51,7 +51,7 @@ export const FAKE_EXTENSIONS = [
  *
  * | name | provides / covers |
  * |---|---|
- * | `fake-theme` | themes `night-city` (dark only, wordmark, font `FakeSans`, logo) and `paper` (light and dark); passes `capybara-plugin check` |
+ * | `fake-theme` | themes `neon-grid` (dark only, wordmark, font `FakeSans`, logo) and `paper` (light and dark); passes `capybara-plugin check` |
  */
 export const FAKE_PLUGINS = ["fake-theme"] as const;
 

@@ -92,7 +92,7 @@ the "carries nothing" check counts them.
 
 ```jsonc
 {
-  "name": { "en": "Night City", "zh": "夜之城" },
+  "name": { "en": "Neon Grid", "zh": "霓虹网格" },
   "description": { "en": "Neon yellow on deep blue-black." },
   "schemes": {
     "dark": {
@@ -104,7 +104,7 @@ the "carries nothing" check counts them.
   "fonts": [
     { "family": "MiSans", "file": "./fonts/MiSans-Regular.woff2", "weight": 400, "role": "prose" }
   ],
-  "logo": { "mark": "./logo.svg", "wordmark": "NIGHT CITY" }
+  "logo": { "mark": "./logo.svg", "wordmark": "NEON GRID" }
 }
 ```
 
@@ -345,7 +345,7 @@ Three levels, most specific first:
   faviconUrl } | null, cssUrl }`; `id` is the `platform_themes` UUID.
 - The settings already have `Platform` operations (`platform.set-preferences`,
   `org-settings.update`, `admin.update-settings`); they gain the fields, so an agent can switch a
-  person's or an org's theme on request ("change my theme to Night City"); the org and platform
+  person's or an org's theme on request ("change my theme to Neon Grid"); the org and platform
   writes stay confirmed and never rememberable. The listing gets a new domain `themes` with
   `themes.list`, which also returns the org's setting. `platform.set-preferences` is partial (at
   least one field).

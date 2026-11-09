@@ -1,0 +1,10 @@
+{
+  "name": "plugin-timer-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#util": "./src/util.ts",
+    "#fx/*": { "browser": "./src/ui/fx-*.ts", "default": "./src/ui/fx-*.ts" }
+  }
+}

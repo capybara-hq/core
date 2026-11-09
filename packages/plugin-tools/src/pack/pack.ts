@@ -46,7 +46,7 @@ import {
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
-import { build, type Plugin } from "esbuild";
+import { type BuildOptions, build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
 import { assetRefs, themePathsOf } from "../check/themes.js";
 import { buildClient, hasClientSources, PackRuleError } from "./client.js";
@@ -539,21 +539,14 @@ async function contentFiles(
 }
 
 /**
- * Bundles `src/index.ts` into `<stage>/package/dist/index.mjs` (esbuild, single-file ESM), checks
- * the bundle's imports, imports it and runs its default export through defineExtension. Returns the
- * bundle, the defined manifest and the bundled inputs (for the notices).
+ * The esbuild options of the extension's server bundle (`src/index.ts`, platform node, only the
+ * host-provided packages and Node builtins external), without an output: the packer adds
+ * `outfile`; `serverBundleInputs` builds with `write: false` to learn which files the bundle holds.
  */
-async function buildAndImport(
-  dir: string,
-  label: string,
-  stage: string,
-): Promise<{ code: Buffer; m: ExtensionManifest; inputs: string[] }> {
-  await linkHostPackages(dir, stage);
-  const entryOut = join(stage, "package", EXTENSION_ENTRY);
-  const result = await build({
+export function serverBuildOptions(dir: string): BuildOptions {
+  return {
     absWorkingDir: dir,
     entryPoints: [join(dir, "src/index.ts")],
-    outfile: entryOut,
     bundle: true,
     platform: "node",
     format: "esm",
@@ -567,7 +560,45 @@ async function buildAndImport(
     metafile: true,
     // Notices of bundled dependencies go to THIRD-PARTY-NOTICES.txt (built from the metafile).
     legalComments: "none",
-  });
+  };
+}
+
+/**
+ * The files the extension's server bundle holds (the metafile inputs of {@link serverBuildOptions},
+ * absolute and with symlinks resolved), built in memory. `undefined` when the build fails or gives
+ * no metafile (callers then treat every file as server code).
+ */
+export async function serverBundleInputs(pluginDir: string): Promise<Set<string> | undefined> {
+  const dir = resolve(pluginDir);
+  try {
+    const result = await build({ ...serverBuildOptions(dir), write: false });
+    if (result.errors.length > 0 || result.metafile === undefined) return undefined;
+    const out = new Set<string>();
+    for (const input of Object.keys(result.metafile.inputs)) {
+      // a namespaced input (`<define:…>`, a plugin's virtual module) is no file of the plugin
+      if (/^[a-z-]+:/i.test(input)) continue;
+      const abs = resolve(dir, input);
+      out.add(existsSync(abs) ? await realpath(abs) : abs);
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Bundles `src/index.ts` into `<stage>/package/dist/index.mjs` (esbuild, single-file ESM), checks
+ * the bundle's imports, imports it and runs its default export through defineExtension. Returns the
+ * bundle, the defined manifest and the bundled inputs (for the notices).
+ */
+async function buildAndImport(
+  dir: string,
+  label: string,
+  stage: string,
+): Promise<{ code: Buffer; m: ExtensionManifest; inputs: string[] }> {
+  await linkHostPackages(dir, stage);
+  const entryOut = join(stage, "package", EXTENSION_ENTRY);
+  const result = await build({ ...serverBuildOptions(dir), outfile: entryOut });
   if (result.errors.length > 0) {
     throw new Error(`${label}: esbuild failed: ${result.errors.map((e) => e.text).join("; ")}`);
   }

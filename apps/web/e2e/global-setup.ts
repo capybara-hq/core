@@ -30,7 +30,7 @@
  * `CAPYBARA_E2E_GREETER_TGZ` for the admin extension page case, which uploads it in the browser. A
  * fake git server holds a git marketplace repository (two versions of the skills plugin `notes`);
  * its URL goes into `CAPYBARA_E2E_GIT_MARKETPLACE_URL` for the catalog case that adds it and
- * upgrades the plugin. The declarative fixture plugin `fake-theme` (themes `night-city` and
+ * upgrades the plugin. The declarative fixture plugin `fake-theme` (themes `neon-grid` and
  * `paper`) is packed to `CAPYBARA_E2E_THEME_TGZ` for themes.spec.ts, which imports it. The client
  * extension fixtures `fake-client` and `fake-client-broken` are packed (client entry, styles,
  * integrity) to `CAPYBARA_E2E_CLIENT_TGZ` / `CAPYBARA_E2E_CLIENT_BROKEN_TGZ` for

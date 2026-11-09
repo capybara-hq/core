@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { packageImportsOf, resolveHashImport } from "./package-imports.js";
 import {
   collectImports,
   type Finding,
@@ -11,12 +12,14 @@ import {
 } from "./source.js";
 
 /**
- * `@capybara-hq/*` packages a plugin test may use besides the plugin itself: the SDK, the test
- * helpers, and model-fake (the scripted model provider published from core), which a test loads by
- * package name to drive agent runs.
+ * `@capybara-hq/*` packages a plugin test may use besides the plugin itself (each with its
+ * subpaths): the SDK, the client SDK (its types, and `/testing` with the fake host
+ * `renderWithFakeHost` for client components), the test helpers, and model-fake (the scripted
+ * model provider published from core), which a test loads by package name to drive agent runs.
  */
 export const PLUGIN_TEST_PACKAGES = [
   "@capybara-hq/plugin-sdk",
+  "@capybara-hq/plugin-client",
   "@capybara-hq/testing",
   "@capybara-hq/plugin-model-fake",
 ];
@@ -87,7 +90,10 @@ function pathCallTarget(call: Node, file: string): string | undefined {
  *   `require.resolve`);
  * - no relative import or path string (`../x`) that leaves the plugin directory, and no `join` /
  *   `resolve` whose bare `..` arguments leave it (taken from the file's directory);
- * - no repo-root path into `packages/` or `apps/` (core's layout).
+ * - no repo-root path into `packages/` or `apps/` (core's layout);
+ * - a `#…` subpath import is judged by its targets in the plugin's package.json `imports` map
+ *   (every condition, patterns expanded): a target package must be allowed and a target path must
+ *   stay inside the plugin directory; a `#…` import the map does not map is reported.
  * A kernel facility a plugin test needs is exported by `@capybara-hq/testing`.
  */
 export function checkPluginTestImports(pluginDirs: string[]): Finding[] {
@@ -99,14 +105,20 @@ export function checkPluginTestImports(pluginDirs: string[]): Finding[] {
       : undefined;
     const own = typeof name === "string" ? name : undefined;
     const allowed = new Set([...PLUGIN_TEST_PACKAGES, ...(own === undefined ? [] : [own])]);
+    const importMap = packageImportsOf(pluginDir);
     for (const file of listFiles(join(pluginDir, "test"))) {
-      out.push(...fileFindings(file, pluginDir, allowed));
+      out.push(...fileFindings(file, pluginDir, allowed, importMap));
     }
   }
   return out;
 }
 
-function fileFindings(file: string, pluginDir: string, allowed: Set<string>): Finding[] {
+function fileFindings(
+  file: string,
+  pluginDir: string,
+  allowed: Set<string>,
+  importMap: Record<string, unknown>,
+): Finding[] {
   const out: Finding[] = [];
   const source = readFileSync(file, "utf8");
   const inside = (p: string) => !relative(pluginDir, p).startsWith("..");
@@ -134,6 +146,20 @@ function fileFindings(file: string, pluginDir: string, allowed: Set<string>): Fi
       imports.add(start);
       const scoped = SCOPED_NAME.exec(spec)?.[1];
       if (scoped !== undefined && !allowed.has(scoped)) add(start, `imports ${spec}`);
+      if (spec.startsWith("#")) {
+        const targets = resolveHashImport(spec, importMap);
+        if (targets.length === 0) {
+          add(start, `${spec} is not mapped by the imports of package.json`);
+        }
+        for (const target of targets) {
+          const pkg = SCOPED_NAME.exec(target)?.[1];
+          if (pkg !== undefined && !allowed.has(pkg)) add(start, `imports ${spec} -> ${target}`);
+          const isPath = target.startsWith(".") || isAbsolute(target);
+          if (isPath && !inside(resolve(pluginDir, target))) {
+            add(start, `${spec} -> ${target} leaves the plugin directory`);
+          }
+        }
+      }
     }
     walk(parsed.program, (n) => {
       if (n.type === "Literal" || n.type === "TemplateLiteral") {
