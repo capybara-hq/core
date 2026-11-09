@@ -415,8 +415,9 @@ the full sidebar each get their own node and a plugin never has to render one el
 - New permission keys: `permissions.client` and `ui.component:<id>` (`permissionKeys`,
   `buildPermissionSet` gains `client` and `ui.components`).
 - **Both are sensitive and block loading** (C3): `itemReason` marks `client` (new category,
-  reason `client_code`) and `ui` items starting with `component:` (reason `ui_component`);
-  `isSensitivePermissionKey` follows from the same table. `blockingKeys` keeps exempting only
+  reason `client_code`) and `components` (its own category, items are the component ids, reason
+  `ui_component`; the `ui` category keeps views and embeds); `isSensitivePermissionKey` follows
+  from the same table. `blockingKeys` keeps exempting only
   `ui.view:*`.
 - The org enablement page and the admin extension detail show a 客户端代码 group, highlighted, with
   the build's files and sizes (§9.1). `capybara extensions review` / `approve` mark both keys
@@ -1076,8 +1077,9 @@ interface ClientExtensionsResponse {
     `BlockBoundary`, wrapped in the host context (plugin, contribution, slot args) the hooks read;
     a component whose module has not loaded renders nothing, then appears;
   - single slots take the built-in as a prop: `<ExtensionSlot slot="shell.brand" args={…}
-    host={{ builtin: <Logo …/>, collapsed }} />`; `conversation.composer.frame` takes `builtin`
-    and `children`; `ExtensionSlot` renders the winner (or the built-in, §6.3-§6.4);
+    host={{ builtin: <Logo …/>, collapsed, panel }} />` (called once per drawn sidebar panel);
+    `conversation.composer.frame` takes `builtin` and `children`; `ExtensionSlot` renders the
+    winner (or the built-in, §6.3-§6.4);
   - `SlotArgs` / `SlotHost` gain the four new slots.
 - `web-ui-extension-slot` (`check:web-ui`) adds `ClientComponentBlock` and `ReplaceableFrame` use
   to the renderers allowed only inside `components/extension-ui/`.

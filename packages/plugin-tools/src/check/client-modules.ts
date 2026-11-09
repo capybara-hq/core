@@ -1,16 +1,14 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { clientEntrySource } from "../pack/client.js";
+import { serverBundleInputs } from "../pack/pack.js";
 import { packageImportsOf, resolveHashImport } from "./package-imports.js";
 import { collectImports, isParseError, parseFile } from "./source.js";
-
-/** The extension's server entry (what `capybara-plugin pack` bundles into `dist/index.mjs`). */
-const SERVER_ENTRY = "src/index.ts";
 
 /** TypeScript writes `./x.js` for `./x.ts`; the packers' esbuild resolves both. */
 const JS_TO_TS: Record<string, string[]> = {
   ".js": [".ts", ".tsx"],
-  ".jsx": [".tsx"],
+  ".jsx": [".ts", ".tsx"],
   ".mjs": [".mts"],
   ".cjs": [".cts"],
 };
@@ -77,16 +75,27 @@ function reachable(
 }
 
 /**
- * The plugin's **browser-only** modules: the client entry (`src/client.tsx` or `src/client.ts`)
- * and every source file it reaches through relative and `#…` imports, minus every file the server entry
- * (`src/index.ts`) reaches. A module both entries reach runs on the server too; a module neither
- * reaches is not known to be browser code. Both count as server code. Absolute paths.
+ * The plugin's **browser-only** modules (absolute paths, symlinks resolved): the client entry
+ * (`src/client.tsx` or `src/client.ts`) and every source file it reaches through relative and `#…`
+ * imports, minus every file of the extension's server bundle. The server side is not resolved by
+ * hand: it is the metafile of the packer's own esbuild build of `src/index.ts`
+ * (`serverBundleInputs`), so tsconfig `paths`, glob `import()`, symlinks, self references and
+ * extension rewrites count exactly as the bundle has them. Fails closed: when that build cannot run
+ * (or there is no `src/index.ts`), no module is browser-only.
  */
-export function browserOnlyModules(pluginDir: string): Set<string> {
+export async function browserOnlyModules(pluginDir: string): Promise<Set<string>> {
   const dir = resolve(pluginDir);
   const importMap = packageImportsOf(dir);
   const client = reachable(dir, clientEntrySource(dir), importMap);
   if (client.size === 0) return client;
-  const server = reachable(dir, join(dir, SERVER_ENTRY), importMap);
-  return new Set([...client].filter((f) => !server.has(f)));
+  const server = await serverBundleInputs(dir);
+  if (server === undefined) return new Set();
+  const real = (f: string) => {
+    try {
+      return realpathSync(f);
+    } catch {
+      return f;
+    }
+  };
+  return new Set([...client].map(real).filter((f) => !server.has(f)));
 }

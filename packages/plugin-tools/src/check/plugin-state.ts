@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { browserOnlyModules } from "./client-modules.js";
 import {
   collectImports,
@@ -159,9 +159,10 @@ function timerFindings(f: ParsedFile): Finding[] {
  * `{ setTimeout: st }`、任何恰好等于定时器名的字符串字面量（含字面量之间的 `+` 拼接，如
  * `g["set" + "Timeout"]`）、timers 模块导入（import/require/动态 import）。
  * Browser code: both rules skip the browser-only modules ({@link browserOnlyModules}: the files
- * the client entry `src/client.ts[x]` reaches through relative or `#…` imports and the server
- * entry `src/index.ts` does not), since a timer or module state in the browser belongs to one
- * document, not to a replica. A module both entries reach, or neither, is checked as server code.
+ * the client entry `src/client.ts[x]` reaches through relative or `#…` imports that the packer's
+ * esbuild build of `src/index.ts` does not bundle), since a timer or module state in the browser
+ * belongs to one document, not to a replica. A module in the server bundle, or reached by neither
+ * entry, is checked as server code; when the server build fails, every module is checked.
  * 扫描范围：插件目录下所有源码，node_modules 任何深度都跳过；dist 与 test/tests/__tests__ 只在插件根跳过
  * （更深处同名目录照常扫描，否则 `src/test/impl.ts` 就能绕过）；*.test.* / *.spec.* 不扫。
  *
@@ -170,10 +171,10 @@ function timerFindings(f: ParsedFile): Finding[] {
  * 类静态可变字段、块内 `var` 提升、`queueMicrotask` / `process.nextTick` 递归循环、
  * 含非字面量成分的运行时拼接（变量、函数调用、带插值的模板）与非字面量动态 import。
  */
-export function checkPluginState(pluginDirs: string[]): Finding[] {
+export async function checkPluginState(pluginDirs: string[]): Promise<Finding[]> {
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
-    const browser = browserOnlyModules(dir);
+    const browser = await browserOnlyModules(dir);
     for (const { file, isTest } of listSourceFiles(dir)) {
       if (isTest) continue;
       const parsed = parseFile(file);
@@ -181,7 +182,7 @@ export function checkPluginState(pluginDirs: string[]): Finding[] {
         findings.push(parsed);
         continue;
       }
-      const all = browser.has(resolve(file))
+      const all = browser.has(realpathSync(file))
         ? []
         : [...moduleStateFindings(parsed), ...timerFindings(parsed)];
       all.sort((a, b) => a.line - b.line);
