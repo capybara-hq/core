@@ -17,7 +17,5 @@ export default async function NewChatPage({
 }) {
   const { agent, draft } = await searchParams;
   const text = first(draft)?.slice(0, MAX_DRAFT_PARAM);
-  return (
-    <NewChatView preferredAgent={first(agent) ?? null} draft={text?.trim() ? text : null} />
-  );
+  return <NewChatView preferredAgent={first(agent) ?? null} draft={text?.trim() ? text : null} />;
 }

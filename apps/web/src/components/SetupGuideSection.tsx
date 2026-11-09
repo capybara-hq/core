@@ -200,8 +200,7 @@ function AskAgent({
 }) {
   const t = useTranslations("setupGuide.askAgent");
   const router = useRouter();
-  const connectionId =
-    g.target?.kind === "channel-connection" ? g.target.id : query.connectionId;
+  const connectionId = g.target?.kind === "channel-connection" ? g.target.id : query.connectionId;
   const connectorId = g.target?.kind === "connector" ? g.target.id : query.connectorId;
   const targetRef =
     connectionId !== undefined
