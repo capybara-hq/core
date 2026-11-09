@@ -1,5 +1,36 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.15
+
+### Patch Changes
+
+- 6f7f6b4: A setup guide section has 让智能体协助 / Ask an agent: it opens a new conversation with a drafted
+  message in the composer (not sent) that names the guide (plugin, catalog item, guide id, place,
+  audience) and its target by id, so the agent can follow it with the Platform `setup` operations.
+  The draft carries names and ids only, never a config value; the platform preview has no entry. The
+  new conversation reads `?draft=` once into the composer, on phones without focusing it.
+- 6a2211b: The design system gains `GuideDocument` (a rendered setup guide: prose, copyable titled code and
+  check rows in document order) and `CheckRow` (a setup check's status, reason, fix, checked-at time
+  and a Re-check button), with zh and en strings and `/dev/ui` fixtures.
+- d497b1b: The conversation composer warns before sending a draft that looks like it holds a secret (Slack,
+  GitHub, `sk-` model keys, AWS and Google keys, private keys, JWTs, long random strings): on paste,
+  and on the first ↵ or send click, a warn line with 移除 / Remove and 仍然发送 / Send anyway; a second
+  ↵ also sends. The check runs in the browser only and is never logged or sent to the kernel.
+- 99364f3: Live setup check rows: the 接入指南 of a channel connection, a connector made from a template
+  (admin text) and the 如何连接 sheet (member text, its checks only) read the checks' cached states,
+  run each row without a fresh result (at most four at a time), poll while a run is in progress
+  elsewhere, and offer 重新检查 (a forced run that waits out its cooldown). Too many runs keep the
+  last results with a muted line. Saving a connection, connector or credential reads the states
+  again. New channels, the install wizards and the super admin's template page keep static rows.
+- 1895c7b: Connector templates show their setup guides: the admin text above a template's input in the
+  install wizards and 补充配置 (checks wait for the save), a 接入指南 tab on a connector made from a
+  template with the drift notice and 「我已更新 … 应用」, a 如何连接 / How to connect sheet with the
+  member text on 我的连接 and on members' connector cards (org admins also get a link to the admin
+  guide), and the guide, read-only and without checks, on the super admin's connector template page.
+- a84c87e: The channel pages show Markdown setup guides: the guide's prose, copyable titled code blocks and
+  check rows (保存后检查 / Checked after saving on 新建渠道), the mode switch, one line per reason for
+  the variables without a value yet, and the drift notice with its ack inside the 接入指南 card.
+
 ## 0.1.0-rc.14
 
 ### Patch Changes
