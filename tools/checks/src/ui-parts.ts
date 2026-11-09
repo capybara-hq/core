@@ -153,7 +153,11 @@ function literalsOf(value: Node | null | undefined): string[] | undefined {
   return undefined;
 }
 
-/** Every `data-cap-part` JSX attribute under the scanned trees; a non-literal value is reported. */
+/**
+ * Every `data-cap-part` JSX attribute under the scanned trees, and every `"data-cap-part"` key of an
+ * object literal there (props spread onto an element); a non-literal value is reported. Props that
+ * arrive from elsewhere (a caller's `{...rest}`) cannot be seen statically.
+ */
 function collectRenders(root: string, out: Finding[]): Render[] {
   const renders: Render[] = [];
   for (const dir of SCAN_DIRS) {
@@ -168,9 +172,13 @@ function collectRenders(root: string, out: Finding[]): Render[] {
       }
       const rel = relative(root, file).split(sep).join("/");
       walk(p.program, (n) => {
-        if (n.type !== "JSXAttribute") return;
-        const name = n.name as Node;
-        if (name.type !== "JSXIdentifier" || name.name !== "data-cap-part") return;
+        // the attribute, or an object literal's "data-cap-part" key (props spread onto an element)
+        if (n.type === "JSXAttribute") {
+          const name = n.name as Node;
+          if (name.type !== "JSXIdentifier" || name.name !== "data-cap-part") return;
+        } else if (n.type === "Property") {
+          if (n.computed === true || stringOf(n.key as Node) !== "data-cap-part") return;
+        } else return;
         const line = p.lineOf(n.start);
         const lits = literalsOf(n.value as Node | null | undefined);
         if (lits === undefined) {

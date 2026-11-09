@@ -45,6 +45,13 @@ describe("check:ui-parts render rules", () => {
   it("a computed value -> ui-part-literal (and counts nothing)", () => {
     expect(rules("dynamic", one)).toEqual(["ui-part-literal"]);
   });
+  it("spread props: an object literal's data-cap-part key is checked like the attribute", () => {
+    const f = checkUiParts(fixture("spread"), one);
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["ui-part-literal", 5],
+      ["ui-part-undeclared", 3],
+    ]);
+  });
   it("literal conditionals count, several tokens, dev/ is skipped, owner lists work", () => {
     const parts = [
       part("x.one", "packages/design/src/a.tsx"),
