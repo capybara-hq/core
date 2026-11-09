@@ -12,6 +12,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
+import { ApiClientError } from "../lib/api";
 import {
   type AppearanceResult,
   type AppearanceSkipReason,
@@ -27,7 +28,7 @@ import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { invalidatePlatformTheme, orgThemesQuery } from "../lib/query/themes";
 import { adminUiArrangementQuery, invalidateOrgUiLists, uiArrangementQuery } from "../lib/query/ui";
-import { themeName } from "../lib/themes";
+import { themeName, themeOffOrgs } from "../lib/themes";
 import { isSingleArrangementSlot, uiLocale } from "../lib/ui";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
@@ -60,17 +61,33 @@ export function useApplyAppearance(
   name: string,
 ): { preview(): void; previewing: boolean; dialog: ReactNode } {
   const toast = useToast();
-  const errorMessage = useErrorMessage();
+  const qc = useQueryClient();
+  const appearanceError = useAppearanceError(level);
   const [result, setResult] = useState<AppearanceResult | null>(null);
   const dry = useAppMutation({
-    fn: () =>
-      level.kind === "platform"
-        ? applyPlatformAppearance(level.itemId, true)
-        : applyOrgAppearance(level.orgId, level.extension, true),
+    fn: async () => {
+      // the names the dialog shows (themes, contributions) are read with the dry run, so the
+      // dialog opens with names, never raw ids
+      const [r] = await Promise.all([
+        level.kind === "platform"
+          ? applyPlatformAppearance(level.itemId, true)
+          : applyOrgAppearance(level.orgId, level.extension, true),
+        ...(level.kind === "platform"
+          ? [
+              qc.prefetchQuery({ ...adminComponentsQuery("theme"), retry: false }),
+              qc.prefetchQuery({ ...adminUiArrangementQuery(), retry: false }),
+            ]
+          : [
+              qc.prefetchQuery({ ...orgThemesQuery(level.orgId), retry: false }),
+              qc.prefetchQuery({ ...uiArrangementQuery(level.orgId), retry: false }),
+            ]),
+      ]);
+      return r;
+    },
     invalidates: () => [],
   });
   const preview = () => {
-    dry.mutateAsync(undefined).then(setResult, (e: unknown) => toast.error(errorMessage(e)));
+    dry.mutateAsync(undefined).then(setResult, (e: unknown) => toast.error(appearanceError(e)));
   };
   return {
     preview,
@@ -106,7 +123,7 @@ function ApplyAppearanceDialog({
   const t = useTranslations("applyAppearance");
   const tc = useTranslations("common");
   const toast = useToast();
-  const errorMessage = useErrorMessage();
+  const appearanceError = useAppearanceError(level);
   const qc = useQueryClient();
   const names = useNames(level);
   const slotName = useSlotName();
@@ -180,7 +197,7 @@ function ApplyAppearanceDialog({
       toast.success(t("applied", { name }));
       onClose();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(appearanceError(e));
     }
   }
 
@@ -223,6 +240,27 @@ function ApplyAppearanceDialog({
       </Stack>
     </Dialog>
   );
+}
+
+/**
+ * The message of a refused dry run or apply: a theme that cannot be set (`theme.not_available`)
+ * says what to do at the level (the platform: the orgs where the theme is off, or that the plugin
+ * must be offered to every org; an org: switch the theme on or ask the super admin); anything else
+ * by its code.
+ */
+function useAppearanceError(level: AppearanceLevel): (e: unknown) => string {
+  const t = useTranslations("applyAppearance.errors");
+  const ta = useTranslations("appearance.platform");
+  const locale = useLocale();
+  const errorMessage = useErrorMessage();
+  return (e) => {
+    if (!(e instanceof ApiClientError) || e.code !== "theme.not_available") return errorMessage(e);
+    if (level.kind === "org") return t("orgTheme");
+    const off = themeOffOrgs(e);
+    return off.length > 0
+      ? ta("notAvailable", { orgs: off.join(locale === "zh" ? "、" : ", ") })
+      : t("platformTheme");
+  };
 }
 
 /**

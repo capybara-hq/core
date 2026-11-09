@@ -330,6 +330,21 @@ export interface CatalogItemVersion {
   licenseText?: string | null;
   /** The root LICENSE was too long (or not UTF-8) to store. */
   licenseTruncated?: boolean;
+  /**
+   * The extension package's client build (admin item detail only; null without one): what the
+   * confirmation of an org's upload shows in its 客户端代码 group.
+   */
+  client?: ClientBuildSummary | null;
+}
+
+/**
+ * A stored client build as the reviews show it (kernel `ClientBuildSummary`): each file by its
+ * manifest key with its size, in load order, the total and the client API version.
+ */
+export interface ClientBuildSummary {
+  files: { path: string; bytes: number }[];
+  totalBytes: number;
+  apiVersion: number;
 }
 
 export interface CatalogItemDetail {

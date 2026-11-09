@@ -272,6 +272,24 @@ describe("界面代码 on /admin/extensions/[name]", () => {
     });
   });
 
+  it("停用界面代码 reads the list fresh, so another super admin's change is kept", async () => {
+    let reads = 0;
+    const calls = detailRoutes(ext(), {
+      // the page read [] on its first load; meanwhile someone stopped "other"
+      "GET /api/v1/admin/settings": () =>
+        json(200, {
+          ...SETTINGS,
+          clientExtensions: { enabled: true, disabled: reads++ === 0 ? [] : ["other"] },
+        }),
+    });
+    await renderRouteWithCache("/admin/extensions/theme-neon", lastStubRoutes());
+    await userEvent.setup().click(await screen.findByRole("button", { name: C.stop }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      clientExtensions: { disabled: ["other", "theme-neon"] },
+    });
+  });
+
   it("an extension without client code shows no 界面代码 and reads no settings", async () => {
     const calls = detailRoutes(ext({ client: null, clientReports: [] }));
     await renderRouteWithCache("/admin/extensions/theme-neon", lastStubRoutes());
@@ -328,5 +346,149 @@ describe("declaredPermissions (the org-upload confirm)", () => {
     expect(declaredPermissions(manifest({ tools: ["search"] }))).toEqual([
       { category: "tools", items: ["search"], sensitive: false },
     ]);
+  });
+});
+
+describe("客户端代码 with sizes in the reviews", () => {
+  const PENDING_ID = "33333333-3333-4333-8333-333333333333";
+  const pendingItem = {
+    id: PENDING_ID,
+    name: "theme-neon",
+    publisher: "Neon",
+    displayName: null,
+    description: "",
+    scope: "optional",
+    scopeOrgs: [],
+    builtin: false,
+    disabled: false,
+    shownToOthers: true,
+    enabledOrgs: 0,
+    pending: true,
+    permissionsHash: "ph1",
+    latestVersion: "1.0.0",
+    versions: ["1.0.0"],
+    installs: 0,
+    source: "file",
+    marketplaceId: null,
+    latestMarketplaceVersion: null,
+    newerInMarketplace: false,
+    contentChanged: false,
+    componentCounts: { extension: 1, skills: 0, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
+    updatedAt: "2026-11-01T00:00:00.000Z",
+  };
+  const manifest = {
+    name: "theme-neon",
+    version: "1.0.0",
+    publisher: "Neon",
+    description: "",
+    extension: {
+      entry: "./dist/index.mjs",
+      manifest: {
+        name: "theme-neon",
+        version: "1.0.0",
+        sdk: "^0.1.0",
+        provides: [],
+        requires: [],
+        optional: [],
+        permissions: { client: true, ui: { components: ["brand"] } },
+      },
+      client: {
+        entry: "./dist/client/client.mjs",
+        styles: ["./dist/client/styles/neon.css"],
+      },
+    },
+  };
+
+  it("the permission confirmation lists the pending build's files with sizes and the total", async () => {
+    resetNavigation("/admin/plugins/pending");
+    stubApi({
+      "GET /api/v1/admin/catalog/items?pending=true": () =>
+        json(200, { items: [pendingItem], nextOffset: null }),
+      "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [] }),
+      "GET /api/v1/admin/catalog/items": () =>
+        json(200, { items: [pendingItem], nextOffset: null }),
+      [`GET /api/v1/admin/catalog/items/${PENDING_ID}`]: () =>
+        json(200, {
+          item: { ...pendingItem, packageName: null, deletedAt: null },
+          versions: [
+            {
+              version: "1.0.0",
+              source: "file",
+              sourceRef: "upload",
+              integrity: null,
+              contentDigest: null,
+              sourceDetail: null,
+              manifest,
+              size: 4096,
+              extensionSha256: SHA,
+              importedAt: "2026-11-01T00:00:00.000Z",
+              client: {
+                files: [
+                  { path: "./dist/client/client.mjs", bytes: 2048 },
+                  { path: "./dist/client/styles/neon.css", bytes: 512 },
+                ],
+                totalBytes: 2560,
+                apiVersion: 1,
+              },
+            },
+          ],
+          hasIcon: false,
+          suggestedAppearance: null,
+        }),
+    });
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.catalog.admin.pending.review }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("./dist/client/client.mjs · 2 KB")).toBeTruthy();
+    expect(within(dialog).getByText("./dist/client/styles/neon.css · 512 B")).toBeTruthy();
+    expect(within(dialog).getByText("2 files, 2.5 KB in total")).toBeTruthy();
+    // the components are their own sensitive group
+    expect(within(dialog).getByText(en.extensions.category.components)).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("the org Sheet's permission review lists the running build's files with sizes", async () => {
+    resetNavigation("/extensions");
+    stubApi({
+      "GET /api/v1/orgs/o1/extensions": () =>
+        json(200, {
+          extensions: [
+            {
+              plugin: "theme-neon",
+              displayName: { en: "Neon theme", zh: "霓虹主题" },
+              version: "1.0.0",
+              enabled: true,
+              configurable: false,
+              config: null,
+              secrets: [],
+              orgConfigSchema: null,
+              provides: [],
+              permissions: ext().permissions,
+              client: {
+                files: [{ path: "./dist/client/client.mjs", bytes: 2048 }],
+                totalBytes: 2048,
+                apiVersion: 1,
+              },
+            },
+          ],
+        }),
+      "GET /api/v1/orgs/o1/file-previewers": () => json(200, { items: [] }),
+      "GET /api/v1/orgs/o1/extension-points": () => json(200, { points: [] }),
+      "GET /api/v1/orgs/o1/ui/arrangement": () => json(200, { slots: [] }),
+      "GET /api/v1/orgs/o1/extensions/theme-neon/tools": () => json(200, { tools: [] }),
+      "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+    });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("row", { name: /Neon theme/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Neon theme" });
+    // the permissions are folded into one line: open them
+    await user.click(
+      within(sheet).getByRole("button", { name: new RegExp(en.extensions.sensitive) }),
+    );
+    expect(await within(sheet).findByText("· ./dist/client/client.mjs · 2 KB")).toBeTruthy();
+    expect(within(sheet).getByText("1 file, 2 KB in total")).toBeTruthy();
   });
 });

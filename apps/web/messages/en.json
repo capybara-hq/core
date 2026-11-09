@@ -5233,6 +5233,10 @@
     },
     "apply": "Apply",
     "ok": "Got it",
-    "applied": "Applied the appearance of {name}"
+    "applied": "Applied the appearance of {name}",
+    "errors": {
+      "orgTheme": "This plugin's theme is not on in this org. Turn it on in the Appearance settings (or ask the super admin to offer it to this org), then apply again.",
+      "platformTheme": "This plugin's theme cannot be the platform default: it must be offered to all organizations and on. Set the plugin's scope to all organizations, then apply again."
+    }
   }
 }

@@ -282,7 +282,11 @@ export function OrgExtensionSheet({
         {canEdit && plugin.permissions.length > 0 && (
           <Subsection title={t("permissions")} variant="divided">
             <PermissionSummary groups={plugin.permissions}>
-              <PermissionReview plugin={plugin.plugin} groups={plugin.permissions} />
+              <PermissionReview
+                plugin={plugin.plugin}
+                groups={plugin.permissions}
+                {...(plugin.client != null && { clientFiles: plugin.client.files })}
+              />
             </PermissionSummary>
           </Subsection>
         )}

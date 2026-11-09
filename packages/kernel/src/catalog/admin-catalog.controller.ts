@@ -13,6 +13,7 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { type ClientBuildSummary, ClientBuilds } from "../client/client-builds.service.js";
 import { ApiError } from "../errors.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
 import {
@@ -118,6 +119,7 @@ export class AdminCatalogController {
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
+    @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
   ) {}
 
   /**
@@ -273,19 +275,34 @@ export class AdminCatalogController {
   /**
    * The item with its versions, plus `hasIcon` (the latest version has an icon, served by `GET
    * items/:id/icon`) and `suggestedAppearance` (the platform version's, null without one: the page
-   * offers 应用此插件的外观 when set). Unknown -> 404 `catalog.item_not_found`.
+   * offers 应用此插件的外观 when set). Each version carries `client`: its extension package's
+   * client build (files with sizes, total, client API version; null without one), what the
+   * permission confirmation of an org's upload shows in its 客户端代码 group (client extensions spec
+   * §5.4). Unknown -> 404 `catalog.item_not_found`.
    */
   @Get("items/:id")
-  async get(
-    @Param("id") id: string,
-  ): Promise<
-    CatalogItemDetail & { hasIcon: boolean; suggestedAppearance: SuggestedAppearance | null }
+  async get(@Param("id") id: string): Promise<
+    Omit<CatalogItemDetail, "versions"> & {
+      versions: (CatalogItemDetail["versions"][number] & { client: ClientBuildSummary | null })[];
+      hasIcon: boolean;
+      suggestedAppearance: SuggestedAppearance | null;
+    }
   > {
     const detail = await this.catalog.get(id);
     const platform = detail.versions.find((v) => v.version === detail.item.platformVersion);
+    const [hasIcon, builds] = await Promise.all([
+      this.orgCatalog.hasIcon(id),
+      this.clientBuilds.summaries(
+        detail.versions.flatMap((v) => (v.extensionSha256 === null ? [] : [v.extensionSha256])),
+      ),
+    ]);
     return {
       ...detail,
-      hasIcon: await this.orgCatalog.hasIcon(id),
+      versions: detail.versions.map((v) => ({
+        ...v,
+        client: v.extensionSha256 === null ? null : (builds.get(v.extensionSha256) ?? null),
+      })),
+      hasIcon,
       suggestedAppearance: suggestedAppearanceOf(platform?.manifest),
     };
   }

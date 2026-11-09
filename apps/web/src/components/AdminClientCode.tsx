@@ -30,7 +30,8 @@ import { useErrorMessage } from "../lib/use-error-message";
  * extension's client code runs (stopped alone, or with all client code), its build (the package
  * sha256, the client API version, the total size), each file with its size, and the error reports
  * of the current build, newest first. 停用界面代码 adds the extension to the kill switch's
- * per-plugin list (its server side keeps running); 恢复界面代码 takes it out. Drawn only for an
+ * per-plugin list (its server side keeps running); 恢复界面代码 takes it out; either reads the list
+ * fresh before writing, so a concurrent change to another plugin's entry is kept. Drawn only for an
  * extension with a client build.
  */
 export function AdminClientCode({ plugin }: { plugin: AdminExtension }) {
@@ -46,9 +47,15 @@ export function AdminClientCode({ plugin }: { plugin: AdminExtension }) {
   }).data;
   const killSwitch = settings?.clientExtensions ?? CLIENT_EXTENSIONS_DEFAULT;
   const stopped = killSwitch.disabled.includes(plugin.name);
-  // The answer is the settings as they are now: it replaces the cached ones
+  // The list is read fresh when writing (another super admin may have changed it since this page
+  // read it), then the answer, the settings as they are now, replaces the cached ones
   const write = useAppMutation({
-    fn: async (disabled: string[]) => {
+    fn: async (stop: boolean) => {
+      const fresh = await qc.fetchQuery({ ...sq, staleTime: 0 });
+      const current = (fresh.clientExtensions ?? CLIENT_EXTENSIONS_DEFAULT).disabled;
+      const disabled = stop
+        ? [...new Set([...current, plugin.name])]
+        : current.filter((n) => n !== plugin.name);
       const r = await updateDeploymentSettings({ clientExtensions: { disabled } });
       await invalidateClientSets(qc);
       return r;
@@ -62,11 +69,8 @@ export function AdminClientCode({ plugin }: { plugin: AdminExtension }) {
   const reports = plugin.clientReports ?? [];
 
   async function toggle() {
-    const next = stopped
-      ? killSwitch.disabled.filter((n) => n !== plugin.name)
-      : [...killSwitch.disabled, plugin.name];
     try {
-      await write.mutateAsync(next);
+      await write.mutateAsync(!stopped);
       toast.success(t(stopped ? "resumed" : "stopped", { name: plugin.name }));
     } catch (e) {
       toast.error(errorMessage(e));

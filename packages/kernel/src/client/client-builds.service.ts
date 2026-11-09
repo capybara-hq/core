@@ -30,6 +30,32 @@ export interface ClientBuildRow {
 }
 
 /**
+ * A client build as the review pages show it (client extensions spec §5.4): every file by its
+ * manifest key with its size, in load order (entry, styles, assets), the total and the client API
+ * version.
+ */
+export interface ClientBuildSummary {
+  files: { path: string; bytes: number }[];
+  totalBytes: number;
+  apiVersion: number;
+}
+
+/** The summary of a stored build row. */
+export function summarizeClientBuild(
+  r: Pick<ClientBuildRow, "entry" | "styles" | "assets" | "sizes" | "apiVersion">,
+): ClientBuildSummary {
+  const files = [...(r.entry !== null ? [r.entry] : []), ...r.styles, ...r.assets].map((path) => ({
+    path,
+    bytes: r.sizes[path] ?? 0,
+  }));
+  return {
+    files,
+    totalBytes: files.reduce((n, f) => n + f.bytes, 0),
+    apiVersion: r.apiVersion,
+  };
+}
+
+/**
  * The client builds of extension packages (client extensions spec §9.1): when a package with an
  * `extension.client` section is stored, its client files are checked (`client-files.ts`) and
  * written to object storage under `deployment/platform/client/<plugin>/<sha256>/<path inside
@@ -175,6 +201,50 @@ export class ClientBuilds {
       apiVersion: r.api_version,
       objectPrefix: r.object_prefix,
     };
+  }
+
+  /** The summaries of the client builds of packages `shas` (a package without one is left out). */
+  async summaries(shas: readonly string[]): Promise<Map<string, ClientBuildSummary>> {
+    const out = new Map<string, ClientBuildSummary>();
+    if (shas.length === 0) return out;
+    const rows = await this.db
+      .selectFrom("extension_client_builds")
+      .select(["package_sha256", "entry", "styles", "assets", "sizes", "api_version"])
+      .where("package_sha256", "in", [...new Set(shas)])
+      .execute();
+    for (const r of rows) {
+      out.set(
+        r.package_sha256,
+        summarizeClientBuild({
+          entry: r.entry,
+          styles: r.styles,
+          assets: r.assets,
+          sizes: r.sizes,
+          apiVersion: r.api_version,
+        }),
+      );
+    }
+    return out;
+  }
+
+  /**
+   * The client build summaries of the packages the install records of `plugins` name (the running
+   * version's), by plugin; a plugin without an install record or a client build is left out.
+   */
+  async installedSummaries(plugins: readonly string[]): Promise<Map<string, ClientBuildSummary>> {
+    const out = new Map<string, ClientBuildSummary>();
+    if (plugins.length === 0) return out;
+    const installs = await this.db
+      .selectFrom("extension_installs")
+      .select(["name", "sha256"])
+      .where("name", "in", [...new Set(plugins)])
+      .execute();
+    const builds = await this.summaries(installs.map((i) => i.sha256));
+    for (const i of installs) {
+      const b = builds.get(i.sha256);
+      if (b !== undefined) out.set(i.name, b);
+    }
+    return out;
   }
 
   /**

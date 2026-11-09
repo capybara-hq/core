@@ -30,7 +30,6 @@ import {
   isCurrencyCode,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
-import { ApiClientError } from "../../../../lib/api";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
@@ -46,6 +45,7 @@ import { usePageQuery } from "../../../../lib/query/page-query";
 import { invalidatePlatformTheme } from "../../../../lib/query/themes";
 import { useAdmin } from "../../../../lib/query/workspace";
 import { useSecureCookiesBlocked } from "../../../../lib/secure-origin";
+import { themeOffOrgs } from "../../../../lib/themes";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
@@ -209,7 +209,7 @@ function AdminSettings({
       setClientDraft(undefined);
       toast.success(t("saved"));
     } catch (e) {
-      const off = offOrgs(e);
+      const off = themeOffOrgs(e);
       toast.error(
         off.length > 0
           ? ta("platform.notAvailable", { orgs: off.join(locale === "zh" ? "、" : ", ") })
@@ -396,11 +396,4 @@ function ClientCodeSection({
       </ItemList>
     </FormSection>
   );
-}
-
-/** The orgs a `theme.not_available` refusal names (the theme is off there), by name. */
-function offOrgs(e: unknown): string[] {
-  if (!(e instanceof ApiClientError) || e.code !== "theme.not_available") return [];
-  const d = e.rawDetails[0] as { orgs?: { orgName: string }[] } | undefined;
-  return (d?.orgs ?? []).map((o) => o.orgName);
 }

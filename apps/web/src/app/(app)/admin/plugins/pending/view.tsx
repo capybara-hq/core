@@ -6,6 +6,7 @@ import {
   Callout,
   Dialog,
   Field,
+  formatBytes,
   KeyValue,
   ListPage,
   ObjectRow,
@@ -28,6 +29,7 @@ import { useRouter } from "../../../../../i18n/navigation";
 import {
   type CatalogItem,
   type CatalogRequest,
+  type ClientBuildSummary,
   confirmPending,
   decideDeploymentRequest,
   declaredPermissions,
@@ -381,7 +383,11 @@ function ConfirmPermissionsDialog({
                         `review.reason.${g.category === "client" ? "client_code" : "ui_component"}`,
                       )}
                     </Text>
-                    <Text>{g.items.join(", ")}</Text>
+                    {g.category === "client" && latest?.client != null ? (
+                      <ClientBuildFiles build={latest.client} />
+                    ) : (
+                      <Text>{g.items.join(", ")}</Text>
+                    )}
                   </Stack>
                 ) : (
                   g.items.join(", ")
@@ -450,5 +456,22 @@ function RejectDialog({
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>
+  );
+}
+
+/** The pending package's client build: each file with its size, then the total (spec §5.4). */
+function ClientBuildFiles({ build }: { build: ClientBuildSummary }) {
+  const t = useTranslations("extensions.review");
+  return (
+    <Stack gap={4}>
+      {build.files.map((f) => (
+        <Text key={f.path} variant="small">
+          {`${f.path} · ${formatBytes(f.bytes)}`}
+        </Text>
+      ))}
+      <Text variant="small" tone="muted">
+        {t("clientTotal", { files: build.files.length, size: formatBytes(build.totalBytes) })}
+      </Text>
+    </Stack>
   );
 }

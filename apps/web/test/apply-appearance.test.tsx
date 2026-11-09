@@ -108,7 +108,7 @@ const detail = (suggestedAppearance: unknown) => ({
 
 function adminRoutes(
   suggestedAppearance: unknown,
-  extra: Record<string, (c: Call) => Response> = {},
+  extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
 ) {
   return stubApi({
     [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(suggestedAppearance)),
@@ -180,6 +180,97 @@ describe("应用此插件的外观 on /admin/plugins/[itemId]", () => {
     }
     // the platform arrangement listing the dialog read is read again
     expect(calls.filter((c) => c.url === "/api/v1/admin/ui/arrangement").length).toBeGreaterThan(1);
+  });
+
+  it("a refused dry run names the orgs where the theme is off; no dialog opens", async () => {
+    adminRoutes(SUGGESTION, {
+      [`POST /api/v1/admin/catalog/items/${ID}/appearance`]: () =>
+        json(400, {
+          error: {
+            code: "theme.not_available",
+            message: "Theme t-neon is not available as the platform default",
+            details: [
+              {
+                orgs: [
+                  { orgId: "o2", orgName: "Beta" },
+                  { orgId: "o3", orgName: "Gamma" },
+                ],
+              },
+            ],
+          },
+        }),
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    await userEvent.setup().click(
+      await screen.findByRole("button", {
+        name: en.catalog.admin.detail.actions.applyAppearance,
+      }),
+    );
+    expect(
+      await screen.findByText(fill(en.appearance.platform.notAvailable, { orgs: "Beta, Gamma" })),
+    ).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a refused apply keeps the dialog open with what to do, and invalidates nothing", async () => {
+    let n = 0;
+    const calls = adminRoutes(SUGGESTION, {
+      [`POST /api/v1/admin/catalog/items/${ID}/appearance`]: () =>
+        n++ === 0
+          ? json(200, RESULT)
+          : json(400, {
+              error: {
+                code: "theme.not_available",
+                message: "Theme t-neon is not available as the platform default",
+              },
+            }),
+    });
+    const { client } = await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    client.setQueryData(keys.deployment().platformTheme(), null);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: en.catalog.admin.detail.actions.applyAppearance }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: A.apply }));
+    expect(await within(dialog).findByText(A.errors.platformTheme)).toBeTruthy();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(client.getQueryState(keys.deployment().platformTheme())?.isInvalidated).toBe(false);
+  });
+
+  it("the dialog opens with names: the reads it needs come with the dry run", async () => {
+    let release: () => void = () => {};
+    const slow = new Promise<void>((r) => {
+      release = r;
+    });
+    adminRoutes(SUGGESTION, {
+      [`POST /api/v1/admin/catalog/items/${ID}/appearance`]: () => json(200, RESULT),
+      // the theme list answers only after the dry run
+      "GET /api/v1/admin/components?kind=theme": async () => {
+        await slow;
+        return json(200, {
+          components: [
+            { id: "t-neon", kind: "theme", name: "neon", displayName: { en: "Neon", zh: "霓虹" } },
+          ],
+        });
+      },
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    await userEvent.setup().click(
+      await screen.findByRole("button", {
+        name: en.catalog.admin.detail.actions.applyAppearance,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    // still reading the names: no dialog with raw ids yet
+    expect(screen.queryByRole("dialog")).toBeNull();
+    release();
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(fill(A.change, { from: A.builtinTheme, to: "Neon" })),
+    ).toBeTruthy();
+    expect(within(dialog).queryByText(/t-neon/)).toBeNull();
   });
 
   it("nothing to change: the dialog says so and offers only 知道了 (zh)", async () => {
@@ -288,6 +379,28 @@ describe("应用此插件的外观 on /extensions", () => {
       expect(after).toContain(`${ORG}/ui/arrangement`);
     });
     expect(client.getQueryState(keys.org("o1").clientExtensions())?.isInvalidated).toBe(true);
+  });
+
+  it("a refused org apply says what the org admin can do (zh)", async () => {
+    let n = 0;
+    const calls = orgRoutes(ext({ suggestedAppearance: SUGGESTION }));
+    // the browser stub serves the same routes object: the apply (the second POST) is refused
+    const routes = lastStubRoutes();
+    routes[`POST ${ORG}/extensions/theme-neon/appearance`] = () =>
+      n++ === 0
+        ? json(200, RESULT)
+        : json(400, { error: { code: "theme.not_available", message: "not on in this org" } });
+    await renderRouteWithCache("/extensions", routes, { me: as("admin"), locale: "zh" });
+    const z = zh.applyAppearance;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("row", { name: /霓虹主题/ }));
+    await user.click(
+      await screen.findByRole("button", { name: fill(z.actionLabel, { name: "霓虹主题" }) }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: fill(z.title, { name: "霓虹主题" }) });
+    await user.click(within(dialog).getByRole("button", { name: z.apply }));
+    expect(await within(dialog).findByText(z.errors.orgTheme)).toBeTruthy();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
   });
 
   it("members see no apply action and read-only picks", async () => {

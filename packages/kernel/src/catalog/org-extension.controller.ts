@@ -1,6 +1,7 @@
 import type { LocalizedName, SuggestedAppearance } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
+import { type ClientBuildSummary, ClientBuilds } from "../client/client-builds.service.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import {
   OrgExtensionConfigs,
@@ -90,24 +91,28 @@ class OrgOverridesTakeBody extends createZodDto(OverridesTake, "OrgOverridesTake
  * One extension of the org list: the org view plus the plugin's display name, the URL of its
  * plugin's icon on the org's catalog route (null without one or when the org may not see the
  * plugin's item), the extension points it provides (`channel@1`, `web-search@1`, … the names
- * only, also for members) and the plugin's suggested appearance (null without one; the page offers
- * 应用此插件的外观 to org admins when set, client extensions spec §6.5).
+ * only, also for members), the plugin's suggested appearance (null without one; the page offers
+ * 应用此插件的外观 to org admins when set, client extensions spec §6.5) and the client build of the
+ * running package (files with sizes, total, client API version; null without one: the permission
+ * review's 客户端代码 group, spec §5.4).
  */
 export type OrgExtensionItem = OrgExtensionView & {
   displayName: LocalizedName | null;
   icon: string | null;
   provides: string[];
   suggestedAppearance: SuggestedAppearance | null;
+  client: ClientBuildSummary | null;
 };
 
 /**
  * What a member sees of an extension: its state and the points it provides (names only, what the
  * 扩展 page sorts by), never the org config, the secrets' state, the config schema, the
- * permission list or the suggested appearance (members cannot apply it).
+ * permission list, the suggested appearance (members cannot apply it) or the client build (part of
+ * the permission review).
  */
 export type OrgExtensionMemberItem = Omit<
   OrgExtensionItem,
-  "config" | "secrets" | "orgConfigSchema" | "permissions" | "suggestedAppearance"
+  "config" | "secrets" | "orgConfigSchema" | "permissions" | "suggestedAppearance" | "client"
 >;
 
 /**
@@ -122,6 +127,7 @@ export class OrgExtensionConfigsController {
     @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
+    @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
   ) {}
 
   /**
@@ -136,10 +142,11 @@ export class OrgExtensionConfigsController {
     const views = await this.configs.list(org.orgId);
     const plugins = views.map((v) => v.plugin);
     const admin = roleAtLeast(org.role, "admin");
-    const [names, icons, suggestions] = await Promise.all([
+    const [names, icons, suggestions, clients] = await Promise.all([
       this.displayNames.many(plugins),
       this.icons.many(plugins, orgIconScope(org)),
       admin ? this.appearance.suggestions(plugins) : new Map<string, SuggestedAppearance | null>(),
+      admin ? this.clientBuilds.installedSummaries(plugins) : new Map<string, ClientBuildSummary>(),
     ]);
     const items = views.map((v) => ({
       ...v,
@@ -147,6 +154,7 @@ export class OrgExtensionConfigsController {
       icon: icons.get(v.plugin) ?? null,
       provides: providesOf(v),
       suggestedAppearance: suggestions.get(v.plugin) ?? null,
+      client: clients.get(v.plugin) ?? null,
     }));
     if (admin) return { extensions: items };
     return {
@@ -157,6 +165,7 @@ export class OrgExtensionConfigsController {
           orgConfigSchema: _o,
           permissions: _p,
           suggestedAppearance: _a,
+          client: _cl,
           ...rest
         }) => rest,
       ),
@@ -178,10 +187,11 @@ export class OrgExtensionConfigsController {
     const p = requireUser(principal);
     const r = await this.extSwitch.put(org.orgId, p.account.id, extension, body, patTokenId(p));
     if (r.kind === "preview") return { preview: r.preview, confirm: r.confirm };
-    const [displayName, icons, suggestions] = await Promise.all([
+    const [displayName, icons, suggestions, clients] = await Promise.all([
       this.displayNames.get(r.view.plugin),
       this.icons.many([r.view.plugin], orgIconScope(org)),
       this.appearance.suggestions([r.view.plugin]),
+      this.clientBuilds.installedSummaries([r.view.plugin]),
     ]);
     return {
       extension: {
@@ -190,6 +200,7 @@ export class OrgExtensionConfigsController {
         icon: icons.get(r.view.plugin) ?? null,
         provides: providesOf(r.view),
         suggestedAppearance: suggestions.get(r.view.plugin) ?? null,
+        client: clients.get(r.view.plugin) ?? null,
       },
     };
   }

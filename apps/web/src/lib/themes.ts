@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { ApiClientError, apiFetch } from "./api";
 
 /** A color scheme a theme defines. */
 export type ThemeScheme = "dark" | "light";
@@ -60,3 +60,13 @@ export const getOrgThemes = (orgId: string) =>
  */
 export const getPlatformTheme = () =>
   apiFetch<ThemeRef | null | undefined>("/api/v1/platform/theme").then((t) => t ?? null);
+
+/**
+ * The orgs a `theme.not_available` refusal of a platform default names (the theme is off there), by
+ * name; empty for any other error or a refusal that names none.
+ */
+export function themeOffOrgs(e: unknown): string[] {
+  if (!(e instanceof ApiClientError) || e.code !== "theme.not_available") return [];
+  const d = e.rawDetails[0] as { orgs?: { orgName: string }[] } | undefined;
+  return (d?.orgs ?? []).map((o) => o.orgName);
+}
