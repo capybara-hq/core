@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type FakeChannelServer,
   fakeExtensionEntry,
@@ -11,9 +12,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
+import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
+import type { OperationContext } from "../../src/platform/operation.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
 import { SETUP_CHECK_TIMEOUT } from "../../src/setup/setup-checks.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -56,6 +60,7 @@ let orgId: string;
 let otherOrgId: string;
 let agentId: string;
 let itemId: string;
+let ownerId: string;
 const lines: string[] = [];
 
 type State = {
@@ -97,6 +102,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   const accounts = accountsFor(db);
   const o = await accounts.createLocal({ login: "owner", password: PW, displayName: "O" });
+  ownerId = o.id;
   const m = await accounts.createLocal({ login: "member", password: PW, displayName: "M" });
   await accounts.createLocal({ login: "stranger", password: PW, displayName: "S" });
   owner = await session(k, "owner");
@@ -133,6 +139,7 @@ beforeEach(async () => {
   const keys = [
     ...(await redis.keys("capk:setup-check*")),
     ...(await redis.keys("throttler:*setup-check")),
+    ...(await redis.keys("capk:setup-check-rate:*")),
   ];
   if (keys.length > 0) await redis.del(...keys);
   im.checks.length = 0;
@@ -477,5 +484,146 @@ describe("setup checks: reading and running", { timeout: 30_000 }, () => {
       mgetSpy.mockRestore();
     }
     expect(im.checks).toHaveLength(0);
+  });
+
+  it("a crashed replica's semaphore slots free themselves; eight live ones answer running", async () => {
+    const id = await connection();
+    const slots = `capk:setup-check-org:${orgId}`;
+    // eight holders whose slots expired (a replica that died mid-run): pruned on the next take
+    const past = Date.now() - 1_000;
+    await redis.zadd(slots, ...Array.from({ length: 8 }, (_, i) => [past, `dead-${i}`]).flat());
+    await redis.pexpire(slots, 60_000);
+    expect((await runOk("proxy", { connectionId: id })).status).toBe("ok");
+    // eight live holders: the run is refused (running) and nothing is called
+    const future = Date.now() + 60_000;
+    await redis.zadd(slots, ...Array.from({ length: 8 }, (_, i) => [future, `live-${i}`]).flat());
+    expect((await runOk("pass", { connectionId: id })).status).toBe("running");
+    expect(im.checks).toHaveLength(1);
+    await redis.del(slots);
+  });
+
+  it("org config secrets cannot be read: the check is not run (fail closed)", async () => {
+    const id = await connection();
+    const spy = vi
+      .spyOn(k.app.get(OrgExtensionConfigs), "get")
+      .mockRejectedValue(new Error("decrypt failed"));
+    try {
+      const s = await runOk("proxy", { connectionId: id });
+      expect(s).toMatchObject({
+        status: "unknown",
+        reason: { en: "Checks are temporarily unavailable; retry later." },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(im.checks).toHaveLength(0);
+    expect(await cachedValues()).toBe("");
+  });
+
+  it("a platform deployment config change invalidates the cache (the loaded config hash)", async () => {
+    const id = await connection();
+    await runOk("proxy", { connectionId: id });
+    const registry = k.app.get(ExtensionRegistry);
+    const current = registry.current.bind(registry);
+    const spy = vi.spyOn(registry, "current").mockImplementation((name: string) => {
+      const inst = current(name);
+      if (name !== "fake-im" || inst === undefined) return inst;
+      return new Proxy(inst, {
+        get: (t, prop) => (prop === "configHash" ? "changed-config-hash" : Reflect.get(t, prop, t)),
+      });
+    });
+    try {
+      const r = (await states(id)).json() as { results: Record<string, State> };
+      expect(r.results.proxy?.status).toBe("not_run");
+      await runOk("proxy", { connectionId: id });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(im.checks).toHaveLength(2);
+  });
+});
+
+describe("setup checks: Platform operations", { timeout: 30_000 }, () => {
+  const ctxOf = (accountId: string): OperationContext => ({
+    orgId,
+    actorAccountId: accountId,
+    agentId,
+    conversationId: randomUUID(),
+    runId: randomUUID(),
+    signal: new AbortController().signal,
+  });
+  const op = (id: string) => {
+    const o = k.app.get(PlatformOperations).get(id);
+    if (o === null) throw new Error(`no operation ${id}`);
+    return o;
+  };
+  const callOp = (id: string, input: unknown, accountId = ownerId) => {
+    const o = op(id);
+    return o.run(o.input.parse(input), ctxOf(accountId)) as Promise<Record<string, unknown>>;
+  };
+  const base = () => ({ itemId, guideId: "fake-im-app" });
+
+  it("setup.status and setup.check are read-class and return only the fixed, redacted fields", async () => {
+    expect(op("setup.status").confirm).toBe("read");
+    expect(op("setup.check").confirm).toBe("read");
+    const id = await connection();
+    const out = await callOp("setup.check", {
+      ...base(),
+      checkId: "echo-secret",
+      connectionId: id,
+    });
+    expect(Object.keys(out)).toEqual(["result"]);
+    const result = out.result as State;
+    for (const key of Object.keys(result)) {
+      expect(["status", "reason", "fix", "checkedAt", "cooldownUntil"]).toContain(key);
+    }
+    expect(result.status).toBe("failing");
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+    expect(JSON.stringify(out)).not.toContain(DEPLOY_SECRET);
+    const st = await callOp("setup.status", { ...base(), connectionId: id });
+    expect(Object.keys(st)).toEqual(["results"]);
+    const echo = (st.results as Record<string, State>)["echo-secret"];
+    expect(echo?.status).toBe("failing");
+    expect(JSON.stringify(st)).not.toContain(SECRET);
+  });
+
+  it("setup.check shares the 30 runs a minute per account with the HTTP route", async () => {
+    const id = await connection();
+    for (let i = 0; i < 30; i++) {
+      const out = await callOp("setup.check", { ...base(), checkId: "pass", connectionId: id });
+      expect((out.result as State).status).toBe("ok");
+    }
+    await expect(
+      callOp("setup.check", { ...base(), checkId: "pass", connectionId: id }),
+    ).rejects.toMatchObject({ code: "rate_limited" });
+    // the HTTP route counts against the same budget
+    const over = await run("pass", { connectionId: id });
+    expect(over.statusCode).toBe(429);
+    expect(errCode(over)).toBe("rate_limited");
+    // reading the states is not limited
+    expect(Object.keys(await callOp("setup.status", { ...base(), connectionId: id }))).toEqual([
+      "results",
+    ]);
+  });
+
+  it("HTTP runs count against setup.check: 30 HTTP runs leave no Platform run", async () => {
+    const id = await connection();
+    for (let i = 0; i < 30; i++) {
+      const r = await run("pass", { connectionId: id });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    await expect(
+      callOp("setup.check", { ...base(), checkId: "pass", connectionId: id }),
+    ).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  it("the per-account counter is a Redis key with a TTL, keyed by the account", async () => {
+    const id = await connection();
+    await callOp("setup.check", { ...base(), checkId: "pass", connectionId: id });
+    const keys = await redis.keys("capk:setup-check-rate:*");
+    expect(keys).toEqual([`capk:setup-check-rate:${ownerId}`]);
+    const ttl = await redis.pttl(keys[0] as string);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(60_000);
   });
 });

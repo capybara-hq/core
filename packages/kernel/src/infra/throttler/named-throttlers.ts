@@ -181,7 +181,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   // setup check runs per signed-in person (setup guides v2 §10.5): 30 a minute, every request
   // counts (@Throttled); a cached answer costs no third-party call but still counts, as the page
-  // asks at most once per row and stale result
+  // asks at most once per row and stale result. The edge of the route (with `retry-after`): the
+  // budget shared with the Platform tool's setup.check is SetupChecksService's own counter
   {
     name: "setup-check",
     group: "setup-check",

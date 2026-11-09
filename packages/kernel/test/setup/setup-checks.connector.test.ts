@@ -60,6 +60,8 @@ let itemId: string;
 let connectorId: string;
 let mem2: Req;
 let mem2Id: string;
+let adm2: Req;
+let adm2Id: string;
 const kernelCalls: KernelCheckArgs[] = [];
 
 type State = { status: string; reason?: { en: string }; checkedAt?: string };
@@ -117,6 +119,14 @@ beforeAll(async () => {
     .values({ org_id: env.orgId, account_id: mem2Id, role: "member" })
     .execute();
   mem2 = await session(env.k, "mem2");
+  adm2Id = (
+    await accountsFor(env.db).createLocal({ login: "adm2", password: PW, displayName: "A2" })
+  ).id;
+  await env.db
+    .insertInto("memberships")
+    .values({ org_id: env.orgId, account_id: adm2Id, role: "admin" })
+    .execute();
+  adm2 = await session(env.k, "adm2");
 }, 240_000);
 
 afterAll(async () => {
@@ -198,6 +208,20 @@ describe("setup checks for connectors", { timeout: 60_000 }, () => {
     expect(t2.target.accountId).toBe(mem2Id);
     const t1 = (await states(env.mem, "member")).target;
     expect(JSON.parse(t1?.reason?.en ?? "{}").target.accountId).toBe(env.memId);
+  });
+
+  it("kernel checks get the caller's account, so admin rows are per account too", async () => {
+    kernelCalls.length = 0;
+    const a = await run(env.boss, "capybara:test-account", "admin");
+    expect(a.reason?.en).toBe(`asked by ${env.bossId}`);
+    // another admin never reads the first admin's answer of an account-aware kernel check
+    expect((await states(adm2, "admin"))["capybara:test-account"]?.status).toBe("not_run");
+    const b = await run(adm2, "capybara:test-account", "admin");
+    expect(b.reason?.en).toBe(`asked by ${adm2Id}`);
+    expect(kernelCalls.at(-1)?.accountId).toBe(adm2Id);
+    // a plugin check of the admin audience gets no account and stays shared between admins
+    await run(env.boss, "target", "admin");
+    expect((await states(adm2, "admin")).target?.status).toBe("ok");
   });
 
   it("a member cannot run the admin checks", async () => {

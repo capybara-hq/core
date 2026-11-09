@@ -44,6 +44,23 @@ export const SETUP_CHECK_TIMEOUT = Symbol("SETUP_CHECK_TIMEOUT");
 const LOCK_TTL_MS = 15_000;
 /** A slot of the org's concurrency semaphore frees itself after this (a crashed replica's). */
 const SLOT_TTL_MS = 15_000;
+/** Runs per account and window, the HTTP route and the `Platform` tool together (spec §10.3). */
+const RUN_LIMIT = 30;
+const RUN_WINDOW_MS = 60_000;
+
+/**
+ * One atomic step of the per-account run counter: at the limit the attempt is refused and not
+ * counted (the window ends on schedule); otherwise the counter is incremented and always carries
+ * a TTL. KEYS[1] the counter; ARGV: window ms, limit. Returns 1 when allowed.
+ */
+const RUN_RATE_LUA = `local n = tonumber(redis.call('GET', KEYS[1]) or '0')
+if n >= tonumber(ARGV[2]) then
+  if redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+  return 0
+end
+redis.call('INCR', KEYS[1])
+if redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+return 1`;
 
 /** Who asks: the org, their role in it and their account. */
 export interface CheckCaller {
@@ -131,6 +148,14 @@ interface Prepared {
   perAccount: boolean;
 }
 
+/**
+ * Whether a check's cache keys and fingerprint carry the caller's account: every check of the
+ * member audience, and every kernel check (it gets the caller's account whatever the audience,
+ * so one admin's answer is never another admin's).
+ */
+const accountScoped = (p: Prepared, checkId: string): boolean =>
+  p.perAccount || checkId.startsWith("capybara:");
+
 /** Target material loaded for one run (after authorization and the lock). */
 interface Material {
   secrets: string[];
@@ -168,7 +193,9 @@ const isValid = (r: SetupCheckResult | { problem: string }): r is SetupCheckResu
  * semaphore live in Redis, every key with a TTL, none touched inside a transaction; nothing is in
  * process memory. A run takes `capk:setup-check-run:<key>` (`LockService.lease`, 15 s, longer than
  * the 10 s time limit) and a slot of `capk:setup-check-org:<orgId>` (8, self-expiring), and frees
- * both on every path. A check runs on the replica that took the lock, in the extension loaded
+ * both on every path. Runs are limited per account (`capk:setup-check-rate:<accountId>`, 30 a
+ * minute, 429 `rate_limited`) here, so the HTTP route and the `Platform` tool share one budget.
+ * A check runs on the replica that took the lock, in the extension loaded
  * there, raced against `AbortSignal.any([timeout, ctx.signal])` so one that ignores its signal
  * still answers `unknown` at the limit (its late settle is dropped).
  *
@@ -182,7 +209,8 @@ const isValid = (r: SetupCheckResult | { problem: string }): r is SetupCheckResu
 export class SetupChecksService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(REDIS) private readonly redis: Pick<Redis, "get" | "set" | "pttl" | "mget" | "exists">,
+    @Inject(REDIS)
+    private readonly redis: Pick<Redis, "get" | "set" | "pttl" | "mget" | "exists" | "eval">,
     @Inject(LockService)
     private readonly locks: Pick<LockService, "lease" | "releaseIf" | "takeSlot" | "releaseSlot">,
     @Inject(KEYRING) private readonly keyring: Keyring,
@@ -219,7 +247,18 @@ export class SetupChecksService {
     const ids = [...new Set(p.checks)];
     const out: Record<string, SetupCheckState> = {};
     if (ids.length === 0) return out;
-    const fingerprint = this.fingerprint(p, await this.revision(p));
+    // at most two fingerprints: the shared one and the caller's own (account-scoped checks)
+    const prints = new Map<boolean, string>();
+    const fingerprints: string[] = [];
+    for (const id of ids) {
+      const scoped = accountScoped(p, id);
+      let fp = prints.get(scoped);
+      if (fp === undefined) {
+        fp = this.fingerprint(p, await this.revision(p, scoped));
+        prints.set(scoped, fp);
+      }
+      fingerprints.push(fp);
+    }
     const keys = ids.map((id) => this.keys(p, id));
     let cached: (string | null)[];
     let locked: number[];
@@ -238,8 +277,9 @@ export class SetupChecksService {
       const cooldown = cooldowns[i] ?? -2;
       const until = cooldown > 0 ? new Date(Date.now() + cooldown).toISOString() : undefined;
       if (locked[i] === 1) out[id] = { status: "running" };
-      else if (c && c.fingerprint === fingerprint) out[id] = stateOf(c.result, c.checkedAt, until);
-      else out[id] = { status: "not_run" };
+      else if (c && c.fingerprint === fingerprints[i]) {
+        out[id] = stateOf(c.result, c.checkedAt, until);
+      } else out[id] = { status: "not_run" };
     });
     return out;
   }
@@ -258,6 +298,18 @@ export class SetupChecksService {
     body: CheckSelection & { force?: boolean | undefined },
   ): Promise<SetupCheckState> {
     const p = await this.prepare(caller, itemId, guideId, body, checkId);
+    // the per-account budget, for the HTTP route and the Platform tool alike (an answer from the
+    // cache counts too); Redis down: nothing runs
+    let allowed: boolean;
+    try {
+      allowed = await this.allowRun(caller.accountId);
+    } catch (err) {
+      this.log.warn("setup checks: Redis unavailable", { err: describeCheckError(err, (s) => s) });
+      return unknownState(REASONS.unavailable);
+    }
+    if (!allowed) {
+      throw new ApiError("rate_limited", "Too many setup check runs; try again in a minute");
+    }
     // a plugin check: the extension must run here, be on in the org and have a valid effective
     // config before its registration is even looked at (nothing is called otherwise)
     let config: unknown;
@@ -270,7 +322,7 @@ export class SetupChecksService {
     if (!check) return unknownState(REASONS.unregistered);
     if (check.place !== "any" && check.place !== p.place) return unknownState(REASONS.otherPlace);
     const keys = this.keys(p, checkId);
-    const revision = await this.revision(p);
+    const revision = await this.revision(p, accountScoped(p, checkId));
     const fingerprint = this.fingerprint(p, revision);
     let cached: CachedResult | null;
     let cooldownMs: number;
@@ -412,7 +464,7 @@ export class SetupChecksService {
       p.plugin,
       checkId,
       p.mode ?? "-",
-      ...(p.perAccount ? [p.caller.accountId] : []),
+      ...(accountScoped(p, checkId) ? [p.caller.accountId] : []),
     ].join(":");
     return {
       result: `capk:setup-check:${base}`,
@@ -425,11 +477,11 @@ export class SetupChecksService {
    * The input revision of a prepared target (spec §10.4): the target's and its credentials'
    * `updated_at`, the org's extension config and copy revisions; never a value.
    */
-  private async revision(p: Prepared): Promise<string> {
+  private async revision(p: Prepared, scoped: boolean): Promise<string> {
     const target =
       p.target.kind === "channel-connection"
         ? await this.channelRevision(p)
-        : await this.connectorRevision(p);
+        : await this.connectorRevision(p, scoped);
     const org = await this.db
       .selectFrom("extension_org_configs")
       .select("updated_at")
@@ -451,18 +503,18 @@ export class SetupChecksService {
     return this.channels.checkRevision(p.caller.orgId, p.plugin, p.target.id);
   }
 
-  private async connectorRevision(p: Prepared): Promise<string> {
+  private async connectorRevision(p: Prepared, scoped: boolean): Promise<string> {
     const row = await this.db
       .selectFrom("connectors")
       .select("updated_at")
       .where("id", "=", p.target.id)
       .where("org_id", "=", p.caller.orgId)
       .executeTakeFirst();
-    // the client and org credential rows, and the caller's own row for member checks
+    // the client and org credential rows, and the caller's own row for account-scoped checks
     const creds = await this.credentials.checkRevision(
       p.caller.orgId,
       p.target.id,
-      p.perAccount ? p.caller.accountId : null,
+      scoped ? p.caller.accountId : null,
     );
     return `${row ? new Date(row.updated_at).toISOString() : "-"}|${creds}`;
   }
@@ -474,10 +526,25 @@ export class SetupChecksService {
    * reversed to a secret.
    */
   private fingerprint(p: Prepared, revision: string): string {
-    const loaded = this.extensions.current(p.plugin)?.version ?? "-";
+    const inst = this.extensions.current(p.plugin);
+    // the loaded deployment config's digest: a platform config change (PG, env, hot reload) is a
+    // new input like the org's copy is
+    const loaded = inst === undefined ? ["-", "-"] : [inst.version, inst.configHash];
     return createHmac("sha256", this.keyring.deriveKey("setup-check-fingerprint").current)
-      .update(JSON.stringify([revision, p.version, loaded, p.mode ?? "-"]))
+      .update(JSON.stringify([revision, p.version, ...loaded, p.mode ?? "-"]))
       .digest("hex");
+  }
+
+  /** Counts one run of the account in its window; false at the limit (nothing counted). */
+  private async allowRun(accountId: string): Promise<boolean> {
+    const r = await this.redis.eval(
+      RUN_RATE_LUA,
+      1,
+      `capk:setup-check-rate:${accountId}`,
+      String(RUN_WINDOW_MS),
+      String(RUN_LIMIT),
+    );
+    return Number(r) === 1;
   }
 
   /** Writes a result (TTL 5 min) and the force cooldown (10 s), outside any transaction. */
@@ -636,17 +703,14 @@ export class SetupChecksService {
   /**
    * The secret values of the extension's org-level config (`config.org`) in the org: the check
    * never gets them, but the extension holds them, so a result is redacted by them too. Nothing
-   * when the plugin has no org config or it cannot be read.
+   * when the plugin has no org config; a read that fails throws (the check is not run: a result
+   * is never redacted by fewer secrets than the extension holds).
    */
   private async orgConfigSecrets(orgId: string, plugin: string): Promise<string[]> {
     const schema = this.extensions.current(plugin)?.manifest.config?.org;
     if (!schema) return [];
-    try {
-      const c = await this.orgConfigs.get(orgId, plugin);
-      return c?.config == null ? [] : secretValues(schema, c.config);
-    } catch {
-      return [];
-    }
+    const c = await this.orgConfigs.get(orgId, plugin);
+    return c?.config == null ? [] : secretValues(schema, c.config);
   }
 
   /** The frozen arguments of a plugin check (the target built field by field). */

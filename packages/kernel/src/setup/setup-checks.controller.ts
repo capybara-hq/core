@@ -51,7 +51,8 @@ export class SetupChecksController {
 
   /**
    * Runs one check unless a fresh result is cached (`force`: rerun, once per 10 s per check and
-   * target). 30 runs a minute per account (429 `rate_limited`).
+   * target). 30 runs a minute per account (429 `rate_limited`): counted by the service, shared
+   * with the `Platform` tool's `setup.check`; the throttler also guards the route (`retry-after`).
    */
   @Post(":checkId/run")
   @HttpCode(200)

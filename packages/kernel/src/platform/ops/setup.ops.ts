@@ -113,6 +113,10 @@ export class SetupOperations implements OnModuleInit {
             code: "catalog.check_not_found",
             next: "That check is not in the guide for this mode and audience; read the check ids with setup.status.",
           },
+          {
+            code: "rate_limited",
+            next: "This person ran 30 checks in the last minute; wait a minute before running another, and read the cached states with setup.status meanwhile.",
+          },
         ],
         run: async (input, ctx) => {
           const { itemId, guideId, checkId, ...body } = input;
