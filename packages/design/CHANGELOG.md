@@ -1,5 +1,46 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.3
+
+### Minor Changes
+
+- 363a2d3: The design stylesheet declares the cascade layer order `@layer design, theme, extensions;` and
+  puts every file in the `design` layer, so theme and plugin CSS win by layer, not by specificity
+  or source order; the design's `!important` rules still beat theirs.
+- f172ba6: Built-in elements carry the public `data-cap-part` hooks of the `UI_PARTS` catalog (`owner` is now a
+  list of files, since one part can be drawn by several components); the design package adds
+  `DecorationLayer`, `ReplaceableFrame` and `SafeModeBanner`, the `decoration` layering token,
+  `Sidebar` `brand` and `AppShell` `capState` (`data-cap-state`). `check:ui-parts` enforces the hooks.
+- 90e6e18: `AppShell` (and `SetupPage`) take a `banner`: a shell-wide row (safe mode's `SafeModeBanner`) drawn
+  as the shell's first grid row across the sidebar and the content column, which share the rest of
+  the window. In safe mode the web draws its banner there instead of above the 100dvh shell, so the
+  status bar and the bottom of the page are no longer clipped.
+
+### Patch Changes
+
+- f437001: `Sidebar` takes `brand` as a function of the panel it is drawn in (`{ collapsed, panel: "full" |
+  "rail" | "drawer" }`), called once per drawn panel. `ReplaceableFrame` takes a `ref`, and a pending
+  frame is revealed by CSS alone after 1 500 ms (no `inert` / `aria-hidden`: `visibility` already takes
+  hidden content out of focus and the accessibility tree), so a pending frame the server drew never
+  stays hidden.
+- 08b3e72: `ComposerBox` takes `frame={false}`: the composer's inputs without the frame's box
+  (`ComposerFrame bare`, `data-frame="bare"`, the same `composer` part), for a plugin's frame drawn
+  around the composer.
+- 60a8d66: `DecorationLayer` no longer puts `aria-hidden` on the whole layer: it hides each decoration element
+  from assistive tech and leaves interactive ones (marked `data-cap-interactive`, or focusable) and
+  their ancestors exposed, keeping up with the plugins' later DOM changes, so an interactive element
+  never sits under `aria-hidden`.
+- 99a970a: `IconButton` carries the `button` UI part (`button button.primary` for the primary variant) like
+  `Button`, so plugin CSS on `[data-cap-part~="button"]` reaches every button, the composer's send and
+  stop among them.
+- 9d72577: The sidebar's breakpoints are exported once (`SIDEBAR_RAIL_QUERY`, `SIDEBAR_DRAWER_QUERY`), and the
+  App Shell's `sidebar=` state token reads them through the sidebar instead of repeating the widths.
+- e531e6d: The SDK exports `UI_PARTS`, the catalog of built-in elements (`data-cap-part`) plugin CSS may
+  select; `capybara-plugin check` reports `ui-part-unknown` against it.
+- 8c49d09: The shell element publishes `run=`, `theme=<plugin>/<file id>`, `motion=` and `sidebar=rail|full` in
+  `data-cap-state`; the open conversation's log is turned into client events on the client (history
+  loaded on open emits nothing). `ThemeRef` gains `key`.
+
 ## 0.2.0-rc.2
 
 ### Patch Changes
