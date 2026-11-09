@@ -12,16 +12,59 @@
  * - a tokenizer that follows the CSS Syntax tokenization (comments, strings, escapes, url tokens)
  *   closely enough that every brace it skips is one a browser skips too: the file must start with
  *   `@layer extensions {` and the block that opens must close at the file's last character, so no
- *   rule lands outside the layer. Every `url(…)`, and every string directly inside `url()`,
- *   `src()`, `image()`, `image-set()` and `cross-fade()`, is checked after decoding escapes, and an
- *   `@import` at-keyword is refused however it is spelled.
+ *   rule lands outside the layer. Every `url(…)` (token or string) is checked after decoding
+ *   escapes, and an `@import` at-keyword is refused however it is spelled.
+ *
+ * Two rules close the spellings a plain string check would miss, in both checks and in the packer:
+ * - URLs are trimmed with CSS whitespace only (space, tab, LF, CR, FF), and a file holding any other
+ *   whitespace, a zero-width character (U+200B-U+200D, U+2060) or U+FEFF anywhere, escaped or not,
+ *   is refused: JavaScript's `trim()` strips an NBSP that CSS and the URL parser keep, so
+ *   `url("\a0 data:/../../v1")` would pass as `data:` and resolve to `/api/v1`;
+ * - functions that turn a plain string (or a `var()`) into a URL or reach outside the stylesheet are
+ *   refused outright ({@link REFUSED_FUNCTIONS}): `image-set(var(--u) 1x)` takes its URL from a
+ *   custom property no string check can see. Plugins write `url(../assets/x)` directly.
  */
 
+/** CSS whitespace (CSS Syntax §4.2): only these are trimmed from a URL. */
+const CSS_SPACE = "[ \\t\\n\\r\\f]";
+const CSS_TRIM = new RegExp(`^${CSS_SPACE}+|${CSS_SPACE}+$`, "g");
+const cssTrim = (s: string) => s.replace(CSS_TRIM, "");
+
+/** Whitespace other than CSS's, zero-width characters and U+FEFF: refused anywhere in a file. */
+const INVISIBLE_RE =
+  /[\u0085\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]/;
+
+const INVISIBLE_REFUSED =
+  "the stylesheet contains non-ASCII whitespace, a zero-width character or U+FEFF; use plain spaces";
+
 /**
- * The packer's rule (mirrors `cssRemoteProblem` of `@capybara-hq/plugin-tools`): no `@import`, and
- * every `url()` and string of `image-set()` (but a `type()` argument) is {@link cssUrlProblem}-free,
- * escapes decoded first. `assets` are the plugin's asset paths relative to `assets/` (`a.png`,
- * `fx/boot.ogg`). Returns the problem, or undefined.
+ * Functions refused in a client stylesheet (case-insensitive, escapes decoded): they take URLs from
+ * plain strings or `var()` (`image-set`, `cross-fade`, `src`, `image`), or reach outside it
+ * (`element`, `paint`).
+ */
+const REFUSED_FUNCTIONS = new Set([
+  "image-set",
+  "-webkit-image-set",
+  "cross-fade",
+  "-webkit-cross-fade",
+  "element",
+  "-moz-element",
+  "paint",
+  "src",
+  "image",
+]);
+
+const REFUSED_FUNCTION_RE =
+  /(?<![A-Za-z0-9_-])(-webkit-image-set|image-set|-webkit-cross-fade|cross-fade|-moz-element|element|paint|src|image)\(/i;
+
+const functionRefused = (name: string) =>
+  `${name}() is not allowed in a client stylesheet; use url(../assets/<file>) directly`;
+
+/**
+ * The packer's rule (mirrors `cssRemoteProblem` of `@capybara-hq/plugin-tools`), escapes decoded
+ * first: no invisible characters (see the file header), no {@link REFUSED_FUNCTIONS}, no
+ * `@import`, and every `url()` is {@link cssUrlProblem}-free. `assets` are the plugin's asset paths
+ * relative to `assets/` (`a.png`, `fx/boot.ogg`). Returns the problem, or undefined.
  */
 export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
   const bare = css
@@ -31,17 +74,13 @@ export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): stri
       const cp = Number.parseInt(hex, 16);
       return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "�";
     });
+  if (INVISIBLE_RE.test(css) || INVISIBLE_RE.test(bare)) return INVISIBLE_REFUSED;
+  const fn = REFUSED_FUNCTION_RE.exec(bare);
+  if (fn !== null) return functionRefused((fn[1] as string).toLowerCase());
   if (/@import\b/i.test(bare)) return IMPORT_REFUSED;
-  for (const m of bare.matchAll(/url\(\s*(["']?)([^)"']*)\1\s*\)/gi)) {
-    const problem = cssUrlProblem((m[2] ?? "").trim(), assets);
+  for (const m of bare.matchAll(/url\([ \t\n\r\f]*(["']?)([^)"']*)\1[ \t\n\r\f]*\)/gi)) {
+    const problem = cssUrlProblem(cssTrim(m[2] ?? ""), assets);
     if (problem !== undefined) return problem;
-  }
-  for (const m of bare.matchAll(/(?:-webkit-)?image-set\(([^;{}]*)\)/gi)) {
-    for (const q of (m[1] ?? "").matchAll(/(type\(\s*)?(["'])((?:\\.|(?!\2)[^\\])*)\2/gi)) {
-      if (q[1] !== undefined) continue; // type("image/png") names a type, not a URL
-      const problem = cssUrlProblem((q[3] ?? "").trim(), assets);
-      if (problem !== undefined) return problem;
-    }
   }
   return undefined;
 }
@@ -53,24 +92,14 @@ const IMPORT_REFUSED =
 const ASSETS_URL = "../assets/";
 
 /**
- * The problem of one URL of a stylesheet (escapes decoded, trimmed), or undefined when it is a
- * `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` exactly.
+ * The problem of one URL of a stylesheet (escapes decoded, CSS whitespace trimmed), or undefined
+ * when it is a `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` exactly.
  */
 export function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | undefined {
   if (u.startsWith("#") || /^data:/i.test(u)) return undefined;
   if (u.startsWith(ASSETS_URL) && assets.has(u.slice(ASSETS_URL.length))) return undefined;
   return `url(${u}) is not allowed; use ../assets/<a file of client/assets>, a data: URL or a #fragment`;
 }
-
-/** Functions whose string arguments are URLs. */
-const URL_FUNCTIONS = new Set([
-  "url",
-  "src",
-  "image",
-  "image-set",
-  "-webkit-image-set",
-  "cross-fade",
-]);
 
 const WRAP_RE = /^@layer extensions \{/;
 
@@ -109,9 +138,8 @@ class Scanner {
         this.i = end + 2;
       } else if (c === '"' || c === "'") {
         const value = this.string(c);
-        const fn = this.fns[this.fns.length - 1];
-        if (fn !== undefined && URL_FUNCTIONS.has(fn)) {
-          const problem = cssUrlProblem(value.trim(), this.assets);
+        if (this.fns[this.fns.length - 1] === "url") {
+          const problem = cssUrlProblem(cssTrim(value), this.assets);
           if (problem !== undefined) throw new CssProblem(problem);
         }
       } else if (c === "@") {
@@ -126,6 +154,7 @@ class Scanner {
         const name = this.name().toLowerCase();
         if (s[this.i] === "(") {
           this.i++;
+          if (REFUSED_FUNCTIONS.has(name)) throw new CssProblem(functionRefused(name));
           if (name === "url" && !this.quoteAfterWhitespace()) this.urlToken();
           else this.fns.push(name);
         }
@@ -142,7 +171,7 @@ class Scanner {
         this.depth--;
         this.i++;
         if (this.depth === 0) {
-          if (s.slice(this.i).trim() !== "") {
+          if (cssTrim(s.slice(this.i)) !== "") {
             throw new CssProblem(
               "a rule is outside @layer extensions; the whole file must be one @layer extensions block",
             );
@@ -245,7 +274,7 @@ class Scanner {
       const c = s[this.i] as string;
       if (c === ")") {
         this.i++;
-        const problem = cssUrlProblem(out.trim(), this.assets);
+        const problem = cssUrlProblem(cssTrim(out), this.assets);
         if (problem !== undefined) throw new CssProblem(problem);
         return;
       }

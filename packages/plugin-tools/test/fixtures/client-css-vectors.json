@@ -1,0 +1,275 @@
+{
+  "assets": ["a.png", "f.woff2", "fx/boot.ogg"],
+  "vectors": [
+    {
+      "css": "a { b: url(../assets/a.png) }",
+      "ok": true,
+      "note": "an asset, unquoted"
+    },
+    {
+      "css": "a { b: url( \"../assets/fx/boot.ogg\" ) }",
+      "ok": true,
+      "note": "an asset, quoted with CSS whitespace"
+    },
+    {
+      "css": "a { b: url('../assets/a.png') }",
+      "ok": true,
+      "note": "an asset, single quotes"
+    },
+    {
+      "css": "@font-face { font-family: x; src: url(\"../assets/f.woff2\") format(\"woff2\") }",
+      "ok": true,
+      "note": "a font asset"
+    },
+    {
+      "css": "a { b: url(data:image/png;base64,AA==) }",
+      "ok": true,
+      "note": "a data: URL"
+    },
+    {
+      "css": "a { b: url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'/>\") }",
+      "ok": true,
+      "note": "a data: URL with markup"
+    },
+    {
+      "css": "a { mask: url(#m) }",
+      "ok": true,
+      "note": "a fragment"
+    },
+    {
+      "css": "a { content: \"}\"; } /* url(https://x.test) */",
+      "ok": true,
+      "note": "a brace string and a comment"
+    },
+    {
+      "css": "a { b: url(../../../../v1/x) }",
+      "ok": false,
+      "note": "url(../../../../v1/x)"
+    },
+    {
+      "css": "a { b: url(\"../../../../v1/x\") }",
+      "ok": false,
+      "note": "url(\"../../../../v1/x\")"
+    },
+    {
+      "css": "a { b: url(../../../../../plugins/x/y) }",
+      "ok": false,
+      "note": "url(../../../../../plugins/x/y)"
+    },
+    {
+      "css": "a { b: url(\"../../../../../plugins/x/y\") }",
+      "ok": false,
+      "note": "url(\"../../../../../plugins/x/y\")"
+    },
+    {
+      "css": "a { b: url(../assets/missing.png) }",
+      "ok": false,
+      "note": "url(../assets/missing.png)"
+    },
+    {
+      "css": "a { b: url(\"../assets/missing.png\") }",
+      "ok": false,
+      "note": "url(\"../assets/missing.png\")"
+    },
+    {
+      "css": "a { b: url(../assets/../../x) }",
+      "ok": false,
+      "note": "url(../assets/../../x)"
+    },
+    {
+      "css": "a { b: url(\"../assets/../../x\") }",
+      "ok": false,
+      "note": "url(\"../assets/../../x\")"
+    },
+    {
+      "css": "a { b: url(../assets/a.png?x) }",
+      "ok": false,
+      "note": "url(../assets/a.png?x)"
+    },
+    {
+      "css": "a { b: url(\"../assets/a.png?x\") }",
+      "ok": false,
+      "note": "url(\"../assets/a.png?x\")"
+    },
+    {
+      "css": "a { b: url(foo.png) }",
+      "ok": false,
+      "note": "url(foo.png)"
+    },
+    {
+      "css": "a { b: url(\"foo.png\") }",
+      "ok": false,
+      "note": "url(\"foo.png\")"
+    },
+    {
+      "css": "a { b: url(/api/v1/x) }",
+      "ok": false,
+      "note": "url(/api/v1/x)"
+    },
+    {
+      "css": "a { b: url(\"/api/v1/x\") }",
+      "ok": false,
+      "note": "url(\"/api/v1/x\")"
+    },
+    {
+      "css": "a { b: url(//evil.example/x) }",
+      "ok": false,
+      "note": "url(//evil.example/x)"
+    },
+    {
+      "css": "a { b: url(\"//evil.example/x\") }",
+      "ok": false,
+      "note": "url(\"//evil.example/x\")"
+    },
+    {
+      "css": "a { b: url(https://evil.example/x.png) }",
+      "ok": false,
+      "note": "url(https://evil.example/x.png)"
+    },
+    {
+      "css": "a { b: url(\"https://evil.example/x.png\") }",
+      "ok": false,
+      "note": "url(\"https://evil.example/x.png\")"
+    },
+    {
+      "css": "a { b: url() }",
+      "ok": false,
+      "note": "url()"
+    },
+    {
+      "css": "a { b: url(\"\") }",
+      "ok": false,
+      "note": "url(\"\")"
+    },
+    {
+      "css": "a { b: url(\\2e\\2e/assets/../../x) }",
+      "ok": false,
+      "note": "escaped dots"
+    },
+    {
+      "css": "a { b: u\\72l(\\68ttps://evil.example/x) }",
+      "ok": false,
+      "note": "escaped url( and scheme"
+    },
+    {
+      "css": "@import \"x.css\";",
+      "ok": false,
+      "note": "@import"
+    },
+    {
+      "css": "@\\69mport \"x.css\";",
+      "ok": false,
+      "note": "escaped @import"
+    },
+    {
+      "css": "a { b: url(\" data:/../../../../../../v1/orgs\") }",
+      "ok": false,
+      "note": "NBSP before data:, quoted"
+    },
+    {
+      "css": "a { b: url( data:/../../../../../../v1/orgs) }",
+      "ok": false,
+      "note": "NBSP before data:, unquoted"
+    },
+    {
+      "css": "a { b: url(\"﻿data:/../../../../../../v1/orgs\") }",
+      "ok": false,
+      "note": "BOM before data:"
+    },
+    {
+      "css": "a { b: url(\"\\a0 data:/../../../../../../v1/orgs\") }",
+      "ok": false,
+      "note": "escaped NBSP before data:"
+    },
+    {
+      "css": "a { b: url(\"\\feff data:/../../../../../../v1/orgs\") }",
+      "ok": false,
+      "note": "escaped BOM before data:"
+    },
+    {
+      "css": "a { b: url(\"　data:/../../v1/orgs\") }",
+      "ok": false,
+      "note": "ideographic space before data:"
+    },
+    {
+      "css": "a { content: \"x​y\" }",
+      "ok": false,
+      "note": "a zero-width space anywhere"
+    },
+    {
+      "css": "a { content: \"x⁠y\" }",
+      "ok": false,
+      "note": "a word joiner anywhere"
+    },
+    {
+      "css": "a { content: \"\\200b\" }",
+      "ok": false,
+      "note": "an escaped zero-width space"
+    },
+    {
+      "css": "/*   */ a { b: c }",
+      "ok": false,
+      "note": "an NBSP in a comment"
+    },
+    {
+      "css": ":root { --u: \"../../../../v1/orgs\" } a { background-image: image-set(var(--u) 1x) }",
+      "ok": false,
+      "note": "var() in image-set"
+    },
+    {
+      "css": ":root { --u: \"https://evil.example/x\" } a { background-image: image-set(var(--u) 1x) }",
+      "ok": false,
+      "note": "a remote var() in image-set"
+    },
+    {
+      "css": "a { b: image-set(\"../assets/a.png\" 1x) }",
+      "ok": false,
+      "note": "image-set with an asset"
+    },
+    {
+      "css": "a { b: -webkit-image-set(url(../assets/a.png) 1x) }",
+      "ok": false,
+      "note": "-webkit-image-set"
+    },
+    {
+      "css": "a { b: \\69mage-set(url(../assets/a.png) 1x) }",
+      "ok": false,
+      "note": "escaped image-set"
+    },
+    {
+      "css": "a { b: IMAGE-SET(url(../assets/a.png) 1x) }",
+      "ok": false,
+      "note": "upper-case image-set"
+    },
+    {
+      "css": "a { b: cross-fade(url(../assets/a.png), url(../assets/a.png)) }",
+      "ok": false,
+      "note": "cross-fade"
+    },
+    {
+      "css": "a { b: element(#x) }",
+      "ok": false,
+      "note": "element()"
+    },
+    {
+      "css": "a { b: -moz-element(#x) }",
+      "ok": false,
+      "note": "-moz-element()"
+    },
+    {
+      "css": "a { b: paint(x) }",
+      "ok": false,
+      "note": "paint()"
+    },
+    {
+      "css": "@font-face { src: src(var(--u)) }",
+      "ok": false,
+      "note": "src()"
+    },
+    {
+      "css": "a { b: image(\"../assets/a.png\") }",
+      "ok": false,
+      "note": "image()"
+    }
+  ]
+}

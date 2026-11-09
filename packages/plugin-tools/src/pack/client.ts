@@ -83,8 +83,8 @@ export async function hasClientSources(dir: string): Promise<boolean> {
 const ASSETS_URL = "../assets/";
 
 /**
- * The problem of one URL of a stylesheet (escapes decoded, trimmed), or undefined when it is a
- * `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` (paths relative to
+ * The problem of one URL of a stylesheet (escapes decoded, CSS whitespace trimmed), or undefined
+ * when it is a `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` (paths relative to
  * `client/assets/`) exactly. Every other URL is refused, relative ones too: the stylesheet is served
  * from the kernel's `/api/v1/client/<plugin>/<build>/styles/`, where `../../../../…` reaches the
  * kernel's own routes with the viewer's cookies. The kernel checks the same at import.
@@ -95,10 +95,31 @@ export function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | 
   return `url(${u}) is not allowed; use ../assets/<a file of client/assets>, a data: URL or a #fragment`;
 }
 
+/** CSS whitespace (CSS Syntax §4.2): the only characters trimmed from a URL. */
+const CSS_TRIM = /^[ \t\n\r\f]+|[ \t\n\r\f]+$/g;
+
 /**
- * CSS rule of the packer (spec §4.1): no `@import`, and every `url()` and string of `image-set()`
- * (but a `type()` argument) passes {@link cssUrlProblem} for the plugin's `assets` (paths relative
- * to `client/assets/`). Returns the problem text, or undefined.
+ * Whitespace other than CSS's, zero-width characters (U+200B-U+200D, U+2060) and U+FEFF: refused
+ * anywhere in a stylesheet. JavaScript's `trim()` strips an NBSP that CSS and the URL parser keep,
+ * so `url("\a0 data:/../../v1")` would otherwise pass as `data:` and resolve to `/api/v1`.
+ */
+const INVISIBLE_RE =
+  /[\u0085\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]/;
+
+/**
+ * Functions refused in a client stylesheet (case-insensitive, escapes decoded): they take URLs from
+ * plain strings or `var()` (`image-set(var(--u) 1x)`: no string check can see the URL), or reach
+ * outside the stylesheet (`element`, `paint`). Plugins write `url(../assets/x)` directly.
+ */
+const REFUSED_FUNCTION_RE =
+  /(?<![A-Za-z0-9_-])(-webkit-image-set|image-set|-webkit-cross-fade|cross-fade|-moz-element|element|paint|src|image)\(/i;
+
+/**
+ * CSS rule of the packer (spec §4.1), escapes decoded first: no non-ASCII whitespace, zero-width
+ * character or U+FEFF, none of the URL-making functions above, no `@import`, and every `url()`
+ * passes {@link cssUrlProblem} for the plugin's `assets` (paths relative to `client/assets/`). The
+ * kernel's import check runs the same vectors (`test/fixtures/client-css-vectors.json`). Returns the
+ * problem text, or undefined.
  */
 export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
   // escapes (`\68 ttps:`, `u\72l(`) are decoded first, so a spelled-out URL is read as it would be
@@ -107,22 +128,21 @@ export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): stri
     .replace(/\\([0-9a-f]{1,6})[ \t\n]?|\\([^\n])/gi, (_m, hex?: string, ch?: string) => {
       if (hex === undefined) return ch ?? "";
       const cp = Number.parseInt(hex, 16);
-      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "\ufffd";
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "�";
     });
+  if (INVISIBLE_RE.test(css) || INVISIBLE_RE.test(bare)) {
+    return "the stylesheet contains non-ASCII whitespace, a zero-width character or U+FEFF; use plain spaces";
+  }
+  const fn = REFUSED_FUNCTION_RE.exec(bare);
+  if (fn !== null) {
+    return `${(fn[1] as string).toLowerCase()}() is not allowed in a client stylesheet; use url(../assets/<file>) directly`;
+  }
   if (/@import\b/i.test(bare)) {
     return "@import is not allowed (a remote stylesheet is not integrity-pinned); inline the rules";
   }
-  for (const m of bare.matchAll(/url\(\s*(["']?)([^)"']*)\1\s*\)/gi)) {
-    const problem = cssUrlProblem((m[2] ?? "").trim(), assets);
+  for (const m of bare.matchAll(/url\([ \t\n\r\f]*(["']?)([^)"']*)\1[ \t\n\r\f]*\)/gi)) {
+    const problem = cssUrlProblem((m[2] ?? "").replace(CSS_TRIM, ""), assets);
     if (problem !== undefined) return problem;
-  }
-  // image-set() takes plain strings as URLs
-  for (const m of bare.matchAll(/(?:-webkit-)?image-set\(([^;{}]*)\)/gi)) {
-    for (const q of (m[1] ?? "").matchAll(/(type\(\s*)?(["'])((?:\\.|(?!\2)[^\\])*)\2/gi)) {
-      if (q[1] !== undefined) continue; // type("image/png") names a type, not a URL
-      const problem = cssUrlProblem((q[3] ?? "").trim(), assets);
-      if (problem !== undefined) return problem;
-    }
   }
   return undefined;
 }

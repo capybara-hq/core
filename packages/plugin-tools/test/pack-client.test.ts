@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -274,6 +275,22 @@ describe("pack builds client code", () => {
   });
 });
 
+/** The stylesheet vectors the kernel's import check runs too (packages/kernel/test/client/client-css.test.ts). */
+const sharedCss = JSON.parse(readFileSync(fixture("client-css-vectors.json"), "utf8")) as {
+  assets: string[];
+  vectors: { css: string; ok: boolean; note: string }[];
+};
+
+describe("cssRemoteProblem: the shared vectors", () => {
+  for (const v of sharedCss.vectors) {
+    it(`${v.ok ? "accepts" : "refuses"} ${v.note}`, () => {
+      const problem = cssRemoteProblem(v.css, new Set(sharedCss.assets));
+      if (v.ok) expect(problem, v.css).toBeUndefined();
+      else expect(problem, v.css).toBeDefined();
+    });
+  }
+});
+
 describe("client helpers", () => {
   it("assetPathProblem refuses %, .., an empty stem, unknown types and other characters", () => {
     expect(assetPathProblem("a/b.png")).toBeUndefined();
@@ -297,7 +314,9 @@ describe("client helpers", () => {
     expect(check("a { background: url(../assets/a.png); }")).toBeUndefined();
     expect(check("a { background: url(data:image/png;base64,AA); }")).toBeUndefined();
     expect(check("a { mask: url(#m); }")).toBeUndefined();
-    expect(check('a { b: image-set("../assets/a.png" type("image/png") 1x); }')).toBeUndefined();
+    expect(check('a { b: image-set("../assets/a.png" type("image/png") 1x); }')).toMatch(
+      /image-set\(\) is not allowed/,
+    );
     for (const u of [
       "../../../../v1/x",
       "../../../../../plugins/x/y",
@@ -320,10 +339,16 @@ describe("client helpers", () => {
     expect(check("a { background: url(https://x.test/a.png); }")).toMatch(/url/);
     expect(check("a { background: url(//x.test/a.png); }")).toMatch(/url/);
     expect(check("a { background: url(/a.png); }")).toMatch(/url/);
-    expect(check('a { background: image-set("https://x.test/a.png" 1x); }')).toMatch(/url/);
-    expect(check("a { background: image-set(url(https://x.test/a.png) 1x); }")).toMatch(/url/);
-    expect(check('a { background: -webkit-image-set("//x.test/a.png" 1x); }')).toMatch(/url/);
-    expect(check('a { background: image-set("../assets/a.png" 1x); }')).toBeUndefined();
+    expect(check('a { background: image-set("https://x.test/a.png" 1x); }')).toMatch(
+      /image-set\(\) is not allowed/,
+    );
+    expect(check("a { background: image-set(url(https://x.test/a.png) 1x); }")).toMatch(
+      /image-set\(\) is not allowed/,
+    );
+    expect(check('a { background: -webkit-image-set("//x.test/a.png" 1x); }')).toMatch(
+      /image-set\(\) is not allowed/,
+    );
+    expect(check('a { background: image-set("../assets/a.png" 1x); }')).toMatch(/not allowed/);
     expect(check("a { background: u\\72l(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
     expect(check("a { background: url(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
     expect(check("\\40import 'x.css';")).toMatch(/@import/);

@@ -12,7 +12,6 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
 import { ClientBuilds } from "../../src/client/client-builds.service.js";
-import { clientCssProblem } from "../../src/client/client-css.js";
 import { checkClientFiles } from "../../src/client/client-files.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionBlobs } from "../../src/extensions/blobs.js";
@@ -40,72 +39,6 @@ interface PackedManifest {
   suggestedAppearance: { theme?: string };
 }
 const WRAPPED = (css: string) => `@layer extensions {\n${css}\n}\n`;
-
-describe("clientCssProblem", () => {
-  const ASSETS = new Set(["a.png", "f.woff2", "fx/boot.ogg"]);
-  const ok = (css: string) => expect(clientCssProblem(css, ASSETS), css).toBeUndefined();
-  const bad = (css: string, like: RegExp) =>
-    expect(clientCssProblem(css, ASSETS), css).toMatch(like);
-
-  it("accepts a wrapped file with asset and data: URLs, strings and comments", () => {
-    ok(WRAPPED('[data-cap-part~="shell"] { background: url(../assets/a.png); }'));
-    ok(WRAPPED(':root { --x: "}"; } /* } */ a { b: url("data:image/png;base64,AA==") }'));
-    ok(WRAPPED(".cx-p-a { mask: url(#m); content: '{'; }"));
-    ok(
-      WRAPPED(
-        '@media (min-width: 1px) { a { b: c } } @font-face { src: url("../assets/f.woff2") }',
-      ),
-    );
-  });
-
-  it("refuses a file that is not one @layer extensions block", () => {
-    bad("a { b: c }", /must start with @layer extensions/);
-    bad(`${WRAPPED("a { b: c }")} a { color: red }`, /outside @layer extensions/);
-    bad("@layer extensions { a { b: c }", /not closed/);
-    bad("@layer extensions { } } a { color: red } @layer extensions {", /outside/);
-  });
-
-  it("follows the tokenizer: a brace in a url token or after a broken string still counts", () => {
-    // the browser ends the bad url at `)` and then closes the layer at `}`
-    bad('@layer extensions { a { b: url(data:x"y) } } .evil { color: red } x" }', /outside/);
-    bad("@layer extensions { a { b: url(data:x/*) } } .evil { color: red } */ }", /outside/);
-    // an unescaped newline ends a string in the browser
-    bad('@layer extensions { a { content: "x\n } } .evil { color: red } " }', /string/);
-  });
-
-  it("refuses @import and absolute or remote URLs, however they are spelled", () => {
-    bad(WRAPPED('@import "x.css";'), /@import/);
-    bad(WRAPPED('@\\69mport "x.css";'), /@import/);
-    bad(WRAPPED("a { b: url(https://evil.example/x.png) }"), /not allowed/);
-    bad(WRAPPED("a { b: url(//evil.example/x.png) }"), /not allowed/);
-    bad(WRAPPED("a { b: url(/api/v1/x) }"), /not allowed/);
-    bad(WRAPPED("a { b: u\\72l(\\68ttps://evil.example/x) }"), /not allowed/);
-    bad(WRAPPED('a { b: image-set("https://evil.example/x.png" 1x) }'), /not allowed/);
-    bad(WRAPPED('a { b: src("https://evil.example/x.png") }'), /not allowed/);
-  });
-
-  it("lets a URL name only one of the plugin's assets, a data: URL or a #fragment", () => {
-    ok(WRAPPED("a { b: url(../assets/a.png) }"));
-    ok(WRAPPED('a { b: url( "../assets/fx/boot.ogg" ) }'));
-    ok(WRAPPED("a { b: url(data:image/svg+xml;utf8,x) }"));
-    ok(WRAPPED('a { b: image-set("../assets/a.png" type("image/png") 1x) }'));
-    for (const u of [
-      "../../../../v1/x",
-      "../../../../../plugins/x/y",
-      "../assets/missing.png",
-      "../assets/../../x",
-      "../assets/a.png?x",
-      "foo.png",
-      "",
-    ]) {
-      bad(WRAPPED(`a { b: url(${u}) }`), /not allowed/);
-      bad(WRAPPED(`a { b: url("${u}") }`), /not allowed/);
-    }
-    bad(WRAPPED("a { b: url(\x02e\x02e/assets/../../x) }"), /not allowed/);
-    bad(WRAPPED('a { b: image-set("x.png" 1x) }'), /not allowed/);
-    bad(WRAPPED('a { b: -webkit-image-set(url("../x.png") 1x) }'), /not allowed/);
-  });
-});
 
 describe("checkClientFiles", () => {
   const css = enc(WRAPPED("a { b: c }"));
