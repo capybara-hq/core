@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { UI_SLOTS, type UiSlotSpec } from "@capybara-hq/plugin-sdk";
-import type { Finding } from "./source.js";
+import {
+  type Finding,
+  isParseError,
+  listSourceFiles,
+  type Node,
+  parseFile,
+  walk,
+} from "./source.js";
 
 export type { Finding };
 
@@ -93,11 +100,7 @@ export function renderUiSlotsDoc(slots: readonly UiSlotSpec[]): string {
   ].join("\n");
 }
 
-/**
- * check:ui-slots: the generated web copy and docs page equal what gen:ui-slots renders from the SDK
- * catalog (`ui-slots-stale`).
- */
-export function checkUiSlots(root: string): Finding[] {
+function staleFindings(root: string): Finding[] {
   const out: Finding[] = [];
   for (const [rel, expected] of [
     [UI_SLOTS_TS, renderUiSlotsTs(UI_SLOTS)],
@@ -120,5 +123,108 @@ export function checkUiSlots(root: string): Finding[] {
           : `${rel} differs from the SDK slot catalog; run pnpm gen:ui-slots (never edit it by hand)`,
     });
   }
+  return out;
+}
+
+const SLOT_ELEMENT = "ExtensionSlot";
+
+interface Render {
+  file: string;
+  line: number;
+  slot: string;
+  anchored: boolean;
+}
+
+/** Every `<ExtensionSlot slot=…>` under apps/web/src (not dev/); a non-literal `slot` is reported. */
+function collectRenders(root: string, out: Finding[]): Render[] {
+  const webSrc = join(root, "apps/web/src");
+  const renders: Render[] = [];
+  for (const { file } of listSourceFiles(webSrc)) {
+    if (!file.endsWith(".tsx")) continue;
+    if (relative(webSrc, file).split(sep)[0] === "dev") continue;
+    const p = parseFile(file);
+    if (isParseError(p)) {
+      out.push(p);
+      continue;
+    }
+    walk(p.program, (n) => {
+      if (n.type !== "JSXOpeningElement") return;
+      const name = n.name as Node;
+      if (name.type !== "JSXIdentifier" || name.name !== SLOT_ELEMENT) return;
+      const attrs = (n.attributes as Node[]).filter((a) => a.type === "JSXAttribute");
+      const attr = (key: string) => attrs.find((a) => (a.name as Node).name === key);
+      const line = p.lineOf(n.start);
+      const value = attr("slot")?.value as Node | null | undefined;
+      const inner = value?.type === "JSXExpressionContainer" ? (value.expression as Node) : value;
+      const literal =
+        inner?.type === "Literal" && typeof inner.value === "string" ? inner.value : undefined;
+      if (literal === undefined) {
+        out.push({
+          file,
+          line,
+          rule: "ui-slot-literal",
+          message: `the slot of <${SLOT_ELEMENT}> must be a string literal so the check can match it to the catalog`,
+        });
+        return;
+      }
+      renders.push({ file, line, slot: literal, anchored: attr("anchor") !== undefined });
+    });
+  }
+  return renders;
+}
+
+/**
+ * check:ui-slots: every catalog slot is rendered once, by its owner file, through `<ExtensionSlot>`
+ * (`ui-slot-literal`, `ui-slot-undeclared`, `ui-slot-unrendered`, `ui-slot-owner`, `ui-slot-twice`),
+ * and the generated web copy and docs page equal what gen:ui-slots renders from the SDK catalog
+ * (`ui-slots-stale`, only against the real catalog).
+ */
+export function checkUiSlots(root: string, slots: readonly UiSlotSpec[] = UI_SLOTS): Finding[] {
+  const out: Finding[] = [];
+  const renders = collectRenders(root, out);
+  const webSrc = join(root, "apps/web/src");
+  const byId = new Map(slots.map((s) => [s.id as string, s]));
+  for (const r of renders) {
+    const spec = byId.get(r.slot);
+    if (!spec) {
+      out.push({
+        file: r.file,
+        line: r.line,
+        rule: "ui-slot-undeclared",
+        message: `"${r.slot}" is not a slot of the catalog (packages/plugin-sdk/src/ui-slots.ts); add it there first`,
+      });
+    } else if (r.file !== join(webSrc, spec.owner)) {
+      out.push({
+        file: r.file,
+        line: r.line,
+        rule: "ui-slot-owner",
+        message: `slot "${r.slot}" belongs to apps/web/src/${spec.owner}; render it there (UI slots spec §7)`,
+      });
+    }
+  }
+  for (const spec of slots) {
+    const mine = renders.filter((r) => r.slot === spec.id);
+    if (mine.length === 0) {
+      out.push({
+        file: join(webSrc, spec.owner),
+        line: 1,
+        rule: "ui-slot-unrendered",
+        message: `slot "${spec.id}" has no <${SLOT_ELEMENT}> in apps/web/src; render it in its owner`,
+      });
+      continue;
+    }
+    // Several anchor renders of one list slot (one per built-in part) count as one.
+    const anchored = mine.filter((r) => r.anchored);
+    const counted = [...mine.filter((r) => !r.anchored), ...anchored.slice(0, 1)];
+    const second = counted[1];
+    if (second)
+      out.push({
+        file: second.file,
+        line: second.line,
+        rule: "ui-slot-twice",
+        message: `slot "${spec.id}" is rendered more than once; render it in exactly one place`,
+      });
+  }
+  if (slots === UI_SLOTS) out.push(...staleFindings(root));
   return out;
 }
