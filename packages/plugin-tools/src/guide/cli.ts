@@ -44,7 +44,8 @@ const printBlock = (b: SetupGuideBlock): string => {
  * - `--locale`: `en` (default) or `zh` (falls back to the English document when there is none);
  * - `--mode` / `--audience`: default the place's first mode (none when it has no modes) and first
  *   audience;
- * - `--var name=value`: a value for a variable of the place (repeatable).
+ * - `--var name=value`: a value for a variable of the place (repeatable); `{{mode}}` takes the
+ *   mode rendered, as in the kernel, so `--var mode=…` is refused.
  *
  * The documents are validated first (without the extension's `permissions.setupChecks`, which
  * `pack` checks): errors are printed and exit 1, warnings are printed to stderr. Bad arguments exit 2.
@@ -92,6 +93,7 @@ export async function guideCommand(args: string[], cwd: string): Promise<number>
     const eq = v.indexOf("=");
     if (eq <= 0) return usage(`--var takes name=value, not ${v}`);
     const name = v.slice(0, eq);
+    if (name === "mode") return usage("--var mode is not accepted: give the mode with --mode");
     if (!Object.hasOwn(info.variables, name)) {
       return usage(
         `unknown variable ${name} for place ${guide.place} (known: ${Object.keys(info.variables).join(", ")})`,
@@ -133,7 +135,8 @@ export async function guideCommand(args: string[], cwd: string): Promise<number>
     place: guide.place,
     mode,
     audience,
-    values: vars,
+    // `{{mode}}` is the mode rendered, as in the kernel's guide route
+    values: { ...vars, mode },
   });
   const parts = [`# ${r.title}`, ...r.blocks.map(printBlock)];
   parts.push(`unresolved: ${r.unresolved.length > 0 ? r.unresolved.join(", ") : "none"}`);

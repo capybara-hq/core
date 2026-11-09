@@ -79,6 +79,15 @@ describe("capybara-plugin guide", () => {
     expect(text).toMatch(/unresolved: .*connectionName/);
   });
 
+  it("lists as unresolved only the variables that still have no value", async () => {
+    const dir = fixture("guides-channel");
+    const args = ["app", "--mode", "webhook", "--var", "connectionName=Ops bot"];
+    expect(await guideCommand(args, dir)).toBe(0);
+    const text = stdout.join("\n");
+    expect(text).toContain('{ "name": "Ops bot", "url": "{{webhookUrl}}" }');
+    expect(text.split("\n").at(-1)).toBe("unresolved: webhookUrl");
+  });
+
   it("refuses an unknown guide, mode, audience or variable", async () => {
     const dir = fixture("guides-channel");
     expect(await guideCommand(["nope"], dir)).toBe(2);
@@ -92,7 +101,7 @@ describe("capybara-plugin guide", () => {
     expect(await guideCommand([], dir)).toBe(2);
   });
 
-  describe("an invalid guide", () => {
+  describe("a guide written by the test", () => {
     let dir: string;
     beforeEach(async () => {
       dir = await mkdtemp(join(tmpdir(), "guide-cli-"));
@@ -119,6 +128,21 @@ describe("capybara-plugin guide", () => {
       expect(err).toMatch(/guides\/app\.md:1: .*level-1 heading/);
       expect(err).toMatch(/unknown variable \{\{appSecret\}\}/);
       expect(stdout).toEqual([]);
+    });
+
+    it("fills {{mode}} from the mode rendered, as the kernel does", async () => {
+      await writeFile(
+        join(dir, "guides/app.md"),
+        "# App\n\n::: mode webhook\nMode `{{mode}}` for {{connectionName}}.\n:::\n",
+      );
+      const args = ["app", "--mode", "webhook", "--var", "connectionName=Ops"];
+      expect(await guideCommand(args, dir)).toBe(0);
+      expect(stdout.join("\n")).toBe(
+        ["# App", "", "Mode `webhook` for Ops.", "", "unresolved: none"].join("\n"),
+      );
+      // the mode comes from --mode only
+      expect(await guideCommand(["app", "--var", "mode=webhook"], dir)).toBe(2);
+      expect(stderr.join("\n")).toMatch(/--var mode.*--mode/);
     });
 
     it("exits 1 on a missing document", async () => {
