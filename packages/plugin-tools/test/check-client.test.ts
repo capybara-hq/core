@@ -97,6 +97,24 @@ describe("client findings of check", () => {
       expect(f.map((x) => x.line)).toEqual([1, 2, 3, 4]);
     });
 
+    it("a foreign class next to an attribute selector still warns", async () => {
+      const f = (
+        await scan(
+          '.foo[data-cap-part~="shell"] { a: b; }\n[data-a] .bar { a: b; }\n[data-cap-part~="shell"].baz { a: b; }',
+        )
+      ).filter((x) => x.rule === "client-css-selector");
+      expect(rules(f)).toEqual([
+        "client-css-selector",
+        "client-css-selector",
+        "client-css-selector",
+      ]);
+      expect(f.map((x) => x.message)).toEqual([
+        expect.stringContaining(".foo"),
+        expect.stringContaining(".bar"),
+        expect.stringContaining(".baz"),
+      ]);
+    });
+
     it("ui-part-unknown names a part the host does not know", async () => {
       const css = '[data-cap-part~="sidebar"] { a: b; }\n[data-cap-part~="nope shell"] { a: b; }';
       const f = await scan(css, ["sidebar", "shell"]);

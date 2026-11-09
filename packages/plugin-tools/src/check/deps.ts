@@ -47,6 +47,10 @@ const PLUGIN_RULES: Rules = {
     `a plugin may depend only on ${SDK}, ${PLUGIN_CLIENT} and third-party npm packages, not on ${what}; what it needs comes through ctx (extend the plugin-sdk contract if it is missing)`,
   outsideMessage: (what) =>
     `${what} points outside the plugin directory, which bypasses the package check and depends on kernel sources directly; a plugin may reference only files inside its own directory`,
+  // plugin-client is allowed everywhere, server code included, not only in src/client.tsx: it
+  // depends on no @capybara-hq/* package (only React as a peer), and a plugin's shared files
+  // (component ids, data types such as ComponentSlotId) may import it from both sides. The browser
+  // side is guarded by the packer's client bundle rule (`client-import-forbidden`)
   allowed: (pkg, where) =>
     pkg === SDK ||
     pkg === PLUGIN_CLIENT ||

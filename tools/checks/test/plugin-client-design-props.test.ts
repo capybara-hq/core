@@ -26,11 +26,23 @@ describe("plugin-client design props", () => {
     expect(r.ok).toBe(true);
   }, 60_000);
 
-  it("a drifted prop fails (the check is red on drift)", async () => {
-    const r = await tsc("tsconfig.drift.json");
-    expect(r.ok).toBe(false);
-    expect(r.out).toContain("compat-drift.tsx");
-  }, 60_000);
+  // Each red twin fails on its assertion (TS2345: `true` is not assignable to `false`), not on an
+  // unresolved import or another error, in both directions of the comparison.
+  for (const [what, project, file] of [
+    ["a package prop the design no longer accepts", "tsconfig.drift.json", "compat-drift.tsx"],
+    ["a new required design prop", "tsconfig.required.json", "compat-required.tsx"],
+    ["a package prop the design does not have", "tsconfig.extra.json", "compat-extra.tsx"],
+  ] as const) {
+    it(`${what} fails (the check is red on drift)`, async () => {
+      const r = await tsc(project);
+      expect(r.ok).toBe(false);
+      const errors = r.out.split("\n").filter((l) => l.includes("error TS"));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(
+        new RegExp(`(^|/)${file.replace(".", "\\.")}\\(\\d+,\\d+\\): error TS2345: `),
+      );
+    }, 60_000);
+  }
 
   it("DESIGN_SUBSET equals the package's design names", () => {
     expect([...DESIGN_SUBSET]).toEqual([...DESIGN_NAMES]);
