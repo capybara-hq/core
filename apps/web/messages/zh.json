@@ -2093,7 +2093,6 @@
     "permissions": {
       "title": "{name} 的权限",
       "hint": "只对你自己的连接生效，用于你使用的所有智能体。智能体可单独覆盖，但你设为「禁止」的工具不会被覆盖。",
-      "listLabel": "工具权限",
       "allow": "允许",
       "ask": "询问",
       "deny": "禁止",
@@ -2107,7 +2106,13 @@
       "save": "保存",
       "cancel": "取消",
       "saved": "已保存权限。",
-      "loading": "正在读取工具…"
+      "loading": "正在读取工具…",
+      "groups": {
+        "read": "只读",
+        "readHint": "工具声明只读取数据，默认允许。",
+        "write": "可能写入",
+        "writeHint": "可能修改数据，或没有声明是否只读，默认询问。"
+      }
     },
     "templates": {
       "needsConfig": "需要配置",

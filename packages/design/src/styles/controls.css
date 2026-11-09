@@ -1011,6 +1011,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Without checkboxes the title stands alone at body size, and the note is not indented. */
+.cb-tool-policy-text[data-check="none"] > .cb-tool-policy-title {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-tool-policy-text[data-check="none"] > .cb-tool-policy-note {
+  padding-left: 0;
+}
 .cb-check[data-disabled="true"] .cb-tool-policy-title {
   color: var(--cb-disabled);
 }

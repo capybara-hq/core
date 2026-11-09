@@ -322,7 +322,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     ).toBeTruthy();
   });
 
-  it("权限: three choices per tool with the default marked, org locks shown, only changes saved", async () => {
+  it("权限: one row per tool grouped read-only / may write, default marked, locks shown, only changes saved", async () => {
     const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH });
     const P = en.connectors.permissions;
     const calls = stubApi({
@@ -339,6 +339,16 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       "GET /api/v1/orgs/o1/connectors/c-slack/tool-policies/me": () =>
         json(200, {
           tools: [
+            {
+              name: "read_channel",
+              key: "mcp__slack__read_channel",
+              title: "Read channel",
+              description: "Read.",
+              defaultPolicy: "allow",
+              annotationPolicy: "allow",
+              policy: null,
+              locked: null,
+            },
             {
               name: "send_message",
               key: "mcp__slack__send_message",
@@ -370,13 +380,21 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     );
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText(P.hint)).toBeTruthy();
-    const list = await within(sheet).findByRole("list", { name: P.listLabel });
-    const send = within(list).getByRole("group", { name: "Send message" });
-    expect(within(send).getByText(P.defaultMark.replace("{label}", P.ask))).toBeTruthy();
-    // the org turned delete_message off: locked, no choices
-    expect(within(list).getByText(P.locked.disabled)).toBeTruthy();
-    expect(within(list).queryByRole("group", { name: "Delete message" })).toBeNull();
-    await user.click(within(send).getByRole("radio", { name: P.deny }));
+    const readList = await within(sheet).findByRole("list", { name: P.groups.read });
+    const writeList = within(sheet).getByRole("list", { name: P.groups.write });
+    expect(within(readList).getByText("Read channel")).toBeTruthy();
+    expect(within(readList).queryByText("Send message")).toBeNull();
+    expect(within(sheet).queryAllByRole("checkbox")).toHaveLength(0);
+    // the org turned delete_message off: locked, its select off
+    expect(within(writeList).getByText(P.locked.disabled)).toBeTruthy();
+    expect(within(writeList).getByRole("combobox", { name: /Delete message/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    const send = within(writeList).getByRole("combobox", { name: /Send message/ });
+    expect(send.textContent).toContain(P.defaultMark.replace("{label}", P.ask));
+    await user.click(send);
+    await user.click(screen.getByRole("option", { name: P.deny }));
     await user.click(within(sheet).getByRole("button", { name: P.save }));
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({

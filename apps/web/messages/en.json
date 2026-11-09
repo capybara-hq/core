@@ -2105,7 +2105,6 @@
     "permissions": {
       "title": "Permissions for {name}",
       "hint": "Applies to your own connection, in every agent you use. An agent can override them, except the tools you set to Deny.",
-      "listLabel": "Tool permissions",
       "allow": "Allow",
       "ask": "Ask",
       "deny": "Deny",
@@ -2119,7 +2118,13 @@
       "save": "Save",
       "cancel": "Cancel",
       "saved": "Permissions saved.",
-      "loading": "Reading the tools…"
+      "loading": "Reading the tools…",
+      "groups": {
+        "read": "Read-only",
+        "readHint": "These tools declare that they only read data; allowed by default.",
+        "write": "May write",
+        "writeHint": "These may change data, or do not declare that they only read; ask by default."
+      }
     },
     "templates": {
       "needsConfig": "Needs setup",

@@ -149,3 +149,44 @@ describe("ToolPolicyList (spec §6.36)", () => {
     expect(css).toMatch(/\.cb-tool-policy-select \{[^}]*width: var\(--cb-layout-policy-select\);/);
   });
 });
+
+describe("ToolPolicyList without onCheck", () => {
+  it("draws the title and the select only; a locked row's select is off", async () => {
+    const onPolicy = vi.fn();
+    render(
+      <DesignProvider locale="zh">
+        <ToolPolicyList
+          label="Slack 的工具"
+          rows={[
+            { id: "read", label: "读取频道", checked: false, policy: "allow" },
+            {
+              id: "post",
+              label: "发送消息",
+              checked: false,
+              policy: "deny",
+              locked: true,
+              note: { text: "组织已禁止这个工具", tone: "warn" },
+            },
+          ]}
+          policyOptions={[
+            { value: "allow", label: "允许" },
+            { value: "ask", label: "询问" },
+            { value: "deny", label: "禁止" },
+          ]}
+          onPolicy={onPolicy}
+          onCheckAll={() => {}}
+        />
+      </DesignProvider>,
+    );
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    const list = screen.getByRole("list", { name: "Slack 的工具" });
+    expect(within(list).getByText("读取频道")).toBeTruthy();
+    const read = screen.getByRole("combobox", { name: "读取频道 的策略" });
+    const post = screen.getByRole("combobox", { name: "发送消息 的策略" });
+    expect(read).toHaveProperty("disabled", false);
+    expect(post).toHaveProperty("disabled", true);
+    await userEvent.click(read);
+    await userEvent.click(screen.getByRole("option", { name: "询问" }));
+    expect(onPolicy).toHaveBeenCalledWith("read", "ask");
+  });
+});
