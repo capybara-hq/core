@@ -2,7 +2,7 @@
 
 // The registry of loaded client extensions (client extensions spec §9.4, §11): what each entry
 // module of the document's set became, and the checks an entry passes before it is activated.
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { createContext, useContext } from "react";
 import type { ClientExtensionItem, ClientReportKind } from "../../lib/client-extensions";
 import type { CapybaraEvent } from "./events";
@@ -53,6 +53,17 @@ export const ClientRegistryProvider = RegistryContext.Provider;
 /** The client extensions of this document and their state (empty in safe mode or without code). */
 export function useClientRegistry(): ClientRegistry {
   return useContext(RegistryContext);
+}
+
+const ShellBannerContext = createContext<ReactNode>(null);
+export const ShellBannerProvider = ShellBannerContext.Provider;
+
+/**
+ * The shell-wide banner the host asks the frame to draw (safe mode's, spec §10.1), or null: the
+ * frame passes it to the App Shell, which draws it as its first row (never above the shell).
+ */
+export function useShellBanner(): ReactNode {
+  return useContext(ShellBannerContext);
 }
 
 /** What the host offers the blocks that render client components (Task 18's boundaries). */

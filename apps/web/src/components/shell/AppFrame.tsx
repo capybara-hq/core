@@ -43,6 +43,7 @@ import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
+import { useShellBanner } from "../client-ext/registry";
 import { RunStateProvider, useRunStateValue } from "../client-ext/run-state";
 import { useClientComponent, useSlotHasClientCode } from "../extension-ui/ClientComponentBlock";
 import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
@@ -265,6 +266,8 @@ function ShellFrame({
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const capState = useCapState();
+  // Safe mode's banner (from the client host): a row of the shell, so nothing is clipped
+  const banner = useShellBanner();
   const orgId = currentOrg?.orgId ?? null;
   // A brand replacement: client code for the slot, or a winner the layout prefetched that the
   // document's set delivers (then the server render is already pending, no flash of the logo).
@@ -540,6 +543,7 @@ function ShellFrame({
                 home ? "/setup" : pathname,
               ),
             }}
+            {...(banner === null ? {} : { banner })}
           >
             {home ? (
               <OverviewPage
@@ -624,6 +628,7 @@ function ShellFrame({
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
       capState={capState}
+      {...(banner === null ? {} : { banner })}
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>

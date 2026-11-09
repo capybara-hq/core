@@ -39,6 +39,7 @@ import {
   ClientHostControlsProvider,
   type ClientRegistry,
   ClientRegistryProvider,
+  ShellBannerProvider,
   validateEntry,
 } from "./registry";
 import { createReporter, reportMessage } from "./reports";
@@ -388,21 +389,24 @@ export function ClientHost({
   useClientBoundary({ safe, loaded, targetHasCode, navigate, leave });
 
   const hostScope = useMemo(() => ({ scope, orgId }), [scope, orgId]);
+  // Safe mode with client code: the banner, drawn by the frame as the App Shell's first row
+  const banner = useMemo(
+    () =>
+      safe && setHasCode(set) ? (
+        <SafeModeBanner
+          onExit={() =>
+            // `safe-ui=0`: the proxy clears the HttpOnly session cookie on this request
+            navigate(withSafeUi(`${location.pathname}${location.search}${location.hash}`, false))
+          }
+        />
+      ) : null,
+    [safe, set, navigate],
+  );
   return (
     <HostScopeProvider value={hostScope}>
       <ClientHostControlsProvider value={controls}>
         <ClientRegistryProvider value={exposed}>
-          {safe && setHasCode(set) ? (
-            <SafeModeBanner
-              onExit={() =>
-                // `safe-ui=0`: the proxy clears the HttpOnly session cookie on this request
-                navigate(
-                  withSafeUi(`${location.pathname}${location.search}${location.hash}`, false),
-                )
-              }
-            />
-          ) : null}
-          {children}
+          <ShellBannerProvider value={banner}>{children}</ShellBannerProvider>
         </ClientRegistryProvider>
       </ClientHostControlsProvider>
     </HostScopeProvider>

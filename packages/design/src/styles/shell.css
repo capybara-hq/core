@@ -55,6 +55,27 @@
 .cb-ref-block .cb-shell {
   height: 100%;
 }
+/* A shell-wide banner (safe mode) is the shell's first row, across both columns; the sidebar and
+   the content column share the second row, so the shell keeps the window height and nothing at its
+   bottom (the status bar, the composer) is clipped. The content column keeps the second column
+   when no sidebar panel is drawn (the drawer below 960). */
+.cb-shell[data-banner="true"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.cb-shell[data-banner="true"] > .cb-shell-banner {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.cb-shell[data-banner="true"] > .cb-sidebar {
+  grid-column: 1;
+  grid-row: 2;
+}
+.cb-shell[data-banner="true"] > .cb-shell-column {
+  grid-column: 2;
+  grid-row: 2;
+}
 .cb-shell-column {
   display: flex;
   flex: 1;
@@ -721,7 +742,7 @@ a.cb-stat-card:focus-visible {
   }
 }
 
-/* Safe mode banner (spec §9.6): one hairline-ruled row above the page. */
+/* Safe mode banner (spec §9.6): one hairline-ruled row, the shell's first (AppShell `banner`). */
 .cb-safe-banner {
   display: flex;
   align-items: center;

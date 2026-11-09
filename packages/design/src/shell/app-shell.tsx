@@ -35,6 +35,12 @@ export type AppShellProps = {
    * panel).
    */
   capState?: string;
+  /**
+   * A shell-wide notice row (safe mode's `SafeModeBanner`): the shell's first row, across the
+   * sidebar and the content column, which share the rest of the window. The shell keeps its
+   * window height, so the status bar and the page's bottom stay visible.
+   */
+  banner?: ReactNode;
   children?: ReactNode;
 };
 
@@ -51,6 +57,7 @@ export function AppShell({
   reference,
   ownStatusBar,
   capState,
+  banner,
   children,
 }: AppShellProps) {
   const t = useDesignT();
@@ -145,11 +152,22 @@ export function AppShell({
 
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
-      <div ref={shellRef} className="cb-shell" data-cap-part="shell" data-cap-state={stateTokens}>
+      <div
+        ref={shellRef}
+        className="cb-shell"
+        data-cap-part="shell"
+        data-cap-state={stateTokens}
+        data-banner={banner ? "true" : undefined}
+      >
         {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
         <a className="cb-skip-link" href={`#${mainId}`}>
           {t("shell.skipToContent")}
         </a>
+        {banner ? (
+          <div className="cb-shell-banner" data-part="shell-banner">
+            {banner}
+          </div>
+        ) : null}
         <Sidebar
           {...sidebar}
           onOpenCommands={() => setPaletteOpen(true)}

@@ -19,6 +19,7 @@ import {
   type ClientHostControls,
   useClientHostControls,
   useClientRegistry,
+  useShellBanner,
 } from "../src/components/client-ext/registry";
 import { RunStateProvider, usePublishRunState } from "../src/components/client-ext/run-state";
 import type { ClientExtensionItem, ClientExtensionsResponse } from "../src/lib/client-extensions";
@@ -70,6 +71,11 @@ function RegistryProbe() {
 }
 const registryText = () => screen.getByTestId("registry").textContent;
 
+/** Draws the shell banner the host hands the frame (AppFrame passes it to the App Shell). */
+function BannerProbe() {
+  return <>{useShellBanner()}</>;
+}
+
 let controls: ClientHostControls | null = null;
 function ControlsProbe() {
   controls = useClientHostControls();
@@ -85,6 +91,7 @@ const host = (
   o: { safe?: boolean; children?: ReactNode } = {},
 ) => (
   <ClientHost set={set} safe={o.safe ?? false} scope="org" orgId="o1">
+    <BannerProbe />
     <RegistryProbe />
     <ControlsProbe />
     {o.children}

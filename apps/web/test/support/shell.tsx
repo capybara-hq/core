@@ -138,7 +138,16 @@ export function shellClient(initial: ShellData): QueryClient {
 export function frameElement(
   initial: ShellData,
   children: ReactNode = <p>page body</p>,
-  { locale = "zh", version = "v9.9.9" }: { locale?: "zh" | "en"; version?: string } = {},
+  {
+    locale = "zh",
+    version = "v9.9.9",
+    wrap = (frame) => frame,
+  }: {
+    locale?: "zh" | "en";
+    version?: string;
+    /** What the layout puts around the frame (the client host), when a test needs it. */
+    wrap?: (frame: ReactNode) => ReactNode;
+  } = {},
   client: QueryClient = shellClient(initial),
 ) {
   return (
@@ -147,7 +156,7 @@ export function frameElement(
         <DesignProvider locale={locale} link={Link as LinkComponent}>
           <ToastProvider>
             <ThemeRoot orgId={initial.org?.orgId ?? null}>
-              <AppFrame version={version}>{children}</AppFrame>
+              {wrap(<AppFrame version={version}>{children}</AppFrame>)}
             </ThemeRoot>
           </ToastProvider>
         </DesignProvider>
@@ -164,7 +173,7 @@ export function frameElement(
 export function renderFrame(
   initial: ShellData,
   children: ReactNode = <p>page body</p>,
-  opts: { locale?: "zh" | "en"; version?: string } = {},
+  opts: Parameters<typeof frameElement>[2] = {},
 ) {
   const client = shellClient(initial);
   const view = render(frameElement(initial, children, opts, client));
