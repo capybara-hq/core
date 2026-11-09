@@ -12,6 +12,7 @@ import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -41,7 +42,7 @@ const ref = (id: string, en: string, zhName: string, schemes: ("dark" | "light")
   schemes,
   singleScheme: schemes.length === 1 ? schemes[0] : null,
   logo: null,
-  cssUrl: `/api/v1/themes/${id}/1/r2/theme.css`,
+  cssUrl: themeCssUrl(id, "1"),
 });
 const sw = (bg: string) => ({ bg, panel: "#111", ink: "#eee", accent: "#f60" });
 const NIGHT = {

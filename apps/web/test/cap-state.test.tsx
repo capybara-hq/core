@@ -7,6 +7,7 @@ import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
 import { frameElement, renderFrame, shellOf } from "./support/shell";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -18,7 +19,7 @@ const NEON: ThemeRef = {
   schemes: ["dark"],
   singleScheme: "dark",
   logo: null,
-  cssUrl: "/api/v1/themes/t-neon/1/r2/theme.css",
+  cssUrl: themeCssUrl("t-neon", "1"),
 };
 
 const shell = () => document.querySelector('[data-cap-part~="shell"]') as HTMLElement;

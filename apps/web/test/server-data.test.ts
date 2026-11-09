@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { themeCssUrl } from "./support/themes";
 
 // The request scope of a server render: `next/headers` reads `req`, and `React.cache` memoizes per
 // `scope` (reset before each test, as each test is one request).
@@ -71,7 +72,7 @@ const PAPER = {
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
-  cssUrl: "/api/v1/themes/t-paper/1.0.0/r2/theme.css",
+  cssUrl: themeCssUrl("t-paper", "1.0.0"),
 };
 const THEMES = { themes: [], resolved: PAPER, org: { id: "t-paper", personal: "allowed" } };
 

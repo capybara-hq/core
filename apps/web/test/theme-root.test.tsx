@@ -8,6 +8,7 @@ import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -26,7 +27,7 @@ const NIGHT_CITY: ThemeRef = {
     wordmark: "NIGHT CITY",
     faviconUrl: null,
   },
-  cssUrl: "/api/v1/themes/t-night/1.0.0/r2/theme.css",
+  cssUrl: themeCssUrl("t-night", "1.0.0"),
 };
 const PAPER: ThemeRef = {
   id: "t-paper",
@@ -36,7 +37,7 @@ const PAPER: ThemeRef = {
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
-  cssUrl: "/api/v1/themes/t-paper/2.0.0/r2/theme.css",
+  cssUrl: themeCssUrl("t-paper", "2.0.0"),
 };
 
 const sidebar = () => screen.getByRole("complementary");
@@ -56,7 +57,7 @@ const themeLinks = () =>
 const at = (theme: ThemeRef, version: string): ThemeRef => ({
   ...theme,
   version,
-  cssUrl: `/api/v1/themes/${theme.id}/${version}/r2/theme.css`,
+  cssUrl: themeCssUrl(theme.id, version),
 });
 const linksTo = (href: string) =>
   document.querySelectorAll(`link[rel="stylesheet"][href="${href}"]`).length;
@@ -102,7 +103,7 @@ describe("ThemeRoot in the workspace frame", () => {
     const next = {
       ...PAPER,
       version: "2.1.0",
-      cssUrl: "/api/v1/themes/t-paper/2.1.0/r2/theme.css",
+      cssUrl: themeCssUrl("t-paper", "2.1.0"),
     };
     const view = renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
     view.update(shellOf(ME, { theme: next }));
