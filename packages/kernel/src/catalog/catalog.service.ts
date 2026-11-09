@@ -21,6 +21,7 @@ import { sameRepository } from "../packages/provenance.js";
 import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import {
   countInstalls,
+  inAuthorOrder,
   itemConfirmations,
   itemScopeFacts,
   itemView,
@@ -774,7 +775,7 @@ export class CatalogService {
         integrity: v.integrity,
         contentDigest: v.content_digest,
         sourceDetail: (v.source_detail as SourceDetail | null) ?? null,
-        manifest: v.manifest as PluginManifest,
+        manifest: inAuthorOrder(v.manifest, v.appearance_order) as PluginManifest,
         files: v.files,
         size: Number(v.size),
         extensionSha256: v.extension_sha256,

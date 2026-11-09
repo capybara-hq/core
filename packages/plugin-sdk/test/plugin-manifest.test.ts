@@ -667,6 +667,20 @@ describe("client section and suggestedAppearance", () => {
     );
   });
 
+  it("two refs to one slot are refused", () => {
+    const m = withClient({
+      suggestedAppearance: { replacements: { "shell.brand": "brand", "shell.brand@1": "brand" } },
+    });
+    expect(errorsOf(m).join("\n")).toContain(
+      "suggestedAppearance.replacements: shell.brand@1 names the slot shell.brand again; give each slot once",
+    );
+    // unknown slots are compared by id too
+    const u = withClient({
+      suggestedAppearance: { replacements: { "future.slot": "brand", "future.slot@2": "brand" } },
+    });
+    expect(errorsOf(u).join("\n")).toContain("future.slot@2 names the slot future.slot again");
+  });
+
   it("a replacement in an unknown slot is accepted", () => {
     const m = withClient({ suggestedAppearance: { replacements: { "future.slot": "brand" } } });
     expect(errorsOf(m)).toEqual([]);

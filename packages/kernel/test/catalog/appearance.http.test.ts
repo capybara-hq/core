@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { clientPlugin, importClientPlugin } from "../client/client-env.js";
@@ -74,7 +75,8 @@ describe("suggested appearance", { timeout: 60_000 }, () => {
     });
     const o = await applyOrg(env.boss, LOOK, true);
     expect(o.statusCode, o.body).toBe(200);
-    expect(o.json().theme).toEqual({ from: null, to: themeId });
+    // the org follows the platform, which has no default theme
+    expect(o.json().theme).toEqual({ from: null, to: themeId, followsPlatform: true });
     expect(await platformRows(env)).toEqual({});
     expect(await orgRows(env, env.orgId)).toEqual({});
   });
@@ -158,8 +160,8 @@ describe("suggested appearance", { timeout: 60_000 }, () => {
     expect(r.json()).toEqual({
       theme: { from: null, to: themeId },
       replacements: [{ slot: "shell.brand", from: null, to: `${LOOK}/brand` }],
-      // in the stored manifest's key order (jsonb: shorter keys first)
-      skipped: [UNKNOWN, { what: "conversation.empty", reason: "not-available" }],
+      // in the author's order (plugin.json), not the jsonb key order
+      skipped: [{ what: "conversation.empty", reason: "not-available" }, UNKNOWN],
     });
     expect((await platformRows(env)).uiArrangement).toEqual({
       "shell.brand": { use: `${LOOK}/brand` },
@@ -204,6 +206,15 @@ describe("suggested appearance", { timeout: 60_000 }, () => {
       },
     });
     expect(items.find((e) => e.plugin === PLAIN)?.suggestedAppearance).toBeNull();
+    // the author's order survives the jsonb storage
+    const look = items.find((e) => e.plugin === LOOK)?.suggestedAppearance as {
+      replacements: Record<string, string>;
+    };
+    expect(Object.keys(look.replacements)).toEqual([
+      "shell.brand",
+      "conversation.empty",
+      "shell.future",
+    ]);
   });
 
   it("a plugin without suggestedAppearance is 404", async () => {
@@ -230,7 +241,92 @@ describe("suggested appearance", { timeout: 60_000 }, () => {
     // the item detail tells the admin page when to offer the action
     const detail = await env.root({ method: "GET", url: `/api/v1/admin/catalog/items/${itemId}` });
     expect(detail.json().suggestedAppearance).toMatchObject({ theme: "look" });
+    expect(Object.keys(detail.json().suggestedAppearance.replacements)).toEqual([
+      "shell.brand",
+      "conversation.empty",
+      "shell.future",
+    ]);
     const plain = await env.root({ method: "GET", url: `/api/v1/admin/catalog/items/${plainId}` });
     expect(plain.json().suggestedAppearance).toBeNull();
+  });
+  it("an org following the platform that already uses the suggestion pins nothing", async () => {
+    expect((await applyPlatform(itemId)).statusCode).toBe(200);
+    const o = await applyOrg(env.boss, LOOK, true);
+    expect(o.statusCode, o.body).toBe(200);
+    expect(o.json()).toEqual({ theme: null, replacements: [], skipped: [UNKNOWN] });
+    expect((await applyOrg(env.boss, LOOK)).statusCode).toBe(200);
+    // the org keeps following the platform
+    expect(await orgRows(env, env.orgId)).toEqual({});
+  });
+
+  it("at org level from is the effective value and says whether it follows the platform", async () => {
+    const platform = await env.root({
+      method: "PUT",
+      url: "/api/v1/admin/settings",
+      payload: { uiArrangement: { "shell.brand": { use: `${PLAIN}/brand` } } },
+    });
+    expect(platform.statusCode, platform.body).toBe(200);
+    // the org's own built-in entry on conversation.empty; shell.brand follows the platform
+    await env.db
+      .updateTable("orgs")
+      .set({
+        settings: sql`jsonb_set(settings, '{uiArrangement}', ${JSON.stringify({
+          "conversation.empty": { use: null },
+          "shell.overlay": { hidden: [], order: [`${LOOK}/fx`] },
+        })}::jsonb)` as unknown as string,
+      })
+      .where("id", "=", env.orgId)
+      .execute();
+    const o = await applyOrg(env.boss, LOOK);
+    expect(o.statusCode, o.body).toBe(200);
+    expect(o.json().replacements).toEqual([
+      { slot: "shell.brand", from: `${PLAIN}/brand`, to: `${LOOK}/brand`, followsPlatform: true },
+      { slot: "conversation.empty", from: null, to: `${LOOK}/empty`, followsPlatform: false },
+    ]);
+    // the list slot's entry survives the apply
+    expect((await orgRows(env, env.orgId)).uiArrangement).toEqual({
+      "shell.brand": { use: `${LOOK}/brand` },
+      "conversation.empty": { use: `${LOOK}/empty` },
+      "shell.overlay": { hidden: [], order: [`${LOOK}/fx`] },
+    });
+  });
+
+  it("a stored manifest naming a slot twice or a list slot is skipped as not eligible", async () => {
+    const stored = await env.db
+      .selectFrom("catalog_item_versions")
+      .select(["version", "manifest", "appearance_order"])
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const replacements = {
+      "shell.brand@1": "brand",
+      "shell.overlay": "brand",
+      "shell.brand": "brand",
+    };
+    const write = (manifest: unknown, order: string[] | null) =>
+      env.db
+        .updateTable("catalog_item_versions")
+        .set({ manifest: JSON.stringify(manifest), appearance_order: order })
+        .where("item_id", "=", itemId)
+        .where("version", "=", stored.version)
+        .execute();
+    await write(
+      {
+        ...(stored.manifest as object),
+        suggestedAppearance: { replacements },
+      },
+      Object.keys(replacements),
+    );
+    try {
+      for (const r of [await applyPlatform(itemId, true), await applyOrg(env.boss, LOOK, true)]) {
+        expect(r.statusCode, r.body).toBe(200);
+        expect(r.json().replacements.map((x: { slot: string }) => x.slot)).toEqual(["shell.brand"]);
+        expect(r.json().skipped).toEqual([
+          { what: "shell.overlay", reason: "not-eligible" },
+          { what: "shell.brand", reason: "not-eligible" },
+        ]);
+      }
+    } finally {
+      await write(stored.manifest, stored.appearance_order);
+    }
   });
 });

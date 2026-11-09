@@ -482,6 +482,11 @@ interface StagedPlugin {
   size: number;
   /** The normalized plugin.json (skills and connector templates listed). */
   manifest: PluginManifest;
+  /**
+   * The keys of `manifest.suggestedAppearance.replacements` in plugin.json order, taken before the
+   * staging's jsonb column loses it (absent without replacements).
+   */
+  appearanceOrder?: string[];
   files: { path: string; size: number; sha256: string }[];
   /** A marketplace import's permission summary differs from the package (shown with the review). */
   permissionsMismatch?: PermissionsMismatch;
@@ -1007,13 +1012,16 @@ export class PluginImport {
       opts.expect?.marketplace?.permissions,
       ext ? keys : undefined,
     );
+    const manifest = normalizedManifest(pkg);
+    const replacements = manifest.suggestedAppearance?.replacements;
     const staged: StagedPlugin = {
       itemId,
       packageName,
       version,
       contentDigest: pkg.contentDigest,
       size: tgz.size,
-      manifest: normalizedManifest(pkg),
+      manifest,
+      ...(replacements !== undefined && { appearanceOrder: Object.keys(replacements) }),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
       ...(mismatch !== null && { permissionsMismatch: mismatch }),
       sourceFormat: format,
@@ -1525,6 +1533,7 @@ export class PluginImport {
       version: staged.version,
       contentDigest: staged.contentDigest,
       manifest: m,
+      appearanceOrder: staged.appearanceOrder ?? null,
       listing: {
         publisher: m.publisher,
         description: pluginDescription(m.description).en,

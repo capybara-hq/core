@@ -1713,6 +1713,11 @@ export interface CatalogItemVersionsTable {
   applied_at: TsNullable;
   /** 0084 (ruling P3-52): when the super admin rejected this pending org version. */
   rejected_at: TsNullable;
+  /**
+   * 0105: the keys of `suggestedAppearance.replacements` in plugin.json order (jsonb does not keep
+   * key order); null without replacements.
+   */
+  appearance_order: ColumnType<string[] | null, string[] | null | undefined, string[] | null>;
 }
 
 /** 0035_catalogs.sql, renamed in 0042: marketplaces (official / custom). */

@@ -512,6 +512,7 @@ const schema = z
             `suggestedAppearance.replacements has ${entries.length} entries; the limit is ${L.appearanceReplacements}`,
           );
         }
+        const seen = new Set<string>();
         for (const [slot, id] of entries) {
           const ref = parseSlotRef(slot);
           if (ref === null) {
@@ -521,6 +522,14 @@ const schema = z
             );
             continue;
           }
+          if (seen.has(ref.id)) {
+            issue(
+              [...at, "replacements"],
+              `suggestedAppearance.replacements: ${slot} names the slot ${ref.id} again; give each slot once`,
+            );
+            continue;
+          }
+          seen.add(ref.id);
           if (!COMPONENT_ID_RE.test(id)) {
             issue(
               [...at, "replacements"],

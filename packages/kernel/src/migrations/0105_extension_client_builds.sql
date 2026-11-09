@@ -43,3 +43,8 @@ CREATE INDEX IF NOT EXISTS extension_client_reports_last_at
 -- pending approval or failed; null when none runs). Client code follows the server code that runs
 -- (spec §9.3): a build is delivered while a live replica serves its package.
 ALTER TABLE extension_replica_status ADD COLUMN IF NOT EXISTS serving_sha256 text NULL;
+
+-- catalog_item_versions.appearance_order: the keys of plugin.json's
+-- suggestedAppearance.replacements in the author's order (a jsonb object does not keep key order),
+-- so the suggestion is listed and applied in that order (spec §6.5); null without replacements.
+ALTER TABLE catalog_item_versions ADD COLUMN IF NOT EXISTS appearance_order text[] NULL;

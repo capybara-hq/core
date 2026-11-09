@@ -25,6 +25,7 @@ import {
   themeOnIn,
 } from "../themes/theme-state.js";
 import { ORG_ARRANGEABLE, type UiArrangement, type UiArrangementEntry } from "../ui/arrangement.js";
+import { inAuthorOrder } from "./catalog-items.js";
 
 /** Where the suggestion is applied: the platform defaults, or one org's. */
 export type AppearanceLevel = { platform: true } | { orgId: string };
@@ -33,14 +34,17 @@ export type AppearanceLevel = { platform: true } | { orgId: string };
 export type AppearanceSkipReason = "unknown-slot" | "not-available" | "not-eligible";
 
 /**
- * What applying a suggestion changes at its level: the default theme (`from`: the theme the level
- * stores, null for none; `to`: the `platform_themes` id; null when the plugin suggests no theme or
- * the level stores it already), each replacement slot's `use` (`to`: the contribution key
- * `<extension>/<contribution>`; a slot that already uses it is not listed) and what was skipped.
+ * What applying a suggestion changes at its level: the default theme (`from`: the theme in effect,
+ * null for none; `to`: the `platform_themes` id; null when the plugin suggests no theme or it is
+ * in effect already), each replacement slot's `use` (`to`: the contribution key
+ * `<extension>/<contribution>`; `from`: the key in effect, null for the built-in; a slot that
+ * already uses it is not listed) and what was skipped, in plugin.json order. At org level `from`
+ * is the org's own entry, else the platform's: `followsPlatform` says which (absent at platform
+ * level), and when the org follows a platform that already uses the suggestion nothing is pinned.
  */
 export interface AppearanceResult {
-  theme: { from: string | null; to: string } | null;
-  replacements: { slot: string; from: string | null; to: string }[];
+  theme: { from: string | null; to: string; followsPlatform?: boolean } | null;
+  replacements: { slot: string; from: string | null; to: string; followsPlatform?: boolean }[];
   skipped: { what: string; reason: AppearanceSkipReason }[];
 }
 
@@ -121,11 +125,13 @@ export class AppearanceService {
             eb("v.version", "=", eb.fn.coalesce("i.platform_synced_version", "i.latest_version")),
           ),
       )
-      .select(["i.name", "v.manifest"])
+      .select(["i.name", "v.manifest", "v.appearance_order"])
       .where("i.name", "in", [...names])
       .where("i.deleted_at", "is", null)
       .execute();
-    for (const r of rows) out.set(r.name, suggestedAppearanceOf(r.manifest));
+    for (const r of rows) {
+      out.set(r.name, suggestedAppearanceOf(inAuthorOrder(r.manifest, r.appearance_order)));
+    }
     return out;
   }
 
@@ -243,18 +249,30 @@ export class AppearanceService {
     return plan.result;
   }
 
-  /** What applying `found` at `level` changes, from the level's stored settings (no writes). */
+  /**
+   * What applying `found` at `level` changes, from the stored settings (no writes): the level's
+   * own, and at org level the platform's it follows where it stores nothing.
+   */
   private async plan(level: AppearanceLevel, found: SuggestingItem): Promise<AppearancePlan> {
     const { suggestion } = found;
-    const [storedTheme, storedArrangement] =
-      "orgId" in level
-        ? await readOrgSettings(this.db.db, level.orgId).then(
-            (s) => [s.theme?.id ?? null, s.uiArrangement ?? {}] as const,
-          )
-        : await Promise.all([
-            readUiTheme(this.db.db).then((t) => t.id),
-            readUiArrangement(this.db.db),
-          ]);
+    const [platformTheme, platformArrangement] = await Promise.all([
+      readUiTheme(this.db.db).then((t) => t.id),
+      readUiArrangement(this.db.db),
+    ]);
+    const org = "orgId" in level ? await readOrgSettings(this.db.db, level.orgId) : null;
+    // the theme in effect: an org without its own theme (id null) follows the platform default
+    const orgTheme = org === null ? undefined : (org.theme?.id ?? null);
+    const themeFollows = orgTheme === null;
+    const themeInEffect = orgTheme ?? platformTheme;
+    /** The `use` in effect for a single slot, and whether an org follows the platform's. */
+    const inEffect = (slot: UiSlotId): { use: string | null; follows?: boolean } => {
+      if (org === null) return { use: useOf(platformArrangement[slot]) };
+      const own = (org.uiArrangement as UiArrangement | undefined)?.[slot];
+      return own !== undefined
+        ? { use: useOf(own), follows: false }
+        : { use: useOf(platformArrangement[slot]), follows: true };
+    };
+    const follows = (f: boolean | undefined) => (f === undefined ? {} : { followsPlatform: f });
     const result: AppearanceResult = { theme: null, replacements: [], skipped: [] };
     const plan: AppearancePlan = { result, arrangement: {} };
 
@@ -272,13 +290,17 @@ export class AppearanceService {
           "orgId" in level ? "in this organization" : "as the platform default",
         );
       }
-      if (row.id !== storedTheme) {
+      if (row.id !== themeInEffect) {
         plan.theme = row.id;
-        result.theme = { from: storedTheme, to: row.id };
+        result.theme = {
+          from: themeInEffect,
+          to: row.id,
+          ...follows(org === null ? undefined : themeFollows),
+        };
       }
     }
 
-    // in the stored manifest's key order (a jsonb object: shorter keys first)
+    // in plugin.json order (`suggestions` restores it from `appearance_order`)
     const entries = Object.entries(suggestion.replacements ?? {});
     if (entries.length === 0) return plan;
     const enabled = "orgId" in level ? await this.host.enabledPlugins(level.orgId) : null;
@@ -291,6 +313,7 @@ export class AppearanceService {
           (enabled === null || enabled.has(c.plugin)),
       );
     const arrangeable = "orgId" in level ? ORG_ARRANGEABLE : UI_ARRANGEABLE_SLOTS;
+    const planned = new Set<UiSlotId>();
     for (const [ref, id] of entries) {
       const parsed = parseSlotRef(ref);
       const known = parsed === null ? undefined : uiSlot(parsed.id);
@@ -299,7 +322,8 @@ export class AppearanceService {
         continue;
       }
       const slot = known.id;
-      if (known.cardinality !== "single" || !arrangeable.includes(slot)) {
+      // a second ref to one slot (`shell.brand` and `shell.brand@1`; the SDK refuses it at parse)
+      if (known.cardinality !== "single" || !arrangeable.includes(slot) || planned.has(slot)) {
         result.skipped.push({ what: ref, reason: "not-eligible" });
         continue;
       }
@@ -312,11 +336,12 @@ export class AppearanceService {
         result.skipped.push({ what: ref, reason: "not-eligible" });
         continue;
       }
+      planned.add(slot);
       const key = `${found.name}/${id}`;
-      const from = useOf((storedArrangement as UiArrangement)[slot]);
-      if (from === key) continue;
+      const now = inEffect(slot);
+      if (now.use === key) continue;
       plan.arrangement[slot] = { use: key };
-      result.replacements.push({ slot, from, to: key });
+      result.replacements.push({ slot, from: now.use, to: key, ...follows(now.follows) });
     }
     return plan;
   }
