@@ -1703,9 +1703,9 @@
   "connect": {
     "title": "Connection required",
     "status": "Not connected",
-    "description": "{connector} needs your credential before the agent can use it.",
+    "description": "Connect your {connector} account before the agent can use it.",
     "action": "Connect",
-    "ended": "{connector} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "ended": "{connector} was not connected when this ran. Connect it, then ask the agent again.",
     "result": {
       "connected": "Connector connected. Ask the agent to try again.",
       "unknown": "Could not complete the connection. Please try again.",

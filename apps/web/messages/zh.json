@@ -1691,9 +1691,9 @@
   "connect": {
     "title": "需要授权连接器",
     "status": "未连接",
-    "description": "智能体使用 {connector} 前，需要先填写你的凭据。",
+    "description": "智能体使用 {connector} 前，需要先连接你的账号。",
     "action": "连接",
-    "ended": "这次运行时 {connector} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "ended": "这次运行时 {connector} 尚未连接。连接后让智能体重试。",
     "result": {
       "connected": "连接器已连接，请让智能体重试。",
       "unknown": "无法完成该连接器的授权，请重试。",
