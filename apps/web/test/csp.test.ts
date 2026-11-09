@@ -5,7 +5,7 @@ import { NextRequest } from "next/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as apiRoute from "../src/app/api/[...path]/route";
 import * as pluginUiRoute from "../src/app/plugin-ui/[...path]/route";
-import { documentPolicy, NONCE_HEADER } from "../src/lib/headers";
+import { documentHost, documentPolicy, NONCE_HEADER } from "../src/lib/headers";
 import {
   isObjectStorePath,
   parseObjectStoreProxy,
@@ -152,13 +152,52 @@ describe("document CSP", () => {
     }
   });
 
-  it("dotted app paths and /dev paths outside the catalog are documents too", () => {
-    for (const p of ["/chat/x.y", "/agents/a.b", "/foo.bar", "/login.", "/a/b.png", "/dev/x"]) {
+  it("dotted app paths, /dev paths outside the catalog and slash-less /api, /plugin-ui, /_next are documents too", () => {
+    for (const p of [
+      "/chat/x.y",
+      "/agents/a.b",
+      "/foo.bar",
+      "/login.",
+      "/a/b.png",
+      "/dev/x",
+      // the catch-all route handlers need a segment: these reach (app)/[...rest]
+      "/api",
+      "/plugin-ui",
+      "/_next",
+    ]) {
       expect(proxied(p), p).toBe(true);
     }
-    for (const p of ["/icon.svg", "/dev/ui", "/dev/ui/display/table", "/_next/static/x.js"]) {
+    for (const p of [
+      "/icon.svg",
+      "/dev/ui",
+      "/dev/ui/display/table",
+      "/_next/static/x.js",
+      "/_next/x",
+      "/api/x",
+      "/plugin-ui/x",
+    ]) {
       expect(proxied(p), p).toBe(false);
     }
+  });
+
+  it("behind a reverse proxy the script sources name X-Forwarded-Host, else Host", async () => {
+    const h = (init: Record<string, string>) => documentHost(new Headers(init));
+    expect(h({ host: "web:3000", "x-forwarded-host": "cap.example.com" })).toBe("cap.example.com");
+    // the first value of a list; a value no CSP source can name falls back to Host
+    expect(h({ host: "web:3000", "x-forwarded-host": "cap.example.com:8443, inner.lan" })).toBe(
+      "cap.example.com:8443",
+    );
+    expect(h({ host: "web:3000", "x-forwarded-host": "evil.example; script-src *" })).toBe(
+      "web:3000",
+    );
+    expect(h({ host: "web:3000" })).toBe("web:3000");
+    expect(h({})).toBeUndefined();
+    const res = await proxy(
+      page("/agents", { host: "web:3000", "x-forwarded-host": "cap.example.com" }),
+    );
+    expect(res.headers.get("content-security-policy")).toMatch(
+      /^script-src cap\.example\.com\/_next\/ cap\.example\.com\/api\/v1\/client\/ 'nonce-/,
+    );
   });
 
   it("currentNonce reads the proxy's nonce for the layouts", async () => {
@@ -244,7 +283,6 @@ describe("the CSPs the document policy leaves alone", () => {
 
   it("/api responses carry no document CSP", async () => {
     expect(proxied("/api/v1/me")).toBe(false);
-    expect(proxied("/api")).toBe(false);
     const res = await (apiRoute.GET as (req: Request) => Promise<Response>)(
       new Request(`${WEB}/api/v1/me`),
     );

@@ -351,7 +351,7 @@ describe("proxy: matcher", () => {
   const [matcher] = getMiddlewareMatchers(config.matcher, {});
   const re = new RegExp(matcher?.regexp ?? "^$");
 
-  it("runs for every page, dotted or not; never for /api, /plugin-ui, /_next, /dev/ui or the icon", () => {
+  it("runs for every page, dotted or not; never for /api/*, /plugin-ui/*, /_next/*, /dev/ui or the icon", () => {
     for (const p of [
       "/",
       "/agents",
@@ -365,12 +365,15 @@ describe("proxy: matcher", () => {
       "/a/b.png",
       "/favicon.ico",
       "/dev/x",
+      // slash-less: no route handler takes them, so they reach (app)/[...rest]
+      "/api",
+      "/plugin-ui",
+      "/_next",
     ]) {
       expect(re.test(p), p).toBe(true);
     }
     for (const p of [
       "/api/v1/me",
-      "/api",
       "/plugin-ui/todo/x",
       "/_next/static/chunk.js",
       "/dev/ui",

@@ -4,6 +4,7 @@ import { loginPathFor } from "./lib/auth-sources";
 import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
 import {
   CSP_HEADER,
+  documentHost,
   documentPolicy,
   NONCE_HEADER,
   newNonce,
@@ -114,8 +115,7 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const nonce = newNonce();
   const policy = documentPolicy({
     nonce,
-    // the host the browser addressed (lib/form-post.ts's same-origin check trusts it too)
-    host: req.headers.get("host") ?? req.nextUrl.host,
+    host: documentHost(req.headers) ?? req.nextUrl.host,
     dev: process.env.NODE_ENV !== "production",
   });
   headers.set(CSP_HEADER, policy);
@@ -194,9 +194,11 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Every document. Skipped are only routes that are never an app page: /api and /plugin-ui (route
-  // handlers), /_next, the design catalog /dev/ui and the metadata icon /icon.svg. Any other path,
-  // dotted or not (`/chat/x.y`, `/dev/x`, `/a/b.png`), can land in the (app) layout through a
-  // dynamic segment or `[...rest]`, so it must get the CSP and a nonce the client cannot choose.
-  matcher: ["/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev/ui(?:/|$)|icon\\.svg$).*)"],
+  // Every document. Skipped are only the paths a non-page route always answers: `/api/<x>` and
+  // `/plugin-ui/<x>` (catch-all route handlers needing at least one segment), `/_next/<x>`, the
+  // design catalog `/dev/ui` (optional catch-all, so `/dev/ui` itself too) and the metadata icon
+  // `/icon.svg`. Any other path, the slash-less `/api`, `/plugin-ui`, `/_next` and dotted ones
+  // (`/chat/x.y`, `/dev/x`, `/a/b.png`) included, can land in the (app) layout through a dynamic
+  // segment or `[...rest]`, so it must get the CSP and a nonce the client cannot choose.
+  matcher: ["/((?!api/|plugin-ui/|_next/|dev/ui(?:/|$)|icon\\.svg$).*)"],
 };

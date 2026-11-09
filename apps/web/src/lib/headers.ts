@@ -30,6 +30,19 @@ export const SCRIPT_PATHS: readonly string[] = ["/_next/", "/api/v1/client/"];
 const CSP_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;
 
 /**
+ * The host the browser addressed, for the CSP's script sources: the first `X-Forwarded-Host` value
+ * when present and nameable by a CSP host-source (a reverse proxy that rewrites `Host`; Next's
+ * server-action origin check reads it the same way), else `Host`. Undefined when neither is present.
+ * server.mjs drops every client-sent forwarding header (`lib/peer.ts`), so behind it only `Host`
+ * reaches here: a reverse proxy must forward the original `Host` (docs/deploy/README.md).
+ */
+export function documentHost(headers: Headers): string | undefined {
+  const forwarded = headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  if (forwarded !== undefined && CSP_HOST.test(forwarded)) return forwarded;
+  return headers.get("host") ?? undefined;
+}
+
+/**
  * The document CSP (client extensions spec §9.5, with the 2026-11-09 review rulings):
  * - `script-src`: {@link SCRIPT_PATHS} on the document's host, plus the request's nonce (Next puts it
  *   on its own inline and chunk scripts). The sources carry no scheme, so they follow the page's

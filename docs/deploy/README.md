@@ -201,6 +201,10 @@ starting. Read its output with `docker compose logs init`.
   `http://localhost:<CAPYBARA_WEB_PORT>`.
 - **A TLS proxy on the same host:** set `CAPYBARA_WEB_BIND=127.0.0.1`, so plain http isn't exposed on
   other interfaces, and point the proxy at `127.0.0.1:3000`.
+- **The proxy must forward the original `Host`** (nginx: `proxy_set_header Host $host;`). `web`'s
+  pages allow scripts only from that host (their content security policy), so a rewritten `Host`
+  leaves the pages without their scripts. `web` drops `X-Forwarded-Host` like every forwarding
+  header, so it can't stand in for `Host` here.
 - **`CAPYBARA_WEB_TRUST_PROXY`** behind a TLS proxy or load balancer: without it, every client looks
   like the proxy's address and all clients share one login rate limit.
   - **A proxy on the same host:** set `CAPYBARA_WEB_BIND=127.0.0.1` and

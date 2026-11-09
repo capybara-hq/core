@@ -113,7 +113,7 @@ test("every page boots under the CSP", async ({ page }) => {
   expect(nonces.size).toBe(6);
 });
 
-test("a dotted app path renders under the CSP with the server's nonce, never the client's", async ({
+test("dotted and slash-less app paths render under the CSP with the server's nonce, never the client's", async ({
   page,
 }) => {
   await recordViolations(page);
@@ -123,7 +123,8 @@ test("a dotted app path renders under the CSP with the server's nonce, never the
     "x-nonce": "Zm9yZ2VkLW5vbmNlLXZhbHVl",
     "content-security-policy": "script-src 'nonce-Zm9yZ2VkLW5vbmNlLXZhbHVl'",
   });
-  for (const path of ["/chat/x.y", "/agents/a.b"]) {
+  // dotted, and the slash-less /api and /plugin-ui (no route handler takes them: (app)/[...rest])
+  for (const path of ["/chat/x.y", "/agents/a.b", "/api", "/plugin-ui"]) {
     const nonce = await visit(page, path);
     expect(nonce).not.toBe("Zm9yZ2VkLW5vbmNlLXZhbHVl");
     // the signed-in shell (its not-found page inside the frame) hydrated without a violation
