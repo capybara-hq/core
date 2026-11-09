@@ -1,5 +1,71 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.12
+
+### Minor Changes
+
+- 89278e7: The UI routes serve component contributions: the contributions list carries `kind: "component"`
+  (listed with or without a server view), `ctx.ui.view` / `ctx.ui.action` accept ids in
+  `permissions.ui.components` and such a view is served like a view of its slot (the slot's role and
+  scope rule decide access). Only a component's view may carry `data` (a plain view's or action's
+  `data` is 502 `ui.invalid_view`). A tool's `ToolResult.card` may name a component card. The UI
+  arrangement gains `{ use }` for single slots (`shell.brand`, `conversation.empty`,
+  `conversation.composer.frame`): the org's entry, else the platform's, picks the winner; `use: null`,
+  no entry or a `use` naming a contribution not available in the org is the built-in. The
+  contributions list shows at most the winner of a single slot, and `GET …/ui/arrangement` lists a
+  single slot as `{ slot, candidates, use, followsPlatform }`. `use` on a list slot and `hidden` /
+  `order` on a single slot are 400 `validation_failed`. `capybara-plugin check` (`perm-ui`) accepts
+  component ids for `ctx.ui.view` / `ctx.ui.action`.
+- 810e10a: `capybara-plugin pack` builds a plugin's client code (`src/client.ts[x]`, `client/styles/*.css`,
+  `client/assets/**`) into `dist/client/` with a sha384 per file and writes `extension.client`;
+  `capybara-plugin check` gains `client-import-forbidden`, `client-css-remote`, `client-size`,
+  `client-api-version`, `client-undeclared`, `appearance-invalid` and the warnings
+  `client-css-selector` and `ui-part-unknown`.
+
+### Patch Changes
+
+- ef60eb4: `capybara-plugin guide` fills `{{mode}}` with the mode rendered, as the kernel's guide route does,
+  so it is no longer reported unresolved; `--var mode=…` is refused in favour of `--mode`.
+- e531e6d: The SDK exports `UI_PARTS`, the catalog of built-in elements (`data-cap-part`) plugin CSS may
+  select; `capybara-plugin check` reports `ui-part-unknown` against it.
+- eaa7768: `client-css-remote` now lets a stylesheet's `url()` name only a file of `client/assets`
+  (`../assets/<path>`), a `data:` URL or a `#fragment`; any other relative path is refused too, as
+  the kernel refuses it at import. A stylesheet may not contain non-ASCII whitespace, zero-width
+  characters or U+FEFF, nor use `image-set()`, `-webkit-image-set()`, `cross-fade()`, `element()`,
+  `paint()`, `src()` or `image()` (escapes decoded). Asset paths may use only letters, digits, `.`,
+  `_`, `-` and `/`.
+- 5d464ce: The client stylesheet rule is one function in the SDK: `clientCssProblem` (with `wrapClientCss`, the
+  `@layer extensions` wrap the packer stores). `capybara-plugin pack` runs it on the file as it stores
+  it and the kernel's import runs it on the stored bytes, so a plugin that packs cleanly imports
+  cleanly: a broken `url(` fragment, a bad url token or a brace that would end the
+  `@layer extensions` block early is refused at pack time (`client-css-remote`), not only at import.
+  The packer no longer loads the kernel for this.
+- Updated dependencies [c4b4f6f]
+- Updated dependencies [571318f]
+- Updated dependencies [f172ba6]
+- Updated dependencies [f2786a6]
+- Updated dependencies [b03397f]
+- Updated dependencies [56fc173]
+- Updated dependencies [ad030b1]
+- Updated dependencies [232191e]
+- Updated dependencies [bb622c4]
+- Updated dependencies [38e9f9b]
+- Updated dependencies [44fe453]
+- Updated dependencies [8a3472b]
+- Updated dependencies [afeb135]
+- Updated dependencies [363a2d3]
+- Updated dependencies [914e022]
+- Updated dependencies [89278e7]
+- Updated dependencies [460567f]
+- Updated dependencies [ec5f411]
+- Updated dependencies [107a004]
+- Updated dependencies [25e6ef3]
+- Updated dependencies [e531e6d]
+- Updated dependencies [5d464ce]
+- Updated dependencies [8c49d09]
+  - @capybara-hq/kernel@0.1.0-rc.15
+  - @capybara-hq/plugin-sdk@0.1.0-rc.11
+
 ## 0.1.0-rc.11
 
 ### Minor Changes
