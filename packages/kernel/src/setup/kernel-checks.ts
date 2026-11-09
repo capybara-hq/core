@@ -147,8 +147,9 @@ export function webhookReceivedResult(seenAt: string | null): SetupCheckResult {
 const LAST_ERROR_CHARS = 200;
 
 /**
- * `last_error` fit for a reason: redacted by the connection's secrets over the whole text first
- * (a cut never leaves part of a secret behind), then cut to {@link LAST_ERROR_CHARS} code points.
+ * `last_error` fit for a reason: redacted over the whole text first by every secret the result is
+ * redacted by (the connection's and the plugin's config secrets: a cut never leaves part of a
+ * secret behind), then cut to {@link LAST_ERROR_CHARS} code points.
  */
 function lastErrorText(lastError: string, secrets: readonly string[]): string {
   const redacted = checkRedactor(secrets)(lastError);
@@ -161,9 +162,9 @@ function lastErrorText(lastError: string, secrets: readonly string[]): string {
 /**
  * `capybara:connection-active`: active with a bot identity and no recorded error is ok. A recorded
  * `last_error` (status `error`, or a failure an active connection keeps retrying) is failing with
- * that text, redacted by the connection's secrets and kept only when the result with it passes
- * the result validation (control, bidi and lone surrogate rules, length); otherwise the reason
- * leaves it out. The kernel pipeline validates and redacts the result again.
+ * that text, redacted by every secret the result is redacted by and kept only when the result
+ * with it passes the result validation (control, bidi and lone surrogate rules, length);
+ * otherwise the reason leaves it out. The kernel pipeline validates and redacts the result again.
  */
 export function connectionActiveResult(
   row: { status: string; botUserId: string | null; lastError: string | null } | undefined,

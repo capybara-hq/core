@@ -624,7 +624,9 @@ export class SetupChecksService {
         mode: p.mode,
         target: kernelTarget(p, material),
         signal,
-        secrets: Object.freeze([...material.secrets]) as string[],
+        // every value the result is redacted by: a check that cuts a text (connection-active's
+        // last_error) redacts first, so no partial secret survives the later whole-value redaction
+        secrets: Object.freeze([...secrets]) as string[],
       });
       answer = await raceSignal(
         signal,

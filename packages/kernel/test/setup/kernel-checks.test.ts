@@ -317,4 +317,19 @@ describe("kernel channel checks over the routes", { timeout: 60_000 }, () => {
       reason: KERNEL_CHECK_TEXTS.connectionFailed,
     });
   });
+
+  it("connection-active: a deployment secret across the 200 character cut leaves no prefix", async () => {
+    const id = await connection();
+    // the plugin's deployment secret (`clientSecret`, not a connection field) straddles the cut:
+    // redacted before cutting, so no partial value survives that later redaction cannot match
+    await db
+      .updateTable("channel_connections")
+      .set({ status: "error", last_error: `${"x".repeat(190)}deploy-secret-0b4e7a tail` })
+      .where("id", "=", id)
+      .execute();
+    const failing = await run("capybara:connection-active", id);
+    expect(failing.status).toBe("failing");
+    expect(failing.reason?.en).not.toContain("deploy-se");
+    expect(failing.reason?.en).toContain("[REDACTED]");
+  });
 });

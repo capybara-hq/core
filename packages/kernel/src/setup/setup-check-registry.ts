@@ -40,8 +40,8 @@ export interface KernelCheckArgs {
   /** Aborted at the kernel's timeout. */
   signal: AbortSignal;
   /**
-   * The secret values of the target the check may touch (a connection's secret fields, a
-   * connector's stored credentials): what the kernel redacts from its result.
+   * Every secret value the kernel redacts the result by: the target's (a connection's secret
+   * fields, a connector's stored credentials) and the plugin's deployment and org config secrets.
    */
   secrets: string[];
 }
