@@ -359,6 +359,25 @@ export interface AdminExtensionView {
    */
   uiDropped: { id: string; ref: string; reason: UiDropReason }[];
   /**
+   * The client build of the install record's package (client extensions spec §9.1, §10.4): its id
+   * (the package sha256), every file with its size, and the client API version; null when the
+   * package has no client code (or the view is degraded).
+   */
+  client: { build: string; files: { path: string; bytes: number }[]; apiVersion: number } | null;
+  /**
+   * Crash and load reports of that build, newest first, at most 50: `orgId` is null for admin
+   * pages. Empty without a client build.
+   */
+  clientReports: {
+    orgId: string | null;
+    contribution: string | null;
+    kind: string;
+    count: number;
+    firstAt: string;
+    lastAt: string;
+    lastMessage: string;
+  }[];
+  /**
    * Only with status `conflict`: the single-provider extension point and the other extensions that
    * provide it (they keep this one from loading; disabling them loads it, no restart).
    */

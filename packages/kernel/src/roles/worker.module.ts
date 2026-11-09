@@ -7,6 +7,8 @@ import { PlatformMigration } from "../catalog/platform-migration.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
+import { ClientModule } from "../client/client.module.js";
+import { ClientReportsCron } from "../client/client-reports.cron.js";
 import type { KernelConfig } from "../config/schema.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
@@ -52,6 +54,7 @@ export class WorkerModule {
       module: WorkerModule,
       imports: [
         KernelScheduleModule,
+        ClientModule,
         // the queue consumers (their worker options come from the startup config)
         RuntimeWorkersModule.forRoot(config),
         EvalWorkersModule.forRoot(config),
@@ -84,6 +87,7 @@ export class WorkerModule {
         BackgroundTaskPollJob,
         ToolJobs,
         InitialPasswordCleanupJob,
+        ClientReportsCron,
         CatalogJobs,
         PlatformMigration,
         DirectoryScanJob,

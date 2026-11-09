@@ -461,8 +461,13 @@ export class ExtensionAdmin {
           .execute()
       ).map((r) => [r.plugin, Number(r.n)] as const),
     );
+    const { clients, reports } = await this.clientsOf(subjects);
     return subjects.map((s) => {
       const of = items.get(s.name);
+      const clientFields = {
+        client: clients.get(s.name) ?? null,
+        clientReports: reports.get(s.name) ?? [],
+      };
       const builtin = of?.some((i) => i.builtin) === true || s.install?.required === true;
       const scopeInfo = {
         scope: of?.[0]
@@ -515,6 +520,7 @@ export class ExtensionAdmin {
           ...scopeInfo,
           installSource: install?.source ?? null,
           uiDropped: this.host.uiDropped(s.name),
+          ...clientFields,
           error: s.broken,
         };
       }
@@ -569,8 +575,72 @@ export class ExtensionAdmin {
         ...scopeInfo,
         installSource: install?.source ?? null,
         uiDropped: this.host.uiDropped(s.name),
+        ...clientFields,
       };
     });
+  }
+
+  /**
+   * The client build of each subject's install record package and its newest reports (at most 50
+   * per extension), in two queries over all subjects.
+   */
+  private async clientsOf(subjects: Subject[]): Promise<{
+    clients: Map<string, NonNullable<AdminExtensionView["client"]>>;
+    reports: Map<string, AdminExtensionView["clientReports"]>;
+  }> {
+    const targets = subjects.flatMap((s) =>
+      s.install !== undefined && s.install !== null && s.broken === undefined
+        ? [{ plugin: s.name, sha: s.install.sha256 }]
+        : [],
+    );
+    const clients = new Map<string, NonNullable<AdminExtensionView["client"]>>();
+    const reports = new Map<string, AdminExtensionView["clientReports"]>();
+    if (targets.length === 0) return { clients, reports };
+    const builds = await this.db
+      .selectFrom("extension_client_builds")
+      .select(["package_sha256", "plugin", "sizes", "api_version"])
+      .where(
+        "package_sha256",
+        "in",
+        targets.map((t) => t.sha),
+      )
+      .execute();
+    for (const t of targets) {
+      const b = builds.find((x) => x.package_sha256 === t.sha && x.plugin === t.plugin);
+      if (b === undefined) continue;
+      clients.set(t.plugin, {
+        build: b.package_sha256,
+        files: Object.entries(b.sizes)
+          .map(([path, bytes]) => ({ path, bytes }))
+          .sort((x, y) => x.path.localeCompare(y.path)),
+        apiVersion: b.api_version,
+      });
+    }
+    const built = [...clients].map(([plugin, c]) => ({ plugin, build: c.build }));
+    if (built.length === 0) return { clients, reports };
+    const rows = await this.db
+      .selectFrom("extension_client_reports")
+      .selectAll()
+      .where((eb) =>
+        eb.or(built.map((c) => eb.and([eb("plugin", "=", c.plugin), eb("build", "=", c.build)]))),
+      )
+      .orderBy("last_at", "desc")
+      .execute();
+    for (const r of rows) {
+      const list = reports.get(r.plugin) ?? [];
+      if (list.length >= 50) continue;
+      list.push({
+        orgId: r.org_id,
+        contribution: r.contribution,
+        kind: r.kind,
+        count: r.count,
+        firstAt: r.first_at.toISOString(),
+        lastAt: r.last_at.toISOString(),
+        lastMessage: r.last_message,
+      });
+      reports.set(r.plugin, list);
+    }
+    return { clients, reports };
   }
 }
 

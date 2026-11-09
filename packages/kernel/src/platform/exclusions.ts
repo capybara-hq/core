@@ -765,6 +765,16 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "The admin console's list of platform page client code to load; nothing an agent acts on",
   },
+  {
+    route: "POST /api/v1/orgs/:orgId/ui/client/reports",
+    category: "transport",
+    reason: "Fire-and-forget crash report sent by the browser that ran the client code",
+  },
+  {
+    route: "POST /api/v1/admin/ui/client/reports",
+    category: "transport",
+    reason: "Fire-and-forget crash report sent by the admin console that ran the client code",
+  },
   // themes (themes spec §8-§9)
   {
     route: "GET /api/v1/themes/:id/:version/:revision/theme.css",
