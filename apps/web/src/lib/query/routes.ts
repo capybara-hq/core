@@ -222,6 +222,11 @@ export const ROUTES: readonly RouteEntry[] = [
       const page = items?.find(
         (c) => c.plugin === plugin && c.id === id && c.slot === "platform.page",
       );
+      // not listed: the platform arrangement may hide it (the direct URL still renders)
+      if (items !== undefined && page === undefined) {
+        await qc.prefetchQuery({ ...adminUiArrangementQuery(), retry: false });
+        return;
+      }
       if (page?.kind !== "view") return;
       await qc.prefetchQuery({ ...uiViewQuery(null, { plugin, id }, { locale }), retry: false });
     },

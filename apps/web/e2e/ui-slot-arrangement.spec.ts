@@ -104,7 +104,7 @@ test("hiding unlists a contribution from its slot; a direct URL still works", as
   }
 });
 
-test("the super admin hides a platform page in 平台设置 and its admin nav entry goes", async ({
+test("the super admin hides a platform page in 平台设置: its nav entry goes, its URL works", async ({
   page,
 }) => {
   await signIn(page);
@@ -128,6 +128,10 @@ test("the super admin hides a platform page in 平台设置 and its admin nav en
     await page.goto("/admin");
     await hydrated(page);
     await expect(nav.getByRole("link", { name: "平台首页", exact: true })).toHaveCount(0);
+    // hidden means not listed: the direct URL still renders the page
+    await page.goto("/admin/p/fake-tools-ui/platform-home");
+    await hydrated(page);
+    await expect(page.getByRole("heading", { name: "Platform home" })).toBeVisible();
   } finally {
     const reset = await page.request.put("/api/v1/admin/settings", {
       headers: CSRF,

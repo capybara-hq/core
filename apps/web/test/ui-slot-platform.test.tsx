@@ -127,11 +127,73 @@ describe("/admin/p/[plugin]/[id]", () => {
     expect(calls.some((c) => c.url.includes("/api/v1/admin/"))).toBe(false);
   });
 
+  /** The platform arrangement listing with `home` hidden (hidden means not listed). */
+  const hiddenHome = () =>
+    json(200, {
+      slots: [{ slot: "platform.page", source: "platform", items: [{ ...home, hidden: true }] }],
+    });
+
   it("an unknown page says so", async () => {
-    stubApi({ [`GET ${ADMIN}/ui/contributions`]: () => json(200, { items: [] }) });
+    stubApi({
+      [`GET ${ADMIN}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${ADMIN}/ui/arrangement`]: hiddenHome,
+    });
     resetNavigation("/admin/p/fake-tools-ui/nope");
     await renderRouteWithCache("/admin/p/fake-tools-ui/nope", lastStubRoutes());
     expect(await screen.findByText(en.errors.ui.not_found)).toBeTruthy();
+  });
+
+  it("a page the platform arrangement hides still renders by its direct link", async () => {
+    const calls = stubApi({
+      [`GET ${ADMIN}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${ADMIN}/ui/arrangement`]: hiddenHome,
+      [`GET ${ADMIN}/ui/views/fake-tools-ui/platform-home`]: () =>
+        json(200, { view: { blocks: [{ type: "heading", text: "Platform home" }] } }),
+    });
+    resetNavigation("/admin/p/fake-tools-ui/platform-home");
+    await renderRouteWithCache("/admin/p/fake-tools-ui/platform-home", lastStubRoutes(), {
+      locale: "en",
+    });
+    // the page title, then the view's own heading (read in the browser: not prefetched)
+    await waitFor(() =>
+      expect(screen.getAllByRole("heading", { name: "Platform home" })).toHaveLength(2),
+    );
+    expect(screen.queryByText(en.errors.ui.not_found)).toBeNull();
+    expect(calls.some((c) => c.url.includes("/api/v1/orgs/"))).toBe(false);
+  });
+
+  it("a listed page does not read the arrangement", async () => {
+    const calls = pageApi();
+    resetNavigation("/admin/p/fake-tools-ui/platform-home");
+    const { calls: server } = await renderRouteWithCache(
+      "/admin/p/fake-tools-ui/platform-home",
+      lastStubRoutes(),
+    );
+    expect(await screen.findAllByRole("heading", { name: "Platform home" })).toHaveLength(2);
+    expect([...server, ...calls].some((c) => c.url.endsWith("/ui/arrangement"))).toBe(false);
+  });
+
+  it("a 404 on the arrangement read is final: the designed not-found, read once", async () => {
+    const calls = stubApi({
+      [`GET ${ADMIN}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${ADMIN}/ui/arrangement`]: () =>
+        json(404, { error: { code: "not_found", message: "no" } }),
+    });
+    resetNavigation("/admin/p/fake-tools-ui/platform-home");
+    const { calls: server } = await renderRouteWithCache(
+      "/admin/p/fake-tools-ui/platform-home",
+      lastStubRoutes(),
+      { locale: "en" },
+    );
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-template="StatusPage"]')?.getAttribute("data-kind"),
+      ).toBe("404"),
+    );
+    expect(screen.queryByText(en.errors.ui.not_found)).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    const reads = [...server, ...calls].filter((c) => c.url.endsWith("/ui/arrangement"));
+    expect(reads).toHaveLength(1);
   });
 });
 

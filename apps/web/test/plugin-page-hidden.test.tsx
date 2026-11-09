@@ -40,6 +40,6 @@ describe("a page the contributions list leaves out", () => {
     expect(screen.queryByText(en.errors.ui.not_found)).toBeNull();
     await new Promise((r) => setTimeout(r, 50));
     const reads = [...server, ...calls].filter((c) => c.url.endsWith("/ui/arrangement"));
-    await waitFor(() => expect(reads.length).toBeLessThanOrEqual(1));
+    expect(reads).toHaveLength(1);
   });
 });

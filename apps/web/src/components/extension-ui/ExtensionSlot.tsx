@@ -45,7 +45,8 @@ export type SlotArgs = {
   "file.preview": { orgId: string; conversationId: string; fileId: string };
   "agent.detail.section": { orgId: string; agentId: string };
   "org.settings.section": { orgId: string };
-  "platform.page": Record<string, never>;
+  /** `direct`: as for `org.page`, the page a platform arrangement hides from the list. */
+  "platform.page": { direct?: UiContributionItem };
 };
 
 /** Opens an open target: `contribution` is a `conversation.panel` of the same extension. */
@@ -148,7 +149,7 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
     case "agent.detail.section":
       return p.select ? <AgentSectionSlot args={p.args} select={p.select} /> : null;
     case "platform.page":
-      return p.select ? <PlatformPageSlot select={p.select} /> : null;
+      return p.select ? <PlatformPageSlot args={p.args} select={p.select} /> : null;
     default:
       return null;
   }
@@ -291,10 +292,16 @@ export function usePlatformPages(enabled = true): {
  * A platform page's body (admin console): a schema view from the query cache refreshed by the
  * platform UI stream, or an embed; the same as an org page, on the org-less admin routes.
  */
-function PlatformPageSlot({ select }: { select: { plugin: string; id: string } }) {
+function PlatformPageSlot({
+  args,
+  select,
+}: {
+  args: SlotArgs["platform.page"];
+  select: { plugin: string; id: string };
+}) {
   const locale = uiLocale(useLocale());
   const { items } = usePlatformPages();
-  const c = items.find((x) => matches(x, select));
+  const c = items.find((x) => matches(x, select)) ?? args.direct;
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
   return (
