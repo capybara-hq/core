@@ -288,7 +288,7 @@ const TASKS_SECTION = {
   plugin: "todo",
   id: "tasks-section",
   title: { zh: "待办", en: "Tasks" },
-  place: "section",
+  slot: "conversation.properties.section",
   kind: "view",
   icon: "list-checks",
 };

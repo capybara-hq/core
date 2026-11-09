@@ -42,7 +42,7 @@ test("扩展视图（假扩展 fake-tools-ui）：plugin__fake-tools-ui__write �
 
   await page.goto(`/chat/${convId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
-  // The extension's panel (its old `place: "conversation"`) is an icon in the title bar
+  // The extension's panel (slot `conversation.panel`) is an icon in the title bar
   const icon = page.locator('[data-part="title-bar"]').getByRole("button", { name: "条目" });
   await expect(icon).toBeVisible();
   await icon.click();

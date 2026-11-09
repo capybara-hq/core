@@ -34,4 +34,6 @@ export * from "./theme-tokens.generated.js";
 export * from "./tool.js";
 export * from "./tool-key.js";
 export * from "./ui.js";
+export * from "./ui-resolve.js";
+export * from "./ui-slots.js";
 export * from "./web.js";

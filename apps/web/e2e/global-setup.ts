@@ -3,8 +3,8 @@
  * `start`) starts a kernel from source that loads `model-fake`, the core fakes of
  * `@capybara-hq/testing` (`fake-connector` as connector kind `mcp`, so the web install wizard
  * drives it as an MCP connector; `fake-openapi`, connector kind `openapi`, for the wizard's OpenAPI
- * flow; `fake-tools-ui`, a tool with a conversation view; `fake-embed`, an org page and a
- * conversation tab embed; `fake-web` and `fake-web-2`, two scripted web search and web fetch
+ * flow; `fake-tools-ui`, a tool with a `conversation.panel` view and views for `agent.detail.section`, `org.settings.section` and `platform.page`; `fake-embed`, an `org.page` and a
+ * `conversation.panel` embed; `fake-web` and `fake-web-2`, two scripted web search and web fetch
  * providers for the web tools case; all allowing local http), `fake-config-form` (a hinted
  * deployment config form) and the fake IM test plugin `fake-im`; no official plugin except
  * `model-fake` and the bootstrap plugins; server.mjs then starts the web layer (`next dev`)
@@ -71,9 +71,9 @@ const fakeExtension = (name: string) =>
   join(repoRoot, "packages/testing/fixtures/extensions", name, "src/index.ts");
 /** Connector extension `fake-connector`, configured as kind `mcp` (an MCP client). */
 const fakeConnector = fakeExtension("fake-connector");
-/** Tool `plugin__fake-tools-ui__write` and the conversation view `tasks` (the right-hand "条目" tab). */
+/** Tool `plugin__fake-tools-ui__write` and the `conversation.panel` view `tasks` (the right-hand "条目" tab), plus `agent-notes`, `org-admin`, `platform-home`. */
 const fakeToolsUi = fakeExtension("fake-tools-ui");
-/** Embeds `panel` (org page) and `panel-conv` (conversation tab), token-checked routes. */
+/** Embeds `panel` (`org.page`) and `panel-conv` (`conversation.panel`), token-checked routes. */
 const fakeEmbed = fakeExtension("fake-embed");
 /** Connector extension `fake-openapi` (kind `openapi`), for the wizard's OpenAPI flow. */
 const fakeOpenApi = fakeExtension("fake-openapi");

@@ -36,6 +36,8 @@
     "check:i18n": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/i18n.ts",
     "check:tokens": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/tokens.ts",
     "gen:tokens": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-tokens.ts",
+    "gen:ui-slots": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-ui-slots.ts",
+    "check:ui-slots": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/ui-slots.ts",
     "check:web-ui": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/web-ui.ts",
     "check:plugin-pack": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-pack.ts",
     "check:config-forms": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/config-forms.ts",

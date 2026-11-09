@@ -27,10 +27,10 @@ import {
 } from "../../lib/query/conversation";
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
-import type { UiContributionItem } from "../../lib/ui";
+import type { UiOpen } from "../../lib/ui";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { useDeviceName } from "../use-device-name";
 import { BackgroundSection } from "./BackgroundSection";
-import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
 /** A connector tool's key is `mcp__<connector slug>__<tool>`. */
 const slugOf = (toolKey: string): string | null => {
@@ -217,29 +217,33 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
 }
 
 /**
- * The properties panel (spec §6.16.17 order): Context, the extensions' sections in contribution
- * order (each failing alone), Files (when there are any, the sub-agents' deliveries included), then
- * Background tasks (hidden until there is a background task or a sub-agent).
+ * The properties panel (spec §6.16.17 order): Context, Files (when there are any, the sub-agents'
+ * deliveries included), then Background tasks (hidden until there is a background task or a
+ * sub-agent); the extensions' sections (slot `conversation.properties.section`, each failing alone)
+ * follow the anchor they name, `context`, `files` or `background`, in the kernel's order.
  */
 export function PropertiesSections({
-  ctx,
+  orgId,
+  conversationId,
+  onOpenTarget,
   events,
   model,
   contextPct,
   lastRun,
   files,
-  sections,
   onOpenFile,
   background,
   total,
 }: {
-  ctx: BlockContext;
+  orgId: string;
+  conversationId: string;
+  /** Opens an open target of an extension section: a panel of the same extension. */
+  onOpenTarget(plugin: string, target: UiOpen): void;
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
   lastRun?: string | undefined;
   files: FileOutput[];
-  sections: UiContributionItem[];
   onOpenFile(id: string): void;
   background?:
     | {
@@ -252,21 +256,28 @@ export function PropertiesSections({
     | undefined;
   total?: string | undefined;
 }) {
+  const after = (anchor: string) => (
+    <ExtensionSlot
+      slot="conversation.properties.section"
+      args={{ orgId, conversationId }}
+      anchor={anchor}
+      host={{ onOpenTarget }}
+    />
+  );
   return (
     <PropertiesPanel>
       <ContextSection
-        orgId={ctx.orgId}
-        conversationId={ctx.conversationId}
+        orgId={orgId}
+        conversationId={conversationId}
         events={events}
         model={model}
         contextPct={contextPct}
         lastRun={lastRun}
         total={total}
       />
-      {sections.map((c) => (
-        <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
-      ))}
+      {after("context")}
       {files.length > 0 ? <FilesSection files={files} onOpen={onOpenFile} /> : null}
+      {after("files")}
       {background && background.views.length + background.tasks.length > 0 ? (
         <BackgroundSection
           views={background.views}
@@ -276,6 +287,7 @@ export function PropertiesSections({
           onOpen={background.onOpen}
         />
       ) : null}
+      {after("background")}
     </PropertiesPanel>
   );
 }

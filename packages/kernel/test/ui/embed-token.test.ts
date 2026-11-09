@@ -18,6 +18,7 @@ const T0 = 1_800_000_000_000;
 
 const CLAIMS = {
   plugin: "example-board",
+  scope: "org" as const,
   orgId: "11111111-1111-4111-8111-111111111111",
   accountId: "22222222-2222-4222-8222-222222222222",
   contribution: "board",
@@ -29,6 +30,13 @@ const tokens = (now: number, ring = createKeyring(K1, [])) => {
 };
 
 const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64url");
+
+/** Signs arbitrary claims with the K1-derived key (a token the kernel could not have issued). */
+const signK1 = (claims: unknown): string => {
+  const p = b64(JSON.stringify(claims));
+  const key = createKeyring(K1, []).deriveKey("capybara-embed/1").current;
+  return `${p}.${b64(createHmac("sha256", key).update(`capybara-embed/1.${p}`).digest())}`;
+};
 
 describe("EmbedTokens", () => {
   it("签发：有效期 300 秒，校验返回声明（只含已知字段）", () => {
@@ -48,6 +56,68 @@ describe("EmbedTokens", () => {
     const conv = "33333333-3333-4333-8333-333333333333";
     const { token } = t.issue({ ...CLAIMS, contribution: "board-conv", conversationId: conv });
     expect(t.verify(token, "example-board")).toMatchObject({ conversationId: conv });
+  });
+
+  it("agentId round-trips in the claims", () => {
+    const t = tokens(T0);
+    const agentId = "44444444-4444-4444-8444-444444444444";
+    const { token } = t.issue({ ...CLAIMS, contribution: "notes", agentId });
+    expect(t.verify(token, "example-board")).toEqual({
+      ...CLAIMS,
+      contribution: "notes",
+      agentId,
+      exp: (T0 + 300_000) / 1000,
+    });
+    // an agent token names no conversation; a non-string agentId is refused
+    const exp = (T0 + 300_000) / 1000;
+    const conv = "33333333-3333-4333-8333-333333333333";
+    expect(
+      t.verify(signK1({ ...CLAIMS, exp, agentId, conversationId: conv }), CLAIMS.plugin),
+    ).toBeNull();
+    expect(t.verify(signK1({ ...CLAIMS, exp, agentId: 1 }), CLAIMS.plugin)).toBeNull();
+    expect(() => t.issue({ ...CLAIMS, agentId, conversationId: conv })).toThrow(/invalid/);
+  });
+
+  it("platform claims with an orgId do not parse", () => {
+    const t = tokens(T0);
+    const exp = (T0 + 300_000) / 1000;
+    const { orgId, ...rest } = CLAIMS;
+    const platform = { ...rest, scope: "platform", role: "superAdmin", contribution: "home", exp };
+    expect(t.verify(signK1(platform), CLAIMS.plugin)).toEqual(platform);
+    expect(t.verify(signK1({ ...platform, orgId }), CLAIMS.plugin)).toBeNull();
+    // a platform claim names no conversation, agent or file
+    const conv = "33333333-3333-4333-8333-333333333333";
+    for (const extra of [{ conversationId: conv }, { agentId: conv }, { fileId: conv }]) {
+      expect(t.verify(signK1({ ...platform, ...extra }), CLAIMS.plugin)).toBeNull();
+    }
+    // not expressible in the type; refused at run time too
+    const bad = { ...rest, scope: "platform", role: "superAdmin", orgId } as never;
+    expect(() => t.issue(bad)).toThrow(/invalid/);
+  });
+
+  it("org claims without an orgId do not parse", () => {
+    const t = tokens(T0);
+    const exp = (T0 + 300_000) / 1000;
+    const { orgId: _orgId, ...noOrg } = CLAIMS;
+    expect(t.verify(signK1({ ...CLAIMS, exp }), CLAIMS.plugin)).not.toBeNull();
+    expect(t.verify(signK1({ ...noOrg, exp }), CLAIMS.plugin)).toBeNull();
+    // the scope is required and one of the two
+    const { scope: _scope, ...noScope } = CLAIMS;
+    expect(t.verify(signK1({ ...noScope, exp }), CLAIMS.plugin)).toBeNull();
+    expect(t.verify(signK1({ ...CLAIMS, exp, scope: "deployment" }), CLAIMS.plugin)).toBeNull();
+  });
+
+  it("superAdmin role only with platform scope", () => {
+    const t = tokens(T0);
+    const exp = (T0 + 300_000) / 1000;
+    const { orgId: _orgId, ...noOrg } = CLAIMS;
+    expect(t.verify(signK1({ ...CLAIMS, exp, role: "superAdmin" }), CLAIMS.plugin)).toBeNull();
+    expect(
+      t.verify(signK1({ ...noOrg, exp, scope: "platform", role: "member" }), CLAIMS.plugin),
+    ).toBeNull();
+    expect(
+      t.verify(signK1({ ...noOrg, exp, scope: "platform", role: "superAdmin" }), CLAIMS.plugin),
+    ).toMatchObject({ scope: "platform", role: "superAdmin" });
   });
 
   it("给别的插件用 → null", () => {

@@ -1,10 +1,12 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type DroppedUiContribution,
   defineExtension,
   type ExtensionManifest,
   ExtensionManifestError,
   type ExtensionPointRef,
+  type ResolvedUiContribution,
   type StaticExtensionManifest,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
@@ -113,6 +115,14 @@ export class ExtensionInstance {
   readonly generation: number;
   readonly manifest: ExtensionManifest;
   readonly permissions: PermissionSet;
+  /** The manifest's UI contributions whose slot the catalog knows (UI slots spec §3.2), in manifest order. */
+  readonly ui: ResolvedUiContribution[];
+  /** The manifest's UI contributions left out at load (unknown slot or slot version). */
+  readonly uiDropped: DroppedUiContribution[];
+  /** `after` values that are not anchors of their slot (the contribution keeps the default position). */
+  readonly uiUnknownAnchors: { id: string; after: string }[];
+  /** Ids of contributions that still name the deprecated `place`. */
+  readonly uiDeprecatedPlace: string[];
   private hash: string;
   private readonly live: LiveConfig;
   readonly entryUrl: string;
@@ -131,6 +141,11 @@ export class ExtensionInstance {
     this.source = init.source;
     this.generation = init.generation;
     this.permissions = init.permissions;
+    const ui = init.ctx.uiResolution;
+    this.ui = ui.resolved;
+    this.uiDropped = ui.dropped;
+    this.uiUnknownAnchors = ui.unknownAnchors;
+    this.uiDeprecatedPlace = ui.deprecatedPlace;
     this.hash = init.configHash;
     this.live = init.config;
     this.entryUrl = init.entryUrl;

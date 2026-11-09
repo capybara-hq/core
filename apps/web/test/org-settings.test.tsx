@@ -19,6 +19,7 @@ const MEMBER: Me = {
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
 };
 const SETTINGS = "/api/v1/orgs/o1/settings";
+const CONTRIBUTIONS = "/api/v1/orgs/o1/ui/contributions";
 
 const actionRow = (locale: "zh" | "en") =>
   screen.queryByRole("region", { name: locale === "zh" ? "待提交改动" : "Pending changes" });
@@ -37,6 +38,7 @@ describe("组织设置（SettingsPage）", () => {
       const o = m.orgSettings;
       const calls = stubApi({
         [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+        [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
         [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
       });
       const { container } = await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
@@ -70,6 +72,7 @@ describe("组织设置（SettingsPage）", () => {
       const o = msgs[locale].orgSettings;
       const calls = stubApi({
         [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+        [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
         [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
       });
       await renderRouteWithCache("/settings/organization", lastStubRoutes(), { locale });
@@ -91,7 +94,10 @@ describe("组织设置（SettingsPage）", () => {
   it("org settings nav groups and admin-only items", async () => {
     const groups = (c: HTMLElement) =>
       [...c.querySelectorAll(".cb-settings-nav")].map((n) => n.textContent ?? "");
-    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    stubApi({
+      [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+      [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+    });
     const nav = en.connections.nav;
     const admin = await renderRouteWithCache("/settings/organization", lastStubRoutes());
     await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.toolSearch.on}`) });
@@ -111,7 +117,10 @@ describe("组织设置（SettingsPage）", () => {
       at = i;
     }
     cleanup();
-    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    stubApi({
+      [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+      [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+    });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.getByRole("link", { name: nav.members })).toBeTruthy();
@@ -122,12 +131,18 @@ describe("组织设置（SettingsPage）", () => {
   });
 
   it("二级导航：成员起有「成员」；访客打不开组织设置（没有访问权限）", async () => {
-    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    stubApi({
+      [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+      [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+    });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     const link = await screen.findByRole("link", { name: en.connections.nav.members });
     expect(link.getAttribute("href")).toBe("/settings/members");
     cleanup();
-    stubApi({ [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    stubApi({
+      [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+      [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+    });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }] },
     });

@@ -491,9 +491,13 @@ export class ToolPipeline {
       switches,
       inlineViews: (plugin) =>
         new Set(
-          (host?.current(plugin)?.manifest.ui ?? [])
-            .filter((c) => c.place === "inline" && c.aliasOf === undefined)
-            .map((c) => c.id),
+          (host?.current(plugin)?.ui ?? [])
+            .filter(
+              (r) =>
+                r.slot.id === "conversation.tool-result.card" &&
+                r.contribution.aliasOf === undefined,
+            )
+            .map((r) => r.contribution.id),
         ),
       onToolsChanged: (orgId, connectorId) => {
         void drift?.onToolsChanged(orgId, connectorId);

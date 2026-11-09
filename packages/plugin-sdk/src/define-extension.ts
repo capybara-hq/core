@@ -24,7 +24,11 @@ export interface ExtensionManifest {
   optional?: ExtensionPointRef[];
   /** 权限清单（治理而非沙箱）。 */
   permissions?: ExtensionPermissions;
-  /** 界面贡献：对话页标签与组织页面；id 须同时列在 `permissions.ui` 里。 */
+  /**
+   * UI contributions, each in a slot of `UI_SLOTS`; every id is also listed in `permissions.ui`.
+   * Kept exactly as written: structural problems fail the extension, while a contribution to an
+   * unknown slot or version is only dropped when the host resolves the slots (`resolveUiSlots`).
+   */
   ui?: UiContribution[];
   config?: { deployment?: z.ZodTypeAny; org?: z.ZodTypeAny };
   migrations?: string;
@@ -121,6 +125,7 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest {
     const errs = validatePermissions(plugin, m.permissions);
     if (errs.length > 0) fail(`invalid permissions: ${errs.join("; ")}`);
   }
+  // structural ui problems only; slot resolution never fails the extension (UI slots spec §3.2)
   const uiErrs = validateUiContributions(m.ui, m.permissions);
   if (uiErrs.length > 0) fail(`invalid ui: ${uiErrs.join("; ")}`);
   return m;

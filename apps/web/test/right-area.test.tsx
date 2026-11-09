@@ -29,11 +29,15 @@ export const TODO_PANEL = {
   plugin: "todo",
   id: "tasks-panel",
   title: { zh: "待办", en: "Tasks" },
-  place: "panel",
+  slot: "conversation.panel",
   kind: "view",
   icon: "list-checks",
 };
-export const TODO_SECTION = { ...TODO_PANEL, id: "tasks-section", place: "section" };
+export const TODO_SECTION = {
+  ...TODO_PANEL,
+  id: "tasks-section",
+  slot: "conversation.properties.section",
+};
 
 const sectionView: UiView = {
   badge: "1/2",

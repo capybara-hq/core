@@ -46,6 +46,12 @@ export type EffectiveConfig =
   /** `notRunning`: the extension is not running on this replica (not a configuration problem). */
   | { ok: false; issues: ConfigIssue[]; notRunning?: true };
 
+const notRunning = (): EffectiveConfig => ({
+  ok: false,
+  notRunning: true,
+  issues: [{ path: "", segments: [], message: "the extension is not running" }],
+});
+
 /** An org's stored copy: its non-secret values and its secrets by field dot path. */
 export interface StoredCopy {
   config: Obj;
@@ -182,6 +188,17 @@ export class EffectiveConfigs {
   }
 
   /**
+   * The config of `plugin` for work done for the platform (a `platform.page` view, UI slots spec
+   * §7): the running instance's deployment config, no org copy applies; `notRunning` when the
+   * extension is not running on this replica.
+   */
+  platform(plugin: string): EffectiveConfig {
+    const inst = this.registry.current(plugin);
+    if (!inst) return notRunning();
+    return { ok: true, config: inst.config, source: "platform" };
+  }
+
+  /**
    * The effective config of `plugin` for `orgId`. Following: the running platform config, `ok:
    * false` when it leaves a required overridable field empty (the host loaded it with those
    * fields optional, so that is the only way the full schema can refuse it). Copy: the platform's
@@ -190,13 +207,7 @@ export class EffectiveConfigs {
    */
   async get(orgId: string, plugin: string): Promise<EffectiveConfig> {
     const inst = this.registry.current(plugin);
-    if (!inst) {
-      return {
-        ok: false,
-        notRunning: true,
-        issues: [{ path: "", segments: [], message: "the extension is not running" }],
-      };
-    }
+    if (!inst) return notRunning();
     const schema = inst.manifest.config?.deployment as z.ZodTypeAny | undefined;
     if (!schema) return { ok: true, config: inst.config, source: "platform" };
     const levels = fieldLevels(schema);

@@ -10,8 +10,11 @@ const config = () =>
   ({ runtime: { sseHeartbeatMs: 60_000, sseRecheckMs: 20 } }) as unknown as KernelConfig;
 const bus = { subscribe: async () => async () => {} };
 const quiet = { warn() {} };
-const streamsFor = (memberRole: () => Promise<OrgRole | undefined>) =>
-  new OrgUiStreams(bus, { role: memberRole }, { get: config }, quiet);
+const streamsFor = (
+  memberRole: () => Promise<OrgRole | undefined>,
+  superAdmin: () => Promise<boolean> = async () => false,
+  b: { subscribe: (topic: string, fn: (m: unknown) => void) => Promise<() => Promise<void>> } = bus,
+) => new OrgUiStreams(b, { role: memberRole, superAdmin }, { get: config }, quiet);
 
 function output() {
   const chunks: string[] = [];
@@ -80,6 +83,50 @@ describe("OrgUiStreams shutdown", () => {
     h.begin();
     expect(late.ended()).toBe(true);
     expect(late.chunks).toEqual([]);
+    expect(streams.size).toBe(0);
+  });
+});
+
+describe("OrgUiStreams platform", () => {
+  const platform = {
+    scope: "platform" as const,
+    viewerAccountId: "a1",
+    credential: async () => null,
+  };
+
+  it("subscribes the platform topic for a super admin only", async () => {
+    const topics: string[] = [];
+    const recording = {
+      subscribe: async (topic: string) => {
+        topics.push(topic);
+        return async () => {};
+      },
+    };
+    let admin = false;
+    const streams = streamsFor(
+      async () => "owner",
+      async () => admin,
+      recording,
+    );
+    await expect(streams.open(platform, output().out)).rejects.toMatchObject({ code: "forbidden" });
+    admin = true;
+    const h = await streams.open(platform, output().out);
+    expect(topics).toEqual(["platform-ui"]);
+    h.close();
+  });
+
+  it("losing super admin closes the stream on the next re-check", async () => {
+    let admin = true;
+    const streams = streamsFor(
+      async () => undefined,
+      async () => admin,
+    );
+    const o = output();
+    const h = await streams.open(platform, o.out);
+    h.begin();
+    admin = false;
+    await waitFor(async () => o.ended(), 2_000);
+    expect(o.chunks.join("")).toContain('event: error\ndata: {"code":"forbidden"}');
     expect(streams.size).toBe(0);
   });
 });

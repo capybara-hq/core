@@ -24,6 +24,7 @@ import { SKILL_ROUTES } from "../skills/skills.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
+import { UI_ROUTES } from "../ui/ui.schemas.js";
 
 /**
  * The zod schemas one HTTP route validates (spec §14.5 item 3), as its controller uses them:
@@ -77,4 +78,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ME_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
+  // UI slots (UI slots spec §3)
+  ...UI_ROUTES,
 ];

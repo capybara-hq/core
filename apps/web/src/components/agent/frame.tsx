@@ -8,11 +8,16 @@ import {
   type PageHeaderProps,
   SettingsPage,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 import type { Agent } from "../../lib/agents";
+import { uiLocale } from "../../lib/ui";
+import { useSlotContributions } from "../extension-ui/ExtensionSlot";
 import {
   type AgentSection,
+  type AgentSectionId,
+  builtinSection,
+  extSectionId,
   READ_ONLY_FIELDS,
   SECTION_DESCRIPTIONS,
   SECTION_FIELDS,
@@ -28,7 +33,7 @@ export interface AgentPageValue {
   agent: Agent;
   /** The viewer may change the agent (owner or org admin); else every section is read-only. */
   editable: boolean;
-  section: AgentSection;
+  section: AgentSectionId;
   header: PageHeaderProps;
   nav: { group: string; items: { id: string; label: string; href: string }[] }[];
   /** A section reports its unsaved edits, so leaving it asks first. */
@@ -67,17 +72,34 @@ export function loadingSection(
   };
 }
 
-/** The nav of the sections this viewer sees. */
-export function useSectionNav(agentId: string, editable: boolean) {
+/** The extensions' sections of the agent page (`agent.detail.section`), in the kernel's order. */
+export function useExtSections(orgId: string) {
+  return useSlotContributions(orgId, "agent.detail.section").items;
+}
+
+/**
+ * The nav of the sections this viewer sees: the built-in ones, then one item per extension
+ * section (its title), for editable and read-only viewers alike.
+ */
+export function useSectionNav(orgId: string, agentId: string, editable: boolean) {
   const t = useTranslations("agents.page");
+  const locale = uiLocale(useLocale());
+  const ext = useExtSections(orgId);
   return [
     {
       group: t("navGroup"),
-      items: sectionsFor(editable).map((s) => ({
-        id: s,
-        label: t(`sections.${s}`),
-        href: sectionHref(agentId, s),
-      })),
+      items: [
+        ...sectionsFor(editable).map((s) => ({
+          id: s as string,
+          label: t(`sections.${s}`),
+          href: sectionHref(agentId, s),
+        })),
+        ...ext.map((c) => ({
+          id: extSectionId(c) as string,
+          label: c.title[locale],
+          href: sectionHref(agentId, extSectionId(c)),
+        })),
+      ],
     },
   ];
 }
@@ -107,9 +129,10 @@ export function AgentSectionFrame({
     setDirty(dirty);
     return () => setDirty(false);
   }, [dirty, setDirty]);
+  const built = builtinSection(page.section);
   const fields = page.editable
-    ? SECTION_FIELDS[page.section]
-    : (READ_ONLY_FIELDS[page.section] ?? SECTION_FIELDS[page.section]);
+    ? SECTION_FIELDS[built]
+    : (READ_ONLY_FIELDS[built] ?? SECTION_FIELDS[built]);
   return (
     <SettingsPage
       header={page.header}
@@ -118,8 +141,7 @@ export function AgentSectionFrame({
       {...(actionRow ? { actionRow } : {})}
       {...(loading
         ? {
-            loading:
-              children !== undefined ? {} : { sections: [loadingSection(page.section, fields, t)] },
+            loading: children !== undefined ? {} : { sections: [loadingSection(built, fields, t)] },
           }
         : {})}
     >

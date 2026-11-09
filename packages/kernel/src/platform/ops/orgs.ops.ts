@@ -161,6 +161,7 @@ export class OrgsOperations implements OnModuleInit {
           "customSkills",
           "orgMarketplaceBrowse",
           "uiTheme",
+          "uiArrangement",
         ],
         extras: ["orgId", "runConcurrency", "sandbox", "subagents"],
         confirm: "platform",

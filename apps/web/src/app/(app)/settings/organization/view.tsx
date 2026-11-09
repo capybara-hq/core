@@ -17,6 +17,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { ExtensionSlot } from "../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
@@ -254,6 +255,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           />
         </Field>
       </FormSection>
+      {manage ? <ExtensionSlot slot="org.settings.section" args={{ orgId }} /> : null}
       {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
     </SettingsPage>
   );

@@ -61,6 +61,7 @@ describe("PlatformOperations", () => {
       "org-settings",
       "devices",
       "themes",
+      "ui",
     ]);
   });
 

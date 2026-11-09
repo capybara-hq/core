@@ -151,14 +151,13 @@ describe("插件视图接口", () => {
     await enable(owner, orgId, "ui-probe");
     const after = await owner({ method: "GET", url: `${ui}/contributions` });
     const items = (after.json() as { items: { plugin: string; id: string }[] }).items;
-    // the old place "conversation" is listed as "panel" with legacyPlace; an alias is not listed
+    // each item names its slot (and a section its anchor); an alias is not listed
     expect(items).toEqual([
       {
         plugin: "ui-probe",
         id: "panel",
         title: { zh: "面板", en: "Panel" },
-        place: "panel",
-        legacyPlace: "conversation",
+        slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
       },
@@ -166,8 +165,7 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "boom",
         title: { zh: "出错", en: "Boom" },
-        place: "panel",
-        legacyPlace: "conversation",
+        slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
       },
@@ -175,8 +173,7 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "slow",
         title: { zh: "很慢", en: "Slow" },
-        place: "panel",
-        legacyPlace: "conversation",
+        slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
       },
@@ -184,8 +181,7 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "bad",
         title: { zh: "非法", en: "Bad" },
-        place: "panel",
-        legacyPlace: "conversation",
+        slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
       },
@@ -193,7 +189,7 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "orgpage",
         title: { zh: "组织页", en: "Org page" },
-        place: "page",
+        slot: "org.page",
         kind: "view",
         icon: "puzzle",
       },
@@ -201,7 +197,8 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "side",
         title: { zh: "侧栏", en: "Side" },
-        place: "section",
+        slot: "conversation.properties.section",
+        after: "context",
         kind: "view",
         icon: "chart",
       },
@@ -209,7 +206,7 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "card",
         title: { zh: "卡片", en: "Card" },
-        place: "inline",
+        slot: "conversation.tool-result.card",
         kind: "view",
         icon: "puzzle",
       },
@@ -217,7 +214,7 @@ describe("插件视图接口", () => {
         plugin: "ui-probe",
         id: "board",
         title: { zh: "看板", en: "Board" },
-        place: "page",
+        slot: "org.page",
         kind: "embed",
         path: "/ui/board",
         icon: "puzzle",
@@ -241,6 +238,8 @@ describe("插件视图接口", () => {
       orgId,
       accountId: ownerId,
       role: "owner",
+      slot: "conversation.panel",
+      scope: "conversation",
       // the effective deployment config (ui-probe declares none)
       config: {},
       conversationId: convId,
@@ -361,6 +360,8 @@ describe("插件视图接口", () => {
       orgId,
       accountId: expect.any(String),
       role: "member",
+      slot: "org.page",
+      scope: "org",
       config: {},
       locale: "en",
     });
@@ -408,6 +409,8 @@ describe("插件视图接口", () => {
       orgId,
       accountId: ownerId,
       role: "owner",
+      slot: "conversation.panel",
+      scope: "conversation",
       config: {},
       conversationId: convId,
       locale: "zh",
@@ -591,6 +594,8 @@ describe("插件视图接口", () => {
       orgId,
       accountId: ownerId,
       role: "owner",
+      slot: "conversation.tool-result.card",
+      scope: "conversation",
       config: {},
       conversationId: convId,
       locale: "en",
@@ -696,7 +701,7 @@ describe("插件视图接口", () => {
     ).extensions.find((p) => p.plugin === "fake-tools-ui");
     expect(toolsUi?.permissions.find((g) => g.category === "ui")).toMatchObject({
       sensitive: false,
-      items: ["view:tasks"],
+      items: ["view:agent-notes", "view:org-admin", "view:platform-home", "view:tasks"],
     });
   });
 });

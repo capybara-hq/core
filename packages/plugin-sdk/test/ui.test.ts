@@ -3,16 +3,18 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   defineExtension,
   EMBED_PROTOCOL,
+  type EmbedClaims,
   type EmbedParentMessage,
   type ExtensionContext,
   type ExtensionManifest,
-  normalizePlace,
   parseEmbedChildMessage,
+  resolveUiSlots,
   type ToolResult,
   UI_ICONS,
   UI_LIMITS,
   type UiBlock,
   type UiRenderArgs,
+  type UiRole,
   type UiView,
   validatePermissions,
   validateToolDisplay,
@@ -411,8 +413,19 @@ describe("类型", () => {
   it("ctx.ui 与块联合", () => {
     expectTypeOf<ExtensionContext["ui"]["invalidate"]>()
       .parameter(0)
-      .toEqualTypeOf<{ orgId: string; conversationId?: string; contribution: string }>();
+      .toEqualTypeOf<{ orgId?: string; conversationId?: string; contribution: string }>();
     expectTypeOf<UiView["blocks"][number]>().toEqualTypeOf<UiBlock>();
+  });
+
+  it("EmbedClaims and UiRenderArgs narrow on scope", () => {
+    const org = (c: EmbedClaims) => (c.scope === "org" ? c : null);
+    expectTypeOf<NonNullable<ReturnType<typeof org>>["orgId"]>().toEqualTypeOf<string>();
+    expectTypeOf<NonNullable<ReturnType<typeof org>>["role"]>().toEqualTypeOf<UiRole>();
+    const platform = (c: EmbedClaims) => (c.scope === "platform" ? c : null);
+    expectTypeOf<NonNullable<ReturnType<typeof platform>>["orgId"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<NonNullable<ReturnType<typeof platform>>["role"]>().toEqualTypeOf<"superAdmin">();
+    const orgArgs = (a: UiRenderArgs) => (a.scope !== "platform" ? a : null);
+    expectTypeOf<NonNullable<ReturnType<typeof orgArgs>>["orgId"]>().toEqualTypeOf<string>();
   });
 });
 
@@ -430,7 +443,7 @@ describe("place file-preview (file-preview@1 embed previewers)", () => {
       validateUiContributions([{ id: "pdf", title, place: "file-preview", kind: "view" }], {
         ui: { views: ["pdf"] },
       }),
-    ).toEqual(['ui "pdf" place file-preview is only allowed for kind embed']);
+    ).toEqual(['ui "pdf" slot file.preview does not accept kind view']);
   });
 
   it("the host sends the file after init as a message, never a URL", () => {
@@ -449,12 +462,6 @@ describe("place file-preview (file-preview@1 embed previewers)", () => {
 describe("conversation page places, icons and open targets (UI refresh B Task 12)", () => {
   const title = { zh: "任务", en: "Tasks" };
   const views = (...ids: string[]) => ({ ui: { views: ids } });
-
-  it("normalizePlace maps the old conversation tab to a panel", () => {
-    expect(normalizePlace("conversation")).toBe("panel");
-    for (const p of ["panel", "section", "inline", "page", "file-preview"] as const)
-      expect(normalizePlace(p)).toBe(p);
-  });
 
   it("accepts panel, section and inline views with an icon from UI_ICONS", () => {
     expect(UI_ICONS).toContain("list-checks");
@@ -548,5 +555,105 @@ describe("conversation page places, icons and open targets (UI refresh B Task 12
       { callId: string; key?: string } | undefined
     >();
     expectTypeOf<UiRenderArgs["item"]>().toEqualTypeOf<string | undefined>();
+  });
+});
+
+describe("contributions name a slot (UI slots spec §3.2, §4)", () => {
+  const title = { zh: "任务", en: "Tasks" };
+  const views = (...ids: string[]) => ({ ui: { views: ids } });
+
+  it("validateUiContributions refuses both slot and place", () => {
+    const errs = validateUiContributions(
+      [{ id: "a", title, kind: "view", slot: "org.page", place: "page" }],
+      views("a"),
+    );
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain("exactly one of slot and place");
+  });
+
+  it("validateUiContributions refuses neither slot nor place", () => {
+    const errs = validateUiContributions([{ id: "a", title, kind: "view" }], views("a"));
+    expect(errs).toEqual(['ui "a" needs exactly one of slot and place']);
+  });
+
+  it("a known slot refuses a kind it does not accept", () => {
+    expect(
+      validateUiContributions([{ id: "a", title, slot: "file.preview", kind: "view" }], views("a")),
+    ).toEqual(['ui "a" slot file.preview does not accept kind view']);
+  });
+
+  it("an unknown slot is not a structural error", () => {
+    expect(
+      validateUiContributions(
+        [{ id: "a", title, slot: "nowhere.at-all", kind: "view" }],
+        views("a"),
+      ),
+    ).toEqual([]);
+    expect(
+      validateUiContributions(
+        [{ id: "a", title, slot: "conversation.panel@2", kind: "view" }],
+        views("a"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("a known slot at an unsupported version skips the slot checks and is only dropped", () => {
+    const http = [{ method: "GET", path: "/ui/pdf" }];
+    const ui = [
+      { id: "a", title, slot: "file.preview@2", kind: "view" as const },
+      { id: "pdf", title, slot: "file.preview", kind: "embed" as const, path: "/ui/pdf" },
+    ];
+    expect(validateUiContributions(ui, { http, ui: { views: ["a"], embeds: ["pdf"] } })).toEqual(
+      [],
+    );
+    const r = resolveUiSlots(ui);
+    expect(r.dropped).toEqual([{ id: "a", ref: "file.preview@2", reason: "unsupported-version" }]);
+    expect(r.resolved.map((x) => x.contribution.id)).toEqual(["pdf"]);
+  });
+
+  it("a malformed slot ref is structural", () => {
+    for (const slot of ["Nope", "org.page@0", 3]) {
+      expect(validateUiContributions([{ id: "a", title, slot, kind: "view" }], views("a"))).toEqual(
+        ['ui "a" slot must be a slot reference like "org.page" or "org.page@1"'],
+      );
+    }
+  });
+
+  it("a slot with a version and an after that names no anchor are accepted", () => {
+    expect(
+      validateUiContributions(
+        [{ id: "a", title, slot: "conversation.properties.section@1", kind: "view", after: "x" }],
+        views("a"),
+      ),
+    ).toEqual([]);
+    expect(
+      validateUiContributions(
+        [{ id: "a", title, slot: "conversation.properties.section", kind: "view", after: 3 }],
+        views("a"),
+      ),
+    ).toEqual(['ui "a" after must be a string']);
+  });
+
+  it("an unknown place value is still structural", () => {
+    expect(
+      validateUiContributions(
+        [{ id: "a", title, place: "sidebar", kind: "view" }],
+        views("a"),
+      ).join(),
+    ).toMatch(/place must be one of/);
+  });
+});
+
+describe("EmbedInitContext narrows on scope", () => {
+  it("an org context names its org, a platform one has none", () => {
+    const init = (context: Extract<EmbedParentMessage, { type: "init" }>["context"]) => context;
+    const c = init({ scope: "org", orgId: "o1", conversationId: "c1" });
+    if (c.scope === "org") expectTypeOf(c.orgId).toEqualTypeOf<string>();
+    const p = init({ scope: "platform" });
+    expect(p.orgId).toBeUndefined();
+    // @ts-expect-error a platform context carries no org
+    init({ scope: "platform", orgId: "o1" });
+    // @ts-expect-error an org context needs its org
+    init({ scope: "org" });
   });
 });

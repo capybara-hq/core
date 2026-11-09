@@ -4,8 +4,13 @@ import { SettingsPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { AgentChannels } from "../../../../components/AgentChannels";
 import { AgentPage } from "../../../../components/agent/AgentPage";
-import { loadingSection, useSectionNav } from "../../../../components/agent/frame";
-import { READ_ONLY_FIELDS, SECTION_FIELDS, sectionOf } from "../../../../components/agent/sections";
+import { loadingSection, useExtSections, useSectionNav } from "../../../../components/agent/frame";
+import {
+  builtinSection,
+  READ_ONLY_FIELDS,
+  SECTION_FIELDS,
+  sectionOf,
+} from "../../../../components/agent/sections";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -49,7 +54,9 @@ function AgentRoute({
   const agent = usePageQuery(agentQuery(orgId, agentId));
   if (agent.kind === "notFound") return <NotFound />;
   if (agent.kind === "error") return <ErrorFrame reset={agent.retry} />;
-  if (agent.kind === "loading") return <AgentPageLoading agentId={agentId} section={section} />;
+  if (agent.kind === "loading") {
+    return <AgentPageLoading orgId={orgId} agentId={agentId} section={section} />;
+  }
   return (
     <AgentPage
       orgId={orgId}
@@ -61,7 +68,15 @@ function AgentRoute({
 }
 
 /** The page while the agent is on its way: the head and the section nav, the section's skeleton. */
-function AgentPageLoading({ agentId, section }: { agentId: string; section: string | undefined }) {
+function AgentPageLoading({
+  orgId,
+  agentId,
+  section,
+}: {
+  orgId: string;
+  agentId: string;
+  section: string | undefined;
+}) {
   const scope = usePagePath("org");
   const t = useTranslations("agents.page");
   const ta = useTranslations("agents");
@@ -74,8 +89,10 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
   const chatHref = newConversationPath(agentId);
   // whether the viewer may change the agent is known only with it: members up see every section
   const editable = roleAtLeast(myRole(me), "member");
-  const open = sectionOf(section, editable);
-  const nav = useSectionNav(agentId, editable);
+  const ext = useExtSections(orgId);
+  const open = sectionOf(section, editable, ext);
+  const built = builtinSection(open);
+  const nav = useSectionNav(orgId, agentId, editable);
   return (
     <SettingsPage
       header={{
@@ -107,22 +124,24 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
       activeNav={open}
       // 渠道 draws its own frame (cards on the page ground), the other sections their fields
       loading={
-        open === "channels"
+        built === "channels" && open === built
           ? {}
           : {
               sections: [
                 loadingSection(
-                  open,
+                  built,
                   editable
-                    ? SECTION_FIELDS[open]
-                    : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
+                    ? SECTION_FIELDS[built]
+                    : (READ_ONLY_FIELDS[built] ?? SECTION_FIELDS[built]),
                   t,
                 ),
               ],
             }
       }
     >
-      {open === "channels" ? <AgentChannels agentId={agentId} channels={null} loading /> : null}
+      {built === "channels" && open === built ? (
+        <AgentChannels agentId={agentId} channels={null} loading />
+      ) : null}
     </SettingsPage>
   );
 }

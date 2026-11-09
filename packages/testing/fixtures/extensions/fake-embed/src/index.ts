@@ -1,4 +1,4 @@
-import { defineExtension, EMBED_PROTOCOL, type EmbedClaims } from "@capybara-hq/plugin-sdk";
+import { defineExtension, EMBED_PROTOCOL, type OrgEmbedClaims } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
@@ -96,14 +96,14 @@ export default defineExtension({
     {
       id: "panel",
       title: { zh: "面板", en: "Panel" },
-      place: "page",
+      slot: "org.page",
       kind: "embed",
       path: "/ui/panel",
     },
     {
       id: "panel-conv",
       title: { zh: "面板", en: "Panel" },
-      place: "conversation",
+      slot: "conversation.panel",
       kind: "embed",
       path: "/ui/panel-conv",
     },
@@ -120,9 +120,11 @@ export default defineExtension({
     ui: { embeds: ["panel", "panel-conv"] },
   },
   setup(ctx) {
-    const auth = async (req: Request): Promise<EmbedClaims | null> => {
+    /** An org-scope token's claims (every contribution here is in an org slot), or null. */
+    const auth = async (req: Request): Promise<OrgEmbedClaims | null> => {
       const m = BEARER_RE.exec(req.headers.get("authorization") ?? "");
-      return m?.[1] === undefined ? null : ctx.ui.verifyEmbedToken(m[1]);
+      const claims = m?.[1] === undefined ? null : await ctx.ui.verifyEmbedToken(m[1]);
+      return claims?.scope === "org" ? claims : null;
     };
     const page = async () =>
       new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });

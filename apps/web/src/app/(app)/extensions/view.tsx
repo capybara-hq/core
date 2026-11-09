@@ -33,6 +33,7 @@ import {
 import { SwitchOffDialog } from "../../../components/PluginSwitch";
 import { PointDefaultsSection } from "../../../components/PointDefaultsSection";
 import { usePagePath } from "../../../components/shell/path";
+import { UiArrangementSection } from "../../../components/UiArrangementSection";
 import { ApiClientError, configIssues, issueLines } from "../../../lib/api";
 import type { SwitchPreview } from "../../../lib/catalog";
 import {
@@ -545,6 +546,8 @@ function ExtensionList({
     canEdit &&
     (tab === "all" || (id === "defaults" ? tab === "web" : tab === "tools")) &&
     search.trim() === "";
+  // 界面位置: members read it too (read only)
+  const arrangement = (tab === "all" || tab === "tools") && search.trim() === "";
 
   return (
     <ListPage header={header}>
@@ -570,6 +573,7 @@ function ExtensionList({
         />
         {section("defaults") && <PointDefaultsSection orgId={orgId} />}
         {section("previewers") && <FilePreviewersSection orgId={orgId} />}
+        {arrangement && <UiArrangementSection scope={{ kind: "org", orgId }} canEdit={canEdit} />}
       </Stack>
       {current !== undefined && (
         <OrgExtensionSheet

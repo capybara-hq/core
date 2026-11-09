@@ -58,19 +58,20 @@ const readOf = (t: ViewTarget): UiViewTarget => ({
  * that failed there is not read again on mount (its retry reads it).
  */
 export function useExtensionViews(
-  orgId: string,
+  orgId: string | null,
   targets: readonly ViewTarget[],
-  opts: { conversationId?: string; locale: UiLocale },
+  opts: { conversationId?: string; agentId?: string; locale: UiLocale },
 ): {
   states: Readonly<Record<string, ViewState>>;
   retry(key: string): void;
   setView(key: string, view: UiView): void;
 } {
-  const { conversationId, locale } = opts;
+  const { conversationId, agentId, locale } = opts;
   const qc = useQueryClient();
   const queries = targets.map((t) =>
     uiViewQuery(orgId, readOf(t), {
       ...(conversationId !== undefined && { conversationId }),
+      ...(agentId !== undefined && { agentId }),
       locale,
     }),
   );
@@ -111,10 +112,15 @@ export function useExtensionViews(
  * 失败时抛出带界面文案的 Error（由视图渲染器显示）。
  */
 export function useUiAction(
-  orgId: string,
-  opts: { conversationId?: string; locale: UiLocale; onView(key: string, view: UiView): void },
+  orgId: string | null,
+  opts: {
+    conversationId?: string;
+    agentId?: string;
+    locale: UiLocale;
+    onView(key: string, view: UiView): void;
+  },
 ): (target: ViewTarget) => (req: UiActionRequest) => Promise<void> {
-  const { conversationId, locale, onView } = opts;
+  const { conversationId, agentId, locale, onView } = opts;
   const toast = useToast();
   const errorMessage = useErrorMessage();
   // The answer is the new view (`onView`), or a toast: nothing to invalidate.
@@ -123,6 +129,7 @@ export function useUiAction(
       postUiAction(orgId, v.target.plugin, v.target.id, {
         ...v.req,
         ...(conversationId !== undefined && { conversationId }),
+        ...(agentId !== undefined && { agentId }),
         locale,
       }),
     invalidates: () => [],
