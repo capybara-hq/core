@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,8 @@ interface Packed {
     };
   };
   read(path: string): string;
+  /** The raw bytes of a file of the tgz. */
+  bytes(path: string): Buffer;
 }
 
 async function pack(name: "fake-client" | "fake-client-broken"): Promise<Packed> {
@@ -27,14 +30,29 @@ async function pack(name: "fake-client" | "fake-client-broken"): Promise<Packed>
     const list = raw.map((l) => l.replace(/^\.?\/?(package\/)?/, ""));
     const read = (path: string) =>
       execFileSync("tar", ["-xzOf", r.file, raw[list.indexOf(path)] ?? ""], { encoding: "utf8" });
-    const files = new Map(list.map((f) => [f, f.startsWith("dist/client/") ? read(f) : ""]));
+    const bytesOf = (path: string) =>
+      execFileSync("tar", ["-xzOf", r.file, raw[list.indexOf(path)] ?? ""]);
+    const client = list.filter((f) => f.startsWith("dist/client/"));
+    const files = new Map(client.map((f) => [f, bytesOf(f)]));
     return {
       list,
-      read: (path) => files.get(path) ?? "",
+      read: (path) => files.get(path)?.toString("utf8") ?? "",
+      bytes: (path) => files.get(path) ?? Buffer.alloc(0),
       manifest: JSON.parse(read(".capybara-plugin/plugin.json")),
     };
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Every integrity value of the client section is the sha384 of that file's bytes in the tgz. */
+function expectIntegrity(p: Packed): void {
+  const integrity = p.manifest.extension?.client?.integrity ?? {};
+  expect(Object.keys(integrity).length).toBeGreaterThan(0);
+  for (const [key, value] of Object.entries(integrity)) {
+    const data = p.bytes(key.replace(/^\.\//, ""));
+    expect(data.length, key).toBeGreaterThan(0);
+    expect(value, key).toBe(`sha384-${createHash("sha384").update(data).digest("base64")}`);
   }
 }
 
@@ -70,6 +88,7 @@ describe("client fixtures", () => {
     expect(css).toContain('[data-cap-part~="composer"] [data-cap-part~="button"]');
     expect(css).toContain("--cx-fake-client-run: 1");
     expect(p.read("dist/client/client.mjs")).toContain("fake-client-brand");
+    expectIntegrity(p);
   });
 
   it("fake-client-broken packs", async () => {
@@ -79,6 +98,7 @@ describe("client fixtures", () => {
       "boom",
       "empty",
     ]);
+    expectIntegrity(p);
   });
 
   it("passes the plugin checks (capybara-plugin check)", async () => {

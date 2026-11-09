@@ -6,6 +6,9 @@ import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "../cata
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { clearThemeLevels, setThemeScope, writeUiTheme } from "./theme-env.js";
 
+/** The render revision segment of a theme stylesheet URL. */
+const REV = `r${THEME_CSS_REVISION}`;
+
 /**
  * Themes spec §8-§9 (plan Task 9): a theme version's stylesheet and assets, and the platform
  * default for pages before sign-in, are public; the stylesheet and assets are immutable per
@@ -79,7 +82,7 @@ describe("theme delivery routes", () => {
   });
 
   it("GET theme.css: the stylesheet without a session, immutable", async () => {
-    const r = await anon(`/api/v1/themes/${id}/1/r2/theme.css`);
+    const r = await anon(`/api/v1/themes/${id}/1/${REV}/theme.css`);
     expect(r.statusCode, r.body).toBe(200);
     expect(r.headers["content-type"]).toBe("text/css; charset=utf-8");
     expect(r.headers["cache-control"]).toBe(IMMUTABLE);
@@ -113,7 +116,7 @@ describe("theme delivery routes", () => {
     await sql`UPDATE capybara.platform_theme_versions
       SET definition = jsonb_set(definition, '{schemes,dark,color,bg}', '"#000;}x{"')
       WHERE theme_id = ${id}`.execute(env.db);
-    const r = await anon(`/api/v1/themes/${id}/1/r2/theme.css`);
+    const r = await anon(`/api/v1/themes/${id}/1/${REV}/theme.css`);
     expect(r.statusCode).toBe(200);
     expect(r.body).not.toContain("x{");
     expect(r.body).toContain(`--cb-bg: ${THEME_TOKENS.color.bg.dark};`);
@@ -151,15 +154,15 @@ describe("theme delivery routes", () => {
 
   it("unknown theme, version or file -> 404 theme.not_found", async () => {
     for (const url of [
-      `/api/v1/themes/00000000-0000-0000-0000-000000000000/1/r2/theme.css`,
-      `/api/v1/themes/not-a-uuid/1/r2/theme.css`,
-      `/api/v1/themes/${id}/2/r2/theme.css`,
-      `/api/v1/themes/${id}/abc/r2/theme.css`,
-      `/api/v1/themes/${id}/99999999999999999999/r2/theme.css`,
+      `/api/v1/themes/00000000-0000-0000-0000-000000000000/1/${REV}/theme.css`,
+      `/api/v1/themes/not-a-uuid/1/${REV}/theme.css`,
+      `/api/v1/themes/${id}/2/${REV}/theme.css`,
+      `/api/v1/themes/${id}/abc/${REV}/theme.css`,
+      `/api/v1/themes/${id}/99999999999999999999/${REV}/theme.css`,
       // Only the current render revision is served: an older one promised another format, a
       // later one is a newer replica's URL
-      `/api/v1/themes/${id}/1/r1/theme.css`,
-      `/api/v1/themes/${id}/1/r3/theme.css`,
+      `/api/v1/themes/${id}/1/r${THEME_CSS_REVISION - 1}/theme.css`,
+      `/api/v1/themes/${id}/1/r${THEME_CSS_REVISION + 1}/theme.css`,
       `/api/v1/themes/${id}/1/2/theme.css`,
       `/api/v1/themes/${id}/1/assets/fonts%2FOther.woff2`,
       `/api/v1/themes/${id}/1/assets/themes%2Fnight-city.json`,
@@ -178,7 +181,7 @@ describe("theme delivery routes", () => {
       .set({ deleted_at: new Date() })
       .where("id", "=", id)
       .execute();
-    expect((await anon(`/api/v1/themes/${id}/1/r2/theme.css`)).statusCode).toBe(200);
+    expect((await anon(`/api/v1/themes/${id}/1/${REV}/theme.css`)).statusCode).toBe(200);
     expect((await anon(`/api/v1/themes/${id}/1/assets/fonts%2FMiSans.woff2`)).statusCode).toBe(200);
   });
 
@@ -197,7 +200,7 @@ describe("theme delivery routes", () => {
       id,
       version: "1",
       singleScheme: "dark",
-      cssUrl: `/api/v1/themes/${id}/1/r2/theme.css`,
+      cssUrl: `/api/v1/themes/${id}/1/${REV}/theme.css`,
       logo: {
         markUrl: `/api/v1/themes/${id}/1/assets/brand%2Flogo.svg`,
         wordmark: "NIGHT CITY",

@@ -160,7 +160,9 @@ interface Render {
   anchored: boolean;
 }
 
-/** Every `<ExtensionSlot slot=…>` under apps/web/src (not dev/); a non-literal `slot` is reported. */
+/**
+ * Every `<ExtensionSlot slot=…>` under apps/web/src (not dev/); a non-literal `slot` is reported.
+ */
 function collectRenders(root: string, out: Finding[]): Render[] {
   const webSrc = join(root, "apps/web/src");
   const renders: Render[] = [];
@@ -200,9 +202,9 @@ function collectRenders(root: string, out: Finding[]): Render[] {
 
 /**
  * check:ui-slots: every catalog slot is rendered once, by its owner file, through `<ExtensionSlot>`
- * (`ui-slot-literal`, `ui-slot-undeclared`, `ui-slot-unrendered`, `ui-slot-owner`, `ui-slot-twice`),
- * and the generated web copy and docs page equal what gen:ui-slots renders from the SDK catalog
- * (`ui-slots-stale`, only against the real catalog).
+ * (`ui-slot-literal`, `ui-slot-undeclared`, `ui-slot-unrendered`, `ui-slot-owner`,
+ * `ui-slot-twice`), and the generated web copy and docs page equal what gen:ui-slots renders from
+ * the SDK catalog (`ui-slots-stale`, only against the real catalog).
  */
 export function checkUiSlots(root: string, slots: readonly UiSlotSpec[] = UI_SLOTS): Finding[] {
   const out: Finding[] = [];
