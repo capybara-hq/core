@@ -816,6 +816,14 @@ export class CatalogService {
   @Transactional()
   private async writeRemove(actor: string, itemId: string, opts: ActorOpts): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
+    // The item row before the install lock the check below takes (the global lock order: the
+    // item, then the install lock, ruling P3-50; also the item before its theme rows in removeIn)
+    await this.db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("id", "=", itemId)
+      .forUpdate()
+      .execute();
     await this.assertExtensionDisabled(this.db, itemId, true);
     if ((await this.removeIn(actor, itemId, opts)) === null) throw notFound();
   }

@@ -471,23 +471,20 @@ export class CatalogScopeService {
       // A new version: applied (unless an earlier confirmation applied it and stopped before the
       // approval), then its permissions approved; an approval that fails puts the pending state
       // back, so the version shows in 待确认 again (ruling P3-37)
-      if (item.platform_synced_version !== version) {
-        try {
+      try {
+        if (item.platform_synced_version !== version) {
           await this.updater.updateToPendingLocked(actor, itemId, version, opts);
+        } else {
+          await this.clearPending(itemId, version);
+        }
+        try {
+          await this.approvePackage(actor, name, sha, reviewHash, opts);
         } catch (e) {
-          if (e instanceof ApiError && e.code === "catalog.item_not_found") {
-            throw itemRemovedError(name);
-          }
+          await this.restorePending(itemId, pending);
           throw e;
         }
-      } else {
-        await this.clearPending(itemId, version);
-      }
-      try {
-        await this.approvePackage(actor, name, sha, reviewHash, opts);
       } catch (e) {
-        await this.restorePending(itemId, pending);
-        throw e;
+        throw await this.removalOr(e, itemId, name);
       }
       return null;
     }
@@ -495,7 +492,10 @@ export class CatalogScopeService {
     let installedHere = false;
     try {
       if (install?.sha256 !== sha) {
-        await this.ops.install(name, sha, actor, opts.actorTokenId, { catalogItemId: itemId });
+        await this.ops.install(name, sha, actor, opts.actorTokenId, {
+          catalogItemId: itemId,
+          liveItem: true,
+        });
         installedHere = install === undefined;
       }
       await this.stillPending(itemId, name, version);
@@ -509,11 +509,7 @@ export class CatalogScopeService {
       if (installedHere && !(await this.confirmed(itemId))) {
         await this.takeOut(itemId, name, actor, opts);
       }
-      // Removed meanwhile: whichever step failed (the removal's cleanup job may have taken the
-      // extension out under this confirmation, so a step answers extension.not_found), the answer
-      // is the removal
-      if (await this.removed(itemId)) throw itemRemovedError(name);
-      throw e;
+      throw await this.removalOr(e, itemId, name);
     }
     return version;
   }
@@ -528,14 +524,41 @@ export class CatalogScopeService {
     return row !== undefined && row.deleted_at === null && !row.awaiting_confirmation;
   }
 
-  /** The item is gone or soft-deleted. */
-  private async removed(itemId: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("catalog_items")
-      .select("deleted_at")
-      .where("id", "=", itemId)
-      .executeTakeFirst();
-    return row === undefined || row.deleted_at !== null;
+  /**
+   * The error a failed confirmation step answers with: 409 `catalog.item_removed` when the item is
+   * gone or soft-deleted by now, whichever step failed (the removal's cleanup job may take the
+   * extension out under the confirmation, so a step answers `extension.not_found`), the original
+   * error logged; else (or when the item cannot be read) the original error.
+   */
+  private async removalOr(e: unknown, itemId: string, name: string): Promise<unknown> {
+    if (e instanceof ApiError && e.code === "catalog.item_removed") return e;
+    let removed: boolean;
+    try {
+      const row = await this.db
+        .selectFrom("catalog_items")
+        .select("deleted_at")
+        .where("id", "=", itemId)
+        .executeTakeFirst();
+      removed = row === undefined || row.deleted_at !== null;
+    } catch (err) {
+      this.log.warn("cannot read the item of a failed confirmation", { itemId, err });
+      return e;
+    }
+    if (!removed) return e;
+    if (e instanceof ApiError) {
+      this.log.info("a confirmation step failed after its item was removed", {
+        itemId,
+        name,
+        code: e.code,
+      });
+    } else {
+      this.log.warn("a confirmation step failed after its item was removed", {
+        itemId,
+        name,
+        err: e,
+      });
+    }
+    return itemRemovedError(name);
   }
 
   /** Clears the pending state of a version an earlier confirmation applied already. */

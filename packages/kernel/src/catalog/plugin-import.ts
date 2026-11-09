@@ -1440,6 +1440,22 @@ export class PluginImport {
     await assertOrgsExist(t, scope.orgs);
     // Checked again before this upload claims anything (ruling P3-51)
     if (owner !== undefined) await assertPackageFree(t, staged.packageName, owner.orgId);
+    // The item's name lock and its live row before the extension's install lock: the global lock
+    // order is the item, then the install lock (ruling P3-50; ExtensionAdminOps.install locks the
+    // source item row before the install lock, an org deletion its items before it). Taken after
+    // the install lock instead, a confirmation of an org upload racing a replacement upload
+    // deadlocks (40P01).
+    const m = manifest;
+    await this.itemLock.lock(m.name);
+    // The scope the audit records: the review's for a new item, the item's own for a new version
+    // of a live item (which keeps its scope)
+    const existing = await t
+      .selectFrom("catalog_items")
+      .select(["id", "scope", "awaiting_confirmation", "package_name"])
+      .where("name", "=", m.name)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
     let now: PluginReviewExtension | undefined;
     let previous: PreviousSnapshot | null | undefined;
     if (reviewed) {
@@ -1476,8 +1492,6 @@ export class PluginImport {
         previous = await this.approve(actor, review, staged, now, stored as ExtensionPackage, opts);
       }
     }
-    const m = manifest;
-    await this.itemLock.lock(m.name);
     // Under the name's lock: the first confirm of a name wins, a later one of another owner is
     // refused naming it, before anything of it is written (P3-14)
     await assertNameFree(t, m.name, owner?.orgId ?? null);
@@ -1485,15 +1499,6 @@ export class PluginImport {
       await assertNameNotReserved(t, m.name);
       await this.resolveDependencies(m, owner);
     }
-    // The scope the audit records: the review's for a new item, the item's own for a new version
-    // of a live item (which keeps its scope)
-    const existing = await t
-      .selectFrom("catalog_items")
-      .select(["id", "scope", "awaiting_confirmation", "package_name"])
-      .where("name", "=", m.name)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
     const actual =
       existing === undefined
         ? scope

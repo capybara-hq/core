@@ -129,7 +129,9 @@ export class ExtensionAdminOps {
    * fix: clearing them would let org enablement bypass catalog policy, C22). The detail of the
    * `extension.installed` audit carries `catalogItemId`; when it already points at the same package
    * and only the source item changed, only that column changes, audit
-   * `extension.install_source_changed`.
+   * `extension.install_source_changed`. With `opts.liveItem` (an org upload's confirmation) a
+   * source item gone or removed when its row lock is granted -> 409 `catalog.item_removed`, before
+   * anything is written.
    * A version change of an enabled extension whose new version provides a single-provider
    * extension point the old one did not, while another extension holds it: the new version is
    * installed **disabled** (`enabled_at` cleared, audit `extension.disabled` with `singleProvider`)
@@ -142,7 +144,7 @@ export class ExtensionAdminOps {
     sha256: string,
     actor: string | null,
     actorTokenId?: string,
-    opts: { catalogItemId?: string; owner?: ExtensionOpsOwner } = {},
+    opts: { catalogItemId?: string; liveItem?: true; owner?: ExtensionOpsOwner } = {},
   ): Promise<InstallView> {
     this.assertInstallable(name);
     const pkg = await this.db
@@ -201,7 +203,7 @@ export class ExtensionAdminOps {
     target: { migrationSql: { file: string; sql: string }[] },
     actor: string | null,
     actorTokenId: string | undefined,
-    opts: { catalogItemId?: string; owner?: ExtensionOpsOwner },
+    opts: { catalogItemId?: string; liveItem?: true; owner?: ExtensionOpsOwner },
   ): Promise<{
     changed: boolean;
     state: "enabled" | "disabled";
@@ -215,12 +217,19 @@ export class ExtensionAdminOps {
     // while it waits for the install lock (CatalogService.removeIn). Taken after the install lock
     // instead, the two deadlock (40P01).
     if (opts.catalogItemId !== undefined) {
-      await db
+      const item = await db
         .selectFrom("catalog_items")
-        .select("id")
+        .select("deleted_at")
         .where("id", "=", opts.catalogItemId)
         .forKeyShare()
-        .execute();
+        .executeTakeFirst();
+      // The lock waits out a removal holding the row; the row read then is the removed one
+      if (opts.liveItem && (item === undefined || item.deleted_at !== null)) {
+        throw new ApiError(
+          "catalog.item_removed",
+          `${name} was removed while its confirmation was running; nothing of it stays installed`,
+        );
+      }
     }
     const row = await this.lockRow(name);
     // 不经目录重装时保留原来的来源条目（不清空，C22）

@@ -531,6 +531,57 @@ describe("org deletion and what the org owns", { timeout: 180_000 }, () => {
       await cleanedUp("del-race-lock");
     });
 
+    it("a replacement upload holding the install lock deadlocks no confirmation", async () => {
+      const { orgX, itemId, digest } = await pendingIn("re-race-lock");
+      const replacement = await prepare(
+        env.root,
+        orgX,
+        await lifePkg({ name: "re-race-lock", version: "1.0.1" }),
+      );
+      // The replacement upload's confirm holds the per-name install lock; the super admin's
+      // confirmation starts then and is let block on that transaction before the upload writes
+      // its version (the upload locks the item row, the confirmation's install checks it)
+      const lock = env.k.app.get(PluginInstallLock);
+      const kdb = env.k.app.get(KernelDb);
+      const original = lock.lock.bind(lock);
+      let confirmation: Promise<{ statusCode: number; body: string }> | undefined;
+      vi.spyOn(lock, "lock").mockImplementation(async (name) => {
+        await original(name);
+        if (confirmation !== undefined || name !== "re-race-lock") return;
+        // the upload's transaction: kdb.db is its connection here
+        const holder = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(kdb.db))
+          .rows[0]?.pid;
+        confirmation = runOutsideTransaction(() => confirmUpload(itemId, digest));
+        await waitFor(
+          async () => {
+            const { rows } = await sql<{ n: number }>`
+              SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE ${holder}::int = ANY (pg_blocking_pids(pid))`.execute(env.db);
+            return (rows[0]?.n ?? 0) > 0;
+          },
+          10_000,
+          "the confirmation blocked by the upload",
+        );
+      });
+      const u = await env.root({
+        method: "POST",
+        url: `${uploads(orgX)}/${replacement.stagingId}/confirm`,
+        payload: { reviewHash: replacement.review.reviewHash },
+      });
+      expect(confirmation).toBeDefined();
+      const c = await (confirmation as Promise<{ statusCode: number; body: string }>);
+      // no deadlock (40P01 -> 500) on either side: the replacement waits, the confirmation of the
+      // version it replaced is stale and leaves nothing installed
+      expect(u.statusCode, u.body).toBe(201);
+      expect(errorOf(c)).toEqual([409, "extension.approval_stale"]);
+      expect(await itemRow(itemId)).toMatchObject({
+        deleted_at: null,
+        awaiting_confirmation: true,
+        pending_version: "1.0.1",
+      });
+      expect(await installRow("re-race-lock")).toBeUndefined();
+    });
+
     it("an extension taken out under the confirmation still answers item_removed", async () => {
       const { orgX, itemId, digest } = await pendingIn("del-race-gone");
       // The deletion and its cleanup job (which uninstalls the extension) both land between the
