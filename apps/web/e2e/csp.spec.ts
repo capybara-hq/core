@@ -5,8 +5,8 @@ import { signIn } from "./support/sign-in";
 
 /**
  * The document CSP (client extensions spec §9.5, with the review rulings): every document carries
- * `script-src <host>/_next/ <host>/api/v1/client/ 'nonce-<n>'; object-src 'none'; base-uri 'none';
- * frame-ancestors 'self'; form-action 'self'` with a fresh nonce (dev adds `'unsafe-eval'`). Next
+ * `script-src <host>/_next/ <host>/api/v1/client/ <host>/_capybara/client-host/ 'nonce-<n>';
+ * object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'` with a fresh nonce (dev adds `'unsafe-eval'`). Next
  * puts the server's nonce on its own scripts, so every page boots without a single violation; a
  * script without the nonce, or from a same-origin path outside those prefixes, does not run.
  */
@@ -39,7 +39,7 @@ async function visit(page: Page, path: string): Promise<string> {
   expect(res, path).not.toBeNull();
   const csp = (await res?.allHeaders())?.["content-security-policy"] ?? "";
   const host = new URL(page.url()).host;
-  const sources = `script-src ${host}/_next/ ${host}/api/v1/client/ 'nonce-`;
+  const sources = `script-src ${host}/_next/ ${host}/api/v1/client/ ${host}/_capybara/client-host/ 'nonce-`;
   expect(csp.startsWith(sources), `${path}: ${csp}`).toBe(true);
   const nonce = /'nonce-([A-Za-z0-9+/]+={0,2})'/.exec(csp)?.[1];
   expect(nonce, `${path}: ${csp}`).toBeDefined();
@@ -181,12 +181,14 @@ test("a same-origin script outside the allowed paths is blocked", async ({ page 
       // answer a missing chunk with something loadable): anything but `blocked`
       next: await attempt("/_next/static/csp-probe-missing.js"),
       client: await attempt("/api/v1/client/csp-probe/missing.js"),
+      host: await attempt("/_capybara/client-host/csp-probe/missing.mjs"),
     };
   });
   expect(loads.icon).toBe("blocked");
   expect(loads.api).toBe("blocked");
   expect(["load", "error"]).toContain(loads.next);
   expect(["load", "error"]).toContain(loads.client);
+  expect(["load", "error"]).toContain(loads.host);
   const seen = await violations(page);
   expect(seen.filter((v) => v.includes("/icon.svg")).length).toBeGreaterThan(0);
   expect(seen.some((v) => v.includes("/_next/static/csp-probe-missing.js"))).toBe(false);
