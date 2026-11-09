@@ -270,6 +270,26 @@
       "css": "a { b: image(\"../assets/a.png\") }",
       "ok": false,
       "note": "image()"
+    },
+    {
+      "css": "a { b: url( ] \"../../v1\") }",
+      "ok": false,
+      "note": "a broken url( fragment holding a quoted relative path"
+    },
+    {
+      "css": "a { b: url(x\"../../../../v1/orgs\") }",
+      "ok": false,
+      "note": "a bad url token with a quote inside"
+    },
+    {
+      "css": "a { b: c } } .evil { color: red }",
+      "ok": false,
+      "note": "a closing brace that ends the layer early"
+    },
+    {
+      "css": "a { content: \"x\n } } .evil { color: red } \" }",
+      "ok": false,
+      "note": "a string broken by a newline that hides a closing brace"
     }
   ]
 }

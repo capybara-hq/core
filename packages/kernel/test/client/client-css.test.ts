@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { clientCssProblem } from "../../src/client/client-css.js";
 
 /**
- * The client stylesheet rule shared with the packer: the same vectors run against plugin-tools'
- * `cssRemoteProblem` (packages/plugin-tools/test/pack-client.test.ts), so the import check and the
- * packer cannot drift. Here each vector is wrapped as the packer stores it.
+ * The client stylesheet rule shared with the packer, which runs this function on the file it stores
+ * (plugin-tools' `cssRemoteProblem`, packages/plugin-tools/test/pack-client.test.ts runs the same
+ * vectors). Here each vector is wrapped as the packer stores it.
  */
 
 interface Vectors {

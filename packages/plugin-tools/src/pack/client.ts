@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { dirname, join, posix } from "node:path";
+import { clientCssProblem } from "@capybara-hq/kernel";
 import {
   CLIENT_API_VERSION,
   CLIENT_ASSET_TYPES,
@@ -79,72 +80,22 @@ export async function hasClientSources(dir: string): Promise<boolean> {
   );
 }
 
-/** How a stylesheet names one of the plugin's assets (styles are served next to `assets/`). */
-const ASSETS_URL = "../assets/";
+/** A stylesheet as the packer stores it: wrapped in `@layer extensions { … }` (spec §4.1). */
+export const wrapClientCss = (css: string): string => `@layer extensions {\n${css.trimEnd()}\n}\n`;
 
 /**
- * The problem of one URL of a stylesheet (escapes decoded, CSS whitespace trimmed), or undefined
- * when it is a `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` (paths relative to
- * `client/assets/`) exactly. Every other URL is refused, relative ones too: the stylesheet is served
- * from the kernel's `/api/v1/client/<plugin>/<build>/styles/`, where `../../../../…` reaches the
- * kernel's own routes with the viewer's cookies. The kernel checks the same at import.
- */
-export function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | undefined {
-  if (u.startsWith("#") || /^data:/i.test(u)) return undefined;
-  if (u.startsWith(ASSETS_URL) && assets.has(u.slice(ASSETS_URL.length))) return undefined;
-  return `url(${u}) is not allowed; use ../assets/<a file of client/assets>, a data: URL or a #fragment`;
-}
-
-/** CSS whitespace (CSS Syntax §4.2): the only characters trimmed from a URL. */
-const CSS_TRIM = /^[ \t\n\r\f]+|[ \t\n\r\f]+$/g;
-
-/**
- * Whitespace other than CSS's, zero-width characters (U+200B-U+200D, U+2060) and U+FEFF: refused
- * anywhere in a stylesheet. JavaScript's `trim()` strips an NBSP that CSS and the URL parser keep,
- * so `url("\a0 data:/../../v1")` would otherwise pass as `data:` and resolve to `/api/v1`.
- */
-const INVISIBLE_RE =
-  /[\u0085\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]/;
-
-/**
- * Functions refused in a client stylesheet (case-insensitive, escapes decoded): they take URLs from
- * plain strings or `var()` (`image-set(var(--u) 1x)`: no string check can see the URL), or reach
- * outside the stylesheet (`element`, `paint`). Plugins write `url(../assets/x)` directly.
- */
-const REFUSED_FUNCTION_RE =
-  /(?<![A-Za-z0-9_-])(-webkit-image-set|image-set|-webkit-cross-fade|cross-fade|-moz-element|element|paint|src|image)\(/i;
-
-/**
- * CSS rule of the packer (spec §4.1), escapes decoded first: no non-ASCII whitespace, zero-width
- * character or U+FEFF, none of the URL-making functions above, no `@import`, and every `url()`
- * passes {@link cssUrlProblem} for the plugin's `assets` (paths relative to `client/assets/`). The
- * kernel's import check runs the same vectors (`test/fixtures/client-css-vectors.json`). Returns the
- * problem text, or undefined.
+ * CSS rule of the packer (spec §4.1): the kernel's import check (`clientCssProblem`, the same
+ * tokenizer, not a mirror) run on the file as it will be stored ({@link wrapClientCss}), so a
+ * stylesheet that packs cleanly imports cleanly. It refuses non-ASCII whitespace, zero-width
+ * characters and U+FEFF, the URL-making functions (`image-set`, `cross-fade`, `src`, `image`,
+ * `element`, `paint`), `@import`, any URL other than `../assets/<a file of client/assets>`, a
+ * `data:` URL or a `#fragment` (escapes decoded, broken url tokens included), and a brace that
+ * would end the layer early. `assets` are paths relative to `client/assets/`. The shared vectors
+ * (`test/fixtures/client-css-vectors.json`) run against both. Returns the problem text, or
+ * undefined.
  */
 export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
-  // escapes (`\68 ttps:`, `u\72l(`) are decoded first, so a spelled-out URL is read as it would be
-  const bare = css
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\\([0-9a-f]{1,6})[ \t\n]?|\\([^\n])/gi, (_m, hex?: string, ch?: string) => {
-      if (hex === undefined) return ch ?? "";
-      const cp = Number.parseInt(hex, 16);
-      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "�";
-    });
-  if (INVISIBLE_RE.test(css) || INVISIBLE_RE.test(bare)) {
-    return "the stylesheet contains non-ASCII whitespace, a zero-width character or U+FEFF; use plain spaces";
-  }
-  const fn = REFUSED_FUNCTION_RE.exec(bare);
-  if (fn !== null) {
-    return `${(fn[1] as string).toLowerCase()}() is not allowed in a client stylesheet; use url(../assets/<file>) directly`;
-  }
-  if (/@import\b/i.test(bare)) {
-    return "@import is not allowed (a remote stylesheet is not integrity-pinned); inline the rules";
-  }
-  for (const m of bare.matchAll(/url\([ \t\n\r\f]*(["']?)([^)"']*)\1[ \t\n\r\f]*\)/gi)) {
-    const problem = cssUrlProblem((m[2] ?? "").replace(CSS_TRIM, ""), assets);
-    if (problem !== undefined) return problem;
-  }
-  return undefined;
+  return clientCssProblem(wrapClientCss(css), assets);
 }
 
 const sha384 = (data: Uint8Array) => `sha384-${createHash("sha384").update(data).digest("base64")}`;
@@ -333,7 +284,7 @@ export async function buildClient(dir: string, stage: string): Promise<PluginCli
     if (problem !== undefined) {
       throw new PackRuleError("client-css-remote", `client/styles/${name}: ${problem}`);
     }
-    const wrapped = Buffer.from(`@layer extensions {\n${css.trimEnd()}\n}\n`);
+    const wrapped = Buffer.from(wrapClientCss(css));
     if (wrapped.length > CLIENT_LIMITS.styleBytes) {
       throw tooBig(`client/styles/${name}`, wrapped.length, CLIENT_LIMITS.styleBytes);
     }

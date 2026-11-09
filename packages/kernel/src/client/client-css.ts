@@ -6,9 +6,9 @@
  * ones included, is refused: the stylesheet is served from `/api/v1/client/<plugin>/<build>/styles/`,
  * so `../../../../…` would reach the kernel's own routes with the viewer's cookies.
  *
- * Two checks, both must pass:
- * - {@link cssRemoteProblem}: the packer's rule (`capybara-plugin`, `pack/client.ts`), kept the
- *   same so a file the packer refuses is refused here too;
+ * The packer (`capybara-plugin`, `pack/client.ts`) runs this same function on the file as it will
+ * store it, so a stylesheet that packs cleanly imports cleanly. Two checks, both must pass:
+ * - {@link cssRemoteProblem}: a plain-text pass over the escape-decoded file;
  * - a tokenizer that follows the CSS Syntax tokenization (comments, strings, escapes, url tokens)
  *   closely enough that every brace it skips is one a browser skips too: the file must start with
  *   `@layer extensions {` and the block that opens must close at the file's last character, so no
@@ -61,8 +61,7 @@ const functionRefused = (name: string) =>
   `${name}() is not allowed in a client stylesheet; use url(../assets/<file>) directly`;
 
 /**
- * The packer's rule (mirrors `cssRemoteProblem` of `@capybara-hq/plugin-tools`), escapes decoded
- * first: no invisible characters (see the file header), no {@link REFUSED_FUNCTIONS}, no
+ * The plain-text pass, escapes decoded first: no invisible characters (see the file header), no {@link REFUSED_FUNCTIONS}, no
  * `@import`, and every `url()` is {@link cssUrlProblem}-free. `assets` are the plugin's asset paths
  * relative to `assets/` (`a.png`, `fx/boot.ogg`). Returns the problem, or undefined.
  */
