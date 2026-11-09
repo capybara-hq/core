@@ -23,8 +23,9 @@ export type AppearanceSkipReason = "unknown-slot" | "not-available" | "not-eligi
  * kernel answers (the plugin's), and what was skipped.
  */
 export interface AppearanceResult {
-  theme: { from: string | null; to: string } | null;
-  replacements: { slot: string; from: string | null; to: string }[];
+  /** `followsPlatform` (org level only): `from` is the platform's value the org follows. */
+  theme: { from: string | null; to: string; followsPlatform?: boolean } | null;
+  replacements: { slot: string; from: string | null; to: string; followsPlatform?: boolean }[];
   skipped: { what: string; reason: AppearanceSkipReason }[];
 }
 

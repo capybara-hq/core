@@ -172,6 +172,9 @@ function ApplyAppearanceDialog({
           ],
   });
   const unchanged = appearanceUnchanged(result);
+  // An org following the platform's value: the current value is said to be the platform's
+  const current = (name: string, follows: boolean | undefined) =>
+    follows === true ? t("followsPlatform", { name }) : name;
   const rows: ItemListRow[] = [
     ...(result.theme === null
       ? []
@@ -180,7 +183,10 @@ function ApplyAppearanceDialog({
             id: "theme",
             title: t("theme"),
             meta: t("change", {
-              from: result.theme.from === null ? t("builtinTheme") : names.theme(result.theme.from),
+              from: current(
+                result.theme.from === null ? t("builtinTheme") : names.theme(result.theme.from),
+                result.theme.followsPlatform,
+              ),
               to: names.theme(result.theme.to),
             }),
           },
@@ -189,7 +195,10 @@ function ApplyAppearanceDialog({
       id: `slot:${r.slot}`,
       title: slotName(r.slot),
       meta: t("change", {
-        from: r.from === null ? t("builtin") : names.contribution(r.from),
+        from: current(
+          r.from === null ? t("builtin") : names.contribution(r.from),
+          r.followsPlatform,
+        ),
         to: names.contribution(r.to),
       }),
     })),

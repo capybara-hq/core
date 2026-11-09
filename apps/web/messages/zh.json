@@ -5218,6 +5218,7 @@
     "theme": "默认主题",
     "change": "{from} → {to}",
     "builtinTheme": "内置主题",
+    "followsPlatform": "跟随平台：{name}",
     "builtin": "内置",
     "skipped": "跳过：{what}",
     "reason": {

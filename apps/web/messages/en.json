@@ -5230,6 +5230,7 @@
     "theme": "Default theme",
     "change": "{from} → {to}",
     "builtinTheme": "Built-in theme",
+    "followsPlatform": "Follows the platform: {name}",
     "builtin": "Built-in",
     "skipped": "Skipped: {what}",
     "reason": {

@@ -449,6 +449,41 @@ describe("应用此插件的外观 on /extensions", () => {
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
   });
 
+  it("an org following the platform: the preview says the current value is the platform's", async () => {
+    orgRoutes(ext({ suggestedAppearance: SUGGESTION }));
+    const r = lastStubRoutes();
+    r[`POST ${ORG}/extensions/theme-neon/appearance`] = () =>
+      json(200, {
+        theme: { from: null, to: "t-neon", followsPlatform: true },
+        replacements: [
+          { slot: "shell.brand", from: null, to: "theme-neon/brand", followsPlatform: true },
+          {
+            slot: "conversation.empty",
+            from: "other/hero",
+            to: "theme-neon/hero",
+            followsPlatform: false,
+          },
+        ],
+        skipped: [],
+      });
+    await renderRouteWithCache("/extensions", r, { me: as("admin"), locale: "zh" });
+    const z = zh.applyAppearance;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("row", { name: /霓虹主题/ }));
+    await user.click(
+      await screen.findByRole("button", { name: fill(z.actionLabel, { name: "霓虹主题" }) }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: fill(z.title, { name: "霓虹主题" }) });
+    const rows = within(within(dialog).getByRole("list", { name: z.changes }))
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+    expect(rows).toEqual([
+      `${z.theme}${fill(z.change, { from: fill(z.followsPlatform, { name: z.builtinTheme }), to: "霓虹" })}`,
+      `${zh.uiArrangement.slots.shellBrand}${fill(z.change, { from: fill(z.followsPlatform, { name: z.builtin }), to: "霓虹品牌" })}`,
+      `${zh.uiArrangement.slots.conversationEmpty}${fill(z.change, { from: "别的主视觉", to: "霓虹主视觉" })}`,
+    ]);
+  });
+
   it("a refused org apply says what the org admin can do (zh)", async () => {
     let n = 0;
     const calls = orgRoutes(ext({ suggestedAppearance: SUGGESTION }));
