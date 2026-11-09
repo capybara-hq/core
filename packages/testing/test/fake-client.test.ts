@@ -67,6 +67,7 @@ describe("client fixtures", () => {
     const css = p.read("dist/client/styles/fake.css");
     expect(css).toContain("@layer extensions");
     expect(css).toContain('[data-cap-part~="button.primary"]');
+    expect(css).toContain('[data-cap-part~="composer"] [data-cap-part~="button"]');
     expect(css).toContain("--cx-fake-client-run: 1");
     expect(p.read("dist/client/client.mjs")).toContain("fake-client-brand");
   });

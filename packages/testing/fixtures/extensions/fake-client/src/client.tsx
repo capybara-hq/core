@@ -6,8 +6,9 @@ import {
 } from "@capybara-hq/plugin-client";
 
 const Hud = () => {
-  const view = useView();
-  const data = view.data as { n?: number } | undefined;
+  // useView() is the view state ({ view, status, retry }); the server view's data is on `view`
+  const { view } = useView();
+  const data = view?.data as { n?: number } | undefined;
   return <span data-testid="fake-client-hud">{`hud ${data?.n ?? "-"}`}</span>;
 };
 
