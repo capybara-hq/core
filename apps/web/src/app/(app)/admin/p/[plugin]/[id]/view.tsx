@@ -11,7 +11,11 @@ import { retryOnMountOf } from "../../../../../../lib/query/client";
 import { usePageQuery } from "../../../../../../lib/query/page-query";
 import { adminUiArrangementQuery, adminUiContributionsQuery } from "../../../../../../lib/query/ui";
 import { useAdmin } from "../../../../../../lib/query/workspace";
-import { type UiContributionItem, uiLocale } from "../../../../../../lib/ui";
+import {
+  type UiArrangementListSlot,
+  type UiContributionItem,
+  uiLocale,
+} from "../../../../../../lib/ui";
 import NotFound from "../../../../not-found";
 
 /**
@@ -77,7 +81,7 @@ function PlatformPageHidden({
   const hidden = listed
     ? undefined
     : arrangement.data
-        ?.find((s) => s.slot === "platform.page")
+        ?.find((s): s is UiArrangementListSlot => s.slot === "platform.page" && "items" in s)
         ?.items.find((c) => c.plugin === plugin && c.id === id && c.hidden);
   return (
     <PlatformPage

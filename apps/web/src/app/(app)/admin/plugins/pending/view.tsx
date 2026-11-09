@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Badge,
   Button,
   Callout,
   Dialog,
@@ -369,9 +370,22 @@ function ConfirmPermissionsDialog({
           >
             <KeyValue
               keyWidth="16ch"
-              rows={declaredPermissions(ext).map((g) => ({
+              rows={declaredPermissions(ext, latest?.manifest.extension?.client).map((g) => ({
                 k: label(g.category),
-                v: g.items.join(", "),
+                // components and client code run the plugin's own code in members' browsers
+                v: g.sensitive ? (
+                  <Stack gap={4}>
+                    <Badge tone="warn">{tp("sensitive")}</Badge>
+                    <Text variant="small" tone="muted">
+                      {tp(
+                        `review.reason.${g.category === "client" ? "client_code" : "ui_component"}`,
+                      )}
+                    </Text>
+                    <Text>{g.items.join(", ")}</Text>
+                  </Stack>
+                ) : (
+                  g.items.join(", ")
+                ),
               }))}
             />
           </Subsection>

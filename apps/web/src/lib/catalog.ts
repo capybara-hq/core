@@ -1,5 +1,6 @@
 import type { PackageWarning, SingleProviderBlock, SingleProviderNote } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
+import type { SuggestedAppearance } from "./appearance";
 import type { Owner } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
 
@@ -148,6 +149,8 @@ export interface PluginManifest {
     manifest: StaticExtensionManifest;
     migrations?: string;
     ui?: string;
+    /** Browser code, styles and assets (client extensions spec §4.1). */
+    client?: PluginClientFiles;
   };
 }
 
@@ -340,6 +343,8 @@ export interface CatalogItemDetail {
   versions: CatalogItemVersion[];
   /** The latest version has an icon (shown as `<img>` through the kernel route). */
   hasIcon: boolean;
+  /** The platform version's suggested appearance (client extensions spec §6.5); null without one. */
+  suggestedAppearance?: SuggestedAppearance | null;
 }
 
 /** The plugin's extension in an import review (kernel `PluginReviewExtension`). */
@@ -361,6 +366,18 @@ export interface PluginReviewExtension {
   warnings: PackageWarning[];
   reviewHash: string;
   sensitive: boolean;
+  /**
+   * The extension's client code (client extensions spec §5.4, §9.1): every file by its manifest
+   * key with its size, entry first; absent without client code.
+   */
+  client?: PluginReviewClient;
+}
+
+/** The client code of an extension in an import review (kernel `PluginReviewClient`). */
+export interface PluginReviewClient {
+  files: { path: string; size: number }[];
+  totalBytes: number;
+  apiVersion: number;
 }
 
 /** One connector template in an import review (kernel `PluginReviewTemplate`). */
@@ -1517,11 +1534,15 @@ export interface PluginReviewAgentTemplate {
 /**
  * The permissions an extension declares in its static manifest, by category (the categories of the
  * kernel's permission view; empty ones left out). Only for display: the import review shows the
- * kernel's grouping with the sensitive items.
+ * kernel's grouping with the sensitive items. Interface components and client code are groups of
+ * their own and `sensitive` (client extensions spec §5.4: both block loading until approved); the
+ * client group lists the files of the extension's `client` section when given (entry, styles,
+ * assets, in that order), else the one key `permissions.client`.
  */
 export function declaredPermissions(
   m: StaticExtensionManifest,
-): { category: string; items: string[] }[] {
+  client?: PluginClientFiles,
+): { category: string; items: string[]; sensitive: boolean }[] {
   const p = m.permissions;
   const http = p.http ?? [];
   const groups = [
@@ -1545,14 +1566,37 @@ export function declaredPermissions(
     },
     { category: "models", items: (p.models ?? []).map((x) => x.purpose) },
     { category: "network", items: p.network ?? [] },
+    { category: "ui", items: [...(p.ui?.views ?? []), ...(p.ui?.embeds ?? [])] },
+    { category: "components", items: p.ui?.components ?? [], sensitive: true },
     {
-      category: "ui",
-      items: [...(p.ui?.views ?? []), ...(p.ui?.embeds ?? []), ...(p.ui?.components ?? [])],
+      category: "client",
+      items:
+        p.client !== true
+          ? []
+          : client === undefined
+            ? ["permissions.client"]
+            : clientFilesOf(client),
+      sensitive: true,
     },
-    { category: "client", items: p.client === true ? ["client"] : [] },
   ];
-  return groups.filter((g) => g.items.length > 0);
+  return groups
+    .filter((g) => g.items.length > 0)
+    .map((g) => ({ category: g.category, items: g.items, sensitive: g.sensitive === true }));
 }
+
+/** The files of a plugin.json `extension.client` section (SDK `PluginClientSection`). */
+export interface PluginClientFiles {
+  entry?: string;
+  styles?: string[];
+  assets?: string[];
+}
+
+/** A client section's files in load order: entry, styles, assets. */
+export const clientFilesOf = (c: PluginClientFiles): string[] => [
+  ...(c.entry !== undefined ? [c.entry] : []),
+  ...(c.styles ?? []),
+  ...(c.assets ?? []),
+];
 
 /** A short commit for display (the first 7 characters). */
 export const shortCommit = (sha: string): string => sha.slice(0, 7);

@@ -232,6 +232,8 @@ describe("what an extension change invalidates in the org", () => {
     ["a deployment-side change (extensionChangeKeys)", extensionChangeKeys("o1")],
   ])("%s: readiness, models, purposes and what the extensions bring", (_, list) => {
     for (const key of [
+      // the client code the org's pages load (client extensions spec §11)
+      k.clientExtensions(),
       k.readiness(),
       k.models(),
       k.modelsCatalog(),

@@ -152,18 +152,49 @@ export const listUiContributions = (orgId: string) =>
 export const listAdminUiContributions = () =>
   apiFetch<{ items: UiContributionItem[] }>(`${base(null)}/contributions`);
 
-/** One slot's arrangement entry: the hidden contributions and the order, keyed `<plugin>/<id>`. */
-export interface UiArrangementEntry {
+/** A list slot's arrangement entry: the hidden contributions and the order, keyed `<plugin>/<id>`. */
+export interface UiArrangementListEntry {
   hidden: string[];
   order: string[];
 }
 
-/** One slot of `GET .../ui/arrangement`: where its entry comes from and its items in order. */
-export interface UiArrangementSlot {
+/**
+ * A single slot's entry (client extensions spec §6.3): the contribution key that replaces the
+ * built-in, null for the built-in.
+ */
+export interface UiArrangementUseEntry {
+  use: string | null;
+}
+
+/** One slot's arrangement entry: `{ hidden, order }` on a list slot, `{ use }` on a single slot. */
+export type UiArrangementEntry = UiArrangementListEntry | UiArrangementUseEntry;
+
+/** A list slot of `GET .../ui/arrangement`: where its entry comes from and its items in order. */
+export interface UiArrangementListSlot {
   slot: UiSlotId;
   source: "org" | "platform" | "none";
   items: (UiContributionItem & { hidden: boolean })[];
 }
+
+/**
+ * A single (replaceable) slot of `GET .../ui/arrangement`: the contributions that may replace the
+ * built-in, the stored `use` (null: the built-in; it may name a key that is no candidate any more,
+ * which renders the built-in) and whether the org follows the platform (always false on the
+ * platform's own listing).
+ */
+export interface UiArrangementSingleSlot {
+  slot: UiSlotId;
+  candidates: { key: string; title: { zh: string; en: string } }[];
+  use: string | null;
+  followsPlatform: boolean;
+}
+
+/** One slot of `GET .../ui/arrangement`. */
+export type UiArrangementSlot = UiArrangementListSlot | UiArrangementSingleSlot;
+
+/** Whether an arrangement slot is a single (replaceable) slot. */
+export const isSingleArrangementSlot = (s: UiArrangementSlot): s is UiArrangementSingleSlot =>
+  "candidates" in s;
 
 export const getUiArrangement = (orgId: string) =>
   apiFetch<{ slots: UiArrangementSlot[] }>(`${base(orgId)}/arrangement`);

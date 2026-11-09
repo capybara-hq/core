@@ -2464,8 +2464,9 @@
       "hooks": "Hook",
       "models": "模型",
       "network": "网络访问",
-      "ui": "界面（视图 / 嵌入页面 / 组件）",
-      "client": "客户端代码"
+      "ui": "界面（视图 / 嵌入页面）",
+      "client": "客户端代码",
+      "components": "界面组件"
     },
     "configTitle": "组织配置",
     "save": "保存配置",
@@ -2505,7 +2506,8 @@
         "dynamic_sql": "DO 块（内容没有检查）",
         "foreign_schema": "越出扩展自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
       },
-      "at": "{file} 第 {line} 行"
+      "at": "{file} 第 {line} 行",
+      "clientTotal": "共 {files} 个文件，{size}"
     },
     "pointDefaults": {
       "title": "默认提供方",
@@ -2606,7 +2608,8 @@
       "saveInvalid": "配置不正确，请检查标出的字段。",
       "loadFailed": "无法读取配置。",
       "retry": "重试"
-    }
+    },
+    "appearanceTitle": "外观"
   },
   "identities": {
     "title": "IM 身份",
@@ -3520,6 +3523,16 @@
         "description": "组织能否不经平台目录、自己新建或导入技能。",
         "allowHint": "组织可以自己新建、导入技能，也可以从平台目录安装。",
         "denyHint": "组织只能从平台目录安装技能。"
+      },
+      "clientCode": {
+        "title": "插件界面代码",
+        "description": "插件可以在成员的浏览器里运行自己的界面代码：组件、样式和装饰。出问题时可以在这里全部停用，或只停用某个插件的界面代码；插件的服务端功能照常运行。",
+        "all": "运行插件界面代码",
+        "allOnHint": "页面会加载下面这些插件的界面代码。",
+        "allOffHint": "已停用：所有页面都不加载插件界面代码。",
+        "pluginLabel": "运行 {name} 的界面代码",
+        "pluginOnHint": "运行中",
+        "pluginOffHint": "已停用：只停用界面代码，服务端功能照常运行。"
       }
     },
     "extensions": {
@@ -3741,6 +3754,42 @@
         "unset": "{path} 未配置",
         "loadFailed": "无法读取组织的配置。",
         "retry": "重试"
+      },
+      "clientCode": {
+        "title": "界面代码",
+        "running": "正在成员的浏览器里运行。",
+        "stoppedState": "已停用：此插件的界面代码不再加载，服务端功能照常运行。",
+        "allStopped": "已停用：部署设置里停用了所有插件界面代码。",
+        "build": "构建",
+        "apiVersion": "客户端 API",
+        "total": "大小",
+        "totalValue": "{files} 个文件 · {size}",
+        "stop": "停用界面代码",
+        "resume": "恢复界面代码",
+        "stopHint": "只停用此插件的界面代码（组件、样式、装饰），它的工具和其他服务端功能照常可用。已打开的页面会在下次刷新时卸下。",
+        "stopped": "已停用 {name} 的界面代码",
+        "resumed": "已恢复 {name} 的界面代码",
+        "filesTitle": "文件",
+        "reportsTitle": "错误报告",
+        "noReports": "此构建没有错误报告。",
+        "adminPages": "管理后台页面",
+        "columns": {
+          "path": "文件",
+          "size": "大小",
+          "kind": "类型",
+          "contribution": "组件",
+          "where": "组织",
+          "count": "次数",
+          "last": "最近一次",
+          "message": "消息"
+        },
+        "kind": {
+          "load": "加载",
+          "render": "渲染",
+          "event": "事件",
+          "api": "API 不支持",
+          "budget": "已自动停用"
+        }
       }
     }
   },
@@ -3949,7 +3998,8 @@
           "update": "更新到 {version}",
           "disable": "停用",
           "enable": "启用",
-          "import": "导入 {version}"
+          "import": "导入 {version}",
+          "applyAppearance": "应用此插件的外观"
         },
         "componentColumns": {
           "name": "组件",
@@ -4599,7 +4649,11 @@
       "title": "标题",
       "extension": "扩展",
       "hidden": "隐藏",
-      "move": "顺序"
+      "move": "顺序",
+      "slot": "位置",
+      "use": "使用",
+      "source": "来源",
+      "reset": "跟随"
     },
     "slots": {
       "conversationPanel": "对话面板",
@@ -4614,7 +4668,13 @@
       "shellOverlay": "全屏图层",
       "conversationEmpty": "新对话主视觉",
       "composerFrame": "输入框边框"
-    }
+    },
+    "replaceTitle": "替换",
+    "replaceDescription": "插件的组件可以接管的位置。选内置则保留网页应用自带的；插件的组件只在该插件启用的地方显示。",
+    "builtin": "内置",
+    "unavailableUse": "{key}（不可用）",
+    "useLabel": "{slot}使用",
+    "orgOwn": "本组织"
   },
   "filePreviewers": {
     "title": "文件预览",
@@ -5138,5 +5198,29 @@
   "clientExtensions": {
     "budget": "「{plugin}」的界面代码出错，已在本次会话停用",
     "safeReload": "以安全模式重新加载"
+  },
+  "applyAppearance": {
+    "action": "应用此插件的外观",
+    "actionLabel": "应用 {name} 的外观",
+    "actionHintPlatform": "把此插件建议的主题和替换设为平台默认。",
+    "actionHintOrg": "把此插件建议的主题和替换设为本组织的默认。",
+    "title": "应用 {name} 的外观？",
+    "platformHint": "这些会成为平台默认：所有没有自己选择的组织都会看到。",
+    "orgHint": "这些会成为本组织的默认：没有自己选主题的成员都会看到。",
+    "unchanged": "外观已经是此插件建议的样子，没有需要更改的。",
+    "changes": "更改",
+    "theme": "默认主题",
+    "change": "{from} → {to}",
+    "builtinTheme": "内置主题",
+    "builtin": "内置",
+    "skipped": "跳过：{what}",
+    "reason": {
+      "unknownSlot": "当前版本的网页应用没有这个位置。",
+      "notAvailable": "此插件的组件在这里不可用。",
+      "notEligible": "这个位置不能由它替换。"
+    },
+    "apply": "应用",
+    "ok": "知道了",
+    "applied": "已应用 {name} 的外观"
   }
 }

@@ -7,6 +7,7 @@ import {
   FormSection,
   Icon,
   IconButton,
+  Select,
   Stack,
   Subsection,
   Switch,
@@ -18,15 +19,26 @@ import { useState } from "react";
 import { updateDeploymentSettings } from "../lib/admin";
 import { updateOrgSettings } from "../lib/org-settings";
 import { retryOnMountOf } from "../lib/query/client";
+import { invalidateClientSets } from "../lib/query/client-extensions";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { adminUiArrangementQuery, invalidateOrgUiLists, uiArrangementQuery } from "../lib/query/ui";
-import { type UiArrangementEntry, type UiArrangementSlot, uiLocale } from "../lib/ui";
+import {
+  isSingleArrangementSlot,
+  type UiArrangementEntry,
+  type UiArrangementListEntry,
+  type UiArrangementListSlot,
+  type UiArrangementSingleSlot,
+  uiLocale,
+} from "../lib/ui";
 import type { UiSlotId } from "../lib/ui-slots.generated";
 import { useErrorMessage } from "../lib/use-error-message";
 
-/** The message key of a slot's name (an id has dots, which a message path cannot hold). */
-const SLOT_NAME: Record<UiSlotId, string> = {
+/**
+ * The message key of a slot's name under `uiArrangement.slots` (an id has dots, which a message
+ * path cannot hold).
+ */
+export const SLOT_NAME: Record<UiSlotId, string> = {
   "conversation.panel": "conversationPanel",
   "conversation.properties.section": "conversationProperties",
   "conversation.tool-result.card": "conversationCard",
@@ -41,11 +53,20 @@ const SLOT_NAME: Record<UiSlotId, string> = {
   "conversation.composer.frame": "composerFrame",
 };
 
-type Item = UiArrangementSlot["items"][number];
+/** A slot's name in the UI locale (its id when the catalog has a slot this web does not know). */
+export function useSlotName(): (slot: string) => string {
+  const t = useTranslations("uiArrangement.slots");
+  return (slot) => {
+    const key = (SLOT_NAME as Record<string, string | undefined>)[slot];
+    return key === undefined ? slot : t(key);
+  };
+}
+
+type Item = UiArrangementListSlot["items"][number];
 const keyOf = (i: Item) => `${i.plugin}/${i.id}`;
 
 /** The entry that says what the listing shows now: every key in order, the hidden ones. */
-const entryOf = (items: Item[]): UiArrangementEntry => ({
+const entryOf = (items: Item[]): UiArrangementListEntry => ({
   hidden: items.filter((i) => i.hidden).map(keyOf),
   order: items.map(keyOf),
 });
@@ -59,10 +80,13 @@ function neighbour(items: Item[], i: number, dir: -1 | 1): number | null {
 }
 
 /**
- * 界面位置: per slot the extension contributions the scope lists, with a hide switch and up / down.
- * "Hidden" means not listed (a direct link still opens). `scope` is an org (org admins write; below
- * admin it is read only) or the platform default (super admins, on the deployment settings page);
- * every change is saved at once (PATCH / PUT) and refreshes the lists that render the slots.
+ * 界面位置: per list slot the extension contributions the scope lists, with a hide switch and up /
+ * down ("hidden" means not listed: a direct link still opens); then one table of the replaceable
+ * slots (client extensions spec §6.3), each with a select 内置 / its candidates (an org shows
+ * whether it follows the platform, and 跟随平台 drops its own pick). `scope` is an org (org admins
+ * write; below admin it is read only, the picks as text) or the platform default (super admins, on
+ * the deployment settings page); every change is saved at once (PATCH / PUT) and refreshes the
+ * lists that render the slots and the client code the pages load.
  */
 export function UiArrangementSection({
   scope,
@@ -77,8 +101,14 @@ export function UiArrangementSection({
   const errorMessage = useErrorMessage();
   const qc = useQueryClient();
   const q = scope.kind === "org" ? uiArrangementQuery(scope.orgId) : adminUiArrangementQuery();
-  const slots = (useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? []).filter(
-    (s) => s.items.length > 0,
+  const all = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? [];
+  const slots = all.filter(
+    (s): s is UiArrangementListSlot => !isSingleArrangementSlot(s) && s.items.length > 0,
+  );
+  // a replaceable slot is listed when something may replace it or a pick is stored
+  const singles = all.filter(
+    (s): s is UiArrangementSingleSlot =>
+      isSingleArrangementSlot(s) && (s.candidates.length > 0 || s.use !== null),
   );
   const put = useAppMutation({
     fn: async (patch: Record<string, UiArrangementEntry | null>) => {
@@ -91,13 +121,20 @@ export function UiArrangementSection({
             keys.org(scope.orgId).uiArrangement(),
             keys.org(scope.orgId).contributions(),
             keys.org(scope.orgId).extensionPages(),
+            // a replacement changes the components the pages load
+            keys.org(scope.orgId).clientExtensions(),
           ]
         : [keys.deployment().uiArrangement(), keys.deployment().uiContributions()],
-    // the platform default changes what every org lists
-    onSuccess: () => (scope.kind === "platform" ? invalidateOrgUiLists(qc) : undefined),
+    // the platform default changes what every org lists and loads
+    onSuccess: () => {
+      if (scope.kind === "platform") {
+        void invalidateOrgUiLists(qc);
+        void invalidateClientSets(qc);
+      }
+    },
   });
   const [busy, setBusy] = useState(false);
-  if (slots.length === 0) return null;
+  if (slots.length === 0 && singles.length === 0) return null;
 
   async function save(slot: UiSlotId, entry: UiArrangementEntry | null) {
     setBusy(true);
@@ -110,7 +147,7 @@ export function UiArrangementSection({
     }
   }
 
-  const table = (s: UiArrangementSlot, slotName: string) => {
+  const table = (s: UiArrangementListSlot, slotName: string) => {
     const items = s.items;
     const columns: Column<Item>[] = [
       { key: "title", header: t("columns.title"), cell: (r) => r.title[locale] },
@@ -222,6 +259,126 @@ export function UiArrangementSection({
       description={canEdit ? t("description") : t("descriptionReadonly")}
     >
       {slots.map((s) => table(s, t(`slots.${SLOT_NAME[s.slot]}`)))}
+      {singles.length > 0 && (
+        <ReplaceableSlots
+          scope={scope}
+          canEdit={canEdit}
+          busy={busy}
+          slots={singles}
+          save={(slot, entry) => void save(slot, entry)}
+        />
+      )}
     </FormSection>
+  );
+}
+
+/** The select's value for 内置 (never a contribution key: keys hold a `/`). */
+const BUILTIN = "builtin";
+
+/**
+ * 替换: one row per replaceable slot, with what it uses (内置 or a contribution) and, for an org,
+ * whether that follows the platform. An org admin's 内置 is the org's own pick (`use: null`);
+ * 跟随平台 removes the org's entry. On the platform 内置 removes the entry (nothing to follow).
+ */
+function ReplaceableSlots({
+  scope,
+  canEdit,
+  busy,
+  slots,
+  save,
+}: {
+  scope: { kind: "org"; orgId: string } | { kind: "platform" };
+  canEdit: boolean;
+  busy: boolean;
+  slots: UiArrangementSingleSlot[];
+  save(slot: UiSlotId, entry: UiArrangementEntry | null): void;
+}) {
+  const t = useTranslations("uiArrangement");
+  const locale = uiLocale(useLocale());
+  const slotName = (s: UiArrangementSingleSlot) => t(`slots.${SLOT_NAME[s.slot]}`);
+  const pickLabel = (s: UiArrangementSingleSlot): string => {
+    if (s.use === null) return t("builtin");
+    const c = s.candidates.find((x) => x.key === s.use);
+    return c === undefined ? t("unavailableUse", { key: s.use }) : c.title[locale];
+  };
+  const org = scope.kind === "org";
+  const columns: Column<UiArrangementSingleSlot>[] = [
+    { key: "slot", header: t("columns.slot"), cell: (s) => slotName(s) },
+    canEdit
+      ? {
+          key: "use",
+          header: t("columns.use"),
+          interactive: true,
+          cell: (s) => (
+            <Select
+              density="dense"
+              aria-label={t("useLabel", { slot: slotName(s) })}
+              value={s.use ?? BUILTIN}
+              disabled={busy}
+              options={[
+                { value: BUILTIN, label: t("builtin") },
+                ...s.candidates.map((c) => ({ value: c.key, label: c.title[locale] })),
+                // a stored pick that is no candidate any more renders the built-in; kept visible
+                ...(s.use !== null && !s.candidates.some((c) => c.key === s.use)
+                  ? [{ value: s.use, label: pickLabel(s), disabled: true }]
+                  : []),
+              ]}
+              onChange={(e) => {
+                const v = e.target.value;
+                save(s.slot, v === BUILTIN ? (org ? { use: null } : null) : { use: v });
+              }}
+            />
+          ),
+        }
+      : { key: "use", header: t("columns.use"), cell: (s) => pickLabel(s) },
+    ...(org
+      ? [
+          {
+            key: "source",
+            header: t("columns.source"),
+            tone: "muted",
+            cell: (s: UiArrangementSingleSlot) =>
+              s.followsPlatform ? t("followsPlatform") : t("orgOwn"),
+          } satisfies Column<UiArrangementSingleSlot>,
+        ]
+      : []),
+    ...(org && canEdit
+      ? [
+          {
+            key: "reset",
+            header: t("columns.reset"),
+            interactive: true,
+            fit: true,
+            cell: (s: UiArrangementSingleSlot) =>
+              s.followsPlatform ? null : (
+                <Button
+                  variant="ghost"
+                  density="dense"
+                  disabled={busy}
+                  onClick={() => save(s.slot, null)}
+                  aria-label={t("resetLabel", { slot: slotName(s) })}
+                >
+                  {t("resetOrg")}
+                </Button>
+              ),
+          } satisfies Column<UiArrangementSingleSlot>,
+        ]
+      : []),
+  ];
+  return (
+    <Subsection
+      variant="flush"
+      title={t("replaceTitle")}
+      count={slots.length}
+      description={t("replaceDescription")}
+    >
+      <DataTable<UiArrangementSingleSlot>
+        label={t("replaceTitle")}
+        columns={columns}
+        rows={slots}
+        rowKey={(s) => s.slot}
+        rowLabel={slotName}
+      />
+    </Subsection>
   );
 }

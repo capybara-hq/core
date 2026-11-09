@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
-import type { UiArrangementSlot } from "../src/lib/ui";
+import type { UiArrangementListSlot } from "../src/lib/ui";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { FakeEventSource } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
@@ -27,7 +27,7 @@ const item = (plugin: string, id: string, title: string, hidden = false) => ({
   hidden,
 });
 
-const slot = (source: UiArrangementSlot["source"]): UiArrangementSlot => ({
+const slot = (source: UiArrangementListSlot["source"]): UiArrangementListSlot => ({
   slot: "org.page",
   source,
   items: [
@@ -37,7 +37,7 @@ const slot = (source: UiArrangementSlot["source"]): UiArrangementSlot => ({
   ],
 });
 
-function api(source: UiArrangementSlot["source"] = "none") {
+function api(source: UiArrangementListSlot["source"] = "none") {
   return stubApi({
     [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
     [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
@@ -162,6 +162,7 @@ describe("界面位置 on /admin/settings", () => {
           customSkills: "allow",
         }),
       "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/ui/arrangement": () =>
         json(200, {
           slots: [

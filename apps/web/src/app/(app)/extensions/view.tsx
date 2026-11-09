@@ -15,6 +15,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { ApplyAppearanceAction } from "../../../components/ApplyAppearance";
 import { hasConfigFields } from "../../../components/config-form/model";
 import { savedConfigComplete } from "../../../components/config-form/org";
 import { ErrorFrame } from "../../../components/ErrorFrame";
@@ -80,7 +81,9 @@ import NotFound from "../not-found";
  * A row opens a Sheet: the org config form on top (保存配置 / 保存并启用), the state line (with why a
  * switch was refused: a missing dependency, dependents that remain, which can be force-disabled, or
  * the kernel's reason; a refused switch opens the Sheet by itself), 立即同步 for directory-sync
- * extensions, and the permissions folded into one line that opens the full blocks. Members read the
+ * extensions, 应用此插件的外观 for a plugin on in the org that suggests an appearance (client
+ * extensions spec §6.5: a dry run listed in a confirm dialog, then applied), and the permissions
+ * folded into one line that opens the full blocks. Members read the
  * same list without the switch, and a Sheet with the capabilities and the state only (the kernel
  * gives them no config, secrets or permissions, P2-13, only the points each provides: their tabs
  * and chips come from those).
@@ -600,6 +603,17 @@ function ExtensionList({
           onSaveAndEnable={(config) => void saveAndEnable(current, config)}
           onForceDisable={() => void toggle(current, false, true)}
           onSync={() => void sync(current)}
+          {...(canEdit &&
+            current.ext.enabled &&
+            !current.unavailable &&
+            current.ext.suggestedAppearance != null && {
+              appearance: (
+                <ApplyAppearanceAction
+                  level={{ kind: "org", orgId, extension: current.ext.plugin }}
+                  name={current.label}
+                />
+              ),
+            })}
         />
       )}
       {off !== null && (

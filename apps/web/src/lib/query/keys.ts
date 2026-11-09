@@ -375,6 +375,8 @@ export const keys = {
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
        */
       pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
+      /** Every plugin's platform client set (an invalidation prefix: the kill switch). */
+      clientExtensionsAll: (): readonly unknown[] => [...all, "clientExtensions"],
       /** One plugin's platform client set (its `/admin/p/<plugin>/<id>` page, §9.6). */
       clientExtensions: (plugin: string): readonly unknown[] => [
         ...all,

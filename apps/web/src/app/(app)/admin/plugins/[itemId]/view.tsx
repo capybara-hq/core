@@ -20,6 +20,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useComponentScopeText } from "../../../../../components/AdminComponents";
+import { useApplyAppearance } from "../../../../../components/ApplyAppearance";
 import {
   ComponentSection,
   LicenseView,
@@ -86,6 +87,9 @@ import NotFound from "../../../not-found";
 const TABS = ["components", "orgs", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
+/** An org's upload whose first version waits for the super admin (no platform action yet). */
+const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation === true;
+
 /**
  * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name, the
  * platform's version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope dialog with
@@ -100,7 +104,9 @@ type Tab = (typeof TABS)[number];
  * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
  * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
  * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
- * license folded at the end; 删除 is the head's ⋯ menu item. From the query cache (the layout
+ * license folded at the end; 删除 is the head's ⋯ menu item. 应用此插件的外观 (a plugin with a
+ * suggested appearance, client extensions spec §6.5) previews the platform changes in a confirm
+ * dialog, then applies them. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
  * the catalog and the orgs are sections.
  */
@@ -246,6 +252,11 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     }
   };
 
+  // 应用此插件的外观 (client extensions spec §6.5): only for a plugin that suggests one and is on
+  const appearance = useApplyAppearance({ kind: "platform", itemId: item.id }, name);
+  const suggests =
+    detail.suggestedAppearance != null && !deleted && !item.disabled && !awaitingOf(item);
+
   const owner = ownerOrgOf(item);
   // An org's upload: its org uploads its versions (ruling P3-12); a first version waiting for the
   // confirmation takes no scope change or disable (409 catalog.item_pending, ruling P3-9)
@@ -276,6 +287,16 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                 onSelect: () => setDialog("disable"),
               },
         ]),
+    ...(suggests
+      ? [
+          {
+            label: t("detail.actions.applyAppearance"),
+            variant: "default" as const,
+            loading: appearance.previewing,
+            onSelect: appearance.preview,
+          },
+        ]
+      : []),
     ...(updateTo !== null && owner === null && !deleted && !item.disabled
       ? [
           {
@@ -438,6 +459,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           )}
         </Stack>
       </DetailPage>
+      {appearance.dialog}
       {dialog === "scope" && (
         <PluginScopeDialog item={item} orgId={orgId} onClose={() => setDialog(null)} />
       )}

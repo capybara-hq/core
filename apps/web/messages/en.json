@@ -2476,8 +2476,9 @@
       "hooks": "Hooks",
       "models": "Models",
       "network": "Network access",
-      "ui": "Interface (views / embeds / components)",
-      "client": "Client code"
+      "ui": "Interface (views / embeds)",
+      "client": "Client code",
+      "components": "Interface components"
     },
     "configTitle": "Organization config",
     "save": "Save config",
@@ -2517,7 +2518,8 @@
         "dynamic_sql": "DO block (contents not checked)",
         "foreign_schema": "Statement outside the extension's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
       },
-      "at": "{file} line {line}"
+      "at": "{file} line {line}",
+      "clientTotal": "{files, plural, one {# file} other {# files}}, {size} in total"
     },
     "pointDefaults": {
       "title": "Default providers",
@@ -2618,7 +2620,8 @@
       "saveInvalid": "The config is invalid. Check the marked fields.",
       "loadFailed": "The configuration cannot be loaded.",
       "retry": "Retry"
-    }
+    },
+    "appearanceTitle": "Appearance"
   },
   "identities": {
     "title": "IM identities",
@@ -3532,6 +3535,16 @@
         "description": "Whether organizations may create or import skills themselves, outside the catalog.",
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
+      },
+      "clientCode": {
+        "title": "Plugin interface code",
+        "description": "Plugins may run their own interface code in members' browsers: components, styles and decoration. When something breaks, stop all of it here, or only one plugin's; the plugins' server side keeps running.",
+        "all": "Run plugin interface code",
+        "allOnHint": "Pages load the interface code of the plugins below.",
+        "allOffHint": "Stopped: no page loads any plugin interface code.",
+        "pluginLabel": "Run the interface code of {name}",
+        "pluginOnHint": "Running",
+        "pluginOffHint": "Stopped: only its interface code; its server side keeps running."
       }
     },
     "extensions": {
@@ -3753,6 +3766,42 @@
         "unset": "{path} not configured",
         "loadFailed": "The orgs' configuration cannot be loaded.",
         "retry": "Retry"
+      },
+      "clientCode": {
+        "title": "Interface code",
+        "running": "Running in members' browsers.",
+        "stoppedState": "Stopped: this plugin's interface code does not load; its server side keeps running.",
+        "allStopped": "Stopped: all plugin interface code is off in the deployment settings.",
+        "build": "Build",
+        "apiVersion": "Client API",
+        "total": "Size",
+        "totalValue": "{files, plural, one {# file} other {# files}} · {size}",
+        "stop": "Stop interface code",
+        "resume": "Resume interface code",
+        "stopHint": "Stopping affects only this plugin's interface code (components, styles, decoration); its tools and other server features keep working. Open pages drop it at their next refresh.",
+        "stopped": "Stopped the interface code of {name}",
+        "resumed": "Resumed the interface code of {name}",
+        "filesTitle": "Files",
+        "reportsTitle": "Error reports",
+        "noReports": "No error reports for this build.",
+        "adminPages": "Admin pages",
+        "columns": {
+          "path": "File",
+          "size": "Size",
+          "kind": "Kind",
+          "contribution": "Component",
+          "where": "Org",
+          "count": "Count",
+          "last": "Last seen",
+          "message": "Message"
+        },
+        "kind": {
+          "load": "Load",
+          "render": "Render",
+          "event": "Event",
+          "api": "Unsupported API",
+          "budget": "Turned off"
+        }
       }
     }
   },
@@ -3961,7 +4010,8 @@
           "update": "Update to {version}",
           "disable": "Disable",
           "enable": "Enable",
-          "import": "Import {version}"
+          "import": "Import {version}",
+          "applyAppearance": "Apply this plugin's appearance"
         },
         "componentColumns": {
           "name": "Component",
@@ -4611,7 +4661,11 @@
       "title": "Title",
       "extension": "Extension",
       "hidden": "Hidden",
-      "move": "Order"
+      "move": "Order",
+      "slot": "Place",
+      "use": "Uses",
+      "source": "From",
+      "reset": "Follow"
     },
     "slots": {
       "conversationPanel": "Conversation panels",
@@ -4626,7 +4680,13 @@
       "shellOverlay": "Full-screen overlays",
       "conversationEmpty": "New-conversation hero",
       "composerFrame": "Composer frame"
-    }
+    },
+    "replaceTitle": "Replacements",
+    "replaceDescription": "Places a plugin's component may take over. Built-in keeps the app's own; a plugin's component shows only where that plugin is on.",
+    "builtin": "Built-in",
+    "unavailableUse": "{key} (not available)",
+    "useLabel": "Use for {slot}",
+    "orgOwn": "This org"
   },
   "filePreviewers": {
     "title": "File previewers",
@@ -5150,5 +5210,29 @@
   "clientExtensions": {
     "budget": "The interface code of “{plugin}” failed and is off for this session.",
     "safeReload": "Reload in safe mode"
+  },
+  "applyAppearance": {
+    "action": "Apply this plugin's appearance",
+    "actionLabel": "Apply the appearance of {name}",
+    "actionHintPlatform": "Sets the theme and replacements this plugin suggests as the platform defaults.",
+    "actionHintOrg": "Sets the theme and replacements this plugin suggests as this org's defaults.",
+    "title": "Apply the appearance of {name}?",
+    "platformHint": "These become the platform defaults: every org that has not picked its own sees them.",
+    "orgHint": "These become this org's defaults: members who have not picked their own theme see them.",
+    "unchanged": "The appearance already matches what this plugin suggests. Nothing to change.",
+    "changes": "Changes",
+    "theme": "Default theme",
+    "change": "{from} → {to}",
+    "builtinTheme": "Built-in theme",
+    "builtin": "Built-in",
+    "skipped": "Skipped: {what}",
+    "reason": {
+      "unknownSlot": "This version of the web app has no such place.",
+      "notAvailable": "The plugin's component is not available here.",
+      "notEligible": "This place cannot be replaced by it."
+    },
+    "apply": "Apply",
+    "ok": "Got it",
+    "applied": "Applied the appearance of {name}"
   }
 }

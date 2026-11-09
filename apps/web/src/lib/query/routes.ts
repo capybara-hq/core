@@ -1,4 +1,5 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
+import type { AdminExtension } from "../admin-extensions";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
@@ -203,11 +204,21 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/extensions/[name]",
-    // The list (the extension is found in it) and its deployment config (the Config tab).
+    // The list (the extension is found in it) and its deployment config (the Config tab); for an
+    // extension with client code, the settings too (界面代码 says whether it is stopped).
     queries: ({ me, params }) =>
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, params }, qc) => {
+      if (!superAdmin(me) || params.name === undefined) return;
+      const list = qc.getQueryData<{ extensions: AdminExtension[] }>(
+        adminExtensionsQuery().queryKey,
+      );
+      if (list?.extensions.find((e) => e.name === params.name)?.client == null) return;
+      await qc.prefetchQuery({ ...deploymentSettingsQuery(), retry: false });
+    },
   },
   {
     pattern: "/admin/p/[plugin]/[id]",
@@ -383,13 +394,15 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    // The settings and the themes (外观's eligible ones, with their names and swatches).
+    // The settings, the themes (外观's eligible ones, with their names and swatches), the platform
+    // arrangement and the extensions (插件界面代码 lists those with client code).
     queries: ({ me }) =>
       superAdmin(me)
         ? [
             q(deploymentSettingsQuery()),
             q(adminComponentsQuery("theme")),
             q(adminUiArrangementQuery()),
+            q(adminExtensionsQuery()),
           ]
         : [],
   },
