@@ -171,6 +171,12 @@ export {
   titleBarFit,
 } from "./title-bar";
 export {
+  findTokenLikeSpans,
+  removeSpans,
+  type TokenLikeKind,
+  type TokenLikeSpan,
+} from "./token-like";
+export {
   elapsed,
   type SummaryPart,
   type SummaryRow,

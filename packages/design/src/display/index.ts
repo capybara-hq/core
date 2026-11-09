@@ -28,7 +28,7 @@ export {
   type PresetId,
 } from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
-export { Callout, type CalloutProps } from "./callout";
+export { Callout, type CalloutAction, type CalloutProps } from "./callout";
 export {
   CardGrid,
   ObjectCard,

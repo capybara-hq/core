@@ -698,6 +698,8 @@ export function ComposerBar({
                   onClick: () => void submit(),
                 }
           }
+          // the token warning's 仍然发送 sends as ↵ does, also while the button is Stop
+          onSend={() => void submit()}
           textareaRef={textEl}
         />
       </FileDrop>

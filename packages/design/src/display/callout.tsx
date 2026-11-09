@@ -12,8 +12,15 @@ export type CalloutProps = {
   tone: "info" | "warn" | "fail";
   children?: ReactNode;
   /** The one button that resolves it. */
-  action?: { label: string; href?: string; onSelect?(): void };
+  action?: CalloutAction;
+  /**
+   * A choice between ways to resolve it (the composer's token warning: 移除 / 仍然发送), drawn
+   * after `action` in order. Most callouts have one action.
+   */
+  actions?: CalloutAction[];
 };
+
+export type CalloutAction = { label: string; href?: string; onSelect?(): void };
 
 /**
  * What needs action, above the list's tabs: a tinted bar, icon, sentence and one button; or, with
@@ -22,9 +29,10 @@ export type CalloutProps = {
  * padding, the line in its tone with its icon (`warn` / `fail`; `info` muted), the action at the
  * right, as a CodeBlock drops its line there.
  */
-export function Callout({ tone, children, action }: CalloutProps) {
+export function Callout({ tone, children, action, actions }: CalloutProps) {
   const Link = useDesignLink();
   const inBox = useInBox() !== null;
+  const all = [...(action ? [action] : []), ...(actions ?? [])];
   return (
     <section
       className="cb-callout"
@@ -38,25 +46,27 @@ export function Callout({ tone, children, action }: CalloutProps) {
         {/* Only the tinted bar is a box; the line form leaves its children in the outer box */}
         {inBox ? children : <BoxScope kind="callout">{children}</BoxScope>}
       </span>
-      {action ? (
-        action.href !== undefined ? (
+      {all.map((a) =>
+        a.href !== undefined ? (
           <Link
-            href={action.href}
+            key={a.label}
+            href={a.href}
             className="cb-btn cb-btn-link cb-btn-link-default"
             data-density="dense"
           >
-            <span className="cb-btn-body">{action.label}</span>
+            <span className="cb-btn-body">{a.label}</span>
           </Link>
         ) : (
           <Button
+            key={a.label}
             variant="default"
             density="dense"
-            {...(action.onSelect ? { onClick: action.onSelect } : {})}
+            {...(a.onSelect ? { onClick: a.onSelect } : {})}
           >
-            {action.label}
+            {a.label}
           </Button>
-        )
-      ) : null}
+        ),
+      )}
     </section>
   );
 }
