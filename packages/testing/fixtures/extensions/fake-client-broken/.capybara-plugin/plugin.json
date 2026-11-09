@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-client-broken",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: client code that throws (a component, an events listener and a conversation.empty replacement)"
+}

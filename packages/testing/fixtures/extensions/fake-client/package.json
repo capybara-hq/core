@@ -1,0 +1,12 @@
+{
+  "name": "@capybara-hq/test-plugin-fake-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test fake: client extension components in five slots, CSS decoration, an events listener and a suggested appearance",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-client": "^0.1.0-rc.0",
+    "@capybara-hq/plugin-sdk": "^0.1.0-rc.0"
+  }
+}
