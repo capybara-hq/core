@@ -58,7 +58,7 @@ capybara-plugin guide <id> [--locale en|zh] [--mode <mode>] [--audience <audienc
 - **guide**: prints a setup guide of the plugin in the current directory as the kernel renders
   it for one locale (`en` default, `zh` falling back to English), mode (default: the place's
   first) and audience (default: the place's first), with `--var name=value` for the place's
-  variables: the title, each block (Markdown as is, code fenced with its title, a check as
+  variables (`{{mode}}` is the mode rendered, so `--var mode` is refused): the title, each block (Markdown as is, code fenced with its title, a check as
   `[check <id>] <label>`), then `unresolved: …` (variables the text uses without a value, or
   `none`). An invalid guide prints its issues and exits 1; warnings go to stderr.
 - **sync-versions**: after `changeset version` (which bumps only `package.json`), copies each
