@@ -17,12 +17,12 @@ import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
 import {
-  ANONYMOUS_NO_ENVIRONMENT,
-  type ConversationEnvironments,
-} from "../../../environments/conversation-environments.js";
+  ANONYMOUS_NO_DEVICE,
+  type ConversationDevices,
+} from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
-import { environmentPathsChange } from "../../../runtime/context/environment-paths.js";
+import { devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import {
   type HeldProvider,
@@ -43,12 +43,11 @@ export interface SandboxToolDeps {
   sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
   /**
-   * The environment a call enters: the root conversation's, checked for its owner every call.
+   * The device a call enters: the root conversation's, checked for its owner every call.
    * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
-   * conversation's environment can run without a cloud provider (ruling R8).
+   * conversation's device can run without a cloud provider (ruling R8).
    */
-  environments: Pick<ConversationEnvironments, "forTool"> &
-    Partial<Pick<ConversationEnvironments, "usableNow">>;
+  devices: Pick<ConversationDevices, "forTool"> & Partial<Pick<ConversationDevices, "usableNow">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -72,7 +71,7 @@ export interface SandboxToolDeps {
   storage: Pick<StorageService, "kernel" | "deployment" | "available">;
   /**
    * `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). `latestOfType` reads the
-   * conversation's latest `environment_paths` (absent in test stubs, which record none).
+   * conversation's latest `device_paths` (absent in test stubs, which record none).
    */
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
     Partial<Pick<EventLog, "publishChanged" | "latestOfType">>;
@@ -87,8 +86,8 @@ export interface SandboxToolDeps {
  * every provider call).
  */
 export interface SandboxSession {
-  /** The environment the call runs in (path leases are taken on it). */
-  environmentId: string;
+  /** The device the call runs in (path leases are taken on it). */
+  deviceId: string;
   h: SandboxHandle;
   /** The instance's roots: every path the call builds or checks is under one of them. */
   roots: SandboxRoots;
@@ -98,25 +97,25 @@ export interface SandboxSession {
 
 // ---- 模型可见文案（英文） ----
 
-/** This conversation's first use of its environment (in the instance's workspace). */
+/** This conversation's first use of its device (in the instance's workspace). */
 export const sandboxStartedNotice = (roots: SandboxRoots): string =>
-  `Environment started (first use in this conversation); the working directory is ${roots.workspace}, shared with the environment's other conversations.`;
+  `Device started (first use in this conversation); the working directory is ${roots.workspace}, shared with the device's other conversations.`;
 /** {@link sandboxStartedNotice} of an instance with the default roots. */
 export const SANDBOX_STARTED_NOTICE = sandboxStartedNotice(DEFAULT_SANDBOX_ROOTS);
-/** A new instance came up on the environment's kept files. */
+/** A new instance came up on the device's kept files. */
 export const SANDBOX_RESTARTED_NOTICE =
-  "The environment's instance was restarted; files are kept, running processes are gone and temporary files may be gone.";
+  "The device's instance was restarted; files are kept, running processes are gone and temporary files may be gone.";
 /**
- * The environment's files were reset (on request, or after they were lost) since this conversation
+ * The device's files were reset (on request, or after they were lost) since this conversation
  * last used it.
  */
 export const sandboxFilesResetNotice = (roots: SandboxRoots): string =>
-  `The environment's files were reset; earlier files in ${roots.workspace} and running processes are gone and temporary files may be gone, so recreate anything you still need.`;
+  `The device's files were reset; earlier files in ${roots.workspace} and running processes are gone and temporary files may be gone, so recreate anything you still need.`;
 /** {@link sandboxFilesResetNotice} of an instance with the default roots. */
 export const SANDBOX_FILES_RESET_NOTICE = sandboxFilesResetNotice(DEFAULT_SANDBOX_ROOTS);
 
 const BUSY_TEXT =
-  "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
+  "The device is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
@@ -128,17 +127,17 @@ export function noSandboxError(): ToolError {
 }
 
 const PATH_BUSY_TEXT =
-  "Another sub-agent or another conversation in this environment is writing this file; wait a moment and retry.";
+  "Another sub-agent or another conversation on this device is writing this file; wait a moment and retry.";
 const ANONYMOUS_TEXT =
   "The sandbox is not available to anonymous IM senders; do the task without the sandbox, or ask the person to link their account and start a new conversation.";
 const ENV_NOT_FOUND_TEXT =
-  "This conversation's environment was deleted or its owner can no longer use it; ask the user to start a new conversation in another environment.";
+  "This conversation's device was deleted or its owner can no longer use it; ask the user to start a new conversation on another device.";
 const ENV_FORBIDDEN_TEXT =
-  "This conversation's owner may no longer use its environment; ask the user to start a new conversation in an environment they can use.";
+  "This conversation's owner may no longer use its device; ask the user to start a new conversation on a device they can use.";
 const ENV_UNAVAILABLE_TEXT =
-  "This conversation's environment is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation in another environment, or an administrator to re-enable that provider.";
+  "This conversation's device is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation on another device, or an administrator to re-enable that provider.";
 const ENV_FILES_LOST_TEXT =
-  "This environment's files are gone. Ask the user to reset its files on the environments page, then retry.";
+  "This device's files are gone. Ask the user to reset its files on the devices page, then retry.";
 /**
  * A provider call that never connected (refused, unknown host, unreachable network): the request
  * did not reach the provider, so the call did nothing in the sandbox.
@@ -149,27 +148,27 @@ export const SANDBOX_UNREACHABLE_TEXT =
 export const SANDBOX_CONNECTION_DROPPED_TEXT =
   "The connection to the sandbox provider broke during this call, so it may or may not have taken effect; check the sandbox state before retrying. If it fails again, continue without the sandbox and ask the person to have a super admin check the sandbox extension's configuration (Admin console → Extensions).";
 const DEVICE_FILES_LOST_TEXT =
-  "This environment's directory is gone from its connected machine. Ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine, then retry.";
+  "This device's directory is gone from the device's machine. Ask the person to run capybara-device logout, then capybara-device login into this device, on that machine, then retry.";
 const FILES_GONE_TEXT =
-  "This environment's files are gone. Ask the user to reset its files on the environments page (for a connected machine: to run capybara-device logout, then capybara-device login, on it), then retry.";
+  "This device's files are gone. Ask the user to reset its files on the devices page (for a local device: to run capybara-device logout, then capybara-device login, on it), then retry.";
 const DEVICE_OFFLINE_TEXT =
-  "The connected machine is offline. Ask the person to start capybara-device on it.";
+  "The device's machine is offline. Ask the person to start capybara-device on it, or to start a new conversation on another device.";
 const DEVICE_OUTDATED_TEXT =
-  "The connected machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
+  "The device's machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
 const DEVICE_REVOKED_TEXT =
-  "The connected machine of this environment was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation in another environment.";
+  "The device's machine was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation on another device.";
 const deviceProtocolText = (detail: string): string =>
-  `The connected machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
+  `The device's machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
-/** The directory of attachments in the environment (each conversation has a subdirectory). */
+/** The directory of attachments in the device (each conversation has a subdirectory). */
 export const attachmentsRoot = (roots: SandboxRoots): string => `${roots.workspace}/attachments`;
 /** {@link attachmentsRoot} of an instance with the default roots. */
 export const ATTACHMENTS_ROOT = attachmentsRoot(DEFAULT_SANDBOX_ROOTS);
 /**
  * One conversation's attachment directory: the first 12 hex digits of the root conversation's
- * UUID, so conversations sharing an environment do not overwrite each other's files.
+ * UUID, so conversations sharing a device do not overwrite each other's files.
  */
 export const attachmentsDir = (roots: SandboxRoots, rootConversationId: string): string =>
   `${attachmentsRoot(roots)}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
@@ -261,7 +260,7 @@ export function withNotices(notices: readonly string[], text: string): string {
 
 /**
  * The root-independent checks of a path (`validateSandboxPathShape`: non-empty, absolute, no
- * control characters, no empty or `..` segments), run before the call enters its environment, so
+ * control characters, no empty or `..` segments), run before the call enters its device, so
  * a malformed path never creates or resumes an instance; root membership is checked inside
  * ({@link checkPath}).
  */
@@ -489,22 +488,22 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
     if (e.code === "sandbox.unavailable") {
       const reason = (e.details?.[0] as { reason?: unknown } | undefined)?.reason;
-      if (reason === ANONYMOUS_NO_ENVIRONMENT) return new ToolError(ANONYMOUS_TEXT);
+      if (reason === ANONYMOUS_NO_DEVICE) return new ToolError(ANONYMOUS_TEXT);
       return new ToolError(NO_SANDBOX_TEXT);
     }
     const detail = e.details?.[0] as { reason?: unknown; source?: unknown } | undefined;
-    if (e.code === "environment.not_found") return new ToolError(ENV_NOT_FOUND_TEXT);
-    if (e.code === "environment.forbidden" && detail?.reason === "machine_revoked") {
+    if (e.code === "device.not_found") return new ToolError(ENV_NOT_FOUND_TEXT);
+    if (e.code === "device.forbidden" && detail?.reason === "machine_revoked") {
       return new ToolError(DEVICE_REVOKED_TEXT);
     }
-    if (e.code === "environment.forbidden") return new ToolError(ENV_FORBIDDEN_TEXT);
-    if (e.code === "environment.unavailable") return new ToolError(ENV_UNAVAILABLE_TEXT);
-    if (e.code === "environment.files_lost" && detail?.source === "device") {
+    if (e.code === "device.forbidden") return new ToolError(ENV_FORBIDDEN_TEXT);
+    if (e.code === "device.unavailable") return new ToolError(ENV_UNAVAILABLE_TEXT);
+    if (e.code === "device.files_lost" && detail?.source === "local") {
       return new ToolError(DEVICE_FILES_LOST_TEXT);
     }
-    if (e.code === "environment.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
-    if (e.code === "environment.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
-    if (e.code === "environment.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
+    if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
+    if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
+    if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
   }
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
@@ -515,14 +514,14 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
 }
 
 /**
- * Runs `fn` in the environment of the call's conversation (a sub-agent: its root's): resolves and
- * checks the environment for the conversation's owner (binding an unbound conversation to the
+ * Runs `fn` in the device of the call's conversation (a sub-agent: its root's): resolves and
+ * checks the device for the conversation's owner (binding an unbound conversation to the
  * owner's default first), then `SandboxService.withSandbox` (the instance created, resumed or
  * rebuilt on the kept files as needed, every `exec` carrying the call's actor). Attachments are
  * synced first. Returns the value and the notices to put before the result (first use, a new
  * instance, newly copied attachments). When `withSandbox` rebuilds a gone instance and calls
  * `fn` again, the notices are the last call's. The instance's roots are recorded for the model
- * on the conversation's first call and whenever they change ({@link recordEnvironmentPaths}).
+ * on the conversation's first call and whenever they change ({@link recordDevicePaths}).
  */
 export async function inSandbox<T>(
   deps: SandboxToolDeps,
@@ -530,18 +529,18 @@ export async function inSandbox<T>(
   fn: (s: SandboxSession) => Promise<T>,
 ): Promise<{ value: T; notices: string[] }> {
   try {
-    const environmentId = await deps.environments.forTool(ctx.orgId, sandboxConversationOf(ctx));
+    const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     return await deps.sandbox.withSandbox(
       {
         orgId: ctx.orgId,
-        environmentId,
+        deviceId,
         // a sub-agent is told when another holder rebuilt the shared instance (final review m5)
         holderConversationId: ctx.conversationId,
         actor: { accountId: ctx.accountId, conversationId: ctx.conversationId },
       },
       async (h, p, info, signal) => {
-        const s: SandboxSession = { environmentId, h, roots: info.roots, p, signal };
-        await recordEnvironmentPaths(deps, ctx, info.roots);
+        const s: SandboxSession = { deviceId, h, roots: info.roots, p, signal };
+        await recordDevicePaths(deps, ctx, info.roots);
         const notices: string[] = [];
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
@@ -562,42 +561,42 @@ export async function inSandbox<T>(
 
 /**
  * Environments spec §13.1, ruling R22: the calling conversation's log (the log its model reads; a
- * sub-agent's own too) gets an `environment_paths` event on its first sandbox call, the default
+ * sub-agent's own too) gets an `device_paths` event on its first sandbox call, the default
  * roots included, and again whenever the held instance's roots differ from the latest recorded
  * ones; always before the call's result. One indexed read per call (migration 0094); parallel
  * calls that saw the same latest event write one event (its idempotency key).
  */
-async function recordEnvironmentPaths(
+async function recordDevicePaths(
   deps: Pick<SandboxToolDeps, "eventLog">,
   ctx: BuiltinCallContext,
   roots: SandboxRoots,
 ): Promise<void> {
   if (!deps.eventLog.latestOfType) return;
-  const latest = await deps.eventLog.latestOfType(ctx.conversationId, "environment_paths");
-  const change = environmentPathsChange(latest, roots, ctx.runId);
+  const latest = await deps.eventLog.latestOfType(ctx.conversationId, "device_paths");
+  const change = devicePathsChange(latest, roots, ctx.runId);
   if (change) await deps.eventLog.append(ctx.conversationId, [change]);
 }
 
-/** The conversation whose environment a call uses (the root conversation's for a sub-agent). */
+/** The conversation whose device a call uses (the root conversation's for a sub-agent). */
 export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>
   ctx.sandboxConversationId ?? ctx.conversationId;
 
 /**
- * Runs `fn` under the per-path lease of `path` in the session's environment (spec §10.4: the
+ * Runs `fn` under the per-path lease of `path` in the session's device (spec §10.4: the
  * kernel's own read-modify-write of one file never loses another holder's update, from any
- * conversation sharing the environment). `fn` gets `signal` combined with the path lease's: pass
+ * conversation sharing the device). `fn` gets `signal` combined with the path lease's: pass
  * it to every provider call, so a lost path lease stops the write. Without `pathLease` (test
  * stubs) it just runs `fn` with `signal`.
  */
 export async function withPathLease<T>(
   deps: Pick<SandboxToolDeps, "sandbox">,
-  s: Pick<SandboxSession, "environmentId">,
+  s: Pick<SandboxSession, "deviceId">,
   path: string,
   signal: AbortSignal,
   fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   if (!deps.sandbox.pathLease) return fn(signal);
-  const lease = await deps.sandbox.pathLease(s.environmentId, path, signal);
+  const lease = await deps.sandbox.pathLease(s.deviceId, path, signal);
   try {
     return await fn(AbortSignal.any([signal, lease.signal]));
   } finally {
@@ -607,17 +606,17 @@ export async function withPathLease<T>(
 
 /**
  * Whether a sandbox tool call of the conversation tree rooted at `conversationId` can run: a
- * cloud provider is loaded, or (ruling R8) the conversation's environment runs on a registered
- * kernel provider (`@device`). Without a conversation only the cloud provider counts.
+ * cloud provider is loaded, or (ruling R8) the conversation's device runs on a registered
+ * kernel provider (`@local`). Without a conversation only the cloud provider counts.
  */
 export async function sandboxUsable(
-  deps: Pick<SandboxToolDeps, "sandbox" | "environments">,
+  deps: Pick<SandboxToolDeps, "sandbox" | "devices">,
   orgId: string,
   conversationId: string | undefined,
 ): Promise<boolean> {
   if (deps.sandbox.cloudAvailable) return true;
-  if (conversationId === undefined || !deps.environments.usableNow) return false;
-  return deps.environments.usableNow(orgId, conversationId);
+  if (conversationId === undefined || !deps.devices.usableNow) return false;
+  return deps.devices.usableNow(orgId, conversationId);
 }
 
 /**
@@ -627,7 +626,7 @@ export async function sandboxUsable(
  * makes every sandbox tool of a listing share one answer.
  */
 export const unavailableWhenNoSandbox =
-  (deps: Pick<SandboxToolDeps, "sandbox" | "environments">) =>
+  (deps: Pick<SandboxToolDeps, "sandbox" | "devices">) =>
   async (ctx: ToolListingScope): Promise<string | null> => {
     if (ctx.replay === true) return null;
     const key = "sandboxUsable";

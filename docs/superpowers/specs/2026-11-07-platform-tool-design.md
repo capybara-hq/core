@@ -7,7 +7,7 @@
   is replaced by this tool, and its agent docs and `check:agent-docs` gate (§8.2, §8.3) move here.
   The co-build design is rewritten separately on top of this one.
 - Related: tool naming (`2026-10-29-tool-naming-claude-code-design.md`), plugin and component
-  management (`2026-11-05-plugin-component-management-design.md`), environments
+  management (`2026-11-05-plugin-component-management-design.md`), devices
   (`2026-11-07-environments-design.md`, on a branch), platform / org layering (on a branch).
 - Markers: **(decided)** is the maintainer's answer in the 2026-11-07 discussion; **(designer's
   call)** is decided here and may be overturned in review. Items without a marker restate current
@@ -212,7 +212,7 @@ Phase 1 domains **(designer's call)**: what co-build and the maintainer's exampl
 
 | Domain | Operations (indicative) |
 |---|---|
-| `platform` | overview (what the platform is, the tool families, what this person may do), `me` (this agent: model, tools, skills, sub-agents, environment) |
+| `platform` | overview (what the platform is, the tool families, what this person may do), `me` (this agent: model, tools, skills, sub-agents, device) |
 | `skills` | list, get, create (新建技能), switch on/off in the org |
 | `agents` | list, get, create, update (my own), create from template (with its preview) |
 | `agent-templates` | list, get, save as template |
@@ -233,7 +233,7 @@ The other routes are either added as operations or excluded with a reason in pha
   (`SKILL.md` frontmatter), agent templates (all fields, including the phase 4 ones), connector
   templates, tool naming, extension points (one topic each, from `EXTENSION_POINTS`), writing an
   extension, and the platform's concepts (platform and org, scope, owner and shareable, requests,
-  environments).
+  devices).
 - Field tables are generated from the JSON Schemas and registries (`pnpm gen:agent-docs`); prose is
   hand-written. `EXTENSION_POINTS` entries gain a `description` (SDK API change, changeset).
 - Live facts (which extension points are registered on this deployment, which plugins exist) come
@@ -275,8 +275,8 @@ skills.
   content is a result, not part of the definition).
 - Language: model-visible text English; card summaries zh and en through i18n; zh UI terms (平台,
   超级管理员, 智能体).
-- Depends on: platform / org layering and environments (both on branches) for the shape of some
-  operations (`me`'s environment, org config). This work starts on `main` now (decided, 2026-11-07):
+- Depends on: platform / org layering and devices (both on branches) for the shape of some
+  operations (`me`'s device, org config). This work starts on `main` now (decided, 2026-11-07):
   `me` reports the sandbox as it is today, and whichever lands second adapts. When this merges
   first, the fence makes those branches classify the routes they add.
 
@@ -594,7 +594,7 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   they are ordinary admin-console writes (§14.1 item 3).
 - `PlatformOperation.rememberable?: false` (static) makes a write never remembered whatever its
   class; used by `conversations.delete` / `abort` / `stop-background-task`, `agents.delete`,
-  `agents.delete-skill`, `environments.delete` / `reset-files` — replaces routing destructive personal writes through
+  `agents.delete-skill`, `devices.delete` / `reset-files` — replaces routing destructive personal writes through
   `confirmFor` → `org`, which mislabelled their rights.
 - `conversations.abort` is offered (`personal`, never remembered, refuses the run's own root
   conversation) — parity with the web's stop button.
@@ -630,10 +630,10 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   export.
 - Eval case titles (excerpts of a person's message) are conversation content, so results and cards
   use neutral labels — same privacy rule.
-- `environments.delete` and `environments.reset-files` are offered (`personal`, never remembered,
+- `devices.delete` and `devices.reset-files` are offered (`personal`, never remembered,
   the card warns that files are destroyed and names the conversations that lose their sandbox) —
-  parity, like `conversations.delete`. Both refuse in the precheck (`environment.current`) the
-  environment the run's root conversation is bound to (sub-agents use the root's) — like
+  parity, like `conversations.delete`. Both refuse in the precheck (`device.current`) the
+  device the run's root conversation is bound to (sub-agents use the root's) — like
   `conversations.delete` refusing the root; a root still unbound binds at its first sandbox call, so
   nothing is refused for it.
 - Audit detail of a tool write is `{ via: "agent", operation, agentConversationId, agentRunId }` —

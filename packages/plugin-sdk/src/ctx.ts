@@ -190,15 +190,20 @@ export interface ExtensionContext {
    * 界面贡献的运行时（清单 `ui` + `permissions.ui`）：
    * - `view` / `action`：只能在 `setup` 期间注册，id 是清单里 kind view 的贡献 id；
    *   `action` 收到视图里按钮或表单提交（`args.actionId` 区分是哪一个）；
-   * - `invalidate`：告诉内核「这个贡献变了」，打开着它的网页会重新取视图（经 bus，跨副本）；
+   * - `invalidate`：告诉内核「这个贡献变了」，打开着它的网页会重新取视图（经 bus，跨副本）；a
+   *   `platform.page` contribution takes no `orgId` (it refreshes the admin console), every other
+   *   contribution requires one;
    * - `verifyEmbedToken`：校验 embed 页面拿到的嵌入令牌，只认签给本插件、未过期的，且此刻插件仍在该组织启用、
-   *   调用者仍是 active 成员（组织页面还要求 member 以上），否则返回 null；返回的 `role` 是此刻的角色。
+   *   调用者仍是 active 成员，角色仍满足位置的 minRole，否则返回 null；返回的 `role` 是此刻的角色。A
+   *   platform-scope token (`scope: "platform"`, no `orgId`) verifies only for a `platform.page`
+   *   contribution while the account is still an active super admin.
    */
   ui: {
     view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
     action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
     invalidate(target: {
-      orgId: string;
+      /** Required, except for a `platform.page` contribution, where it must be omitted. */
+      orgId?: string;
       conversationId?: string;
       contribution: string;
     }): Promise<void>;

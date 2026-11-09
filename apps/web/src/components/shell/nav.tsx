@@ -10,7 +10,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
 import { type UiContributionItem, uiLocale } from "../../lib/ui";
-import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
+import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
 
 /**
  * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
@@ -23,7 +23,7 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (智能体, 技能, 连接器, 环境; there is no home page: the new
+ * `primary` items follow New conversation (智能体, 技能, 连接器, 设备; there is no home page: the new
  * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
@@ -62,11 +62,11 @@ const NAV: readonly {
     icon: "connector",
     section: "primary",
   },
-  // Environments: where a person's conversations run their commands and keep their files
+  // Devices: where a person's conversations run their commands and keep their files
   {
-    id: "environments",
-    key: "environments",
-    href: "/environments",
+    id: "devices",
+    key: "devices",
+    href: "/devices",
     audience: "all",
     icon: "cpu",
     section: "primary",
@@ -174,7 +174,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/plugins")) return "plugins";
   if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
-  if (under(pathname, "/environments")) return "environments";
+  if (under(pathname, "/devices")) return "devices";
   return "";
 }
 
@@ -225,7 +225,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 /**
- * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
+ * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
  * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
  * share a title, each label gets its plugin name. Empty while loading, without pages or on a failed
  * read (the group is then hidden).
@@ -290,18 +290,23 @@ const ADMIN_ICONS: Record<AdminPageId, IconName> = {
  */
 export function useAdminItems(
   counts: Partial<Record<AdminPageId, number | undefined>> = {},
+  /** The extensions' platform pages (`platform.page`), listed after the fixed pages. */
+  pages: readonly AdminExtensionPage[] = [],
 ): SidebarNavItem[] {
   const t = useTranslations("admin.nav");
-  return ADMIN_PAGES.map((p) => {
-    const count = counts[p.id];
-    return {
-      id: p.id,
-      label: t(p.id),
-      href: p.href,
-      icon: ADMIN_ICONS[p.id],
-      ...(count !== undefined && count > 0 ? { count } : {}),
-    };
-  });
+  return [
+    ...ADMIN_PAGES.map((p) => {
+      const count = counts[p.id];
+      return {
+        id: p.id,
+        label: t(p.id),
+        href: p.href,
+        icon: ADMIN_ICONS[p.id],
+        ...(count !== undefined && count > 0 ? { count } : {}),
+      };
+    }),
+    ...pages.map((p) => ({ ...p, id: `ext:${p.id}`, icon: "extension" as const })),
+  ];
 }
 
 /** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */

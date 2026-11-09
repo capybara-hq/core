@@ -4,7 +4,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
-import { EnvironmentsModule } from "../environments/environments.module.js";
+import { DevicesModule } from "../devices/devices.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { FilesModule } from "../files/files.module.js";
@@ -29,7 +29,7 @@ import { ChannelsOperations } from "./ops/channels.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
-import { EnvironmentsOperations } from "./ops/environments.ops.js";
+import { DevicesOperations } from "./ops/devices.ops.js";
 import { EvalsOperations } from "./ops/evals.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
@@ -46,6 +46,7 @@ import { RequestsOperations } from "./ops/requests.ops.js";
 import { SetupOperations } from "./ops/setup.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { ThemesOperations } from "./ops/themes.ops.js";
+import { UiOperations } from "./ops/ui.ops.js";
 import { PlatformModule } from "./platform.module.js";
 
 /**
@@ -83,13 +84,15 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   EvalsOperations,
   BackgroundOperations,
   PreviewersOperations,
-  // Task 11b: environments, agent skills
-  EnvironmentsOperations,
+  // Task 11b: devices, agent skills
+  DevicesOperations,
   AgentSkillsOperations,
   // themes (themes spec §9)
   ThemesOperations,
   // setup guide checks (setup guides v2 §12; plan task 13 adds the rest of the domain)
   SetupOperations,
+  // UI slot catalog (UI slots spec §3)
+  UiOperations,
 ] as const;
 
 /**
@@ -113,7 +116,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     InboxModule,
     ChannelsModule,
     EvalsModule,
-    EnvironmentsModule,
+    DevicesModule,
     BackgroundModule,
     FilesModule,
     ThemesModule,

@@ -30,7 +30,7 @@ function bridge(over: Partial<EmbedBridgeOptions> = {}) {
     frameWindow: () => frame,
     fetchToken: async () => ({ token: "tok", expiresIn: 300 }),
     locale: "en",
-    context: { orgId: "o1", conversationId: "c1" },
+    context: { scope: "org", orgId: "o1", conversationId: "c1" },
     readTheme: () => ({ theme: "dark", tokens: {} }),
     onResize: vi.fn(),
     onNavigate: vi.fn(),
@@ -174,6 +174,7 @@ describe("org file previewers section", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
       [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [P("a", 0), P("b", 1)] }),
+      [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [] }),
       [`PUT ${BASE}/file-previewers`]: (c) => {
         const items = (bodyOf(c) as { items: { id: string; disabled: boolean }[] }).items;
         return json(200, { items: items.map((i, n) => P(i.id, n, i.disabled)) });
@@ -214,6 +215,7 @@ describe("org file previewers section", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
       [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+      [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [] }),
     });
     await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" });
     await screen.findByText(en.extensions.empty);

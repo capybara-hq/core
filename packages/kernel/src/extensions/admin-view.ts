@@ -514,6 +514,7 @@ export class ExtensionAdmin {
           required: install?.required === true,
           ...scopeInfo,
           installSource: install?.source ?? null,
+          uiDropped: this.host.uiDropped(s.name),
           error: s.broken,
         };
       }
@@ -567,6 +568,7 @@ export class ExtensionAdmin {
         required: install?.required === true,
         ...scopeInfo,
         installSource: install?.source ?? null,
+        uiDropped: this.host.uiDropped(s.name),
       };
     });
   }

@@ -26,18 +26,41 @@ export const READ_ONLY_SECTIONS: readonly AgentSection[] = ["basics", "quick-act
 const isSection = (s: string): s is AgentSection =>
   (AGENT_SECTIONS as readonly string[]).includes(s);
 
+/** An extension's section (`agent.detail.section`): `ext.<plugin>.<id>`. */
+export type ExtSectionId = `ext.${string}.${string}`;
+
+/** A built-in section or an extension's. */
+export type AgentSectionId = AgentSection | ExtSectionId;
+
+/** The `?s=` value of an extension's section. */
+export const extSectionId = (c: { plugin: string; id: string }): ExtSectionId =>
+  `ext.${c.plugin}.${c.id}`;
+
 /** The sections the viewer's nav lists. */
 export const sectionsFor = (editable: boolean): readonly AgentSection[] =>
   editable ? AGENT_SECTIONS : READ_ONLY_SECTIONS;
 
-/** The section `?s=` opens for this viewer: an unknown or hidden one opens `basics`. */
-export function sectionOf(s: string | undefined, editable: boolean): AgentSection {
-  if (s === undefined || !isSection(s)) return "basics";
+/**
+ * The section `?s=` opens for this viewer: an unknown or hidden one opens `basics`; an extension's
+ * (`ext.<plugin>.<id>`) only when `ext` (the viewer's `agent.detail.section` contributions) has it.
+ */
+export function sectionOf(
+  s: string | undefined,
+  editable: boolean,
+  ext: readonly { plugin: string; id: string }[] = [],
+): AgentSectionId {
+  if (s === undefined) return "basics";
+  if (s.startsWith("ext."))
+    return ext.some((c) => extSectionId(c) === s) ? (s as ExtSectionId) : "basics";
+  if (!isSection(s)) return "basics";
   return sectionsFor(editable).includes(s) ? s : "basics";
 }
 
+/** The built-in section a loading frame draws for `s` (an extension's section has none: basics). */
+export const builtinSection = (s: AgentSectionId): AgentSection => (isSection(s) ? s : "basics");
+
 /** The URL of a section of the agent page. */
-export const sectionHref = (agentId: string, s: AgentSection) =>
+export const sectionHref = (agentId: string, s: AgentSectionId) =>
   `/agents/${encodeURIComponent(agentId)}?s=${s}`;
 
 /**

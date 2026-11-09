@@ -47,7 +47,7 @@ const POLL_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 /**
  * The worker's background task jobs (spec 2026-11-05-background-bash-design §4.3), each once per
  * tick across replicas:
- * - `background-task-poll` (every `sandbox.background.pollSeconds`): for every environment
+ * - `background-task-poll` (every `sandbox.background.pollSeconds`): for every device
  *   instance with running tasks (of any conversation using it), one exec through
  *   `SandboxService.ifRunning` (which never creates or resumes an instance) reports each task's
  *   exit file and liveness; ended tasks finish through {@link BackgroundTaskFinisher}. Each poll
@@ -100,17 +100,17 @@ export class BackgroundTaskPollJob {
     const groups = new Map<string, BackgroundTaskRow[]>();
     for (const t of await this.store.runningStarted()) {
       if (t.sid === null || t.sandboxCreatedAt === null) continue;
-      // one exec per instance: the tasks of every conversation sharing the environment
-      const key = `${t.environmentId} ${t.sandboxCreatedAt.getTime()}`;
+      // one exec per instance: the tasks of every conversation sharing the device
+      const key = `${t.deviceId} ${t.sandboxCreatedAt.getTime()}`;
       groups.set(key, [...(groups.get(key) ?? []), t]);
     }
     let finished = 0;
     for (const tasks of groups.values()) {
       if (signal.aborted) break;
       try {
-        // the environment's provider is not there (no cloud provider, `@device` not served):
+        // the device's provider is not there (no cloud provider, `@local` not served):
         // its tasks stay as they are until it is
-        const env = tasks[0]?.environmentId ?? null;
+        const env = tasks[0]?.deviceId ?? null;
         if (env === null ? !this.sandbox.cloudAvailable : !(await this.sandbox.availableFor(env))) {
           continue;
         }
@@ -118,7 +118,7 @@ export class BackgroundTaskPollJob {
       } catch (err) {
         if (signal.aborted) break;
         this.log.warn("cannot poll background tasks; retrying next tick", {
-          environmentId: tasks[0]?.environmentId,
+          deviceId: tasks[0]?.deviceId,
           err,
         });
       }
@@ -127,15 +127,15 @@ export class BackgroundTaskPollJob {
     return finished;
   }
 
-  /** Polls the tasks of one environment instance; returns how many finished. */
+  /** Polls the tasks of one device instance; returns how many finished. */
   private async pollSandbox(tasks: BackgroundTaskRow[], signal: AbortSignal): Promise<number> {
     const [first] = tasks as [BackgroundTaskRow];
-    // a task from before environments has no instance any more
+    // a task from before devices has no instance any more
     const r: IfRunningResult<Map<string, TaskReport>> =
-      first.environmentId === null
+      first.deviceId === null
         ? { kind: "not_running", status: "gone" }
         : await this.sandbox.ifRunning(
-            first.environmentId,
+            first.deviceId,
             { createdAt: first.sandboxCreatedAt as Date },
             (p, h, sig) => this.pollExec(actingAs(p, taskActor(first)), h, tasks, sig),
             signal,

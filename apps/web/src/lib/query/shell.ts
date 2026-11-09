@@ -94,11 +94,11 @@ export const inboxCountQuery = (orgId: string) =>
     freshness: "live",
   });
 
-/** The extension pages (`place: "page"`) of the sidebar's More menu. */
+/** The extension pages (slot `org.page`) of the sidebar's More menu. */
 export const extensionPagesQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).extensionPages(),
     fn: () =>
-      listUiContributions(orgId).then(({ items }) => items.filter((c) => c.place === "page")),
+      listUiContributions(orgId).then(({ items }) => items.filter((c) => c.slot === "org.page")),
     freshness: "orgConfig",
   });

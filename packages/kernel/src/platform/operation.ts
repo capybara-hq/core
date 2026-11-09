@@ -245,9 +245,9 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
       "The org's settings (tool search, language, sandbox policy, the Platform tool switch, the default theme): read and change.",
   },
   {
-    id: "environments",
+    id: "devices",
     description:
-      "Your own cloud environments (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
+      "Your own cloud devices (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
   },
   {
     id: "setup",
@@ -258,6 +258,11 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     id: "themes",
     description:
       "The themes on in this org, the one in effect for you and the org's theme setting: list. Themes are set through your preferences, the org settings and the deployment settings.",
+  },
+  {
+    id: "ui",
+    description:
+      "The UI slots an extension can contribute to (the catalog): list. A slot id is a ui contribution's `slot` in a plugin manifest.",
   },
 ];
 

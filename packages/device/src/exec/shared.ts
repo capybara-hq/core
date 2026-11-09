@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { DeviceOpError } from "./types.js";
 
-/** The file that marks a directory as an environment directory this program has used. */
+/** The file that marks a directory as a device directory this program has used. */
 export const ROOT_MARKER = ".capybara-device";
 
 /** How long a finished command's output pipes may stay open (held by a background child). */
@@ -12,7 +12,7 @@ export const PIPE_GRACE_MS = 200;
 
 export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** The roots of an environment directory: `<dir>/workspace`, `<dir>/skills`, `<dir>/tmp`. */
+/** The roots of a device directory: `<dir>/workspace`, `<dir>/skills`, `<dir>/tmp`. */
 export function osRoots(dir: string): SandboxRoots {
   return { workspace: join(dir, "workspace"), skills: join(dir, "skills"), tmp: join(dir, "tmp") };
 }
@@ -79,20 +79,20 @@ export class OutputCap {
   }
 }
 
-const MARKER_TEXT = "This directory is a capybara-device environment.\n";
+const MARKER_TEXT = "This directory is a capybara-device directory.\n";
 
 /**
- * Creates (or completes) an environment directory: the marker and the three roots. Only `login`
- * calls it, so logging in again after the files were lost starts the environment afresh.
+ * Creates (or completes) a device directory: the marker and the three roots. Only `login`
+ * calls it, so logging in again after the files were lost starts the device afresh.
  */
-export function prepareEnvironmentDir(dir: string): void {
+export function prepareDeviceDir(dir: string): void {
   for (const r of Object.values(osRoots(dir))) mkdirSync(r, { recursive: true });
   const marker = join(dir, ROOT_MARKER);
   if (!existsSync(marker)) writeFileSync(marker, MARKER_TEXT);
 }
 
 /**
- * The environment directory's marker and roots. Once the marker exists, the directory, the marker
+ * The device directory's marker and roots. Once the marker exists, the directory, the marker
  * or any root vanishing is "gone": nothing is recreated silently (log in again to start afresh).
  */
 export class RootGuard {
@@ -133,9 +133,7 @@ export class HostFiles {
     if (!isAbsolute(path)) throw policyError(`${path} is not an absolute path`);
     const p = resolve(path);
     if (!this.rootList().some((r) => isUnder(p, r))) {
-      throw policyError(
-        `${path} is outside the environment's roots (${this.rootList().join(", ")})`,
-      );
+      throw policyError(`${path} is outside the device's roots (${this.rootList().join(", ")})`);
     }
     return p;
   }
@@ -169,7 +167,7 @@ export class HostFiles {
   private async checkReal(path: string, real: string): Promise<string> {
     const roots = await Promise.all(this.rootList().map((r) => realpath(r).catch(() => r)));
     if (!roots.some((r) => isUnder(real, r))) {
-      throw policyError(`${path} resolves to ${real}, outside the environment's roots`);
+      throw policyError(`${path} resolves to ${real}, outside the device's roots`);
     }
     return real;
   }

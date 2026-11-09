@@ -117,7 +117,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
   the new conversation pins the composer at the bottom with the greeting and a sideways-scrolling
   agents row at the top; the page passes the agent's quick actions twice, as the composer's
   `QuickActions` and as `newConversation.quickActions` (a `QuickActionList`, listed on a phone, the
-  same `onPick`); the composer collapses its environment / model / effort pickers into one options
+  same `onPick`); the composer collapses its device / model / effort pickers into one options
   button and bottom sheet by itself (pass the pickers as usual). On a touch device
   (`isTouchPointer()`, read at the tap) a choice never focuses the composer, and a quick action
   fills it without focus. The shell lifts the conversation column above the iOS keyboard

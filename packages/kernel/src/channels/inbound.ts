@@ -15,8 +15,8 @@ import {
   imSenderContext,
   recipientLocale,
 } from "../conversations/message-context.js";
-import { EnvironmentsService, type EnvironmentView } from "../environments/environments.service.js";
-import { DEFAULT_ENVIRONMENT_ALIASES, environmentLabel } from "../environments/label.js";
+import { DevicesService, type DeviceView } from "../devices/devices.service.js";
+import { DEFAULT_DEVICE_ALIASES, deviceLabel } from "../devices/label.js";
 import { ApiError } from "../errors.js";
 import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
@@ -107,8 +107,8 @@ export class ChannelInbound {
     @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "decide">,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "answer">,
     @Inject(AnonymousGuests) private readonly guests: Pick<AnonymousGuests, "ensure">,
-    @Inject(EnvironmentsService)
-    private readonly environments: Pick<EnvironmentsService, "list" | "imDefault" | "setImDefault">,
+    @Inject(DevicesService)
+    private readonly devices: Pick<DevicesService, "list" | "imDefault" | "setImDefault">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "info">,
   ) {
     this.actions = new ChannelCardActions({
@@ -251,9 +251,9 @@ export class ChannelInbound {
       return;
     }
 
-    const envCommand = !isGroup && threadAccount !== null ? parseEnvCommand(e.text) : null;
-    if (envCommand !== null) {
-      await this.envCommand(row.orgId, accountId, envCommand.name, locale, replyText);
+    const deviceCommand = !isGroup && threadAccount !== null ? parseDeviceCommand(e.text) : null;
+    if (deviceCommand !== null) {
+      await this.deviceCommand(row.orgId, accountId, deviceCommand.name, locale, replyText);
       return;
     }
 
@@ -261,7 +261,7 @@ export class ChannelInbound {
     if (conversationId === undefined) {
       let created: string;
       try {
-        // bound to the person's IM default environment, else their default (environments spec
+        // bound to the person's IM default device, else their default (environments spec
         // §4.2 item 8); an anonymous sender's stays unbound (no sandbox)
         created = (await this.conversations.create(row.orgId, accountId, row.agentId, { im: true }))
           .id;
@@ -333,54 +333,54 @@ export class ChannelInbound {
   }
 
   /**
-   * Direct-message `/env` (environments spec §4.2 item 8): lists the person's usable environments,
+   * Direct-message `/device` (environments spec §4.2 item 8): lists the person's usable devices,
    * or with a name sets the IM default their next new conversation is bound to. The name matches
-   * case-insensitively against each label (`environmentLabel`: a former default demoted by a
-   * provider switch answers to e.g. "Personal (Docker sandbox)"); the default environment also
-   * answers to 个人环境 / Personal.
+   * case-insensitively against each label (`deviceLabel`: a former default demoted by a
+   * provider switch answers to e.g. "Personal (Docker sandbox)"); the default device also
+   * answers to 个人设备 / Personal.
    */
-  private async envCommand(
+  private async deviceCommand(
     orgId: string,
     accountId: string,
     name: string | null,
     locale: ChannelLocale,
     replyText: (text: string) => Promise<void>,
   ): Promise<void> {
-    const { items, defaultId } = await this.environments.list(orgId, accountId);
+    const { items, defaultId } = await this.devices.list(orgId, accountId);
     const usable = items.filter((v) => v.available);
-    const labelOf = (v: EnvironmentView) => environmentLabel(v, locale);
-    const current = (await this.environments.imDefault(orgId, accountId)) ?? defaultId;
+    const labelOf = (v: DeviceView) => deviceLabel(v, locale);
+    const current = (await this.devices.imDefault(orgId, accountId)) ?? defaultId;
     const list = usable
-      .map((v) => `- ${labelOf(v)}${v.id === current ? phrase("envCurrent", locale) : ""}`)
+      .map((v) => `- ${labelOf(v)}${v.id === current ? phrase("deviceCurrent", locale) : ""}`)
       .join("\n");
     const fill = (key: ChannelPhrase, vars: Record<string, string>) =>
       phrase(key, locale).replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m);
-    if (usable.length === 0) return replyText(phrase("envNone", locale));
-    if (name === null) return replyText(fill("envList", { list }));
+    if (usable.length === 0) return replyText(phrase("deviceNone", locale));
+    if (name === null) return replyText(fill("deviceList", { list }));
     const wanted = name.toLowerCase();
-    const is = (v: EnvironmentView) => labelOf(v).toLowerCase() === wanted;
+    const is = (v: DeviceView) => labelOf(v).toLowerCase() === wanted;
     // a name the person gave wins over a generated label, and both over the default's aliases
     const hit =
       usable.find((v) => v.name !== null && is(v)) ??
       usable.find(is) ??
-      usable.find((v) => v.isDefault && DEFAULT_ENVIRONMENT_ALIASES.includes(wanted));
+      usable.find((v) => v.isDefault && DEFAULT_DEVICE_ALIASES.includes(wanted));
     if (hit === undefined) {
       const unavailable = items.find((v) => !v.available && is(v));
       if (unavailable !== undefined) {
-        return replyText(fill("envUnavailable", { name: labelOf(unavailable), list }));
+        return replyText(fill("deviceUnavailable", { name: labelOf(unavailable), list }));
       }
-      return replyText(fill("envUnknown", { name, list }));
+      return replyText(fill("deviceUnknown", { name, list }));
     }
     try {
-      await this.environments.setImDefault(orgId, accountId, hit.id);
+      await this.devices.setImDefault(orgId, accountId, hit.id);
     } catch (err) {
       // deleted or made unusable since the list was read
-      if (err instanceof ApiError && err.code.startsWith("environment.")) {
-        return replyText(fill("envUnknown", { name, list }));
+      if (err instanceof ApiError && err.code.startsWith("device.")) {
+        return replyText(fill("deviceUnknown", { name, list }));
       }
       throw err;
     }
-    return replyText(fill("envSwitched", { name: labelOf(hit) }));
+    return replyText(fill("deviceSwitched", { name: labelOf(hit) }));
   }
 
   /**
@@ -511,9 +511,9 @@ export class ChannelInbound {
   }
 }
 
-/** `/env` or `/env <name>` (the exact command word, case-insensitive); anything else is null. */
-function parseEnvCommand(text: string): { name: string | null } | null {
-  const m = /^\/env(?:\s+([\s\S]*))?$/i.exec(text.trim());
+/** `/device` or `/device <name>` (the exact command word, case-insensitive); anything else is null. */
+function parseDeviceCommand(text: string): { name: string | null } | null {
+  const m = /^\/device(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (m === null) return null;
   const name = m[1]?.trim();
   return { name: name ? name : null };

@@ -1,5 +1,42 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.9
+
+### Minor Changes
+
+- d495d7d: The `init` message to an embed carries `context` as `EmbedInitContext`, narrowed on `scope`: an org
+  embed gets `{ scope: "org", orgId, conversationId? }`, a platform page of the admin console
+  `{ scope: "platform" }` (no `orgId`).
+- 18defa0: `platform.page` contributions are served to super admins on org-less routes under
+  `/api/v1/admin/ui/` (`contributions`, `views/:plugin/:id`, `actions/:plugin/:id`,
+  `embeds/:plugin/:id/token`, `stream`): the extension must be running (no org enablement applies)
+  and gets the platform's deployment config. `UiRenderArgs` / `UiActionArgs` become unions narrowed
+  on `scope`: the platform variant has `role: "superAdmin"` and no `orgId`. `EmbedClaims` gain
+  `scope: "org" | "platform"` (`orgId` absent exactly for the platform scope); a platform token
+  verifies only for a `platform.page` contribution while the account is still an active super admin,
+  and an org token never verifies for one. `ctx.ui.invalidate` takes no `orgId` for a `platform.page`
+  contribution (refreshing the admin console's stream) and throws when one is given.
+- 0a35407: Add the UI slot catalog (`UI_SLOTS`, `uiSlot`, `parseSlotRef`, `PLACE_SLOTS`, arrangement keys).
+- cf93278: The org UI routes gate every contribution by its slot: the slot's `minRole` (`org.settings.section`
+  admin and above, `org.page` member and above, conversation and agent slots any member), then its
+  scope (a readable conversation; an agent the caller can read in this org). `platform.page` is never
+  listed or served through an org route. `GET /orgs/:orgId/ui/contributions` takes `?slot=` and lists
+  `slot` and the resolved `after` anchor instead of `place`, ordered by extension name, then manifest
+  order. Views, actions and embed tokens take `agentId` for `agent.detail.section`; embed claims carry
+  it, and `ctx.ui.verifyEmbedToken` returns null when the current role no longer meets the slot's
+  `minRole`. `UiRenderArgs` gains `slot`, `scope` and `agentId`; `EmbedClaims` gains `agentId`.
+- 199f895: UI contributions name a slot (`slot: "conversation.panel"`, optionally `@<n>`, plus `after` for
+  slots with anchors); `place` stays accepted as a deprecated input. `validateUiContributions` now
+  covers only structural problems, and the new `resolveUiSlots` drops a contribution to an unknown
+  slot or version instead of failing the extension. `normalizePlace` is removed.
+
+### Patch Changes
+
+- ec79610: One name: devices. The program says device everywhere: `credential.json` holds `deviceId` (a file
+  from an older version is unusable: run `capybara-device logout` and log in again), the default
+  directory is `~/capybara-device/<deviceId>`, the sign-in follows the kernel's `device_sign_in.*`
+  error codes, and `status` prints `device`. SDK doc comments say device instead of environment.
+
 ## 0.1.0-rc.8
 
 ### Minor Changes

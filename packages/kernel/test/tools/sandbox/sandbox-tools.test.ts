@@ -118,7 +118,7 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.environment_instances, capybara.environments, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.device_instances, capybara.devices, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -150,23 +150,23 @@ async function sandboxConversation(): Promise<string> {
   return createConv(owner, orgId, agentId);
 }
 
-/** The environment a conversation is bound to (its owner's default unless one was chosen). */
+/** The device a conversation is bound to (its owner's default unless one was chosen). */
 async function envOf(convId: string): Promise<string> {
   const r = await db
     .selectFrom("conversations")
-    .select("environment_id")
+    .select("device_id")
     .where("id", "=", convId)
     .executeTakeFirstOrThrow();
-  if (r.environment_id === null) throw new Error(`conversation ${convId} is not bound`);
-  return r.environment_id;
+  if (r.device_id === null) throw new Error(`conversation ${convId} is not bound`);
+  return r.device_id;
 }
 
-/** The instance row of the conversation's environment. */
+/** The instance row of the conversation's device. */
 async function instanceOf(convId: string) {
   return db
-    .selectFrom("environment_instances")
+    .selectFrom("device_instances")
     .select(["handle", "generation", "status"])
-    .where("environment_id", "=", await envOf(convId))
+    .where("device_id", "=", await envOf(convId))
     .executeTakeFirst();
 }
 
@@ -189,14 +189,14 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const conv = await sandboxConversation();
     const r = await call(conv, "Bash", { description: "Test step", command: "pwd && echo hi" }, 1);
     expect(r.isError).toBe(false);
-    expect(r.content).toMatch(/^Environment started/);
+    expect(r.content).toMatch(/^Device started/);
     expect(r.content).toContain("/workspace\nhi");
     expect(r.content).toContain("[exit code: 0]");
     expect(r.display?.summary.en).toBeTruthy();
     expect(r.display?.summary.zh).toBeTruthy();
     // 第二次不再提示
     const r2 = await call(conv, "Bash", { description: "Test step", command: "echo again" }, 2);
-    expect(r2.content).not.toMatch(/Environment started/);
+    expect(r2.content).not.toMatch(/Device started/);
     expect(r2.content).toContain("again");
   });
 
@@ -837,11 +837,11 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     );
   });
 
-  it("environment route returns the bound environment", async () => {
+  it("device route returns the bound device", async () => {
     const conv = await sandboxConversation();
-    const url = `/api/v1/orgs/${orgId}/conversations/${conv}/environment`;
+    const url = `/api/v1/orgs/${orgId}/conversations/${conv}/device`;
     type V = {
-      environment: {
+      device: {
         id: string;
         isDefault: boolean;
         instance: { status: string; lastUsedAt: string } | null;
@@ -849,15 +849,15 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     };
     const before = await owner({ method: "GET", url });
     expect(before.statusCode, before.body).toBe(200);
-    const env = (before.json() as V).environment;
-    // bound at create to the owner's default environment, no instance before first use
+    const env = (before.json() as V).device;
+    // bound at create to the owner's default device, no instance before first use
     expect(env?.id).toBe(await envOf(conv));
     expect(env?.isDefault).toBe(true);
     expect(env?.instance).toBeNull();
     await call(conv, "Bash", { description: "Test step", command: "true" }, 1);
     const running = await owner({ method: "GET", url });
     expect(running.statusCode, running.body).toBe(200);
-    const s = (running.json() as V).environment?.instance;
+    const s = (running.json() as V).device?.instance;
     expect(s?.status).toBe("running");
     expect(Number.isNaN(Date.parse(s?.lastUsedAt ?? ""))).toBe(false);
     // someone who cannot see the conversation: as for its stream, 404 conversation.not_found
@@ -870,14 +870,14 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 24 * 3600_000)),
     ).toBeGreaterThan(0);
     const suspended = await owner({ method: "GET", url });
-    expect((suspended.json() as V).environment?.instance?.status).toBe("suspended");
-    // a deleted environment: null (its sandbox tools fail)
+    expect((suspended.json() as V).device?.instance?.status).toBe("suspended");
+    // a deleted device: null (its sandbox tools fail)
     const del = await owner({
       method: "DELETE",
-      url: `/api/v1/orgs/${orgId}/environments/${await envOf(conv)}`,
+      url: `/api/v1/orgs/${orgId}/devices/${await envOf(conv)}`,
     });
     expect(del.statusCode, del.body).toBe(202);
-    expect(((await owner({ method: "GET", url })).json() as V).environment).toBeNull();
+    expect(((await owner({ method: "GET", url })).json() as V).device).toBeNull();
   });
 
   it("deliver refuses files over sandbox.deliverMaxBytes", async () => {
@@ -1061,7 +1061,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(r.content).toContain("kept");
   });
 
-  it("after a files reset each conversation of the environment is told once that its files are gone", async () => {
+  it("after a files reset each conversation of the device is told once that its files are gone", async () => {
     // the file system comes back under the same id, as sandbox-docker's volumes do
     await setFakeFileSystemIdsByName(root, true);
     try {

@@ -18,12 +18,12 @@ export interface Credential {
   connectUrl: string;
   credential: string;
   orgId: string;
-  environmentId: string;
+  deviceId: string;
   dir: string;
   mode: DeviceMode;
-  /** The deployment's `environments.device.reconnectGraceSeconds`, returned with the credential. */
+  /** The deployment's `devices.local.reconnectGraceSeconds`, returned with the credential. */
   reconnectGraceSeconds: number;
-  /** The deployment's `environments.device.maxFrameBytes`: no frame this program sends is larger. */
+  /** The deployment's `devices.local.maxFrameBytes`: no frame this program sends is larger. */
   maxFrameBytes: number;
 }
 
@@ -62,9 +62,9 @@ export function policyPath(dir: string): string {
   return join(dir, "policy.json");
 }
 
-/** The default working directory of an environment: `~/capybara-device/<environmentId>`. */
-export function defaultWorkDir(environmentId: string, home: string = homedir()): string {
-  return join(home, "capybara-device", environmentId);
+/** The default working directory of a device: `~/capybara-device/<deviceId>`. */
+export function defaultWorkDir(deviceId: string, home: string = homedir()): string {
+  return join(home, "capybara-device", deviceId);
 }
 
 export function writePrivate(file: string, text: string): void {
@@ -99,7 +99,7 @@ export function readCredential(dir: string): Credential | undefined {
   } catch (e) {
     throw new Error(`${file} is not valid JSON (${(e as Error).message})`);
   }
-  for (const key of ["url", "connectUrl", "credential", "orgId", "environmentId", "dir", "mode"]) {
+  for (const key of ["url", "connectUrl", "credential", "orgId", "deviceId", "dir", "mode"]) {
     if (typeof raw[key as keyof Credential] !== "string") {
       throw new Error(`${file} is invalid: missing ${key}; log in again`);
     }

@@ -240,7 +240,7 @@ function api(
     [`GET ${PARENT}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${PARENT}/tools`]: () => json(200, { tools: [] }),
     [`GET ${PARENT}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${PARENT}/environment`]: () => json(200, { environment: null }),
+    [`GET ${PARENT}/device`]: () => json(200, { device: null }),
     [`GET ${PARENT}/subagents`]: () =>
       json(200, {
         subagents: [view("ch2", "Check tests", "running"), view("ch1", "Scan docs", "completed")],
@@ -288,7 +288,7 @@ const TASKS_SECTION = {
   plugin: "todo",
   id: "tasks-section",
   title: { zh: "待办", en: "Tasks" },
-  place: "section",
+  slot: "conversation.properties.section",
   kind: "view",
   icon: "list-checks",
 };
@@ -858,7 +858,7 @@ describe("sub-agents on the conversation page", () => {
           json(200, {
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
           }),
-        [`GET ${CHILD}/environment`]: () => json(200, { environment: null }),
+        [`GET ${CHILD}/device`]: () => json(200, { device: null }),
       },
       { child },
     );
@@ -890,7 +890,7 @@ describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
         `${PARENT}/tools`,
         `${ORG}/ui/contributions`,
         `${PARENT}/files`,
-        `${PARENT}/environment`,
+        `${PARENT}/device`,
         `${ORG}/connectors`,
         `${ORG}/agents/ag1/invocable-skills`,
         `${ORG}/attachments/limits`,
@@ -901,7 +901,7 @@ describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
     expect(group()?.textContent).toContain("1 subagents running");
     const props = await screen.findByRole("complementary", { name: "Properties" });
     expect(within(props).getByText(/1,234/)).toBeTruthy();
-    expect(within(props).getByText(new RegExp(en.chatPanel.environmentNone))).toBeTruthy();
+    expect(within(props).getByText(new RegExp(en.chatPanel.deviceNone))).toBeTruthy();
     expect(calls).toEqual([]);
   });
 });

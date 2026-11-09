@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
-import { ConversationEnvironments } from "../environments/conversation-environments.js";
+import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -69,8 +69,8 @@ export class BackgroundTasks {
     private readonly sandbox: Pick<SandboxService, "availableFor" | "ifRunning">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "findByIdem">,
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(ConversationEnvironments)
-    private readonly environments: Pick<ConversationEnvironments, "forTool">,
+    @Inject(ConversationDevices)
+    private readonly devices: Pick<ConversationDevices, "forTool">,
   ) {}
 
   /**
@@ -159,15 +159,12 @@ export class BackgroundTasks {
   }
 
   /**
-   * Whether the task's environment may still be used by its conversation's owner (the access
+   * Whether the task's device may still be used by its conversation's owner (the access
    * re-check every sandbox tool call makes); when it may not, the live read is skipped.
    */
-  private async environmentUsable(orgId: string, taskConversationId: string): Promise<boolean> {
+  private async deviceUsable(orgId: string, taskConversationId: string): Promise<boolean> {
     try {
-      await this.environments.forTool(
-        orgId,
-        await rootConversationOf(this.db.db, taskConversationId),
-      );
+      await this.devices.forTool(orgId, await rootConversationOf(this.db.db, taskConversationId));
       return true;
     } catch (e) {
       if (e instanceof ApiError) return false;
@@ -176,7 +173,7 @@ export class BackgroundTasks {
   }
 
   /**
-   * The end of the task's output, at most `tail` bytes. Read live when the task's environment
+   * The end of the task's output, at most `tail` bytes. Read live when the task's device
    * instance runs (never resuming a suspended one); a finished task whose sandbox does not run answers
    * with the last lines its finished event kept. Anything else is
    * `background_task.output_unavailable` (409).
@@ -192,16 +189,16 @@ export class BackgroundTasks {
     if (
       task.sid !== null &&
       task.sandboxCreatedAt !== null &&
-      task.environmentId !== null &&
-      (await this.sandbox.availableFor(task.environmentId)) &&
-      (await this.environmentUsable(orgId, task.conversationId))
+      task.deviceId !== null &&
+      (await this.sandbox.availableFor(task.deviceId)) &&
+      (await this.deviceUsable(orgId, task.conversationId))
     ) {
       const createdAt = task.sandboxCreatedAt;
       // the person reading it acts in the task's conversation
       const actor = { accountId, conversationId: task.conversationId };
       try {
         const r = await this.sandbox.ifRunning(
-          task.environmentId,
+          task.deviceId,
           { createdAt },
           async (p, h, signal) => {
             const res = await actingAs(p, actor).exec(h, {

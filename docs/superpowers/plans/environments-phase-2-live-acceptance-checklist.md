@@ -1,4 +1,4 @@
-# Environments phase 2: live acceptance checklist
+# Devices phase 2: live acceptance checklist
 
 Run on a deployment with this branch's kernel (gateway role reachable over `wss://` at
 `/device/connect`, through web's forwarding (`CAPYBARA_WEB_GATEWAY_URL`) or a proxy route, see
@@ -8,15 +8,15 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
 ## macOS, OS mode
 
 - [ ] `capybara-device login --url <deployment>` opens the browser; `/device` shows the code and the
-      machine; confirming with a new environment connects it (the environment shows online).
-- [ ] A conversation on the environment runs `Bash` and `Write`; the model is told the real
-      directories (the `environment_paths` line) and uses them, not `/workspace`.
+      machine; confirming with a new device connects it (the device shows online).
+- [ ] A conversation on the device runs `Bash` and `Write`; the model is told the real
+      directories (the `device_paths` line) and uses them, not `/workspace`.
 - [ ] Reading `~/.ssh`, `~/.npmrc` or `~/Library/Keychains` from `Bash` is refused; writing outside
       the working directory is refused.
 - [ ] With an empty policy, `curl` fails; after
       `capybara-device policy set allowedDomains registry.npmjs.org` and a restart, npm's registry is
       reachable and another domain is not (policy change narrows or widens only the local side; the
-      environment's egress setting still caps it). Then remove the domain again
+      device's egress setting still caps it). Then remove the domain again
       (`capybara-device policy set allowedDomains ""`), restart, and confirm npm's registry is
       refused again.
 
@@ -30,7 +30,7 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
 
 - [ ] Wi-Fi off for 30 s in the middle of a long `Bash` command: after it returns the result is
       delivered to the conversation (no duplicate run).
-- [ ] Wi-Fi off for 3 min: the environment shows offline, calls answer `environment.offline`, the
+- [ ] Wi-Fi off for 3 min: the device shows offline, calls answer `device.offline`, the
       command is killed when the program is back online (or finished and its result discarded after
       the grace).
 
@@ -38,23 +38,23 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
 
 - [ ] Revoking the machine from the web closes the program's connection (it logs the revocation and
       stops).
-- [ ] Deleting the environment: the program stops and the files in the working directory stay.
-- [ ] Logging a second machine into the same environment replaces the first: the first is revoked and
+- [ ] Deleting the device: the program stops and the files in the working directory stay.
+- [ ] Logging a second machine into the same device replaces the first: the first is revoked and
       disconnected, the second is online.
 
 ## Files lost
 
-- [ ] Stop the program, delete the environment's working directory by hand, start it again: the
-      environment page shows 文件已丢失 with the guidance and no 重建文件, and a tool call answers
+- [ ] Stop the program, delete the device's working directory by hand, start it again: the
+      device page shows 文件已丢失 with the guidance and no 重建文件, and a tool call answers
       files lost. Run `capybara-device logout`, then `capybara-device login` into the same
-      environment: the directory is recreated, the next conversation call works (a new
-      `environment_paths` line), and the page no longer says 文件已丢失.
+      device: the directory is recreated, the next conversation call works (a new
+      `device_paths` line), and the page no longer says 文件已丢失.
 
 ## Docker mode
 
-- [ ] On a machine with Docker, `login --mode docker`: the container `capybara-device-<environmentId>`
+- [ ] On a machine with Docker, `login --mode docker`: the container `capybara-device-<deviceId>`
       starts on first use, commands run as uid 1000 with the working directory at `/workspace`,
-      the root file system is read-only, and with an `egress: none` environment the container has no
+      the root file system is read-only, and with an `egress: none` device the container has no
       network.
 
 ## Service

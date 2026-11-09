@@ -389,7 +389,7 @@ export class PreviewerRegistry {
   }
 
   /**
-   * Whether an embed token for a `file-preview` contribution may be issued for this file: the
+   * Whether an embed token for a `file.preview` contribution may be issued for this file: the
    * viewer reads the conversation, the file is in it, and an enabled previewer of that extension
    * with `embed: contribution` takes it. Conversation / file not found throws 404.
    */

@@ -222,7 +222,7 @@ export function ComposerBar({
   /** The agent picker is absent on the new conversation page (its agents row picks). */
   pickers: {
     agent?: PickerProps;
-    environment?: PickerProps;
+    device?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };

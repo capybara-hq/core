@@ -77,25 +77,24 @@ const TASKS = {
   plugin: "todo",
   id: "tasks",
   title: { zh: "任务", en: "Tasks" },
-  place: "panel",
-  legacyPlace: "conversation",
+  slot: "conversation.panel",
   kind: "view",
   icon: "list-checks",
 };
 // a section and an inline card are not tabs of this panel
-const _TASKS_SECTION = { ...TASKS, id: "tasks-section", place: "section" };
+const _TASKS_SECTION = { ...TASKS, id: "tasks-section", slot: "conversation.properties.section" };
 const BOARD_PAGE = {
   plugin: "board",
   id: "overview",
   title: { zh: "看板", en: "Board" },
-  place: "page",
+  slot: "org.page",
   kind: "view",
 };
 const EMBED = {
   plugin: "board",
   id: "live",
   title: { zh: "实时", en: "Live" },
-  place: "panel",
+  slot: "conversation.panel",
   kind: "embed",
   icon: "layout-grid",
 };
@@ -141,7 +140,7 @@ describe("extension pages in the sidebar's More group", () => {
       .queryAllByRole("menuitem")
       .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
 
-  it("none without page contributions (the layout keeps only place: page)", async () => {
+  it("none without page contributions (the layout keeps only slot org.page)", async () => {
     const calls = stubApi({});
     renderFrame(shellOf(ME, { extensions: [] }), undefined, { locale: "en", version: "v0" });
     await userEvent.setup().click(within(nav()).getByRole("button", { name: "More" }));
@@ -326,7 +325,7 @@ describe("嵌入应用（第二档）", () => {
     params.current = { plugin: "board", id: "live" };
     const calls = stubApi({
       [`GET ${UI}/contributions`]: () =>
-        json(200, { items: [{ ...EMBED, place: "page", path: "/ui/live" }] }),
+        json(200, { items: [{ ...EMBED, slot: "org.page", path: "/ui/live" }] }),
       [`POST ${UI}/embeds/board/live/token`]: () => issued("/plugin-ui/board/live"),
     });
     const { container } = await renderRouteWithCache(pluginPath(), lastStubRoutes(), {

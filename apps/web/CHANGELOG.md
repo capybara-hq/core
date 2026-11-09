@@ -1,5 +1,76 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.14
+
+### Patch Changes
+
+- 0a5b15d: One name: devices. Environments become devices everywhere in the kernel: migration 0105 renames the
+  tables (`devices`, `device_instances`, `device_defaults`, `device_machines`), the `device_id` columns,
+  indexes and constraints, turns `source` `device` into `local`, the provider `@device` into `@local`
+  and the log event `environment_paths` into `device_paths`. Config `environments.*` becomes
+  `devices.maxPersonal` and `devices.local.*` (`CAPYBARA_DEVICES__…`); error codes `environment.*`
+  become `device.*` and the sign-in codes become `device_sign_in.*`; routes move to
+  `orgs/:orgId/devices…`, Platform operations to `devices.*`, the IM command to `/device`, sandbox
+  file systems to `cap-device-<id>` (existing cloud files under `cap-env-<id>` are left behind) and
+  the sign-in `verificationUri` to `<web>/devices/link`.
+  
+  Upgrading: sandbox jobs queued by the previous kernel (instance destroys, file resets) are dropped
+  (the hourly sweep still cleans deleted devices; a file reset must be requested again), and audit
+  rows written before the upgrade keep their `environment.*` action names.
+- 098c38c: One name: devices. The 环境 / Environments page is now 设备 / Devices at `/devices` and
+  `/devices/[id]`; 新建设备 offers 云端 / 本地 (cloud and local devices). The sign-in confirmation
+  page moves from `/device` to `/devices/link`; `/device` and `/environments` are the app's 404. The
+  composer's picker, the properties panel and all copy say 设备 / device. The design system's
+  composer picker prop `pickers.environment` is now `pickers.device` (reference blocks
+  `composer-device` and `composer-device-locked`).
+- 52279a1: The agent page lists extension sections (`agent.detail.section`) after the built-in ones, for
+  editable and read-only viewers alike.
+- 4d5e6aa: The web app renders extension UI through `ExtensionSlot` by slot (`conversation.panel`,
+  `conversation.properties.section`, `conversation.tool-result.card`, `org.page`, `file.preview`)
+  and reads the kernel's `slot` / `after` contribution fields; a properties section follows the
+  anchor it names (`context`, `files` or `background`).
+- bf9c72c: The organization settings page shows extension sections (`org.settings.section`) after the built-in
+  ones, for org admins and owners only.
+- 54c9697: Extensions' `platform.page` views appear in the admin console: a 扩展 group in the admin sidebar
+  lists them (hidden when there are none), each opens at `/admin/p/<plugin>/<id>` for super admins,
+  and an extension's detail page lists the interfaces it declared that did not take effect
+  (未生效的界面), each with its reason.
+- a2ba18a: 界面位置: org admins hide and reorder extension contributions per slot on the extensions page
+  (members read it), and the super admin sets the platform default in the deployment settings.
+  A page hidden from the lists still renders at its direct URL, an org page as well as a platform
+  page of the admin console.
+- 56c1e85: A page the arrangement hides now opens a not-found page, not a retry, when the arrangement read
+  answers 404 (a guest); the UI placement description says only org pages and platform pages stay
+  reachable by their direct link when hidden.
+- Updated dependencies [098c38c]
+  - @capybara-hq/design@0.2.0-rc.2
+
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- 8469cb8: The workspace 连接器 page is cards: every connector, and every connector template of a plugin on in
+  the org that has no connector yet, switched off or not. Org admins 启用 a template and go straight
+  to its input (补充配置); members 连接 a personal connector and, once connected, set 权限: their own
+  允许 / 询问 / 禁止 per tool for their connection (`GET` / `PUT …/connectors/:id/tool-policies/me`,
+  migration 0104). A connector tool call resolves the org's lock, the member's 禁止, the agent's
+  setting (which may now be `allow` for a connector tool), the member's 允许 / 询问, then the org
+  default. Connector templates and connectors show their plugin's icon, and the admin connector
+  templates list and detail show the template's display name with the id as meta.
+- 5f583ea: Phones: object list rows are compact (the ⋯ menu on the name line, the state at the end of the meta
+  line, the row action at its right), the page head stacks with a wrapping description, the settings
+  sub-nav sticks under the head, and the sidebar drawer lists 更多 in place and scrolls its middle as
+  one region.
+- 36705dd: On phones the new conversation pins the composer at the bottom, puts the greeting and a sideways
+  scrolling agents row at the top and lists the agent's quick actions in between; the composer's
+  environment, model and effort pickers become one options button with a bottom sheet (also in a
+  conversation), the effort label is no longer cut in half, a tap on an agent or a quick action no
+  longer pops the keyboard, and the composer stays above the iOS keyboard.
+- f60b796: `GET /orgs/:orgId/conversations/groups` gives each group's agent its avatar and profile time
+  (`agent.profile: { avatar, updatedAt }`, the agents API's shape), and the sidebar draws the group
+  titles from it: the agent's pixel avatar or image shows on every page, not only when the agents
+  list happens to be cached; an agent without an avatar still shows its initial.
+
 ## 0.1.0-rc.12
 
 ### Minor Changes

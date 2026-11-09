@@ -573,7 +573,7 @@ async function pushAndSettleAnon(e: Parameters<FakeChannelServer["push"]>[1]): P
   );
 }
 
-describe("/env: the IM default environment", () => {
+describe("/device: the IM default device", () => {
   /**
    * Sends a direct message and returns the bot's reply to it, matched by the reply's idempotency
    * key: model replies of earlier conversations are delivered to the same chat asynchronously and
@@ -586,30 +586,30 @@ describe("/env: the IM default environment", () => {
     const s = await sentAfter(n, "dm-u-owner", (x) => x.idempotencyKey === key);
     return s.message.text ?? "";
   };
-  const newEnvironment = async (name: string): Promise<string> => {
+  const newDevice = async (name: string): Promise<string> => {
     const res = await owner({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/environments`,
+      url: `/api/v1/orgs/${orgId}/devices`,
       payload: { name },
     });
     expect(res.statusCode, res.body).toBe(201);
-    return (res.json() as { environment: { id: string } }).environment.id;
+    return (res.json() as { device: { id: string } }).device.id;
   };
   const liveConversation = async () =>
     (await threads()).filter((r) => r.thread_key === "dm:u-owner" && r.archived_at === null)[0]
       ?.conversation_id as string;
-  const environmentOf = async (conversationId: string) =>
+  const deviceOf = async (conversationId: string) =>
     (
       await db
         .selectFrom("conversations")
-        .select("environment_id")
+        .select("device_id")
         .where("id", "=", conversationId)
         .executeTakeFirstOrThrow()
-    ).environment_id;
-  const defaultEnvironment = async () =>
+    ).device_id;
+  const defaultDevice = async () =>
     (
       await db
-        .selectFrom("environments")
+        .selectFrom("devices")
         .select("id")
         .where("org_id", "=", orgId)
         .where("owner_account_id", "=", ownerId)
@@ -620,97 +620,97 @@ describe("/env: the IM default environment", () => {
 
   let lab: string;
   beforeAll(async () => {
-    lab = await newEnvironment("Lab");
+    lab = await newDevice("Lab");
   });
   beforeEach(async () => {
-    await db.deleteFrom("environment_defaults").where("account_id", "=", ownerId).execute();
+    await db.deleteFrom("device_defaults").where("account_id", "=", ownerId).execute();
   });
 
-  it("/env lists environments in a direct message", async () => {
-    const text = await sendDm("env-1", "/env");
-    expect(text).toContain("Your environments:");
+  it("/device lists devices in a direct message", async () => {
+    const text = await sendDm("env-1", "/device");
+    expect(text).toContain("Your devices:");
     expect(text).toContain("- Personal (current)");
     expect(text).toContain("- Lab");
     expect(text).not.toContain("- Lab (current)");
   });
 
-  it("/env <name> sets the IM default for the next thread", async () => {
-    expect(await sendDm("env-2", "/env lab")).toBe(
-      "Your next new conversation will use the environment \u201cLab\u201d; send /new to start one.",
+  it("/device <name> sets the IM default for the next thread", async () => {
+    expect(await sendDm("env-2", "/device lab")).toBe(
+      "Your next new conversation will use the device \u201cLab\u201d; send /new to start one.",
     );
     const row = await db
-      .selectFrom("environment_defaults")
-      .select("environment_id")
+      .selectFrom("device_defaults")
+      .select("device_id")
       .where("org_id", "=", orgId)
       .where("account_id", "=", ownerId)
       .executeTakeFirstOrThrow();
-    expect(row.environment_id).toBe(lab);
-    expect(await sendDm("env-3", "/env")).toContain("- Lab (current)");
+    expect(row.device_id).toBe(lab);
+    expect(await sendDm("env-3", "/device")).toContain("- Lab (current)");
     // the unknown name lists what exists and changes nothing
-    expect(await sendDm("env-4", "/env nope")).toContain("No environment named \u201cnope\u201d");
+    expect(await sendDm("env-4", "/device nope")).toContain("No device named \u201cnope\u201d");
     // a new IM thread is bound to the IM default
     await sendDm("env-5", "/new");
     await pushAndSettle(dm("env-6", "u-owner", "hello"));
-    expect(await environmentOf(await liveConversation())).toBe(lab);
-    // the default environment answers to its display name
-    await sendDm("env-7", "/env Personal");
+    expect(await deviceOf(await liveConversation())).toBe(lab);
+    // the default device answers to its display name
+    await sendDm("env-7", "/device Personal");
     await sendDm("env-8", "/new");
     await pushAndSettle(dm("env-9", "u-owner", "again"));
-    expect(await environmentOf(await liveConversation())).toBe(await defaultEnvironment());
+    expect(await deviceOf(await liveConversation())).toBe(await defaultDevice());
   });
 
-  it("an environment named Personal wins over the default's alias", async () => {
-    const named = await newEnvironment("Personal");
+  it("a device named Personal wins over the default's alias", async () => {
+    const named = await newDevice("Personal");
     try {
-      await sendDm("env-10", "/env personal");
+      await sendDm("env-10", "/device personal");
       const row = await db
-        .selectFrom("environment_defaults")
-        .select("environment_id")
+        .selectFrom("device_defaults")
+        .select("device_id")
         .where("account_id", "=", ownerId)
         .executeTakeFirstOrThrow();
-      expect(row.environment_id).toBe(named);
+      expect(row.device_id).toBe(named);
     } finally {
-      await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/environments/${named}` });
+      await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/devices/${named}` });
     }
   });
 
-  it("/env <name> for an unavailable environment says so", async () => {
-    const old = await newEnvironment("Old");
+  it("/device <name> for an unavailable device says so", async () => {
+    const old = await newDevice("Old");
     try {
       // its files are kept by a provider that is not the current one
-      await sql`INSERT INTO capybara.environment_instances
-          (environment_id, org_id, provider, fs_handle, fs_status)
+      await sql`INSERT INTO capybara.device_instances
+          (device_id, org_id, provider, fs_handle, fs_status)
         VALUES (${old}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
-      const text = await sendDm("env-11", "/env old");
-      expect(text).toContain("The environment \u201cOld\u201d is unavailable");
+      const text = await sendDm("env-11", "/device old");
+      expect(text).toContain("The device \u201cOld\u201d is unavailable");
       expect(text).toContain("- Lab");
       expect(text).not.toContain("- Old");
       const row = await db
-        .selectFrom("environment_defaults")
-        .select("environment_id")
+        .selectFrom("device_defaults")
+        .select("device_id")
         .where("account_id", "=", ownerId)
         .executeTakeFirst();
       expect(row).toBeUndefined();
     } finally {
-      await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/environments/${old}` });
+      await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/devices/${old}` });
     }
   });
 
-  it("/env in a group is posted as a normal message", async () => {
+  it("/device in a group is posted as a normal message", async () => {
     const before = (await threads()).length;
     const sent = im.sent.length;
-    await pushAndSettle(group("g-env", "u-owner", "@bot /env lab"));
+    await pushAndSettle(group("g-env", "u-owner", "@bot /device lab"));
     const t = (await threads()).find((r) => r.thread_key === "g-env");
     expect((await threads()).length).toBe(before + 1);
     const messages = await userMessages(t?.conversation_id as string);
     expect(messages).toHaveLength(1);
-    expect(JSON.stringify(messages[0])).toContain("/env lab");
+    expect(JSON.stringify(messages[0])).toContain("/device lab");
     expect(
       im.sent
         .slice(sent)
-        .some((x) => /Your environments|Your next new conversation/.test(x.message.text ?? "")),
+        .some((x) => /Your devices|Your next new conversation/.test(x.message.text ?? "")),
     ).toBe(false);
-    expect(await db.selectFrom("environment_defaults").selectAll().execute()).toHaveLength(0);
+    expect(await db.selectFrom("device_defaults").selectAll().execute()).toHaveLength(0);
   });
 });
 
@@ -776,14 +776,14 @@ describe("kernel IM text in the person's language (run context spec §3.4)", () 
     return sentAfter(n, "dm-u-owner", (x) => x.idempotencyKey === key);
   };
 
-  it("/env replies: IM language, else the latest web message's, else the org's", async () => {
-    await db.deleteFrom("environment_defaults").where("account_id", "=", ownerId).execute();
+  it("/device replies: IM language, else the latest web message's, else the org's", async () => {
+    await db.deleteFrom("device_defaults").where("account_id", "=", ownerId).execute();
     // nothing known (the owner's web conversations hidden): the org's language (en)
     await sql`UPDATE capybara.conversations SET deleted_at = now()
       WHERE org_id = ${orgId} AND account_id = ${ownerId} AND kind = 'chat' AND deleted_at IS NULL
         AND id NOT IN (SELECT conversation_id FROM capybara.channel_threads)`.execute(raw);
-    const plain = await sendDm("loc-1", "/env");
-    expect(plain.message.text).toContain("Your environments:");
+    const plain = await sendDm("loc-1", "/device");
+    expect(plain.message.text).toContain("Your devices:");
     expect(plain.locale).toBe("en");
     // the person's latest web message is in Chinese: replies in Chinese, org still en
     const web = await owner({
@@ -795,19 +795,19 @@ describe("kernel IM text in the person's language (run context spec §3.4)", () 
       },
     });
     expect(web.statusCode, web.body).toBe(201);
-    const zh = await sendDm("loc-2", "/env");
-    expect(zh.message.text).toContain("你的环境：");
+    const zh = await sendDm("loc-2", "/device");
+    expect(zh.message.text).toContain("你的设备：");
     expect(zh.message.text).toContain("（当前）");
     expect(zh.locale).toBe("zh");
-    expect((await sendDm("loc-3", "/env lab")).message.text).toBe(
-      "下一个新对话将使用环境「Lab」，发送 /new 开始。",
+    expect((await sendDm("loc-3", "/device lab")).message.text).toBe(
+      "下一个新对话将使用设备「Lab」，发送 /new 开始。",
     );
     expect((await sendDm("loc-4", "/new")).message.text).toBe("已开始新对话");
     // the IM platform's language wins over the web one
-    const en = await sendDm("loc-5", "/env", "en-US");
-    expect(en.message.text).toContain("Your environments:");
+    const en = await sendDm("loc-5", "/device", "en-US");
+    expect(en.message.text).toContain("Your devices:");
     expect(en.locale).toBe("en");
-    await db.deleteFrom("environment_defaults").where("account_id", "=", ownerId).execute();
+    await db.deleteFrom("device_defaults").where("account_id", "=", ownerId).execute();
   });
 
   it("an unbound sender's bind prompt follows the IM language, else the org's", async () => {

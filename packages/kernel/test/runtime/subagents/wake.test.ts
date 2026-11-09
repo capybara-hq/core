@@ -17,7 +17,7 @@ import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { reconstructRequest } from "../../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../../src/evals/snapshot.js";
-import { environmentPathsText } from "../../../src/runtime/context/environment-paths.js";
+import { devicePathsText } from "../../../src/runtime/context/device-paths.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
@@ -431,10 +431,10 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     const sent = parentRequests("SCENARIO absorb");
     expect(sent).toHaveLength(3);
     expect(systemTexts(sent[1])).toEqual([]);
-    // ruling R22: the step's first sandbox call recorded the environment's directories
+    // ruling R22: the step's first sandbox call recorded the device's directories
     expect(systemTexts(sent[2])).toEqual([
       renderSubagentDelivery(delivery.payload),
-      environmentPathsText(DEFAULT_SANDBOX_ROOTS),
+      devicePathsText(DEFAULT_SANDBOX_ROOTS),
     ]);
     expect(
       ((end as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
@@ -471,8 +471,8 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     expect(wakeRequests).toHaveLength(2);
     expect(systemTexts(wakeRequests[1])).toEqual([
       ...all.map((d) => renderSubagentDelivery(d.payload)),
-      // ruling R22: the wake run's first sandbox call recorded the environment's directories
-      environmentPathsText(DEFAULT_SANDBOX_ROOTS),
+      // ruling R22: the wake run's first sandbox call recorded the device's directories
+      devicePathsText(DEFAULT_SANDBOX_ROOTS),
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
     // everything consumed: no delayed wake waits for this conversation
@@ -541,7 +541,7 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       conversationId: child.conversationId,
       sandboxConversationId: conv,
       // a row without a process: no instance to address
-      environmentId: null,
+      deviceId: null,
       runId: child.runId,
       callId: "call-x",
       triggerAccountId: ownerId,
@@ -896,7 +896,7 @@ async function finishChildTask(
     conversationId: child.conversationId,
     sandboxConversationId: conv,
     // a row without a process: no instance to address
-    environmentId: null,
+    deviceId: null,
     runId: child.runId,
     callId: "call-x",
     triggerAccountId: ownerId,

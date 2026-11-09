@@ -7,7 +7,6 @@ import { CatalogModule } from "./catalog/catalog.module.js";
 import { ChannelsModule } from "./channels/channels.module.js";
 import type { KernelConfig } from "./config/schema.js";
 import { TitlesModule } from "./conversations/titles.js";
-import { DevicesModule } from "./devices/devices.module.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
@@ -29,6 +28,7 @@ import { KERNEL_POOL, REDIS } from "./infra/tokens.js";
 import { ValidationModule } from "./infra/validation/validation.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_APP_OPTIONS } from "./lifecycle/tokens.js";
+import { LocalDevicesModule } from "./local-devices/local-devices.module.js";
 import { createConfiguredLogger } from "./log-config.js";
 import { KERNEL_OVERRIDE_TOKENS } from "./overrides.js";
 import { PlatformModule } from "./platform/platform.module.js";
@@ -110,8 +110,8 @@ export class KernelModule {
         TitlesModule,
         UsageReportModule,
         ChannelsModule,
-        // the @device sandbox provider, registered on every role (any replica may relay to a machine)
-        DevicesModule,
+        // the @local sandbox provider, registered on every role (any replica may relay to a machine)
+        LocalDevicesModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role

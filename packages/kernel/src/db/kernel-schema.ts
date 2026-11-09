@@ -284,8 +284,8 @@ export interface ConversationsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
   subagent_depth: ColumnType<number, number | undefined, number>;
-  /** 0088: the environment the conversation runs in; null = not chosen yet. */
-  environment_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0088, renamed in 0105: the device the conversation runs in; null = not chosen yet. */
+  device_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -462,8 +462,8 @@ export interface ConnectorsTable {
   /** 0081: the platform connector template this connector was made from (null = none). */
   platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
-   * 0105: the setup guide of its connector template it was last set up with (`{ guideId, version,
-   * hash, mode: null }`); null when unknown (custom connectors, connectors before 0105).
+   * 0106: the setup guide of its connector template it was last set up with (`{ guideId, version,
+   * hash, mode: null }`); null when unknown (custom connectors, connectors before 0106).
    */
   guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
 }
@@ -628,7 +628,7 @@ export interface LgCheckpointWritesTable {
 
 /** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
 /**
- * `channel_connections.guide_ack` (0099) and `connectors.guide_ack` (0105): the setup guide a
+ * `channel_connections.guide_ack` (0099) and `connectors.guide_ack` (0106): the setup guide a
  * target was set up with; `hash` is the v2 drift hash (`setupGuideHash`, admin audience) of
  * `mode` (null for a place without modes).
  */
@@ -862,8 +862,8 @@ export interface BackgroundTasksTable {
   read_offset: ColumnType<string, number | string | undefined, number | string>;
   /** Set while a stop is under way (0072); the poller skips such a task. */
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0088: the environment the task runs in. */
-  environment_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0088, renamed in 0105: the device the task runs in. */
+  device_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0023_sandboxes.sql: the legacy per-conversation sandbox; kept only for the cleanup job (0088). */
@@ -903,27 +903,30 @@ type InstanceHandle = ColumnType<
   string | null
 >;
 
-/** 0088_environments.sql: a long-lived environment (one instance plus a kept file system). */
-export interface EnvironmentsTable {
+/**
+ * 0088_environments.sql, renamed in 0105: a device. A cloud device is one instance plus a kept file
+ * system; a local device is a person's machine (device_machines).
+ */
+export interface DevicesTable {
   id: string;
   org_id: string;
   owner_kind: "personal";
   owner_account_id: string;
   name: ColumnType<string | null, string | null | undefined, string | null>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0093: `device` is a connected machine (environment_machines). */
-  source: "cloud" | "device";
+  /** 0093, renamed in 0105: `local` is a person's machine (device_machines). */
+  source: "cloud" | "local";
   provider: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0096: the provider a demoted default was demoted from; null for every other environment. */
+  /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
 }
 
-/** 0088_environments.sql: the instance and file system of an environment (replaces sandboxes). */
-export interface EnvironmentInstancesTable {
-  environment_id: string;
+/** 0088_environments.sql, renamed in 0105: the instance and file system of a device. */
+export interface DeviceInstancesTable {
+  device_id: string;
   org_id: string;
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** The provider's `FileSystemHandle`; null before the file system exists or after a reset. */
@@ -957,13 +960,13 @@ export interface EnvironmentInstancesTable {
 }
 
 /**
- * 0093_connected_environments.sql: the machine connected to a `device` environment. At most one
- * unrevoked row per environment; revoking sets `revoked_at` and keeps the row.
+ * 0093_connected_environments.sql, renamed in 0105: the machine of a local device. At most one
+ * unrevoked row per device; revoking sets `revoked_at` and keeps the row.
  */
-export interface EnvironmentMachinesTable {
+export interface DeviceMachinesTable {
   id: Generated<string>;
   org_id: string;
-  environment_id: string;
+  device_id: string;
   account_id: string;
   /** A hash of the machine credential, never the credential itself. */
   credential_hash: string;
@@ -984,11 +987,11 @@ export interface EnvironmentMachinesTable {
   revoked_at: TsNullable;
 }
 
-/** 0088_environments.sql: the environment a member's new conversations use by default. */
-export interface EnvironmentDefaultsTable {
+/** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
+export interface DeviceDefaultsTable {
   org_id: string;
   account_id: string;
-  environment_id: string;
+  device_id: string;
   updated_at: Ts;
 }
 
@@ -1295,10 +1298,10 @@ export interface KernelDatabase {
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
   sandboxes: LegacySandboxesTable;
-  environments: EnvironmentsTable;
-  environment_instances: EnvironmentInstancesTable;
-  environment_defaults: EnvironmentDefaultsTable;
-  environment_machines: EnvironmentMachinesTable;
+  devices: DevicesTable;
+  device_instances: DeviceInstancesTable;
+  device_defaults: DeviceDefaultsTable;
+  device_machines: DeviceMachinesTable;
   background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;

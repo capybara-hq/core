@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { LocalizedName } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName, UiDropReason } from "@capybara-hq/plugin-sdk";
 import type { PluginScope } from "../catalog/scope.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
@@ -324,6 +324,11 @@ export interface AdminExtensionView {
   builtin: boolean;
   /** Where the install record came from (`bootstrap` for the bootstrap step); null for config-declared. */
   installSource: "npm" | "file" | "catalog" | "bootstrap" | null;
+  /**
+   * UI contributions this replica's loaded instance left out at load (UI slots spec §3.2): a slot the
+   * catalog does not know, or not at that version. `[]` when the extension is not loaded here.
+   */
+  uiDropped: { id: string; ref: string; reason: UiDropReason }[];
   /**
    * Only with status `conflict`: the single-provider extension point and the other extensions that
    * provide it (they keep this one from loading; disabling them loads it, no restart).

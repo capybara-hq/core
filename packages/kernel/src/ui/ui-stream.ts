@@ -1,5 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { currentPlatformAccount } from "../ctx/create-ctx.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -13,7 +14,7 @@ import {
   type StreamBus,
   type StreamHandle,
 } from "../runtime/stream.js";
-import { isUiBusMessage, orgUiTopic, PAGE_MIN_ROLE, uiFrame } from "./registry.js";
+import { isUiBusMessage, orgUiTopic, PLATFORM_UI_TOPIC, uiFrame } from "./registry.js";
 
 interface OrgUiStreamsDeps {
   bus: StreamBus;
@@ -22,15 +23,31 @@ interface OrgUiStreamsDeps {
    * 连接建立时与每 `sseRecheckMs` 复核一次；组织级刷新只服务组织页面，要 member 以上（A38）。
    */
   memberRole(orgId: string, accountId: string): Promise<OrgRole | undefined>;
+  /** Whether the account is an active super admin right now (the platform stream, same cadence). */
+  superAdmin(accountId: string): Promise<boolean>;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
 }
 
 export interface OrgUiStreamParams {
+  scope?: "org";
   orgId: string;
   viewerAccountId: string;
   credential: CredentialCheck;
 }
+
+/** The platform refresh stream (`GET /api/v1/admin/ui/stream`): a super admin's, no org. */
+export interface PlatformUiStreamParams {
+  scope: "platform";
+  viewerAccountId: string;
+  credential: CredentialCheck;
+}
+
+export type UiStreamParams = OrgUiStreamParams | PlatformUiStreamParams;
+
+/** The log field naming the stream: its org, or the platform scope. */
+const whereOf = (p: UiStreamParams): { orgId: string } | { scope: "platform" } =>
+  p.scope === "platform" ? { scope: "platform" } : { orgId: p.orgId };
 
 /** The org role the org UI stream re-checks. */
 @Injectable()
@@ -51,14 +68,26 @@ export class UiStreamMembership {
       .executeTakeFirst();
     return row?.role;
   }
+
+  /** Whether the account is an active super admin (one query). */
+  superAdmin(accountId: string): Promise<boolean> {
+    return currentPlatformAccount(this.db.db, accountId);
+  }
 }
 
-async function authorize(d: OrgUiStreamsDeps, p: OrgUiStreamParams): Promise<ErrorCode | null> {
+/**
+ * The org refresh stream is member and above (UI slots spec §7): it carries `org.page` and
+ * `org.settings.section` refreshes; an `agent.detail.section` a guest views refreshes on navigation.
+ */
+export const ORG_STREAM_MIN_ROLE: OrgRole = "member";
+
+async function authorize(d: OrgUiStreamsDeps, p: UiStreamParams): Promise<ErrorCode | null> {
   const denied = await p.credential();
   if (denied !== null) return denied;
+  if (p.scope === "platform") return (await d.superAdmin(p.viewerAccountId)) ? null : "forbidden";
   const role = await d.memberRole(p.orgId, p.viewerAccountId);
   if (role === undefined) return "org.not_found";
-  return roleAtLeast(role, PAGE_MIN_ROLE) ? null : "ui.not_found";
+  return roleAtLeast(role, ORG_STREAM_MIN_ROLE) ? null : "ui.not_found";
 }
 
 /** 慢客户端的积压上限（刷新帧很小，超过即说明客户端不读了）。 */
@@ -66,7 +95,9 @@ const MAX_BACKLOG_BYTES = 1024 * 1024;
 
 /**
  * 组织级界面刷新流（SSE）：订阅内核主题 `org-ui.<orgId>`，把插件 `ctx.ui.invalidate`（不带对话）的刷新
- * 转发为 `event: ui`（`data: {"plugin","contribution"}`）。跨副本只经 Redis bus；进程内只持有连接本身的资源
+ * 转发为 `event: ui`（`data: {"plugin","contribution"}`）。The platform variant subscribes
+ * `platform-ui` (`invalidate` of a `platform.page`, no org) for a super admin, re-checked on the
+ * same interval (losing super admin ends it with `event: error`, code `forbidden`).跨副本只经 Redis bus；进程内只持有连接本身的资源
  * （订阅、心跳与复核定时器），停机时一并关闭。
  */
 @Injectable()
@@ -84,7 +115,7 @@ export class OrgUiStreams {
    */
   constructor(
     @Inject(KERNEL_BUS) bus: StreamBus,
-    @Inject(UiStreamMembership) membership: Pick<UiStreamMembership, "role">,
+    @Inject(UiStreamMembership) membership: Pick<UiStreamMembership, "role" | "superAdmin">,
     @Inject(KernelConfigService) config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
     @Optional() @Inject(GracefulShutdown) shutdown?: Pick<GracefulShutdown, "signal">,
@@ -92,6 +123,7 @@ export class OrgUiStreams {
     this.d = {
       bus,
       memberRole: (orgId, accountId) => membership.role(orgId, accountId),
+      superAdmin: (accountId) => membership.superAdmin(accountId),
       config,
       log,
     };
@@ -100,7 +132,7 @@ export class OrgUiStreams {
   }
 
   /** 复核凭据与成员关系并订阅；失败时尚未写响应，调用方按普通错误返回。 */
-  async open(p: OrgUiStreamParams, out: SseOutput): Promise<StreamHandle> {
+  async open(p: UiStreamParams, out: SseOutput): Promise<StreamHandle> {
     const denied = await authorize(this.d, p);
     if (denied !== null) throw new ApiError(denied, "Access denied");
     if (this.closing) return endedStream(out);
@@ -139,13 +171,14 @@ class OrgUiConnection implements StreamHandle {
 
   constructor(
     private readonly d: OrgUiStreamsDeps,
-    private readonly p: OrgUiStreamParams,
+    private readonly p: UiStreamParams,
     private readonly out: SseOutput,
     private readonly onClosed: () => void,
   ) {}
 
   async subscribe(): Promise<void> {
-    const un = await this.d.bus.subscribe(orgUiTopic(this.p.orgId), (m) => {
+    const topic = this.p.scope === "platform" ? PLATFORM_UI_TOPIC : orgUiTopic(this.p.orgId);
+    const un = await this.d.bus.subscribe(topic, (m) => {
       // begin() 之前（响应头还没写）到达的刷新丢掉：网页连上后会先取一次视图
       if (this.begun && isUiBusMessage(m)) this.write(uiFrame(m));
     });
@@ -171,7 +204,7 @@ class OrgUiConnection implements StreamHandle {
     const un = this.unsubscribe;
     this.unsubscribe = undefined;
     un?.().catch((err) =>
-      this.d.log.warn("org ui stream unsubscribe failed", { orgId: this.p.orgId, err }),
+      this.d.log.warn("org ui stream unsubscribe failed", { ...whereOf(this.p), err }),
     );
     if (this.begun) {
       try {
@@ -193,7 +226,7 @@ class OrgUiConnection implements StreamHandle {
       return;
     }
     if (this.out.backlog() > MAX_BACKLOG_BYTES) {
-      this.d.log.warn("org ui stream client too slow; closing", { orgId: this.p.orgId });
+      this.d.log.warn("org ui stream client too slow; closing", whereOf(this.p));
       this.close("abort");
     }
   }
@@ -207,7 +240,7 @@ class OrgUiConnection implements StreamHandle {
       code = await authorize(this.d, this.p);
     } catch (err) {
       this.d.log.warn("org ui stream access re-check failed; closing", {
-        orgId: this.p.orgId,
+        ...whereOf(this.p),
         err,
       });
       code = "internal";

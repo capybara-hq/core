@@ -8,6 +8,12 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { assertPlatformDefaultEligible, lockThemeShared } from "../themes/theme-state.js";
+import {
+  mergeArrangement,
+  type UiArrangement,
+  UiArrangementPatchSchema,
+  UiArrangementSchema,
+} from "../ui/arrangement.js";
 import { audit } from "./audit.js";
 import { SuperAdminLock } from "./super-admin.js";
 
@@ -104,6 +110,8 @@ export const DEPLOYMENT_SETTINGS = z.object({
   orgMarketplaceBrowse: z.boolean().default(true),
   /** The platform default theme (themes spec §7); `{ id: null }`: the built-in theme. */
   uiTheme: UiThemeSetting.default({ id: null }),
+  /** The platform default arrangement of UI slots (UI slots spec §5); orgs override per slot. */
+  uiArrangement: UiArrangementSchema.default({}),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -138,6 +146,8 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * disabled (else 400 `theme.not_available`), or `{ id: null }` for the built-in theme.
      */
     uiTheme: UiThemeSetting.strict().optional(),
+    /** Per slot, the entry to hide / order contributions with; null removes a slot's entry. */
+    uiArrangement: UiArrangementPatchSchema.optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -265,6 +275,20 @@ async function lockUiThemeRow(db: KernelSchemaDb): Promise<void> {
     .execute();
 }
 
+/**
+ * The platform default arrangement of UI slots, read live (the lists apply it). An invalid
+ * stored value reads as `{}` (the same fallback {@link SettingsService.get} uses).
+ */
+export async function readUiArrangement(db: KernelSchemaDb): Promise<UiArrangement> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "uiArrangement")
+    .executeTakeFirst();
+  const parsed = UiArrangementSchema.safeParse(row?.value);
+  return parsed.success ? parsed.data : {};
+}
+
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
 function mergeByOrg<T>(
   current: Record<string, T>,
@@ -369,9 +393,18 @@ export class SettingsService {
       runConcurrencyOverrides: runPatch,
       sandboxLimitOverrides: sandboxPatch,
       subagentLimitOverrides: subagentPatch,
+      uiArrangement: arrangementPatch,
     } = patch;
-    if (runPatch !== undefined || sandboxPatch !== undefined || subagentPatch !== undefined) {
+    if (
+      runPatch !== undefined ||
+      sandboxPatch !== undefined ||
+      subagentPatch !== undefined ||
+      arrangementPatch !== undefined
+    ) {
       const current = await this.get();
+      if (arrangementPatch !== undefined) {
+        next.uiArrangement = mergeArrangement(current.uiArrangement, arrangementPatch);
+      }
       if (runPatch !== undefined) {
         next.runConcurrencyOverrides = mergeByOrg(current.runConcurrencyOverrides, runPatch);
       }

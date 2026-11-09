@@ -51,10 +51,10 @@ export const keys = {
         "agentTemplateDeletePreview",
         id,
       ],
-      /** The person's environments in the org. */
-      environments: (): readonly unknown[] => [...all, "environments"],
-      /** One of the person's environments. */
-      environment: (id: string): readonly unknown[] => [...all, "environment", id],
+      /** The person's devices in the org. */
+      devices: (): readonly unknown[] => [...all, "devices"],
+      /** One of the person's devices. */
+      device: (id: string): readonly unknown[] => [...all, "device", id],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
@@ -299,6 +299,8 @@ export const keys = {
       ],
       /** The extensions' UI contributions (enabled and loaded). */
       contributions: (): readonly unknown[] => [...all, "contributions"],
+      /** The org's UI arrangement listing (every arrangeable slot, with the hidden ones). */
+      uiArrangement: (): readonly unknown[] => [...all, "uiArrangement"],
       /** The attachment limits. */
       attachmentLimits: (): readonly unknown[] => [...all, "attachmentLimits"],
       /** An agent's invocable skills, with a conversation's trial drafts when one is named. */
@@ -338,7 +340,7 @@ export const keys = {
           events: (): readonly unknown[] => [...c, "events"],
           queue: (): readonly unknown[] => [...c, "queue"],
           files: (): readonly unknown[] => [...c, "files"],
-          environment: (): readonly unknown[] => [...c, "environment"],
+          device: (): readonly unknown[] => [...c, "device"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           /** The agent tree of a root conversation (the agent map). */
           agentTree: (): readonly unknown[] => [...c, "agentTree"],
@@ -398,7 +400,7 @@ export const keys = {
        */
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
       /**
-       * The machine waiting behind a device user code (`/device`). Like a binding it needs a
+       * The machine waiting behind a device user code (`/devices/link`). Like a binding it needs a
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
        */
       pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
@@ -431,6 +433,25 @@ export const keys = {
       adminPurposes: (): readonly unknown[] => [...all, "adminPurposes"],
       /** The deployment's extensions (with the drain time limit). */
       extensions: (): readonly unknown[] => [...all, "extensions"],
+      /** The platform's UI contributions (`platform.page`; the admin console's 扩展 pages). */
+      uiContributions: (): readonly unknown[] => [...all, "uiContributions"],
+      /** The platform default UI arrangement listing. */
+      uiArrangement: (): readonly unknown[] => [...all, "uiArrangement"],
+      /** Platform page views: all of them, or one contribution's (prefixes). */
+      uiViews: (plugin?: string, contribution?: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        ...(plugin === undefined ? [] : [plugin]),
+        ...(contribution === undefined ? [] : [contribution]),
+      ],
+      /** One platform page view (`rest`: locale, item, card). */
+      uiView: (plugin: string, contribution: string, rest: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        plugin,
+        contribution,
+        rest,
+      ],
       /** One extension (the detail page's poll while it converges). */
       extension: (name: string): readonly unknown[] => [...all, "extension", name],
       /** Every extension's deployment config (an invalidation prefix). */

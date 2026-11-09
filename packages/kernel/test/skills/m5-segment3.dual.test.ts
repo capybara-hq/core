@@ -327,18 +327,14 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     expect(await firstRequestText(convX, x4.runId, def)).toContain("Updated skills");
 
     // ---- 3. 脚本进沙箱：Skill 复制到 /skills/fruit-sum@<digest>/，Bash 用 sh 执行 ----
-    // the previous Skill copied v2 into the same environment (beside v1; no new instance)
+    // the previous Skill copied v2 into the same device (beside v1; no new instance)
     expect(x4.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
     const dir = /\/skills\/fruit-sum@[0-9a-f]{12}/.exec(x4.result.content)?.[0] as string;
     expect(dir, x4.result.content).toBeTruthy();
     const box = await db
-      .selectFrom("environment_instances")
-      .innerJoin(
-        "conversations",
-        "conversations.environment_id",
-        "environment_instances.environment_id",
-      )
-      .select("environment_instances.handle")
+      .selectFrom("device_instances")
+      .innerJoin("conversations", "conversations.device_id", "device_instances.device_id")
+      .select("device_instances.handle")
       .where("conversations.id", "=", convX)
       .executeTakeFirstOrThrow();
     const meta = JSON.parse(

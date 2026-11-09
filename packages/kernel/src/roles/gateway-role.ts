@@ -3,17 +3,17 @@ import { Inject, Injectable } from "@nestjs/common";
 import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
 import { ChannelSupervisor } from "../channels/supervisor.js";
 import { ChannelWebhooks } from "../channels/webhook.js";
-import { DeviceGateway } from "../devices/device-gateway.js";
 import { ExtensionHost } from "../extensions/host.js";
 import type { GatewayRoutes } from "../http/gateway-routes.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_BUS } from "../infra/tokens.js";
+import { LocalDeviceGateway } from "../local-devices/local-device-gateway.js";
 
 /**
  * The gateway role's parts, driven by `KernelLifecycle` at fixed points of its start order and
  * stop phases: the channel long-connection supervisor (leader election and share) and the webhook
  * inbound (its raw Fastify route, {@link routes}, and its runtime cache's invalidation), and the
- * device connections ({@link DeviceGateway}, `GET /device/connect`). Provided
+ * device connections ({@link LocalDeviceGateway}, `GET /device/connect`). Provided
  * only by `GatewayModule`, so a process without the gateway role has none of them.
  */
 @Injectable()
@@ -32,7 +32,7 @@ export class GatewayRole {
     @Inject(KERNEL_BUS) private readonly bus: Pick<ExtensionContext["bus"], "subscribe">,
     @Inject(ChannelSupervisor) private readonly supervisor: ChannelSupervisor,
     @Inject(ChannelWebhooks) private readonly webhooks: ChannelWebhooks,
-    @Inject(DeviceGateway) private readonly devices: DeviceGateway,
+    @Inject(LocalDeviceGateway) private readonly devices: LocalDeviceGateway,
   ) {}
 
   /**
@@ -46,7 +46,7 @@ export class GatewayRole {
       webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
       devices: {
         gateway: this.devices,
-        maxFrameBytes: config.environments.device.maxFrameBytes,
+        maxFrameBytes: config.devices.local.maxFrameBytes,
       },
     };
   }

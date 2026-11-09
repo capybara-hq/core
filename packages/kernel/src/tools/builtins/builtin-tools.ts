@@ -5,7 +5,7 @@ import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
-import { ConversationEnvironments } from "../../environments/conversation-environments.js";
+import { ConversationDevices } from "../../devices/conversation-devices.js";
 import { ExtensionHost } from "../../extensions/host.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
@@ -58,7 +58,7 @@ export class BuiltinTools {
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
-    @Inject(ConversationEnvironments) environments: ConversationEnvironments,
+    @Inject(ConversationDevices) devices: ConversationDevices,
     @Inject(ExtensionPointDefaults) points: ExtensionPointDefaults,
     @Inject(WebPages) webPages: WebPages,
     /** The WebFetch extraction call: the `web_fetch` purpose, its hooks, usage and denials. */
@@ -78,7 +78,7 @@ export class BuiltinTools {
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
-      environments,
+      devices,
       background,
       tasks: { finisher, stopper },
       attachments,
@@ -103,7 +103,7 @@ export class BuiltinTools {
         storage,
         config,
         sandbox,
-        environments,
+        devices,
         attachments,
         eventLog,
         log,

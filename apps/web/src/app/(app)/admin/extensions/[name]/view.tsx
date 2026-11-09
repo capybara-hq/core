@@ -1,6 +1,14 @@
 "use client";
 
-import { DetailPage, ObjectMark, Text, versionLabel } from "@capybara-hq/design";
+import {
+  type Column,
+  DataTable,
+  DetailPage,
+  ObjectMark,
+  Stack,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -166,12 +174,15 @@ function Detail({
       {plugin === undefined ? (
         <Text tone="muted">{t("detail.notFound")}</Text>
       ) : tab === "overview" ? (
-        <AdminExtensionOverview
-          plugin={plugin}
-          drainSeconds={data.drainSeconds}
-          moving={moving}
-          {...changed}
-        />
+        <Stack gap={16}>
+          <AdminExtensionOverview
+            plugin={plugin}
+            drainSeconds={data.drainSeconds}
+            moving={moving}
+            {...changed}
+          />
+          <UiDropped dropped={plugin.uiDropped} />
+        </Stack>
       ) : tab === "permissions" ? (
         <AdminExtensionPermissions plugin={plugin} {...changed} />
       ) : (
@@ -187,5 +198,39 @@ function Detail({
         />
       )}
     </DetailPage>
+  );
+}
+
+/**
+ * 未生效的界面 (UI slots spec §3.2): the interfaces the loaded extension declared that the platform
+ * left out, each with its reason. Drawn only when there are some.
+ */
+function UiDropped({ dropped }: { dropped: AdminExtension["uiDropped"] | undefined }) {
+  const t = useTranslations("admin.extensions.uiDropped");
+  if (dropped === undefined || dropped.length === 0) return null;
+  const columns: Column<AdminExtension["uiDropped"][number]>[] = [
+    { key: "id", header: t("columns.id"), fit: true, cell: (d) => d.id },
+    { key: "slot", header: t("columns.slot"), tone: "muted", fit: true, cell: (d) => d.ref },
+    {
+      key: "reason",
+      header: t("columns.reason"),
+      tone: "muted",
+      wrap: true,
+      cell: (d) => (d.reason === "unknown-slot" ? t("unknownSlot") : t("unsupportedVersion")),
+    },
+  ];
+  return (
+    <Stack gap={8}>
+      <Text variant="small" tone="muted">
+        {t("title")}
+      </Text>
+      <Text variant="prose">{t("description")}</Text>
+      <DataTable
+        label={t("title")}
+        columns={columns}
+        rows={dropped}
+        rowKey={(d) => `${d.id}/${d.ref}`}
+      />
+    </Stack>
   );
 }

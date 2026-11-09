@@ -1,23 +1,15 @@
 import type { Locale } from "./cards.js";
 import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
+import type { UiSlotId, UiSlotScope } from "./ui-slots.js";
 import { isHttpUrl } from "./url.js";
 
 /**
- * Where a ui contribution goes (UI refresh spec §5.3):
- * - `panel`: a right panel of the conversation page, opened from the extension's icon in the title
- *   bar (one at a time);
- * - `section`: a section of the conversation's properties panel;
- * - `inline`: an inline card in the conversation, hanging off a tool result (`ToolResult.card`);
- * - `page`: an org page under "Extensions";
- * - `file-preview`: an embed previewer of `file-preview@1` (embed only, see `FilePreviewer.embed`);
- * - `conversation`: the old right-side tab; it means `panel` (see {@link normalizePlace}).
+ * The places of the first UI design, kept as a deprecated input (UI slots spec §4, step A): each maps
+ * to a slot through `PLACE_SLOTS` (`panel` and `conversation` → `conversation.panel`, `section` →
+ * `conversation.properties.section`, `inline` → `conversation.tool-result.card`, `page` →
+ * `org.page`, `file-preview` → `file.preview`).
  */
 export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
-
-/** A place with the old `conversation` mapped to `panel`. */
-export function normalizePlace(place: UiPlace): Exclude<UiPlace, "conversation"> {
-  return place === "conversation" ? "panel" : place;
-}
 
 /**
  * Icons a contribution may use (design system icon names; `puzzle` is the default and is drawn as
@@ -39,8 +31,9 @@ export const UI_ICONS = [
 export type UiIcon = (typeof UI_ICONS)[number];
 
 /**
- * An "open" target: a `panel` contribution of the same extension, scrolled to the block or item
- * whose `id` equals `item` (the panel's render receives it as {@link UiRenderArgs.item}).
+ * An "open" target: a `conversation.panel` contribution of the same extension, scrolled to the
+ * block or item whose `id` equals `item` (the panel's render receives it as
+ * {@link UiRenderArgs.item}).
  */
 export interface UiOpen {
   contribution: string;
@@ -57,7 +50,19 @@ export type UiKind = "view" | "embed";
 export interface UiContribution {
   id: string;
   title: { zh: string; en: string };
-  place: UiPlace;
+  /**
+   * The slot it goes in: `"<id>"` (version 1) or `"<id>@<n>"`, an id of `UI_SLOTS`. Exactly one of
+   * `slot` and `place`. An unknown slot or version does not fail the extension: the contribution is
+   * dropped (see `resolveUiSlots`).
+   */
+  slot?: string;
+  /** @deprecated use slot (UI slots spec §4, step A) */
+  place?: UiPlace;
+  /**
+   * One of the slot's `anchors` to be placed after; omitted (or not an anchor of the slot) = the
+   * slot's first anchor.
+   */
+  after?: string;
   kind: UiKind;
   /** 仅 embed：插件路由下 `/ui/` 开头的路径，须在 `permissions.http` 中声明为 GET。 */
   path?: string;
@@ -377,21 +382,43 @@ export function validateUiView(v: unknown): string[] {
 }
 
 /**
- * 调用者在组织内的角色（由高到低 owner / admin / member / guest）。`place: "page"` 的贡献只给 member 以上
- * （内核对 guest 返回 404，插件收不到 guest 的组织页面请求）；对话位置的贡献给能访问该对话的任何角色。
+ * The caller's role in the org (owner / admin / member / guest, highest first). A slot's `minRole`
+ * decides who may use its contributions, then its scope's rule (the kernel answers 404 to anyone
+ * else, so the extension never sees such a request): `org.page` member and up,
+ * `org.settings.section` admin and up; conversation slots any role that can read the
+ * conversation; `agent.detail.section` any role that can read the agent (read-only viewers
+ * included: tighten on `role` if you must).
  */
 export type UiRole = "owner" | "admin" | "member" | "guest";
 
-/** 内核调用插件 `render` 时传入的参数（身份由内核鉴权后给出，插件拿不到用户的会话凭据）。 */
-export interface UiRenderArgs {
-  orgId: string;
+/** The render args every scope shares (identity comes from the kernel's auth, never the caller's credentials). */
+export interface UiRenderArgsBase {
   accountId: string;
+  /** The catalog slot the contribution resolved to. */
+  slot: UiSlotId;
+  locale: Locale;
+  signal: AbortSignal;
+  /**
+   * The extension's effective deployment config: for an org, the platform's deployment config
+   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+   * platform's config (equal to `ctx.config`) while the org follows it; for the platform scope,
+   * the platform's config. Use it, not `ctx.config`, for work done for this org. Optional in the
+   * type so older extensions compile; the kernel always passes it.
+   */
+  config?: unknown;
+}
+
+/** 内核调用插件 `render` 时传入的参数，组织内的位置（会话、智能体、组织、文件）。 */
+export interface UiOrgRenderArgs extends UiRenderArgsBase {
+  /** The scope of {@link slot}: which of the context ids below are set. */
+  scope: Exclude<UiSlotScope, "platform">;
+  orgId: string;
   /** 调用者此刻在 `orgId` 的角色（内核按成员关系填，插件可据此收紧按钮等，见 {@link UiRole}）。 */
   role: UiRole;
   /** 仅对话视图。 */
   conversationId?: string;
-  locale: Locale;
-  signal: AbortSignal;
+  /** Only an agent view (`agent.detail.section`): an agent of `orgId` the caller can read. */
+  agentId?: string;
   /** A panel opened from an open target: the block or item `id` to scroll to. */
   item?: string;
   /**
@@ -400,42 +427,90 @@ export interface UiRenderArgs {
    * recorded this very card (same extension, view and key); scope lookups by `conversationId` too.
    */
   card?: { callId: string; key?: string };
-  /**
-   * The extension's effective deployment config for this org: the platform's deployment config
-   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
-   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
-   * for work done for this org. Optional in the type so older extensions compile; the kernel
-   * always passes it.
-   */
-  config?: unknown;
 }
 
-/** 视图里的按钮或表单提交：`actionId` 来自块；表单提交时带 `answer`。 */
-export interface UiActionArgs extends UiRenderArgs {
+/**
+ * The render args of a `platform.page` contribution: rendered for a super admin in the admin
+ * console, with no org (and so no org role, conversation or agent).
+ */
+export interface UiPlatformRenderArgs extends UiRenderArgsBase {
+  scope: "platform";
+  orgId?: undefined;
+  role: "superAdmin";
+  conversationId?: undefined;
+  agentId?: undefined;
+  item?: undefined;
+  card?: undefined;
+}
+
+/** 内核调用插件 `render` 时传入的参数：narrow on `scope` (`"platform"` has no `orgId`). */
+export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
+
+/** What a button or form submit adds to the render args. */
+export interface UiActionInput {
   actionId: string;
   payload?: unknown;
   answer?: FormAnswer;
 }
 
+/** An action of an org-scope view. */
+export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {}
+/** An action of a `platform.page` view. */
+export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInput {}
+/** 视图里的按钮或表单提交：`actionId` 来自块；表单提交时带 `answer`。 */
+export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
+
 /** 动作结果：一条提示，或一份新的视图。 */
 export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
 
-/** 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）。`exp` 为 Unix 秒。 */
-export interface EmbedClaims {
+/** The embed claims both scopes share. `exp` 为 Unix 秒。 */
+export interface EmbedClaimsBase {
   plugin: string;
-  orgId: string;
   accountId: string;
-  /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
-  role: UiRole;
-  conversationId?: string;
-  /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
-  fileId?: string;
   contribution: string;
   exp: number;
 }
 
+/** An org-scope embed token's claims (every slot but `platform.page`). */
+export interface OrgEmbedClaims extends EmbedClaimsBase {
+  scope: "org";
+  orgId: string;
+  /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
+  role: UiRole;
+  conversationId?: string;
+  /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
+  agentId?: string;
+  /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
+  fileId?: string;
+}
+
+/** A `platform.page` embed token's claims: a super admin's, with no org, conversation, agent or file. */
+export interface PlatformEmbedClaims extends EmbedClaimsBase {
+  scope: "platform";
+  orgId?: undefined;
+  role: "superAdmin";
+  conversationId?: undefined;
+  agentId?: undefined;
+  fileId?: undefined;
+}
+
+/**
+ * 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）: narrow on `scope` (`"platform"` has no
+ * `orgId` and `role` `"superAdmin"`).
+ */
+export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
+
 /** 外层页面与嵌入 iframe 之间 `postMessage` 协议的版本标识。 */
 export const EMBED_PROTOCOL = "capybara-embed/1";
+
+/**
+ * What an embed's `init` says about where it is shown, narrowed on `scope` like {@link EmbedClaims}:
+ * an org's page, panel, section or previewer (`orgId`, and the conversation when there is one), or
+ * a platform page of the admin console (no org).
+ */
+export type EmbedInitContext =
+  | { scope: "org"; orgId: string; conversationId?: string }
+  | { scope: "platform"; orgId?: undefined; conversationId?: undefined };
 
 /** 外层页面发给 iframe 的消息。 */
 export type EmbedParentMessage =
@@ -446,7 +521,7 @@ export type EmbedParentMessage =
       locale: Locale;
       theme: "dark" | "light";
       tokens: Record<string, string>;
-      context: { orgId: string; conversationId?: string };
+      context: EmbedInitContext;
     }
   | { protocol: typeof EMBED_PROTOCOL; type: "token"; token: string }
   | {

@@ -29,7 +29,7 @@ numbers below refer to it). v1 for context: `docs/superpowers/specs/2026-11-08-p
 - English for code, comments, identifiers, commit messages, model-visible text; UI text through
   i18n zh and en; zh UI says 平台 / 超级管理员 / 智能体, never 企业 or `agent` (`pnpm check:i18n`).
 - Pre-0.1.0: change formats directly, no compatibility layer. Applied migrations are immutable;
-  the new one is the next free number (`0105_setup_guides_v2.sql`: origin/main took 0102 and 0103,
+  the new one is the next free number (`0106_setup_guides_v2.sql`: origin/main took 0102, 0103 and 0105,
   the unreleased fix/acceptance branch 0104; checked 2026-11-09 in Task 6).
 - Kernel: `@Injectable` providers, explicit `@Inject` on every constructor parameter, DTOs via
   `createZodDto`, writes in `@Transactional()` methods, Redis calls never inside a transaction
@@ -472,7 +472,7 @@ Wave notes:
 ### Task 6: Kernel connector-template place, migration and connector ack
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0105_setup_guides_v2.sql` (0102–0104 are taken on
+- Create: `packages/kernel/src/migrations/0106_setup_guides_v2.sql` (0102–0105 are taken on
   origin/main and fix/acceptance)
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (`ConnectorsTable.guide_ack`)
 - Modify: `packages/kernel/src/extensions/guide-places.ts` (connector-template resolver and target
@@ -995,6 +995,6 @@ Also: add permissions.setupChecks to the kernel permission snapshot; import SETU
 
 ## Status (2026-11-09, handover)
 
-- Waves 1–3 done, reviewed, green (T1–T8, migration 0105). main merged at f09e7df3.
+- Waves 1–3 done, reviewed, green (T1–T8, migration 0105, renumbered 0106 when main took 0105). main merged at f09e7df3.
 - Wave 4 in progress: T10 (f178b922) and T9 (db2c2329) are partial WIP commits from an interrupted session; finish, then review T10 alone as a trust boundary.
 - Then waves 5–10 as planned (T11 kernel checks + token probe, T12 live rows, T13–T14 Platform setup ops, T15 token paste warning, T16 docs, T17 baselines, T18 release, T19 Slack plugin migration).

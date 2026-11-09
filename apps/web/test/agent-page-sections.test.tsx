@@ -779,7 +779,7 @@ describe("the agent page renders on the server (web-SSR spec §6)", () => {
       me: as("member"),
     });
     expect(new Set(calls.map((c) => c.url))).toEqual(
-      new Set(["/api/v1/me", `${ORG}/readiness`, `${ORG}/agents/ag1`]),
+      new Set(["/api/v1/me", `${ORG}/readiness`, `${ORG}/agents/ag1`, `${ORG}/ui/contributions`]),
     );
     expect(screen.getByText(en.agents.readOnly)).toBeTruthy();
     expect(browser).toEqual([]);

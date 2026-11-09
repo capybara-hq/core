@@ -29,17 +29,22 @@ const PANEL = {
   plugin: "todo",
   id: "tasks-panel",
   title: { zh: "待办", en: "Tasks" },
-  place: "panel",
+  slot: "conversation.panel",
   kind: "view",
   icon: "list-checks",
 };
-const SECTION = { ...PANEL, id: "tasks-section", place: "section" };
-const CARD = { ...PANEL, id: "tasks-card", place: "inline", title: { zh: "待办", en: "todo" } };
+const SECTION = { ...PANEL, id: "tasks-section", slot: "conversation.properties.section" };
+const CARD = {
+  ...PANEL,
+  id: "tasks-card",
+  slot: "conversation.tool-result.card",
+  title: { zh: "待办", en: "todo" },
+};
 const EMBED = {
   plugin: "board",
   id: "live",
   title: { zh: "实时", en: "Live" },
-  place: "panel",
+  slot: "conversation.panel",
   kind: "embed",
   icon: "layout-grid",
 };
@@ -56,7 +61,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${BASE}`]: () => json(200, CONV()),
     [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${BASE}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${BASE}/environment`]: () => json(200, { environment: null }),
+    [`GET ${BASE}/device`]: () => json(200, { device: null }),
     [`GET ${BASE}/tools`]: () => json(200, { tools: [] }),
     [`GET ${ORG}/agents`]: () => json(200, AGENTS),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
@@ -257,7 +262,10 @@ describe("embed panels (tier two)", () => {
       frame.dispatchEvent(new Event("load"));
     });
     expect(sent).toEqual([
-      expect.objectContaining({ type: "init", context: { orgId: "o1", conversationId: "c1" } }),
+      expect.objectContaining({
+        type: "init",
+        context: { scope: "org", orgId: "o1", conversationId: "c1" },
+      }),
     ]);
     const fromFrame = (data: unknown) =>
       act(() => {

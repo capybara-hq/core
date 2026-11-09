@@ -26,7 +26,7 @@ their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` ro
 | `packages/kernel` | The kernel: one NestJS + Fastify app (config, db, `ctx`, extension host, HTTP) |
 | `packages/testing` | Test containers, dual-replica helpers, fake servers, fake extensions (`fixtures/extensions/*`) |
 | `packages/plugin-tools` | The published plugin toolchain `capybara-plugin` (`pack`, `check`, `marketplace`, `release`, …) |
-| `packages/device` | The published program `capybara-device` that connects a laptop or server to a deployment as an environment (HTTP and WebSocket only; imports only `plugin-sdk`) |
+| `packages/device` | The published program `capybara-device` that connects a laptop or server to a deployment as a local device (HTTP and WebSocket only; imports only `plugin-sdk`) |
 | `packages/design` | Web design system (spec `docs/design/spec.md`) |
 | `apps/capybara` | CLI |
 | `apps/web` | Next web app; talks to the kernel only over HTTP; pages built only from `@capybara-hq/design` |
@@ -138,7 +138,7 @@ Each line is the rule you must not miss; the skill has the rest.
   purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
   through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
   recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** work happens in environments (one instance + a file system kept until the environment
+- **Sandboxes:** work happens in devices (one instance + a file system kept until the device
   is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
   never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)

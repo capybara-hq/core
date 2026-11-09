@@ -312,7 +312,7 @@ imports no domain module). `defineOperation({...})` fields:
 - `confirm`: `read` runs without asking; `personal` asks and may be remembered; `org` and `platform`
   ask every time and are never remembered. `rememberable: false` makes a `personal` write asked every
   time too (destructive personal writes: `conversations.delete` / `abort` /
-  `stop-background-task`, `agents.delete`, `agents.delete-skill`, `environments.delete` /
+  `stop-background-task`, `agents.delete`, `agents.delete-skill`, `devices.delete` /
   `reset-files`). `confirmFor(input, ctx)` picks the class per call when it depends on the target
   (`agents.update`: `personal` only on the actor's own private agent; a throw counts as not
   remembered). A route marked `HUMAN_ONLY` is not an operation (exclusion `human-only`).

@@ -95,10 +95,10 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
       const { value: edit, notices } = await inSandbox(
         deps,
         ctx,
-        ({ environmentId, h, roots, p, signal }) => {
+        ({ deviceId, h, roots, p, signal }) => {
           path = checkWritable((input as EditInput).file_path, roots);
           // read, replace, write: one holder at a time per file
-          return withPathLease(deps, { environmentId }, path, signal, async (signal) => {
+          return withPathLease(deps, { deviceId }, path, signal, async (signal) => {
             const st = await p.stat(h, path, signal);
             if (st === null) throw new ToolError(notFound(path));
             if (st.isDir) throw new ToolError(notText(path));

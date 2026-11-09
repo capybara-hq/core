@@ -12,7 +12,7 @@ export interface AuthorizeResponse {
 export interface TokenResponse {
   credential: string;
   orgId: string;
-  environmentId: string;
+  deviceId: string;
   connectUrl: string;
   reconnectGraceSeconds: number;
   /** The program uses 16 MiB when it is absent. */

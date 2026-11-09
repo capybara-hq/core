@@ -18,7 +18,7 @@ import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgSettingsFor } from "../helpers/identity.js";
-import { sandboxServiceFor, seedEnvironment } from "../helpers/sandbox.js";
+import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
  * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：超级管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
@@ -98,7 +98,7 @@ async function newOrg(): Promise<string> {
   return id;
 }
 
-const newEnvironment = (org = orgId) => seedEnvironment(raw, org);
+const newDevice = (org = orgId) => seedDevice(raw, org);
 
 /** 直接写部署设置（等同超级管理员 PUT /admin/settings 的结果）。 */
 const setOverrides = (value: unknown) =>
@@ -116,25 +116,25 @@ const service = () =>
     lockPollMs: 20,
   });
 
-const use = (s: SandboxService, environmentId: string, org = orgId) =>
+const use = (s: SandboxService, deviceId: string, org = orgId) =>
   s.withSandbox(
     {
       orgId: org,
-      environmentId,
+      deviceId,
       holderConversationId: randomUUID(),
       actor: { accountId: randomUUID(), conversationId: randomUUID() },
     },
     async (h) => h,
     signal(),
   );
-const limitsOf = async (s: SandboxService, environmentId: string, org = orgId) =>
-  (await fakeSandboxMeta(root, (await use(s, environmentId, org)).id))?.limits;
+const limitsOf = async (s: SandboxService, deviceId: string, org = orgId) =>
+  (await fakeSandboxMeta(root, (await use(s, deviceId, org)).id))?.limits;
 
 beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs, capybara.deployment_settings",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs, capybara.deployment_settings",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-limits-"));
@@ -171,13 +171,13 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
     const other = await newOrg();
     await setOverrides({ [orgId]: { cpu: 2.5, memoryMb: 3072 } });
     const s = service();
-    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
+    expect(await limitsOf(s, await newDevice())).toMatchObject({
       cpu: 2.5,
       memoryMb: 3072,
       diskMb: config.sandbox.limits.diskMb,
       egress: config.sandbox.limits.egress,
     });
-    expect(await limitsOf(s, await newEnvironment(other), other)).toMatchObject({
+    expect(await limitsOf(s, await newDevice(other), other)).toMatchObject({
       cpu: config.sandbox.limits.cpu,
       memoryMb: config.sandbox.limits.memoryMb,
     });
@@ -185,7 +185,7 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
 
   it("只覆盖 memoryMb：cpu 用部署默认", async () => {
     await setOverrides({ [orgId]: { memoryMb: 8192 } });
-    expect(await limitsOf(service(), await newEnvironment())).toMatchObject({
+    expect(await limitsOf(service(), await newDevice())).toMatchObject({
       cpu: config.sandbox.limits.cpu,
       memoryMb: 8192,
     });
@@ -193,13 +193,13 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
 
   it("只对之后新建的沙箱生效：已有的沿用创建时的限额", async () => {
     const s = service();
-    const env = await newEnvironment();
+    const env = await newDevice();
     const first = await use(s, env);
     await setOverrides({ [orgId]: { cpu: 4 } });
     const again = await use(s, env);
     expect(again).toEqual(first);
     expect((await fakeSandboxMeta(root, again.id))?.limits.cpu).toBe(config.sandbox.limits.cpu);
-    expect(await limitsOf(s, await newEnvironment())).toMatchObject({ cpu: 4 });
+    expect(await limitsOf(s, await newDevice())).toMatchObject({ cpu: 4 });
   });
 });
 

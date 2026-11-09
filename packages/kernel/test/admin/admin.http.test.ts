@@ -512,6 +512,7 @@ describe("超级管理员端点", () => {
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
+      uiArrangement: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
       subagentLimitOverrides: {},
@@ -529,6 +530,7 @@ describe("超级管理员端点", () => {
     expect(put.json()).toEqual({
       orgCreation: "super_admin",
       runConcurrencyOverrides: {},
+      uiArrangement: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
       subagentLimitOverrides: {},
@@ -566,6 +568,7 @@ describe("超级管理员端点", () => {
     expect(r1.json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgA: 1, orgB: 5 },
+      uiArrangement: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
       subagentLimitOverrides: {},
@@ -591,6 +594,7 @@ describe("超级管理员端点", () => {
     expect(r2.json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+      uiArrangement: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
       subagentLimitOverrides: {},
@@ -617,6 +621,7 @@ describe("超级管理员端点", () => {
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
+      uiArrangement: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
       subagentLimitOverrides: {},

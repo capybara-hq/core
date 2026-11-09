@@ -11,7 +11,7 @@ import type { TransactionHost } from "../../src/infra/database/transaction-host.
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
-import { DEVICE_PROVIDER, type SandboxProviderEntry } from "../../src/sandbox/providers.js";
+import { LOCAL_PROVIDER, type SandboxProviderEntry } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 
 /** A kernel logger over a test's partial logger (the missing levels are dropped). */
@@ -57,7 +57,7 @@ export interface SandboxServiceDeps {
   provider: () => SandboxProviderEntry | undefined;
   /** A still-loaded provider by plugin name; none when omitted. */
   lookup?: (plugin: string) => SandboxProvider | undefined;
-  /** Kernel-internal providers (`@device`), found by name before any extension. */
+  /** Kernel-internal providers (`@local`), found by name before any extension. */
   internal?: SandboxProviderEntry[];
   config: () => Pick<KernelConfig, "sandbox">;
   log: Partial<Pick<Logger, "info" | "warn" | "error">>;
@@ -107,19 +107,19 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
 }
 
 /**
- * Inserts a personal environment in `orgId`, owned by `accountId` (default: the org's creator);
- * returns its id. A cloud one records no provider; a `device` one records `@device`.
+ * Inserts a personal device in `orgId`, owned by `accountId` (default: the org's creator);
+ * returns its id. A cloud one records no provider; a `device` one records `@local`.
  */
-export async function seedEnvironment(
+export async function seedDevice(
   // biome-ignore lint/suspicious/noExplicitAny: test databases have no schema types
   raw: Kysely<any>,
   orgId: string,
   accountId?: string,
-  source: "cloud" | "device" = "cloud",
+  source: "cloud" | "local" = "cloud",
 ): Promise<string> {
   const id = randomUUID();
-  const provider = source === "device" ? DEVICE_PROVIDER : null;
-  await sql`INSERT INTO capybara.environments
+  const provider = source === "local" ? LOCAL_PROVIDER : null;
+  await sql`INSERT INTO capybara.devices
       (id, org_id, owner_kind, owner_account_id, source, provider)
     SELECT ${id}, o.id, 'personal', COALESCE(${accountId ?? null}::text, o.created_by), ${source},
       ${provider}

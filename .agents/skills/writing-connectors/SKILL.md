@@ -143,7 +143,7 @@ writing-plugins). The template's plugin (slack) is usually not the connector ext
 - **How a page finds the guide**: org catalog templates (`connectors.templates`, `GET
   …/catalog/:itemId`) carry `guide: { itemId, guideId } | null`; connector views carry `setupGuide`
   and `guideDrift`, resolved through `connectors.platform_template_id` to the template.
-- **Drift**: `connectors.guide_ack` (migration 0105) records `{ guideId, version, hash, mode: null }`
+- **Drift**: `connectors.guide_ack` (migration 0106) records `{ guideId, version, hash, mode: null }`
   when a connector is created from the template, and `POST
   /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack { hash }` (`connectors.manage`, 409
   `connector.guide_changed`, audited `connector.guide_confirmed`; a `human-only` Platform exclusion)

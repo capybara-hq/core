@@ -112,6 +112,7 @@ const COPY = {
 function routes(view: unknown, extra: Parameters<typeof stubApi>[0] = {}) {
   return stubApi({
     [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+    [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [] }),
     [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
     "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     [`GET ${BASE}/extensions`]: () => json(200, { extensions: [BAILIAN] }),

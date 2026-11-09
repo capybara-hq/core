@@ -29,11 +29,15 @@ export const TODO_PANEL = {
   plugin: "todo",
   id: "tasks-panel",
   title: { zh: "待办", en: "Tasks" },
-  place: "panel",
+  slot: "conversation.panel",
   kind: "view",
   icon: "list-checks",
 };
-export const TODO_SECTION = { ...TODO_PANEL, id: "tasks-section", place: "section" };
+export const TODO_SECTION = {
+  ...TODO_PANEL,
+  id: "tasks-section",
+  slot: "conversation.properties.section",
+};
 
 const sectionView: UiView = {
   badge: "1/2",
@@ -91,7 +95,7 @@ function api(id = "c1", extra: Record<string, (c: Call) => Response> = {}) {
     [`GET ${conv(id)}/files/f1/previewers`]: () => json(200, { previewers: [] }),
     [`GET ${conv(id)}/files/f1/content`]: () =>
       new Response("hello", { status: 200, headers: { "content-type": "text/plain" } }),
-    [`GET ${conv(id)}/environment`]: () => json(200, { environment: null }),
+    [`GET ${conv(id)}/device`]: () => json(200, { device: null }),
     "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
     "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
     "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
@@ -386,12 +390,12 @@ describe("the Context section's sandbox status", () => {
         });
       },
     });
-    const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/environment")).length;
+    const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/device")).length;
     const { calls: server } = await renderChatRoute();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Properties" }));
     // the first paint has the sandbox status and the tool info from the server snapshot
-    expect(server.some((c) => c.url.endsWith("/c1/environment"))).toBe(true);
+    expect(server.some((c) => c.url.endsWith("/c1/device"))).toBe(true);
     await waitFor(() =>
       expect([...server, ...calls].some((c) => c.url.includes("/c1/tools?keys=Bash"))).toBe(true),
     );
@@ -408,7 +412,7 @@ describe("the Context section's sandbox status", () => {
     await waitFor(() => expect(sandboxGets()).toBe(before + 1));
   });
 
-  it("a sandbox result while the properties panel is closed still rereads the environment", async () => {
+  it("a sandbox result while the properties panel is closed still rereads the device", async () => {
     const calls = api("c1", {
       [`GET ${conv("c1")}/events`]: () => json(200, { events: [userMsg(1, "go")] }),
       [`GET ${conv("c1")}/tools`]: (c) => {
@@ -416,7 +420,7 @@ describe("the Context section's sandbox status", () => {
         return json(200, { tools: keys.map((k) => toolInfo(k, k === "Write")) });
       },
     });
-    const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/environment")).length;
+    const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/device")).length;
     await renderChatRoute();
     expect(screen.queryByRole("complementary", { name: "Properties" })).toBeNull();
     // the first delivered event ends the catch-up, which rereads everything outside the log once
@@ -431,41 +435,40 @@ describe("the Context section's sandbox status", () => {
     act(() => {
       FakeEventSource.instances[0]?.emit("event", result(3, "Write"));
     });
-    // the panel is not open: the conversation page itself keeps the environment current, so a
+    // the panel is not open: the conversation page itself keeps the device current, so a
     // panel opened later shows the started instance instead of a fresh but outdated state
     await waitFor(() => expect(sandboxGets()).toBe(before + 1));
   });
 });
 
-describe("the conversation's environment (environments design §4.1 item 2)", () => {
+describe("the conversation's device (environments design §4.1 item 2)", () => {
   const T = "2026-11-07T08:00:00.000Z";
   const open = async () => {
     window.history.replaceState(null, "", "/chat/c1#properties");
     await renderChatRoute();
     return screen.findByRole("complementary", { name: "Properties" });
   };
-  const bound = (environment: unknown, environmentId: string | null = "e1") =>
+  const bound = (device: unknown, deviceId: string | null = "e1") =>
     api("c1", {
-      [`GET ${conv("c1")}`]: () => json(200, CONV("c1", { environmentId })),
-      [`GET ${conv("c1")}/environment`]: () => json(200, { environment }),
+      [`GET ${conv("c1")}`]: () => json(200, CONV("c1", { deviceId })),
+      [`GET ${conv("c1")}/device`]: () => json(200, { device }),
     });
 
-  it("properties panel shows the conversation's environment", async () => {
+  it("properties panel shows the conversation's device", async () => {
     bound(envView("e1", null, { instance: { status: "running", lastUsedAt: T } }));
     const props = await open();
     expect(
-      within(props).getByText(
-        `Environment: ${en.environments.personal} · ${en.environments.state.running}`,
-        { exact: false },
-      ),
+      within(props).getByText(`Device: ${en.devices.personal} · ${en.devices.state.running}`, {
+        exact: false,
+      }),
     ).toBeTruthy();
     // the composer shows it read only, before the model
     expect(
-      screen.getByText(en.environments.personal, { selector: '[data-part="picker"]' }),
+      screen.getByText(en.devices.personal, { selector: '[data-part="picker"]' }),
     ).toBeTruthy();
   });
 
-  it("an environment that is not started or whose provider is gone shows that state", async () => {
+  it("a device that is not started or whose provider is gone shows that state", async () => {
     bound(envView("e1", "Build box"));
     expect(within(await open()).getByText(/Build box · Not started/)).toBeTruthy();
     cleanup();
@@ -473,26 +476,26 @@ describe("the conversation's environment (environments design §4.1 item 2)", ()
     expect(within(await open()).getByText(/Build box · Unavailable/)).toBeTruthy();
   });
 
-  it("a bound environment that was deleted shows 环境已删除, not 'none'", async () => {
+  it("a bound device that was deleted shows 设备已删除, not 'none'", async () => {
     bound(null);
     const props = await open();
-    expect(within(props).getByText(en.chatPanel.environmentDeleted, { exact: false })).toBeTruthy();
+    expect(within(props).getByText(en.chatPanel.deviceDeleted, { exact: false })).toBeTruthy();
     expect(
-      screen.getByText(en.chat.environmentDeleted, { selector: '[data-part="picker"]' }),
+      screen.getByText(en.chat.deviceDeleted, { selector: '[data-part="picker"]' }),
     ).toBeTruthy();
   });
 
-  it("a row read before its first tool call bound it still shows the bound environment", async () => {
-    // the row says unbound, the environment route (read after the first tool call) has one
+  it("a row read before its first tool call bound it still shows the bound device", async () => {
+    // the row says unbound, the device route (read after the first tool call) has one
     bound(envView("e1", "Build box"), null);
     await open();
     expect(await screen.findByText("Build box", { selector: '[data-part="picker"]' })).toBeTruthy();
   });
 
-  it("a conversation with no environment bound says so and shows no picker", async () => {
+  it("a conversation with no device bound says so and shows no picker", async () => {
     bound(null, null);
     const props = await open();
-    expect(within(props).getByText(en.chatPanel.environmentNone, { exact: false })).toBeTruthy();
+    expect(within(props).getByText(en.chatPanel.deviceNone, { exact: false })).toBeTruthy();
     expect(document.querySelector('[data-part="picker"][data-locked="true"]')).toBeNull();
   });
 });

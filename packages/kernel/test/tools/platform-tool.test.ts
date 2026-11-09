@@ -256,7 +256,7 @@ describe("the Platform tool definition", () => {
     expect(tool.defaultPolicy).toBe("allow");
     expect(tool.spec.keyArgs).toEqual(["action", "operation", "domain"]);
     expect(tool.spec.description).toBe(
-      'Discover and use the platform\'s own operations (agents, skills, templates, plugins, connectors, extensions, conversations, environments, models, evals, channels, requests, approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) and its documentation, as the person you are working for. Start with action "browse", which lists every domain, then "describe" an operation before you "call" it; never guess parameters. Writes ask the person to confirm. Use "read" for how-to documentation (plugin format, skills, extension points).',
+      'Discover and use the platform\'s own operations (agents, skills, templates, plugins, connectors, extensions, conversations, devices, models, evals, channels, requests, approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) and its documentation, as the person you are working for. Start with action "browse", which lists every domain, then "describe" an operation before you "call" it; never guess parameters. Writes ask the person to confirm. Use "read" for how-to documentation (plugin format, skills, extension points).',
     );
   });
 
@@ -296,9 +296,10 @@ describe("browse, search, describe, read", () => {
       "approvals",
       "channels",
       "org-settings",
-      "environments",
+      "devices",
       "setup",
       "themes",
+      "ui",
     ]);
     expect(domains.find((d) => d.id === "skills")?.operations).toBe(2);
     expect(out.method).toContain("describe");

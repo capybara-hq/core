@@ -17,9 +17,9 @@ export const OUTDATED_MESSAGE =
 export const DISCONNECTED_MESSAGE =
   "This machine was disconnected from the deployment. Run capybara-device logout, then capybara-device login.";
 export const REPLACED_MESSAGE =
-  "This machine connected elsewhere: a newer connection to this environment replaced this one.";
+  "This machine connected elsewhere: a newer connection to this device replaced this one.";
 export const DELETED_MESSAGE =
-  "The environment was deleted on the deployment. The files on this machine stay where they are.";
+  "The device was deleted on the deployment. The files on this machine stay where they are.";
 
 /** The answer sent instead of a result whose frame would exceed the connection's frame limit. */
 export const TOO_LARGE_MESSAGE = "result larger than the connection's frame limit";

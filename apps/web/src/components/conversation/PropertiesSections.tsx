@@ -17,20 +17,20 @@ import type {
   SubagentView,
   ToolInfo,
 } from "../../lib/conversations";
-import { environmentState } from "../../lib/environments";
+import { deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   connectorsQuery,
-  conversationEnvironmentQuery,
+  conversationDeviceQuery,
   conversationQuery,
 } from "../../lib/query/conversation";
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
-import type { UiContributionItem } from "../../lib/ui";
-import { useEnvironmentName } from "../use-environment-name";
+import type { UiOpen } from "../../lib/ui";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
+import { useDeviceName } from "../use-device-name";
 import { BackgroundSection } from "./BackgroundSection";
-import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
 /** A connector tool's key is `mcp__<connector slug>__<tool>`. */
 const slugOf = (toolKey: string): string | null => {
@@ -89,12 +89,12 @@ const sandboxUses = (
 };
 
 /**
- * Reads the conversation's environment again whenever the number of sandbox tool results changes:
+ * Reads the conversation's device again whenever the number of sandbox tool results changes:
  * a result may have started, stopped or suspended the instance. It lives in the conversation page,
  * which is mounted from the start, not in the properties panel: a panel opened after the tools ran
  * would take the current count as its baseline and keep showing a fresh but outdated state.
  */
-export function useEnvironmentRefresh(
+export function useDeviceRefresh(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
@@ -116,14 +116,14 @@ export function useEnvironmentRefresh(
     // The first resolved count is the baseline, not a change.
     if (prev !== null && uses !== prev)
       void qc.invalidateQueries({
-        queryKey: conversationEnvironmentQuery(orgId, conversationId).queryKey,
+        queryKey: conversationDeviceQuery(orgId, conversationId).queryKey,
       });
   }, [uses, qc, orgId, conversationId]);
 }
 
 /**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
- * the model, the environment and its state (kept current by {@link useEnvironmentRefresh}) and the
+ * the model, the device and its state (kept current by {@link useDeviceRefresh}) and the
  * connectors used.
  * A connectors read the role is refused (R5: not read again on mount) names no connectors.
  */
@@ -156,36 +156,36 @@ export function ContextSection({
     () => new Map((connectors?.connectors ?? []).map((a) => [a.slug, a.name])),
     [connectors],
   );
-  const te = useTranslations("environments");
-  const nameOf = useEnvironmentName();
+  const te = useTranslations("devices");
+  const nameOf = useDeviceName();
   const rowQ = conversationQuery(orgId, conversationId);
-  const environmentId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
-    ?.environmentId;
-  const environmentQ = conversationEnvironmentQuery(orgId, conversationId);
-  const environment = useQuery({
-    ...environmentQ,
-    retryOnMount: retryOnMountOf(environmentQ.queryKey),
+  const deviceId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
+    ?.deviceId;
+  const deviceQ = conversationDeviceQuery(orgId, conversationId);
+  const device = useQuery({
+    ...deviceQ,
+    retryOnMount: retryOnMountOf(deviceQ.queryKey),
   });
   // The route answers null both for "none bound" and "the bound one was deleted": the
-  // conversation's own environmentId tells them apart.
-  const environmentText =
-    environment.data === undefined
-      ? environment.error === null
+  // conversation's own deviceId tells them apart.
+  const deviceText =
+    device.data === undefined
+      ? device.error === null
         ? undefined
-        : t("environmentFailed")
-      : environment.data === null
-        ? environmentId
-          ? t("environmentDeleted")
-          : t("environmentNone")
-        : t("environmentLine", {
-            name: nameOf(environment.data),
-            state: te(`state.${environmentState(environment.data)}`),
+        : t("deviceFailed")
+      : device.data === null
+        ? deviceId
+          ? t("deviceDeleted")
+          : t("deviceNone")
+        : t("deviceLine", {
+            name: nameOf(device.data),
+            state: te(`state.${deviceState(device.data)}`),
           });
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
-      {...(environmentText !== undefined ? { sandbox: environmentText } : {})}
+      {...(deviceText !== undefined ? { sandbox: deviceText } : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}
       {...(total !== undefined ? { total } : {})}
@@ -217,29 +217,33 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
 }
 
 /**
- * The properties panel (spec §6.16.17 order): Context, the extensions' sections in contribution
- * order (each failing alone), Files (when there are any, the sub-agents' deliveries included), then
- * Background tasks (hidden until there is a background task or a sub-agent).
+ * The properties panel (spec §6.16.17 order): Context, Files (when there are any, the sub-agents'
+ * deliveries included), then Background tasks (hidden until there is a background task or a
+ * sub-agent); the extensions' sections (slot `conversation.properties.section`, each failing alone)
+ * follow the anchor they name, `context`, `files` or `background`, in the kernel's order.
  */
 export function PropertiesSections({
-  ctx,
+  orgId,
+  conversationId,
+  onOpenTarget,
   events,
   model,
   contextPct,
   lastRun,
   files,
-  sections,
   onOpenFile,
   background,
   total,
 }: {
-  ctx: BlockContext;
+  orgId: string;
+  conversationId: string;
+  /** Opens an open target of an extension section: a panel of the same extension. */
+  onOpenTarget(plugin: string, target: UiOpen): void;
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
   lastRun?: string | undefined;
   files: FileOutput[];
-  sections: UiContributionItem[];
   onOpenFile(id: string): void;
   background?:
     | {
@@ -252,21 +256,28 @@ export function PropertiesSections({
     | undefined;
   total?: string | undefined;
 }) {
+  const after = (anchor: string) => (
+    <ExtensionSlot
+      slot="conversation.properties.section"
+      args={{ orgId, conversationId }}
+      anchor={anchor}
+      host={{ onOpenTarget }}
+    />
+  );
   return (
     <PropertiesPanel>
       <ContextSection
-        orgId={ctx.orgId}
-        conversationId={ctx.conversationId}
+        orgId={orgId}
+        conversationId={conversationId}
         events={events}
         model={model}
         contextPct={contextPct}
         lastRun={lastRun}
         total={total}
       />
-      {sections.map((c) => (
-        <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
-      ))}
+      {after("context")}
       {files.length > 0 ? <FilesSection files={files} onOpen={onOpenFile} /> : null}
+      {after("files")}
       {background && background.views.length + background.tasks.length > 0 ? (
         <BackgroundSection
           views={background.views}
@@ -276,6 +287,7 @@ export function PropertiesSections({
           onOpen={background.onOpen}
         />
       ) : null}
+      {after("background")}
     </PropertiesPanel>
   );
 }

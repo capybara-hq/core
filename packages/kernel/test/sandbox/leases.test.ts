@@ -213,7 +213,7 @@ describe("SandboxLeases", () => {
     expect(await l.renew()).toBe(false);
     expect(l.signal.aborted).toBe(true);
     expect(l.signal.reason).toBeInstanceOf(SandboxLockLostError);
-    expect((l.signal.reason as Error).message).toBe("sandbox lock lost for environment c2");
+    expect((l.signal.reason as Error).message).toBe("sandbox lock lost for device c2");
     await l.release();
 
     // the renewal timer notices too

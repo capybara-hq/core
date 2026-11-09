@@ -9,12 +9,14 @@ import {
   ExtensionPointUnavailableError,
   type ExtensionStorage,
   FILE_PREVIEW_EXTENSION_POINT,
+  type FilePreviewer,
   type FilePreviewProvider,
   type HookHandler,
   type Logger,
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
   parseExtensionPoint,
+  resolveUiSlots,
   SETUP_CHECK_ID_RE,
   SETUP_GUIDE_PLACES,
   type SetupCheckArgs,
@@ -22,6 +24,7 @@ import {
   type SetupGuidePlace,
   type ToolHandler,
   type ToolSpec,
+  type UiSlotSpec,
   validateFilePreviewProvider,
   validateToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -46,8 +49,9 @@ import type { HookRunner } from "../runtime/hook-calls.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
 import {
-  canUsePlace,
+  canUseSlot,
   orgUiTopic,
+  PLATFORM_UI_TOPIC,
   PluginUiRegistration,
   type UiActionHandler,
   type UiBusMessage,
@@ -156,6 +160,24 @@ async function currentEmbedRole(
     .where("accounts.status", "=", "active")
     .executeTakeFirst();
   return row?.role;
+}
+
+/**
+ * Whether the account is, right now, an active super admin (one query): what a platform embed
+ * token and the platform refresh stream re-check.
+ */
+export async function currentPlatformAccount(
+  db: KernelDeps["db"],
+  accountId: string,
+): Promise<boolean> {
+  const row = await kernelDb(db)
+    .selectFrom("accounts")
+    .select("accounts.id")
+    .where("accounts.id", "=", accountId)
+    .where("accounts.status", "=", "active")
+    .where("accounts.is_super_admin", "=", true)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 /** `ui.invalidate` 目标的一条查询：插件在该组织启用，且（带对话时）对话属于该组织。 */
@@ -282,6 +304,9 @@ const noProviders = (deps: KernelDeps): ExtensionPointAccess => ({
   configOk: async () => true,
 });
 
+/** What {@link resolveUiSlots} returns for a manifest. */
+export type UiResolution = ReturnType<typeof resolveUiSlots>;
+
 /** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
 export type KernelExtensionContext = ExtensionContext & {
   /** 本实例的登记账（C17）：每次登记记一笔，撤销时逐项撤销。 */
@@ -300,6 +325,8 @@ export type KernelExtensionContext = ExtensionContext & {
   registeredTools: RegisteredTool[];
   /** Hooks registered through `ctx.hooks.on` (registration order). */
   registeredHooks: RegisteredHook[];
+  /** The manifest's `ui` resolved against the slot catalog once per load (UI slots spec §3.2). */
+  uiResolution: UiResolution;
   /** 经 `ctx.ui.view` 注册的视图（按贡献 id）。 */
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
@@ -426,7 +453,14 @@ export function createExtensionContext(
   const declaredSetupChecks = new Set(perms.setupChecks ?? []);
   const setupChecks = new Map<string, RegisteredSetupCheck>();
   const embedTokens = deps.embedTokens;
-  const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, c.place]));
+  const uiResolution = resolveUiSlots(manifest.ui);
+  const uiSlots = new Map<string, UiSlotSpec>(
+    uiResolution.resolved.map((r) => [r.contribution.id, r.slot]),
+  );
+  /** Ids of the extension's `platform.page` contributions (their invalidate takes no orgId). */
+  const platformUi: ReadonlySet<string> = new Set(
+    [...uiSlots].filter(([, s]) => s.id === "platform.page").map(([id]) => id),
+  );
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -710,9 +744,15 @@ export function createExtensionContext(
         });
       },
       // 目标先核对（一条查询）：插件在 orgId 启用；带对话时对话属于 orgId。不满足就只记 debug、不发
-      // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）
+      // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）。A `platform.page`
+      // contribution takes no orgId and refreshes the platform stream (super admins only)
       async invalidate(target) {
-        const t = uiReg.target(target);
+        const t = uiReg.target(target, platformUi);
+        const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
+        if (t.scope === "platform") {
+          await kernelBus.publish(PLATFORM_UI_TOPIC, msg);
+          return;
+        }
         if (!(await invalidateTargetOk(deps.db, name, t.orgId, t.conversationId))) {
           deps.log.debug?.(
             "plugin ui invalidate ignored: plugin not enabled or conversation not in org",
@@ -725,7 +765,6 @@ export function createExtensionContext(
           );
           return;
         }
-        const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
         await kernelBus.publish(
           t.conversationId !== undefined
             ? conversationTopic(t.conversationId)
@@ -735,13 +774,23 @@ export function createExtensionContext(
       },
       // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts）；再用一条查询核对此刻：本插件仍在该组织
       // 启用、组织未删除、账号 active 且仍是成员（每次查 PG、不缓存：停用插件、离职、停用账号后已签出的令牌立即失效）。
-      // 返回的 role 是此刻的角色；组织页面的令牌在调用者已降为 guest 时失效（A38）。其余一律 null
+      // 返回的 role 是此刻的角色；令牌在此刻的角色低于贡献所在位置的 minRole 时失效（A38, UI slots spec §7）。
+      // A platform token: the contribution is a `platform.page` and the account is still an active
+      // super admin. A token of one scope never verifies for the other's slots. 其余一律 null
       async verifyEmbedToken(token) {
         const claims = embedTokens.verify(token, name);
         if (claims === null) return null;
+        const slot = uiSlots.get(claims.contribution);
+        if (claims.scope === "platform") {
+          if (slot?.id !== "platform.page") return null;
+          return (await currentPlatformAccount(deps.db, claims.accountId)) ? claims : null;
+        }
+        if (claims.scope !== "org" || claims.orgId === undefined) return null;
+        // the contribution's slot as loaded now: never `platform.page` through an org token, and the
+        // current role still meets the slot's minRole (a demoted caller's token stops working)
+        if (slot === undefined || slot.id === "platform.page") return null;
         const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
-        if (role === undefined) return null;
-        if (!canUsePlace(uiPlaces.get(claims.contribution) ?? "page", role)) return null;
+        if (role === undefined || !canUseSlot(slot, role)) return null;
         return { ...claims, role };
       },
     },
@@ -756,13 +805,16 @@ export function createExtensionContext(
           `plugin ${name}: extension point ${extensionPoint} provided more than once`,
         );
       }
-      if (extensionPoint === FILE_PREVIEW_EXTENSION_POINT) checkFilePreviewProvider(manifest, impl);
-      provided.set(extensionPoint, impl);
+      const served =
+        extensionPoint === FILE_PREVIEW_EXTENSION_POINT
+          ? checkFilePreviewProvider(manifest, impl, uiResolution, deps.log)
+          : impl;
+      provided.set(extensionPoint, served);
       ledger.add({
         kind: "provide",
         key: extensionPoint,
         dispose: async () => {
-          if (provided.get(extensionPoint) === impl) provided.delete(extensionPoint);
+          if (provided.get(extensionPoint) === served) provided.delete(extensionPoint);
         },
       });
     },
@@ -780,6 +832,7 @@ export function createExtensionContext(
     provided,
     registeredTools,
     registeredHooks,
+    uiResolution,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
     setupChecks,
@@ -836,27 +889,60 @@ export function createExtensionContext(
 /**
  * A `file-preview@1` provider must be valid when it is provided (setup fails otherwise): the shape
  * ({@link validateFilePreviewProvider}), and every `embed` names a ui contribution of this extension
- * with `kind: "embed"` and `place: "file-preview"`.
+ * with `kind: "embed"` that resolved to the slot `file.preview` (from `slot` or the deprecated
+ * `place`). A previewer whose embed names an embed contribution dropped at load (unknown slot or
+ * slot version, UI slots spec §3.2) is left out instead, with one warn per load: the returned
+ * provider is what the kernel serves.
  */
-function checkFilePreviewProvider(manifest: ExtensionManifest, impl: unknown): void {
+function checkFilePreviewProvider(
+  manifest: ExtensionManifest,
+  impl: unknown,
+  ui: UiResolution,
+  log: KernelDeps["log"],
+): unknown {
   const problems = validateFilePreviewProvider(impl);
-  if (problems.length === 0) {
-    const embeds = new Set(
-      (manifest.ui ?? [])
-        .filter((c) => c.kind === "embed" && c.place === "file-preview")
-        .map((c) => c.id),
-    );
-    (impl as FilePreviewProvider).previewers.forEach((p, i) => {
-      if (p.embed !== undefined && !embeds.has(p.embed)) {
-        problems.push(
-          `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", place: "file-preview" }`,
-        );
-      }
-    });
-  }
   if (problems.length > 0) {
     throw new Error(
       `plugin ${manifest.name}: invalid ${FILE_PREVIEW_EXTENSION_POINT} provider: ${problems.join("; ")}`,
     );
   }
+  const embeds = new Set(
+    ui.resolved
+      .filter((r) => r.contribution.kind === "embed" && r.slot.id === "file.preview")
+      .map((r) => r.contribution.id),
+  );
+  const droppedEmbeds = new Map(
+    ui.dropped
+      .filter((d) => manifest.ui?.some((c) => c.id === d.id && c.kind === "embed"))
+      .map((d) => [d.id, d] as const),
+  );
+  const provider = impl as FilePreviewProvider;
+  const kept: FilePreviewer[] = [];
+  const dropped: { previewer: string; embed: string; ref: string; reason: string }[] = [];
+  provider.previewers.forEach((p, i) => {
+    if (p.embed === undefined || embeds.has(p.embed)) {
+      kept.push(p);
+      return;
+    }
+    const d = droppedEmbeds.get(p.embed);
+    if (d !== undefined) {
+      dropped.push({ previewer: p.id, embed: p.embed, ref: d.ref, reason: d.reason });
+      return;
+    }
+    problems.push(
+      `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", slot: "file.preview" }`,
+    );
+  });
+  if (problems.length > 0) {
+    throw new Error(
+      `plugin ${manifest.name}: invalid ${FILE_PREVIEW_EXTENSION_POINT} provider: ${problems.join("; ")}`,
+    );
+  }
+  if (dropped.length === 0) return impl;
+  log.warn("plugin file previewers dropped", {
+    plugin: manifest.name,
+    version: manifest.version,
+    previewers: dropped,
+  });
+  return { ...provider, previewers: kept } satisfies FilePreviewProvider;
 }

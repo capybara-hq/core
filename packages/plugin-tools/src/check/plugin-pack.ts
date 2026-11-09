@@ -11,6 +11,7 @@ import {
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { packPlugin } from "../pack/pack.js";
 import type { Finding } from "./source.js";
+import { uiSlotFindings } from "./ui-slots.js";
 
 /**
  * The default of `packages.maxBytes` (from the kernel config schema): an official plugin's package
@@ -59,6 +60,7 @@ export async function checkPluginPack(pluginDirs: string[]): Promise<Finding[]> 
         }
         const bytes = new Uint8Array(await readFile(r.file));
         const plugin = await readPluginPackage(bytes, opts);
+        findings.push(...uiSlotFindings(file, plugin.manifest.extension?.manifest.ui));
         if (plugin.manifest.extension !== undefined) await readExtensionPackage(bytes, opts);
       } catch (e) {
         const message =

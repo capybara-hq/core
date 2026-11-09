@@ -171,13 +171,13 @@ export type ComposerBoxProps = {
   attachDisabled?: boolean;
   /**
    * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
-   * agent (agent profile design §4.2); the model and effort pickers stay. `environment` sits
-   * between the agent and the model (environments design: a conversation picks its environment
-   * before the model) and is `locked` after the first message.
+   * agent (agent profile design §4.2); the model and effort pickers stay. `device` sits
+   * between the agent and the model (a conversation picks its device before the model) and is
+   * `locked` after the first message.
    */
   pickers: {
     agent?: PickerProps;
-    environment?: PickerProps;
+    device?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
@@ -257,9 +257,9 @@ function ComposerTokenChip({
 
 /**
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
- * control row: ＋ · agent · environment · model · effort (hidden without efforts) · quick actions
+ * control row: ＋ · agent · device · model · effort (hidden without efforts) · quick actions
  * (only when the agent has some) · the agents chip (once the conversation has a sub-agent) · send /
- * stop. Below 640 the environment, model and effort pickers are one options button
+ * stop. Below 640 the device, model and effort pickers are one options button
  * (`ComposerOptions`) opening a bottom sheet with the three groups.
  */
 export function ComposerBox({
@@ -435,12 +435,12 @@ export function ComposerBox({
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
         {/* 640 and up: the three pickers; a phone: one options button and its bottom sheet (CSS) */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
-          {pickers.environment ? <Picker {...pickers.environment} /> : null}
+          {pickers.device ? <Picker {...pickers.device} /> : null}
           <Picker {...pickers.model} />
           {pickers.effort ? <Picker {...pickers.effort} /> : null}
         </span>
         <ComposerOptions
-          {...(pickers.environment ? { environment: pickers.environment } : {})}
+          {...(pickers.device ? { device: pickers.device } : {})}
           model={pickers.model}
           {...(pickers.effort ? { effort: pickers.effort } : {})}
         />

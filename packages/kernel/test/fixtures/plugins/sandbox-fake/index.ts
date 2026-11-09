@@ -26,7 +26,7 @@ import { z } from "zod";
  * The "provider side" lives under the deployment config `root` (like a Docker daemon: kernel
  * replicas sharing one root share the same file systems and instances):
  * - `root/filesystems/<fsId>/{workspace,skills}` and `meta.json` (`{ name, limits }`): an
- *   environment's files, kept until `destroyFileSystem`; `createFileSystem` on a name that exists
+ *   device's files, kept until `destroyFileSystem`; `createFileSystem` on a name that exists
  *   returns the existing one; `create` on a missing file system throws `FileSystemGoneError`
  *   ({@link removeFakeFileSystem} simulates the loss);
  * - `root/instances/<id>/{state,meta.json,tmp,procs,sessions,groups}`: an instance mounts its file
