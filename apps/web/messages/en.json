@@ -2439,7 +2439,15 @@
     "howToConnectTitle": "How to connect {name}",
     "adminGuideLink": "Open the admin setup guide",
     "close": "Close",
-    "platformHint": "The setup guide org admins see when they configure this template. Org and connector names are filled in per org; checks run only once an org has created its connector, so they are not shown here."
+    "platformHint": "The setup guide org admins see when they configure this template. Org and connector names are filled in per org; checks run only once an org has created its connector, so they are not shown here.",
+    "askAgent": {
+      "action": "Ask an agent",
+      "draft": "Help me finish setting up “{title}” for {target}.",
+      "reference": "Setup guide: {guideId} from the {plugin} plugin (catalog item {itemId}, place {place}, audience {audience}); target: {target}. Read it with the Platform setup operations, walk me through the step I am on and run its checks; I enter every secret on the page myself.",
+      "targetConnection": "channel connection {id}",
+      "targetConnector": "connector {id}",
+      "targetNone": "not saved yet"
+    }
   },
   "extensions": {
     "title": "Extensions",

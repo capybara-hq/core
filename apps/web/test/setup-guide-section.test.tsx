@@ -6,7 +6,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { setupGuideQuery } from "../src/lib/query/setup";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
-import { resetNavigation } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { pickOption } from "./support/select";
 
@@ -504,6 +504,53 @@ describe("channel detail: 接入指南 and the drift notice", () => {
     expect(key("0.2.0", { locale: "zh" })).not.toEqual(key("0.2.0", { locale: "en" }));
     expect(key("0.2.0", { audience: "admin" })).not.toEqual(key("0.2.0", { audience: "member" }));
     expect(key("0.2.0", { connectorId: "c1" })).not.toEqual(key("0.2.0", { connectorId: "c2" }));
+  });
+
+  it("ask an agent opens the new conversation with the draft, not sent", async () => {
+    const calls = stubApi(detailRoutes());
+    await renderRouteWithCache("/channels/ch1", lastStubRoutes(), { locale: "zh" });
+    await screen.findByText("创建 Slack 应用");
+    await userEvent.setup().click(screen.getByRole("button", { name: g.askAgent.action }));
+    expect(router.push).toHaveBeenCalledTimes(1);
+    const to = new URL(String(router.push.mock.calls[0]?.[0]), "http://x");
+    expect(to.pathname).toBe("/");
+    expect([...to.searchParams.keys()]).toEqual(["draft"]);
+    const draft = to.searchParams.get("draft") ?? "";
+    // names the guide and the target by id, for the Platform setup operations
+    expect(draft).toBe(
+      [
+        "帮我完成 Acme Bot 的「创建 Slack 应用」接入设置。",
+        g.askAgent.reference
+          .replace("{plugin}", "slack")
+          .replace("{guideId}", "app")
+          .replace("{itemId}", "item1")
+          .replace("{place}", "channel-connection")
+          .replace("{audience}", "admin")
+          .replace("{target}", "渠道连接 ch1"),
+      ].join("\n\n"),
+    );
+    // no config value and none of the guide's text
+    expect(draft).not.toContain("A1");
+    expect(draft).not.toContain("manifest");
+    // nothing sent, nothing created: only a navigation
+    expect(calls.some((c) => c.method !== "GET")).toBe(false);
+  });
+
+  it("ask an agent before saving: the name typed so far, no target yet", async () => {
+    const { user } = await openNewChannel();
+    await screen.findByText("manifest.socket.yaml");
+    await user.type(
+      screen.getByRole("textbox", { name: new RegExp(`^${zh.channels.form.nameLabel}`) }),
+      "Sales",
+    );
+    await vi.waitFor(() => expect(screen.getByText(/name: "Sales"/)).toBeTruthy(), {
+      timeout: 2000,
+    });
+    await user.click(screen.getByRole("button", { name: g.askAgent.action }));
+    const draft =
+      new URL(String(router.push.mock.calls[0]?.[0]), "http://x").searchParams.get("draft") ?? "";
+    expect(draft.startsWith("帮我完成 Sales 的「创建 Slack 应用」接入设置。")).toBe(true);
+    expect(draft).toContain(`目标：${g.askAgent.targetNone}。`);
   });
 
   it("no setup guide: no section, no notice", async () => {

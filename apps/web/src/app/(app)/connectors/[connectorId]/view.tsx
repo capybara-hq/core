@@ -343,6 +343,7 @@ function GuideTab({
           orgId={orgId}
           guide={guide}
           query={{ connectorId: app.id, audience: "admin" }}
+          targetLabel={app.name}
           checks="live"
           {...(plugin !== undefined ? { pluginLabel: plugin } : {})}
           drift={

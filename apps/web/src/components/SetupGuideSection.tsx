@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   Callout,
   CheckRow,
   type CheckRowState,
@@ -15,12 +16,14 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "../i18n/navigation";
 import { ApiClientError } from "../lib/api";
 import { labelLocale } from "../lib/extension-label";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { adminSetupGuideQuery, setupGuideQuery } from "../lib/query/setup";
 import { setupCheckStatesQuery } from "../lib/query/setup-checks";
+import { draftConversationPath } from "../lib/routes";
 import {
   type RenderedSetupGuide,
   runSetupCheck,
@@ -61,6 +64,11 @@ export type SetupGuideSectionProps = {
   admin?: boolean;
   /** The plugin's display name for the drift notice; defaults to the plugin's name. */
   pluginLabel?: string;
+  /**
+   * What the guide sets up, as the person knows it (the connection's or connector's name) for the
+   * 让智能体协助 draft; defaults to the name typed so far, else the plugin's label.
+   */
+  targetLabel?: string;
 };
 
 /**
@@ -80,6 +88,7 @@ export function SetupGuideSection({
   checks = "static",
   admin = false,
   pluginLabel,
+  targetLabel,
 }: SetupGuideSectionProps) {
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
@@ -161,6 +170,61 @@ export function SetupGuideSection({
           {t(`unresolved.${reason}`, { names: names.map((n) => `{{${n}}}`).join(", ") })}
         </Text>
       ))}
+      {admin ? null : (
+        <AskAgent
+          g={g}
+          query={query}
+          target={targetLabel ?? query.name ?? pluginLabel ?? g.plugin}
+        />
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * 让智能体协助 / Ask an agent (spec §12): a new conversation (`/`, the agent the home picks) with a
+ * drafted message in the composer, not sent, naming the guide (plugin, catalog item, guide id,
+ * place) and its target by id, so the agent finds it with the Platform `setup` operations. The
+ * draft is built from names and ids only, never from config values (the guide's text is not in
+ * it either). Shown wherever the section is, since the guide is only rendered for someone who
+ * can act on it (its page, or the member's 如何连接); never in the platform preview.
+ */
+function AskAgent({
+  g,
+  query,
+  target,
+}: {
+  g: RenderedSetupGuide;
+  query: SetupGuideSectionProps["query"];
+  target: string;
+}) {
+  const t = useTranslations("setupGuide.askAgent");
+  const router = useRouter();
+  const connectionId =
+    g.target?.kind === "channel-connection" ? g.target.id : query.connectionId;
+  const connectorId = g.target?.kind === "connector" ? g.target.id : query.connectorId;
+  const targetRef =
+    connectionId !== undefined
+      ? t("targetConnection", { id: connectionId })
+      : connectorId !== undefined
+        ? t("targetConnector", { id: connectorId })
+        : t("targetNone");
+  const draft = [
+    t("draft", { title: g.title, target }),
+    t("reference", {
+      plugin: g.plugin,
+      itemId: g.itemId,
+      guideId: g.id,
+      place: g.place,
+      audience: g.audience,
+      target: targetRef,
+    }),
+  ].join("\n\n");
+  return (
+    <Stack direction="row">
+      <Button variant="ghost" onClick={() => router.push(draftConversationPath(draft))}>
+        {t("action")}
+      </Button>
     </Stack>
   );
 }

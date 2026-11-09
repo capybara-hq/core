@@ -296,6 +296,7 @@ function GuideSection({
         orgId={orgId}
         guide={guide}
         query={{ connectionId: channel.id }}
+        targetLabel={channel.name}
         checks="live"
         pluginLabel={channelPluginLabel(channel, lang)}
         drift={

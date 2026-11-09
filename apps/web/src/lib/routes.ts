@@ -20,3 +20,14 @@ export const HOME_PATH = "/";
 /** The new conversation, with `agentId` picked when given (`/?agent=<id>`). */
 export const newConversationPath = (agentId?: string): string =>
   agentId === undefined ? HOME_PATH : `${HOME_PATH}?agent=${encodeURIComponent(agentId)}`;
+
+/** The longest `?draft=` the new conversation reads into its composer; the rest is dropped. */
+export const MAX_DRAFT_PARAM = 4000;
+
+/**
+ * The new conversation with `draft` in its composer (`/?draft=<text>`): prefilled, never sent; the
+ * person reads it and sends it themselves. A draft carries no secret (the callers build it from
+ * names and ids only).
+ */
+export const draftConversationPath = (draft: string): string =>
+  `${HOME_PATH}?${new URLSearchParams({ draft: draft.slice(0, MAX_DRAFT_PARAM) })}`;

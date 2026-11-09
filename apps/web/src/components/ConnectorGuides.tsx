@@ -112,6 +112,7 @@ export function ConnectorGuideSheet({
         orgId={orgId}
         guide={guide}
         query={{ connectorId: connector.id, audience: "member" }}
+        targetLabel={connector.name}
         checks="live"
       />
     </Sheet>

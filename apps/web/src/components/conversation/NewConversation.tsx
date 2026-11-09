@@ -86,10 +86,15 @@ export function orderAgents(
  * at once with the pending bubble and the working line; the create's answer seeds the new
  * conversation's cache, and the URL changes without waiting for the sidebar's groups. A failed
  * create goes back to the new conversation with the draft in the composer.
+ *
+ * `draft` (`?draft=`, a setup guide's 让智能体协助) is the composer's first text: read once at
+ * mount (a later address change leaves the text alone), never sent until the person sends it, and
+ * never focused into on a touch device (the composer only takes the text).
  */
 export function useNewConversationPage(
   orgId: string,
   preferredAgent: string | null,
+  draft: string | null = null,
 ): ConversationPageProps {
   const t = useTranslations("chat");
   const locale = useLocale() === "zh" ? "zh" : "en";
@@ -154,7 +159,11 @@ export function useNewConversationPage(
   const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
-  const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>({ n: 0 });
+  const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>(() =>
+    draft === null
+      ? { n: 0 }
+      : { n: 0, draft: { text: draft, skill: null, attachments: [], files: [] } },
+  );
   /** A second ↵ came before the conversation exists: the composer says why it waits. */
   const [blocked, setBlocked] = useState(false);
 

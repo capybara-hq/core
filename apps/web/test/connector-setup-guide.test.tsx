@@ -524,6 +524,8 @@ describe("/admin/connector-templates/<id>: the template's guide for the platform
     expect(screen.queryByRole("group", { name: "OAuth client works" })).toBeNull();
     expect(screen.queryByText("OAuth client works")).toBeNull();
     expect(screen.queryByRole("button", { name: /I updated/ })).toBeNull();
+    // no org to ask an agent in: the platform preview has no 让智能体协助
+    expect(screen.queryByRole("button", { name: G.askAgent.action })).toBeNull();
     expect(
       screen.getByText(G.unresolved.no_org.replace("{names}", "{{orgName}}, {{connectorName}}")),
     ).toBeTruthy();

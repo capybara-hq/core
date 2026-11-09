@@ -2427,7 +2427,15 @@
     "howToConnectTitle": "如何连接 {name}",
     "adminGuideLink": "查看管理员接入指南",
     "close": "关闭",
-    "platformHint": "组织管理员配置这个模板时看到的接入指南。组织名称、连接器名称在各组织里填上；检查要等组织创建了连接器才运行，这里不显示。"
+    "platformHint": "组织管理员配置这个模板时看到的接入指南。组织名称、连接器名称在各组织里填上；检查要等组织创建了连接器才运行，这里不显示。",
+    "askAgent": {
+      "action": "让智能体协助",
+      "draft": "帮我完成 {target} 的「{title}」接入设置。",
+      "reference": "接入指南：{plugin} 插件的 {guideId}（目录项 {itemId}，位置 {place}，对象 {audience}）；目标：{target}。请用 Platform 的 setup 操作读取指南，带我完成当前这一步并运行检查；所有密钥我会自己在页面上填写。",
+      "targetConnection": "渠道连接 {id}",
+      "targetConnector": "连接器 {id}",
+      "targetNone": "尚未保存"
+    }
   },
   "extensions": {
     "title": "扩展",
