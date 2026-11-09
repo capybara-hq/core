@@ -114,13 +114,11 @@ describe("suggested appearance operations", { timeout: 60_000 }, () => {
     // the org operation: the same, at org level
     const orgCtx = ctxOf(env.bossId);
     const orgInput = parse(ORG_OP, { extension: LOOK });
-    const orgCard = await op(ORG_OP).summary?.(orgInput, orgCtx);
-    expect(orgCard?.en).toContain("shell.brand");
+    // the platform already uses the suggestion, so an org that follows it pins nothing
+    await op(ORG_OP).summary?.(orgInput, orgCtx);
     expect(await orgRows(env, env.orgId)).toEqual({});
     await op(ORG_OP).run(orgInput, orgCtx);
-    expect(await orgRows(env, env.orgId)).toMatchObject({
-      theme: { id: themeId, personal: "allowed" },
-    });
+    expect(await orgRows(env, env.orgId)).toEqual({});
   });
 
   it("the precheck refuses a theme that cannot be set, before any card", async () => {
