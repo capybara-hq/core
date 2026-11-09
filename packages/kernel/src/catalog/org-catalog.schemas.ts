@@ -61,6 +61,11 @@ export const OrgPluginSwitchBody = z
 /** `:itemId` as the routes take it (`@Param`). */
 export const CatalogItemPathParams = z.object({ itemId: z.string().min(1) });
 
+/** `:itemId` / `:guideId` of the guide route (`@Param`). */
+export const CatalogGuidePathParams = CatalogItemPathParams.extend({
+  guideId: z.string().min(1).max(64),
+});
+
 /** `:installId` as the uninstall route takes it (`@Param`). */
 export const PluginInstallPathParams = z.object({ installId: z.string().min(1) });
 
@@ -89,6 +94,11 @@ export const CatalogGuideQuery = z
 export const ORG_CATALOG_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/catalog" },
   { route: "GET /api/v1/orgs/:orgId/catalog/:itemId", params: CatalogItemPathParams },
+  {
+    route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId",
+    params: CatalogGuidePathParams,
+    query: CatalogGuideQuery,
+  },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/requests",
     params: CatalogItemPathParams,

@@ -144,12 +144,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
-    route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId",
-    category: "internal",
-    reason:
-      "A plugin's setup guide (an app manifest, URLs, steps) for the web's setup section; a person pastes it into the third-party platform's console, which an agent cannot reach",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
     category: "secret",
     reason:

@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
 import { type KernelCheckArgs, SetupCheckRegistry } from "../../src/setup/setup-check-registry.js";
 import {
   importPlugin,
@@ -231,5 +234,126 @@ describe("setup checks for connectors", { timeout: 60_000 }, () => {
       payload: { connectorId, audience: "admin" },
     });
     expect(r.statusCode).toBe(403);
+  });
+});
+
+type Target = {
+  kind: string;
+  id: string;
+  name: string;
+  drift: unknown;
+  checks: Record<string, number> | null;
+  webPath: string;
+};
+type Guide = {
+  itemId: string;
+  place: string;
+  template: string | null;
+  audience: string;
+  title: string;
+  targets: Target[];
+};
+
+async function guideList(req: Req): Promise<Guide[]> {
+  const r = await req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/setup-guides` });
+  expect(r.statusCode, r.body).toBe(200);
+  expect(r.body).not.toContain(MCP_TOKEN);
+  return (r.json() as { guides: Guide[] }).guides;
+}
+
+// The guide list and `setup.read` for connector template guides (plan task 13): admins get the
+// admin guide with the connector (and a template without one), members the member section.
+// Runs last: the final test removes the connector.
+describe("setup guides for connectors", { timeout: 60_000 }, () => {
+  const callOp = (id: string, input: unknown, accountId: string) => {
+    const o = env.k.app.get(PlatformOperations).get(id);
+    if (o === null) throw new Error(`no operation ${id}`);
+    return o.run(o.input.parse(input), {
+      orgId: env.orgId,
+      actorAccountId: accountId,
+      agentId: randomUUID(),
+      conversationId: randomUUID(),
+      runId: randomUUID(),
+      signal: new AbortController().signal,
+    }) as Promise<Record<string, unknown>>;
+  };
+
+  it("an org admin sees the admin guide with the connector, its check counts and page", async () => {
+    const guides = await guideList(env.boss);
+    expect(guides).toHaveLength(1);
+    expect(guides[0]).toMatchObject({
+      itemId,
+      place: "connector-template",
+      template: TEMPLATE,
+      audience: "admin",
+    });
+    const [t] = guides[0]?.targets ?? [];
+    expect(t).toMatchObject({
+      kind: "connector",
+      id: connectorId,
+      name: "Team GitHub",
+      drift: null,
+      webPath: `/connectors/${connectorId}?tab=guide`,
+    });
+    const counts = Object.values(t?.checks ?? {}).reduce((a, b) => a + b, 0);
+    expect(counts).toBe(2);
+  });
+
+  it("a member sees only the member section, without drift", async () => {
+    const guides = await guideList(env.mem);
+    expect(guides.map((g) => [g.audience, g.targets.map((t) => [t.kind, t.id, t.drift])])).toEqual([
+      ["member", [["connector", connectorId, null]]],
+    ]);
+  });
+
+  it("setup.read renders the member section as Markdown with its check lines and no secret", async () => {
+    const out = await callOp(
+      "setup.read",
+      { itemId, guideId: "gh", connectorId, audience: "member" },
+      env.memId,
+    );
+    const guide = out.guide as {
+      title: string;
+      markdown: string;
+      audience: string;
+      webPath: string;
+    };
+    expect(guide.audience).toBe("member");
+    expect(guide.markdown.startsWith(`# ${guide.title}\n`)).toBe(true);
+    expect(guide.markdown).toContain("- [check target] The target the check gets");
+    expect(guide.markdown).toContain("- [check capybara:test-account] Who asked");
+    expect(guide.webPath).toBe(`/connectors/${connectorId}?tab=guide`);
+    expect(JSON.stringify(out)).not.toContain(MCP_TOKEN);
+    // the member may not read the admin section
+    await expect(
+      callOp("setup.read", { itemId, guideId: "gh", connectorId }, env.memId),
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("a template on in the org without a connector is listed for admins, not members", async () => {
+    await env.db
+      .updateTable("connectors")
+      .set({ deleted_at: sql`now()` })
+      .where("id", "=", connectorId)
+      .execute();
+    const guides = await guideList(env.boss);
+    expect(guides.map((g) => g.targets)).toEqual([
+      [
+        {
+          kind: "connector-template",
+          id: TEMPLATE,
+          name: expect.any(String),
+          drift: null,
+          checks: null,
+          webPath: `/connectors/install?template=${itemId}`,
+        },
+      ],
+    ]);
+    expect(await guideList(env.mem)).toEqual([]);
+    // without a target, setup.read points at the install page
+    const out = await callOp("setup.read", { itemId, guideId: "gh" }, env.bossId);
+    expect((out.guide as { webPath: string }).webPath).toBe(
+      `/connectors/install?template=${itemId}`,
+    );
   });
 });

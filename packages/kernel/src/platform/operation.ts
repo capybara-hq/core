@@ -252,7 +252,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "setup",
     description:
-      "Plugin setup guides: the state of a guide's checks for a channel connection or a connector, and running one check. Entering secrets stays on the web.",
+      "Plugin setup guides: list the guides you may help with, read one as Markdown, the state of its checks for a channel connection or a connector, and running one check. Entering secrets, connecting an account and confirming the app was updated stay with the person on the web; read the docs topic `setup` first.",
   },
   {
     id: "themes",

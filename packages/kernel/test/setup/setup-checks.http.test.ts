@@ -61,6 +61,7 @@ let otherOrgId: string;
 let agentId: string;
 let itemId: string;
 let ownerId: string;
+let memberId: string;
 const lines: string[] = [];
 
 type State = {
@@ -104,6 +105,7 @@ beforeAll(async () => {
   const o = await accounts.createLocal({ login: "owner", password: PW, displayName: "O" });
   ownerId = o.id;
   const m = await accounts.createLocal({ login: "member", password: PW, displayName: "M" });
+  memberId = m.id;
   await accounts.createLocal({ login: "stranger", password: PW, displayName: "S" });
   owner = await session(k, "owner");
   member = await session(k, "member");
@@ -625,5 +627,90 @@ describe("setup checks: Platform operations", { timeout: 30_000 }, () => {
     const ttl = await redis.pttl(keys[0] as string);
     expect(ttl).toBeGreaterThan(0);
     expect(ttl).toBeLessThanOrEqual(60_000);
+  });
+
+  it("setup.guides lists the channel guide with its connections, check counts and pages", async () => {
+    expect(op("setup.guides").confirm).toBe("read");
+    const id = await connection();
+    await callOp("setup.check", { ...base(), checkId: "pass", connectionId: id });
+    const out = await callOp("setup.guides", {});
+    const guides = out.guides as {
+      itemId: string;
+      guideId: string;
+      place: string;
+      audience: string;
+      title: string;
+      targets: {
+        kind: string;
+        id: string;
+        drift: unknown;
+        checks: Record<string, number> | null;
+        webPath: string;
+      }[];
+    }[];
+    expect(guides).toHaveLength(1);
+    const g = guides[0];
+    expect(g).toMatchObject({
+      itemId,
+      guideId: "fake-im-app",
+      place: "channel-connection",
+      audience: "admin",
+      title: "Create the fake IM app",
+    });
+    const t = g?.targets.find((x) => x.id === id);
+    expect(t).toMatchObject({
+      kind: "channel-connection",
+      drift: null,
+      webPath: `/channels/${id}`,
+    });
+    // the long connection mode has nine checks; `pass` ran
+    expect(t?.checks).toEqual({ ok: 1, failing: 0, unknown: 0, running: 0, notRun: 8 });
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+    // the HTTP route answers the same list
+    const r = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/setup-guides` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((r.json() as { guides: unknown[] }).guides).toEqual(guides);
+  });
+
+  it("setup.guides shows a member no channel guide (only org admins set channels up)", async () => {
+    await connection();
+    expect(await callOp("setup.guides", {}, memberId)).toEqual({ guides: [] });
+    const r = await member({ method: "GET", url: `/api/v1/orgs/${orgId}/setup-guides` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toEqual({ guides: [] });
+  });
+
+  it("setup.read returns the guide as Markdown with check lines, the page and no secret", async () => {
+    expect(op("setup.read").confirm).toBe("read");
+    const id = await connection();
+    const out = await callOp("setup.read", { ...base(), connectionId: id });
+    const guide = out.guide as {
+      markdown: string;
+      mode: string | null;
+      modes: string[];
+      checks: { id: string }[];
+      target: unknown;
+      webPath: string;
+      handover: string;
+    };
+    expect(guide.markdown.startsWith("# Create the fake IM app\n")).toBe(true);
+    expect(guide.markdown).toContain("```yaml\nsocket: true\n```");
+    expect(guide.markdown).toContain("- [check pass] The platform accepts the app");
+    expect(guide.markdown).not.toContain("webhook: true");
+    expect(guide.mode).toBe("long_connection");
+    expect(guide.modes).toEqual(["long_connection", "webhook"]);
+    expect(guide.target).toEqual({ kind: "channel-connection", id });
+    expect(guide.webPath).toBe(`/channels/${id}`);
+    expect(guide.handover).toContain(`/channels/${id}`);
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+    expect(JSON.stringify(out)).not.toContain(DEPLOY_SECRET);
+    const webhook = await callOp("setup.read", { ...base(), connectionId: id, mode: "webhook" });
+    expect((webhook.guide as { markdown: string }).markdown).toContain(
+      "- [check fail] The platform refuses the app",
+    );
+    // a member may not read the admin guide
+    await expect(
+      callOp("setup.read", { ...base(), connectionId: id }, memberId),
+    ).rejects.toMatchObject({ code: "forbidden" });
   });
 });

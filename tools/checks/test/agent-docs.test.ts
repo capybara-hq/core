@@ -1,3 +1,5 @@
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionPointInfo } from "@capybara-hq/plugin-sdk";
@@ -84,5 +86,20 @@ describe("checkAgentDocs", () => {
     expect(got.some((g) => g.includes('"alpha" has a row'))).toBe(false);
     // a title that does not say authoring
     has("agent-docs-missing", "skills.md", 'must start with "Authoring:"');
+  });
+
+  it("requires the setup usage topic, whose title need not say authoring", () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-docs-"));
+    try {
+      cpSync(fixture("clean"), root, { recursive: true });
+      rmSync(join(root, AGENT_DOCS_DIR, "setup.md"));
+      const f = checkAgentDocs(root, { points, agentTemplateFields });
+      expect(f.map((x) => [x.rule, x.file.slice(join(root, AGENT_DOCS_DIR).length + 1)])).toEqual([
+        ["agent-docs-missing", "setup.md"],
+      ]);
+      expect(f[0]?.message).toContain('topic "setup" has no file');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
