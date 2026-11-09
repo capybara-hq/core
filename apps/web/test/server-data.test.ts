@@ -69,7 +69,7 @@ const PAPER = {
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
-  cssUrl: "/api/v1/themes/t-paper/1.0.0/theme.css",
+  cssUrl: "/api/v1/themes/t-paper/1.0.0/r2/theme.css",
 };
 const THEMES = { themes: [], resolved: PAPER, org: { id: "t-paper", personal: "allowed" } };
 

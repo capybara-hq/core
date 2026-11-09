@@ -25,7 +25,7 @@ const NIGHT_CITY: ThemeRef = {
     wordmark: "NIGHT CITY",
     faviconUrl: null,
   },
-  cssUrl: "/api/v1/themes/t-night/1.0.0/theme.css",
+  cssUrl: "/api/v1/themes/t-night/1.0.0/r2/theme.css",
 };
 const PAPER: ThemeRef = {
   id: "t-paper",
@@ -34,7 +34,7 @@ const PAPER: ThemeRef = {
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
-  cssUrl: "/api/v1/themes/t-paper/2.0.0/theme.css",
+  cssUrl: "/api/v1/themes/t-paper/2.0.0/r2/theme.css",
 };
 
 const sidebar = () => screen.getByRole("complementary");
@@ -54,7 +54,7 @@ const themeLinks = () =>
 const at = (theme: ThemeRef, version: string): ThemeRef => ({
   ...theme,
   version,
-  cssUrl: `/api/v1/themes/${theme.id}/${version}/theme.css`,
+  cssUrl: `/api/v1/themes/${theme.id}/${version}/r2/theme.css`,
 });
 const linksTo = (href: string) =>
   document.querySelectorAll(`link[rel="stylesheet"][href="${href}"]`).length;
@@ -97,7 +97,11 @@ describe("ThemeRoot in the workspace frame", () => {
   });
 
   it("a settings change that updates the themes read swaps the stylesheet and the brand", () => {
-    const next = { ...PAPER, version: "2.1.0", cssUrl: "/api/v1/themes/t-paper/2.1.0/theme.css" };
+    const next = {
+      ...PAPER,
+      version: "2.1.0",
+      cssUrl: "/api/v1/themes/t-paper/2.1.0/r2/theme.css",
+    };
     const view = renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
     view.update(shellOf(ME, { theme: next }));
     expect(themeLinks()).toEqual([next.cssUrl]);

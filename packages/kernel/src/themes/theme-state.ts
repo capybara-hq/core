@@ -38,7 +38,7 @@ export interface ThemeRef {
   singleScheme: ThemeScheme | null;
   /** null: the theme has no logo (the built-in mark and wordmark). */
   logo: { markUrl: string | null; wordmark: string | null; faviconUrl: string | null } | null;
-  /** `/api/v1/themes/<id>/<version>/theme.css`. */
+  /** `/api/v1/themes/<id>/<version>/r<THEME_CSS_REVISION>/theme.css`. */
   cssUrl: string;
 }
 
@@ -54,7 +54,18 @@ export interface ThemeSwatch {
 export type ListedTheme = ThemeRef & { swatches: Partial<Record<ThemeScheme, ThemeSwatch>> };
 
 /**
- * The delivery URL of a theme version (spec §8): its stylesheet, or with `asset` (a path inside the
+ * The render revision of theme stylesheets, a segment of the stylesheet URL (`r<N>/theme.css`).
+ * The stylesheet is cached as immutable for a year, keyed by its URL: bump this whenever
+ * `renderThemeCss`'s output format changes, so no browser keeps an older format under a URL
+ * that now means the new one. The delivery route serves only the current revision (404
+ * `theme.not_found` otherwise). History: (none, `<version>/theme.css`) plain rules; 2: one
+ * `@layer theme { … }` block (client extensions spec §7.2).
+ */
+export const THEME_CSS_REVISION = 2;
+
+/**
+ * The delivery URL of a theme version (spec §8): its stylesheet (with the render revision,
+ * {@link THEME_CSS_REVISION}), or with `asset` (a path inside the
  * plugin as the theme file names it, e.g. `./fonts/MiSans.woff2`) that asset, as one path segment
  * (`assets/fonts%2FMiSans.woff2`; the route decodes it back to the stored path `fonts/MiSans.woff2`).
  * The one builder of these URLs: the listing, the stylesheet and the asset routes all use it.
@@ -62,7 +73,7 @@ export type ListedTheme = ThemeRef & { swatches: Partial<Record<ThemeScheme, The
 export function themeUrl(id: string, version: string, asset?: string): string {
   const base = `/api/v1/themes/${encodeURIComponent(id)}/${encodeURIComponent(version)}`;
   return asset === undefined
-    ? `${base}/theme.css`
+    ? `${base}/r${THEME_CSS_REVISION}/theme.css`
     : `${base}/assets/${encodeURIComponent(packagePath(asset))}`;
 }
 

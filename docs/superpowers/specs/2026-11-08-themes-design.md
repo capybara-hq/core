@@ -286,7 +286,9 @@ Three levels, most specific first:
 
 ## 8. Delivering a theme to the web
 
-- **CSS from the kernel**: `GET /api/v1/themes/:id/:version/theme.css` renders, from the stored,
+- **CSS from the kernel**: `GET /api/v1/themes/:id/:version/:revision/theme.css` (`revision` =
+  `r<THEME_CSS_REVISION>`, bumped when the output format changes; only the current one is served)
+  renders, as one `@layer theme { … }` block (client extensions spec §7.2), from the stored,
   parsed theme, the overrides under `:root[data-theme="dark"]` / `:root[data-theme="light"]`, the
   `@font-face` rules and the font stacks. A single-scheme theme writes its one scheme under both
   selectors and pins `color-scheme`, so it needs nothing from the root layout (which owns
@@ -337,7 +339,7 @@ Three levels, most specific first:
 | `PUT /api/v1/admin/settings` | existing (`@SuperAdmin`) | gains `uiTheme` (the platform default) |
 | `PUT /api/v1/me/preferences` | signed in | gains `theme: string \| null`; becomes a partial update: each field is optional and an omitted field keeps its value |
 | `GET /api/v1/platform/theme` | public | the resolved platform default for anonymous pages |
-| `GET /api/v1/themes/:id/:version/theme.css`, `…/assets/:file` | public | delivery |
+| `GET /api/v1/themes/:id/:version/:revision/theme.css`, `…/assets/:file` | public | delivery |
 
 - `ThemeRef` = `{ id, version, name, schemes, singleScheme, logo: { markUrl, wordmark,
   faviconUrl } | null, cssUrl }`; `id` is the `platform_themes` UUID.

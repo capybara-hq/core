@@ -17,7 +17,10 @@ export interface ThemeRef {
   singleScheme: ThemeScheme | null;
   /** null: the built-in mark and wordmark. */
   logo: { markUrl: string | null; wordmark: string | null; faviconUrl: string | null } | null;
-  /** `/api/v1/themes/<id>/<version>/theme.css` (public, immutable per version). */
+  /**
+   * `/api/v1/themes/<id>/<version>/r<revision>/theme.css` (public, immutable per version and render
+   * revision); opaque here.
+   */
   cssUrl: string;
 }
 

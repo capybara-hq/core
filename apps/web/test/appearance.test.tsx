@@ -41,7 +41,7 @@ const ref = (id: string, en: string, zhName: string, schemes: ("dark" | "light")
   schemes,
   singleScheme: schemes.length === 1 ? schemes[0] : null,
   logo: null,
-  cssUrl: `/api/v1/themes/${id}/1/theme.css`,
+  cssUrl: `/api/v1/themes/${id}/1/r2/theme.css`,
 });
 const sw = (bg: string) => ({ bg, panel: "#111", ink: "#eee", accent: "#f60" });
 const NIGHT = {

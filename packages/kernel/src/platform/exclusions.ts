@@ -749,7 +749,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // themes (themes spec §8-§9)
   {
-    route: "GET /api/v1/themes/:id/:version/theme.css",
+    route: "GET /api/v1/themes/:id/:version/:revision/theme.css",
     category: "transport",
     reason: "Serves a theme version's stylesheet to the browser; an agent reads themes.list",
   },

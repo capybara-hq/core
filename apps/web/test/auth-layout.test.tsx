@@ -110,7 +110,7 @@ describe("the (auth) layout's first-load prefetch", () => {
   });
 
   it("the platform theme is dehydrated; a failed read is the built-in theme, not a failure", async () => {
-    const THEME = { id: "t1", cssUrl: "/api/v1/themes/t1/1.0.0/theme.css" };
+    const THEME = { id: "t1", cssUrl: "/api/v1/themes/t1/1.0.0/r2/theme.css" };
     serverRoutes({ [`GET ${PLATFORM_THEME}`]: () => json(200, THEME) });
     expect(dataOf(stateOf(await layoutAt("/setup")), "platformTheme")).toMatchObject({
       status: "success",
