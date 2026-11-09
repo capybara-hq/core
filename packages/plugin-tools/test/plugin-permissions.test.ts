@@ -90,6 +90,16 @@ describe("perm-ui 的动态 id 与别名", () => {
   });
 });
 
+describe("perm-ui and components", () => {
+  it("ctx.ui.view on a component id passes perm-ui", () => {
+    const f = checkPluginPermissions([fixture("plugin-perm-ui-components")]);
+    // view and action on the component id pass; only the undeclared id is reported
+    expect(f.map((x) => x.line)).toEqual(flagged("plugin-perm-ui-components"));
+    expect(f.map((x) => x.rule)).toEqual(["perm-ui"]);
+    expect(f[0]?.message).toContain("permissions.ui.components");
+  });
+});
+
 describe("perm-hooks", () => {
   it("undeclared mount or policy mount is reported; a variable mount cannot be confirmed; declared mounts pass", () => {
     const f = checkPluginPermissions([fixture("plugin-perm-hooks")]);

@@ -339,8 +339,8 @@ export class LiveConfig {
  * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
  *   only with `permissions.models` (and only its `embedding` purposes, through `deps.models`); `http.route`
  *   only the method + path declared in `permissions.http`; `tools.register` only names declared in
- *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` (during
- *   setup only); `ui.invalidate` sends a refresh over the kernel bus (namespace `kernel`), across
+ *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` or
+ *   `permissions.ui.components` (a component's server view; during setup only); `ui.invalidate` sends a refresh over the kernel bus (namespace `kernel`), across
  *   replicas; `ui.verifyEmbedToken` checks an embed token the kernel signed: `claims.plugin` must be
  *   this extension, the extension still enabled in that org and the caller still an active member of
  *   the org (org not deleted); returns the current role;

@@ -110,7 +110,10 @@ export const DEPLOYMENT_SETTINGS = z.object({
   orgMarketplaceBrowse: z.boolean().default(true),
   /** The platform default theme (themes spec §7); `{ id: null }`: the built-in theme. */
   uiTheme: UiThemeSetting.default({ id: null }),
-  /** The platform default arrangement of UI slots (UI slots spec §5); orgs override per slot. */
+  /**
+   * The platform default arrangement of UI slots (UI slots spec §5): `{ hidden, order }` per list
+   * slot, `{ use }` per single slot (client extensions spec §6.3); orgs override per slot.
+   */
   uiArrangement: UiArrangementSchema.default({}),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
@@ -146,7 +149,10 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * disabled (else 400 `theme.not_available`), or `{ id: null }` for the built-in theme.
      */
     uiTheme: UiThemeSetting.strict().optional(),
-    /** Per slot, the entry to hide / order contributions with; null removes a slot's entry. */
+    /**
+     * Per slot, the entry to hide / order contributions with (`{ use }` on a single slot); null
+     * removes a slot's entry.
+     */
     uiArrangement: UiArrangementPatchSchema.optional(),
   })
   .strict();

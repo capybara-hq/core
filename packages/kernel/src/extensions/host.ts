@@ -101,7 +101,8 @@ export { deploymentConfigHash };
 
 /**
  * One item of {@link ExtensionHost.uiContributions}: a UI contribution from the manifest whose slot
- * resolved at load (dropped ones never appear), with its registered view / action (embeds have none).
+ * resolved at load (dropped ones never appear), with its registered view / action (a view's or a
+ * component's; embeds have none).
  */
 export interface LoadedUiContribution {
   plugin: string;
@@ -2508,8 +2509,10 @@ export class ExtensionHost {
   uiContributions(): LoadedUiContribution[] {
     return this.registry.all().flatMap((i) =>
       i.ui.map(({ contribution: c, slot, after }) => {
-        const render = c.kind === "view" ? i.uiViews.get(c.id) : undefined;
-        const action = c.kind === "view" ? i.uiActions.get(c.id) : undefined;
+        // a view's, or a component's server view (client extensions spec §5.2); embeds have none
+        const served = c.kind === "view" || c.kind === "component";
+        const render = served ? i.uiViews.get(c.id) : undefined;
+        const action = served ? i.uiActions.get(c.id) : undefined;
         return {
           plugin: i.name,
           contribution: c,
