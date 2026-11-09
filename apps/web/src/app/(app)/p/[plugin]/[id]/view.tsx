@@ -71,6 +71,8 @@ function PluginPageHidden({
     enabled: listed === undefined,
     retryOnMount: retryOnMountOf(q.queryKey),
   });
+  // A 404 is final (a guest's slot gate answers it): the designed not-found, no further read.
+  if (listed === undefined && arrangement.error?.status === 404) return <NotFound />;
   if (listed === undefined && arrangement.data === undefined && arrangement.error === null) {
     return null;
   }

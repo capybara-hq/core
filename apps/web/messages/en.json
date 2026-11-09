@@ -4553,8 +4553,8 @@
   },
   "uiArrangement": {
     "title": "UI placement",
-    "description": "Where extensions show their pages and sections. Hide a contribution to stop listing it, or change its order. Hidden only means not listed: a direct link still opens.",
-    "descriptionReadonly": "Where extensions show their pages and sections. Only org admins change it. Hidden means not listed: a direct link still opens.",
+    "description": "Where extensions show their pages and sections. Hide a contribution to stop listing it, or change its order. Hidden only means not listed: a hidden org page or platform page still opens by its direct link, and any other hidden contribution simply does not show.",
+    "descriptionReadonly": "Where extensions show their pages and sections. Only org admins change it. Hidden means not listed: a hidden org page or platform page still opens by its direct link, and any other hidden contribution simply does not show.",
     "followsPlatform": "Follows the platform",
     "resetOrg": "Follow the platform",
     "resetPlatform": "Reset to default",

@@ -2,7 +2,12 @@
 
 - Date: 2026-11-08, written against `main` at `180e4bd4`; adjusted on 2026-11-09 against
   `feat/themes` at `eff38b42` (latest kernel migration 0103).
-- Status: reviewed by the maintainer (2026-11-08); adjusted to the code on 2026-11-09.
+- Status: implemented on `feat/ui-slots` (PR #127, steps A of §4; steps B and C follow the release); reviewed by
+  the maintainer (2026-11-08); adjusted to the code on 2026-11-09.
+- As built, deviations from the text below: `EmbedClaims`, `UiRenderArgs` and `EmbedInitContext` are
+  unions on `scope` (`org` / `platform`, the platform members carry no `orgId`); `agent.detail.section`
+  carries `agentId`; `GET /api/v1/ui/slots` and the `ui.slots` Platform operation serve the catalog;
+  `PluginPageHidden` treats a 404 on the arrangement read as final (the designed not-found).
 - Plan: `docs/superpowers/plans/2026-11-09-ui-slots.md`.
 - Related: themes (`2026-11-08-themes-design.md`, layer L0 of the same direction), the extension UI
   contract (`.agents/skills/writing-extension-ui/SKILL.md`, `packages/plugin-sdk/src/ui.ts`), the UI
