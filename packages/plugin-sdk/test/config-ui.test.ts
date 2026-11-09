@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  CONFIG_UI_LIMITS,
   type ChannelInboundMode,
+  CONFIG_UI_LIMITS,
   type ConfigUiHints,
   configJsonSchema,
   inboundModeFields,
