@@ -77,6 +77,14 @@ export class SetupOperations implements OnModuleInit {
             next: "The plugin has no setup guide with that id; list the guides with setup.guides.",
           },
           {
+            code: "channel.not_found",
+            next: "No channel connection with that id in this org; list the targets with setup.guides.",
+          },
+          {
+            code: "connector.not_found",
+            next: "No connector made from this guide's template with that id in this org; list the targets with setup.guides.",
+          },
+          {
             code: "validation_failed",
             next: "Pass a mode and audience the guide has (setup.guides lists the audience) and the target of its place: connectionId for a channel guide, connectorId for a connector template guide.",
           },
@@ -110,6 +118,14 @@ export class SetupOperations implements OnModuleInit {
           {
             code: "catalog.guide_not_found",
             next: "The plugin has no setup guide with that id; read the guide id from the connection or connector page.",
+          },
+          {
+            code: "channel.not_found",
+            next: "No channel connection with that id in this org; list the targets with setup.guides.",
+          },
+          {
+            code: "connector.not_found",
+            next: "No connector made from this guide's template with that id in this org; list the targets with setup.guides.",
           },
           {
             code: "validation_failed",
@@ -150,6 +166,14 @@ export class SetupOperations implements OnModuleInit {
           {
             code: "catalog.guide_not_found",
             next: "The plugin has no setup guide with that id; read the guide id from the connection or connector page.",
+          },
+          {
+            code: "channel.not_found",
+            next: "No channel connection with that id in this org; list the targets with setup.guides.",
+          },
+          {
+            code: "connector.not_found",
+            next: "No connector made from this guide's template with that id in this org; list the targets with setup.guides.",
           },
           {
             code: "validation_failed",

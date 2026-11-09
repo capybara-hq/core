@@ -301,9 +301,9 @@ describe("setup guides for connectors", { timeout: 60_000 }, () => {
 
   it("a member sees only the member section, without drift", async () => {
     const guides = await guideList(env.mem);
-    expect(guides.map((g) => [g.audience, g.targets.map((t) => [t.kind, t.id, t.drift])])).toEqual([
-      ["member", [["connector", connectorId, null]]],
-    ]);
+    expect(
+      guides.map((g) => [g.audience, g.targets.map((t) => [t.kind, t.id, t.drift, t.webPath])]),
+    ).toEqual([["member", [["connector", connectorId, null, "/account/connections"]]]]);
   });
 
   it("setup.read renders the member section as Markdown with its check lines and no secret", async () => {
@@ -322,7 +322,9 @@ describe("setup guides for connectors", { timeout: 60_000 }, () => {
     expect(guide.markdown.startsWith(`# ${guide.title}\n`)).toBe(true);
     expect(guide.markdown).toContain("- [check target] The target the check gets");
     expect(guide.markdown).toContain("- [check capybara:test-account] Who asked");
-    expect(guide.webPath).toBe(`/connectors/${connectorId}?tab=guide`);
+    // a member's section lives on their connections page (§9.3), not the admin 接入指南 tab
+    expect(guide.webPath).toBe("/account/connections");
+    expect((out.guide as { handover: string }).handover).toContain("/account/connections");
     expect(JSON.stringify(out)).not.toContain(MCP_TOKEN);
     // the member may not read the admin section
     await expect(

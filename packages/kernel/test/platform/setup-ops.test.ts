@@ -36,6 +36,15 @@ describe("Platform setup domain", () => {
     });
   });
 
+  it("the target operations say what to do when the target is gone or in another org", () => {
+    for (const o of setupOps().filter((x) => x.id !== "setup.guides")) {
+      const codes = (o.errors ?? []).map((e) => e.code);
+      expect(codes, o.id).toEqual(
+        expect.arrayContaining(["channel.not_found", "connector.not_found"]),
+      );
+    }
+  });
+
   it("no setup operation takes a secret, a config or a credential", () => {
     for (const o of setupOps()) {
       const fields = Object.keys(

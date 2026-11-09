@@ -81,11 +81,17 @@ export const setupWebPath = {
   connection: (id: string) => `/channels/${enc(id)}`,
   newConnection: () => "/channels/new",
   connector: (id: string) => `/connectors/${enc(id)}?tab=guide`,
+  /** A member's connector section: the connector's row on their connections page (§9.3). */
+  memberConnections: () => "/account/connections",
   template: (itemId: string) => `/connectors/install?template=${enc(itemId)}`,
 };
 
-/** The page a rendered guide belongs on: its target's, else where a target is created. */
+/**
+ * The page a rendered guide belongs on: a member's connections page for the member audience, else
+ * its target's, else where a target is created.
+ */
 function webPathOf(g: RenderedSetupGuide): string {
+  if (g.audience === "member") return setupWebPath.memberConnections();
   if (g.target?.kind === "channel-connection") return setupWebPath.connection(g.target.id);
   if (g.target?.kind === "connector") return setupWebPath.connector(g.target.id);
   return g.place === "channel-connection"
@@ -301,7 +307,7 @@ export class SetupGuidesService {
         id: r.id,
         name: r.name,
         query: { connectorId: r.id },
-        webPath: setupWebPath.connector(r.id),
+        webPath: admin ? setupWebPath.connector(r.id) : setupWebPath.memberConnections(),
       });
     });
     if (!admin) return out;

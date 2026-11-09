@@ -35,7 +35,8 @@ the person's own decision stays with the person on the web.
   never repeat one; if the person pastes one anyway, tell them to rotate it at the third-party
   platform. The guide and the check results never contain secret values, and no setup operation
   takes one.
-- **Connecting a personal account** (OAuth consent) happens in the browser on the connector page.
+- **Connecting a personal account** (OAuth consent) happens in the browser on the `webPath` page
+  (for a member, their connections page).
 - **Confirming the app was updated** after a guide changed (the drift notice) is the person's
   click on the target's page: only they know they changed the app at the third party.
 - **Creating the app** at the third-party platform is outside Capybara: explain it, the person

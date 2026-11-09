@@ -713,4 +713,28 @@ describe("setup checks: Platform operations", { timeout: 30_000 }, () => {
       callOp("setup.read", { ...base(), connectionId: id }, memberId),
     ).rejects.toMatchObject({ code: "forbidden" });
   });
+
+  it("setup.guides and setup.read stay inside the org", async () => {
+    const mine = await connection();
+    const otherAgent = await createAgent(stranger, otherOrgId);
+    const theirs = await connection({ req: stranger, org: otherOrgId, agent: otherAgent });
+    const out = await callOp("setup.guides", {});
+    const ids = (out.guides as { targets: { id: string }[] }[]).flatMap((g) =>
+      g.targets.map((t) => t.id),
+    );
+    expect(ids).toContain(mine);
+    expect(ids).not.toContain(theirs);
+    // another org's connection is not found, not rendered
+    await expect(callOp("setup.read", { ...base(), connectionId: theirs })).rejects.toMatchObject({
+      code: "channel.not_found",
+    });
+    // the other org's admin lists only their own connections, over HTTP too
+    const r = await stranger({ method: "GET", url: `/api/v1/orgs/${otherOrgId}/setup-guides` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.body).not.toContain(mine);
+    expect(r.body).toContain(theirs);
+    // and nobody outside the org lists its guides
+    const outsider = await stranger({ method: "GET", url: `/api/v1/orgs/${orgId}/setup-guides` });
+    expect(outsider.statusCode).toBe(404);
+  });
 });
