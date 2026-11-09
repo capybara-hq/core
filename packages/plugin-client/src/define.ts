@@ -13,17 +13,21 @@ export const CLIENT_API_VERSION = 1;
 
 export type ComponentProps<S extends ComponentSlotId> = BaseComponentProps & SlotComponentProps[S];
 
-export interface ClientComponent<S extends ComponentSlotId = ComponentSlotId> {
-  readonly slot: S;
-  readonly render: ComponentType<ComponentProps<S>>;
-}
+/**
+ * A component bound to one slot: `render` takes that slot's props. Without a type argument (or
+ * with a union of slots) it is the union of the single-slot bindings, so a `components` map may
+ * hold components of different slots while each keeps its own slot's props.
+ */
+export type ClientComponent<S extends ComponentSlotId = ComponentSlotId> = {
+  [K in S]: { readonly slot: K; readonly render: ComponentType<ComponentProps<K>> };
+}[S];
 
 /** Binds a component to the slot it is written for; the host checks it against the manifest. */
 export function defineComponent<S extends ComponentSlotId>(
   slot: S,
   render: ComponentType<ComponentProps<S>>,
 ): ClientComponent<S> {
-  return { slot, render };
+  return { slot, render } as ClientComponent<S>;
 }
 
 export interface ClientExtensionDefinition {

@@ -95,10 +95,12 @@ export interface ClientApi {
 }
 
 // @public
-export interface ClientComponent<S extends ComponentSlotId = ComponentSlotId> {
-    readonly render: ComponentType<ComponentProps<S>>;
-    readonly slot: S;
-}
+export type ClientComponent<S extends ComponentSlotId = ComponentSlotId> = {
+    [K in S]: {
+        readonly slot: K;
+        readonly render: ComponentType<ComponentProps<K>>;
+    };
+}[S];
 
 // @public
 export interface ClientExtension extends ClientExtensionDefinition {
@@ -249,6 +251,7 @@ export interface SlotComponentProps {
     "shell.brand": {
         builtin: ReactNode;
         collapsed: boolean;
+        panel: "full" | "rail" | "drawer";
     };
     "shell.overlay": Record<string, never>;
 }

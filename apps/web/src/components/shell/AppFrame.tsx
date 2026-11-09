@@ -585,11 +585,11 @@ function ShellFrame({
   const brand =
     workspaceOrg === null || !brandReplaced
       ? undefined
-      : ({ collapsed }: SidebarBrandVariant) => (
+      : ({ collapsed, panel }: SidebarBrandVariant) => (
           <ExtensionSlot
             slot="shell.brand"
             args={{ orgId: workspaceOrg }}
-            host={{ builtin: <Logo scale={2} wordmark={!collapsed} />, collapsed }}
+            host={{ builtin: <Logo scale={2} wordmark={!collapsed} />, collapsed, panel }}
           />
         );
   const context: SidebarContext = inAdmin

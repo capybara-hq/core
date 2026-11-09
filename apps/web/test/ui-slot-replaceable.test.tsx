@@ -63,8 +63,15 @@ const flush = () =>
 
 const BUILTIN = <span data-testid="builtin">CAPYBARA</span>;
 
-const brandSlot = (collapsed = false) => (
-  <ExtensionSlot slot="shell.brand" args={{ orgId: "o1" }} host={{ builtin: BUILTIN, collapsed }} />
+const brandSlot = (
+  collapsed = false,
+  panel: "full" | "rail" | "drawer" = collapsed ? "rail" : "full",
+) => (
+  <ExtensionSlot
+    slot="shell.brand"
+    args={{ orgId: "o1" }}
+    host={{ builtin: BUILTIN, collapsed, panel }}
+  />
 );
 
 const BRAND_SET = setOf([{ id: "brand", slot: "shell.brand" }]);
@@ -120,8 +127,16 @@ describe("ReplaceableSlot", () => {
   });
 
   it("the winner renders and can wrap builtin", async () => {
-    const Brand = ({ builtin, collapsed }: { builtin: ReactNode; collapsed: boolean }) => (
-      <span data-testid="fake-client-brand" data-collapsed={String(collapsed)}>
+    const Brand = ({
+      builtin,
+      collapsed,
+      panel,
+    }: {
+      builtin: ReactNode;
+      collapsed: boolean;
+      panel: string;
+    }) => (
+      <span data-testid="fake-client-brand" data-collapsed={String(collapsed)} data-panel={panel}>
         {builtin}
       </span>
     );
@@ -132,8 +147,30 @@ describe("ReplaceableSlot", () => {
     await flush();
     const wrap = screen.getByTestId("fake-client-brand");
     expect(wrap.getAttribute("data-collapsed")).toBe("true");
+    expect(wrap.getAttribute("data-panel")).toBe("rail");
     expect(wrap.contains(screen.getByTestId("builtin"))).toBe(true);
     expect(pending()).toBe(false);
+  });
+
+  it("the brand winner gets the sidebar panel it is drawn in", async () => {
+    const Brand = ({ collapsed, panel }: { collapsed: boolean; panel: string }) => (
+      <span data-testid="fake-client-brand" data-collapsed={String(collapsed)} data-panel={panel} />
+    );
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({ brand: { slot: "shell.brand", render: Brand as ComponentType<never> } }),
+    );
+    const view = renderSlot(
+      [winner("brand", "shell.brand")],
+      BRAND_SET,
+      brandSlot(false, "drawer"),
+    );
+    await flush();
+    const brand = () => screen.getByTestId("fake-client-brand");
+    expect(brand().getAttribute("data-panel")).toBe("drawer");
+    expect(brand().getAttribute("data-collapsed")).toBe("false");
+    view.again(brandSlot(false, "full"));
+    await flush();
+    expect(brand().getAttribute("data-panel")).toBe("full");
   });
 
   it("with the winners prefetched, the winner renders at the slot's first render", async () => {
@@ -550,8 +587,18 @@ describe("shell slots in AppFrame", () => {
     { id: "brand", slot: "shell.brand" },
   ]);
   const Fx = () => <i data-testid="fx" />;
-  const Brand = ({ builtin }: { builtin: ReactNode }) => (
-    <span data-testid="fake-client-brand">{builtin}</span>
+  const Brand = ({
+    builtin,
+    collapsed,
+    panel,
+  }: {
+    builtin: ReactNode;
+    collapsed: boolean;
+    panel: string;
+  }) => (
+    <span data-testid="fake-client-brand" data-collapsed={String(collapsed)} data-panel={panel}>
+      {builtin}
+    </span>
   );
 
   function renderFrameAt(path: string, load?: () => Promise<unknown>) {
@@ -596,6 +643,12 @@ describe("shell slots in AppFrame", () => {
     expect(layer?.querySelector('[data-testid="fx"]')).not.toBeNull();
     const row = document.querySelector('[data-cap-part="sidebar.brand"]');
     expect(row?.querySelector('[data-testid="fake-client-brand"]')).not.toBeNull();
+    // each drawn panel's brand gets that panel (AppFrame passes the Sidebar's variant through)
+    const sidebar = row?.closest('[data-cap-part="sidebar"]');
+    const brand = row?.querySelector('[data-testid="fake-client-brand"]');
+    const mode = sidebar?.getAttribute("data-mode");
+    expect(brand?.getAttribute("data-panel")).toBe(mode === "rail" ? "rail" : "full");
+    expect(brand?.getAttribute("data-collapsed")).toBe(String(mode === "rail"));
   });
 
   it("the overlay draws no layer until one of its components is ready", async () => {

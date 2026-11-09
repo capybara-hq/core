@@ -7,6 +7,7 @@ import {
   PropertySection,
   RightPanel,
   type RightPanelSwitcher,
+  type SidebarBrandVariant,
   Stack,
   Text,
 } from "@capybara-hq/design";
@@ -99,8 +100,11 @@ export type SlotHost = {
   "agent.detail.section": Record<string, never>;
   "org.settings.section": Record<string, never>;
   "platform.page": Record<string, never>;
-  /** `builtin`: the brand row's default (the `Logo`); `collapsed`: the sidebar is the rail. */
-  "shell.brand": { builtin: ReactNode; collapsed: boolean };
+  /**
+   * `builtin`: the brand row's default (the `Logo`); `collapsed`: the sidebar is the rail; `panel`:
+   * the sidebar panel this node is drawn in (the design `Sidebar` calls `brand` once per panel).
+   */
+  "shell.brand": { builtin: ReactNode; collapsed: boolean; panel: SidebarBrandVariant["panel"] };
   "shell.overlay": Record<string, never>;
   /** `builtin`: the new conversation's hero (`Greeting`); `greeting`: its line ("" until picked). */
   "conversation.empty": { builtin: ReactNode; agentId: string | null; greeting: string };
@@ -202,7 +206,7 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
           slot="shell.brand"
           args={p.args}
           builtin={p.host.builtin}
-          extra={{ collapsed: p.host.collapsed }}
+          extra={{ collapsed: p.host.collapsed, panel: p.host.panel }}
         />
       ) : null;
     case "conversation.empty":
