@@ -37,16 +37,22 @@ export interface ClientExtensionsResponse {
 /** The most characters of a report's `message` (spec §10.4): longer is refused, not truncated. */
 export const REPORT_MESSAGE_MAX = 500;
 
+/** The UI contribution id grammar of the SDK (`ui[].id`): what a report's `contribution` names. */
+const COMPONENT_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
+
 /**
  * `POST /api/v1/orgs/:orgId/ui/client/reports` and `POST /api/v1/admin/ui/client/reports` (spec
  * §10.4): one crash or load report of client code, from the browser that ran it. `build` is the
  * package sha256 the files were loaded from; `contribution` the component id (null: the whole
- * extension, e.g. the entry failed to load).
+ * extension, e.g. the entry failed to load), which must be a component of that build's manifest.
  */
 export const ReportBody = z.object({
   plugin: z.string().regex(EXTENSION_NAME_RE, "must be an extension name"),
   build: z.string().regex(/^[0-9a-f]{64}$/, "must be a 64-character lowercase hex sha256"),
-  contribution: z.string().min(1).max(128).nullable(),
+  contribution: z
+    .string()
+    .regex(COMPONENT_ID_RE, "must be a component id of the build (or null)")
+    .nullable(),
   kind: z.enum(["load", "render", "event", "api", "budget"]),
   message: z.string().max(REPORT_MESSAGE_MAX),
 });

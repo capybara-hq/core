@@ -17,6 +17,8 @@ let orgB: string;
 let mem: Person;
 let bmem: Person;
 let flood: Person;
+let guest: Person;
+let racer: Person;
 let sa: Person;
 let pageSha: string;
 let plainSha: string;
@@ -32,6 +34,10 @@ beforeAll(async () => {
     .id;
   const floodId = (await accounts.createLocal({ login: "flood", password: PW, displayName: "F" }))
     .id;
+  const guestId = (await accounts.createLocal({ login: "guest", password: PW, displayName: "G" }))
+    .id;
+  const racerId = (await accounts.createLocal({ login: "racer", password: PW, displayName: "R" }))
+    .id;
   await accounts.createLocal({
     login: "nomember",
     password: PW,
@@ -43,11 +49,15 @@ beforeAll(async () => {
     .values([
       { org_id: orgB, account_id: bmemId, role: "member" },
       { org_id: env.orgId, account_id: floodId, role: "member" },
+      { org_id: env.orgId, account_id: guestId, role: "guest" },
+      { org_id: env.orgId, account_id: racerId, role: "member" },
     ])
     .execute();
   mem = await signIn(env, "mem");
   bmem = await signIn(env, "bmem");
   flood = await signIn(env, "flood");
+  guest = await signIn(env, "guest");
+  racer = await signIn(env, "racer");
   sa = await signIn(env, "nomember");
   const page = await clientPlugin({
     name: PAGE,
@@ -117,6 +127,43 @@ describe("client reports", { timeout: 120_000 }, () => {
     expect((await rows()).some((x) => x.org_id === orgB)).toBe(false);
   });
 
+  it("a contribution must be a component of the build", async () => {
+    const before = (await rows()).length;
+    // well formed but not a component of the build: the same 404 as an unknown build
+    for (const contribution of ["page", "made-up", "hud2"]) {
+      const r = await post(mem, env.orgId, body({ contribution }));
+      expect(r.statusCode, contribution).toBe(404);
+      expect(r.json().error.code, contribution).toBe("client.not_found");
+    }
+    // not the component id grammar at all
+    for (const contribution of ["", "Hud", "plain/hud", "x".repeat(41), "1hud"]) {
+      const r = await post(mem, env.orgId, body({ contribution }));
+      expect(r.statusCode, contribution).toBe(400);
+    }
+    expect((await rows()).length).toBe(before);
+  });
+
+  it("a guest of the org may report", async () => {
+    const r = await post(guest, env.orgId, body({ kind: "event", message: "from a guest" }));
+    expect(r.statusCode, r.body).toBe(204);
+    expect((await rows()).find((x) => x.last_message === "from a guest")).toMatchObject({
+      org_id: env.orgId,
+      contribution: "hud",
+      kind: "event",
+    });
+  });
+
+  it("two reports of one key at once are one row counted twice", async () => {
+    const key = body({ kind: "api", contribution: null, message: "race" });
+    const [a, b] = await Promise.all([post(racer, env.orgId, key), post(racer, env.orgId, key)]);
+    expect([a.statusCode, b.statusCode]).toEqual([204, 204]);
+    const raced = (await rows()).filter(
+      (r) => r.plugin === PLAIN && r.kind === "api" && r.contribution === null,
+    );
+    expect(raced).toHaveLength(1);
+    expect(raced[0]?.count).toBe(2);
+  });
+
   it("a message over 500 characters is 400", async () => {
     const ok = await post(mem, env.orgId, body({ message: "x".repeat(500) }));
     expect(ok.statusCode, ok.body).toBe(204);
@@ -184,5 +231,32 @@ describe("client reports", { timeout: 120_000 }, () => {
     ).json();
     expect(plain.clientReports.length).toBeGreaterThanOrEqual(2);
     expect(plain.clientReports[0].lastAt >= plain.clientReports[1].lastAt).toBe(true);
+  });
+
+  it("the admin view lists the newest 50 reports of the build", async () => {
+    // 60 rows, one per made-up org so the key keeps them apart; the newest is n59
+    const at = Date.now() + 3_600_000;
+    await env.db
+      .insertInto("extension_client_reports")
+      .values(
+        Array.from({ length: 60 }, (_, n) => ({
+          plugin: PLAIN,
+          build: plainSha,
+          org_id: crypto.randomUUID(),
+          contribution: null,
+          kind: "load" as const,
+          last_message: `n${n}`,
+          first_at: new Date(at + n * 1000),
+          last_at: new Date(at + n * 1000),
+        })),
+      )
+      .execute();
+    const v = (await env.root({ method: "GET", url: `/api/v1/admin/extensions/${PLAIN}` })).json();
+    expect(v.clientReports).toHaveLength(50);
+    expect(v.clientReports[0].lastMessage).toBe("n59");
+    expect(v.clientReports[49].lastMessage).toBe("n10");
+    const list = (await env.root({ method: "GET", url: "/api/v1/admin/extensions" })).json();
+    const item = list.extensions.find((x: { name: string }) => x.name === PLAIN);
+    expect(item.clientReports).toHaveLength(50);
   });
 });

@@ -1,12 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { ClientAccess } from "../../src/client/client-access.service.js";
 import { ClientReportsCron } from "../../src/client/client-reports.cron.js";
 import { ClientReports } from "../../src/client/client-reports.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 
@@ -60,8 +63,9 @@ describe("client reports prune", { timeout: 120_000 }, () => {
     const host = () => {
       const redis = new Redis(rd.url);
       redises.push(redis);
-      // the service wraps one delete statement; count it per replica
-      const service = new ClientReports({ db } as never, {} as never, {} as never);
+      // the service wraps one delete statement; count it per replica (prune never asks access)
+      const tx = new TransactionHost(raw, log);
+      const service = new ClientReports(new KernelDb(raw, tx), tx, {} as ClientAccess);
       const prune = service.prune.bind(service);
       service.prune = async () => {
         const n = await prune();
@@ -79,6 +83,5 @@ describe("client reports prune", { timeout: 120_000 }, () => {
       .map((r) => r.plugin)
       .sort();
     expect(left).toEqual(["fresh", "new"]);
-    void vi;
   });
 });

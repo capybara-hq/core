@@ -359,14 +359,17 @@ export interface AdminExtensionView {
    */
   uiDropped: { id: string; ref: string; reason: UiDropReason }[];
   /**
-   * The client build of the install record's package (client extensions spec §9.1, §10.4): its id
-   * (the package sha256), every file with its size, and the client API version; null when the
-   * package has no client code (or the view is degraded).
+   * The client build that runs (client extensions spec §9.1, §9.3, §10.4): the one a live replica
+   * serves (the install's own package when it runs, else the older one still served beside an
+   * upgrade awaiting approval or failed), or the install record package's build when no replica
+   * serves one; its id (the package sha256), every file with its size, and the client API
+   * version; null when that package has no client code (or the view is degraded).
    */
   client: { build: string; files: { path: string; bytes: number }[]; apiVersion: number } | null;
   /**
    * Crash and load reports of that build, newest first, at most 50: `orgId` is null for admin
-   * pages. Empty without a client build.
+   * pages and may name an org deleted since (rows stay until the 30-day prune). Empty without a
+   * client build.
    */
   clientReports: {
     orgId: string | null;

@@ -38,6 +38,8 @@ export interface FetchableBuild {
   build: string;
   /** Every manifest key of the build: the entry, the styles and the assets. */
   keys: ReadonlySet<string>;
+  /** The ids of the build's `component` contributions (whatever their slot's role gate). */
+  components: ReadonlySet<string>;
   /** Relative to `deployment/`: `platform/client/<plugin>/<sha256>/`. */
   objectPrefix: string;
 }
@@ -243,7 +245,9 @@ export class ClientAccess {
    * The build `build` of `plugin` when the account may fetch its files, else null; one query, not
    * cached. It must be served (class header), not stopped by the kill switch, and the account a
    * member (any role) of a live org where the extension is enabled, or a super admin when the
-   * build's manifest has a `platform.page` component (the admin console loads only those).
+   * build's manifest has a `platform.page` component (the admin console loads only those). A
+   * build of a client API version the kernel does not support is never fetchable, as it is never
+   * listed in a shell read.
    */
   async fetchable(
     accountId: string,
@@ -290,27 +294,18 @@ export class ClientAccess {
       .executeTakeFirst();
     if (row === undefined) return null;
     const kill = parseClientExtensions(row.kill ?? undefined, this.log);
-    if (stopped(kill, plugin)) return null;
+    if (stopped(kill, plugin) || !supported(row)) return null;
+    const components = componentsOf(row.section);
     const allowed =
-      row.member === true ||
-      (superAdmin && componentsOf(row.section).some((c) => c.slot.id === "platform.page"));
+      row.member === true || (superAdmin && components.some((c) => c.slot.id === "platform.page"));
     if (!allowed) return null;
     return {
       plugin: row.plugin,
       build: row.build,
       keys: new Set([...(row.entry !== null ? [row.entry] : []), ...row.styles, ...row.assets]),
+      components: new Set(components.map((c) => c.id)),
       objectPrefix: row.object_prefix,
     };
-  }
-
-  /** Whether the account may fetch the files of `plugin`'s build `build` ({@link fetchable}). */
-  async canFetch(
-    accountId: string,
-    superAdmin: boolean,
-    plugin: string,
-    build: string,
-  ): Promise<boolean> {
-    return (await this.fetchable(accountId, superAdmin, plugin, build)) !== null;
   }
 
   /**

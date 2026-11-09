@@ -60,6 +60,9 @@ export interface PublishBus {
 }
 
 /** The raw material for one extension in the admin console (before building the {@link AdminExtensionView}). */
+/** The most client reports an extension view lists (the newest). */
+const CLIENT_REPORTS_SHOWN = 50;
+
 interface Subject {
   name: string;
   source: ExtensionSource;
@@ -461,7 +464,7 @@ export class ExtensionAdmin {
           .execute()
       ).map((r) => [r.plugin, Number(r.n)] as const),
     );
-    const { clients, reports } = await this.clientsOf(subjects);
+    const { clients, reports } = await this.clientsOf(subjects, rows);
     return subjects.map((s) => {
       const of = items.get(s.name);
       const clientFields = {
@@ -581,32 +584,44 @@ export class ExtensionAdmin {
   }
 
   /**
-   * The client build of each subject's install record package and its newest reports (at most 50
-   * per extension), in two queries over all subjects.
+   * The client build of each subject and its newest reports (at most {@link CLIENT_REPORTS_SHOWN}
+   * per extension, limited in SQL), in two queries over all subjects. The build is the one a live
+   * replica serves (`serving_sha256` of the fresh rows `live`, like the shell reads: the install's
+   * own package when it runs, else the newest still served, e.g. the old one beside an upgrade
+   * awaiting approval or failed); with none served, the install record package's build.
    */
-  private async clientsOf(subjects: Subject[]): Promise<{
+  private async clientsOf(
+    subjects: Subject[],
+    live: { plugin: string; serving_sha256: string | null }[],
+  ): Promise<{
     clients: Map<string, NonNullable<AdminExtensionView["client"]>>;
     reports: Map<string, AdminExtensionView["clientReports"]>;
   }> {
-    const targets = subjects.flatMap((s) =>
-      s.install !== undefined && s.install !== null && s.broken === undefined
-        ? [{ plugin: s.name, sha: s.install.sha256 }]
-        : [],
-    );
+    const targets = subjects.flatMap((s) => {
+      if (s.install === undefined || s.install === null || s.broken !== undefined) return [];
+      const serving = new Set(
+        live.flatMap((r) =>
+          r.plugin === s.name && r.serving_sha256 !== null ? [r.serving_sha256] : [],
+        ),
+      );
+      return [{ plugin: s.name, sha: s.install.sha256, serving }];
+    });
     const clients = new Map<string, NonNullable<AdminExtensionView["client"]>>();
     const reports = new Map<string, AdminExtensionView["clientReports"]>();
     if (targets.length === 0) return { clients, reports };
+    const shas = [...new Set(targets.flatMap((t) => [t.sha, ...t.serving]))];
     const builds = await this.db
       .selectFrom("extension_client_builds")
-      .select(["package_sha256", "plugin", "sizes", "api_version"])
-      .where(
-        "package_sha256",
-        "in",
-        targets.map((t) => t.sha),
-      )
+      .select(["package_sha256", "plugin", "sizes", "api_version", "created_at"])
+      .where("package_sha256", "in", shas)
+      .orderBy("created_at", "desc")
       .execute();
     for (const t of targets) {
-      const b = builds.find((x) => x.package_sha256 === t.sha && x.plugin === t.plugin);
+      const mine = builds.filter((x) => x.plugin === t.plugin);
+      const b =
+        (t.serving.has(t.sha) ? mine.find((x) => x.package_sha256 === t.sha) : undefined) ??
+        mine.find((x) => t.serving.has(x.package_sha256)) ??
+        (t.serving.size === 0 ? mine.find((x) => x.package_sha256 === t.sha) : undefined);
       if (b === undefined) continue;
       clients.set(t.plugin, {
         build: b.package_sha256,
@@ -618,17 +633,21 @@ export class ExtensionAdmin {
     }
     const built = [...clients].map(([plugin, c]) => ({ plugin, build: c.build }));
     if (built.length === 0) return { clients, reports };
-    const rows = await this.db
+    const ranked = this.db
       .selectFrom("extension_client_reports")
       .selectAll()
+      .select(sql<number>`row_number() over (partition by plugin order by last_at desc)`.as("rank"))
       .where((eb) =>
         eb.or(built.map((c) => eb.and([eb("plugin", "=", c.plugin), eb("build", "=", c.build)]))),
-      )
-      .orderBy("last_at", "desc")
+      );
+    const rows = await this.db
+      .selectFrom(ranked.as("r"))
+      .selectAll()
+      .where("r.rank", "<=", CLIENT_REPORTS_SHOWN)
+      .orderBy("r.last_at", "desc")
       .execute();
     for (const r of rows) {
       const list = reports.get(r.plugin) ?? [];
-      if (list.length >= 50) continue;
       list.push({
         orgId: r.org_id,
         contribution: r.contribution,

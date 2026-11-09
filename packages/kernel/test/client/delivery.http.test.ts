@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ReplicaStatusStore } from "../../src/extensions/sources.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { type ExtensionLoadStatus, ReplicaStatusStore } from "../../src/extensions/sources.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { importPlugin, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -114,6 +115,13 @@ const listedBuilds = async () => {
       i.build,
     ]),
   );
+};
+
+/** The client build the admin extension detail shows. */
+const adminBuild = async (plugin: string) => {
+  const r = await env.root({ method: "GET", url: `/api/v1/admin/extensions/${plugin}` });
+  expect(r.statusCode, r.body).toBe(200);
+  return (r.json() as { client: { build: string } | null }).client?.build ?? null;
 };
 
 const integrityOf = async (build: string, key: string) =>
@@ -334,6 +342,8 @@ describe("client delivery", { timeout: 120_000 }, () => {
     const next = await rawGet(env, url("cx-wait", sha256(v2), "client.mjs"), mem.cookie());
     expectNotFound(next, rawCode(next));
     expect((await listedBuilds())["cx-wait"]).toBe(sha256(v1));
+    // the admin view's client build is the one that runs, not the install record's package
+    expect(await adminBuild("cx-wait")).toBe(sha256(v1));
   });
 
   it("a failed upgrade keeps delivering and listing the build that runs", async () => {
@@ -354,6 +364,7 @@ describe("client delivery", { timeout: 120_000 }, () => {
     const next = await rawGet(env, url("cx-fail", sha256(v2), "client.mjs"), mem.cookie());
     expectNotFound(next, rawCode(next));
     expect((await listedBuilds())["cx-fail"]).toBe(sha256(v1));
+    expect(await adminBuild("cx-fail")).toBe(sha256(v1));
   });
 
   it("no live replica serving the build is 404 (fails closed)", async () => {
@@ -377,6 +388,91 @@ describe("client delivery", { timeout: 120_000 }, () => {
     const r = await rawGet(env, path, mem.cookie());
     expectNotFound(r, rawCode(r));
     expect(await listedBuilds()).not.toHaveProperty("cx-stale");
+  });
+
+  it("a pending row for the package that runs keeps serving its build", async () => {
+    const bytes = await clientPlugin({ name: "cx-same", components: [HUD] });
+    const sha = sha256(bytes);
+    await importClientPlugin(env, bytes, "cx-same");
+    await enableExtensions(env.db, env.orgId, "cx-same");
+    const path = url("cx-same", sha, "client.mjs");
+    expect((await rawGet(env, path, mem.cookie())).status).toBe(200);
+    // the running instance's own package goes pending (e.g. a provider conflict that leaves it
+    // loaded): the replica still serves that package, so its client code stays
+    const host = env.k.app.get(ExtensionHost) as unknown as {
+      writeStatus(s: ExtensionLoadStatus): Promise<void>;
+    };
+    await host.writeStatus({
+      plugin: "cx-same",
+      version: "1.0.0",
+      sha256: sha,
+      source: "install",
+      state: "pending",
+      reason: "conflict",
+      detail: "test",
+    });
+    await waitForServing(env, "cx-same", sha, "pending", sha);
+    expect((await rawGet(env, path, mem.cookie())).status).toBe(200);
+  });
+
+  it("a disabled or uninstalled install is 404 while a replica row still names its build", async () => {
+    const bytes = await clientPlugin({ name: "cx-off", components: [HUD] });
+    const sha = sha256(bytes);
+    await importClientPlugin(env, bytes, "cx-off");
+    await enableExtensions(env.db, env.orgId, "cx-off");
+    const path = url("cx-off", sha, "client.mjs");
+    expect((await rawGet(env, path, mem.cookie())).status).toBe(200);
+    // the replica has not caught up yet: its row keeps saying it serves the build
+    const store = env.k.app.get(ReplicaStatusStore);
+    const write = store.write.bind(store);
+    vi.spyOn(store, "write").mockImplementation(async (st) => {
+      if (st.plugin !== "cx-off") await write(st);
+    });
+    const install = await env.db
+      .selectFrom("extension_installs")
+      .selectAll()
+      .where("name", "=", "cx-off")
+      .executeTakeFirstOrThrow();
+    const live = () =>
+      env.db
+        .selectFrom("extension_replica_status")
+        .select("serving_sha256")
+        .where("plugin", "=", "cx-off")
+        .executeTakeFirstOrThrow();
+    // switched off on the platform
+    await env.db
+      .updateTable("extension_installs")
+      .set({ desired_state: "disabled" })
+      .where("name", "=", "cx-off")
+      .execute();
+    expect(await live()).toEqual({ serving_sha256: sha });
+    const off = await rawGet(env, path, mem.cookie());
+    expectNotFound(off, rawCode(off));
+    expect(await listedBuilds()).not.toHaveProperty("cx-off");
+    // uninstalled
+    await env.db.deleteFrom("extension_installs").where("name", "=", "cx-off").execute();
+    expect(await live()).toEqual({ serving_sha256: sha });
+    const gone = await rawGet(env, path, mem.cookie());
+    expectNotFound(gone, rawCode(gone));
+    expect(await listedBuilds()).not.toHaveProperty("cx-off");
+    expect(install.sha256).toBe(sha);
+  });
+
+  it("a build of a client API the kernel does not support is 404", async () => {
+    const setVersion = (v: number) =>
+      env.db
+        .updateTable("extension_client_builds")
+        .set({ api_version: v })
+        .where("package_sha256", "=", plainSha)
+        .execute();
+    await setVersion(2);
+    try {
+      const r = await rawGet(env, url(PLAIN, plainSha, "client.mjs"), mem.cookie());
+      expectNotFound(r, rawCode(r));
+    } finally {
+      await setVersion(1);
+    }
+    expect((await rawGet(env, url(PLAIN, plainSha, "client.mjs"), mem.cookie())).status).toBe(200);
   });
 
   it("HEAD answers like GET without a body, through the same check", async () => {

@@ -1521,8 +1521,9 @@ export class ExtensionHost {
    * 写本副本的加载状态；失败只记 warn（状态是给后台看的，不影响加载）。这一行的版本没加载成（failed / pending）
    * 而本副本仍有别的版本在跑时，记下那个版本（`servingVersion`，后台同时显示「新版失败、旧版仍在服务」）。
    * `servingSha256` is the package this replica actually serves for the plugin (client code follows
-   * it, client extensions spec §9.3): the row's own package when loaded, that older package beside
-   * a failed / pending version, else null.
+   * it, client extensions spec §9.3): the row's own package when loaded; for a failed / pending row
+   * the package of the instance still running here (an older one, or the row's own package when it
+   * stays loaded, e.g. beside a provider conflict), else null.
    */
   private async writeStatus(s: ExtensionLoadStatus): Promise<void> {
     const waiting = s.state === "failed" || s.state === "pending";
@@ -1536,7 +1537,7 @@ export class ExtensionHost {
           ? s.servingSha256
           : s.state === "loaded"
             ? s.sha256
-            : (other?.sha256 ?? null),
+            : (cur?.sha256 ?? null),
     };
     if (s.source === "install") {
       if (s.state === "unloaded") this.installRows.delete(s.plugin);

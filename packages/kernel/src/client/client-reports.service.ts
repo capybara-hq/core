@@ -14,9 +14,11 @@ export const REPORT_RETENTION_DAYS = 30;
 /**
  * Crash and load reports of client code (client extensions spec §10.4): one row per (plugin,
  * build, org, contribution, kind), upserted so a crash loop is one row with a count. A report is
- * accepted only for a build the reporter could fetch ({@link ClientAccess.canFetch}) and, in an
- * org, an extension enabled there, so nobody writes rows about plugins or orgs they cannot see;
- * anything else is the same 404 `client.not_found` the delivery route answers.
+ * accepted only for a build the reporter could fetch ({@link ClientAccess.fetchable}), in an org
+ * an extension enabled there, and a `contribution` that is null or a component of that build's
+ * manifest, so nobody writes rows about plugins or orgs they cannot see and the key bounds the
+ * rows (a made-up contribution cannot add one); anything else is the same 404
+ * `client.not_found` the delivery route answers.
  */
 @Injectable()
 export class ClientReports {
@@ -34,14 +36,21 @@ export class ClientReports {
       .where("en.plugin", "=", body.plugin)
       .executeTakeFirst();
     if (enabled === undefined) throw notFound();
-    if (!(await this.access.canFetch(accountId, false, body.plugin, body.build))) throw notFound();
+    await this.check(accountId, false, body);
     await this.upsert(orgId, body);
   }
 
   /** A report from the admin console (no org; super admins only, the caller checks that). */
   async recordForAdmin(accountId: string, body: ReportBodyInput): Promise<void> {
-    if (!(await this.access.canFetch(accountId, true, body.plugin, body.build))) throw notFound();
+    await this.check(accountId, true, body);
     await this.upsert(null, body);
+  }
+
+  /** The build must be fetchable and the contribution null or one of its components. */
+  private async check(accountId: string, superAdmin: boolean, b: ReportBodyInput): Promise<void> {
+    const build = await this.access.fetchable(accountId, superAdmin, b.plugin, b.build);
+    if (build === null) throw notFound();
+    if (b.contribution !== null && !build.components.has(b.contribution)) throw notFound();
   }
 
   @Transactional()
