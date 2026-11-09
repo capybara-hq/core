@@ -49,7 +49,10 @@ type Point = {
 };
 
 /** The page's other section, answered empty. */
-const PREVIEWERS = { [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }) };
+const PREVIEWERS = {
+  [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+  [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
+};
 
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
@@ -167,6 +170,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           ],
         }),
       [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
     };
     const browser = expectNoFirstPaintFetch();
     const { calls } = await renderRouteWithCache("/extensions", routes);
@@ -192,6 +196,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           ],
         }),
       [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      [`GET ${ORG}/ui/arrangement`]: () => json(200, { slots: [] }),
     });
     const select = await screen.findByRole("combobox", {
       name: en.extensions.pointDefaults.points.webSearch,

@@ -23,7 +23,7 @@ import type { FilePreviewerItem } from "../../lib/previewers";
 import { filePreviewersQuery, filePreviewQuery, fileTextQuery } from "../../lib/query/conversation";
 import { type UiView, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
-import { EmbedTab } from "../extension-ui/EmbedTab";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { useOpenDownload } from "../SessionFilePreview";
 import { UiViewRenderer } from "../ui-view/UiViewRenderer";
 
@@ -189,15 +189,13 @@ export function FilePanel({
   if (current.p?.kind === "embed") {
     const p = current.p;
     content = (
-      <EmbedTab
+      <ExtensionSlot
         key={`${previewerId(p)}/${file.id}`}
-        orgId={orgId}
-        plugin={p.plugin}
-        id={p.id}
-        title={current.title}
-        conversationId={conversationId}
-        file={{
-          id: file.id,
+        slot="file.preview"
+        args={{ orgId, conversationId, fileId: file.id }}
+        select={{ plugin: p.plugin, id: p.id }}
+        host={{
+          title: current.title,
           maxBytes: p.maxBytes,
           read: async () => {
             const res = await fetch(artifactDownloadUrl(orgId, conversationId, file.id), {
@@ -211,13 +209,13 @@ export function FilePanel({
               data: await res.arrayBuffer(),
             };
           },
+          failed: ({ message, onRetry }) => (
+            <>
+              <LoadFailed name={current.title} reason={message} onRetry={onRetry} />
+              {fallback}
+            </>
+          ),
         }}
-        failed={({ message, onRetry }) => (
-          <>
-            <LoadFailed name={current.title} reason={message} onRetry={onRetry} />
-            {fallback}
-          </>
-        )}
       />
     );
   } else if (current.p?.kind === "view" && data.view) {

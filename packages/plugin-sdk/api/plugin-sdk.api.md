@@ -822,6 +822,13 @@ export const DOCUMENT_MEDIA_TYPES: readonly ["application/pdf", "text/plain", "t
 export type DocumentMediaType = (typeof DOCUMENT_MEDIA_TYPES)[number];
 
 // @public
+export interface DroppedUiContribution {
+    id: string;
+    reason: UiDropReason;
+    ref: string;
+}
+
+// @public
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 // @public
@@ -872,15 +879,14 @@ export type EmbedChildMessage =
 };
 
 // @public
-export interface EmbedClaims {
+export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
+
+// @public
+export interface EmbedClaimsBase {
     accountId: string;
     contribution: string;
-    conversationId?: string;
     exp: number;
-    fileId?: string;
-    orgId: string;
     plugin: string;
-    role: UiRole;
 }
 
 // @public
@@ -903,6 +909,17 @@ export interface EmbeddingRequestHookPayload {
 }
 
 // @public
+export type EmbedInitContext = {
+    scope: "org";
+    orgId: string;
+    conversationId?: string;
+} | {
+    scope: "platform";
+    orgId?: undefined;
+    conversationId?: undefined;
+};
+
+// @public
 export type EmbedParentMessage = {
     protocol: typeof EMBED_PROTOCOL;
     type: "init";
@@ -910,10 +927,7 @@ export type EmbedParentMessage = {
     locale: Locale;
     theme: "dark" | "light";
     tokens: Record<string, string>;
-    context: {
-        orgId: string;
-        conversationId?: string;
-    };
+    context: EmbedInitContext;
 } | {
     protocol: typeof EMBED_PROTOCOL;
     type: "token";
@@ -1054,7 +1068,7 @@ export interface ExtensionContext {
         view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
         action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
         invalidate(target: {
-            orgId: string;
+            orgId?: string;
             conversationId?: string;
             contribution: string;
         }): Promise<void>;
@@ -1874,9 +1888,6 @@ export interface ModelUsage {
 }
 
 // @public
-export function normalizePlace(place: UiPlace): Exclude<UiPlace, "conversation">;
-
-// @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
 
 // @public
@@ -1937,6 +1948,16 @@ export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess):
 
 // @public
 export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
+
+// @public
+export interface OrgEmbedClaims extends EmbedClaimsBase {
+    agentId?: string;
+    conversationId?: string;
+    fileId?: string;
+    orgId: string;
+    role: UiRole;
+    scope: "org";
+}
 
 // @public
 export interface OutboundMessage {
@@ -2052,6 +2073,12 @@ export interface ParseSkillMdOptions {
 }
 
 // @public
+export function parseSlotRef(ref: string): {
+    id: string;
+    version: number;
+} | null;
+
+// @public
 export function parseThemeFile(id: string, json: unknown, options?: ParseThemeOptions): ParsedTheme | {
     errors: string[];
 };
@@ -2063,6 +2090,19 @@ export interface ParseThemeOptions {
 
 // @public
 export function parseToolKey(key: string): ParsedToolKey | null;
+
+// @public @deprecated
+export const PLACE_SLOTS: Readonly<Record<UiPlace, UiSlotId>>;
+
+// @public
+export interface PlatformEmbedClaims extends EmbedClaimsBase {
+    agentId?: undefined;
+    conversationId?: undefined;
+    fileId?: undefined;
+    orgId?: undefined;
+    role: "superAdmin";
+    scope: "platform";
+}
 
 // @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
@@ -2270,6 +2310,25 @@ export interface RenderSkillInvocationInput {
     skillName: string;
     version: number;
 }
+
+// @public
+export interface ResolvedUiContribution {
+    after?: string;
+    contribution: UiContribution;
+    slot: UiSlotSpec;
+    version: number;
+}
+
+// @public
+export function resolveUiSlots(ui: readonly UiContribution[] | undefined): {
+    resolved: ResolvedUiContribution[];
+    dropped: DroppedUiContribution[];
+    unknownAnchors: {
+        id: string;
+        after: string;
+    }[];
+    deprecatedPlace: string[];
+};
 
 // @public
 export function rootsOf(h: SandboxHandle): SandboxRoots;
@@ -2503,6 +2562,9 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 
 // @public
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
+
+// @public
+export function slotRefOf(c: UiContribution): string;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];
@@ -2996,6 +3058,12 @@ export interface ToolSpec {
 export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;
 
 // @public
+export const UI_ARRANGEABLE_SLOTS: readonly UiSlotId[];
+
+// @public
+export const UI_CONTRIBUTION_KEY_RE: RegExp;
+
+// @public
 export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
 
 // @public
@@ -3008,7 +3076,16 @@ export const UI_LIMITS: {
 };
 
 // @public
-export interface UiActionArgs extends UiRenderArgs {
+export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properties.section", "conversation.tool-result.card", "org.page", "file.preview", "agent.detail.section", "org.settings.section", "platform.page"];
+
+// @public
+export const UI_SLOTS: readonly UiSlotSpec[];
+
+// @public
+export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
+
+// @public
+export interface UiActionInput {
     actionId: string;
     answer?: FormAnswer;
     payload?: unknown;
@@ -3087,17 +3164,26 @@ export type UiBlock = {
 
 // @public
 export interface UiContribution {
+    after?: string;
     aliasOf?: string;
     icon?: UiIcon;
     id: string;
     kind: UiKind;
     path?: string;
-    place: UiPlace;
+    // @deprecated
+    place?: UiPlace;
+    slot?: string;
     title: {
         zh: string;
         en: string;
     };
 }
+
+// @public
+export function uiContributionKey(plugin: string, id: string): string;
+
+// @public
+export type UiDropReason = "unknown-slot" | "unsupported-version";
 
 // @public
 export type UiIcon = (typeof UI_ICONS)[number];
@@ -3112,26 +3198,89 @@ export interface UiOpen {
 }
 
 // @public
-export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
+export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {
+}
 
 // @public
-export interface UiRenderArgs {
-    accountId: string;
+export interface UiOrgRenderArgs extends UiRenderArgsBase {
+    agentId?: string;
     card?: {
         callId: string;
         key?: string;
     };
-    config?: unknown;
     conversationId?: string;
     item?: string;
-    locale: Locale;
     orgId: string;
     role: UiRole;
+    scope: Exclude<UiSlotScope, "platform">;
+}
+
+// @public
+export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
+
+// @public
+export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInput {
+}
+
+// @public
+export interface UiPlatformRenderArgs extends UiRenderArgsBase {
+    agentId?: undefined;
+    card?: undefined;
+    conversationId?: undefined;
+    item?: undefined;
+    orgId?: undefined;
+    role: "superAdmin";
+    scope: "platform";
+}
+
+// @public
+export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
+
+// @public
+export interface UiRenderArgsBase {
+    accountId: string;
+    config?: unknown;
+    locale: Locale;
     signal: AbortSignal;
+    slot: UiSlotId;
 }
 
 // @public
 export type UiRole = "owner" | "admin" | "member" | "guest";
+
+// @public
+export function uiSlot(id: string): UiSlotSpec | undefined;
+
+// @public
+export type UiSlotId = (typeof UI_SLOT_IDS)[number];
+
+// @public
+export type UiSlotRole = "guest" | "member" | "admin" | "superAdmin";
+
+// @public
+export type UiSlotScope = "conversation" | "agent" | "org" | "platform" | "file";
+
+// @public
+export interface UiSlotSpec {
+    accepts: readonly UiKind[];
+    anchors?: readonly string[];
+    args: readonly string[];
+    cardinality: "list";
+    density: "dense" | "regular";
+    description: {
+        en: string;
+        zh: string;
+    };
+    icon: "required" | "optional" | "none";
+    id: UiSlotId;
+    limits?: {
+        maxShown?: number;
+    };
+    minRole: UiSlotRole;
+    owner: string;
+    scope: UiSlotScope;
+    version: number;
+}
 
 // @public
 export interface UiView {

@@ -691,6 +691,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Navigation entries of the web shell (panels, pages, embeds); nothing an agent acts on",
   },
   {
+    route: "GET /api/v1/orgs/:orgId/ui/arrangement",
+    category: "internal",
+    reason:
+      "Listing for the 界面位置 page; the arrangement is read and written through org-settings / admin settings",
+  },
+  {
     route: "GET /api/v1/orgs/:orgId/ui/views/:plugin/:id",
     category: "transport",
     reason: "Renders an extension UI view for the web app",
@@ -707,6 +713,37 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "GET /api/v1/orgs/:orgId/ui/stream",
+    category: "transport",
+    reason: "Server-sent event stream of UI invalidations",
+  },
+  {
+    route: "GET /api/v1/admin/ui/contributions",
+    category: "internal",
+    reason: "Navigation entries of the admin console (platform pages)",
+  },
+  {
+    route: "GET /api/v1/admin/ui/arrangement",
+    category: "internal",
+    reason:
+      "Listing for the 界面位置 page; the arrangement is read and written through org-settings / admin settings",
+  },
+  {
+    route: "GET /api/v1/admin/ui/views/:plugin/:id",
+    category: "transport",
+    reason: "Renders an extension UI view for the web app",
+  },
+  {
+    route: "POST /api/v1/admin/ui/actions/:plugin/:id",
+    category: "transport",
+    reason: "Runs an extension UI action from the web app",
+  },
+  {
+    route: "POST /api/v1/admin/ui/embeds/:plugin/:id/token",
+    category: "transport",
+    reason: "Issues an embed token for an iframe",
+  },
+  {
+    route: "GET /api/v1/admin/ui/stream",
     category: "transport",
     reason: "Server-sent event stream of UI invalidations",
   },

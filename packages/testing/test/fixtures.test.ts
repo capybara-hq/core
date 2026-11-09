@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   AccountsService,
   closeKernelApp,
@@ -143,7 +144,7 @@ describe("packing", () => {
     // Like todo: no storage permission, so it runs without an object store
     expect(plugin.manifest.extension?.manifest.permissions).toEqual({
       tools: ["write"],
-      ui: { views: ["tasks"] },
+      ui: { views: ["tasks", "agent-notes", "org-admin", "platform-home"] },
     });
     const storageUser = await readPluginPackage(packed.get("fake-storage-user") as Uint8Array, {
       maxBytes: MAX_BYTES,
@@ -726,7 +727,7 @@ describe("loaded by path in a kernel", () => {
         .find((c) => c.plugin === "fake-tools-ui");
       expect(view?.contribution).toMatchObject({
         id: "tasks",
-        place: "conversation",
+        slot: "conversation.panel",
         kind: "view",
       });
       expect(
@@ -734,6 +735,8 @@ describe("loaded by path in a kernel", () => {
           orgId,
           accountId: randomUUID(),
           role: "member",
+          slot: "conversation.panel",
+          scope: "conversation",
           conversationId: "c1",
           locale: "en",
           signal: new AbortController().signal,
@@ -773,10 +776,10 @@ describe("loaded by path in a kernel", () => {
         .get(ExtensionHost)
         .uiContributions()
         .filter((c) => c.plugin === "fake-embed")
-        .map((c) => [c.contribution.id, c.contribution.place, c.contribution.kind]);
+        .map((c) => [c.contribution.id, c.contribution.slot, c.contribution.kind]);
       expect(embeds).toEqual([
-        ["panel", "page", "embed"],
-        ["panel-conv", "conversation", "embed"],
+        ["panel", "org.page", "embed"],
+        ["panel-conv", "conversation.panel", "embed"],
       ]);
       const page = await k.http.inject({ method: "GET", url: "/plugins/fake-embed/ui/panel" });
       expect(page.statusCode).toBe(200);
@@ -1118,6 +1121,31 @@ describe("fake-openapi (connector kind openapi)", () => {
     } finally {
       await s.close();
     }
+  });
+});
+
+describe("core fixtures", () => {
+  it("core fixtures declare slot, not place", async () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const roots = [
+      join(here, "../fixtures/extensions"),
+      join(here, "../../kernel/test/fixtures/plugins"),
+    ];
+    const offenders: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === "node_modules" || e.name === "ui-legacy-place") continue;
+          await walk(full);
+        } else if (/\.ts$/.test(e.name)) {
+          const text = await readFile(full, "utf8");
+          if (/\bplace:\s*"|"place"\s*:/.test(text)) offenders.push(full);
+        }
+      }
+    };
+    for (const r of roots) await walk(r);
+    expect(offenders).toEqual([]);
   });
 });
 

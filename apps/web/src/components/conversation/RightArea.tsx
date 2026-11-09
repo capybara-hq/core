@@ -24,7 +24,6 @@ import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   backgroundTasksQuery,
-  contributionsQuery,
   filesQuery,
   hasBackgroundTasks,
   toolOutputQuery,
@@ -34,12 +33,13 @@ import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/rig
 import { agentsSummary, dispatchedAny, useAgentTree } from "../../lib/subagents";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
 import { toolLabelText } from "../../lib/tool-label";
-import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
+import { type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { ICON_OF } from "../extension-ui/ExtensionBlocks";
+import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { AgentMap } from "./AgentMap";
 import { BackgroundTaskPanel } from "./BackgroundSection";
 import type { RightAreaSlot } from "./ConversationView";
-import { type BlockContext, ExtensionCard, ExtensionPanel, ICON_OF } from "./ExtensionBlocks";
 import { FilePanel } from "./FilePanel";
 import { PropertiesSections } from "./PropertiesSections";
 import { SubagentPanel } from "./SubagentPanel";
@@ -179,7 +179,6 @@ function OutputPanel({
   );
 }
 
-const NONE_CONTRIBUTIONS: UiContributionItem[] = [];
 const NO_FILES: FileOutput[] = [];
 const NO_TASKS: BackgroundTaskView[] = [];
 const NO_SUBAGENTS: SubagentView[] = [];
@@ -291,20 +290,13 @@ export function useRightAreaSlot(p: {
   // A failed read (R5: not read again on mount) shows none: no extension blocks, no files.
   // Sub-agents cannot deliver files (`Deliver` is removed for children), so their lists
   // are not read (Task 22 ruling, final review I5).
-  const contributionsQ = contributionsQuery(p.orgId);
-  const contributionsR = useQuery({
-    ...contributionsQ,
-    retryOnMount: retryOnMountOf(contributionsQ.queryKey),
-  });
+  const { items: panels, pending: contributionsPending } = useSlotContributions(
+    p.orgId,
+    "conversation.panel",
+  );
   const filesQ = filesQuery(p.orgId, p.conversationId);
   const filesR = useQuery({ ...filesQ, retryOnMount: retryOnMountOf(filesQ.queryKey) });
-  const contributions = contributionsR.data ?? NONE_CONTRIBUTIONS;
   const files = filesR.data ?? NO_FILES;
-  const panels = useMemo(() => contributions.filter((c) => c.place === "panel"), [contributions]);
-  const sections = useMemo(
-    () => contributions.filter((c) => c.place === "section"),
-    [contributions],
-  );
   const close = useCallback(() => open(null), [open]);
   const openFile = useCallback((id: string) => open({ kind: "file", id }), [open]);
   const onOpenTarget = useCallback(
@@ -317,11 +309,6 @@ export function useRightAreaSlot(p: {
       }),
     [open],
   );
-  const ctx: BlockContext = {
-    orgId: p.orgId,
-    conversationId: p.conversationId,
-    onOpen: onOpenTarget,
-  };
   const background = useBackgroundTasks(p.orgId, p.conversationId, p.events);
   /** The finish events' last lines by task (the panel's text when the output is unreadable). */
   const lastLines = useMemo(() => {
@@ -427,14 +414,21 @@ export function useRightAreaSlot(p: {
     const c = panels.find((x) => x.plugin === target.plugin && x.id === target.contribution);
     if (c) {
       panelNode = (
-        <ExtensionPanel
+        <ExtensionSlot
           key={`${uiKey(c.plugin, c.id)}/${target.item ?? ""}`}
-          ctx={ctx}
-          c={c}
-          item={target.item}
-          {...(switcher ? { switcher } : {})}
-          onClose={close}
-          onFullscreen={fullscreen}
+          slot="conversation.panel"
+          args={{
+            orgId: p.orgId,
+            conversationId: p.conversationId,
+            ...(target.item !== undefined ? { item: target.item } : {}),
+          }}
+          select={{ plugin: c.plugin, id: c.id }}
+          host={{
+            ...(switcher ? { switcher } : {}),
+            onClose: close,
+            onFullscreen: fullscreen,
+            onOpenTarget,
+          }}
         />
       );
     }
@@ -516,9 +510,9 @@ export function useRightAreaSlot(p: {
   const loading: RightAreaSlot["loading"] =
     target?.kind === "file" && pending(filesR)
       ? { title: t("files") }
-      : target?.kind === "panel" && pending(contributionsR)
+      : target?.kind === "panel" && contributionsPending
         ? true
-        : target?.kind === "properties" && (pending(contributionsR) || pending(filesR))
+        : target?.kind === "properties" && (contributionsPending || pending(filesR))
           ? true
           : undefined;
   const right: RightAreaSlot["right"] =
@@ -610,13 +604,14 @@ export function useRightAreaSlot(p: {
     right,
     propertiesNode: (
       <PropertiesSections
-        ctx={ctx}
+        orgId={p.orgId}
+        conversationId={p.conversationId}
+        onOpenTarget={onOpenTarget}
         events={p.events}
         model={p.model}
         contextPct={p.contextPct}
         lastRun={p.lastRun}
         files={files}
-        sections={sections}
         onOpenFile={openFile}
         background={
           p.subagents || background.tasks
@@ -653,13 +648,15 @@ export function useRightAreaSlot(p: {
       ...(hasSubagents ? { onOpenAgentMap: openMap, onOpenAgent: openAgent } : {}),
       onOpenTask: openTask,
       renderCard: (e) => (
-        <ExtensionCard
-          ctx={ctx}
-          contributions={contributions}
-          plugin={e.plugin}
-          view={e.view}
-          callId={e.callId}
-          {...(e.cardKey !== undefined ? { cardKey: e.cardKey } : {})}
+        <ExtensionSlot
+          slot="conversation.tool-result.card"
+          args={{
+            orgId: p.orgId,
+            conversationId: p.conversationId,
+            card: { callId: e.callId, ...(e.cardKey !== undefined ? { key: e.cardKey } : {}) },
+          }}
+          select={{ plugin: e.plugin, id: e.view }}
+          host={{ onOpenTarget }}
         />
       ),
     },

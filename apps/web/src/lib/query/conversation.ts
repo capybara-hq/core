@@ -241,7 +241,7 @@ export const invocableSkillsQuery = (orgId: string, agentId: string, conversatio
     freshness: "orgConfig",
   });
 
-/** The extensions' UI contributions (title-bar panels, properties sections, inline cards). */
+/** The extensions' UI contributions of every org-reachable slot (`useSlotContributions` filters). */
 export const contributionsQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).contributions(),

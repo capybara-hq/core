@@ -27,7 +27,7 @@ const t = (zh: string, en: string) => ({ zh, en });
  * A fake `file-preview@1` provider (no official plugin provides a previewer in UI refresh B):
  * - `docx`: a view previewer for `.docx` (1 MiB) that reads the bytes through the grant and echoes
  *   the count and the first bytes;
- * - `docx-page`: an embed previewer for `.docx` (ui contribution `docx-embed`, place file-preview);
+ * - `docx-page`: an embed previewer for `.docx` (ui contribution `docx-embed`, slot file.preview);
  * - `hang`: a view previewer for `.hang` that waits until the kernel aborts it.
  */
 export default defineExtension({
@@ -39,7 +39,7 @@ export default defineExtension({
     {
       id: "docx-embed",
       title: t("文档", "Document"),
-      place: "file-preview",
+      slot: "file.preview",
       kind: "embed",
       path: "/ui/docx",
     },

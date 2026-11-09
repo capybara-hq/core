@@ -34,7 +34,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.get",
         description:
-          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress and wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), the deployment's sandbox egress default and the sandbox cpu / memory limits in effect.",
+          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress and wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per UI slot, the extension contributions the org hides and their order; a slot not listed follows the platform), the deployment's sandbox egress default and the sandbox cpu / memory limits in effect.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
@@ -49,7 +49,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.update",
         description:
-          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress or wakeOnBackgroundTask so they follow the deployment again. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
+          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress or wakeOnBackgroundTask so they follow the deployment again. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } replaces that slot's entry, where hidden and order list contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
         input: OrgSettingsPatchSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
           message: "give at least one setting",
         }),

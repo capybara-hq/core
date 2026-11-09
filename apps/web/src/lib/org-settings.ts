@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { UiArrangementEntry } from "./ui";
 
 /** 组织的沙箱出站（Ruling M19）：`allowHosts` 给出时替换部署的白名单，省略时沿用部署的。 */
 export interface SandboxEgressSetting {
@@ -64,6 +65,8 @@ export type OrgSettingsPatch = Partial<
   sandboxEgress?: SandboxEgressSetting | null;
   /** null clears the default (UTC). */
   timeZone?: string | null;
+  /** Per slot: the entry replaces the org's, null removes it (follow the platform). */
+  uiArrangement?: Record<string, UiArrangementEntry | null>;
 };
 
 const path = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/settings`;

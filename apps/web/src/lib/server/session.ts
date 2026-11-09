@@ -45,7 +45,7 @@ export interface ShellData {
   groups: ConversationGroupsPage | null;
   /** The inbox count; `null` when the read failed or no org. */
   pending: { count: number; more: boolean } | null;
-  /** The extension pages (`place: "page"`); `null` when the read failed or no org. */
+  /** The extension pages (slot `org.page`); `null` when the read failed or no org. */
   extensions: UiContributionItem[] | null;
   /**
    * The viewer's resolved theme (themes spec §8): the org's themes read, or the platform default

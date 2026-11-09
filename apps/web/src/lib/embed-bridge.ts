@@ -16,6 +16,11 @@
 
 export const EMBED_PROTOCOL = "capybara-embed/1";
 
+/** Where an embed is shown (SDK `EmbedInitContext`, narrowed on `scope`; no org for a platform page). */
+export type EmbedInitContext =
+  | { scope: "org"; orgId: string; conversationId?: string }
+  | { scope: "platform" };
+
 export type EmbedTheme = "dark" | "light";
 
 export type EmbedParentMessage =
@@ -26,7 +31,7 @@ export type EmbedParentMessage =
       locale: "zh" | "en";
       theme: EmbedTheme;
       tokens: Record<string, string>;
-      context: { orgId: string; conversationId?: string };
+      context: EmbedInitContext;
     }
   | { protocol: typeof EMBED_PROTOCOL; type: "token"; token: string }
   | {
@@ -191,7 +196,7 @@ export interface EmbedBridgeOptions {
   /** 取一个新令牌（内核 `POST .../ui/embeds/:plugin/:id/token`）；`expiresIn` 为有效期秒数。 */
   fetchToken(): Promise<{ token: string; expiresIn: number }>;
   locale: "zh" | "en";
-  context: { orgId: string; conversationId?: string };
+  context: EmbedInitContext;
   readTheme(): { theme: EmbedTheme; tokens: Record<string, string> };
   onResize(height: number): void;
   onNavigate(path: string): void;
@@ -264,12 +269,7 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
       locale: o.locale,
       theme,
       tokens,
-      context: {
-        orgId: o.context.orgId,
-        ...(o.context.conversationId !== undefined && {
-          conversationId: o.context.conversationId,
-        }),
-      },
+      context: o.context,
     });
     sendFile();
   };

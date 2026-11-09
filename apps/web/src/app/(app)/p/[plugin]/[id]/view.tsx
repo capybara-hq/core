@@ -1,33 +1,27 @@
 "use client";
 
-import { DetailPage, Stack, Text } from "@capybara-hq/design";
-import { useQueryClient } from "@tanstack/react-query";
+import { DetailPage, Text } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
-import { EmbedTab } from "../../../../../components/extension-ui/EmbedTab";
-import {
-  ExtensionViewTab,
-  useExtensionViews,
-  useUiAction,
-} from "../../../../../components/extension-ui/ExtensionViewTab";
+import { ExtensionSlot } from "../../../../../components/extension-ui/ExtensionSlot";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
+import { retryOnMountOf } from "../../../../../lib/query/client";
 import { contributionsQuery } from "../../../../../lib/query/conversation";
-import { keys } from "../../../../../lib/query/keys";
 import { usePageQuery } from "../../../../../lib/query/page-query";
-import { refreshUiViews } from "../../../../../lib/query/ui";
+import { uiArrangementQuery } from "../../../../../lib/query/ui";
 import { useWorkspace } from "../../../../../lib/query/workspace";
-import { openUiStream, type UiContributionItem, uiKey, uiLocale } from "../../../../../lib/ui";
+import { type UiContributionItem, uiLocale } from "../../../../../lib/ui";
 import NotFound from "../../../not-found";
 
 /**
- * `/p/[plugin]/[id]`: an extension's org page (the sidebar's extension pages), DetailPage without an
- * inspector. A schema view (kind view) is drawn by our components; it comes from the query cache
- * (the layout prefetched the contributions, then the view, on a first load; a view the extension
- * failed is its own error state), and the org UI stream refreshes it after first paint. An embed
- * (kind embed) opens the extension's own page in a sandboxed iframe (`EmbedTab`: its token request
- * is the embed handshake, in the browser), which refreshes itself. An unknown contribution says so.
+ * `/p/[plugin]/[id]`: an extension's org page (slot `org.page`, the sidebar's extension pages),
+ * DetailPage without an inspector; the body is the slot's (`ExtensionSlot`). A schema view comes
+ * from the query cache (the layout prefetched the contributions, then the view, on a first load; a
+ * view the extension failed is its own error state), and the org UI stream refreshes it after
+ * first paint. An embed opens the extension's own page in a sandboxed iframe (its token request is
+ * the embed handshake, in the browser), which refreshes itself. An unknown contribution says so.
  */
 export default function PluginPageView({ plugin, id }: { plugin: string; id: string }) {
   const ws = useWorkspace();
@@ -51,10 +45,51 @@ function PluginPageData({ orgId, plugin, id }: { orgId: string; plugin: string; 
       />
     );
   }
-  const contribution = read.data.find(
-    (c) => c.plugin === plugin && c.id === id && c.place === "page",
+  const listed = read.data.find((c) => c.plugin === plugin && c.id === id && c.slot === "org.page");
+  return <PluginPageHidden orgId={orgId} plugin={plugin} id={id} listed={listed} />;
+}
+
+/**
+ * A page the contributions list leaves out may be one an arrangement hides: hidden means not
+ * listed, so the direct URL still renders it (the arrangement listing names it with its hidden
+ * flag, for whoever the slot admits). Read only then.
+ */
+function PluginPageHidden({
+  orgId,
+  plugin,
+  id,
+  listed,
+}: {
+  orgId: string;
+  plugin: string;
+  id: string;
+  listed: UiContributionItem | undefined;
+}) {
+  const q = uiArrangementQuery(orgId);
+  const arrangement = useQuery({
+    ...q,
+    enabled: listed === undefined,
+    retryOnMount: retryOnMountOf(q.queryKey),
+  });
+  // A 404 is final (a guest's slot gate answers it): the designed not-found, no further read.
+  if (listed === undefined && arrangement.error?.status === 404) return <NotFound />;
+  if (listed === undefined && arrangement.data === undefined && arrangement.error === null) {
+    return null;
+  }
+  const hidden = listed
+    ? undefined
+    : arrangement.data
+        ?.find((s) => s.slot === "org.page")
+        ?.items.find((c) => c.plugin === plugin && c.id === id && c.hidden);
+  return (
+    <PluginPage
+      orgId={orgId}
+      plugin={plugin}
+      id={id}
+      contribution={listed ?? hidden}
+      direct={hidden !== undefined}
+    />
   );
-  return <PluginPage orgId={orgId} plugin={plugin} id={id} contribution={contribution} />;
 }
 
 function PluginPage({
@@ -62,71 +97,34 @@ function PluginPage({
   plugin,
   id,
   contribution,
+  direct,
 }: {
   orgId: string;
   plugin: string;
   id: string;
   /** Undefined when the org has no such page. */
   contribution: UiContributionItem | undefined;
+  /** The page is hidden from the lists: the slot gets it as `args.direct`. */
+  direct: boolean;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations();
   const locale = uiLocale(useLocale());
-  const isView = contribution?.kind === "view";
-  const isEmbed = contribution?.kind === "embed";
-  const targets = useMemo(() => (isView ? [{ plugin, id }] : []), [isView, plugin, id]);
-
-  // The org UI stream: read again when this page's contribution changes, and once after a
-  // reconnect (refreshes may have been missed meanwhile)
-  const qc = useQueryClient();
-  // 组织流终止（会话吊销、浏览器放弃重连）：内容照常显示，提示实时刷新已断开
-  const [liveLost, setLiveLost] = useState(false);
-  // ssr-exempt: live updates after first paint (the UI stream)
-  useEffect(() => {
-    if (!isView) return;
-    setLiveLost(false);
-    return openUiStream(orgId, {
-      onUi: (r) => {
-        if (r.plugin === plugin && r.contribution === id)
-          refreshUiViews(qc, keys.org(orgId).uiViews("org", plugin, id));
-      },
-      onReconnect: () => refreshUiViews(qc, keys.org(orgId).uiViews("org")),
-      onError: () => setLiveLost(true),
-    });
-  }, [orgId, plugin, id, isView, qc]);
-
-  const key = uiKey(plugin, id);
-  const views = useExtensionViews(orgId, targets, { locale });
-  const runAction = useUiAction(orgId, { locale, onView: views.setView });
   const title = contribution?.title[locale] ?? id;
-
-  let body: ReactNode;
-  if (isEmbed) {
-    body = <EmbedTab key={key} orgId={orgId} plugin={plugin} id={id} title={title} />;
-  } else if (!isView) body = <Text tone="muted">{t("errors.ui.not_found")}</Text>;
-  else {
-    body = (
-      <ExtensionViewTab
-        state={views.states[key]}
-        onRetry={() => views.retry(key)}
-        onAction={runAction({ plugin, id })}
-      />
-    );
-  }
-
   return (
     <DetailPage
       header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
       tabs={{ label: title, items: [{ id: "view", label: title }], value: "view" }}
     >
-      <Stack gap={12}>
-        {liveLost && (
-          <Text variant="small" tone="warn">
-            {t("pluginPage.liveLost")}
-          </Text>
-        )}
-        {body}
-      </Stack>
+      {contribution ? (
+        <ExtensionSlot
+          slot="org.page"
+          args={{ orgId, ...(direct ? { direct: contribution } : {}) }}
+          select={{ plugin, id }}
+        />
+      ) : (
+        <Text tone="muted">{t("errors.ui.not_found")}</Text>
+      )}
     </DetailPage>
   );
 }

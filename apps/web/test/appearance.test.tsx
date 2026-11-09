@@ -303,6 +303,7 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
   const routes = (put: Routes[string]): Routes => ({
     ...orgRoutes(),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+    "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     "GET /api/v1/admin/components?kind=theme": () => json(200, THEMES),
     "PUT /api/v1/admin/settings": put,
     "GET /api/v1/platform/theme": () => json(200, null),

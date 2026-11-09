@@ -46,7 +46,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["web-search@1", "web-fetch@1", "directory@1"],
-  ui: [{ id: "page", title: t("组织页", "Org page"), place: "page", kind: "view" }],
+  ui: [{ id: "page", title: t("组织页", "Org page"), slot: "org.page", kind: "view" }],
   permissions: {
     tools: ["probe"],
     ui: { views: ["page"] },
@@ -110,11 +110,11 @@ export default defineExtension({
     ctx.provide("web-fetch@1", fetch);
     ctx.provide("directory@1", directory);
     ctx.ui.view("page", async (args) => {
-      record("ui.render", args.orgId, args.config);
+      record("ui.render", args.orgId ?? "platform", args.config);
       return { blocks: [{ type: "text", markdown: JSON.stringify(shown(args.config)) }] };
     });
     ctx.ui.action("page", async (args) => {
-      record("ui.action", args.orgId, args.config);
+      record("ui.action", args.orgId ?? "platform", args.config);
       return { toast: t("好", "ok") };
     });
     ctx.hooks.on(

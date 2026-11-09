@@ -52,6 +52,14 @@ const FORBIDDEN_PKG = new RegExp(
     "react-icons",
   ].join("|")})(?:/|$))`,
 );
+/** Extension UI blocks that only `<ExtensionSlot>` (components/extension-ui) may draw. */
+const EXTENSION_BLOCKS = new Set([
+  "ExtensionPanel",
+  "ExtensionSection",
+  "ExtensionCard",
+  "ExtensionViewTab",
+  "EmbedTab",
+]);
 const CREATE_ELEMENT = new Set(["createElement", "jsx", "jsxs", "jsxDEV"]);
 const DESIGN_PKG = "@capybara-hq/design";
 /** 目录式 catalog 页，不要求使用页面模板。 */
@@ -327,6 +335,7 @@ function checkWebFile(
   const p = parseFile(file);
   if (isParseError(p)) return [p];
   const out: Finding[] = [];
+  const segs0 = relative(webSrcDir, file).split(sep);
 
   for (const imp of collectImports(p.program)) {
     const line = p.lineOf(imp.start);
@@ -353,6 +362,15 @@ function checkWebFile(
     "页面内不得写 style / <style> / dangerouslySetInnerHTML；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式";
   const IFRAME_MSG =
     "页面内不得直接渲染 iframe；用 @capybara-hq/design 的 EmbedFrame（固定 sandbox、只转发本 iframe 的消息）";
+  const EXT_SLOT_MSG = "render extension UI through <ExtensionSlot> (UI slots spec §7)";
+  const inExtensionUi = segs0[0] === "components" && segs0[1] === "extension-ui";
+  const declared = new Set<string>();
+  walk(p.program, (n) => {
+    if (n.type === "FunctionDeclaration" || n.type === "VariableDeclarator") {
+      const id = n.id as Node | null;
+      if (id?.type === "Identifier") declared.add(id.name as string);
+    }
+  });
   const flag = (rule: string, message: string, at: Node) =>
     out.push({ file, line: p.lineOf(at.start), rule, message });
   const checkObject = (obj: unknown) => {
@@ -382,6 +400,14 @@ function checkWebFile(
         flag("web-ui-style", STYLE_MSG, n);
       else if (name.type === "JSXIdentifier" && name.name === "iframe")
         flag("web-ui-iframe", IFRAME_MSG, n);
+      else if (
+        name.type === "JSXIdentifier" &&
+        EXTENSION_BLOCKS.has(name.name as string) &&
+        !inExtensionUi &&
+        segs0[0] !== "dev" &&
+        !declared.has(name.name as string)
+      )
+        flag("web-ui-extension-slot", EXT_SLOT_MSG, n);
     } else if (n.type === "CallExpression") {
       const callee = n.callee as Node;
       const fn =

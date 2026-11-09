@@ -6,7 +6,9 @@ export default defineExtension({
   version: "0.2.0",
   sdk: "^0.1.0-rc.0",
   provides: [],
-  ui: [{ id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" }],
+  ui: [
+    { id: "tasks", title: { zh: "任务", en: "Tasks" }, slot: "conversation.panel", kind: "view" },
+  ],
   permissions: { http: [{ method: "GET", path: "/ui/board" }], ui: { views: ["tasks"] } },
   setup(ctx) {
     ctx.http.route("GET", "/ui/board", async () => new Response("board"));

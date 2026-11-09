@@ -147,6 +147,7 @@ describe("删除组织 (组织设置 · 通用)", () => {
   const api = () =>
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
+      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
       [`DELETE ${O}`]: () => noContent(),
     });
   for (const role of ["member", "admin", "owner"] as const) {
@@ -204,6 +205,7 @@ describe("删除组织 errors", () => {
   it("a refusal shows the localized message in the dialog, not the kernel's English", async () => {
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
+      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
       [`DELETE ${O}`]: () =>
         json(403, { error: { code: "forbidden", message: "Insufficient organization role" } }),
     });
@@ -265,6 +267,7 @@ describe("服务令牌", () => {
     resetNavigation("/settings/organization");
     stubApi({
       [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
+      [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
     });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       locale: "zh",

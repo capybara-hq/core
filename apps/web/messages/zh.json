@@ -3273,7 +3273,8 @@
       "agent-templates": "智能体模板",
       "themes": "主题",
       "models": "模型",
-      "plugins": "插件"
+      "plugins": "插件",
+      "extensionPages": "扩展"
     },
     "overview": {
       "intro": "管理整个部署：账号、组织、扩展与部署设置。",
@@ -3555,6 +3556,17 @@
         "consistent": "副本一致 {ok}/{n}",
         "diverged": "副本不一致 {ok}/{n}",
         "none": "无副本上报"
+      },
+      "uiDropped": {
+        "title": "未生效的界面",
+        "description": "这个扩展声明的下列界面没有生效：它们指向的插槽在本平台不存在，或插槽版本不受支持。扩展的其他功能不受影响。",
+        "columns": {
+          "id": "界面",
+          "slot": "插槽",
+          "reason": "原因"
+        },
+        "unknownSlot": "插槽不存在",
+        "unsupportedVersion": "插槽版本不受支持"
       },
       "detail": {
         "tabsLabel": "扩展详情",
@@ -4558,6 +4570,36 @@
     "owner": {
       "self": "本组织",
       "platform": "平台"
+    }
+  },
+  "uiArrangement": {
+    "title": "界面位置",
+    "description": "扩展在哪些位置展示页面和区块。隐藏后不再列出，也可以调整顺序。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
+    "descriptionReadonly": "扩展在哪些位置展示页面和区块。只有组织管理员可以修改。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
+    "followsPlatform": "跟随平台",
+    "resetOrg": "跟随平台",
+    "resetPlatform": "恢复默认",
+    "resetLabel": "重置{slot}",
+    "hideLabel": "隐藏 {name}",
+    "hiddenState": "已隐藏",
+    "shownState": "显示中",
+    "moveUp": "上移 {name}",
+    "moveDown": "下移 {name}",
+    "columns": {
+      "title": "标题",
+      "extension": "扩展",
+      "hidden": "隐藏",
+      "move": "顺序"
+    },
+    "slots": {
+      "conversationPanel": "对话面板",
+      "conversationProperties": "对话属性区块",
+      "conversationCard": "工具结果卡片",
+      "orgPage": "组织页面",
+      "filePreview": "文件预览",
+      "agentSection": "智能体页面区块",
+      "orgSettingsSection": "组织设置区块",
+      "platformPage": "平台页面"
     }
   },
   "filePreviewers": {

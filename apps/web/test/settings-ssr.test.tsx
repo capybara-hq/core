@@ -87,6 +87,7 @@ const ROUTES: Routes = {
       deployment: { sandboxEgress: { mode: "open", allowHosts: [] } },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
     }),
+  [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
   [`GET ${O}/members`]: () => json(200, { members: MEMBERS }),
   [`GET ${O}/invitations`]: () => json(200, { invitations: [INVITATION] }),
   [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
@@ -95,6 +96,7 @@ const ROUTES: Routes = {
   [`GET ${O}/plugin-installs`]: () => json(200, { installs: [] }),
   [`GET ${O}/extensions`]: () => json(200, { extensions: [] }),
   [`GET ${O}/file-previewers`]: () => json(200, { items: [] }),
+  [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
   [`GET ${O}/extension-points`]: () => json(200, { points: [] }),
   [`GET ${O}/service-tokens`]: () => json(200, { tokens: [] }),
   [`GET ${O}/connectors`]: () =>
@@ -452,6 +454,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
+      [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
     });
     expect(screen.getByRole("row", { name: /Todo/ })).toBeTruthy();
     expect(screen.getByRole("switch", { name: /Markdown/ })).toBeTruthy();
@@ -464,6 +467,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await renderRouteWithCache("/extensions", {
       ...ROUTES,
       [`GET ${O}/file-previewers`]: failing,
+      [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
     });
     expect(screen.getByText(en.extensions.empty)).toBeTruthy();
     await settle();
@@ -483,6 +487,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
+      [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
     };
     const calls = stubApi({
       ...routes,
@@ -501,10 +506,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       );
     await vi.waitFor(() => expect(screen.getByText(en.extensions.disabled)).toBeTruthy());
     // the list is not read again (the answer is the extension); the shown readiness,
-    // previewers and default providers are, and the cached models and purposes are stale
+    // 界面位置, previewers and default providers are, and the cached models and purposes are stale
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `PUT ${O}/extensions/todo`,
       `GET ${O}/readiness`,
+      `GET ${O}/ui/arrangement`,
       `GET ${O}/file-previewers`,
       `GET ${O}/extension-points`,
     ]);

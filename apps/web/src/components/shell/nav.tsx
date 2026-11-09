@@ -10,7 +10,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
 import { type UiContributionItem, uiLocale } from "../../lib/ui";
-import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
+import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
 
 /**
  * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
@@ -225,7 +225,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 /**
- * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
+ * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
  * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
  * share a title, each label gets its plugin name. Empty while loading, without pages or on a failed
  * read (the group is then hidden).
@@ -290,18 +290,23 @@ const ADMIN_ICONS: Record<AdminPageId, IconName> = {
  */
 export function useAdminItems(
   counts: Partial<Record<AdminPageId, number | undefined>> = {},
+  /** The extensions' platform pages (`platform.page`), listed after the fixed pages. */
+  pages: readonly AdminExtensionPage[] = [],
 ): SidebarNavItem[] {
   const t = useTranslations("admin.nav");
-  return ADMIN_PAGES.map((p) => {
-    const count = counts[p.id];
-    return {
-      id: p.id,
-      label: t(p.id),
-      href: p.href,
-      icon: ADMIN_ICONS[p.id],
-      ...(count !== undefined && count > 0 ? { count } : {}),
-    };
-  });
+  return [
+    ...ADMIN_PAGES.map((p) => {
+      const count = counts[p.id];
+      return {
+        id: p.id,
+        label: t(p.id),
+        href: p.href,
+        icon: ADMIN_ICONS[p.id],
+        ...(count !== undefined && count > 0 ? { count } : {}),
+      };
+    }),
+    ...pages.map((p) => ({ ...p, id: `ext:${p.id}`, icon: "extension" as const })),
+  ];
 }
 
 /** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */

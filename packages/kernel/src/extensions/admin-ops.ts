@@ -644,6 +644,7 @@ function fallbackView(
     enabledOrgs: 0,
     builtin: false,
     installSource: null,
+    uiDropped: [],
     error: `the change was saved, but its current status cannot be read: ${err instanceof Error ? err.message : String(err)}`,
   };
 }

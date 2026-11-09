@@ -93,7 +93,7 @@ const BOARD = {
   plugin: "board",
   id: "overview",
   title: { zh: "看板", en: "Board" },
-  place: "page",
+  slot: "org.page",
   kind: "view",
 };
 const LIVE = { ...BOARD, id: "live", title: { zh: "实时", en: "Live" }, kind: "embed" };
@@ -105,6 +105,7 @@ const ROUTES: Routes = {
     json(200, { items: [ITEM("c1", "Clean up"), ITEM("c2", null)], next: null }),
   [`GET ${O}/trajectories/c1`]: () => json(200, DETAIL()),
   [`GET ${UI}/contributions`]: () => json(200, { items: [BOARD, LIVE] }),
+  [`GET ${UI}/arrangement`]: () => json(200, { slots: [] }),
   [`GET ${UI}/views/board/overview`]: () =>
     json(200, { view: { blocks: [{ type: "heading", text: "Cards" }] } }),
 };

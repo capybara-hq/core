@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-ui-unknown-slot",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: Violation: the slot is not in the SDK's catalog."
+}

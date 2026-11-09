@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  type DroppedUiContribution,
   EXTENSION_POINT_CARDINALITY,
   type ExtensionManifest,
   type ExtensionPointRef,
@@ -13,6 +14,7 @@ import {
   type ToolHandler,
   type ToolSpec,
   type UiContribution,
+  type UiSlotSpec,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
@@ -97,10 +99,17 @@ import { PackageShaMismatchError, packageRootOf } from "./sync.js";
 
 export { deploymentConfigHash };
 
-/** One item of {@link ExtensionHost.uiContributions}: a UI contribution from the manifest with its registered view / action (embeds have none). */
+/**
+ * One item of {@link ExtensionHost.uiContributions}: a UI contribution from the manifest whose slot
+ * resolved at load (dropped ones never appear), with its registered view / action (embeds have none).
+ */
 export interface LoadedUiContribution {
   plugin: string;
   contribution: UiContribution;
+  /** The catalog slot the contribution resolved to (from `slot`, or the deprecated `place`). */
+  slot: UiSlotSpec;
+  /** For a slot with anchors: the anchor it goes after (see `resolveUiSlots`). */
+  after?: string;
   render?: UiRender;
   action?: UiActionHandler;
 }
@@ -2063,7 +2072,7 @@ export class ExtensionHost {
         if (c || this.settingUp === ctx) this.settingUp = c;
       },
     });
-    if (timeoutMs === undefined) return p;
+    if (timeoutMs === undefined) return p.then((inst) => this.logUiResolution(inst));
     let timer: NodeJS.Timeout | undefined;
     let onClose: () => void = () => {};
     const stop = new Promise<"timeout" | "closed">((resolve) => {
@@ -2074,7 +2083,8 @@ export class ExtensionHost {
     });
     try {
       const r = await Promise.race([p.then((inst) => ({ inst })), stop]);
-      if (typeof r === "object") return r.inst;
+      // a late instance that is disposed right away never logs its UI resolution
+      if (typeof r === "object") return this.logUiResolution(r.inst);
       // setup 迟迟不返回：关闭它的 ctx（此后它的登记立即撤销），迟到完成的实例直接撤销
       p.then(
         (inst) => this.disposeQuietly(inst, 0),
@@ -2092,6 +2102,21 @@ export class ExtensionHost {
       clearTimeout(timer);
       this.abort.signal.removeEventListener("abort", onClose);
     }
+  }
+
+  /** Logs once per load what slot resolution left out or flagged (UI slots spec §3.2). */
+  private logUiResolution(inst: ExtensionInstance): ExtensionInstance {
+    const at = { plugin: inst.name, version: inst.version };
+    if (inst.uiDropped.length > 0) {
+      this.log.warn("plugin ui contributions dropped", { ...at, dropped: inst.uiDropped });
+    }
+    if (inst.uiUnknownAnchors.length > 0) {
+      this.log.warn("plugin ui anchors unknown", { ...at, anchors: inst.uiUnknownAnchors });
+    }
+    if (inst.uiDeprecatedPlace.length > 0) {
+      this.log.info("plugin ui uses the deprecated place", { ...at, ids: inst.uiDeprecatedPlace });
+    }
+    return inst;
   }
 
   /** 取能力实现：单选能力无需 providerName，多选能力必须指定。 */
@@ -2482,17 +2507,24 @@ export class ExtensionHost {
    */
   uiContributions(): LoadedUiContribution[] {
     return this.registry.all().flatMap((i) =>
-      (i.manifest.ui ?? []).map((c) => {
+      i.ui.map(({ contribution: c, slot, after }) => {
         const render = c.kind === "view" ? i.uiViews.get(c.id) : undefined;
         const action = c.kind === "view" ? i.uiActions.get(c.id) : undefined;
         return {
           plugin: i.name,
           contribution: c,
+          slot,
+          ...(after !== undefined && { after }),
           ...(render !== undefined && { render }),
           ...(action !== undefined && { action }),
         };
       }),
     );
+  }
+
+  /** The UI contributions the loaded extension left out at load (UI slots spec §3.2); `[]` when not loaded. */
+  uiDropped(name: string): DroppedUiContribution[] {
+    return [...(this.registry.current(name)?.uiDropped ?? [])];
   }
 
   /** 串行执行生命周期操作（unload / reload 互不交错）；宿主关闭后拒绝。 */

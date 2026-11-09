@@ -1,14 +1,14 @@
 import { ApiClientError, apiFetch } from "./api";
 import type { FormAnswer, InputForm } from "./conversations";
+import type { UiSlotId } from "./ui-slots.generated";
+
+export type { UiSlotId } from "./ui-slots.generated";
 
 /**
  * 插件界面（第一档：渲染 schema；第二档：嵌入应用的令牌）的类型与接口。
  * 类型照抄 `packages/plugin-sdk/src/ui.ts`（`UiBlock` / `UiView` / `UiContribution`）：Web 层只依赖 design，
  * 不 import SDK，SDK 改了这里要同步。接口见内核 `packages/kernel/src/ui/views.controller.ts`。
  */
-
-/** Listed places (the kernel lists the old `conversation` as `panel` with `legacyPlace`). */
-export type UiPlace = "panel" | "section" | "inline" | "page";
 
 /** A contribution's icon (SDK `UI_ICONS`; `puzzle` is drawn as the design `extension` icon). */
 export type UiIcon =
@@ -30,17 +30,19 @@ export interface UiOpen {
 }
 export type UiKind = "view" | "embed";
 
-/** `GET .../ui/contributions` 的一项（已启用、已加载的插件的界面贡献）。 */
+/** One item of `GET .../ui/contributions` (the kernel's `UiContributionItem`, `ui/views.ts`). */
 export interface UiContributionItem {
   plugin: string;
   id: string;
   title: { zh: string; en: string };
-  place: UiPlace;
-  /** `"conversation"` when the extension still declares the old place. */
-  legacyPlace?: "conversation";
+  /** The catalog slot the contribution resolved to. */
+  slot: UiSlotId;
+  /** For a slot with anchors: the anchor it goes after (resolved: the slot's first by default). */
+  after?: string;
   kind: UiKind;
-  /** 仅 embed：插件路由下 `/ui/` 开头的路径。 */
+  /** Embed only: a path under the plugin's routes starting with `/ui/`. */
   path?: string;
+  /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
 }
 
@@ -131,12 +133,41 @@ export function isHttpUrl(url: string): boolean {
 /** UI 语言（next-intl 的 locale）→ 接口的 `locale`。 */
 export const uiLocale = (locale: string): UiLocale => (locale === "zh" ? "zh" : "en");
 
-const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/ui`;
+/**
+ * The UI routes of a scope: an org's, or the platform's (`orgId` null: the org-less
+ * `/api/v1/admin/ui/*` routes of the admin console, super admins only; slot `platform.page`).
+ */
+const base = (orgId: string | null) =>
+  orgId === null ? "/api/v1/admin/ui" : `/api/v1/orgs/${encodeURIComponent(orgId)}/ui`;
 const target = (plugin: string, id: string) =>
   `${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 export const listUiContributions = (orgId: string) =>
   apiFetch<{ items: UiContributionItem[] }>(`${base(orgId)}/contributions`);
+
+/** The platform's page contributions (slot `platform.page`; super admins). */
+export const listAdminUiContributions = () =>
+  apiFetch<{ items: UiContributionItem[] }>(`${base(null)}/contributions`);
+
+/** One slot's arrangement entry: the hidden contributions and the order, keyed `<plugin>/<id>`. */
+export interface UiArrangementEntry {
+  hidden: string[];
+  order: string[];
+}
+
+/** One slot of `GET .../ui/arrangement`: where its entry comes from and its items in order. */
+export interface UiArrangementSlot {
+  slot: UiSlotId;
+  source: "org" | "platform" | "none";
+  items: (UiContributionItem & { hidden: boolean })[];
+}
+
+export const getUiArrangement = (orgId: string) =>
+  apiFetch<{ slots: UiArrangementSlot[] }>(`${base(orgId)}/arrangement`);
+
+/** The platform default arrangement (super admins). */
+export const getAdminUiArrangement = () =>
+  apiFetch<{ slots: UiArrangementSlot[] }>(`${base(null)}/arrangement`);
 
 /** How long one extension block may take to load before it shows "Failed to load · Retry". */
 export const UI_VIEW_TIMEOUT_MS = 10_000;
@@ -147,11 +178,13 @@ export const UI_VIEW_TIMEOUT_MS = 10_000;
  * {@link UI_VIEW_TIMEOUT_MS} with `ui.timeout`, and on `signal` (an unmount).
  */
 export async function getUiView(
-  orgId: string,
+  orgId: string | null,
   plugin: string,
   id: string,
   opts: {
     conversationId?: string;
+    /** An `agent.detail.section` view: the agent it is shown on. */
+    agentId?: string;
     locale: UiLocale;
     item?: string;
     card?: { callId: string; key?: string };
@@ -160,6 +193,7 @@ export async function getUiView(
 ) {
   const q = new URLSearchParams();
   if (opts.conversationId !== undefined) q.set("conversationId", opts.conversationId);
+  if (opts.agentId !== undefined) q.set("agentId", opts.agentId);
   q.set("locale", opts.locale);
   if (opts.item !== undefined) q.set("item", opts.item);
   if (opts.card !== undefined) {
@@ -180,10 +214,10 @@ export async function getUiView(
 }
 
 export const postUiAction = (
-  orgId: string,
+  orgId: string | null,
   plugin: string,
   id: string,
-  body: UiActionRequest & { conversationId?: string; locale: UiLocale },
+  body: UiActionRequest & { conversationId?: string; agentId?: string; locale: UiLocale },
 ) =>
   apiFetch<UiActionResult>(`${base(orgId)}/actions/${target(plugin, id)}`, {
     method: "POST",
@@ -192,21 +226,22 @@ export const postUiAction = (
 
 /** 取嵌入令牌：对话嵌入带 `conversationId`，组织页面不带。 */
 export const requestEmbedToken = (
-  orgId: string,
+  orgId: string | null,
   plugin: string,
   id: string,
-  opts: { conversationId?: string; fileId?: string } = {},
+  opts: { conversationId?: string; agentId?: string; fileId?: string } = {},
 ) =>
   apiFetch<EmbedToken>(`${base(orgId)}/embeds/${target(plugin, id)}/token`, {
     method: "POST",
     body: JSON.stringify({
       ...(opts.conversationId !== undefined && { conversationId: opts.conversationId }),
+      ...(opts.agentId !== undefined && { agentId: opts.agentId }),
       ...(opts.fileId !== undefined && { fileId: opts.fileId }),
     }),
   });
 
 /** 组织级刷新流的 URL（SSE，经同源代理）。 */
-export const uiStreamUrl = (orgId: string) => `${base(orgId)}/stream`;
+export const uiStreamUrl = (orgId: string | null) => `${base(orgId)}/stream`;
 
 /** 解析 `event: ui` 帧的 data；形状不对返回 undefined。 */
 export function parseUiRefresh(data: unknown): UiRefresh | undefined {
@@ -224,7 +259,7 @@ export function parseUiRefresh(data: unknown): UiRefresh | undefined {
  * 没有 `code` 表示浏览器放弃了重连。返回关闭函数。
  */
 export function openUiStream(
-  orgId: string,
+  orgId: string | null,
   handlers: {
     onUi(r: UiRefresh): void;
     onReconnect?(): void;

@@ -268,6 +268,8 @@ export const keys = {
       ],
       /** The extensions' UI contributions (enabled and loaded). */
       contributions: (): readonly unknown[] => [...all, "contributions"],
+      /** The org's UI arrangement listing (every arrangeable slot, with the hidden ones). */
+      uiArrangement: (): readonly unknown[] => [...all, "uiArrangement"],
       /** The attachment limits. */
       attachmentLimits: (): readonly unknown[] => [...all, "attachmentLimits"],
       /** An agent's invocable skills, with a conversation's trial drafts when one is named. */
@@ -393,6 +395,25 @@ export const keys = {
       adminPurposes: (): readonly unknown[] => [...all, "adminPurposes"],
       /** The deployment's extensions (with the drain time limit). */
       extensions: (): readonly unknown[] => [...all, "extensions"],
+      /** The platform's UI contributions (`platform.page`; the admin console's 扩展 pages). */
+      uiContributions: (): readonly unknown[] => [...all, "uiContributions"],
+      /** The platform default UI arrangement listing. */
+      uiArrangement: (): readonly unknown[] => [...all, "uiArrangement"],
+      /** Platform page views: all of them, or one contribution's (prefixes). */
+      uiViews: (plugin?: string, contribution?: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        ...(plugin === undefined ? [] : [plugin]),
+        ...(contribution === undefined ? [] : [contribution]),
+      ],
+      /** One platform page view (`rest`: locale, item, card). */
+      uiView: (plugin: string, contribution: string, rest: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        plugin,
+        contribution,
+        rest,
+      ],
       /** One extension (the detail page's poll while it converges). */
       extension: (name: string): readonly unknown[] => [...all, "extension", name],
       /** Every extension's deployment config (an invalidation prefix). */

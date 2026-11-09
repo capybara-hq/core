@@ -118,6 +118,10 @@ describe("checkWebUi", () => {
     expect(f[0]?.message).toContain('method="post"');
   });
   it("<iframe> 元素 -> web-ui-iframe", () => one("iframe-element", "web-ui-iframe", 6));
+  it("Extension* blocks outside extension-ui -> web-ui-extension-slot", () =>
+    one("extension-slot-outside", "web-ui-extension-slot", 7));
+  it("blocks inside extension-ui and a locally declared name pass", () =>
+    expect(run("extension-slot-ok")).toEqual([]));
   it('createElement("iframe") -> web-ui-iframe', () =>
     one("create-element-iframe", "web-ui-iframe", 7));
   it("别名导入的模板通过", () => expect(run("aliased-template")).toEqual([]));

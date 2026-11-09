@@ -44,6 +44,7 @@ import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { ThemesOperations } from "./ops/themes.ops.js";
+import { UiOperations } from "./ops/ui.ops.js";
 import { PlatformModule } from "./platform.module.js";
 
 /**
@@ -86,6 +87,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   AgentSkillsOperations,
   // themes (themes spec §9)
   ThemesOperations,
+  // UI slot catalog (UI slots spec §3)
+  UiOperations,
 ] as const;
 
 /**

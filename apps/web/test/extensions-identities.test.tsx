@@ -27,6 +27,7 @@ const BASE = "/api/v1/orgs/o1";
 const api = (routes: Parameters<typeof stubApi>[0]) =>
   stubApi({
     [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+    [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [] }),
     [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
     "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     ...routes,
@@ -662,6 +663,7 @@ describe("组织设置：IM 语言", () => {
     const o = msgs[locale].orgSettings;
     const calls = api({
       [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
+      [`GET ${BASE}/ui/contributions`]: () => json(200, { items: [] }),
       [`PATCH ${BASE}/settings`]: (c) =>
         json(200, { settings: { toolSearch: "on", locale: "en", ...(bodyOf(c) as object) } }),
     });

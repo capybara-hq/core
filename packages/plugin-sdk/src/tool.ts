@@ -111,9 +111,9 @@ export interface ToolResult {
   display?: ToolDisplay;
   /**
    * Optional: an inline card under this call in the conversation: `view` is a ui contribution of
-   * the same extension with `place: "inline"`, rendered with `card: { callId, key }`. Display only
-   * (recorded on the `tool_result` event, never in the model's context); an unknown view is dropped
-   * with a warning and the result is kept.
+   * the same extension in the `conversation.tool-result.card` slot, rendered with
+   * `card: { callId, key }`. Display only (recorded on the `tool_result` event, never in the model's
+   * context); an unknown view is dropped with a warning and the result is kept.
    */
   card?: { view: string; key?: string };
 }

@@ -7,11 +7,11 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   ui: [
-    { id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" },
+    { id: "tasks", title: { zh: "任务", en: "Tasks" }, slot: "conversation.panel", kind: "view" },
     {
       id: "board",
       title: { zh: "看板", en: "Board" },
-      place: "page",
+      slot: "org.page",
       kind: "embed",
       path: "/ui/board",
     },

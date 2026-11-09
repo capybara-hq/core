@@ -3285,7 +3285,8 @@
       "agent-templates": "Agent templates",
       "themes": "Themes",
       "models": "Models",
-      "plugins": "Plugins"
+      "plugins": "Plugins",
+      "extensionPages": "Extensions"
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
@@ -3567,6 +3568,17 @@
         "consistent": "Replicas in sync {ok}/{n}",
         "diverged": "Replicas out of sync {ok}/{n}",
         "none": "No replica reported"
+      },
+      "uiDropped": {
+        "title": "Interfaces not in effect",
+        "description": "These interfaces declared by the extension are not shown: the slot they target does not exist on this platform, or its version is not supported. The rest of the extension works as usual.",
+        "columns": {
+          "id": "Interface",
+          "slot": "Slot",
+          "reason": "Reason"
+        },
+        "unknownSlot": "The slot does not exist",
+        "unsupportedVersion": "The slot version is not supported"
       },
       "detail": {
         "tabsLabel": "Extension details",
@@ -4570,6 +4582,36 @@
     "owner": {
       "self": "This org",
       "platform": "Platform"
+    }
+  },
+  "uiArrangement": {
+    "title": "UI placement",
+    "description": "Where extensions show their pages and sections. Hide a contribution to stop listing it, or change its order. Hidden only means not listed: a hidden org page or platform page still opens by its direct link, and any other hidden contribution simply does not show.",
+    "descriptionReadonly": "Where extensions show their pages and sections. Only org admins change it. Hidden means not listed: a hidden org page or platform page still opens by its direct link, and any other hidden contribution simply does not show.",
+    "followsPlatform": "Follows the platform",
+    "resetOrg": "Follow the platform",
+    "resetPlatform": "Reset to default",
+    "resetLabel": "Reset {slot}",
+    "hideLabel": "Hide {name}",
+    "hiddenState": "Hidden",
+    "shownState": "Shown",
+    "moveUp": "Move {name} up",
+    "moveDown": "Move {name} down",
+    "columns": {
+      "title": "Title",
+      "extension": "Extension",
+      "hidden": "Hidden",
+      "move": "Order"
+    },
+    "slots": {
+      "conversationPanel": "Conversation panels",
+      "conversationProperties": "Conversation properties",
+      "conversationCard": "Tool result cards",
+      "orgPage": "Org pages",
+      "filePreview": "File previews",
+      "agentSection": "Agent page sections",
+      "orgSettingsSection": "Org settings sections",
+      "platformPage": "Platform pages"
     }
   },
   "filePreviewers": {
