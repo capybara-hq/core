@@ -99,7 +99,7 @@ const utf8 = (data: Uint8Array): string | undefined => {
  * - `client.invalid` (details `[{ file, reason }]`): the section fails `validateClientSection`
  *   (file `plugin.json`), a key cannot be looked up exactly, a listed file is missing, a file
  *   under `dist/client/` is not listed, a size limit is exceeded, or a stylesheet fails the CSS
- *   check (`client-css.ts`);
+ *   check (`clientCssProblem` from `@capybara-hq/plugin-sdk`);
  * - `client.integrity_mismatch` (details `[{ file }]`): a file's sha384 is not the section's;
  * - `client.api_unsupported` (details `[{ apiVersion, supported }]`): the section's `apiVersion`
  *   is newer than the kernel's `CLIENT_API_VERSION` (the host could not run it).

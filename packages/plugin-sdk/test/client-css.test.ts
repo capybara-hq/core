@@ -4,7 +4,7 @@ import { clientCssProblem, wrapClientCss } from "../src/index.js";
 
 /**
  * The client stylesheet rule the packer and the kernel's import both run (plugin-tools'
- * `cssRemoteProblem` and the kernel's `checkClientFiles` run the shared vectors too). Here each
+ * `cssRemoteProblem` runs the shared vectors too; the kernel's `checkClientFiles` has one end-to-end case). Here each
  * vector is wrapped as the packer stores it.
  */
 
