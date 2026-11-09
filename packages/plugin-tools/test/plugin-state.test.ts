@@ -56,6 +56,51 @@ describe("plugin-timer", () => {
   });
 });
 
+describe("plugin-timer and client code", () => {
+  const dir = fixture("plugin-timer-client");
+  const all = checkPluginState([dir]);
+  const flagged = (rel: string) =>
+    readFileSync(join(dir, rel), "utf8")
+      .split("\n")
+      .flatMap((l, i) => (l.includes("// FLAG") ? [`${rel}:${i + 1}`] : []));
+
+  // `#` subpath imports are followed through the package.json imports map on both sides
+  it("refuses timers in server modules, allows them in modules only the client entry reaches", () => {
+    const expected = [
+      "src/index.ts",
+      "src/orphan.ts",
+      "src/server-helper.ts",
+      "src/shared.ts",
+      "src/util.ts",
+    ]
+      .flatMap(flagged)
+      .sort();
+    expect(expected).toHaveLength(5);
+    expect(all.every((x) => x.rule === "plugin-timer")).toBe(true);
+    expect(all.map((x) => `${x.file.slice(dir.length + 1)}:${x.line}`).sort()).toEqual(expected);
+  });
+
+  it("a client entry the server entry imports is server code", () => {
+    const d = mkdtempSync(join(tmpdir(), "capybara-ps-"));
+    tmp.push(d);
+    cpSync(dir, d, { recursive: true });
+    writeFileSync(join(d, "src/index.ts"), 'export { boot } from "./client.js";\n');
+    const files = checkPluginState([d]).map((x) => x.file.slice(d.length + 1));
+    expect(files).toContain("src/client.tsx");
+    expect(files).toContain("src/ui/glitch.tsx");
+  });
+
+  it("module state is still refused in client code", () => {
+    const d = mkdtempSync(join(tmpdir(), "capybara-ps-"));
+    tmp.push(d);
+    cpSync(dir, d, { recursive: true });
+    writeFileSync(join(d, "src/client.tsx"), "let n = 0;\nexport default () => n++;\n");
+    expect(checkPluginState([d]).filter((x) => x.file.endsWith("client.tsx"))).toEqual([
+      expect.objectContaining({ rule: "plugin-module-state", line: 1 }),
+    ]);
+  });
+});
+
 describe("真实正例与反例", () => {
   it("a clean plugin -> no findings", () => {
     expect(checkPluginState([fixture("plugin-clean")])).toEqual([]);

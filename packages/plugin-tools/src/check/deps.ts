@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { leaves, resolveHashImport } from "./package-imports.js";
 import {
   collectImports,
   type Finding,
@@ -99,14 +100,6 @@ function judge(
 
 type Json = unknown;
 
-/** Every string leaf of a JSON subtree. */
-function leaves(v: Json): string[] {
-  if (typeof v === "string") return [v];
-  if (Array.isArray(v)) return v.flatMap(leaves);
-  if (typeof v === "object" && v !== null) return Object.values(v).flatMap(leaves);
-  return [];
-}
-
 /** Reads package.json; undefined when there is none. */
 function readPackage(
   dir: string,
@@ -159,23 +152,6 @@ function packageFindings(dir: string, rules: Rules): Finding[] {
     }
   }
   return out;
-}
-
-/** Expands a `#xxx` subpath import of the sources through the package.json imports map (empty when unmapped). */
-function resolveHashImport(spec: string, imports: Record<string, Json>): string[] {
-  const direct = imports[spec];
-  if (direct !== undefined) return leaves(direct);
-  for (const [key, v] of Object.entries(imports)) {
-    const star = key.indexOf("*");
-    if (star === -1) continue;
-    const head = key.slice(0, star);
-    const tail = key.slice(star + 1);
-    if (spec.startsWith(head) && spec.endsWith(tail) && spec.length >= head.length + tail.length) {
-      const mid = spec.slice(head.length, spec.length - tail.length);
-      return leaves(v).map((t) => t.replace("*", mid));
-    }
-  }
-  return [];
 }
 
 function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {

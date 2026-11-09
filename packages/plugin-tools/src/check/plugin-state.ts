@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { browserOnlyModules } from "./client-modules.js";
 import {
   collectImports,
   type Finding,
@@ -156,6 +158,11 @@ function timerFindings(f: ParsedFile): Finding[] {
  * 定时器识别：标识符引用（含别名赋值）、`x.setTimeout` / `x["setTimeout"]`、解构键
  * `{ setTimeout: st }`、任何恰好等于定时器名的字符串字面量（含字面量之间的 `+` 拼接，如
  * `g["set" + "Timeout"]`）、timers 模块导入（import/require/动态 import）。
+ * Browser code: plugin-timer skips the browser-only modules ({@link browserOnlyModules}: the files
+ * the client entry `src/client.ts[x]` reaches through relative or `#…` imports and the server
+ * entry `src/index.ts` does not), since a timer in the browser belongs to one tab, not to a replica. A
+ * module both entries reach, or neither, is checked as server code. plugin-module-state still
+ * checks client code.
  * 扫描范围：插件目录下所有源码，node_modules 任何深度都跳过；dist 与 test/tests/__tests__ 只在插件根跳过
  * （更深处同名目录照常扫描，否则 `src/test/impl.ts` 就能绕过）；*.test.* / *.spec.* 不扫。
  *
@@ -167,6 +174,7 @@ function timerFindings(f: ParsedFile): Finding[] {
 export function checkPluginState(pluginDirs: string[]): Finding[] {
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
+    const browser = browserOnlyModules(dir);
     for (const { file, isTest } of listSourceFiles(dir)) {
       if (isTest) continue;
       const parsed = parseFile(file);
@@ -174,7 +182,10 @@ export function checkPluginState(pluginDirs: string[]): Finding[] {
         findings.push(parsed);
         continue;
       }
-      const all = [...moduleStateFindings(parsed), ...timerFindings(parsed)];
+      const all = [
+        ...moduleStateFindings(parsed),
+        ...(browser.has(resolve(file)) ? [] : timerFindings(parsed)),
+      ];
       all.sort((a, b) => a.line - b.line);
       const seen = new Set<string>();
       for (const x of all) {
