@@ -2,7 +2,6 @@ import {
   type FormAnswer,
   type Logger,
   UI_ARRANGEABLE_SLOTS,
-  UI_SINGLE_SLOTS,
   type UiActionResult,
   type UiBlock,
   type UiContribution,
@@ -31,6 +30,8 @@ import {
   arrange,
   arrangeBySlot,
   effectiveEntry,
+  isSingle,
+  keyOf,
   ORG_ARRANGEABLE,
   orderItems,
   resolveSingleSlot,
@@ -287,10 +288,6 @@ function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
     }));
 }
 
-const keyOf = (i: UiContributionItem): string => `${i.plugin}/${i.id}`;
-
-const isSingle = (slot: UiSlotId): boolean => UI_SINGLE_SLOTS.includes(slot);
-
 /** The candidates of a single slot in an arrangement listing. */
 const candidatesOf = (items: UiContributionItem[]): UiArrangementSingleSlot["candidates"] =>
   items.map((i) => ({ key: keyOf(i), title: i.title }));
@@ -385,12 +382,15 @@ export class UiViews {
 
   /**
    * The contributions the role may use in the org, of one slot or of every org-reachable slot:
-   * the extension enabled and loaded, a view's render registered, the slot's `minRole`
-   * ({@link canUseSlot}, so never `platform.page`); no alias, no `file.preview` contribution (the
-   * file previewers list those). Base order (spec §5): extension name, then manifest order. A
-   * single slot lists at most its winner ({@link resolveSingleSlot} over what this role may use:
-   * none until one is chosen, and the web renders the built-in); display only, the routes that
-   * serve a contribution never read it.
+   * the extension enabled and loaded, a view's render registered (a component is listed with or
+   * without a server view), the slot's `minRole` ({@link canUseSlot}, so never `platform.page`);
+   * no alias, no `file.preview` contribution (the file previewers list those). Base order (spec
+   * §5): extension name, then manifest order. A single slot lists at most its winner
+   * ({@link resolveSingleSlot} over what this role may use: none until one is chosen, and the web
+   * renders the built-in); display only, the routes that serve a contribution never read it. The
+   * winner is listed whether or not its client code may load (kill switch, per-plugin disable,
+   * client API support): the web renders the built-in when the org's client set has no such
+   * component, and any other consumer must do the same.
    */
   async contributions(
     orgId: string,
@@ -481,8 +481,8 @@ export class UiViews {
 
   /**
    * The `platform.page` contributions of the running extensions, for the admin console (super
-   * admins; no org enablement applies): no alias, a view's render registered. Base order like
-   * {@link contributions}.
+   * admins; no org enablement applies): no alias, a view's render registered (a component is
+   * listed with or without a server view). Base order like {@link contributions}.
    */
   async platformContributions(): Promise<UiContributionItem[]> {
     const items = listed(

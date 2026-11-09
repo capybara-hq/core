@@ -196,6 +196,23 @@ describe("use on single slots", () => {
       expect(p.statusCode, `${JSON.stringify(entry)} ${p.body}`).toBe(400);
       expect(errCode(p)).toBe("validation_failed");
     }
+    // each refusal says what the slot takes
+    const said = async (entry: Record<string, unknown>) =>
+      ((await patchOrg(entry)).json().error.details as { path: string; message: string }[]).map(
+        (d) => `${d.path}: ${d.message}`,
+      );
+    expect(await said({ "shell.overlay": { use: "ui-components/fx" } })).toContain(
+      "uiArrangement.shell.overlay: shell.overlay is a list slot: give { hidden, order }; use is only for the single slots (shell.brand, conversation.empty, conversation.composer.frame)",
+    );
+    expect(await said({ "shell.brand": { hidden: [], order: [] } })).toContain(
+      "uiArrangement.shell.brand: shell.brand is a single slot: give { use } (a contribution key <plugin>/<id>, or null for the built-in); hidden and order are only for list slots",
+    );
+    expect(await said({ "shell.brand": {} })).toEqual([
+      "uiArrangement.shell.brand.use: shell.brand needs use: a contribution key <plugin>/<id>, or null for the built-in",
+    ]);
+    expect(await said({ "shell.brand": { use: "Not A Key" } })).toEqual([
+      "uiArrangement.shell.brand.use: must be a contribution key <plugin>/<id>",
+    ]);
     // the list slots keep hidden / order
     expect((await patchOrg({ "shell.overlay": { hidden: [], order: [] } })).statusCode).toBe(200);
     expect((await patchOrg({ "shell.overlay": null })).statusCode).toBe(200);

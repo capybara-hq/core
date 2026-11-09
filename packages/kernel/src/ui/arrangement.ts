@@ -16,25 +16,61 @@ import type { UiContributionItem } from "./views.js";
  * routes keep working for an allowed role whatever the arrangement says.
  */
 
-const Key = z.string().regex(UI_CONTRIBUTION_KEY_RE);
+const Key = z.string().regex(UI_CONTRIBUTION_KEY_RE, "must be a contribution key <plugin>/<id>");
 const LIST_MAX = 200;
 
-/** A list slot's entry: the keys hidden and the keys ordered first. */
-export const UiListEntrySchema = z
-  .object({ hidden: z.array(Key).max(LIST_MAX), order: z.array(Key).max(LIST_MAX) })
-  .strict();
-export type UiListEntry = z.infer<typeof UiListEntrySchema>;
+/**
+ * A list slot's entry: the keys hidden and the keys ordered first. The refusals name the slot and
+ * what it takes (actionable for an admin and the Platform tool's model).
+ */
+const listEntrySchema = (slot: UiSlotId) => {
+  const keys = z
+    .array(Key, {
+      error: (iss) =>
+        iss.input === undefined
+          ? `${slot} is a list slot: give an array of contribution keys <plugin>/<id>`
+          : undefined,
+    })
+    .max(LIST_MAX);
+  return z.strictObject(
+    { hidden: keys, order: keys },
+    {
+      error: (iss) =>
+        iss.code === "unrecognized_keys"
+          ? `${slot} is a list slot: give { hidden, order }; use is only for the single slots (${UI_SINGLE_SLOTS.join(", ")})`
+          : undefined,
+    },
+  );
+};
+export type UiListEntry = { hidden: string[]; order: string[] };
 
 /** A single slot's entry: the contribution that replaces the built-in, or null for the built-in. */
-export const UiUseEntrySchema = z.object({ use: Key.nullable() }).strict();
-export type UiUseEntry = z.infer<typeof UiUseEntrySchema>;
+const useEntrySchema = (slot: UiSlotId) =>
+  z.strictObject(
+    {
+      use: z.union([Key, z.null()], {
+        error: (iss) =>
+          iss.input === undefined
+            ? `${slot} needs use: a contribution key <plugin>/<id>, or null for the built-in`
+            : undefined,
+      }),
+    },
+    {
+      error: (iss) =>
+        iss.code === "unrecognized_keys"
+          ? `${slot} is a single slot: give { use } (a contribution key <plugin>/<id>, or null for the built-in); hidden and order are only for list slots`
+          : undefined,
+    },
+  );
+export type UiUseEntry = { use: string | null };
 
 /** One slot's entry: `{ hidden, order }` on a list slot, `{ use }` on a single slot. */
 export type UiArrangementEntry = UiListEntry | UiUseEntry;
 
 export type UiArrangement = Partial<Record<UiSlotId, UiArrangementEntry>>;
 
-const isSingle = (slot: UiSlotId): boolean => UI_SINGLE_SLOTS.includes(slot);
+/** Whether a slot is a single (replaceable) slot. */
+export const isSingle = (slot: UiSlotId): boolean => UI_SINGLE_SLOTS.includes(slot);
 
 /**
  * An object over `slots`, each optional and of its kind's entry (nullable in a patch); unknown
@@ -47,7 +83,7 @@ function arrangementShape(
 ): z.ZodType<Partial<Record<UiSlotId, UiArrangementEntry | null>>> {
   const shape: Record<string, z.ZodType> = {};
   for (const slot of slots) {
-    const entry = isSingle(slot) ? UiUseEntrySchema : UiListEntrySchema;
+    const entry = isSingle(slot) ? useEntrySchema(slot) : listEntrySchema(slot);
     shape[slot] = (nullable ? entry.nullable() : entry).optional();
   }
   return z.object(shape).strict() as unknown as z.ZodType<
@@ -137,7 +173,8 @@ export function storedUse(
   };
 }
 
-const keyOf = (i: UiContributionItem) => `${i.plugin}/${i.id}`;
+/** The arrangement key of a contribution: `<plugin>/<id>`. */
+export const keyOf = (i: { plugin: string; id: string }) => `${i.plugin}/${i.id}`;
 
 /**
  * Orders the items of one slot (hidden ones stay in place): grouped by anchor in the slot's anchor

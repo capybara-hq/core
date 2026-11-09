@@ -41,6 +41,7 @@ let ui: string;
 let owner: Req;
 let guest: Req;
 let ownerConv: string;
+let agentId: string;
 let guestConv: string;
 const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
 
@@ -77,7 +78,7 @@ beforeAll(async () => {
     },
   });
   expect(agent.statusCode, agent.body).toBe(201);
-  const agentId = (agent.json() as { agent: { id: string } }).agent.id;
+  agentId = (agent.json() as { agent: { id: string } }).agent.id;
   ownerConv = await createConv(owner, orgId, agentId);
   guestConv = await createConv(guest, orgId, agentId);
   ui = `/api/v1/orgs/${orgId}/ui`;
@@ -162,6 +163,40 @@ describe("component contributions", () => {
     // a component without a server view has nothing to render: 404, as for a missing view
     const noView = await owner({ method: "GET", url: `${ui}/views/ui-components/fx` });
     expect(noView.statusCode, noView.body).toBe(404);
+  });
+
+  it("an agent-scoped component view needs a readable agent", async () => {
+    const view = (req: Req, q: string) =>
+      req({ method: "GET", url: `${ui}/views/ui-components/agentx${q}` });
+    for (const req of [owner, guest]) {
+      const r = await view(req, `?agentId=${agentId}`);
+      expect(r.statusCode, r.body).toBe(200);
+      expect((r.json() as { view: { data?: unknown } }).view.data).toEqual({ n: 4 });
+    }
+    const bare = await view(owner, "");
+    expect(bare.statusCode, bare.body).toBe(400);
+    expect(errCode(bare)).toBe("validation_failed");
+    const other = await view(owner, `?agentId=${crypto.randomUUID()}`);
+    expect(other.statusCode, other.body).toBe(404);
+    const conv = await view(owner, `?agentId=${agentId}&conversationId=${ownerConv}`);
+    expect(conv.statusCode, conv.body).toBe(400);
+  });
+
+  it("an org list slot component view follows the slot's role", async () => {
+    const view = (req: Req, q = "") =>
+      req({ method: "GET", url: `${ui}/views/ui-components/pagex${q}` });
+    const r = await view(owner);
+    expect(r.statusCode, r.body).toBe(200);
+    expect((r.json() as { view: { data?: unknown } }).view.data).toEqual({ n: 5 });
+    // org.page is for members and up: a guest gets the same 404 as an unknown contribution
+    const g = await view(guest);
+    expect(g.statusCode, g.body).toBe(404);
+    expect((await list(guest, "?slot=org.page")).map((i) => i.id)).toEqual([]);
+    expect((await list(owner, "?slot=org.page")).map((i) => [i.id, i.kind])).toEqual([
+      ["pagex", "component"],
+    ]);
+    const conv = await view(owner, `?conversationId=${ownerConv}`);
+    expect(conv.statusCode, conv.body).toBe(400);
   });
 
   it("single slots list nothing until a winner is chosen", async () => {

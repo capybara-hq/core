@@ -72,6 +72,8 @@ export class PluginUiRegistration {
   readonly actions = new Map<string, UiActionHandler>();
   private readonly declaredViews: Set<string>;
   private readonly contributions: Set<string>;
+  /** The ids of the manifest's `component` contributions: their permission is `ui.components`. */
+  private readonly components: Set<string>;
   private sealed = false;
 
   constructor(
@@ -85,6 +87,9 @@ export class PluginUiRegistration {
     const ui = manifest.permissions?.ui;
     this.declaredViews = new Set([...(ui?.views ?? []), ...(ui?.components ?? [])]);
     this.contributions = new Set((manifest.ui ?? []).map((c) => c.id));
+    this.components = new Set(
+      (manifest.ui ?? []).filter((c) => c.kind === "component").map((c) => c.id),
+    );
   }
 
   /** setup 结束后调用：此后 view / action 抛错。 */
@@ -150,7 +155,9 @@ export class PluginUiRegistration {
       );
     }
     if (typeof id !== "string" || !this.declaredViews.has(id)) {
-      this.deny(`permissions.ui.views ${String(id)}`);
+      // name the list the id belongs in: a component's server view is declared under components
+      const list = typeof id === "string" && this.components.has(id) ? "components" : "views";
+      this.deny(`permissions.ui.${list} ${String(id)}`);
     }
     if (typeof fn !== "function") {
       throw new Error(`plugin ${name}: ui.${what} "${id}" handler must be a function`);

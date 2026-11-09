@@ -7,7 +7,9 @@ const t = (zh: string, en: string) => ({ zh, en });
  * with a server view and action answering `data`; the single slots `shell.brand` (`brand`),
  * `conversation.empty` (`empty`) and `conversation.composer.frame` (`frame`), `brand` with a server
  * view answering `data: { n: 3 }`; `fx` in the list slot
- * `shell.overlay`; a component card `card` that the tool `ping` returns. `plain` is an ordinary view
+ * `shell.overlay`; a component card `card` that the tool `ping` returns; `agentx` in the agent-scoped
+ * `agent.detail.section` and `pagex` in the org-scoped list slot `org.page`, both with a server view
+ * answering `data` (`{ n: 4 }`, `{ n: 5 }`). `plain` is an ordinary view
  * whose render and action answer `data` too (refused: only a component's view may carry it). The
  * client entry is `src/client.tsx`; loaded as a directory fixture it carries no package section.
  */
@@ -39,6 +41,13 @@ export default defineExtension({
       kind: "component",
     },
     {
+      id: "agentx",
+      title: t("智能体", "Agent extra"),
+      slot: "agent.detail.section",
+      kind: "component",
+    },
+    { id: "pagex", title: t("页面", "Page extra"), slot: "org.page", kind: "component" },
+    {
       id: "plain",
       title: t("普通", "Plain"),
       slot: "conversation.properties.section",
@@ -47,7 +56,10 @@ export default defineExtension({
   ],
   permissions: {
     client: true,
-    ui: { views: ["plain"], components: ["hud", "brand", "empty", "frame", "fx", "card"] },
+    ui: {
+      views: ["plain"],
+      components: ["hud", "brand", "empty", "frame", "fx", "card", "agentx", "pagex"],
+    },
     tools: ["ping"],
   },
   setup(ctx) {
@@ -65,6 +77,8 @@ export default defineExtension({
     // a single slot's component may have a server view too; it is served whoever wins the slot
     ctx.ui.view("brand", async () => withData(3));
     ctx.ui.action("hud", async () => ({ view: withData(2) }));
+    ctx.ui.view("agentx", async () => withData(4));
+    ctx.ui.view("pagex", async () => withData(5));
     ctx.ui.view("plain", async () => withData(1));
     ctx.ui.action("plain", async () => ({ view: withData(2) }));
   },
