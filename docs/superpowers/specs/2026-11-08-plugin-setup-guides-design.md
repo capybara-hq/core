@@ -1,8 +1,11 @@
 # Plugin setup guides: setup material shipped in the plugin, rendered by the kernel
 
 - Date: 2026-11-08, written against `fix/acceptance` at `d53f1ded`.
-- Status: decided by the maintainer on 2026-11-08 (marked **(decided)**); the maintainer asked for
-  the implementation right away, so the designer's calls below were not reviewed first.
+- Status: **Superseded by `2026-11-09-setup-guides-v2-design.md`** (Markdown guides, connector
+  templates, live checks, agent-assisted setup); v1's routes, ack semantics and visibility rules
+  carry over where v2 says so. Originally decided by the maintainer on 2026-11-08 (marked
+  **(decided)**); the maintainer asked for the implementation right away, so the designer's calls
+  below were not reviewed first.
 - Related: the plugin format (`2026-10-22-package-ecosystem-design.md` §4,
   `.agents/skills/writing-plugins`), channels (`.agents/skills/writing-channels`), plugin icons
   (commit `48b244e5`, the same visibility rules), the `Platform` tool

@@ -28,7 +28,7 @@ export function status(
         "Logged in.",
         `  deployment:   ${cred.url}`,
         `  organization: ${cred.orgId}`,
-        `  environment:  ${cred.environmentId}`,
+        `  device:       ${cred.deviceId}`,
         `  directory:    ${cred.dir}`,
         `  mode:         ${cred.mode}`,
       ].join("\n"),

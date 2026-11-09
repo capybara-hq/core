@@ -22,7 +22,7 @@ const cred = {
   connectUrl: "ws://x.test/device/connect",
   credential: "cap_dev_a",
   orgId: "o",
-  environmentId: "e1",
+  deviceId: "e1",
   dir: "/w",
   mode: "os" as const,
   reconnectGraceSeconds: 120,

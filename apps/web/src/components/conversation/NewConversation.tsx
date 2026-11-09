@@ -27,7 +27,7 @@ import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
-import { environmentsQuery } from "../../lib/query/environments";
+import { devicesQuery } from "../../lib/query/devices";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
@@ -45,7 +45,7 @@ import {
 import { useStatusSignature } from "./ConversationView";
 import { PendingBubbles, usePendingSends } from "./PendingBubbles";
 import type { SendResult } from "./useConversation";
-import { useEnvironmentChoice, useSelection } from "./useSelection";
+import { useDeviceChoice, useSelection } from "./useSelection";
 
 /**
  * The agents in the row's order: by this person's most recent conversation with each (the sidebar's
@@ -87,10 +87,15 @@ export function orderAgents(
  * at once with the pending bubble and the working line; the create's answer seeds the new
  * conversation's cache, and the URL changes without waiting for the sidebar's groups. A failed
  * create goes back to the new conversation with the draft in the composer.
+ *
+ * `draft` (`?draft=`, a setup guide's 让智能体协助) is the composer's first text: read once at
+ * mount (a later address change leaves the text alone), never sent until the person sends it, and
+ * never focused into on a touch device (the composer only takes the text).
  */
 export function useNewConversationPage(
   orgId: string,
   preferredAgent: string | null,
+  draft: string | null = null,
 ): ConversationPageProps {
   const t = useTranslations("chat");
   const locale = useLocale() === "zh" ? "zh" : "en";
@@ -138,24 +143,28 @@ export function useNewConversationPage(
       agentId: string;
       message: MessageInput;
       sentAt: number;
-      environmentId: string | undefined;
+      deviceId: string | undefined;
     }) => {
-      const r = await createConversationWithMessage(orgId, v.agentId, v.message, v.environmentId);
+      const r = await createConversationWithMessage(orgId, v.agentId, v.message, v.deviceId);
       seedNewConversation(qc, orgId, r.conversation, r, v.sentAt);
       return r;
     },
     invalidates: () => [],
   });
-  const environmentsQ = environmentsQuery(orgId);
-  const environments = useQuery({
-    ...environmentsQ,
-    retryOnMount: retryOnMountOf(environmentsQ.queryKey),
+  const devicesQ = devicesQuery(orgId);
+  const devices = useQuery({
+    ...devicesQ,
+    retryOnMount: retryOnMountOf(devicesQ.queryKey),
   }).data;
-  const environment = useEnvironmentChoice(environments);
+  const device = useDeviceChoice(devices);
   const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
-  const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>({ n: 0 });
+  const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>(() =>
+    draft === null
+      ? { n: 0 }
+      : { n: 0, draft: { text: draft, skill: null, attachments: [], files: [] } },
+  );
   /** A second ↵ came before the conversation exists: the composer says why it waits. */
   const [blocked, setBlocked] = useState(false);
 
@@ -167,7 +176,7 @@ export function useNewConversationPage(
       const { conversation } = await create.mutateAsync({
         agentId: agent.id,
         message: { ...m, ...selection.pending },
-        environmentId: environment.environmentId,
+        deviceId: device.deviceId,
         // this tab's clock at the send: the working line's backstop counts from it
         sentAt: Date.now(),
       });
@@ -261,8 +270,8 @@ export function useNewConversationPage(
       <Stack gap={8}>
         {error !== undefined && <FormError message={error} />}
         {agents !== undefined && usable.length === 0 ? <FormError message={t("noAgents")} /> : null}
-        {!sent && environment.unavailable !== undefined ? (
-          <FormError message={environment.unavailable} />
+        {!sent && device.unavailable !== undefined ? (
+          <FormError message={device.unavailable} />
         ) : null}
         {sent && blocked ? (
           <Text variant="small" tone="muted">
@@ -279,15 +288,15 @@ export function useNewConversationPage(
           initialDraft={sent ? undefined : restore.draft}
           running={false}
           // one message at a time until the conversation exists (it has no queue yet)
-          // and never without an environment while the only ones are connected machines, offline
-          sendDisabled={!agent || sent || environment.unavailable !== undefined}
+          // and never without a device while the only ones are connected machines, offline
+          sendDisabled={!agent || sent || device.unavailable !== undefined}
           onBlocked={() => {
             if (sent) setBlocked(true);
           }}
           onSend={send}
           control={composer}
           pickers={{
-            ...(environment.picker ? { environment: environment.picker } : {}),
+            ...(device.picker ? { device: device.picker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}

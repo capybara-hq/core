@@ -226,7 +226,7 @@ export function ComposerBar({
   /** The agent picker is absent on the new conversation page (its agents row picks). */
   pickers: {
     agent?: PickerProps;
-    environment?: PickerProps;
+    device?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
@@ -713,6 +713,8 @@ export function ComposerBar({
               onClick: () => void submit(),
             }
       }
+      // the token warning's 仍然发送 sends as ↵ does, also while the button is Stop
+      onSend={() => void submit()}
       textareaRef={textEl}
     />
   );

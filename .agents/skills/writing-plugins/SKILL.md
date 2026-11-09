@@ -1,6 +1,6 @@
 ---
 name: writing-plugins
-description: 'Use when changing the plugin format or its readers (SDK parsers and JSON Schemas: plugin.json, connectors/<id>.json, agents/<name>.md, skills, dependencies, marketplace.json), the capybara-plugin toolchain (packages/plugin-tools), the kernel catalog (packages/kernel/src/catalog), Claude Code plugin import, or bootstrap plugins: plugin tgz and git trees (readPluginFiles), the one import review (prepare, confirm with reviewHash), plugin scope (all / optional / named, org switch), marketplaces (http or git, npm / archive / git sources), bootstrap.json and check:bootstrap, content digest, +git.<sha12> versions, provenance, skill conflicts, org install, upgrade and rollback, capybara plugins, and client code in the format (extension.client, suggestedAppearance, client pack and check rules, no client code in bootstrap plugins). To write, pack and release a plugin see writing-plugins in capybara-hq/plugins; extension host: writing-extensions; connectors: writing-connectors.'
+description: 'Use when changing the plugin format or its readers (SDK parsers, JSON Schemas: plugin.json, setup guides, connectors/<id>.json, agents/<name>.md, skills, dependencies, marketplace.json), the capybara-plugin toolchain (packages/plugin-tools), the kernel catalog (kernel src/catalog), Claude Code plugin import, or bootstrap plugins: plugin tgz and git trees (readPluginFiles), the one import review (prepare, confirm with reviewHash), plugin scope (all / optional / named, builtin, the org switch), the Claude translation report, marketplaces (http or git, npm / archive / git sources), bootstrap.json and check:bootstrap, direct git import, content digest and +git.<sha12> versions, provenance, skill conflicts, org install, upgrade and rollback, capybara plugins, client code (extension.client, suggestedAppearance, client pack and check rules, none in bootstrap plugins). To write, pack and release a plugin see writing-plugins in capybara-hq/plugins; extension host: writing-extensions; connectors: writing-connectors.'
 ---
 
 # Writing plugins
@@ -101,11 +101,64 @@ Behaviour and delivery: [writing-extension-ui](../writing-extension-ui/SKILL.md)
 - **Bootstrap rule**: a bootstrap plugin may not carry client code: client files are kept in and delivered from object storage, which a bootstrap run may not have (the object store may be a bootstrap plugin itself). The kernel's bootstrap import refuses such a package (`client.invalid`, naming the plugin; a required entry then stops the start), and `check:bootstrap` reports it first (rule `bootstrap-client-code`: workspace entries from their pack, npm entries from the tarball in the network mode).
 - Org uploads with client code follow the extension branch (`awaiting_confirmation`, the permission snapshot needs approval); nothing is delivered before both.
 
-## Setup guides (`setupGuides`, spec `2026-11-08-plugin-setup-guides-design.md`)
+## Setup guides (`setupGuides`, spec `2026-11-09-setup-guides-v2-design.md`)
 
-- `plugin.json` `setupGuides` (≤ 8, SDK `setup-guide.ts`): `{ id, place, title, steps?, files? }`. `place` is an enum (`SETUP_GUIDE_PLACES`; only `channel-connection` now, which needs the extension to provide `channel@1`: the parser checks it with an `extension` section, `readPluginFiles` without one, the packer without `src/index.ts`). Titles and steps are `{ en, zh? }`; steps are plain text (the web draws a backtick pair as inline code, nothing else). Files: `./` paths ending in `.tmpl` / `.yaml` / `.yml` / `.json` / `.txt`, `language` `yaml` / `json` / `text`, ≤ 64 KiB UTF-8 without NUL (`setupGuideFileProblem`). A step or file may carry `mode` from the place's modes (`SETUP_GUIDE_MODES`: `long_connection` / `webhook`); per-mode files, never conditionals.
-- Placeholders are `{{name}}` only, from the place's fixed variables (`SETUP_GUIDE_VARIABLES`: `publicUrl`, `webhookUrl`, `signInCallbackUrl`, `connectionName`, `orgName`, `pluginName`, `pluginVersion`, `mode`; never a secret). `renderSetupGuideText` JSON-escapes values in `yaml` / `json` (placeholders go inside double quotes) and leaves unknown and unresolved placeholders as written. The packer refuses an unknown placeholder (`unknownSetupGuidePlaceholders`); the kernel never refuses an import for one.
-- Import keeps the files with the version like the icon (`checkContent`), in PG (`catalog_files`, see Platform import). `PluginGuides` (`packages/kernel/src/extensions/plugin-guides.ts`) renders `GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId?mode=&connectionId=&name=` with the catalog icon's visibility (`orgVisibleItems`) and the place's action (`channels.manage`); the template hash (`setupGuideHash`: path + sha256 of the mode's files from the version row) is what a channel connection's `guide_ack` records (writing-channels). Both new routes are Platform exclusions.
+A guide is a Markdown document a plugin ships, rendered where a person sets up what it brings, with
+live check rows. v2 replaced v1's steps and files directly (pre-0.1.0, no compatibility layer; spec
+§15).
+
+- **Declaration** (§4.1, SDK `setup-guide.ts`): `plugin.json` `setupGuides` (≤ 8) of `{ id, place,
+  template? }`. `id` `^[a-z0-9][a-z0-9-]{0,63}$`; the documents sit at the fixed paths
+  `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (optional; `setupGuideDocPath`).
+  `place` is one of `SETUP_GUIDE_PLACES`: `channel-connection` (the extension must provide
+  `channel@1`; at most one per plugin) or `connector-template` (`template` required: one of the
+  plugin's own `connectors/<template>.json`, at most one guide per template). The title is the
+  document's `#` heading; there is no title, steps or files field.
+- **The document** (§4.2): CommonMark + GFM with exactly one leading `# Title` (no further `#`),
+  `{{name}}` variables, sections (a column-0 line `::: mode <mode>` or `::: audience <audience>`
+  opens one, `:::` closes it; one `mode` section may nest inside an `audience` section, nothing
+  else nests), check lines (`::check <id> <label>`: a plugin check id `^[a-z0-9][a-z0-9-]{0,47}$`
+  or a kernel `capybara:<id>`, label ≤ 80 plain characters) and code fences `<language>
+  [title="<text>"]`. Directive lines and fence info strings never hold variables; indented code
+  blocks are refused. Limits are `SETUP_GUIDE_LIMITS` (64 KiB per document without NUL or
+  U+E000–U+E0FF, 24 code blocks, 16 checks, 16 sections, 100-character titles and headings).
+- **Places** (`SETUP_GUIDE_PLACE_INFO`, §9.1): each defines its modes, audiences (and the org action
+  each needs), typed variables (`url` / `text` / `token`) and whether it records drift.
+  `channel-connection`: modes `long_connection` / `webhook`, audience admin (`channels.manage`).
+  `connector-template`: no modes, audiences admin (`connectors.manage`) and member
+  (`connectors.use`). No variable is ever a secret, a config value or a client id (§6.3).
+- **Languages** (§4.3): the zh document carries the same sections in the same order, the same check
+  ids and byte-equal code blocks (titles aside); pack, check and import refuse a difference and
+  name the block and the first differing line. Drift hashes only the English document.
+- **Rendering** (§6, §7, `renderSetupGuide` in `setup-guide-render.ts`): parse first, substitute into
+  the tree, escape per node (JSON escapes in `yaml` / `json` fences, so put the variable inside
+  double quotes), sanitize (no raw HTML, no images, author links https only, no autolinks from
+  text) and cut into blocks `markdown` / `code` / `check`. Deterministic.
+- **Validation** (§4.5): `validateSetupGuide` is the one validator. `capybara-plugin pack` / `check`
+  fail on its errors (and on a plugin check id missing from the extension's
+  `permissions.setupChecks`, or any plugin check in a plugin without an extension) and print its
+  warnings (e.g. a `text` variable outside double quotes in a `yaml` fence; never fatal). The kernel's
+  `readPluginFiles` runs it at import with `allowUnknownVariables` (a newer variable stays as
+  written) and fails the import with `catalog.invalid_manifest` naming the guide. An unknown
+  `capybara:` check renders as `unknown`.
+- **`capybara-plugin guide <id> [--locale en|zh] [--mode m] [--audience a] [--var name=value]…`**
+  (`packages/plugin-tools/src/guide/cli.ts`) prints the guide rendered as the kernel would, then
+  the unresolved variables: what an admin will see.
+- **Storage and rendering in the kernel**: the documents are kept with the version like the icon
+  (`catalog_files`, paths in `catalog_item_versions.files`). `PluginGuides`
+  (`packages/kernel/src/extensions/plugin-guides.ts`) renders `GET
+  /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId?mode=&audience=&locale=&connectionId=&name=&connectorId=`
+  with the catalog visibility (`orgVisibleItems`), then the place and audience action, then the
+  target (a live connection on the plugin, a connector made from the template; else
+  `channel.not_found` / `connector.not_found`); `resolvePlace` (`guide-places.ts`) fills the
+  variables and the `unresolved` reasons. A stored v1-shaped entry is skipped and logged, not a
+  crash. The super admin's preview `GET /api/v1/admin/catalog/:itemId/guides/:guideId` renders with
+  no org and no target.
+- **Drift** (§11, `setupGuideHash`): sha256 over the code blocks and check lines of the English
+  document after section selection (prose, headings and labels never count). Channel connections
+  and connectors made from a template record `guide_ack` (writing-channels, writing-connectors).
+- **Checks** run by the plugin's extension (`ctx.setup.check`, writing-extensions) or by the kernel
+  (`capybara:*`); agents read guides through the Platform `setup` domain (writing-kernel-api).
 
 ## Connector templates (`connectors/<id>.json`, C30)
 

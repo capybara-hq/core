@@ -80,6 +80,21 @@ const RELEASE_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.c
 /** Extends the key only while it holds our token. */
 const RENEW_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], tonumber(ARGV[2])) else return 0 end`;
 
+/**
+ * Takes a slot of a counting semaphore: a sorted set of holder tokens scored by expiry time. Expired
+ * holders (a crashed replica's) drop out first, so a slot is never lost for longer than its TTL;
+ * then the token is added when fewer than ARGV[2] slots are taken. The set itself expires with
+ * its last slot. KEYS[1] the set; ARGV: token, limit, ttl ms. Returns 1 when taken.
+ */
+const TAKE_SLOT = `local now = redis.call('time')
+local ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+redis.call('zremrangebyscore', KEYS[1], '-inf', ms)
+if redis.call('zcard', KEYS[1]) >= tonumber(ARGV[2]) then return 0 end
+redis.call('zadd', KEYS[1], ms + tonumber(ARGV[3]), ARGV[1])
+local last = redis.call('zrange', KEYS[1], -1, -1, 'withscores')
+redis.call('pexpireat', KEYS[1], tonumber(last[2]))
+return 1`;
+
 /** Resolves after `ms`; rejects with the abort reason when `signal` aborts first. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -187,6 +202,30 @@ export class LockService {
   /** Deletes `key` when `holder` still owns it. */
   async releaseIf(key: string, holder: string): Promise<boolean> {
     return (await this.redis.eval(RELEASE_IF, 1, key, holder)) === 1;
+  }
+
+  /**
+   * Takes one of `limit` slots of the counting semaphore `key` for `holder` (a unique token), for at
+   * most `ttlMs` (a crashed holder's slot frees itself then; no renewal). False when every slot is
+   * taken. Release with {@link releaseSlot}.
+   */
+  async takeSlot(key: string, holder: string, limit: number, ttlMs: number): Promise<boolean> {
+    assertNoTransaction("takeSlot");
+    return (
+      (await this.redis.eval(
+        TAKE_SLOT,
+        1,
+        key,
+        holder,
+        String(limit),
+        String(Math.ceil(ttlMs)),
+      )) === 1
+    );
+  }
+
+  /** Gives back `holder`'s slot of the semaphore `key` (nothing when it already expired). */
+  async releaseSlot(key: string, holder: string): Promise<void> {
+    await this.redis.zrem(key, holder);
   }
 
   /**

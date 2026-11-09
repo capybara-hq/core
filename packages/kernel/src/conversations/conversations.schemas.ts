@@ -92,6 +92,6 @@ export const CONVERSATION_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/conversations/:id/agent-tree", params: IdParams },
   { route: "GET /api/v1/orgs/:orgId/conversations/:id/usage", params: IdParams },
   { route: "GET /api/v1/orgs/:orgId/conversations/:id/files", params: IdParams, query: FilesQuery },
-  { route: "GET /api/v1/orgs/:orgId/conversations/:id/environment", params: IdParams },
+  { route: "GET /api/v1/orgs/:orgId/conversations/:id/device", params: IdParams },
   { route: "POST /api/v1/orgs/:orgId/conversations/:id/abort", params: IdParams },
 ];

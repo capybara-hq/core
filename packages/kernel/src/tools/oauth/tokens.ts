@@ -119,6 +119,56 @@ export interface TokenRequestOptions {
 }
 
 /**
+ * The headers and form of a token request (RFC 6749 §3.2): client_id / secret per the client's
+ * auth method (Basic form-encodes them first, §2.3.1; otherwise `client_id`, plus
+ * `client_secret` for `client_secret_post`). Empty parameters are left out.
+ */
+export function tokenRequestInit(
+  client: OAuthClientRecord,
+  params: Record<string, string | undefined>,
+): { headers: Record<string, string>; body: URLSearchParams } {
+  const form = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") form.set(k, v);
+  const headers: Record<string, string> = {
+    "content-type": "application/x-www-form-urlencoded",
+    accept: "application/json",
+  };
+  if (client.authMethod === "client_secret_basic" && client.clientSecret !== undefined) {
+    headers.authorization = basicClientAuth(client.clientId, client.clientSecret);
+  } else {
+    form.set("client_id", client.clientId);
+    if (client.authMethod === "client_secret_post" && client.clientSecret !== undefined) {
+      form.set("client_secret", client.clientSecret);
+    }
+  }
+  return { headers, body: form };
+}
+
+/** The form encoding of a Basic client credential part (RFC 6749 §2.3.1). */
+export const formEncode = (s: string) => encodeURIComponent(s).replace(/%20/g, "+");
+
+/** The `Authorization` value of `client_secret_basic` (both parts form-encoded first). */
+export const basicClientAuth = (clientId: string, clientSecret: string) =>
+  `Basic ${Buffer.from(`${formEncode(clientId)}:${formEncode(clientSecret)}`).toString("base64")}`;
+
+/**
+ * The refusal code of a token endpoint answer, or null when it is not a refusal (the one parser of
+ * token refusals): a 400 / 401 whose JSON body has an RFC 6749-shaped `error`, or a 200 whose body
+ * carries `ok: false` (Slack) or an `error` and no `access_token`, with a code that is not
+ * transient. Only codes matching the RFC 6749 shape are returned, never other text of the body.
+ */
+export function parseTokenRefusal(status: number, body: unknown): string | null {
+  const code = isObj(body) ? body.error : undefined;
+  const shaped = typeof code === "string" && OAUTH_ERROR_RE.test(code) ? code : null;
+  if (status === 400 || status === 401) return shaped;
+  if (status !== 200 || !isObj(body)) return null;
+  if (body.ok === false || (body.access_token === undefined && body.error !== undefined)) {
+    return shaped !== null && !TRANSIENT_ERRORS.has(shaped) ? shaped : null;
+  }
+  return null;
+}
+
+/**
  * Calls the token endpoint (RFC 6749 §3.2), sending client_id / secret per the client's auth method
  * (Basic form-encodes them first, §2.3.1).
  * - 400 / 401 with a parsable RFC 6749 `error` code -> OAuthGrantError.
@@ -138,23 +188,7 @@ export async function tokenRequest(
   http: OAuthHttpOptions,
   opts: TokenRequestOptions = {},
 ): Promise<OAuthTokenRecord> {
-  const form = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") form.set(k, v);
-  const headers: Record<string, string> = {
-    "content-type": "application/x-www-form-urlencoded",
-    accept: "application/json",
-  };
-  if (client.authMethod === "client_secret_basic" && client.clientSecret !== undefined) {
-    const enc = (s: string) => encodeURIComponent(s).replace(/%20/g, "+");
-    headers.authorization = `Basic ${Buffer.from(
-      `${enc(client.clientId)}:${enc(client.clientSecret)}`,
-    ).toString("base64")}`;
-  } else {
-    form.set("client_id", client.clientId);
-    if (client.authMethod === "client_secret_post" && client.clientSecret !== undefined) {
-      form.set("client_secret", client.clientSecret);
-    }
-  }
+  const { headers, body: form } = tokenRequestInit(client, params);
   let res: Awaited<ReturnType<typeof oauthFetch>>;
   try {
     res = await oauthFetch(client.tokenEndpoint, { method: "POST", headers, body: form }, http);
@@ -168,16 +202,11 @@ export async function tokenRequest(
   } catch {
     body = undefined;
   }
-  if (res.status === 400 || res.status === 401) {
-    const code = isObj(body) ? body.error : undefined;
-    if (typeof code === "string" && OAUTH_ERROR_RE.test(code)) throw new OAuthGrantError(code);
-  }
+  const refusal = parseTokenRefusal(res.status, body);
+  if (refusal !== null) throw new OAuthGrantError(refusal);
   if (res.status !== 200 || !isObj(body)) throw new OAuthUnavailable();
+  // an error body without a usable code (or a transient one): unavailable, not a refusal
   if (body.ok === false || (body.access_token === undefined && body.error !== undefined)) {
-    const code = body.error;
-    if (typeof code === "string" && OAUTH_ERROR_RE.test(code) && !TRANSIENT_ERRORS.has(code)) {
-      throw new OAuthGrantError(code);
-    }
     throw new OAuthUnavailable();
   }
   const { access_token, refresh_token, expires_in, token_type, scope } = body;

@@ -2,7 +2,10 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { FastifyInstance } from "fastify";
 import { registerChannelWebhookRoute } from "../channels/webhook.controller.js";
 import type { ChannelWebhooks } from "../channels/webhook.js";
-import { type DeviceRoutesOptions, registerDeviceConnectRoute } from "../devices/device-routes.js";
+import {
+  type DeviceRoutesOptions,
+  registerDeviceConnectRoute,
+} from "../local-devices/device-routes.js";
 
 /** What the gateway role serves over HTTP besides health and plugin routes. */
 export interface GatewayRoutes {

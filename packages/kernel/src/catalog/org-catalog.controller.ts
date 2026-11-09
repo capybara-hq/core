@@ -171,10 +171,11 @@ export class OrgCatalogController {
   }
 
   /**
-   * A setup guide of the item, rendered for this org (spec 2026-11-08-plugin-setup-guides-design.md
-   * §4): steps and template files with the place's variables filled in, the modes and the template
-   * hash. The item must be one the org's catalog shows; a `channel-connection` guide also needs
-   * `channels.manage` (checked by the service).
+   * A setup guide of the item, rendered for this org (spec 2026-11-09-setup-guides-v2-design.md
+   * §7.2): the document's blocks with the place's variables filled in, its modes, audiences and
+   * checks, the unresolved variables with their reasons, the drift hash and the target. The item
+   * must be one the org's catalog shows; the place and audience's action (`channels.manage`,
+   * `connectors.manage`, `connectors.use`) is checked by the service.
    */
   @Get("catalog/:itemId/guides/:guideId")
   @OrgAction("catalog.read")

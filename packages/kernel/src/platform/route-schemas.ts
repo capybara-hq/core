@@ -13,7 +13,7 @@ import { ORG_EXTENSION_ROUTES } from "../catalog/org-extension.schemas.js";
 import { ORG_PLUGIN_UPLOAD_ROUTES } from "../catalog/org-plugin-uploads.schemas.js";
 import { CHANNEL_ROUTES } from "../channels/channels.schemas.js";
 import { CONVERSATION_ROUTES } from "../conversations/conversations.schemas.js";
-import { ENVIRONMENT_ROUTES } from "../environments/environments.schemas.js";
+import { DEVICE_ROUTES } from "../devices/devices.schemas.js";
 import { EVAL_ROUTES } from "../evals/evals.schemas.js";
 import { EXTENSION_POINT_ROUTES } from "../extensions/point-defaults.schemas.js";
 import { FILE_PREVIEWER_ROUTES } from "../files/previewers.schemas.js";
@@ -21,6 +21,8 @@ import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
+import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
+import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
@@ -73,14 +75,17 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...EVAL_ROUTES,
   ...BACKGROUND_ROUTES,
   ...FILE_PREVIEWER_ROUTES,
-  // Task 11b: environments
-  ...ENVIRONMENT_ROUTES,
+  // Task 11b: devices
+  ...DEVICE_ROUTES,
   // personal preferences (run context spec §3.4)
   ...ME_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
   // a plugin's suggested appearance (client extensions spec §6.5)
   ...APPEARANCE_ROUTES,
+  // setup guide checks (setup guides v2 §10.3, §12)
+  ...SETUP_CHECK_ROUTES,
+  ...SETUP_GUIDE_ROUTES,
   // UI slots (UI slots spec §3)
   ...UI_ROUTES,
 ];

@@ -12,7 +12,7 @@ import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/backgroun
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
+import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -34,7 +34,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { seedEnvironment } from "../helpers/sandbox.js";
+import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -58,7 +58,7 @@ let root: string;
 let sandbox: SandboxService;
 let store: BackgroundTaskStore;
 let tools: readonly BuiltinTool[];
-/** The environments a test used (destroyed after it: their tasks die with them). */
+/** The devices a test used (destroyed after it: their tasks die with them). */
 let used: string[] = [];
 
 beforeAll(async () => {
@@ -93,7 +93,7 @@ afterAll(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const e of used) await sandbox.destroyEnvironment(e).catch(() => {});
+  for (const e of used) await sandbox.destroyDevice(e).catch(() => {});
   used = [];
   await sql`UPDATE capybara.background_tasks SET status = 'lost', finished_at = now()
     WHERE status = 'running'`.execute(raw);
@@ -101,19 +101,19 @@ afterEach(async () => {
 
 const tool = (name: string): BuiltinTool => tools.find((t) => t.spec.name === name) as BuiltinTool;
 
-type Conv = Awaited<ReturnType<typeof seedConversation>> & { environmentId: string };
+type Conv = Awaited<ReturnType<typeof seedConversation>> & { deviceId: string };
 
-/** A seeded conversation bound to an environment of its own. */
+/** A seeded conversation bound to a device of its own. */
 async function conversation(): Promise<Conv> {
   const s = await seedConversation(raw);
-  const environmentId = await seedEnvironment(raw, s.orgId, s.accountId);
+  const deviceId = await seedDevice(raw, s.orgId, s.accountId);
   await db
     .updateTable("conversations")
-    .set({ environment_id: environmentId })
+    .set({ device_id: deviceId })
     .where("id", "=", s.conversationId)
     .execute();
-  used.push(environmentId);
-  return { ...s, environmentId };
+  used.push(deviceId);
+  return { ...s, deviceId };
 }
 
 const ctxOf = (c: Conv, over: Partial<BuiltinCallContext> = {}): BuiltinCallContext => ({
@@ -148,7 +148,7 @@ async function shell(c: Conv, command: string): Promise<string> {
   return sandbox.withSandbox(
     {
       orgId: c.orgId,
-      environmentId: c.environmentId,
+      deviceId: c.deviceId,
       holderConversationId: c.conversationId,
       actor: { accountId: c.accountId, conversationId: c.conversationId },
     },
@@ -187,7 +187,7 @@ async function reservation(c: Conv, id: string): Promise<void> {
         orgId: c.orgId,
         conversationId: c.conversationId,
         sandboxConversationId: c.conversationId,
-        environmentId: c.environmentId,
+        deviceId: c.deviceId,
         runId: "run-1",
         callId: "call-1",
         triggerAccountId: c.accountId,
@@ -369,9 +369,9 @@ describe("TaskOutput", () => {
     });
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.reported).toBe(true);
     const st = await db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .select("status")
-      .where("environment_id", "=", c.environmentId)
+      .where("device_id", "=", c.deviceId)
       .executeTakeFirstOrThrow();
     expect(st.status).toBe("suspended");
   }, 60_000);
@@ -403,17 +403,17 @@ describe("TaskOutput", () => {
   }, 60_000);
 });
 
-describe("the environment access re-check", () => {
-  it("TaskOutput and TaskStop check that the owner may still use the environment", async () => {
+describe("the device access re-check", () => {
+  it("TaskOutput and TaskStop check that the owner may still use the device", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "sleep 30");
     const forTool = vi
-      .spyOn(k.app.get(ConversationEnvironments), "forTool")
-      .mockRejectedValue(new ApiError("environment.forbidden", "no longer allowed"));
+      .spyOn(k.app.get(ConversationDevices), "forTool")
+      .mockRejectedValue(new ApiError("device.forbidden", "no longer allowed"));
     for (const run of [output, stop]) {
       const e = await run(c, { task_id: t.id, block: false }).catch((x: unknown) => x);
       expect(e).toBeInstanceOf(ToolError);
-      expect((e as Error).message).toContain("may no longer use its environment");
+      expect((e as Error).message).toContain("may no longer use its device");
     }
     expect(forTool).toHaveBeenCalledWith(c.orgId, c.conversationId);
     // nothing was read or stopped

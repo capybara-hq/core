@@ -8,6 +8,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { createLogger, type KernelLogger } from "../../src/log.js";
 import { LangGraphLoop } from "../../src/runtime/langgraph-loop.js";
 import type { AgentLoop, LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
 import {
@@ -20,6 +21,7 @@ import {
 import { RUN_QUEUE_NAME, RunQueue, runJobId } from "../../src/runtime/run-queue.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run-steps.js";
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
+import { looperState } from "../fixtures/plugins/model-looper/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -116,9 +118,11 @@ async function worker(
     hooks?: RunHooks;
     roles?: ("api" | "worker" | "gateway")[];
     loop?: AgentLoopFactory;
+    logger?: KernelLogger;
   } = {},
 ): Promise<TestKernel> {
   const k = await startKernel(runConfig(urls(), { roles: opts.roles ?? ["worker"], runtime }), {
+    ...(opts.logger && { logger: opts.logger }),
     // the run loop and the worker's hooks are provider overrides (test seams)
     overrides: [
       { provide: AGENT_LOOP_FACTORY, useValue: opts.loop ?? defaultLoop },
@@ -530,33 +534,61 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
     await waitFor(async () => (await redis.exists(`capk:conv-run:${convId}`)) === 0, 2_000);
   });
-  it("会话锁在运行中丢失（R27）→ 按停机处理：不写终态、不释放别人的锁，任务回到队列后续跑完成一次", async () => {
-    await worker({ maxSteps: 4 }, { hooks: { lockTtlMs: 300 } });
-    const { orgId, convId } = await setup(LOOPER);
-    await postMessage(req, orgId, convId, "loop:300");
-    await waitForEvent(db, convId, (e) => e.type === "model_call");
-    // 模拟锁过期后被别人取得：覆盖锁键，下一次续租（≤100ms）发现丢失
-    await redis.set(`capk:conv-run:${convId}`, "foreign", "PX", 1500);
-    await sleep(600);
-    // 第 1 步已在步骤边界结束、运行被中断：没有终态，别人的锁原样保留
-    expect(await redis.get(`capk:conv-run:${convId}`)).toBe("foreign");
-    let evs = await eventsOf(db, convId);
-    expect(evs.some((e) => ["run_finished", "run_failed", "run_aborted"].includes(e.type))).toBe(
-      false,
-    );
-    expect(evs.filter((e) => e.type === "assistant_message")).toHaveLength(1);
-    expect((await runsOf(db, convId))[0]?.status).toBe("running");
-    // 别人的锁过期后，回到队列的任务重新领取并续跑完成
-    const [fin] = await waitForTerminal(db, convId, 1, 15_000);
-    expect(fin?.payload).toMatchObject({ reason: "max_steps" });
-    await sleep(300);
-    evs = await eventsOf(db, convId);
-    expect(evs.filter((e) => e.type === "run_started")).toHaveLength(1);
-    expect(evs.filter((e) => e.type === "run_finished")).toHaveLength(1);
-    expect(evs.flatMap((e) => (e.type === "assistant_message" ? [e.payload.step] : []))).toEqual([
-      1, 2, 3, 4, 5,
-    ]);
-    expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
+  it("conversation lock lost mid-run (R27) -> handled like a shutdown: no terminal event, the other holder's lock kept, the job requeued and resumed to completion once", async () => {
+    // Step 1 is held open until the worker has seen the loss, so the loop meets it at the first
+    // step boundary however slow the machine is (with a fixed sleep, a slow step looked like a
+    // missing one). The TTL is long enough that the worker never loses the lock on its own.
+    let convId = "";
+    const lost = gate();
+    const logger = createLogger("warn", {
+      write: (line) => {
+        const rec = JSON.parse(line) as { msg?: unknown; lockKey?: unknown };
+        const key = String(rec.lockKey);
+        if (String(rec.msg).startsWith("lock lost") && convId && key.includes(convId)) lost.open();
+      },
+    });
+    let held = false;
+    looperState().beforeComplete = async () => {
+      if (held) return;
+      held = true;
+      await lost.promise;
+    };
+    try {
+      await worker({ maxSteps: 4 }, { hooks: { lockTtlMs: 3_000 }, logger });
+      const conv = await setup(LOOPER);
+      convId = conv.convId;
+      const seq = await postMessage(req, conv.orgId, convId, "loop:50");
+      await waitForEvent(db, convId, (e) => e.type === "model_call");
+      // Another holder takes the lock (as after an expiry): the next renewal finds it taken. The
+      // test removes it itself, so it cannot expire before the checks below.
+      const lockKey = `capk:conv-run:${convId}`;
+      await redis.set(lockKey, "foreign", "PX", 60_000);
+      // Interrupted after step 1: the job left the worker and waits in the queue (delayed again
+      // on every pickup while the lock is busy)
+      await waitFor(async () => (await runJobState(convId, seq)) === "delayed", 10_000, "requeued");
+      expect(await redis.get(lockKey)).toBe("foreign");
+      let evs = await eventsOf(db, convId);
+      expect(evs.some((e) => ["run_finished", "run_failed", "run_aborted"].includes(e.type))).toBe(
+        false,
+      );
+      expect(evs.filter((e) => e.type === "model_call")).toHaveLength(1);
+      expect(evs.filter((e) => e.type === "assistant_message")).toHaveLength(1);
+      expect((await runsOf(db, convId))[0]?.status).toBe("running");
+      // Once the other holder's lock is gone, the requeued job is picked up again and completes
+      await redis.del(lockKey);
+      const [fin] = await waitForTerminal(db, convId, 1, 15_000);
+      expect(fin?.payload).toMatchObject({ reason: "max_steps" });
+      await sleep(300);
+      evs = await eventsOf(db, convId);
+      expect(evs.filter((e) => e.type === "run_started")).toHaveLength(1);
+      expect(evs.filter((e) => e.type === "run_finished")).toHaveLength(1);
+      expect(evs.flatMap((e) => (e.type === "assistant_message" ? [e.payload.step] : []))).toEqual([
+        1, 2, 3, 4, 5,
+      ]);
+      expect(await runsOf(db, convId)).toMatchObject([{ status: "completed" }]);
+    } finally {
+      delete looperState().beforeComplete;
+    }
   }, 30_000);
 
   it("loop 在吸收消息前抛错 → run_failed，consumed_seq 推进到触发消息，之后的新消息正常运行（会话不卡住）", async () => {
@@ -782,6 +814,18 @@ async function removeJob(convId: string, seq: number): Promise<void> {
   const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
   try {
     await (await q.getJob(runJobId(convId, seq)))?.remove();
+  } finally {
+    await q.close();
+    conn.disconnect();
+  }
+}
+
+/** The BullMQ state of the run job of the message at `seq` (undefined when there is no such job). */
+async function runJobState(convId: string, seq: number): Promise<string | undefined> {
+  const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
+  const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
+  try {
+    return await (await q.getJob(runJobId(convId, seq)))?.getState();
   } finally {
     await q.close();
     conn.disconnect();

@@ -87,7 +87,7 @@ function pidAlive(pid: number): boolean {
 }
 
 export interface OsExecutorOptions {
-  /** The environment directory (from login). */
+  /** The device directory (from login). */
   dir: string;
   policy: Policy;
   /** The home whose secret paths are denied (default: the user's home). */
@@ -104,7 +104,7 @@ interface Spawned {
 /**
  * Runs every command inside `@anthropic-ai/sandbox-runtime` (macOS Seatbelt, Linux bubblewrap):
  * writes only under the workspace and tmp roots, the secret paths unreadable, network only to
- * the intersection of the local policy and the environment's egress. File operations in the
+ * the intersection of the local policy and the device's egress. File operations in the
  * workspace and tmp roots run in a sandboxed helper too. Construct it with
  * {@link createOsExecutor}; the constructor alone serves only `ensureRoot` and the skills root.
  */
@@ -112,7 +112,7 @@ export class OsExecutor implements Executor {
   readonly mode = "os" as const;
   readonly roots: SandboxRoots;
   private readonly dir: string;
-  /** Marks every process of this environment's commands: `<dirKey>.<tag>`. */
+  /** Marks every process of this device's commands: `<dirKey>.<tag>`. */
   private readonly dirKey: string;
   private readonly groups = new Set<Group>();
   private pruneTimer: NodeJS.Timeout | undefined;
@@ -432,7 +432,7 @@ export class OsExecutor implements Executor {
     await this.killLeftovers();
   }
 
-  /** Kills every process carrying this environment's marker (also a previous run's). */
+  /** Kills every process carrying this device's marker (also a previous run's). */
   async killLeftovers(): Promise<void> {
     const prefix = `${this.dirKey}.`;
     await killMarked((v) => v.startsWith(prefix));
@@ -449,7 +449,7 @@ export class OsExecutor implements Executor {
 
 /**
  * The OS sandbox executor: checks the platform and dependencies, starts the sandbox's proxies
- * once for this process, and kills what a previous run of this environment left running.
+ * once for this process, and kills what a previous run of this device left running.
  * Network is denied unless a command's own list allows it.
  */
 export async function createOsExecutor(opts: OsExecutorOptions): Promise<OsExecutor> {

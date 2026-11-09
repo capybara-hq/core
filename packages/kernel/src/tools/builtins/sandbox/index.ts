@@ -31,7 +31,7 @@ export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
 
 /**
  * The sandbox builtins (M5 T8): Bash / Read / Write / Edit / Glob / Grep / Deliver, all run in the
- * conversation's environment (`SandboxService.withSandbox`) after syncing attachments to
+ * conversation's device (`SandboxService.withSandbox`) after syncing attachments to
  * `<workspace>/attachments` (the instance's roots, environments spec §13.1); unavailable without
  * a provider for it. Allowed by default; with the org setting `sandboxToolPolicy` set to ask,
  * every one but Read / Glob / Grep needs approval (see policy.ts).

@@ -27,7 +27,7 @@ their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` ro
 | `packages/kernel` | The kernel: one NestJS + Fastify app (config, db, `ctx`, extension host, HTTP) |
 | `packages/testing` | Test containers, dual-replica helpers, fake servers, fake extensions (`fixtures/extensions/*`) |
 | `packages/plugin-tools` | The published plugin toolchain `capybara-plugin` (`pack`, `check`, `marketplace`, `release`, …) |
-| `packages/device` | The published program `capybara-device` that connects a laptop or server to a deployment as an environment (HTTP and WebSocket only; imports only `plugin-sdk`) |
+| `packages/device` | The published program `capybara-device` that connects a laptop or server to a deployment as a local device (HTTP and WebSocket only; imports only `plugin-sdk`) |
 | `packages/design` | Web design system (spec `docs/design/spec.md`) |
 | `apps/capybara` | CLI |
 | `apps/web` | Next web app; talks to the kernel only over HTTP; pages built only from `@capybara-hq/design` |
@@ -115,7 +115,9 @@ Each line is the rule you must not miss; the skill has the rest.
   hooks fail closed. An extension call made for an org carries `config`, the
   effective config (platform deployment config plus the org's copy of overridable fields: never an
   overridable platform secret, hidden secrets stay); an org whose effective config is invalid gets
-  no call (`needsConfig`); org admins may switch off single extension tools.
+  no call (`needsConfig`); org admins may switch off single extension tools. A setup check
+  (`ctx.setup.check`, declared in `permissions.setupChecks`) never writes and never returns a
+  secret; it never gets an OAuth client secret or a member's token.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
@@ -141,7 +143,7 @@ Each line is the rule you must not miss; the skill has the rest.
   purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
   through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
   recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** work happens in environments (one instance + a file system kept until the environment
+- **Sandboxes:** work happens in devices (one instance + a file system kept until the device
   is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
   never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)

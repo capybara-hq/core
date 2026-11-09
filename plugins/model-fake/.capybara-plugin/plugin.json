@@ -5,7 +5,7 @@
     "zh": "模拟模型",
     "en": "Fake model"
   },
-  "version": "0.1.0-rc.8",
+  "version": "0.1.0-rc.10",
   "publisher": "Capybara",
   "description": {
     "en": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",

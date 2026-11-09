@@ -15,23 +15,23 @@ export const SANDBOX_SUSPEND_JOB = "sandbox-suspend-idle";
 export const SANDBOX_DESTROY_JOB = "sandbox-destroy-inactive";
 
 /**
- * One-off job: destroy a batch of environments now, instance and file system (environment
- * deletion, offboarding; data `{ environmentIds }`).
+ * One-off job: destroy a batch of devices now, instance and file system (device
+ * deletion, offboarding; data `{ deviceIds }`).
  */
 export const SANDBOX_DESTROY_FOR_JOB = "sandbox-destroy-for";
 
 /**
- * One-off job: start an environment over with empty files (`resetFileSystem`; data
- * `{ environmentId }`, job id {@link resetFilesJobId}).
+ * One-off job: start a device over with empty files (`resetFileSystem`; data
+ * `{ deviceId }`, job id {@link resetFilesJobId}).
  */
 export const SANDBOX_RESET_FILES_JOB = "sandbox-reset-files";
 
 /**
- * The deterministic id of an environment's reset job: a second request while one is waiting or
+ * The deterministic id of a device's reset job: a second request while one is waiting or
  * running joins it (that reset still empties the files); once it ended, a new request is a new job.
  */
-export const resetFilesJobId = (environmentId: string): string =>
-  `${SANDBOX_RESET_FILES_JOB}-${environmentId}`;
+export const resetFilesJobId = (deviceId: string): string =>
+  `${SANDBOX_RESET_FILES_JOB}-${deviceId}`;
 
 /**
  * The producer of the sandbox maintenance jobs: {@link SANDBOX_DESTROY_FOR_JOB} (BullMQ's own job
@@ -45,13 +45,13 @@ export class SandboxJobs {
   ) {}
 
   /**
-   * Enqueues the destruction of these environments: a failed batch is retried whole (destroying
+   * Enqueues the destruction of these devices: a failed batch is retried whole (destroying
    * one already destroyed does nothing).
    */
-  async destroy(environmentIds: string[]): Promise<void> {
+  async destroy(deviceIds: string[]): Promise<void> {
     await this.queue.add(
       SANDBOX_DESTROY_FOR_JOB,
-      { environmentIds },
+      { deviceIds },
       {
         attempts: 5,
         backoff: { type: "exponential", delay: 30_000 },
@@ -62,16 +62,16 @@ export class SandboxJobs {
   }
 
   /**
-   * Enqueues the reset of an environment's files (see {@link resetFilesJobId}): retried on failure
+   * Enqueues the reset of a device's files (see {@link resetFilesJobId}): retried on failure
    * (the exclusive lease not obtained in time, the provider failing); a job that failed all its
    * attempts is removed, so the id never blocks a later request.
    */
-  async resetFiles(environmentId: string): Promise<void> {
+  async resetFiles(deviceId: string): Promise<void> {
     await this.queue.add(
       SANDBOX_RESET_FILES_JOB,
-      { environmentId },
+      { deviceId },
       {
-        jobId: resetFilesJobId(environmentId),
+        jobId: resetFilesJobId(deviceId),
         attempts: 5,
         backoff: { type: "exponential", delay: 30_000 },
         removeOnComplete: true,
@@ -89,39 +89,39 @@ export async function runSandboxResetFiles(
   sandbox: Pick<SandboxService, "resetFileSystem">,
   job: Pick<Job, "data">,
 ): Promise<void> {
-  const id = (job.data as { environmentId?: unknown }).environmentId;
+  const id = (job.data as { deviceId?: unknown }).deviceId;
   if (typeof id !== "string") return;
   await sandbox.resetFileSystem(id);
 }
 
 /**
- * The worker side of {@link SANDBOX_DESTROY_FOR_JOB}: `destroyEnvironment` one by one; a failure is
+ * The worker side of {@link SANDBOX_DESTROY_FOR_JOB}: `destroyDevice` one by one; a failure is
  * warned and fails the job (the whole batch is retried) after the others were destroyed.
  */
 export async function runSandboxDestroyFor(
-  sandbox: Pick<SandboxService, "destroyEnvironment">,
+  sandbox: Pick<SandboxService, "destroyDevice">,
   log: Pick<KernelLogger, "warn">,
   job: Pick<Job, "data">,
 ): Promise<void> {
-  const ids = (job.data as { environmentIds?: unknown }).environmentIds;
+  const ids = (job.data as { deviceIds?: unknown }).deviceIds;
   if (!Array.isArray(ids)) return;
   let failed = 0;
   for (const id of ids) {
     if (typeof id !== "string") continue;
     try {
-      await sandbox.destroyEnvironment(id);
+      await sandbox.destroyDevice(id);
     } catch (err) {
       failed++;
-      log.warn("cannot destroy environment; will retry", { environmentId: id, err });
+      log.warn("cannot destroy device; will retry", { deviceId: id, err });
     }
   }
-  if (failed > 0) throw new Error(`${failed} of ${ids.length} environments could not be destroyed`);
+  if (failed > 0) throw new Error(`${failed} of ${ids.length} devices could not be destroyed`);
 }
 
 /**
  * The sandbox sweeps (exactly once per tick across replicas): every minute the idle and overdue
  * running instances are suspended, every hour the inactive instances are destroyed (files kept)
- * and deleted environments, or those of deleted orgs, are destroyed with their files. Both do nothing without a sandbox provider. They replace the
+ * and deleted devices, or those of deleted orgs, are destroyed with their files. Both do nothing without a sandbox provider. They replace the
  * maintenance schedulers `sandbox-suspend-idle-every-minute` and `sandbox-destroy-inactive-hourly`
  * (retired at worker start).
  */

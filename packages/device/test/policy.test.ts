@@ -30,7 +30,7 @@ describe("effectiveEgress", () => {
     expect(effectiveEgress(p, limits("none", ["a.com"]))).toEqual([]);
   });
 
-  it("a policy wildcard admits the environment's subdomains, never the apex", () => {
+  it("a policy wildcard admits the device's subdomains, never the apex", () => {
     const p = policy(["*.github.com"]);
     expect(
       effectiveEgress(p, limits("allowlist", ["api.github.com", "github.com", "x.org"])),

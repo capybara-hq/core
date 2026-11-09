@@ -858,10 +858,10 @@ describe("修复波 W1：匿名访客保护", () => {
   });
 });
 
-describe("offboarding and the leaver's environments", () => {
+describe("offboarding and the leaver's devices", () => {
   const env = async (orgId: string, accountId: string, name: string | null) => {
     const id = randomUUID();
-    await sql`INSERT INTO capybara.environments
+    await sql`INSERT INTO capybara.devices
       (id, org_id, owner_kind, owner_account_id, name, is_default, source)
       VALUES (${id}, ${orgId}, 'personal', ${accountId}, ${name}, ${name === null}, 'cloud')`.execute(
       raw,
@@ -882,14 +882,14 @@ describe("offboarding and the leaver's environments", () => {
     ),
   });
 
-  it("offboarding deletes the account's environments", async () => {
+  it("offboarding deletes the account's devices", async () => {
     const mine = await env(f.orgId, f.leaver.id, null);
     const named = await env(f.orgId, f.leaver.id, "Repo");
     const gone = await env(f.orgId, f.leaver.id, "Old");
-    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${gone}`.execute(raw);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${gone}`.execute(raw);
     const others = await env(f.orgId, f.bystander.id, null);
     const otherOrg = await env(f.otherOrgId, f.leaver.id, null);
-    await sql`INSERT INTO capybara.environment_defaults (org_id, account_id, environment_id)
+    await sql`INSERT INTO capybara.device_defaults (org_id, account_id, device_id)
       VALUES (${f.orgId}, ${f.leaver.id}, ${named}),
              (${f.otherOrgId}, ${f.leaver.id}, ${otherOrg}),
              (${f.orgId}, ${f.bystander.id}, ${others})`.execute(raw);
@@ -903,21 +903,21 @@ describe("offboarding and the leaver's environments", () => {
       },
     });
     const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
-    expect([...r.environments].sort()).toEqual([mine, named].sort());
+    expect([...r.devices].sort()).toEqual([mine, named].sort());
     // nothing is enqueued before the caller's commit hook runs
     expect(scheduled).toEqual([]);
     await off.afterOffboard(r);
     expect(scheduled.map((ids) => [...ids].sort())).toEqual([[mine, named].sort()]);
 
     const live = await db
-      .selectFrom("environments")
+      .selectFrom("devices")
       .select("id")
       .where("deleted_at", "is", null)
       .orderBy("id")
       .execute();
     expect(live.map((e) => e.id)).toEqual([others, otherOrg].sort());
     const defaults = await db
-      .selectFrom("environment_defaults")
+      .selectFrom("device_defaults")
       .select(["org_id", "account_id"])
       .orderBy("org_id")
       .execute();
@@ -933,7 +933,7 @@ describe("offboarding and the leaver's environments", () => {
       .select("detail")
       .where("action", "=", "org.member.offboarded")
       .executeTakeFirstOrThrow();
-    expect(audit.detail).toMatchObject({ environmentsDeleted: 2 });
+    expect(audit.detail).toMatchObject({ devicesDeleted: 2 });
   });
 
   it("a failed enqueue only warns and does not fail the offboarding", async () => {
@@ -953,11 +953,11 @@ describe("offboarding and the leaver's environments", () => {
     );
     const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
     await off.afterOffboard(r);
-    expect(warns).toContain("offboarding: cannot schedule environment destruction");
+    expect(warns).toContain("offboarding: cannot schedule device destruction");
     expect(await isMember(f.orgId, f.leaver.id)).toBe(false);
   });
 
-  it("kernel: removing a member enqueues sandbox-destroy-for with their environment ids", async () => {
+  it("kernel: removing a member enqueues sandbox-destroy-for with their device ids", async () => {
     const mine = await env(f.orgId, f.leaver.id, null);
     const connection = new Redis(rd.url);
     const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection });
@@ -972,7 +972,7 @@ describe("offboarding and the leaver's environments", () => {
       expect(res.statusCode).toBe(204);
       const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
       const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
-      expect(job?.data).toEqual({ environmentIds: [mine] });
+      expect(job?.data).toEqual({ deviceIds: [mine] });
     } finally {
       await q.resume();
       await q.close();

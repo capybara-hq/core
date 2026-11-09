@@ -27,7 +27,7 @@ export function logEntryFor(req: KernelReq, res: DeviceRes, now: Date): CommandL
 }
 
 /**
- * Runs one request on the executor and returns the answer. A vanished environment directory
+ * Runs one request on the executor and returns the answer. A vanished device directory
  * answers `fs_gone` for every operation except `stop`. Never throws.
  */
 export async function runOp(
@@ -46,7 +46,7 @@ export async function runOp(
         error: {
           kind: "fs_gone",
           message:
-            "The environment directory on this machine existed and is gone. It is not recreated automatically.",
+            "The device directory on this machine existed and is gone. It is not recreated automatically.",
         },
       };
     }

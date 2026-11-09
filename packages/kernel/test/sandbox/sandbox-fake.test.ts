@@ -275,7 +275,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("destroy keeps the file system", async () => {
     const p = createFakeSandbox(root);
-    const fileSystem = await p.createFileSystem({ name: "cap-env-keep", limits, signal: sig() });
+    const fileSystem = await p.createFileSystem({ name: "cap-device-keep", limits, signal: sig() });
     const h1 = await p.create({ name: "keep-1", limits, fileSystem, signal: sig() });
     await p.writeFile(h1, "/workspace/a", new TextEncoder().encode("kept"), sig());
     await p.destroy(h1, sig());
@@ -284,14 +284,14 @@ describe("sandbox-fake background task shims", () => {
     expect(new TextDecoder().decode(f?.data)).toBe("kept");
     expect((await fakeSandboxMeta(root, h2.id))?.image).toBeNull();
     // idempotent by name
-    expect(await p.createFileSystem({ name: "cap-env-keep", limits, signal: sig() })).toEqual(
+    expect(await p.createFileSystem({ name: "cap-device-keep", limits, signal: sig() })).toEqual(
       fileSystem,
     );
   });
 
   it("create on a removed file system throws FileSystemGoneError", async () => {
     const p = createFakeSandbox(root);
-    const fileSystem = await p.createFileSystem({ name: "cap-env-gone", limits, signal: sig() });
+    const fileSystem = await p.createFileSystem({ name: "cap-device-gone", limits, signal: sig() });
     await removeFakeFileSystem(root, fileSystem.id);
     expect(await fakeFileSystems(root)).not.toContain(fileSystem.id);
     await expect(p.create({ name: "gone-1", limits, fileSystem, signal: sig() })).rejects.toSatisfy(

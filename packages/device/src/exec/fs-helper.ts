@@ -20,7 +20,7 @@ export const FS_HELPER_SCRIPT = `
   const under = (r) => realRoots.some((x) => r === x || r.startsWith(x + "/"));
   const missing = (e) => e && (e.code === "ENOENT" || e.code === "ENOTDIR");
   const real = (q) => { try { return fs.realpathSync(q); } catch (e) { if (missing(e)) return null; throw e; } };
-  const outside = (r) => out({ e: "policy", m: p + " resolves to " + r + ", outside the environment's roots" });
+  const outside = (r) => out({ e: "policy", m: p + " resolves to " + r + ", outside the device's roots" });
   try {
     if (op === "read" || op === "stat") {
       const r = real(p);

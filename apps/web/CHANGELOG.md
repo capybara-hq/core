@@ -1,5 +1,81 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.15
+
+### Patch Changes
+
+- 6f7f6b4: A setup guide section has 让智能体协助 / Ask an agent: it opens a new conversation with a drafted
+  message in the composer (not sent) that names the guide (plugin, catalog item, guide id, place,
+  audience) and its target by id, so the agent can follow it with the Platform `setup` operations.
+  The draft carries names and ids only, never a config value; the platform preview has no entry. The
+  new conversation reads `?draft=` once into the composer, on phones without focusing it.
+- 6a2211b: The design system gains `GuideDocument` (a rendered setup guide: prose, copyable titled code and
+  check rows in document order) and `CheckRow` (a setup check's status, reason, fix, checked-at time
+  and a Re-check button), with zh and en strings and `/dev/ui` fixtures.
+- d497b1b: The conversation composer warns before sending a draft that looks like it holds a secret (Slack,
+  GitHub, `sk-` model keys, AWS and Google keys, private keys, JWTs, long random strings): on paste,
+  and on the first ↵ or send click, a warn line with 移除 / Remove and 仍然发送 / Send anyway; a second
+  ↵ also sends. The check runs in the browser only and is never logged or sent to the kernel.
+- 99364f3: Live setup check rows: the 接入指南 of a channel connection, a connector made from a template
+  (admin text) and the 如何连接 sheet (member text, its checks only) read the checks' cached states,
+  run each row without a fresh result (at most four at a time), poll while a run is in progress
+  elsewhere, and offer 重新检查 (a forced run that waits out its cooldown). Too many runs keep the
+  last results with a muted line. Saving a connection, connector or credential reads the states
+  again. New channels, the install wizards and the super admin's template page keep static rows.
+- 1895c7b: Connector templates show their setup guides: the admin text above a template's input in the
+  install wizards and 补充配置 (checks wait for the save), a 接入指南 tab on a connector made from a
+  template with the drift notice and 「我已更新 … 应用」, a 如何连接 / How to connect sheet with the
+  member text on 我的连接 and on members' connector cards (org admins also get a link to the admin
+  guide), and the guide, read-only and without checks, on the super admin's connector template page.
+- a84c87e: The channel pages show Markdown setup guides: the guide's prose, copyable titled code blocks and
+  check rows (保存后检查 / Checked after saving on 新建渠道), the mode switch, one line per reason for
+  the variables without a value yet, and the drift notice with its ack inside the 接入指南 card.
+
+## 0.1.0-rc.14
+
+### Patch Changes
+
+- 0a5b15d: One name: devices. Environments become devices everywhere in the kernel: migration 0105 renames the
+  tables (`devices`, `device_instances`, `device_defaults`, `device_machines`), the `device_id` columns,
+  indexes and constraints, turns `source` `device` into `local`, the provider `@device` into `@local`
+  and the log event `environment_paths` into `device_paths`. Config `environments.*` becomes
+  `devices.maxPersonal` and `devices.local.*` (`CAPYBARA_DEVICES__…`); error codes `environment.*`
+  become `device.*` and the sign-in codes become `device_sign_in.*`; routes move to
+  `orgs/:orgId/devices…`, Platform operations to `devices.*`, the IM command to `/device`, sandbox
+  file systems to `cap-device-<id>` (existing cloud files under `cap-env-<id>` are left behind) and
+  the sign-in `verificationUri` to `<web>/devices/link`.
+  
+  Upgrading: sandbox jobs queued by the previous kernel (instance destroys, file resets) are dropped
+  (the hourly sweep still cleans deleted devices; a file reset must be requested again), and audit
+  rows written before the upgrade keep their `environment.*` action names.
+- 098c38c: One name: devices. The 环境 / Environments page is now 设备 / Devices at `/devices` and
+  `/devices/[id]`; 新建设备 offers 云端 / 本地 (cloud and local devices). The sign-in confirmation
+  page moves from `/device` to `/devices/link`; `/device` and `/environments` are the app's 404. The
+  composer's picker, the properties panel and all copy say 设备 / device. The design system's
+  composer picker prop `pickers.environment` is now `pickers.device` (reference blocks
+  `composer-device` and `composer-device-locked`).
+- 52279a1: The agent page lists extension sections (`agent.detail.section`) after the built-in ones, for
+  editable and read-only viewers alike.
+- 4d5e6aa: The web app renders extension UI through `ExtensionSlot` by slot (`conversation.panel`,
+  `conversation.properties.section`, `conversation.tool-result.card`, `org.page`, `file.preview`)
+  and reads the kernel's `slot` / `after` contribution fields; a properties section follows the
+  anchor it names (`context`, `files` or `background`).
+- bf9c72c: The organization settings page shows extension sections (`org.settings.section`) after the built-in
+  ones, for org admins and owners only.
+- 54c9697: Extensions' `platform.page` views appear in the admin console: a 扩展 group in the admin sidebar
+  lists them (hidden when there are none), each opens at `/admin/p/<plugin>/<id>` for super admins,
+  and an extension's detail page lists the interfaces it declared that did not take effect
+  (未生效的界面), each with its reason.
+- a2ba18a: 界面位置: org admins hide and reorder extension contributions per slot on the extensions page
+  (members read it), and the super admin sets the platform default in the deployment settings.
+  A page hidden from the lists still renders at its direct URL, an org page as well as a platform
+  page of the admin console.
+- 56c1e85: A page the arrangement hides now opens a not-found page, not a retry, when the arrangement read
+  answers 404 (a guest); the UI placement description says only org pages and platform pages stay
+  reachable by their direct link when hidden.
+- Updated dependencies [098c38c]
+  - @capybara-hq/design@0.2.0-rc.2
+
 ## 0.1.0-rc.13
 
 ### Patch Changes

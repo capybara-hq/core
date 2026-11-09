@@ -1,6 +1,6 @@
 ---
 name: writing-connectors
-description: 'Use when changing the kernel side of connector@1 (packages/kernel/src/tools: connectors, preview, drift, elicitation, OAuth, redaction) or the contract in the SDK: the terms "connector / connector extension / connector template", no stdio MCP support, endpointSchema validation and the credential checks, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged and drift checks, onElicit and elicitation resumption, resources / prompts, connector templates, OAuth and credentials, redaction, and kernel tests with the fake-connector / fake-openapi extensions and startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer. To write a connector extension (connector-mcp, connector-openapi) see writing-connectors in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of connector@1 (packages/kernel/src/tools: connectors, preview, drift, elicitation, OAuth, redaction) or the contract in the SDK: the terms "connector / connector extension / connector template", no stdio MCP support, endpointSchema validation and the credential checks, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged and drift checks, onElicit and elicitation resumption, resources / prompts, connector templates and their setup guides (guide_ack, the token endpoint probe), OAuth and credentials, redaction, and kernel tests with the fake-connector / fake-openapi extensions and startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer. To write a connector extension (connector-mcp, connector-openapi) see writing-connectors in capybara-hq/plugins.'
 ---
 
 # Connectors: the kernel side of `connector@1`
@@ -129,6 +129,33 @@ A connector template spares the org from endpoint details: a super admin imports
 - No credentials in the endpoint (a template's presets are visible to every org); anything that needs a credential goes through the auth settings.
 - When the deployment setting `customConnectors` is `deny`, an org can create connectors only from the catalog (templates), and manual install returns 403 `catalog.custom_disabled`.
 
+### Connector template setup guides (spec `2026-11-09-setup-guides-v2-design.md` §9.3, §10, §11)
+
+A template's plugin may ship a `connector-template` guide (`setupGuides` entry with `template`,
+writing-plugins). The template's plugin (slack) is usually not the connector extension
+(connector-mcp); the guide, its checks and its drift belong to the template, not to the protocol.
+
+- **Places**: admin audience (`connectors.manage`) above the template's input in the install wizard
+  and on 补充配置 / `/connectors/install?template=` (no target, rows "checked after saving"), and on
+  `/connectors/<id>` (接入指南 tab: live checks, drift notice and ack); member audience
+  (`connectors.use`) on `/account/connections`, the connector row's 如何连接 sheet. Variables:
+  `oauthCallbackUrl`, `signInCallbackUrl`, `templateId`, `templateName`, `connectorName`.
+- **How a page finds the guide**: org catalog templates (`connectors.templates`, `GET
+  …/catalog/:itemId`) carry `guide: { itemId, guideId } | null`; connector views carry `setupGuide`
+  and `guideDrift`, resolved through `connectors.platform_template_id` to the template.
+- **Drift**: `connectors.guide_ack` (migration 0106) records `{ guideId, version, hash, mode: null }`
+  when a connector is created from the template, and `POST
+  /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack { hash }` (`connectors.manage`, 409
+  `connector.guide_changed`, audited `connector.guide_confirmed`; a `human-only` Platform exclusion)
+  confirms the app was updated. Only the admin audience has drift.
+- **Checks never get a secret**: a plugin check on a connector gets the connector id, the template
+  id, a manual client's **id** and (member checks) the viewing account id; never the client secret
+  or a member's token, which stay with the kernel and the connector extension's `auth()`. Kernel
+  checks: `capybara:oauth-client` (manual client id and secret stored), `capybara:connector-tools`
+  (a tool snapshot exists), `capybara:connector-connected` (member: the viewer holds a credential)
+  and `capybara:oauth-token-endpoint` (the probe below). Results are redacted by
+  `Credentials.checkMaterial`, which lists the stored values and the forms they are sent in.
+
 ## A member's own tool policies (decision 2026-11-09)
 
 Spec `docs/superpowers/specs/2026-11-09-connector-cards-and-member-policies-design.md`. On a
@@ -158,6 +185,7 @@ A connector only needs to follow "call `auth()` before every request, call `onUn
 - **Token types**: a token response's `token_type` must be `Bearer` or `user` (Slack's `oauth.v2.user.access`), case-insensitive, or one the auth settings list in `tokenTypes` (on `oauth_code` / `oauth_client`, at most 5, never `DPoP`: the schema refuses it in any case); every accepted token is stored and sent as `Authorization: Bearer`. Any other type (`DPoP`, `mac`, ...) fails with `unsupported_token_type`.
 - **Token endpoint errors**: a 400 / 401 with an RFC 6749 `error` code, or an HTTP 200 whose body has `ok: false` (Slack reports every error this way) or an `error` code and no `access_token`, is a refusal with that code (`ok: false` wins over an `access_token` in the same body: nothing is stored). A token is invalidated (credential deleted, the person sees "connection required") only for `invalid_grant` / `invalid_client` / `unauthorized_client` and Slack's `invalid_refresh_token` / `token_revoked` / `token_expired`; other refusal codes (`invalid_scope`, Slack's `invalid_arguments`, ...) keep the credential and report "ask an administrator to check the app". 429, other 4xx, responses without a parsable code and the transient codes in a 200 body (RFC 6749's `temporarily_unavailable` / `server_error`, Slack's `ratelimited`, `service_unavailable`, `internal_error`, `fatal_error`, `request_timeout`) are all treated as temporarily unavailable and the credential is kept.
 - **What the flow sends** (`flow.ts`): the authorize URL always carries PKCE S256 (also for a confidential client), `scope` space-joined (template `scopes`, else the scopes from discovery), `resource` when discovery found one (also on the code exchange and refresh); the callback checks RFC 9207 `iss` only when the authorization server sends it and discovery recorded an issuer. No extra authorize parameters (such as Slack's `team=`).
+- **The setup check probe** (`capybara:oauth-token-endpoint`, `packages/kernel/src/setup/oauth-token-probe.ts`): for a manual client the kernel posts one authorization-code exchange with the stored client record (its `tokenEndpoint` and auth method, as the callback would) and the fixed invalid code `capybara-setup-probe`, through `packages/kernel/src/net` (`safeFetch`: no redirects, `net.httpsProxy`, `marketplaces.allowPrivateHosts`, loopback http only under `tools.oauthAllowInsecureLoopback`) with the run's signal. It reads the answer only with `parseTokenRefusal` (the one refusal parser, shared with `tokenRequest`): `invalid_grant` / `invalid_code` ok, a refused client or any 401 failing, `redirect_uri_mismatch` / `bad_redirect_uri` failing with the kernel-built callback URL, anything else (a 2xx token included, never stored) unknown; fixed texts only, nothing logged or written.
 - An authorization-code connector does not `listTools` at install (after the first member connects via `POST /orgs/:orgId/connectors/:connectorId/connect` -> authorization server -> `GET /api/v1/oauth/callback`, the tool list is refreshed with their token). To rotate the client secret: `PUT .../credentials/org` with `{ clientId, clientSecret }`.
 
 ## Redaction is the kernel's job

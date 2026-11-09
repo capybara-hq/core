@@ -1,5 +1,73 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.10
+
+### Minor Changes
+
+- aa81e5a: Setup checks contract: an extension registers the live rows of its setup guides with
+  `ctx.setup.check(id, { place, run })` during `setup`, each id listed in the new
+  `permissions.setupChecks` (`SETUP_CHECK_ID_RE`, at most 32; ids with `:` stay the kernel's).
+  `run` gets the org, the extension's effective config, the locale, the mode, an abort signal and the
+  target: a channel connection with its config, or a connector with its ids and OAuth client id
+  (never the client secret or a member's token). Results are `ok` / `failing` / `unknown` with plain
+  text `reason` and `fix` (en required, zh optional, 300 / 500 characters) and no details field;
+  `validateSetupCheckResult` returns a fresh copy or why it is invalid. `SETUP_CHECK_LIMITS` holds
+  the run limits. A check never writes, passes `signal` on, does not retry and never puts a secret
+  in its result.
+- 2219734: Setup guides v2: a guide is a Markdown document `guides/<id>.md` (optional `guides/<id>.zh.md`)
+  declared in `plugin.json` `setupGuides` as `{ id, place, template? }`. The SDK adds the place
+  registry (`channel-connection`, `connector-template`; modes, audiences, typed variables), the
+  parser (`parseSetupGuide`: title, `::: mode` / `::: audience` sections, `::check` lines, titled
+  code fences), the validator (`validateSetupGuide`, including zh parity), the renderer
+  (`renderSetupGuide`: substitution into the parsed tree, link policy, raw HTML as text, blocks) and
+  the drift hash (`setupGuideHash`, code blocks and check lines only). The v1 steps-and-files format
+  and its helpers are removed.
+
+### Patch Changes
+
+- 70a50f5: Add the `setup` agent docs topic: how an agent helps a person through a plugin's setup guide with
+  the `setup` operations, and what stays with the person (secrets, OAuth consent, the guide ack).
+  
+  The `plugin-format` and `extensions` topics describe v2 setup guides (Markdown documents, places,
+  sections, check lines) and setup checks (`ctx.setup.check`, `permissions.setupChecks`).
+
+## 0.1.0-rc.9
+
+### Minor Changes
+
+- d495d7d: The `init` message to an embed carries `context` as `EmbedInitContext`, narrowed on `scope`: an org
+  embed gets `{ scope: "org", orgId, conversationId? }`, a platform page of the admin console
+  `{ scope: "platform" }` (no `orgId`).
+- 18defa0: `platform.page` contributions are served to super admins on org-less routes under
+  `/api/v1/admin/ui/` (`contributions`, `views/:plugin/:id`, `actions/:plugin/:id`,
+  `embeds/:plugin/:id/token`, `stream`): the extension must be running (no org enablement applies)
+  and gets the platform's deployment config. `UiRenderArgs` / `UiActionArgs` become unions narrowed
+  on `scope`: the platform variant has `role: "superAdmin"` and no `orgId`. `EmbedClaims` gain
+  `scope: "org" | "platform"` (`orgId` absent exactly for the platform scope); a platform token
+  verifies only for a `platform.page` contribution while the account is still an active super admin,
+  and an org token never verifies for one. `ctx.ui.invalidate` takes no `orgId` for a `platform.page`
+  contribution (refreshing the admin console's stream) and throws when one is given.
+- 0a35407: Add the UI slot catalog (`UI_SLOTS`, `uiSlot`, `parseSlotRef`, `PLACE_SLOTS`, arrangement keys).
+- cf93278: The org UI routes gate every contribution by its slot: the slot's `minRole` (`org.settings.section`
+  admin and above, `org.page` member and above, conversation and agent slots any member), then its
+  scope (a readable conversation; an agent the caller can read in this org). `platform.page` is never
+  listed or served through an org route. `GET /orgs/:orgId/ui/contributions` takes `?slot=` and lists
+  `slot` and the resolved `after` anchor instead of `place`, ordered by extension name, then manifest
+  order. Views, actions and embed tokens take `agentId` for `agent.detail.section`; embed claims carry
+  it, and `ctx.ui.verifyEmbedToken` returns null when the current role no longer meets the slot's
+  `minRole`. `UiRenderArgs` gains `slot`, `scope` and `agentId`; `EmbedClaims` gains `agentId`.
+- 199f895: UI contributions name a slot (`slot: "conversation.panel"`, optionally `@<n>`, plus `after` for
+  slots with anchors); `place` stays accepted as a deprecated input. `validateUiContributions` now
+  covers only structural problems, and the new `resolveUiSlots` drops a contribution to an unknown
+  slot or version instead of failing the extension. `normalizePlace` is removed.
+
+### Patch Changes
+
+- ec79610: One name: devices. The program says device everywhere: `credential.json` holds `deviceId` (a file
+  from an older version is unusable: run `capybara-device logout` and log in again), the default
+  directory is `~/capybara-device/<deviceId>`, the sign-in follows the kernel's `device_sign_in.*`
+  error codes, and `status` prints `device`. SDK doc comments say device instead of environment.
+
 ## 0.1.0-rc.8
 
 ### Minor Changes

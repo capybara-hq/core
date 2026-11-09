@@ -1,6 +1,5 @@
 import { getChannel, getChannelSchema, listChannels } from "../channels";
 import { getOrgOverrides, listOrgExtensions, listOrgToolSwitches } from "../extensions";
-import { getSetupGuide, type SetupGuideQuery, type SetupGuideRef } from "../setup-guides";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -36,23 +35,6 @@ export const channelGuideRefQuery = (orgId: string, plugin: string) =>
   defineQuery({
     key: keys.org(orgId).channelGuideRef(plugin),
     fn: () => getChannelSchema(orgId, plugin).then((r) => r.guide ?? null),
-    freshness: "orgConfig",
-  });
-
-/** A plugin's setup guide rendered for the org: a connection, a mode or the name typed so far. */
-export const setupGuideQuery = (orgId: string, ref: SetupGuideRef, q: SetupGuideQuery = {}) =>
-  defineQuery({
-    key: keys
-      .org(orgId)
-      .setupGuide(
-        ref.itemId,
-        ref.guideId,
-        ref.version ?? "",
-        q.connectionId ?? "",
-        q.mode ?? "",
-        q.name ?? "",
-      ),
-    fn: () => getSetupGuide(orgId, ref, q).then((r) => r.guide),
     freshness: "orgConfig",
   });
 

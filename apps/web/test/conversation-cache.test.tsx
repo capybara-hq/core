@@ -471,7 +471,7 @@ describe("the conversation page from the cache", () => {
     expect(await screen.findByText("while away")).toBeTruthy();
     await vi.waitFor(() =>
       expect(gets(calls).sort()).toEqual(
-        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/environment`].sort(),
+        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/device`].sort(),
       ),
     );
     window.history.replaceState(null, "", "/");

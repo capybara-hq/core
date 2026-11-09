@@ -24,7 +24,7 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (智能体, 技能, 连接器, 环境; there is no home page: the new
+ * `primary` items follow New conversation (智能体, 技能, 连接器, 设备; there is no home page: the new
  * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
@@ -63,11 +63,11 @@ const NAV: readonly {
     icon: "connector",
     section: "primary",
   },
-  // Environments: where a person's conversations run their commands and keep their files
+  // Devices: where a person's conversations run their commands and keep their files
   {
-    id: "environments",
-    key: "environments",
-    href: "/environments",
+    id: "devices",
+    key: "devices",
+    href: "/devices",
     audience: "all",
     icon: "cpu",
     section: "primary",
@@ -175,7 +175,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/plugins")) return "plugins";
   if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
-  if (under(pathname, "/environments")) return "environments";
+  if (under(pathname, "/devices")) return "devices";
   return "";
 }
 

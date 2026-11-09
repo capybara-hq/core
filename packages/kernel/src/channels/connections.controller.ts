@@ -34,7 +34,7 @@ class ChannelGuideAckBody extends createZodDto(GuideAckBody, "ChannelGuideAckBod
  * the URL of its plugin's icon on the org's catalog route (null without one, or when the org may
  * not see the plugin's catalog item; maintainer decision 2026-11-08), and its plugin's setup guide
  * with the drift since the connection was set up (`setupGuide`, `guideDrift`; spec
- * 2026-11-08-plugin-setup-guides-design.md §6).
+ * 2026-11-09-setup-guides-v2-design.md §11).
  */
 export type ChannelConnectionPage = ChannelConnectionView &
   ConnectionGuideState & {
@@ -160,7 +160,7 @@ export class ChannelConnectionsController {
   ): Promise<{ channel: ChannelConnectionPage }> {
     const p = requireUser(principal);
     const view = await this.channels.ackGuide(
-      org.orgId,
+      { orgId: org.orgId, role: org.role },
       id,
       body.hash,
       p.account.id,

@@ -102,6 +102,19 @@ describe("the route table", () => {
       prefetchRoute(makeQueryClient(), "/agents", { me: ME, orgId: "o1" }),
     ).resolves.toBe("ok");
   });
+
+  it("the old /environments and /device pages are gone: the app's 404 (the catch-all)", () => {
+    for (const path of ["/environments", "/environments/e1", "/device", "/device?code=BCDF-GHJK"])
+      expect(matchRoute(path)?.entry.pattern).toBe("/[...rest]");
+  });
+
+  it("/devices/link is the sign-in confirmation, not a device id", () => {
+    const m = matchRoute("/devices/link?code=BCDF-GHJK");
+    expect(m?.entry.pattern).toBe("/devices/link");
+    expect(m?.search.get("code")).toBe("BCDF-GHJK");
+    expect(matchRoute("/devices/d1")?.entry.pattern).toBe("/devices/[id]");
+    expect(matchRoute("/devices")?.entry.pattern).toBe("/devices");
+  });
 });
 
 describe("prefetchRoute's then", () => {

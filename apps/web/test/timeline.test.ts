@@ -419,10 +419,10 @@ describe("buildTimeline", () => {
     );
   });
 
-  it("the environment's paths (model-facing only) add no entry", () => {
+  it("the device's paths (model-facing only) add no entry", () => {
     const events = [
       user(1, "hi"),
-      ev(2, "environment_paths", {
+      ev(2, "device_paths", {
         roots: { workspace: "/Users/me/work", skills: "/Users/me/.skills", tmp: "/tmp/x" },
       }),
     ];

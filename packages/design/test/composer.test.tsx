@@ -147,9 +147,9 @@ describe("ComposerBox token (skill chip)", () => {
   });
 });
 
-describe("ComposerBox environment picker", () => {
-  const env = (over: Partial<NonNullable<ComposerBoxProps["pickers"]["environment"]>> = {}) => ({
-    label: "Environment",
+describe("ComposerBox device picker", () => {
+  const env = (over: Partial<NonNullable<ComposerBoxProps["pickers"]["device"]>> = {}) => ({
+    label: "Device",
     value: "Docker dev",
     groups: [
       {
@@ -163,9 +163,9 @@ describe("ComposerBox environment picker", () => {
     ...over,
   });
 
-  it("environment picker renders between agent and model", () => {
-    wrap(<ComposerBox {...props({ pickers: { ...props().pickers, environment: env() } })} />);
-    const names = ["Agent: Research", "Environment: Docker dev", "Model: opus 5.5"];
+  it("device picker renders between agent and model", () => {
+    wrap(<ComposerBox {...props({ pickers: { ...props().pickers, device: env() } })} />);
+    const names = ["Agent: Research", "Device: Docker dev", "Model: opus 5.5"];
     const nodes = names.map((n) => screen.getByRole("button", { name: n }));
     expect(nodes[0]?.compareDocumentPosition(nodes[1] as Node)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -175,14 +175,14 @@ describe("ComposerBox environment picker", () => {
     );
   });
 
-  it("locked environment picker opens no menu", async () => {
+  it("locked device picker opens no menu", async () => {
     const user = userEvent.setup();
     wrap(
       <ComposerBox
         {...props({
           pickers: {
             ...props().pickers,
-            environment: env({ locked: { hint: "Fixed after the first message" } }),
+            device: env({ locked: { hint: "Fixed after the first message" } }),
           },
         })}
       />,
@@ -192,16 +192,14 @@ describe("ComposerBox environment picker", () => {
     expect(locked?.getAttribute("title")).toBe("Fixed after the first message");
     await user.click(locked as Element);
     expect(screen.queryByRole("menu")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Environment/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Device/ })).toBeNull();
   });
 
-  it("a disabled environment item shows its hint and cannot be picked", async () => {
+  it("a disabled device item shows its hint and cannot be picked", async () => {
     const user = userEvent.setup();
     const onPick = vi.fn();
-    wrap(
-      <ComposerBox {...props({ pickers: { ...props().pickers, environment: env({ onPick }) } })} />,
-    );
-    await user.click(screen.getByRole("button", { name: "Environment: Docker dev" }));
+    wrap(<ComposerBox {...props({ pickers: { ...props().pickers, device: env({ onPick }) } })} />);
+    await user.click(screen.getByRole("button", { name: "Device: Docker dev" }));
     const item = screen.getByRole("menuitemradio", { name: /E2B cloud/ });
     expect(item.textContent).toContain("Not configured");
     await user.click(item);

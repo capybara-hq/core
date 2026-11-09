@@ -42,7 +42,7 @@ const info = (
 export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
   sandbox: info(
     [2],
-    "Runs an environment's instance and keeps its files for agents' commands (Docker, E2B).",
+    "Runs a device's instance and keeps its files for agents' commands (Docker, E2B).",
     "single",
     true,
   ),

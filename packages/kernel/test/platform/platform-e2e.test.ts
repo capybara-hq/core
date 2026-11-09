@@ -42,7 +42,7 @@ import {
  * pipeline decides (policy, approval bound to the input, availability on fresh facts), the real
  * operations run, and the log replays with zero drift. Phase 2's cases (the deployment-config repro
  * per role, accounts.create, approvals.waiting, conversations.delete) are in
- * platform-e2e-phase2.test.ts, on the org catalog environment.
+ * platform-e2e-phase2.test.ts, on the org catalog device.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");

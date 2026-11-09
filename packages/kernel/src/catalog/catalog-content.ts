@@ -109,6 +109,11 @@ export interface OrgCatalogTemplate {
   editableEndpoint: string[];
   auth: Record<string, unknown>;
   ownership: "org" | "personal" | null;
+  /**
+   * The template's setup guide in the item's latest version (`GET …/catalog/:itemId/guides/
+   * :guideId`), null without one (spec 2026-11-09-setup-guides-v2-design.md §9.3).
+   */
+  guide: { itemId: string; guideId: string } | null;
 }
 
 /** `GET /orgs/:orgId/catalog/:itemId`: the item and what the install wizard needs (latest version). */
@@ -140,7 +145,11 @@ export interface OrgCatalogDetail {
  * A connector template as an org sees it (the install wizard and the upgrade preview's inputs):
  * presets and editable paths, no credentials.
  */
-export function orgTemplateView(id: string, file: ConnectorTemplateFile): OrgCatalogTemplate {
+export function orgTemplateView(
+  id: string,
+  file: ConnectorTemplateFile,
+  guide: OrgCatalogTemplate["guide"] = null,
+): OrgCatalogTemplate {
   const t = file.template;
   return {
     id,
@@ -154,6 +163,7 @@ export function orgTemplateView(id: string, file: ConnectorTemplateFile): OrgCat
     ownership:
       t.ownership ??
       (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
+    guide,
   };
 }
 

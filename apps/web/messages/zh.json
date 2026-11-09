@@ -185,6 +185,7 @@
     "connector": {
       "not_found": "连接器不存在或已被删除。",
       "slug_taken": "该 slug 已被其他连接器使用。",
+      "guide_changed": "接入指南在你查看后又变了，请先看新的指南再确认。",
       "kind_unavailable": "该连接器类型所属的插件未在本组织启用。",
       "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
       "tool_not_found": "该连接器没有这个工具。",
@@ -266,7 +267,8 @@
       "item_removed": "这个插件已被删除。",
       "preview_stale": "删除这个插件的影响在预览之后发生了变化，请重新预览后再确认。",
       "not_owned": "只能共享本组织自己的技能和智能体模板。",
-      "guide_not_found": "插件没有这份接入指南。"
+      "guide_not_found": "插件没有这份接入指南。",
+      "check_not_found": "这项检查不在当前显示的接入指南里，请刷新页面。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -315,24 +317,24 @@
       "unavailable": "当前部署没有可用的沙箱。",
       "busy": "沙箱正忙，请稍后再试。"
     },
-    "environment": {
-      "not_found": "该环境不存在或已被删除。",
-      "name_taken": "你已有同名环境，请换一个名称。",
-      "limit_reached": "环境数量已达上限，请先删除一个再新建。",
-      "unavailable": "该环境的沙箱提供方当前不可用，请联系超级管理员。",
-      "files_lost": "该环境的文件已丢失。云端沙箱请在环境页面重建文件；接入设备请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个环境。",
-      "forbidden": "你已无法使用该环境。",
-      "files_on_device": "接入设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个环境。",
-      "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
-      "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。"
-    },
     "device": {
+      "not_found": "该设备不存在或已被删除。",
+      "name_taken": "你已有同名设备，请换一个名称。",
+      "limit_reached": "设备数量已达上限，请先删除一个再新建。",
+      "unavailable": "该设备的沙箱提供方当前不可用，请联系超级管理员。",
+      "files_lost": "该设备的文件已丢失。云端设备请在设备页面重建文件；本地设备请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
+      "forbidden": "你已无法使用该设备。",
+      "files_on_device": "本地设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
+      "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
+      "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
+      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。"
+    },
+    "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
       "slow_down": "请求过于频繁，请稍后再试。",
       "expired": "连接码已过期，请在电脑上重新发起连接。",
       "denied": "连接请求已被拒绝。",
       "code_invalid": "连接码无效或已使用，请核对电脑上显示的连接码。",
-      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
       "unavailable": "未能连接这台机器，请在机器上重新运行 capybara-device login。"
     },
     "skill": {
@@ -1359,11 +1361,11 @@
     "contextPct": "上下文 {n}%",
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
-    "pickEnvironment": "环境",
-    "environmentNote": "发出第一条消息后不能更换",
-    "environmentOffline": "没有可用的环境：你接入的设备都已离线。请在机器上启动 capybara-device 后再发送。",
-    "environmentLocked": "对话开始后环境不再更换",
-    "environmentDeleted": "环境已删除",
+    "pickDevice": "设备",
+    "deviceNote": "发出第一条消息后不能更换",
+    "deviceOffline": "没有可用的设备：你的本地设备都已离线。请在机器上启动 capybara-device 后再发送。",
+    "deviceLocked": "对话开始后设备不再更换",
+    "deviceDeleted": "设备已删除",
     "pickEffort": "思考档位",
     "nextMessage": "从下一条消息起生效",
     "agentDefault": "智能体默认",
@@ -1463,26 +1465,26 @@
     "download": "下载",
     "previewTruncated": "只显示开头部分，完整内容请下载。",
     "previewFailed": "预览加载失败。",
-    "environmentLine": "环境：{name} · {state}",
-    "environmentNone": "未绑定环境",
-    "environmentDeleted": "环境已删除",
-    "environmentFailed": "环境状态读取失败",
+    "deviceLine": "设备：{name} · {state}",
+    "deviceNone": "未绑定设备",
+    "deviceDeleted": "设备已删除",
+    "deviceFailed": "设备状态读取失败",
     "lastRun": "上次运行 · {parts}"
   },
   "pluginPage": {
     "pathLabel": "扩展页",
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
-  "environments": {
-    "title": "环境",
-    "listLabel": "我的环境",
-    "personal": "个人环境",
-    "demotedName": "个人环境（{provider}）",
-    "new": "新建环境",
+  "devices": {
+    "title": "设备",
+    "listLabel": "我的设备",
+    "personal": "个人设备",
+    "demotedName": "个人设备（{provider}）",
+    "new": "新建设备",
     "none": "无",
     "source": {
-      "cloud": "云端沙箱",
-      "device": "接入设备"
+      "cloud": "云端设备",
+      "local": "本地设备"
     },
     "state": {
       "running": "运行中",
@@ -1502,34 +1504,34 @@
       "allowlist": "仅允许名单内的主机",
       "open": "开放网络"
     },
-    "empty": "你还没有环境。",
+    "empty": "你还没有设备。",
     "noCloud": {
       "text": "平台没有云端沙箱。",
       "hint": "请联系超级管理员配置沙箱提供方。",
-      "notice": "平台没有云端沙箱，下列环境不可用，但仍可删除。请联系超级管理员配置沙箱提供方。"
+      "notice": "平台没有云端沙箱，下列云端设备不可用，但仍可删除。请联系超级管理员配置沙箱提供方。"
     },
     "create": {
-      "title": "新建环境",
+      "title": "新建设备",
       "name": "名称",
-      "nameHelp": "最多 64 个字符，你的环境名称不能重复。",
+      "nameHelp": "最多 64 个字符，你的设备名称不能重复。",
       "cancel": "取消",
       "submit": "创建",
-      "created": "已创建环境 {name}。",
-      "kindLabel": "环境来源",
-      "cloud": "云端沙箱",
+      "created": "已创建设备 {name}。",
+      "kindLabel": "设备类型",
+      "cloud": "云端",
       "cloudHint": "在平台的沙箱里运行，创建后即可使用。",
-      "device": "接入设备",
-      "deviceHint": "在你自己的电脑或服务器上运行命令。",
+      "local": "本地",
+      "localHint": "在你自己的电脑或服务器上运行命令。",
       "installStep": "1. 在这台机器上安装连接程序",
       "loginStep": "2. 登录并在打开的网页上确认",
       "copy": "复制",
       "copied": "已复制。",
-      "waiting": "正在等待机器连接…确认后它会出现在环境列表里。",
+      "waiting": "正在等待机器连接…确认后它会出现在设备列表里。",
       "connected": "已连接 {name}。",
       "close": "关闭"
     },
     "detail": {
-      "tabsLabel": "环境分区",
+      "tabsLabel": "设备分区",
       "tabs": {
         "summary": "概要"
       },
@@ -1540,28 +1542,28 @@
       "limits": "限制",
       "limitsValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk} · {egress}",
       "files": "文件",
-      "filesNote": "文件保留到环境被删除。",
+      "filesNote": "文件保留到设备被删除。",
       "suspendNote": "暂停会结束正在运行的进程。",
-      "demotedNote": "这是平台更换沙箱提供方之前你的个人环境。平台换回{provider}后，它会重新成为你的默认环境，文件也随之回来。",
-      "filesLostNote": "该环境的文件已在提供方丢失。重建文件后才能再次使用。",
-      "deviceFilesLostNote": "这个环境在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个环境，即可重建目录后继续使用。",
+      "demotedNote": "这是平台更换沙箱提供方之前你的个人设备。平台换回{provider}后，它会重新成为你的默认设备，文件也随之回来。",
+      "filesLostNote": "该设备的文件已在提供方丢失。重建文件后才能再次使用。",
+      "localFilesLostNote": "这个本地设备在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个设备，即可重建目录后继续使用。",
       "created": "创建时间",
       "rename": "重命名",
-      "renameTitle": "重命名环境",
+      "renameTitle": "重命名设备",
       "renameSubmit": "保存",
-      "renamed": "环境已重命名为 {name}。",
-      "delete": "删除环境",
-      "deleteTitle": "删除环境",
-      "deleteHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。输入环境名称以确认。",
-      "deleteDefaultHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的{name}。输入环境名称以确认。",
-      "deleted": "已删除环境 {name}。",
+      "renamed": "设备已重命名为 {name}。",
+      "delete": "删除设备",
+      "deleteTitle": "删除设备",
+      "deleteHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。输入设备名称以确认。",
+      "deleteDefaultHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的{name}。输入设备名称以确认。",
+      "deleted": "已删除设备 {name}。",
       "resetFiles": "重建文件",
       "resetTitle": "重建 {name} 的文件？",
       "resetHint": "工作区会被清空，下次使用时从空文件开始。",
       "resetSubmit": "重建文件",
       "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。",
-      "deviceFilesNote": "文件保存在这台机器上，不会上传到平台。",
-      "deleteDeviceHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入环境名称以确认。"
+      "localFilesNote": "文件保存在这台机器上，不会上传到平台。",
+      "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。"
     },
     "mode": {
       "os": "系统沙箱",
@@ -1569,7 +1571,7 @@
     },
     "machine": {
       "title": "机器",
-      "description": "运行这个环境命令的机器。",
+      "description": "运行这个设备命令的机器。",
       "name": "名称",
       "os": "系统",
       "mode": "运行方式",
@@ -1590,7 +1592,7 @@
     "actions": "操作",
     "inbox": "收件箱",
     "connectors": "连接器",
-    "environments": "环境",
+    "devices": "设备",
     "channels": "渠道",
     "skills": "技能",
     "evals": "评测与运行",
@@ -1900,7 +1902,8 @@
         "tools": "工具",
         "review": "复核",
         "credentials": "凭据",
-        "settings": "设置"
+        "settings": "设置",
+        "guide": "接入指南"
       },
       "refresh": "刷新工具",
       "refreshed": "工具列表已刷新。"
@@ -2400,19 +2403,45 @@
     "tabs": {
       "all": "全部",
       "error": "出错"
+    }
+  },
+  "setupGuide": {
+    "title": "接入指南",
+    "hint": "按插件的说明在平台上创建应用；下面的内容已按这个渠道填好，复制后粘贴即可。",
+    "modeLabel": "接入方式",
+    "modes": {
+      "long_connection": "长连接",
+      "webhook": "Webhook"
     },
-    "guide": {
-      "title": "接入指南",
-      "hint": "按插件提供的步骤在平台上创建应用；下面的文件已按这个渠道填好，复制后粘贴即可。",
-      "modeLabel": "接入方式",
-      "stepsLabel": "接入步骤",
-      "unresolved": "{names} 现在还没有值，原样显示。",
-      "unresolvedOnSave": "{names} 现在还没有值，原样显示：保存渠道后才会填上。",
-      "unresolvedPublicUrl": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置平台的公开地址（http.publicUrl）。",
-      "unresolvedWebhookBase": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置 Webhook 回调地址（channels.webhookBaseUrl）。",
-      "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
-      "driftAck": "我已更新 {plugin} 应用",
-      "driftAcked": "已记录：应用与插件的接入配置一致。"
+    "checkAfterSave": "保存后检查",
+    "checksRateLimited": "检查次数太多，请一分钟后再重新检查；各项显示的是上次的结果。",
+    "checksUnavailable": "暂时读不到检查结果，请稍后刷新页面。",
+    "unresolved": {
+      "not_saved": "{names} 保存后显示，现在原样显示。",
+      "public_url": "{names} 现在原样显示：需要超级管理员设置 http.publicUrl（平台的公开地址）。",
+      "webhook_base": "{names} 现在原样显示：需要超级管理员设置 channels.webhookBaseUrl（Webhook 回调地址）。",
+      "no_connector": "{names} 创建连接器后显示，现在原样显示。",
+      "no_org": "{names} 在各组织里填上，这里原样显示。"
+    },
+    "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
+    "driftAck": "我已更新 {plugin} 应用",
+    "driftAcked": "已记录：应用与插件的接入配置一致。",
+    "connectorDriftNotice": "{plugin} 插件更新了连接器的接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest。",
+    "templateHint": "先按下面的说明在第三方平台注册应用，拿到客户端信息后再填写下方的字段。",
+    "connectorHint": "这个连接器的模板附带的接入指南，内容已按本组织和这个连接器填好。",
+    "openGuide": "查看接入指南",
+    "howToConnect": "如何连接",
+    "howToConnectTitle": "如何连接 {name}",
+    "adminGuideLink": "查看管理员接入指南",
+    "close": "关闭",
+    "platformHint": "组织管理员配置这个模板时看到的接入指南。组织名称、连接器名称在各组织里填上；检查要等组织创建了连接器才运行，这里不显示。",
+    "askAgent": {
+      "action": "让智能体协助",
+      "draft": "帮我完成 {target} 的「{title}」接入设置。",
+      "reference": "接入指南：{plugin} 插件的 {guideId}（目录项 {itemId}，位置 {place}，对象 {audience}）；目标：{target}。请用 Platform 的 setup 操作读取指南，带我完成当前这一步并运行检查；所有密钥我会自己在页面上填写。",
+      "targetConnection": "渠道连接 {id}",
+      "targetConnector": "连接器 {id}",
+      "targetNone": "尚未保存"
     }
   },
   "extensions": {
@@ -2646,7 +2675,7 @@
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
     "goHome": "进入 Capybara"
   },
-  "device": {
+  "deviceLink": {
     "title": "连接这台机器",
     "subtitle": "确认这个连接码与终端里显示的一致。",
     "code": "连接码",
@@ -2658,16 +2687,16 @@
     "system": "系统",
     "programVersion": "程序版本",
     "org": "组织",
-    "environment": "环境",
-    "newEnvironment": "新建环境",
-    "name": "新环境名称",
+    "device": "设备",
+    "newDevice": "新建设备",
+    "name": "新设备名称",
     "noOrg": "你还没有加入任何组织，无法连接机器。",
-    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在环境页断开，或在这台机器上运行 capybara-device stop。",
+    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在设备页断开，或在这台机器上运行 capybara-device stop。",
     "confirm": "确认连接",
     "deny": "拒绝",
     "doneTitle": "已连接",
     "doneHint": "回到终端，这台机器已经可以使用了。",
-    "openEnvironment": "查看环境",
+    "openDevice": "查看设备",
     "deniedTitle": "已拒绝",
     "deniedHint": "这台机器不会连接。",
     "invalidTitle": "连接码已失效",
@@ -5008,7 +5037,8 @@
       "tabsLabel": "组件",
       "tabs": {
         "versions": "版本",
-        "orgs": "组织"
+        "orgs": "组织",
+        "guide": "接入指南"
       },
       "fields": {
         "from": "来自",

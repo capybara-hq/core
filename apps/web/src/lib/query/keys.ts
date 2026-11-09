@@ -51,10 +51,10 @@ export const keys = {
         "agentTemplateDeletePreview",
         id,
       ],
-      /** The person's environments in the org. */
-      environments: (): readonly unknown[] => [...all, "environments"],
-      /** One of the person's environments. */
-      environment: (id: string): readonly unknown[] => [...all, "environment", id],
+      /** The person's devices in the org. */
+      devices: (): readonly unknown[] => [...all, "devices"],
+      /** One of the person's devices. */
+      device: (id: string): readonly unknown[] => [...all, "device", id],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
@@ -78,25 +78,56 @@ export const keys = {
       /** Every rendered setup guide (an invalidation prefix). */
       setupGuidesAll: (): readonly unknown[] => [...all, "setupGuide"],
       /**
-       * A plugin's setup guide rendered for a connection / mode / name, at the item's version (an
-       * upgrade reads the new guide; "" where the version is unknown, as on 新建渠道).
+       * A plugin's setup guide rendered for a target (connection, name typed so far, connector),
+       * mode, audience and language, at the item's version (an upgrade reads the new guide; ""
+       * where the version is unknown, as on 新建渠道).
        */
       setupGuide: (
         itemId: string,
         guideId: string,
         version: string,
-        connectionId: string,
-        mode: string,
-        name: string,
+        q: {
+          connectionId: string;
+          name: string;
+          connectorId: string;
+          mode: string;
+          audience: string;
+          locale: string;
+        },
       ): readonly unknown[] => [
         ...all,
         "setupGuide",
         itemId,
         guideId,
         version,
-        connectionId,
-        mode,
-        name,
+        q.connectionId,
+        q.name,
+        q.connectorId,
+        q.mode,
+        q.audience,
+        q.locale,
+      ],
+      /** Every setup guide's check states (an invalidation prefix: a target's input changed). */
+      setupChecksAll: (): readonly unknown[] => [...all, "setupChecks"],
+      /**
+       * The cached states of a rendered guide's live checks: the guide at the item's version, the
+       * target, the mode and the audience (the language only picks the text, so it is not part).
+       */
+      setupChecks: (
+        itemId: string,
+        guideId: string,
+        version: string,
+        q: { connectionId: string; connectorId: string; mode: string; audience: string },
+      ): readonly unknown[] => [
+        ...all,
+        "setupChecks",
+        itemId,
+        guideId,
+        version,
+        q.connectionId,
+        q.connectorId,
+        q.mode,
+        q.audience,
       ],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
@@ -311,7 +342,7 @@ export const keys = {
           events: (): readonly unknown[] => [...c, "events"],
           queue: (): readonly unknown[] => [...c, "queue"],
           files: (): readonly unknown[] => [...c, "files"],
-          environment: (): readonly unknown[] => [...c, "environment"],
+          device: (): readonly unknown[] => [...c, "device"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           /** The agent tree of a root conversation (the agent map). */
           agentTree: (): readonly unknown[] => [...c, "agentTree"],
@@ -371,7 +402,7 @@ export const keys = {
        */
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
       /**
-       * The machine waiting behind a device user code (`/device`). Like a binding it needs a
+       * The machine waiting behind a device user code (`/devices/link`). Like a binding it needs a
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
        */
       pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
@@ -383,6 +414,13 @@ export const keys = {
         "clientExtensions",
         plugin,
       ],
+      /** A template's setup guide as the super admin sees it (no org, no target), per language. */
+      adminSetupGuide: (
+        itemId: string,
+        guideId: string,
+        version: string,
+        locale: string,
+      ): readonly unknown[] => [...all, "adminSetupGuide", itemId, guideId, version, locale],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /** The super admin's inbox (its items). */

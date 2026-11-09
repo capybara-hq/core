@@ -61,7 +61,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${BASE}`]: () => json(200, CONV()),
     [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${BASE}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${BASE}/environment`]: () => json(200, { environment: null }),
+    [`GET ${BASE}/device`]: () => json(200, { device: null }),
     [`GET ${BASE}/tools`]: () => json(200, { tools: [] }),
     [`GET ${ORG}/agents`]: () => json(200, AGENTS),
     [`GET ${ORG}/models`]: () => json(200, MODELS),

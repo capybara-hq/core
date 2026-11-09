@@ -35,7 +35,7 @@ let opened: string[];
 
 const pending = {
   status: 400,
-  body: { error: { code: "device.authorization_pending", message: "wait" } },
+  body: { error: { code: "device_sign_in.authorization_pending", message: "wait" } },
 };
 
 beforeEach(async () => {
@@ -63,7 +63,7 @@ beforeEach(async () => {
           deviceCode: "cap_dvc_x",
           userCode: "BCDF-GHJK",
           verificationUri: `${base}/device`,
-          verificationUriComplete: `${base}/device?code=BCDF-GHJK`,
+          verificationUriComplete: `${base}/devices/link?code=BCDF-GHJK`,
           interval: 5,
           expiresIn: 600,
         });
@@ -105,7 +105,7 @@ const granted = {
   body: {
     credential: "cap_dev_secret",
     orgId: "org-1",
-    environmentId: "env-1",
+    deviceId: "env-1",
     connectUrl: "wss://x.test/device/connect",
     reconnectGraceSeconds: 90,
   },
@@ -118,8 +118,8 @@ describe("login", () => {
     expect(await run(["login", "--url", `${base}/`])).toBe(0);
     expect(sleeps).toEqual([5000, 5000, 5000]);
     expect(out[0]).toContain("BCDF-GHJK");
-    expect(out[0]).toContain(`${base}/device?code=BCDF-GHJK`);
-    expect(opened).toEqual([`${base}/device?code=BCDF-GHJK`]);
+    expect(out[0]).toContain(`${base}/devices/link?code=BCDF-GHJK`);
+    expect(opened).toEqual([`${base}/devices/link?code=BCDF-GHJK`]);
     expect(seen.every((s) => s.csrf === "1")).toBe(true);
     expect(seen[0]?.body).toMatchObject({ os: "linux", name: expect.any(String) });
     expect(seen[1]?.body).toEqual({ deviceCode: "cap_dvc_x" });
@@ -128,7 +128,7 @@ describe("login", () => {
     expect(cred).toMatchObject({
       url: base,
       credential: "cap_dev_secret",
-      environmentId: "env-1",
+      deviceId: "env-1",
       orgId: "org-1",
       mode: "os",
       reconnectGraceSeconds: 90,
@@ -178,22 +178,29 @@ describe("login", () => {
     expect(existsSync(join(dir, "workspace"))).toBe(true);
   });
 
-  it("slows down on device.slow_down", async () => {
-    const slow = { status: 400, body: { error: { code: "device.slow_down", message: "slow" } } };
+  it("slows down on device_sign_in.slow_down", async () => {
+    const slow = {
+      status: 400,
+      body: { error: { code: "device_sign_in.slow_down", message: "slow" } },
+    };
     tokenAnswers = [slow, slow, granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(sleeps).toEqual([5000, 10000, 15000]);
   });
 
-  it("stops on device.denied with exit 1", async () => {
-    tokenAnswers = [{ status: 400, body: { error: { code: "device.denied", message: "no" } } }];
+  it("stops on device_sign_in.denied with exit 1", async () => {
+    tokenAnswers = [
+      { status: 400, body: { error: { code: "device_sign_in.denied", message: "no" } } },
+    ];
     expect(await run(["login", "--url", base])).toBe(1);
     expect(err.join("\n")).toContain("denied");
     expect(existsSync(credFile())).toBe(false);
   });
 
-  it("stops on device.expired with exit 1", async () => {
-    tokenAnswers = [{ status: 400, body: { error: { code: "device.expired", message: "old" } } }];
+  it("stops on device_sign_in.expired with exit 1", async () => {
+    tokenAnswers = [
+      { status: 400, body: { error: { code: "device_sign_in.expired", message: "old" } } },
+    ];
     expect(await run(["login", "--url", base])).toBe(1);
     expect(err.join("\n")).toContain("expired");
   });
@@ -204,7 +211,7 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(err.join("\n")).toContain("credential.json");
-    expect(JSON.parse(readFileSync(credFile(), "utf8")).environmentId).toBe("env-1");
+    expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
 
     await run(["logout"]);
     tokenAnswers = [granted];
@@ -227,7 +234,10 @@ describe("login", () => {
   });
 
   it("gives up once expiresIn has passed, even on slow_down", async () => {
-    const slow = { status: 400, body: { error: { code: "device.slow_down", message: "slow" } } };
+    const slow = {
+      status: 400,
+      body: { error: { code: "device_sign_in.slow_down", message: "slow" } },
+    };
     tokenAnswers = Array.from({ length: 100 }, () => slow);
     expect(await run(["login", "--url", base])).toBe(1);
     expect(err.join("\n")).toContain("expired");
@@ -257,7 +267,7 @@ describe("status and logout", () => {
     out.length = 0;
     expect(await run(["status", "--json"])).toBe(0);
     const shown = JSON.parse(out[0] ?? "");
-    expect(shown).toMatchObject({ loggedIn: true, environmentId: "env-1" });
+    expect(shown).toMatchObject({ loggedIn: true, deviceId: "env-1" });
     expect(JSON.stringify(shown)).not.toContain("cap_dev_secret");
     expect(await run(["logout"])).toBe(0);
     expect(existsSync(credFile())).toBe(false);

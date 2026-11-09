@@ -18,7 +18,7 @@ const cred = (): Credential => ({
   connectUrl: kernel.url,
   credential: "cap_dev_secret",
   orgId: "o",
-  environmentId: "e1",
+  deviceId: "e1",
   dir: "/work/e1",
   mode: "os",
   reconnectGraceSeconds: 120,
@@ -318,7 +318,7 @@ describe("client", () => {
     await kernel.waitFor("r1", () => kernel.of("res").find((r) => r.id === "r1"));
   });
 
-  it("a stop op for a deleted environment exits 0 with the deleted message", async () => {
+  it("a stop op for a deleted device exits 0 with the deleted message", async () => {
     const c = start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     kernel.send(0, req("s1", "stop", { reason: "deleted" }));

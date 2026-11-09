@@ -1,5 +1,52 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.11
+
+### Minor Changes
+
+- ba8ebaf: Setup guides v2: `capybara-plugin pack` / `check` ship and validate the Markdown guide documents
+  `guides/<id>.md` and `guides/<id>.zh.md` with the SDK validator (errors fail; warnings such as a
+  text variable outside quotes in a yaml block are printed as `plugin-pack-guide` and fail
+  nothing; plugin check ids must be in the extension's `permissions.setupChecks`). The new
+  `capybara-plugin guide <id>` command prints a guide rendered for a locale, mode, audience and
+  variable values. `PackResult` gains `warnings`. The v1 template files are no longer read.
+  The permission check gains `perm-setup-check`: every `ctx.setup.check(id, …)` id must be listed in
+  `permissions.setupChecks`.
+
+### Patch Changes
+
+- Updated dependencies [848fb39]
+- Updated dependencies [2f01b01]
+- Updated dependencies [155c1cf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [6622107]
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/kernel@0.1.0-rc.14
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
+## 0.1.0-rc.10
+
+### Minor Changes
+
+- adfc0af: `capybara-plugin check` reports UI slot problems: a slot this SDK does not know (`ui-slot-unknown`), an `after` that is no anchor of the slot (`ui-slot-anchor`) and a deprecated `place` (`ui-place-deprecated`, a warning).
+
+### Patch Changes
+
+- Updated dependencies [ec79610]
+- Updated dependencies [0a5b15d]
+- Updated dependencies [c12e7a7]
+- Updated dependencies [17fdfb1]
+- Updated dependencies [0e765e2]
+- Updated dependencies [d495d7d]
+- Updated dependencies [18defa0]
+- Updated dependencies [0a35407]
+- Updated dependencies [cf93278]
+- Updated dependencies [199f895]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.9
+  - @capybara-hq/kernel@0.1.0-rc.13
+
 ## 0.1.0-rc.9
 
 ### Minor Changes

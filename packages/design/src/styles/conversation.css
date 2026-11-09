@@ -1604,6 +1604,16 @@ button.cb-file-card:focus-visible {
 .cb-composer-input::placeholder {
   color: var(--cb-faint);
 }
+/* The token warning (§6.16.2, setup guides v2 spec §12.1): the Callout's warn line at the top of
+   the frame, never a box in it; its two buttons go under the sentence when the row is short. */
+.cb-composer > .cb-callout {
+  flex-wrap: wrap;
+  row-gap: var(--cb-space-1);
+  margin-bottom: var(--cb-space-2);
+}
+.cb-composer > .cb-callout > .cb-callout-text {
+  flex: 1 1 60%;
+}
 
 /* ── Greeting (§6.16.25) ── */
 

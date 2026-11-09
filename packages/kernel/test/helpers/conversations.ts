@@ -88,7 +88,7 @@ const noRuns: RunControl = {
 /**
  * A conversations service over test doubles: what is left out refuses (`resolveAttachments`,
  * `bindFiles`, `invoker`, the model `providers`) or does nothing (`runs`); conversations are
- * created unbound (no environment).
+ * created unbound (no device).
  */
 export function conversationsFor(
   h: DbHandles,

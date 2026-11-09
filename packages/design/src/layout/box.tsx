@@ -3,7 +3,8 @@ import { createContext, type ReactNode, useContext } from "react";
 /**
  * The box a component is drawn in (spec §1 "One box is enough", §2.5): a Card, a form section's
  * card, a Dialog, Sheet or Popover, an inline card, a property section, the narrow properties
- * sheet, a Callout, a DangerZone or an ObjectList (every box `web-ui-box-in-box` treats as one).
+ * sheet, a Callout, a DangerZone, an ObjectList (every box `web-ui-box-in-box` treats as one) or
+ * the composer frame (its token warning is the warn line).
  * `null` is the page ground, or a full-height pane (RightPanel), which holds content like a page.
  */
 export type BoxKind =
@@ -17,7 +18,8 @@ export type BoxKind =
   | "popover"
   | "callout"
   | "danger-zone"
-  | "object-list";
+  | "object-list"
+  | "composer";
 
 const BoxContext = createContext<BoxKind | null>(null);
 

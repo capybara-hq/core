@@ -27,7 +27,7 @@ import {
   DEFAULT_MAX_RUN_SECONDS,
   type KernelConfig,
 } from "../config/schema.js";
-import type { EnvironmentInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
+import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -48,8 +48,8 @@ import {
   sandboxBusy,
 } from "./leases.js";
 import {
-  DEVICE_PROVIDER,
-  providerForEnvironment,
+  LOCAL_PROVIDER,
+  providerForDevice,
   type SandboxProviderEntry,
   SandboxProviders,
 } from "./providers.js";
@@ -73,7 +73,7 @@ const SWEEP_INTENT_WAIT_MS = 1000;
 /** Rows one sweep handles at most, and the provider calls it runs at once. */
 const SWEEP_BATCH = 200;
 const SWEEP_CONCURRENCY = 4;
-/** How long `destroyEnvironment` / `resetFileSystem` wait for the exclusive lease (running commands). */
+/** How long `destroyDevice` / `resetFileSystem` wait for the exclusive lease (running commands). */
 const EXCLUSIVE_WAIT_MS = 10 * 60_000;
 /** The time limit of the exec that kills lost background tasks after a resume (ms). */
 const PENDING_KILL_TIMEOUT_MS = 30_000;
@@ -85,13 +85,13 @@ export interface SandboxUseInfo {
   /** This call created the instance (first use, or a rebuild). */
   fresh: boolean;
   /**
-   * The environment had an instance before that is no longer there (destroyed after inactivity,
+   * The device had an instance before that is no longer there (destroyed after inactivity,
    * gone at the provider, or rebuilt by another holder since this holder last used it): this is a
    * new instance on the kept files, so earlier processes are gone.
    */
   restarted: boolean;
   /**
-   * The environment's files were reset since this holder last used it (on request, or after they
+   * The device's files were reset since this holder last used it (on request, or after they
    * were lost): earlier files are gone too. Set only when true; `restarted` is then false.
    */
   filesReset?: true;
@@ -108,7 +108,7 @@ type EnteredInfo = Omit<SandboxUseInfo, "roots">;
 /** Who uses the sandbox in {@link SandboxService.withSandbox}. */
 export interface SandboxUseContext {
   orgId: string;
-  environmentId: string;
+  deviceId: string;
   /** The agent conversation using it (a sub-agent's own for a child): what it last saw is tracked. */
   holderConversationId: string;
   /** Passed with every `exec` (audit and attribution). */
@@ -117,8 +117,8 @@ export interface SandboxUseContext {
 
 export type { SandboxProviderEntry } from "./providers.js";
 
-type Row = Selectable<EnvironmentInstancesTable>;
-type Patch = UpdateObject<KernelDatabase, "environment_instances">;
+type Row = Selectable<DeviceInstancesTable>;
+type Patch = UpdateObject<KernelDatabase, "device_instances">;
 type ExecArgs = Parameters<SandboxProvider["exec"]>[1];
 /** The fence read under the lease (incremented by every fenced write). */
 interface Fence {
@@ -126,7 +126,7 @@ interface Fence {
 }
 
 /**
- * One instance of an environment: its handle and the row's `created_at`, which the fenced write
+ * One instance of a device: its handle and the row's `created_at`, which the fenced write
  * after every `create` sets. The handle alone is not enough: sandbox-docker's handle is the
  * instance name, the same after a rebuild (spec §10.10).
  */
@@ -159,7 +159,7 @@ export type IfRunningResult<T> =
    * `creating`, `destroyed`, or `running` recorded with another provider), `gone` without a row.
    */
   | { kind: "not_running"; status: Row["status"] | "gone" }
-  /** The environment now records another instance (a rebuild). */
+  /** The device now records another instance (a rebuild). */
   | { kind: "other_instance" };
 
 /** A holder ready to run `fn`: a shared lease, the running instance, the use info. */
@@ -167,7 +167,7 @@ interface Entered {
   lease: SandboxLease;
   handle: SandboxHandle;
   createdAt: number;
-  /** The environment's file reset count (`fs_resets`) when the holder entered. */
+  /** The device's file reset count (`fs_resets`) when the holder entered. */
   fsResets: number;
   info: EnteredInfo;
 }
@@ -176,29 +176,28 @@ interface Entered {
 const opSignal = (lease: SandboxLease): AbortSignal =>
   AbortSignal.any([lease.signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]);
 
-/** The provider-side name of an environment's file system and instance. */
-export const environmentResourceName = (environmentId: string): string =>
-  `cap-env-${environmentId}`;
+/** The provider-side name of a device's file system and instance. */
+export const deviceResourceName = (deviceId: string): string => `cap-device-${deviceId}`;
 
-/** The environment is missing, deleted, or not in the caller's org (404; ids cannot be probed). */
-export const environmentNotFound = (): ApiError =>
-  new ApiError("environment.not_found", "This environment does not exist or was deleted.");
+/** The device is missing, deleted, or not in the caller's org (404; ids cannot be probed). */
+export const deviceNotFound = (): ApiError =>
+  new ApiError("device.not_found", "This device does not exist or was deleted.");
 
 /**
- * The environment's file system is gone at the provider (409); never replaced silently. On a
- * connected machine (`device`, details `[{ source: "device" }]`) the directory is the machine
- * owner's: `capybara-device logout`, then `login` into the environment, recreates it (ruling R24).
+ * The device's file system is gone at the provider (409); never replaced silently. On a
+ * connected machine (`local`, details `[{ source: "local" }]`) the directory is the machine
+ * owner's: `capybara-device logout`, then `login` into the device, recreates it (ruling R24).
  */
-export const environmentFilesLost = (device = false): ApiError =>
-  device
+export const deviceFilesLost = (local = false): ApiError =>
+  local
     ? new ApiError(
-        "environment.files_lost",
-        "The environment's directory is gone from its connected machine; run capybara-device logout, then capybara-device login into this environment, on that machine to recreate it.",
-        [{ source: "device" }],
+        "device.files_lost",
+        "The local device's directory is gone from its machine; run capybara-device logout, then capybara-device login into this device, on that machine to recreate it.",
+        [{ source: "local" }],
       )
     : new ApiError(
-        "environment.files_lost",
-        "The environment's files are gone; reset its files from the environments page to start with an empty workspace.",
+        "device.files_lost",
+        "The device's files are gone; reset its files from the devices page to start with an empty workspace.",
       );
 
 /**
@@ -278,13 +277,13 @@ export const sandboxUnavailable = (): ApiError =>
   );
 
 /**
- * The environment's files are kept by a provider that is not the current one (503); its files are
+ * The device's files are kept by a provider that is not the current one (503); its files are
  * not migrated, so it stays unusable until that provider is back (spec §4.2 item 13).
  */
 const otherProvider = (provider: string): ApiError =>
   new ApiError(
-    "environment.unavailable",
-    `This environment's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
+    "device.unavailable",
+    `This device's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
   );
 
 const abortReason = (signal: AbortSignal): unknown =>
@@ -321,19 +320,19 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
 }
 
 /**
- * The kernel's sandbox service over the `sandbox@2` provider, keyed by **environment** (spec
- * 2026-11-07-environments-design §4.2, §5.1): one file system kept until the environment is
+ * The kernel's sandbox service over the `sandbox@2` provider, keyed by **device** (spec
+ * 2026-11-07-environments-design §4.2, §5.1): one file system kept until the device is
  * deleted, plus one instance attached to it that comes and goes; all conversations bound to the
- * environment (and their sub-agents) share both.
+ * device (and their sub-agents) share both.
  *
  * - **Lazy creation**: the first {@link withSandbox} creates the file system
- *   (`createFileSystem`, name `cap-env-<environmentId>`) and then the instance on it; state lives
- *   in `environment_instances`. A file system gone at the provider is never replaced silently:
- *   `fs_status` becomes `lost` and uses fail with `environment.files_lost` until
+ *   (`createFileSystem`, name `cap-device-<deviceId>`) and then the instance on it; state lives
+ *   in `device_instances`. A file system gone at the provider is never replaced silently:
+ *   `fs_status` becomes `lost` and uses fail with `device.files_lost` until
  *   {@link resetFileSystem}.
- * - **Leases** (phase C, spec §10, {@link SandboxLeases}), keyed by environment id: using an
+ * - **Leases** (phase C, spec §10, {@link SandboxLeases}), keyed by device id: using an
  *   instance recorded `running` with the current provider takes a **shared** lease, so up to
- *   `sandbox.maxConcurrentCommands` holders (all sessions of the environment) run at once. Every
+ *   `sandbox.maxConcurrentCommands` holders (all sessions of the device) run at once. Every
  *   lifecycle change (create, resume, rebuild, suspend, destroy, reset) takes the **exclusive**
  *   lease, alone; a caller that needs one on the use path sets the intent so new shared leases wait
  *   for it, and downgrades to a shared lease to run its own command once the instance runs.
@@ -346,9 +345,9 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   provider calls.
  * - **Suspension and destruction**: the sweeps (`SandboxSweepJobs`, crons) call
  *   {@link suspendIdle} / {@link destroyInactive}; they try the exclusive lease once and skip an
- *   environment with any holder; one past `maxRunningMinutes` gets the intent for a short window
+ *   device with any holder; one past `maxRunningMinutes` gets the intent for a short window
  *   (about a second) so the suspension can get in when its commands end. Inactivity destroys only
- *   the instance (files kept); a deleted environment or org loses its files too.
+ *   the instance (files kept); a deleted device or org loses its files too.
  * - **Transparent recovery**: a suspended instance is resumed on next use; when `resume` returns
  *   `gone`, the instance was destroyed, or `fn` throws `SandboxGoneError` (retried once), a new
  *   instance is created on the kept files and `restarted` is true. Several holders hitting `gone`
@@ -356,7 +355,7 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * - **Takeover** (spec §10.5; environments spec §4.2): every holder records itself in
  *   `capk:sandbox-holders:<env>` (again before each `exec`) and its commands carry its lease token
  *   as `tag`. An acquirer that finds a record without a live lease (a crashed holder) kills only
- *   that holder's commands (`killTagged`): other conversations of the environment may be running
+ *   that holder's commands (`killTagged`): other conversations of the device may be running
  *   commands. `killAll` runs only under the exclusive lease, before the downgrade, on an instance
  *   this holder just resumed from `suspended` (nobody else can hold it; a provider that keeps
  *   memory across a pause brings old commands back); it also covers crashed holders' records,
@@ -366,16 +365,16 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
  *
- * - **Provider per environment** (environments spec §6): each call resolves the provider from
- *   the environment's `environments.provider` ({@link providerForEnvironment}): a `device`
- *   environment runs on the kernel-internal `@device` provider (never the cloud one), a cloud
- *   environment on the loaded `sandbox@2` extension. A `@device` instance is never suspended or
- *   destroyed for inactivity; a deleted `@device` environment (or one of a deleted org) is
+ * - **Provider per device** (environments spec §6): each call resolves the provider from
+ *   the device's `devices.provider` ({@link providerForDevice}): a `device`
+ *   device runs on the kernel-internal `@local` provider (never the cloud one), a cloud
+ *   device on the loaded `sandbox@2` extension. A `@local` instance is never suspended or
+ *   destroyed for inactivity; a deleted `@local` device (or one of a deleted org) is
  *   destroyed by the sweep like any other.
  *
- * Files kept by another provider than the current one make the environment unusable
- * (`environment.unavailable`) until that provider is back; deleting it still works while that
- * provider is loaded ({@link SandboxProviders.forName}). Without the environment's provider
+ * Files kept by another provider than the current one make the device unusable
+ * (`device.unavailable`) until that provider is back; deleting it still works while that
+ * provider is loaded ({@link SandboxProviders.forName}). Without the device's provider
  * {@link availableFor} is false and uses throw `sandbox.unavailable` (503). No in-process state:
  * replicas share it through PG and Redis.
  */
@@ -403,44 +402,44 @@ export class SandboxService {
 
   /**
    * Whether there is a cloud sandbox provider (a loaded `sandbox@2` extension). For gates that have
-   * no environment yet (tool listing, skill files); a call on an environment asks
+   * no device yet (tool listing, skill files); a call on a device asks
    * {@link availableFor}.
    */
   get cloudAvailable(): boolean {
     return this.providers.cloud() !== undefined;
   }
 
-  /** Whether the environment's provider is there (`@device` registered, or a cloud provider). */
-  async availableFor(environmentId: string): Promise<boolean> {
-    return (await this.providerOf(environmentId)) !== undefined;
+  /** Whether the device's provider is there (`@local` registered, or a cloud provider). */
+  async availableFor(deviceId: string): Promise<boolean> {
+    return (await this.providerOf(deviceId)) !== undefined;
   }
 
   /**
-   * The provider the environment works with, read from its row ({@link providerForEnvironment});
-   * a missing row (or one of another org, with `orgId`) reads as a cloud environment, whose use
+   * The provider the device works with, read from its row ({@link providerForDevice});
+   * a missing row (or one of another org, with `orgId`) reads as a cloud device, whose use
    * then fails as not found.
    */
   private async providerOf(
-    environmentId: string,
+    deviceId: string,
     orgId?: string,
   ): Promise<SandboxProviderEntry | undefined> {
     const row = await this.db
-      .selectFrom("environments")
+      .selectFrom("devices")
       .select("provider")
-      .where("id", "=", environmentId)
+      .where("id", "=", deviceId)
       .$if(orgId !== undefined, (q) => q.where("org_id", "=", orgId as string))
       .executeTakeFirst();
-    return providerForEnvironment(this.providers, row?.provider ?? null);
+    return providerForDevice(this.providers, row?.provider ?? null);
   }
 
   /** {@link providerOf}, or `sandbox.unavailable` (503) without it. */
-  private async require(environmentId: string, orgId?: string): Promise<SandboxProviderEntry> {
-    const p = await this.providerOf(environmentId, orgId);
+  private async require(deviceId: string, orgId?: string): Promise<SandboxProviderEntry> {
+    const p = await this.providerOf(deviceId, orgId);
     if (!p) throw sandboxUnavailable();
     return p;
   }
 
-  /** Concurrent holders of one environment (`sandbox.maxConcurrentCommands`, read at every use). */
+  /** Concurrent holders of one device (`sandbox.maxConcurrentCommands`, read at every use). */
   private get cap(): number {
     return this.config.get().sandbox.maxConcurrentCommands;
   }
@@ -448,7 +447,7 @@ export class SandboxService {
   /**
    * The org's effective sandbox limits (spec §8.4): the deployment's `sandbox.limits`, egress
    * narrowed by the org setting `sandboxEgress` (Ruling M19), cpu / memory per the super admin's
-   * org override (C19 / Ruling M16). Instances are created with them; phase 1 environments use
+   * org override (C19 / Ruling M16). Instances are created with them; phase 1 devices use
    * them unchanged.
    */
   async orgLimits(orgId: string): Promise<SandboxLimits> {
@@ -471,18 +470,18 @@ export class SandboxService {
   }
 
   /**
-   * The environment's instance state as shown to people (read only, no lease): `running` /
+   * The device's instance state as shown to people (read only, no lease): `running` /
    * `suspended` and the last use. No instance, a destroyed one, or one stuck in `creating` (being
    * created, or a failed create the next use retries) is null.
    */
   async status(
     orgId: string,
-    environmentId: string,
+    deviceId: string,
   ): Promise<{ status: "running" | "suspended"; lastUsedAt: Date } | null> {
     const row = await this.db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .select(["status", "last_used_at"])
-      .where("environment_id", "=", environmentId)
+      .where("device_id", "=", deviceId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!row || (row.status !== "running" && row.status !== "suspended")) return null;
@@ -490,15 +489,15 @@ export class SandboxService {
   }
 
   /**
-   * The instance the environment records now (its `created_at`), while it has one that runs or is
+   * The instance the device records now (its `created_at`), while it has one that runs or is
    * suspended; null otherwise. Read without a lease: a caller inside `withSandbox` reads the
    * instance its own lease keeps.
    */
-  async currentInstance(environmentId: string): Promise<{ createdAt: Date } | null> {
+  async currentInstance(deviceId: string): Promise<{ createdAt: Date } | null> {
     const row = await this.db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .select(["status", "handle", "created_at"])
-      .where("environment_id", "=", environmentId)
+      .where("device_id", "=", deviceId)
       .executeTakeFirst();
     if (!row || row.handle === null) return null;
     if (row.status !== "running" && row.status !== "suspended") return null;
@@ -506,7 +505,7 @@ export class SandboxService {
   }
 
   /**
-   * Runs `fn` on the environment's instance only while it runs the instance created at
+   * Runs `fn` on the device's instance only while it runs the instance created at
    * `instance.createdAt` (background tasks, spec 2026-11-05-background-bash-design §4.3). It never
    * creates, resumes or rebuilds one: an instance that is missing, suspended, being created or
    * destroyed (or recorded with another provider) is `not_running`, one that records another
@@ -518,21 +517,21 @@ export class SandboxService {
    * too) are thrown as they are.
    */
   async ifRunning<T>(
-    environmentId: string,
+    deviceId: string,
     instance: { createdAt: Date },
     fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<IfRunningResult<T>> {
-    const p = await this.require(environmentId);
-    const env = environmentId;
+    const p = await this.require(deviceId);
+    const env = deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
       const row = await this.db
-        .selectFrom("environment_instances")
+        .selectFrom("device_instances")
         .selectAll()
-        .where("environment_id", "=", env)
+        .where("device_id", "=", env)
         .executeTakeFirst();
       if (!row) return { kind: "not_running", status: "gone" };
       if (row.created_at.getTime() !== instance.createdAt.getTime()) {
@@ -545,7 +544,7 @@ export class SandboxService {
       const lease = await this.leases.tryShared(env, this.cap, token);
       if (lease) {
         const e = await this.asShared(
-          { orgId: row.org_id, environmentId: env },
+          { orgId: row.org_id, deviceId: env },
           p,
           lease,
           (r): r is Row & { handle: SandboxHandle } =>
@@ -577,16 +576,16 @@ export class SandboxService {
   }
 
   /**
-   * A short lease on one path of the environment around the kernel's own read-modify-write of
+   * A short lease on one path of the device around the kernel's own read-modify-write of
    * that file (spec §10.4); waits up to 30 s, then throws `SandboxPathBusyError`. Its `signal`
    * aborts when a renewal finds it lost.
    */
-  pathLease(environmentId: string, path: string, signal: AbortSignal): Promise<SandboxPathLease> {
-    return this.leases.pathLease(environmentId, path, signal, PATH_LEASE_WAIT_MS);
+  pathLease(deviceId: string, path: string, signal: AbortSignal): Promise<SandboxPathLease> {
+    return this.leases.pathLease(deviceId, path, signal, PATH_LEASE_WAIT_MS);
   }
 
   /**
-   * Runs `fn` on the environment's instance: take a lease → make sure the instance runs (file
+   * Runs `fn` on the device's instance: take a lease → make sure the instance runs (file
    * system, create / resume / rebuild, under the exclusive lease) → `fn` under a shared lease →
    * update `last_used_at` → release.
    * - Waiting longer than `sandbox.lockWaitSeconds` throws `sandbox.busy` (409); `signal` aborts
@@ -597,7 +596,7 @@ export class SandboxService {
    * - When `fn` throws `SandboxGoneError` (the instance is gone) the instance is rebuilt on the
    *   kept files (or the one another holder rebuilt is taken) and `fn` runs once more with
    *   `restarted: true`; a second `gone` is thrown. Other errors are thrown as they are.
-   * - Lost files throw `environment.files_lost` (409), also when `fn` throws
+   * - Lost files throw `device.files_lost` (409), also when `fn` throws
    *   `FileSystemGoneError` (the files are then recorded lost, ruling R24).
    * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
    *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
@@ -612,8 +611,8 @@ export class SandboxService {
     ) => Promise<T>,
     signal: AbortSignal,
   ): Promise<T> {
-    const p = await this.require(ctx.environmentId, ctx.orgId);
-    const env = ctx.environmentId;
+    const p = await this.require(ctx.deviceId, ctx.orgId);
+    const env = ctx.deviceId;
     const holder = ctx.holderConversationId;
     let e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, null));
     try {
@@ -622,7 +621,7 @@ export class SandboxService {
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         if (!isSandboxGoneError(err)) throw err;
-        this.log.info("sandbox instance is gone during use; recreating", { environmentId: env });
+        this.log.info("sandbox instance is gone during use; recreating", { deviceId: env });
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(env, prev);
@@ -647,27 +646,27 @@ export class SandboxService {
    * Ruling R24: an operation on the held instance `e` found its file system gone. Records
    * `fs_status = 'lost'` while the row still records that instance on its file system (the
    * instance handle stays, so a reset still destroys it), moving the fence on, and returns
-   * `environment.files_lost` to throw. Uses then fail until the files are reset (a connected
+   * `device.files_lost` to throw. Uses then fail until the files are reset (a connected
    * machine: until a new login, which resets the row). A failed write only logs.
    */
   private async filesGone(env: string, p: SandboxProviderEntry, e: Entered): Promise<ApiError> {
-    this.log.warn("environment file system is gone at the provider; its files are lost", {
-      environmentId: env,
+    this.log.warn("device file system is gone at the provider; its files are lost", {
+      deviceId: env,
       provider: p.plugin,
     });
     try {
       await this.db
-        .updateTable("environment_instances")
+        .updateTable("device_instances")
         .set((eb) => ({ fs_status: "lost", generation: eb("generation", "+", 1) }))
-        .where("environment_id", "=", env)
+        .where("device_id", "=", env)
         .where("fs_status", "=", "ready")
         // `createdAt` is the row's value read back in milliseconds
         .where(sql<Date>`date_trunc('milliseconds', created_at)`, "=", new Date(e.createdAt))
         .execute();
     } catch (err) {
-      this.log.warn("cannot record lost environment files", { environmentId: env, err });
+      this.log.warn("cannot record lost device files", { deviceId: env, err });
     }
-    return environmentFilesLost(p.plugin === DEVICE_PROVIDER);
+    return deviceFilesLost(p.plugin === LOCAL_PROVIDER);
   }
 
   /**
@@ -676,15 +675,15 @@ export class SandboxService {
    * holder last used another instance under the same reset count `e` is marked restarted (files
    * kept); under another count it is marked `filesReset` instead. The count, not the provider's
    * file system id, tells them apart: a provider may give the new file system the old id
-   * (sandbox-docker's volumes are named after the environment). Best effort: a Redis error only
+   * (sandbox-docker's volumes are named after the device). Best effort: a Redis error only
    * logs.
    */
-  private async seenBy(environmentId: string, holder: string, e: Entered): Promise<Entered> {
+  private async seenBy(deviceId: string, holder: string, e: Entered): Promise<Entered> {
     try {
       const ttl = (this.config.get().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
       const seen = `${e.createdAt}:${e.fsResets}`;
       const prev = await this.redis.set(
-        `capk:sandbox-seen:${environmentId}:${holder}`,
+        `capk:sandbox-seen:${deviceId}:${holder}`,
         seen,
         "EX",
         ttl,
@@ -701,7 +700,7 @@ export class SandboxService {
       }
     } catch (err) {
       this.log.warn("cannot record the sandbox instance a holder uses", {
-        environmentId,
+        deviceId,
         holder,
         err,
       });
@@ -723,7 +722,7 @@ export class SandboxService {
     signal: AbortSignal,
   ): Promise<T> {
     const sig = AbortSignal.any([signal, e.lease.signal]);
-    const env = ctx.environmentId;
+    const env = ctx.deviceId;
     const impl = tagged<HeldProvider>(p.impl, e.lease.token, ctx.actor, () =>
       this.register(env, e.lease.token),
     );
@@ -742,7 +741,7 @@ export class SandboxService {
     signal: AbortSignal,
     gone: Instance | null,
   ): Promise<Entered> {
-    const env = ctx.environmentId;
+    const env = ctx.deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     let intent = false;
@@ -776,23 +775,23 @@ export class SandboxService {
     await this.leases
       .clearIntent(env, token)
       .catch((err: unknown) =>
-        this.log.warn("cannot clear sandbox intent", { environmentId: env, err }),
+        this.log.warn("cannot clear sandbox intent", { deviceId: env, err }),
       );
   }
 
-  private async readRow(ctx: { orgId: string; environmentId: string }): Promise<Row | undefined> {
+  private async readRow(ctx: { orgId: string; deviceId: string }): Promise<Row | undefined> {
     const row = await this.db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .selectAll()
-      .where("environment_id", "=", ctx.environmentId)
+      .where("device_id", "=", ctx.deviceId)
       .executeTakeFirst();
     if (row && row.org_id !== ctx.orgId) throw this.foreign(ctx);
     return row;
   }
 
   /** The instance row belongs to another org: reported as not found, so ids cannot be probed. */
-  private foreign(_ctx: { orgId: string; environmentId: string }): ApiError {
-    return environmentNotFound();
+  private foreign(_ctx: { orgId: string; deviceId: string }): ApiError {
+    return deviceNotFound();
   }
 
   /**
@@ -819,13 +818,13 @@ export class SandboxService {
    * returns null), records the holder and kills crashed holders' commands.
    */
   private async asShared(
-    ctx: { orgId: string; environmentId: string },
+    ctx: { orgId: string; deviceId: string },
     p: SandboxProviderEntry,
     lease: SandboxLease,
     accept: (row: Row | undefined) => row is Row & { handle: SandboxHandle },
     signal: AbortSignal,
   ): Promise<Entered | null> {
-    const env = ctx.environmentId;
+    const env = ctx.deviceId;
     try {
       const row = await this.readRow(ctx);
       if (!accept(row)) {
@@ -836,12 +835,12 @@ export class SandboxService {
       // expired unnoticed (a stalled sweep) then fails its next write instead of suspending or
       // destroying the instance under this holder. Shared holders never compare it.
       await this.db
-        .updateTable("environment_instances")
+        .updateTable("device_instances")
         .set((eb) => ({ generation: eb("generation", "+", 1) }))
-        .where("environment_id", "=", env)
+        .where("device_id", "=", env)
         .execute();
       await this.register(env, lease.token);
-      // other holders (any conversation of the environment) may be running: only the dead
+      // other holders (any conversation of the device) may be running: only the dead
       // holders' own commands are killed
       await this.killTagged(env, row.handle, p, await this.claim(env), signal, lease);
       return {
@@ -872,7 +871,7 @@ export class SandboxService {
     gone: Instance | null,
     signal: AbortSignal,
   ): Promise<Entered> {
-    const env = ctx.environmentId;
+    const env = ctx.deviceId;
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
       const s = await this.ensure(ctx, p, lease, sig, gone);
@@ -904,13 +903,13 @@ export class SandboxService {
     await this.unregister(env, e.lease.token);
     await e.lease.release();
     await this.db
-      .updateTable("environment_instances")
+      .updateTable("device_instances")
       .set({ last_used_at: sql<Date>`GREATEST(last_used_at, now())` })
-      .where("environment_id", "=", env)
+      .where("device_id", "=", env)
       .where("status", "=", "running")
       .execute()
       .catch((err: unknown) =>
-        this.log.warn("cannot update sandbox last_used_at", { environmentId: env, err }),
+        this.log.warn("cannot update sandbox last_used_at", { deviceId: env, err }),
       );
   }
 
@@ -919,7 +918,7 @@ export class SandboxService {
     await this.leases
       .registerHolder(env, token, ttl)
       .catch((err: unknown) =>
-        this.log.warn("cannot record sandbox holder", { environmentId: env, err }),
+        this.log.warn("cannot record sandbox holder", { deviceId: env, err }),
       );
   }
 
@@ -927,7 +926,7 @@ export class SandboxService {
     await this.leases
       .unregisterHolder(env, token)
       .catch((err: unknown) =>
-        this.log.warn("cannot clear sandbox holder record", { environmentId: env, err }),
+        this.log.warn("cannot clear sandbox holder record", { deviceId: env, err }),
       );
   }
 
@@ -936,7 +935,7 @@ export class SandboxService {
     try {
       return await this.leases.claimDeadHolders(env);
     } catch (err) {
-      this.log.warn("cannot read sandbox holder records", { environmentId: env, err });
+      this.log.warn("cannot read sandbox holder records", { deviceId: env, err });
       return [];
     }
   }
@@ -957,7 +956,7 @@ export class SandboxService {
 
   /** Runs one kill call: gone and abort are thrown, other failures only warned. */
   private async kill(
-    environmentId: string,
+    deviceId: string,
     why: "takeover" | "resume",
     call: () => Promise<void>,
     signal?: AbortSignal,
@@ -967,23 +966,23 @@ export class SandboxService {
       if (why === "takeover") {
         this.log.info(
           "sandbox taken over from a holder that did not finish; leftover commands killed",
-          { environmentId },
+          { deviceId },
         );
       }
     } catch (err) {
       if (signal?.aborted || isSandboxGoneError(err)) throw err;
-      this.log.warn("cannot kill leftover sandbox commands", { environmentId, err });
+      this.log.warn("cannot kill leftover sandbox commands", { deviceId, err });
     }
   }
 
   /**
    * Suspends running instances idle longer than `suspendAfterIdleMinutes` or running continuously
-   * longer than `maxRunningMinutes`. Skips an environment with any holder; one past
+   * longer than `maxRunningMinutes`. Skips a device with any holder; one past
    * `maxRunningMinutes` gets the intent for one poll window (about a second) first. Returns how
    * many it suspended. Called every minute by the `sandbox-suspend-idle` cron.
    */
   async suspendIdle(now: Date): Promise<number> {
-    // cloud only: suspendDue keeps to this provider's rows, so `@device` is never suspended here
+    // cloud only: suspendDue keeps to this provider's rows, so `@local` is never suspended here
     const p = this.providers.cloud();
     if (!p) return 0;
     const due = this.suspendDue(now, p.plugin);
@@ -995,13 +994,13 @@ export class SandboxService {
     await inPool(rows, SWEEP_CONCURRENCY, async (c) => {
       const overdue = c.running_since !== null && c.running_since < runningBefore;
       const done = await this.tryLocked(
-        c.environment_id,
+        c.device_id,
         async (lease) => {
-          const id = c.environment_id;
+          const id = c.device_id;
           const row = await this.db
-            .selectFrom("environment_instances")
+            .selectFrom("device_instances")
             .selectAll()
-            .where("environment_id", "=", id)
+            .where("device_id", "=", id)
             .where(due)
             .executeTakeFirst();
           if (!row?.handle) return false;
@@ -1014,7 +1013,7 @@ export class SandboxService {
             running_since: null,
             sweep_failed_at: null,
           });
-          this.log.info("sandbox suspended", { environmentId: id });
+          this.log.info("sandbox suspended", { deviceId: id });
           return true;
         },
         overdue,
@@ -1027,57 +1026,53 @@ export class SandboxService {
   /**
    * Destruction sweep: an instance unused for longer than `destroyAfterInactiveDays` is destroyed
    * (the instance only; the file system is kept and the next use builds a new instance on it); an
-   * environment that was deleted, or whose org was deleted, loses its instance and its file system
-   * and its row is deleted (as {@link destroyEnvironment} does). Environments with any holder are
-   * skipped. Inactivity never destroys a `@device` instance; a gone `@device` environment is
-   * destroyed like any other while `@device` is registered. Returns how many it destroyed. Called
+   * device that was deleted, or whose org was deleted, loses its instance and its file system
+   * and its row is deleted (as {@link destroyDevice} does). Devices with any holder are
+   * skipped. Inactivity never destroys a `@local` instance; a gone `@local` device is
+   * destroyed like any other while `@local` is registered. Returns how many it destroyed. Called
    * hourly by the `sandbox-destroy-inactive` cron.
    */
   async destroyInactive(now: Date): Promise<number> {
     const p = this.providers.cloud();
-    const device = this.providers.forName(DEVICE_PROVIDER) !== undefined;
+    const local = this.providers.forName(LOCAL_PROVIDER) !== undefined;
     let n = 0;
-    // Gone environments (deleted, or of a deleted org) on every provider that is here, `@device`
+    // Gone devices (deleted, or of a deleted org) on every provider that is here, `@local`
     // too (its destroy calls never need the machine online); rows whose provider is missing wait.
-    const here = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+    const here = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
       eb.or([
         ...(p ? [this.cloudRow(eb)] : []),
-        ...(device ? [eb("provider", "=", DEVICE_PROVIDER)] : []),
+        ...(local ? [eb("provider", "=", LOCAL_PROVIDER)] : []),
       ]);
-    const gone = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
-      eb.and([here(eb), this.environmentGone(eb)]);
-    if (p || device) {
-      await inPool(
-        await this.candidates(gone),
-        SWEEP_CONCURRENCY,
-        async ({ environment_id: id }) => {
-          const done = await this.tryLocked(id, async (lease) => {
-            const row = await this.db
-              .selectFrom("environment_instances")
-              .selectAll()
-              .where("environment_id", "=", id)
-              .where(gone)
-              .executeTakeFirst();
-            const owner = row && this.rowProvider(row);
-            if (!row || !owner) return false;
-            await this.destroyRow(row, owner, lease, "environment");
-            return true;
-          });
-          if (done) n++;
-        },
-      );
+    const gone = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
+      eb.and([here(eb), this.deviceGone(eb)]);
+    if (p || local) {
+      await inPool(await this.candidates(gone), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
+        const done = await this.tryLocked(id, async (lease) => {
+          const row = await this.db
+            .selectFrom("device_instances")
+            .selectAll()
+            .where("device_id", "=", id)
+            .where(gone)
+            .executeTakeFirst();
+          const owner = row && this.rowProvider(row);
+          if (!row || !owner) return false;
+          await this.destroyRow(row, owner, lease, "device");
+          return true;
+        });
+        if (done) n++;
+      });
     }
-    // inactivity destroys cloud instances only: `@device` instances are never swept
+    // inactivity destroys cloud instances only: `@local` instances are never swept
     if (!p) return n;
     const due = this.instanceDue(now);
-    const idle = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+    const idle = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
       eb.and([this.cloudRow(eb), due(eb)]);
-    await inPool(await this.candidates(idle), SWEEP_CONCURRENCY, async ({ environment_id: id }) => {
+    await inPool(await this.candidates(idle), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
         const row = await this.db
-          .selectFrom("environment_instances")
+          .selectFrom("device_instances")
           .selectAll()
-          .where("environment_id", "=", id)
+          .where("device_id", "=", id)
           .where(idle)
           .executeTakeFirst();
         if (!row) return false;
@@ -1090,78 +1085,78 @@ export class SandboxService {
   }
 
   /**
-   * Destroys the environment's instance, then its file system, then deletes its instance row
-   * (environment deletion, offboarding); nothing to do without a row. Waits for the exclusive lease
+   * Destroys the device's instance, then its file system, then deletes its instance row
+   * (device deletion, offboarding); nothing to do without a row. Waits for the exclusive lease
    * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without the
-   * environment's provider it throws and the row stays, marked `sweep_failed_at` (the job is
-   * retried, and the destruction sweep finishes a deleted environment once the provider is back).
+   * device's provider it throws and the row stays, marked `sweep_failed_at` (the job is
+   * retried, and the destruction sweep finishes a deleted device once the provider is back).
    * Files kept by another provider that is not loaded cannot be destroyed: it throws and the row
    * stays.
    */
-  async destroyEnvironment(environmentId: string): Promise<void> {
+  async destroyDevice(deviceId: string): Promise<void> {
     const row = await this.db
-      .selectFrom("environment_instances")
-      .select("environment_id")
-      .where("environment_id", "=", environmentId)
+      .selectFrom("device_instances")
+      .select("device_id")
+      .where("device_id", "=", deviceId)
       .executeTakeFirst();
     if (!row) return;
-    const p = await this.providerOf(environmentId);
+    const p = await this.providerOf(deviceId);
     if (!p) {
       await this.db
-        .updateTable("environment_instances")
+        .updateTable("device_instances")
         .set({ sweep_failed_at: sql<Date>`now()` })
-        .where("environment_id", "=", environmentId)
+        .where("device_id", "=", deviceId)
         .execute();
       throw new Error(
-        `cannot destroy environment ${environmentId}: its sandbox provider is not there; ` +
+        `cannot destroy device ${deviceId}: its sandbox provider is not there; ` +
           "the destruction sweep retries it",
       );
     }
     const lease = await this.leases.acquireExclusive(
-      environmentId,
+      deviceId,
       AbortSignal.timeout(EXCLUSIVE_WAIT_MS),
       undefined,
       { intent: true },
     );
     try {
       const current = await this.db
-        .selectFrom("environment_instances")
+        .selectFrom("device_instances")
         .selectAll()
-        .where("environment_id", "=", environmentId)
+        .where("device_id", "=", deviceId)
         .executeTakeFirst();
-      if (current) await this.destroyRow(current, p, lease, "environment");
+      if (current) await this.destroyRow(current, p, lease, "device");
     } finally {
       await lease.release();
     }
   }
 
   /**
-   * Starts the environment over with empty files (after `environment.files_lost`, or on request):
-   * under the exclusive lease (waited for like {@link destroyEnvironment}) destroys any instance and
+   * Starts the device over with empty files (after `device.files_lost`, or on request):
+   * under the exclusive lease (waited for like {@link destroyDevice}) destroys any instance and
    * the file system (a `lost` one is only dropped), and records no file system; the next use
    * creates a new one. Nothing to do without a row. Throws `sandbox.unavailable` without a provider.
    */
-  async resetFileSystem(environmentId: string): Promise<void> {
-    const p = await this.require(environmentId);
+  async resetFileSystem(deviceId: string): Promise<void> {
+    const p = await this.require(deviceId);
     const lease = await this.leases.acquireExclusive(
-      environmentId,
+      deviceId,
       AbortSignal.timeout(EXCLUSIVE_WAIT_MS),
       undefined,
       { intent: true },
     );
     try {
       const row = await this.db
-        .selectFrom("environment_instances")
+        .selectFrom("device_instances")
         .selectAll()
-        .where("environment_id", "=", environmentId)
+        .where("device_id", "=", deviceId)
         .executeTakeFirst();
       if (!row) return;
       const fence = { gen: row.generation };
       const signal = opSignal(lease);
       const prev = await this.destroyInstance(row, p, signal);
       await this.destroyFiles(row, p, signal, true);
-      if (!(await lease.renew())) throw new SandboxLockLostError(environmentId);
-      await this.fenced(lease, environmentId, fence, {
+      if (!(await lease.renew())) throw new SandboxLockLostError(deviceId);
+      await this.fenced(lease, deviceId, fence, {
         fs_handle: null,
         fs_status: "none",
         handle: null,
@@ -1174,7 +1169,7 @@ export class SandboxService {
         fs_resets: sql<number>`fs_resets + 1`,
         ...prev,
       });
-      this.log.info("environment files reset", { environmentId });
+      this.log.info("device files reset", { deviceId });
     } finally {
       await lease.release();
     }
@@ -1188,14 +1183,14 @@ export class SandboxService {
    * failures are only warned.
    */
   private async killLeftovers(
-    environmentId: string,
+    deviceId: string,
     handle: SandboxHandle,
     p: SandboxProviderEntry,
     signal: AbortSignal,
     dead: string[],
   ): Promise<void> {
     await this.kill(
-      environmentId,
+      deviceId,
       dead.length > 0 ? "takeover" : "resume",
       () => p.impl.killAll(handle, signal),
       signal,
@@ -1210,7 +1205,7 @@ export class SandboxService {
    * and leaves the flags of this instance's tasks for the next resume.
    */
   private async killPendingTasks(
-    environmentId: string,
+    deviceId: string,
     handle: SandboxHandle,
     createdAt: number,
     p: SandboxProviderEntry,
@@ -1218,7 +1213,7 @@ export class SandboxService {
     actor: SandboxActor,
     signal: AbortSignal,
   ): Promise<void> {
-    const rows = await this.background.pendingKills(environmentId);
+    const rows = await this.background.pendingKills(deviceId);
     if (rows.length === 0) return;
     const mine = rows.filter(
       (r): r is typeof r & { sid: string } =>
@@ -1243,13 +1238,13 @@ export class SandboxService {
           );
         }
         this.log.info("lost background tasks killed after a sandbox resume", {
-          environmentId,
+          deviceId,
           tasks: mine.map((t) => t.id),
         });
       } catch (err) {
         if (signal.aborted || isSandboxGoneError(err)) throw err;
         this.log.warn("cannot kill lost background tasks after a sandbox resume", {
-          environmentId,
+          deviceId,
           err,
         });
         const kept = new Set(mine.map((r) => r.id));
@@ -1266,9 +1261,9 @@ export class SandboxService {
   private async fenced(lease: SandboxLease, id: string, fence: Fence, set: Patch): Promise<Date> {
     if (lease.signal.aborted) throw new SandboxLockLostError(id);
     const r = await this.db
-      .updateTable("environment_instances")
+      .updateTable("device_instances")
       .set({ ...set, generation: fence.gen + 1 })
-      .where("environment_id", "=", id)
+      .where("device_id", "=", id)
       .where("generation", "=", fence.gen)
       .returning("created_at")
       .executeTakeFirst();
@@ -1279,11 +1274,11 @@ export class SandboxService {
 
   /** Sweep candidates: those whose last sweep failed come last, the rest least recently used first. */
   private async candidates(
-    due: (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) => Expression<SqlBool>,
-  ): Promise<{ environment_id: string; running_since: Date | null }[]> {
+    due: (eb: ExpressionBuilder<KernelDatabase, "device_instances">) => Expression<SqlBool>,
+  ): Promise<{ device_id: string; running_since: Date | null }[]> {
     return await this.db
-      .selectFrom("environment_instances")
-      .select(["environment_id", "running_since"])
+      .selectFrom("device_instances")
+      .select(["device_id", "running_since"])
       .where(due)
       .orderBy(sql`sweep_failed_at ASC NULLS FIRST`)
       .orderBy("last_used_at")
@@ -1293,22 +1288,22 @@ export class SandboxService {
 
   /**
    * One try at the exclusive lease: null → false; else runs `fn`. With `overdue` (past
-   * `maxRunningMinutes`) a busy environment gets the intent for about a second, so new commands
+   * `maxRunningMinutes`) a busy device gets the intent for about a second, so new commands
    * wait briefly and the sweep gets in if the running ones end. Failures are warned, recorded in
    * `sweep_failed_at` (sorted last next time) and return false.
    */
   private async tryLocked(
-    environmentId: string,
+    deviceId: string,
     fn: (lease: SandboxLease) => Promise<boolean>,
     overdue = false,
   ): Promise<boolean> {
     let lease: SandboxLease | null;
     try {
-      lease = await this.leases.tryExclusive(environmentId);
+      lease = await this.leases.tryExclusive(deviceId);
       if (!lease && overdue) {
         lease = await this.leases
           .acquireExclusive(
-            environmentId,
+            deviceId,
             AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
             Math.max(this.pollMs * 2, SWEEP_INTENT_WAIT_MS),
             { intent: true },
@@ -1319,18 +1314,18 @@ export class SandboxService {
           });
       }
     } catch (err) {
-      this.log.warn("cannot take sandbox lock", { environmentId, err });
+      this.log.warn("cannot take sandbox lock", { deviceId, err });
       return false;
     }
     if (!lease) return false;
     try {
       return await fn(lease);
     } catch (err) {
-      this.log.warn("sandbox maintenance failed; will retry", { environmentId, err });
+      this.log.warn("sandbox maintenance failed; will retry", { deviceId, err });
       await this.db
-        .updateTable("environment_instances")
+        .updateTable("device_instances")
         .set({ sweep_failed_at: sql<Date>`now()` })
-        .where("environment_id", "=", environmentId)
+        .where("device_id", "=", deviceId)
         .execute()
         .catch(() => {});
       return false;
@@ -1340,7 +1335,7 @@ export class SandboxService {
   }
 
   /**
-   * Under the exclusive lease: make the environment's instance run. `gone`: the instance a holder
+   * Under the exclusive lease: make the device's instance run. `gone`: the instance a holder
    * found gone; when it is still the recorded one it is rebuilt, when another holder already
    * rebuilt it the new one is used.
    */
@@ -1358,49 +1353,49 @@ export class SandboxService {
     fence: Fence;
     resumed?: boolean;
   }> {
-    const id = ctx.environmentId;
-    // Only a live environment of the caller's org gets a row, with the environment's own org; a
+    const id = ctx.deviceId;
+    // Only a live device of the caller's org gets a row, with the device's own org; a
     // row made earlier (another use) keeps its file system handle.
     await this.db
-      .insertInto("environment_instances")
-      .columns(["environment_id", "org_id", "provider", "status"])
+      .insertInto("device_instances")
+      .columns(["device_id", "org_id", "provider", "status"])
       .expression((eb) =>
         eb
-          .selectFrom("environments")
+          .selectFrom("devices")
           .select((e) => [
-            "environments.id",
-            "environments.org_id",
+            "devices.id",
+            "devices.org_id",
             e.val(p.plugin).as("provider"),
             e.val("creating").as("status"),
           ])
-          .where("environments.id", "=", id)
-          .where("environments.org_id", "=", ctx.orgId)
-          .where("environments.deleted_at", "is", null),
+          .where("devices.id", "=", id)
+          .where("devices.org_id", "=", ctx.orgId)
+          .where("devices.deleted_at", "is", null),
       )
-      .onConflict((oc) => oc.column("environment_id").doNothing())
+      .onConflict((oc) => oc.column("device_id").doNothing())
       .execute();
-    // Under the lease: a use that waited behind destroyEnvironment (or raced a deletion) must not
-    // bring the environment's provider resources back.
+    // Under the lease: a use that waited behind destroyDevice (or raced a deletion) must not
+    // bring the device's provider resources back.
     const live = await this.db
-      .selectFrom("environments")
+      .selectFrom("devices")
       .select("id")
       .where("id", "=", id)
       .where("org_id", "=", ctx.orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (!live) throw environmentNotFound();
+    if (!live) throw deviceNotFound();
     const row = await this.db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .selectAll()
-      .where("environment_id", "=", id)
+      .where("device_id", "=", id)
       .executeTakeFirst();
-    if (!row) throw environmentNotFound();
+    if (!row) throw deviceNotFound();
     if (row.org_id !== ctx.orgId) throw this.foreign(ctx);
     const fence = { gen: row.generation };
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
     // kept running (a stalled sweep) then fails its next write.
     await this.fenced(held, id, fence, {});
-    if (row.fs_status === "lost") throw environmentFilesLost(p.plugin === DEVICE_PROVIDER);
+    if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
     if (
       row.provider !== null &&
       row.provider !== p.plugin &&
@@ -1447,7 +1442,7 @@ export class SandboxService {
         };
       }
       this.log.info("sandbox instance is gone at the provider; recreating", {
-        environmentId: id,
+        deviceId: id,
       });
     }
     const created = await this.create(ctx, p, held, row, fence, signal);
@@ -1465,7 +1460,7 @@ export class SandboxService {
    * Under the lease: fenced reset to `creating`, the file system when there is none
    * (`createFileSystem`, its handle written fenced), then the instance on it, then a fenced write
    * of the instance handle. `FileSystemGoneError` from `create` records `fs_status = 'lost'` and
-   * throws `environment.files_lost`. When the instance handle cannot be written (lease lost), the
+   * throws `device.files_lost`. When the instance handle cannot be written (lease lost), the
    * new instance is destroyed (best effort) before {@link SandboxLockLostError} is thrown.
    */
   private async create(
@@ -1476,8 +1471,8 @@ export class SandboxService {
     fence: Fence,
     signal: AbortSignal,
   ): Promise<Instance> {
-    const id = ctx.environmentId;
-    const name = environmentResourceName(id);
+    const id = ctx.deviceId;
+    const name = deviceResourceName(id);
     await this.fenced(held, id, fence, {
       org_id: ctx.orgId,
       provider: p.plugin,
@@ -1506,7 +1501,7 @@ export class SandboxService {
         fs_handle: JSON.stringify(fs),
         fs_status: "ready",
       });
-      this.log.info("environment file system created", { environmentId: id, provider: p.plugin });
+      this.log.info("device file system created", { deviceId: id, provider: p.plugin });
     }
     let handle: SandboxHandle;
     try {
@@ -1519,12 +1514,12 @@ export class SandboxService {
       });
     } catch (err) {
       if (!isFileSystemGoneError(err)) throw err;
-      this.log.warn("environment file system is gone at the provider; its files are lost", {
-        environmentId: id,
+      this.log.warn("device file system is gone at the provider; its files are lost", {
+        deviceId: id,
         provider: p.plugin,
       });
       await this.fenced(held, id, fence, { fs_status: "lost", status: "none" });
-      throw environmentFilesLost(p.plugin === DEVICE_PROVIDER);
+      throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
     }
     let createdAt: Date;
     try {
@@ -1544,20 +1539,20 @@ export class SandboxService {
       // system is never touched here.
       await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
         this.log.warn("cannot destroy sandbox created after the lock was lost", {
-          environmentId: id,
+          deviceId: id,
           err,
         }),
       );
       throw e;
     }
-    this.log.info("sandbox created", { environmentId: id, provider: p.plugin });
+    this.log.info("sandbox created", { deviceId: id, provider: p.plugin });
     return { handle, createdAt: createdAt.getTime() };
   }
 
   /**
-   * Destroys the file system another provider may have made under the environment's name without
+   * Destroys the file system another provider may have made under the device's name without
    * the kernel recording it (`destroyFileSystemByName`; not there is success). That provider not
-   * loaded, or a failure, is only warned (the files may leak there) so the environment stays
+   * loaded, or a failure, is only warned (the files may leak there) so the device stays
    * usable; an abort is thrown.
    */
   private async dropUnrecordedFiles(
@@ -1568,17 +1563,17 @@ export class SandboxService {
     const old = this.providers.forName(provider)?.impl;
     if (!old) {
       this.log.warn(
-        "environment file system may have been made by a provider that is not loaded; it may leak",
-        { environmentId: id, provider },
+        "device file system may have been made by a provider that is not loaded; it may leak",
+        { deviceId: id, provider },
       );
       return;
     }
     try {
-      await old.destroyFileSystemByName(environmentResourceName(id), signal);
+      await old.destroyFileSystemByName(deviceResourceName(id), signal);
     } catch (err) {
       if (signal.aborted) throw err;
       this.log.warn("cannot destroy the file system of the previous sandbox provider", {
-        environmentId: id,
+        deviceId: id,
         provider,
         err,
       });
@@ -1605,7 +1600,7 @@ export class SandboxService {
         return false;
       } catch (err) {
         this.log.warn("cannot destroy sandbox instance of the previous provider", {
-          environmentId: id,
+          deviceId: id,
           provider,
           err,
         });
@@ -1614,7 +1609,7 @@ export class SandboxService {
     }
     this.log.warn(
       "sandbox was created by another provider that is not loaded; its instance may leak",
-      { environmentId: id, provider },
+      { deviceId: id, provider },
     );
     return true;
   }
@@ -1629,7 +1624,7 @@ export class SandboxService {
     p: SandboxProviderEntry,
     signal: AbortSignal,
   ): Promise<Patch> {
-    const id = row.environment_id;
+    const id = row.device_id;
     const owner = row.provider ?? p.plugin;
     let prev: Patch = {};
     if (row.handle && owner === p.plugin) {
@@ -1641,7 +1636,7 @@ export class SandboxService {
     } else if (!row.handle && row.status === "creating") {
       // the provider may have built it already: only the name finds it
       const impl = owner === p.plugin ? p.impl : this.providers.forName(owner)?.impl;
-      await impl?.destroyByName(environmentResourceName(id), signal);
+      await impl?.destroyByName(deviceResourceName(id), signal);
     }
     if (row.prev_handle && row.prev_provider && !("prev_handle" in prev)) {
       if (!(await this.retire(id, row.prev_provider, row.prev_handle, signal))) {
@@ -1663,41 +1658,41 @@ export class SandboxService {
     signal: AbortSignal,
     lenient = false,
   ): Promise<void> {
-    const id = row.environment_id;
+    const id = row.device_id;
     const owner = row.provider ?? p.plugin;
     const impl = owner === p.plugin ? p.impl : this.providers.forName(owner)?.impl;
     if (!impl) {
       if (row.fs_handle === null) return;
       if (!lenient) {
         throw new Error(
-          `cannot destroy the file system of environment ${id}: its sandbox provider ${owner} is not loaded`,
+          `cannot destroy the file system of device ${id}: its sandbox provider ${owner} is not loaded`,
         );
       }
-      this.log.warn("environment file system of a provider that is not loaded is leaked", {
-        environmentId: id,
+      this.log.warn("device file system of a provider that is not loaded is leaked", {
+        deviceId: id,
         provider: owner,
       });
       return;
     }
     if (row.fs_handle !== null) await impl.destroyFileSystem(row.fs_handle, signal);
-    else await impl.destroyFileSystemByName(environmentResourceName(id), signal);
+    else await impl.destroyFileSystemByName(deviceResourceName(id), signal);
   }
 
   /**
    * Under the lease: `instance` destroys the instance and marks the row `destroyed` (the file
-   * system stays); `environment` also destroys the file system and deletes the row.
+   * system stays); `device` also destroys the file system and deletes the row.
    */
   private async destroyRow(
     row: Row,
     p: SandboxProviderEntry,
     held: SandboxLease,
-    mode: "instance" | "environment",
+    mode: "instance" | "device",
   ): Promise<void> {
-    const id = row.environment_id;
+    const id = row.device_id;
     const fence = { gen: row.generation };
     const signal = opSignal(held);
     const prev = await this.destroyInstance(row, p, signal);
-    if (mode === "environment") await this.destroyFiles(row, p, signal);
+    if (mode === "device") await this.destroyFiles(row, p, signal);
     if (!(await held.renew())) throw new SandboxLockLostError(id);
     if (mode === "instance") {
       await this.fenced(held, id, fence, {
@@ -1707,16 +1702,16 @@ export class SandboxService {
         sweep_failed_at: null,
         ...prev,
       });
-      this.log.info("sandbox instance destroyed", { environmentId: id });
+      this.log.info("sandbox instance destroyed", { deviceId: id });
       return;
     }
     const r = await this.db
-      .deleteFrom("environment_instances")
-      .where("environment_id", "=", id)
+      .deleteFrom("device_instances")
+      .where("device_id", "=", id)
       .where("generation", "=", fence.gen)
       .executeTakeFirst();
     if (Number(r.numDeletedRows) !== 1) throw new SandboxLockLostError(id, "generation");
-    this.log.info("environment destroyed", { environmentId: id });
+    this.log.info("device destroyed", { deviceId: id });
   }
 
   /** Due for suspension: made by this provider, running, and idle or running for too long. */
@@ -1724,7 +1719,7 @@ export class SandboxService {
     const lim = this.config.get().sandbox.limits;
     const idleBefore = new Date(now.getTime() - lim.suspendAfterIdleMinutes * 60_000);
     const runningBefore = new Date(now.getTime() - lim.maxRunningMinutes * 60_000);
-    return (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+    return (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
       eb.and([
         eb("status", "=", "running"),
         eb("provider", "=", plugin),
@@ -1732,38 +1727,36 @@ export class SandboxService {
       ]);
   }
 
-  /** The provider of an instance row: an internal one (`@device`) by name, else the cloud one. */
+  /** The provider of an instance row: an internal one (`@local`) by name, else the cloud one. */
   private rowProvider(row: Row): SandboxProviderEntry | undefined {
-    return providerForEnvironment(this.providers, row.provider);
+    return providerForDevice(this.providers, row.provider);
   }
 
   /**
-   * A row the idle sweeps may touch: not on a kernel-internal provider (`@device` instances live on
+   * A row the idle sweeps may touch: not on a kernel-internal provider (`@local` instances live on
    * people's machines and are never suspended or destroyed for inactivity).
    */
-  private cloudRow(
-    eb: ExpressionBuilder<KernelDatabase, "environment_instances">,
-  ): Expression<SqlBool> {
+  private cloudRow(eb: ExpressionBuilder<KernelDatabase, "device_instances">): Expression<SqlBool> {
     return eb.or([eb("provider", "is", null), eb("provider", "not like", "@%")]);
   }
 
-  /** The environment was deleted, or its org was: the instance and the files go. */
-  private environmentGone(
-    eb: ExpressionBuilder<KernelDatabase, "environment_instances">,
+  /** The device was deleted, or its org was: the instance and the files go. */
+  private deviceGone(
+    eb: ExpressionBuilder<KernelDatabase, "device_instances">,
   ): Expression<SqlBool> {
     return eb.or([
       eb.exists(
         eb
-          .selectFrom("environments")
-          .select("environments.id")
-          .whereRef("environments.id", "=", "environment_instances.environment_id")
-          .where("environments.deleted_at", "is not", null),
+          .selectFrom("devices")
+          .select("devices.id")
+          .whereRef("devices.id", "=", "device_instances.device_id")
+          .where("devices.deleted_at", "is not", null),
       ),
       eb.exists(
         eb
           .selectFrom("orgs")
           .select("orgs.id")
-          .whereRef("orgs.id", "=", "environment_instances.org_id")
+          .whereRef("orgs.id", "=", "device_instances.org_id")
           .where("orgs.deleted_at", "is not", null),
       ),
     ]);
@@ -1773,7 +1766,7 @@ export class SandboxService {
   private instanceDue(now: Date) {
     const days = this.config.get().sandbox.limits.destroyAfterInactiveDays;
     const before = new Date(now.getTime() - days * 24 * 3_600_000);
-    return (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+    return (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
       eb.and([
         eb("status", "in", ["creating", "running", "suspended"]),
         eb("last_used_at", "<", before),

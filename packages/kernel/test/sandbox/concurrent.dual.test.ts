@@ -19,7 +19,7 @@ import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Concurrent sandbox holders on two replicas (sub-agents spec §10.5, §10.9; environments spec
- * §4.2: several conversations share one environment's instance). Each replica
+ * §4.2: several conversations share one device's instance). Each replica
  * is a `SandboxService` with its own PG pool and Redis connection, sharing PG, Redis and the fake
  * sandbox's provider root; the service keeps no state in process, so this equals two processes.
  * A replica "crashes" by losing its Redis connection while its command keeps running in the
@@ -69,7 +69,7 @@ const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
 
 let orgId: string;
 let conversationId: string;
-/** A second conversation bound to the same environment. */
+/** A second conversation bound to the same device. */
 let convB: string;
 let accountId: string;
 let envId: string;
@@ -82,7 +82,7 @@ beforeEach(async () => {
     r.disconnect();
     await truncateTables(
       raw,
-      "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+      "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
     );
     accountId = randomUUID();
     orgId = randomUUID();
@@ -101,7 +101,7 @@ beforeEach(async () => {
         VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
     }
     envId = randomUUID();
-    await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
       VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
   } finally {
     await raw.destroy();
@@ -118,7 +118,7 @@ beforeEach(async () => {
 
 const ctx = (conv = conversationId) => ({
   orgId,
-  environmentId: envId,
+  deviceId: envId,
   holderConversationId: conv,
   actor: { accountId, conversationId: conv },
 });
@@ -142,7 +142,7 @@ const until = async (cond: () => Promise<boolean>, ms = 20_000) => {
 };
 
 describe("concurrent sandbox holders (two replicas)", () => {
-  it("crashed holder in a shared environment kills only its tags", async () => {
+  it("crashed holder in a shared device kills only its tags", async () => {
     const fake = createFakeSandbox(root);
     // A dies with its command still running: its provider never kills on abort
     const deaf: SandboxProvider = {
@@ -154,7 +154,7 @@ describe("concurrent sandbox holders (two replicas)", () => {
     await run(b.s, "true", convB);
     const holders = `capk:sandbox-holders:${envId}`;
 
-    // conversation A on replica A and conversation B on replica B share the environment
+    // conversation A on replica A and conversation B on replica B share the device
     const aCall = run(a.s, "sleep 30", conversationId);
     const bCall = run(b.s, "sleep 4; echo b-done", convB);
     await until(async () => (await b.redis.hlen(holders)) === 2);

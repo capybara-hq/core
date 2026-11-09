@@ -3,7 +3,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
-import { EnvironmentsModule } from "../environments/environments.module.js";
+import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
@@ -51,9 +51,9 @@ import { ToolRegistry } from "./registry.js";
     OrgLockModule,
     // the `Agent` tool's dispatch
     SubagentsModule,
-    // the builtin sandbox and skill tools run in the conversation's environment
+    // the builtin sandbox and skill tools run in the conversation's device
     SandboxModule,
-    EnvironmentsModule,
+    DevicesModule,
     // `Bash` with run_in_background records its task; TaskOutput / TaskStop finish and stop it
     BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see

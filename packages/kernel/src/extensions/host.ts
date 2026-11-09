@@ -79,6 +79,7 @@ import {
   blockingKeys,
   computePermissionSet,
   type PermissionSet,
+  SETUP_CHECK_KEY_PREFIX,
   UI_VIEW_KEY_PREFIX,
 } from "./permission-set.js";
 import { type ExtensionPointEntry, ExtensionRegistry } from "./registry.js";
@@ -1643,9 +1644,11 @@ export class ExtensionHost {
         // 权限变少、不变（版本变了）或只多出视图（ui.view:*，不卡加载）：直接加载，快照跟上当前清单。
         // 补进视图不写审计（与 autoApprove 一样，Ruling A4），只记日志
         const updated = await approvals.refresh(name, manifest.version, a.set);
-        const merged = decision.added.filter((k) => k.startsWith(UI_VIEW_KEY_PREFIX));
+        const merged = decision.added.filter(
+          (k) => k.startsWith(UI_VIEW_KEY_PREFIX) || k.startsWith(SETUP_CHECK_KEY_PREFIX),
+        );
         if (updated && merged.length > 0 && blockingKeys(decision.added).length === 0) {
-          this.log.info("plugin ui views merged into the permission snapshot", {
+          this.log.info("plugin ui views and setup checks merged into the permission snapshot", {
             plugin: name,
             version: manifest.version,
             merged,

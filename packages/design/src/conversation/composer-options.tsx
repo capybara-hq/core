@@ -5,7 +5,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { PickerProps } from "./composer";
 
-// The composer's options button (spec §6.16.2, phones): below 640 the environment, model and
+// The composer's options button (spec §6.16.2, phones): below 640 the device, model and
 // effort pickers collapse into one compact button that opens a bottom sheet with the three groups.
 
 /**
@@ -20,36 +20,34 @@ export function shortModelLabel(label: string): string {
   return s || label;
 }
 
-/** An environment's name for the options button: without a trailing 「环境」 / "environment". */
-export function shortEnvironmentLabel(label: string): string {
-  const s = label.replace(/\s*(环境|environment)$/i, "").trim();
+/** A device's name for the options button: without a trailing 「设备」 / "device". */
+export function shortDeviceLabel(label: string): string {
+  const s = label.replace(/\s*(设备|device)$/i, "").trim();
   return s || label;
 }
 
 export type ComposerOptionsProps = {
-  environment?: PickerProps;
+  device?: PickerProps;
   model: PickerProps;
   effort?: PickerProps;
 };
 
 /**
- * One compact button (`DeepSeek · 高 · 个人`) for the environment, model and effort pickers,
+ * One compact button (`DeepSeek · 高 · 个人`) for the device, model and effort pickers,
  * opening a bottom sheet with one group each. The groups reuse the pickers' props: their items
  * (disabled ones with their reason), their notes, and a locked picker (a conversation's
- * environment) shown read-only with its hint. Choosing an item calls the picker's `onPick` and
+ * device) shown read-only with its hint. Choosing an item calls the picker's `onPick` and
  * keeps the sheet open, so all three can be set in one go.
  */
-export function ComposerOptions({ environment, model, effort }: ComposerOptionsProps): JSX.Element {
+export function ComposerOptions({ device, model, effort }: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
-  const full = [model.value, effort?.value, environment?.value].filter(
+  const full = [model.value, effort?.value, device?.value].filter(
     (v): v is string => v !== undefined,
   );
   const name = t("composer.options");
   const groups: { key: string; title: string; picker: PickerProps }[] = [
-    ...(environment
-      ? [{ key: "environment", title: t("composer.options.environment"), picker: environment }]
-      : []),
+    ...(device ? [{ key: "device", title: t("composer.options.device"), picker: device }] : []),
     { key: "model", title: t("composer.options.model"), picker: model },
     ...(effort ? [{ key: "effort", title: t("composer.options.effort"), picker: effort }] : []),
   ];
@@ -92,13 +90,13 @@ export function ComposerOptions({ environment, model, effort }: ComposerOptionsP
               </span>
             </>
           ) : null}
-          {environment ? (
+          {device ? (
             <>
               <span className="cb-options-sep" aria-hidden="true">
                 ·
               </span>
-              <span className="cb-options-value" data-part="options-environment">
-                {shortEnvironmentLabel(environment.value)}
+              <span className="cb-options-value" data-part="options-device">
+                {shortDeviceLabel(device.value)}
               </span>
             </>
           ) : null}

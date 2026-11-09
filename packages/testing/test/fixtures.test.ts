@@ -1142,7 +1142,9 @@ describe("core fixtures", () => {
           await walk(full);
         } else if (/\.ts$/.test(e.name)) {
           const text = await readFile(full, "utf8");
-          if (/\bplace:\s*"|"place"\s*:/.test(text)) offenders.push(full);
+          // a setup check's `place` (setup guides v2) names a guide place, not a UI place
+          const uiPlace = /\bplace:\s*"(?!channel-connection"|connector-template")|"place"\s*:/;
+          if (uiPlace.test(text)) offenders.push(full);
         }
       }
     };

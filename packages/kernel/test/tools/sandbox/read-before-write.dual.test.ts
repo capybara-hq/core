@@ -11,7 +11,7 @@ import { EventLog } from "../../../src/conversations/event-log.js";
 import { createDb } from "../../../src/db/pool.js";
 import { BuiltinTools } from "../../../src/tools/builtins/builtin-tools.js";
 import { startKernel, type TestKernel } from "../../helpers/runs.js";
-import { seedEnvironment } from "../../helpers/sandbox.js";
+import { seedDevice } from "../../helpers/sandbox.js";
 
 /**
  * Read before Write and Edit across two replicas (two kernels on one PG / Redis and one fake
@@ -72,12 +72,10 @@ describe("read before write (two replicas)", { timeout: 90_000 }, () => {
       VALUES (${orgId}, ${`o-${orgId.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
     await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
       VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
-    // bound to an environment of the owner's (both replicas reach its one instance)
-    const environmentId = await seedEnvironment(raw, orgId, accountId);
-    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, environment_id)
-      VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId}, ${environmentId})`.execute(
-      raw,
-    );
+    // bound to a device of the owner's (both replicas reach its one instance)
+    const deviceId = await seedDevice(raw, orgId, accountId);
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+      VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId}, ${deviceId})`.execute(raw);
 
     let step = 0;
     /** Runs a builtin on a replica and logs its result the way the tool pipeline does. */

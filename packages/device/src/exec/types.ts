@@ -25,7 +25,7 @@ export interface Executor {
   killTagged(tags: string[]): Promise<void>;
   killAll(): Promise<void>;
   /**
-   * Creates the environment directory (and its marker file) on first use. "gone" when it existed
+   * Creates the device directory (and its marker file) on first use. "gone" when it existed
    * before and has vanished; it is never recreated silently.
    */
   ensureRoot(): Promise<"ok" | "gone">;

@@ -34,7 +34,7 @@ import { childRunsOf, finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Phase C Task 14 (spec §14.2, §14.3): `GET /conversations/:id/subagents`, child conversations
- * through the unchanged routes (view, events, environment, outputs), `listMine` without
+ * through the unchanged routes (view, events, device, outputs), `listMine` without
  * children, the parent's SSE receiving `subagent_progress`, and conversation usage that sums the
  * children. One kernel with model-script and sandbox-fake.
  */
@@ -136,7 +136,7 @@ async function login(name: string): Promise<{ req: Req; cookie: () => string }> 
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.audit_events, capybara.subagent_dispatches, capybara.environment_instances, capybara.environments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.audit_events, capybara.subagent_dispatches, capybara.device_instances, capybara.devices, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   scriptRules([]);
   const accounts = accountsFor(db);
@@ -348,7 +348,7 @@ describe("GET /conversations/:id/subagents", () => {
 });
 
 describe("child conversations through the conversation routes", () => {
-  it("GET a child conversation and its events works for the owner; environment is the parent's; outputs read", async () => {
+  it("GET a child conversation and its events works for the owner; device is the parent's; outputs read", async () => {
     const { conv, child } = await oneChild();
 
     const view = await owner({ method: "GET", url: `${base()}/${child}` });
@@ -371,11 +371,11 @@ describe("child conversations through the conversation routes", () => {
     expect(types[0]).toBe("subagent_started");
     expect(types).toContain("run_finished");
 
-    // the child works in its parent's environment: the same one, with its instance running
-    const ps = await owner({ method: "GET", url: `${base()}/${conv}/environment` });
+    // the child works in its parent's device: the same one, with its instance running
+    const ps = await owner({ method: "GET", url: `${base()}/${conv}/device` });
     expect(ps.statusCode, ps.body).toBe(200);
-    expect(ps.json().environment?.instance?.status).toBe("running");
-    const cs = await owner({ method: "GET", url: `${base()}/${child}/environment` });
+    expect(ps.json().device?.instance?.status).toBe("running");
+    const cs = await owner({ method: "GET", url: `${base()}/${child}/device` });
     expect(cs.statusCode, cs.body).toBe(200);
     expect(cs.json()).toEqual(ps.json());
 
@@ -396,7 +396,7 @@ describe("child conversations through the conversation routes", () => {
     for (const [method, path, payload] of [
       ["GET", ""],
       ["GET", "/events"],
-      ["GET", "/environment"],
+      ["GET", "/device"],
       ["GET", `/outputs/${archived?.payload.outputId}`],
       ["GET", "/subagents"],
       ["GET", "/stream"],

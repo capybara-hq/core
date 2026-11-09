@@ -15,6 +15,7 @@ import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { type ClientBuildSummary, ClientBuilds } from "../client/client-builds.service.js";
 import { ApiError } from "../errors.js";
+import { PluginGuides, type RenderedSetupGuide } from "../extensions/plugin-guides.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
@@ -26,6 +27,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import {
+  AdminCatalogGuideQuery,
   CatalogItemsQuery,
   CatalogUpdateBody,
   CatalogUpdatePreviewBody,
@@ -84,6 +86,10 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 
 class CatalogImportConfirmBody extends createZodDto(ConfirmBody, "CatalogImportConfirmBody") {}
 class CatalogGitImportBody extends createZodDto(GitBody, "CatalogGitImportBody") {}
+class AdminCatalogGuideQueryDto extends createZodDto(
+  AdminCatalogGuideQuery,
+  "AdminCatalogGuideQuery",
+) {}
 class CatalogItemsQueryDto extends createZodDto(CatalogItemsQuery, "CatalogItemsQuery") {}
 class CatalogNpmImportBody extends createZodDto(NpmBody, "CatalogNpmImportBody") {}
 class CatalogScopePreviewBody extends createZodDto(ScopePreviewBody, "CatalogScopePreviewBody") {}
@@ -120,6 +126,7 @@ export class AdminCatalogController {
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
+    @Inject(PluginGuides) private readonly guides: PluginGuides,
   ) {}
 
   /**
@@ -339,6 +346,21 @@ export class AdminCatalogController {
   @Get("items/:id/icon")
   async icon(@Param("id") id: string, @Res() reply: FastifyReply): Promise<void> {
     await sendCatalogIcon(reply, await this.orgCatalog.icon(id, true));
+  }
+
+  /**
+   * A setup guide of the item as the platform sees it (spec 2026-11-09-setup-guides-v2-design.md
+   * §9.3; the admin console's connector template page): any live item, the admin audience, no org
+   * (`orgName` unresolved, reason `no_org`), no target, no checks run. Unknown item -> 404
+   * `catalog.item_not_found`, unknown guide -> 404 `catalog.guide_not_found`.
+   */
+  @Get(":itemId/guides/:guideId")
+  async guide(
+    @Param("itemId") itemId: string,
+    @Param("guideId") guideId: string,
+    @ZQuery(AdminCatalogGuideQueryDto) q: z.infer<typeof AdminCatalogGuideQuery>,
+  ): Promise<{ guide: RenderedSetupGuide }> {
+    return { guide: await this.guides.renderForPlatform(itemId, guideId, q) };
   }
 
   /**

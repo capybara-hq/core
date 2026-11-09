@@ -14,7 +14,7 @@ import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { TitlesModule } from "../conversations/titles.js";
-import { LegacySandboxCleanupJob } from "../environments/legacy-cleanup.job.js";
+import { LegacySandboxCleanupJob } from "../devices/legacy-cleanup.job.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";

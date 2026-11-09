@@ -1,5 +1,21 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.2
+
+### Patch Changes
+
+- ec79610: One name: devices. The program says device everywhere: `credential.json` holds `deviceId` (a file
+  from an older version is unusable: run `capybara-device logout` and log in again), the default
+  directory is `~/capybara-device/<deviceId>`, the sign-in follows the kernel's `device_sign_in.*`
+  error codes, and `status` prints `device`. SDK doc comments say device instead of environment.
+- Updated dependencies [ec79610]
+- Updated dependencies [d495d7d]
+- Updated dependencies [18defa0]
+- Updated dependencies [0a35407]
+- Updated dependencies [cf93278]
+- Updated dependencies [199f895]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.9
+
 ## 0.1.0-rc.1
 
 ### Minor Changes

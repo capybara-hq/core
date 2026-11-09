@@ -448,7 +448,7 @@ span.cb-title-btn {
 .cb-options-value[data-part="options-effort"] {
   flex: none;
 }
-.cb-options-value[data-part="options-environment"] {
+.cb-options-value[data-part="options-device"] {
   flex: 0 1 auto;
   max-width: 6em;
 }

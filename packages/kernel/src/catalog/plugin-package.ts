@@ -16,10 +16,12 @@ import {
   parseSkillMd,
   parseThemeFile,
   SKILL_ENTRY_FILE,
-  setupGuideFileProblem,
+  setupGuideDocPath,
+  setupGuideDocProblem,
   THEME_LIMITS,
   themeIdOf,
   validatePluginPackageJsonFor,
+  validateSetupGuide,
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
@@ -570,19 +572,45 @@ export function readPluginFiles(
   }
 
   const ext = manifest.extension;
-  // Setup guides: their template files are text within the size limit (spec
-  // 2026-11-08-plugin-setup-guides-design.md §2); a channel guide needs a channel extension, which
-  // the manifest parser checks when the extension section is there
+  // Setup guides v2 (spec 2026-11-09-setup-guides-v2-design.md §4.5): the documents are text
+  // within the limits and pass the SDK validator (an unknown variable is accepted: it renders as
+  // written); a channel guide needs a channel extension, which the manifest parser checks when the
+  // extension section is there; a template guide names one of the plugin's connector templates
+  const templateIds = new Set(connectorTemplates.map((t) => t.id));
   manifest.setupGuides?.forEach((g, i) => {
+    const at = `setupGuides.${i} (${g.id})`;
     if (g.place === "channel-connection" && ext === undefined) {
       issues.push(
-        `setupGuides.${i}: a channel-connection guide needs the plugin's extension to provide channel@1`,
+        `${at}: a channel-connection guide needs the plugin's extension to provide channel@1`,
       );
     }
-    g.files?.forEach((f, j) => {
-      const problem = setupGuideFileProblem(f.path, files.get(packagePath(f.path)));
-      if (problem !== undefined) issues.push(`setupGuides.${i}.files.${j}: ${problem}`);
-    });
+    // a listed template is checked by the manifest parser; scanned ones only here
+    if (
+      g.template !== undefined &&
+      manifest.connectorTemplates === undefined &&
+      !templateIds.has(g.template)
+    ) {
+      issues.push(`${at}: template ${g.template} is not one of the plugin's connector templates`);
+    }
+    const docs: Partial<Record<"en" | "zh", string>> = {};
+    for (const locale of ["en", "zh"] as const) {
+      const path = setupGuideDocPath(g.id, locale);
+      const data = files.get(path);
+      if (locale === "zh" && data === undefined) continue;
+      const problem = setupGuideDocProblem(path, data);
+      if (problem !== undefined) issues.push(`${at}: ${problem}`);
+      else docs[locale] = new TextDecoder().decode(data);
+    }
+    if (docs.en === undefined) return;
+    for (const issue of validateSetupGuide({
+      place: g.place,
+      en: docs.en,
+      ...(docs.zh !== undefined && { zh: docs.zh }),
+      id: g.id,
+      allowUnknownVariables: true,
+    })) {
+      if (issue.level === "error") issues.push(`${at}: ${issue.message}`);
+    }
   });
 
   if (ext !== undefined) {

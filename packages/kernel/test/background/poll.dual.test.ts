@@ -22,7 +22,7 @@ import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { handlesFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, waitFor } from "../helpers/runs.js";
-import { sandboxServiceFor, seedEnvironment } from "../helpers/sandbox.js";
+import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -80,8 +80,8 @@ describe("background task poll (dual replica)", () => {
 
   afterAll(async () => {
     if (db) {
-      const rows = await db.selectFrom("environment_instances").select("environment_id").execute();
-      for (const r of rows) await sandbox.destroyEnvironment(r.environment_id).catch(() => {});
+      const rows = await db.selectFrom("device_instances").select("device_id").execute();
+      for (const r of rows) await sandbox.destroyDevice(r.device_id).catch(() => {});
     }
     await h?.stop();
     redis?.disconnect();
@@ -93,13 +93,13 @@ describe("background task poll (dual replica)", () => {
   it("a task finishing while both replicas poll gets exactly one finish event", async () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
     const c = await seedConversation(raw);
-    const environmentId = await seedEnvironment(raw, c.orgId, c.accountId);
+    const deviceId = await seedDevice(raw, c.orgId, c.accountId);
     const id = newTaskId();
     const t0 = Date.now();
     const sid = await sandbox.withSandbox(
       {
         orgId: c.orgId,
-        environmentId,
+        deviceId,
         holderConversationId: c.conversationId,
         actor: { accountId: c.accountId, conversationId: c.conversationId },
       },
@@ -117,20 +117,20 @@ describe("background task poll (dual replica)", () => {
       AbortSignal.timeout(30_000),
     );
     const { handle } = await db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .select("handle")
-      .where("environment_id", "=", environmentId)
+      .where("device_id", "=", deviceId)
       .executeTakeFirstOrThrow();
     const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
     await waitFor(async () => existsSync(record), 10_000, "session record");
-    const instance = await sandbox.currentInstance(environmentId);
+    const instance = await sandbox.currentInstance(deviceId);
     const startedAt = new Date();
     await store.insert({
       id,
       orgId: c.orgId,
       conversationId: c.conversationId,
       sandboxConversationId: c.conversationId,
-      environmentId,
+      deviceId,
       runId: "run-x",
       callId: "call-x",
       triggerAccountId: c.accountId,

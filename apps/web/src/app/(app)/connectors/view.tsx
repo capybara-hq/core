@@ -6,6 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useOwnerLabel } from "../../../components/CatalogParts";
 import { useComponentSwitch } from "../../../components/ComponentSwitch";
+import { ConnectorGuideSheet, useMemberGuides } from "../../../components/ConnectorGuides";
 import { ConnectorPermissionsSheet } from "../../../components/ConnectorPermissions";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
@@ -56,6 +57,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const tc = useTranslations("orgComponents");
+  const tg = useTranslations("setupGuide");
   const locale = useLocale();
   const router = useRouter();
   const manage = canManageConnectors(me);
@@ -63,6 +65,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const member = roleOf(me) !== undefined && roleOf(me) !== "guest";
   const [tab, setTab] = useState<"all" | "disabled">("all");
   const [permissions, setPermissions] = useState<string | null>(null);
+  const [howTo, setHowTo] = useState<string | null>(null);
   const list = usePageQuery(connectorsQuery(orgId));
   const cq = orgComponentsQuery(orgId, { kind: "connector_template" });
   const offered = useQuery({ ...cq, enabled: member, retryOnMount: retryOnMountOf(cq.queryKey) });
@@ -73,6 +76,8 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
       return { ...q, retryOnMount: retryOnMountOf(q.queryKey) };
     }),
   });
+  // the personal connectors whose template's guide has a member section: 如何连接 on their card
+  const memberGuides = useMemberGuides(orgId, personal);
   const ownerLabel = useOwnerLabel(orgId);
   const { start, starting } = useStartConnect(orgId);
   const { actionsOf, dialog, error } = useComponentSwitch({
@@ -181,11 +186,17 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     if (!own || d === undefined) {
       return <ObjectCard key={c.id} {...base} state={{ label: t("status.active"), tone: "ok" }} />;
     }
+    // 如何连接: the member text of its template's guide, in a sheet
+    const howToMenu: MenuItem[] = memberGuides.has(c.id)
+      ? [{ label: tg("howToConnect"), onSelect: () => setHowTo(c.id) }]
+      : [];
+    const menu = howToMenu.length > 0 ? { menu: howToMenu } : {};
     if (!connected) {
       return (
         <ObjectCard
           key={c.id}
           {...base}
+          {...menu}
           state={{ label: t("cards.notConnected"), tone: "warn" }}
           primary={
             c.auth.type === "oauth_code"
@@ -199,6 +210,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
       <ObjectCard
         key={c.id}
         {...base}
+        {...menu}
         state={{ label: t("cards.connected"), tone: "ok" }}
         primary={{ label: t("cards.permissions"), onSelect: () => setPermissions(c.id) }}
       />
@@ -258,6 +270,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   };
 
   const open = permissions === null ? undefined : detailOf.get(permissions);
+  const guideOf = howTo === null ? undefined : personal.find((p) => p.id === howTo);
   return (
     <>
       <ListPage header={header} variant="cards" {...callout} {...(empty ? { empty } : {})}>
@@ -270,6 +283,14 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
           orgId={orgId}
           connector={open as ConnectorDetail}
           onClose={() => setPermissions(null)}
+        />
+      )}
+      {guideOf !== undefined && (
+        <ConnectorGuideSheet
+          orgId={orgId}
+          connector={guideOf}
+          admin={manage}
+          onClose={() => setHowTo(null)}
         />
       )}
     </>

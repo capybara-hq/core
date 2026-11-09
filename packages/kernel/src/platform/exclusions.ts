@@ -105,6 +105,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
+    route: "GET /api/v1/admin/catalog/:itemId/guides/:guideId",
+    category: "internal",
+    reason:
+      "The super admin's preview of a plugin's setup guide for the admin console, with no org and no target; agents assist with the org guides an org member sees",
+  },
+  {
     route: "POST /api/v1/admin/catalog/items/:id/confirm",
     category: "human-only",
     reason: "Confirms a catalog item's reviewed changes, an approval decision",
@@ -136,12 +142,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",
     category: "transport",
     reason: "Serves icon image bytes",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId",
-    category: "internal",
-    reason:
-      "A plugin's setup guide (an app manifest, URLs, steps) for the web's setup section; a person pastes it into the third-party platform's console, which an agent cannot reach",
   },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
@@ -283,15 +283,15 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves sandbox file bytes",
   },
-  // environments (personal cloud environments, environments design phase 1)
+  // devices (personal cloud devices, environments design phase 1)
   // connected machines (environments design phase 2): device sign-in by the program and on the
   // confirmation page, and disconnecting a machine. The machine's WebSocket (`GET /device/connect`)
   // is a raw gateway-role route, not a Nest controller, so it is not listed (like the webhook)
   {
-    route: "DELETE /api/v1/orgs/:orgId/environments/:id/machine",
+    route: "DELETE /api/v1/orgs/:orgId/devices/:id/machine",
     category: "human-only",
     reason:
-      "Disconnects a person's own machine (revokes its credential); a trust decision taken on the environment's page",
+      "Disconnects a person's own machine (revokes its credential); a trust decision taken on the device's page",
   },
   {
     route: "POST /api/v1/device/authorize",
@@ -625,6 +625,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PATCH /api/v1/orgs/:orgId/connectors/:connectorId",
     category: "secret",
     reason: "Edits connector endpoint config that can carry credentials",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack",
+    category: "human-only",
+    reason:
+      "A person confirms they updated the app on the third-party platform after a connector template's setup guide changed; only that person knows it was done",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/tools/:name/review",

@@ -108,6 +108,8 @@ interface Manifest {
   hooks: Set<string>;
   /** permissions.policyHooks: `mode: "policy"` only on these mount points (M-1). */
   policyHooks: Set<string>;
+  /** permissions.setupChecks: ctx.setup.check may only use these ids. */
+  setupChecks: Set<string>;
   caps: Set<string>;
   storage: boolean;
   models: boolean;
@@ -154,6 +156,7 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     uiViews: new Set(),
     hooks: new Set(),
     policyHooks: new Set(),
+    setupChecks: new Set(),
     caps: new Set(),
     storage: false,
     models: false,
@@ -181,6 +184,9 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     for (const h of strings(prop(pe, "hooks")?.value as Node | undefined, decls)) m.hooks.add(h);
     for (const h of strings(prop(pe, "policyHooks")?.value as Node | undefined, decls)) {
       m.policyHooks.add(h);
+    }
+    for (const c of strings(prop(pe, "setupChecks")?.value as Node | undefined, decls)) {
+      m.setupChecks.add(c);
     }
     const ui = prop(pe, "ui");
     const ue = ui ? resolve(ui.value as Node, decls) : undefined;
@@ -337,6 +343,16 @@ function scanSetup(
               `UI view "${id}" is not declared; add it to permissions.ui.views (or permissions.ui.components for a component) and ui in the extension manifest`,
             );
           }
+        } else if (area === "setup" && method === "check") {
+          const id = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
+          if (id === undefined) return dynamic(n, "perm-setup-check", "the ctx.setup.check id");
+          if (!m.setupChecks.has(id)) {
+            add(
+              n,
+              "perm-setup-check",
+              `Setup check "${id}" is not declared; add it to permissions.setupChecks in the extension manifest`,
+            );
+          }
         } else if (area === "hooks" && method === "on") {
           const mount = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
           if (mount === undefined) return dynamic(n, "perm-hooks", "the hook mount point");
@@ -397,11 +413,12 @@ function scanSetup(
           name === "tools" ||
           name === "extensionPoints" ||
           name === "ui" ||
-          name === "hooks"
+          name === "hooks" ||
+          name === "setup"
         ) {
           // 只有 ctx.http.route / ctx.tools.register / ctx.extensionPoints.get|list /
           // ctx.ui.view|action|invalidate|verifyEmbedToken 能被确认，其余写法无法确认
-          // (likewise only ctx.hooks.on is confirmable)
+          // (likewise only ctx.hooks.on and ctx.setup.check are confirmable)
           const rule =
             name === "http"
               ? "perm-http"
@@ -411,7 +428,9 @@ function scanSetup(
                   ? "perm-ui"
                   : name === "hooks"
                     ? "perm-hooks"
-                    : "perm-extension-point";
+                    : name === "setup"
+                      ? "perm-setup-check"
+                      : "perm-extension-point";
           const outer = parent;
           const ok =
             outer?.type === "MemberExpression" &&
@@ -419,6 +438,7 @@ function scanSetup(
             ((name === "http" && memberName(outer) === "route") ||
               (name === "tools" && memberName(outer) === "register") ||
               (name === "hooks" && memberName(outer) === "on") ||
+              (name === "setup" && memberName(outer) === "check") ||
               (name === "extensionPoints" && ["get", "list"].includes(memberName(outer) ?? "")) ||
               (name === "ui" &&
                 ["view", "action", "invalidate", "verifyEmbedToken"].includes(
@@ -463,6 +483,8 @@ function scanFile(
  * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount
  *   point must be a string literal or a same-file const, like the names below), or the options are
  *   `{ mode: "policy" }` and the mount point is not in permissions.policyHooks;
+ * - perm-setup-check: the id of ctx.setup.check(id, …) is not in permissions.setupChecks (a string
+ *   literal or same-file const, like the names below);
  * - perm-models: ctx.models is used but permissions.models is not declared (the purposes it may use
  *   are checked at run time);
  * - perm-reserved: platform access that cannot be confirmed (a destructured ctx, a computed member).

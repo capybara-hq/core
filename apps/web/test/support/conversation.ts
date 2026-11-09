@@ -97,8 +97,8 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   ...over,
 });
 
-/** The person's environments as `GET /environments` answers them (the composer's picker reads it). */
-export const ENVIRONMENTS = {
+/** The person's devices as `GET /devices` answers them (the composer's picker reads it). */
+export const DEVICES = {
   items: [
     envView("e1", null),
     envView("e2", "Build box"),
@@ -205,7 +205,7 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCa
     [`GET ${base}/usage`]: ok({
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     }),
-    [`GET ${base}/environment`]: ok({ environment: null }),
+    [`GET ${base}/device`]: ok({ device: null }),
     "GET /api/v1/orgs/o1/ui/contributions": ok({ items: [] }),
     "GET /api/v1/orgs/o1/connectors": ok({ connectors: [] }),
     "GET /api/v1/orgs/o1/attachments/limits": ok(LIMITS),

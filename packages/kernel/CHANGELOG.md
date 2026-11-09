@@ -1,5 +1,114 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.14
+
+### Patch Changes
+
+- 848fb39: Setup guides v2 kernel checks: `capybara:public-url`, `capybara:webhook-public`,
+  `capybara:webhook-received` (the gateway marks an accepted webhook in Redis, at most once a minute
+  per connection, kept 7 days), `capybara:connection-active`, `capybara:oauth-client`,
+  `capybara:connector-tools`, `capybara:connector-connected` and `capybara:oauth-token-endpoint`, which
+  probes the token endpoint with the stored client and a fixed invalid code (through the kernel's
+  network rules, no redirects, nothing logged or stored). The guide route returns the guide's
+  `template`; check runs need the connector's live platform template, read the cache again after
+  taking the run lock, and redact the sent forms of a connector's credentials too.
+- 2f01b01: Setup guides v2 checks: extensions register setup checks with `ctx.setup.check` (only during
+  setup, ids from `permissions.setupChecks`, recorded in the permission snapshot without blocking
+  loading). `GET …/catalog/:itemId/guides/:guideId/checks` reads the cached state of a guide's checks
+  and `POST …/checks/:checkId/run` runs one (30 a minute per account): results cached in Redis per
+  target, mode and (for member checks) account, single flight across replicas, a 10 s force cooldown,
+  8 concurrent runs per org, a 10 s time limit, and every result validated, redacted by the target's
+  and the extension's secrets and validated again. The `Platform` tool gains `setup.status` and
+  `setup.check`. Guide acks of channel connections and connectors follow the guide read's catalog
+  visibility.
+- 155c1cf: Setup guides v2 for connector templates: the guide route renders a template's guide for the org's
+  connector made from it (`connectorId`, `connectorName`), connectors created from a template record
+  the guide they were set up with (`connectors.guide_ack`, migration 0106, which also clears the v1
+  acks of channel connections), connector views carry `setupGuide` and `guideDrift`, and
+  `POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack` confirms an updated app (409
+  `connector.guide_changed`; a human-only Platform exclusion). Catalog template entries and the
+  connector template list carry `guide`; the platform update preview lists `guideChanges` with org
+  counts.
+- 70a50f5: Complete the `Platform` tool's `setup` domain: `setup.guides` lists the setup guides a person may
+  help with (targets, drift, cached check counts, web pages) and mirrors the new
+  `GET /api/v1/orgs/:orgId/setup-guides` route; `setup.read` returns a guide rendered as Markdown
+  (checks as `- [check <id>]` lines) and mirrors the org guide route, which is no longer excluded.
+  Every setup operation is read class; secrets, OAuth consent and the guide ack stay human-only.
+- 6622107: Setup guides v2: the kernel validates `guides/<id>.md` (and `.zh.md`) at import with the SDK
+  validator, stores both documents as display files, and renders a guide per org, place, mode,
+  audience, locale and target (`GET …/catalog/:itemId/guides/:guideId` now returns blocks, checks,
+  unresolved variables with reasons and the v2 drift hash). Channel connection acks use the v2 hash;
+  a version imported with a v1 `setupGuides` entry shows no guide. The super admin previews a guide
+  with `GET /api/v1/admin/catalog/:itemId/guides/:guideId` (a Platform exclusion).
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
+## 0.1.0-rc.13
+
+### Minor Changes
+
+- c12e7a7: Org admins and the super admin can hide and reorder extension contributions per UI slot: the org
+  setting `uiArrangement` and the deployment setting `uiArrangement` (an org's entry replaces the
+  platform's for that slot). Hidden means not listed: the contribution lists apply it, the view,
+  action and embed routes do not. `GET /orgs/:orgId/ui/arrangement` and `GET /admin/ui/arrangement`
+  list the slots with their items for the arrangement page.
+  The lists are grouped by anchor in the slot's anchor order also for a slot no arrangement names.
+- 17fdfb1: `GET /api/v1/ui/slots` lists the UI slot catalog for any signed-in person, and the Platform
+  operation `ui.slots` (new `ui` domain) lets an agent read it.
+- 0e765e2: The extension host resolves each UI contribution's slot once per load: a contribution to an unknown
+  slot or slot version is dropped (the extension still loads), logged once, and listed as `uiDropped`
+  on the admin extension view. Contributions still on the deprecated `place` load unchanged (info
+  log). The contribution list no longer carries `legacyPlace`, and contributions to slots without a
+  place (agent, org settings, platform) are not listed or served through the org routes yet.
+  A file previewer whose embed names a dropped contribution is left out (one warn per load) instead
+  of failing the extension.
+- 18defa0: `platform.page` contributions are served to super admins on org-less routes under
+  `/api/v1/admin/ui/` (`contributions`, `views/:plugin/:id`, `actions/:plugin/:id`,
+  `embeds/:plugin/:id/token`, `stream`): the extension must be running (no org enablement applies)
+  and gets the platform's deployment config. `UiRenderArgs` / `UiActionArgs` become unions narrowed
+  on `scope`: the platform variant has `role: "superAdmin"` and no `orgId`. `EmbedClaims` gain
+  `scope: "org" | "platform"` (`orgId` absent exactly for the platform scope); a platform token
+  verifies only for a `platform.page` contribution while the account is still an active super admin,
+  and an org token never verifies for one. `ctx.ui.invalidate` takes no `orgId` for a `platform.page`
+  contribution (refreshing the admin console's stream) and throws when one is given.
+- cf93278: The org UI routes gate every contribution by its slot: the slot's `minRole` (`org.settings.section`
+  admin and above, `org.page` member and above, conversation and agent slots any member), then its
+  scope (a readable conversation; an agent the caller can read in this org). `platform.page` is never
+  listed or served through an org route. `GET /orgs/:orgId/ui/contributions` takes `?slot=` and lists
+  `slot` and the resolved `after` anchor instead of `place`, ordered by extension name, then manifest
+  order. Views, actions and embed tokens take `agentId` for `agent.detail.section`; embed claims carry
+  it, and `ctx.ui.verifyEmbedToken` returns null when the current role no longer meets the slot's
+  `minRole`. `UiRenderArgs` gains `slot`, `scope` and `agentId`; `EmbedClaims` gains `agentId`.
+
+### Patch Changes
+
+- 0a5b15d: One name: devices. Environments become devices everywhere in the kernel: migration 0105 renames the
+  tables (`devices`, `device_instances`, `device_defaults`, `device_machines`), the `device_id` columns,
+  indexes and constraints, turns `source` `device` into `local`, the provider `@device` into `@local`
+  and the log event `environment_paths` into `device_paths`. Config `environments.*` becomes
+  `devices.maxPersonal` and `devices.local.*` (`CAPYBARA_DEVICES__…`); error codes `environment.*`
+  become `device.*` and the sign-in codes become `device_sign_in.*`; routes move to
+  `orgs/:orgId/devices…`, Platform operations to `devices.*`, the IM command to `/device`, sandbox
+  file systems to `cap-device-<id>` (existing cloud files under `cap-env-<id>` are left behind) and
+  the sign-in `verificationUri` to `<web>/devices/link`.
+  
+  Upgrading: sandbox jobs queued by the previous kernel (instance destroys, file resets) are dropped
+  (the hourly sweep still cleans deleted devices; a file reset must be requested again), and audit
+  rows written before the upgrade keep their `environment.*` action names.
+- 199f895: UI contributions name a slot (`slot: "conversation.panel"`, optionally `@<n>`, plus `after` for
+  slots with anchors); `place` stays accepted as a deprecated input. `validateUiContributions` now
+  covers only structural problems, and the new `resolveUiSlots` drops a contribution to an unknown
+  slot or version instead of failing the extension. `normalizePlace` is removed.
+- Updated dependencies [ec79610]
+- Updated dependencies [d495d7d]
+- Updated dependencies [18defa0]
+- Updated dependencies [0a35407]
+- Updated dependencies [cf93278]
+- Updated dependencies [199f895]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.9
+
 ## 0.1.0-rc.12
 
 ### Patch Changes

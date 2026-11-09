@@ -28,7 +28,7 @@ export {
   type PresetId,
 } from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
-export { Callout, type CalloutProps } from "./callout";
+export { Callout, type CalloutAction, type CalloutProps } from "./callout";
 export {
   CardGrid,
   ObjectCard,
@@ -57,6 +57,7 @@ export {
   type ToolCallRowProps,
   type ToolCallStatus,
 } from "./chat";
+export { CheckRow, type CheckRowProps, type CheckRowState } from "./check-row";
 export { ContentSection, type ContentSectionProps } from "./content-section";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
@@ -65,6 +66,7 @@ export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
+export { type GuideBlock, GuideDocument, type GuideDocumentProps } from "./guide-document";
 export {
   ImpactPreview,
   type ImpactPreviewGroup,

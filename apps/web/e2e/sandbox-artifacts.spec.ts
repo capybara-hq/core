@@ -86,5 +86,5 @@ test("Write + Deliver：文件卡片实时出现，右侧预览为表格，能�
   await page.getByRole("button", { name: designZh("titlebar.properties") }).click();
   const props = page.getByRole("complementary", { name: designZh("props.label") });
   await expect(props.getByText("fruit.csv")).toBeVisible();
-  await expect(props.getByText(new RegExp(zh.environments.state.running))).toBeVisible();
+  await expect(props.getByText(new RegExp(zh.devices.state.running))).toBeVisible();
 });

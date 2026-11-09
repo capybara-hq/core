@@ -20,6 +20,8 @@ capybara-plugin marketplace --write|--check [--base <rev>] [--root <dir>] [--fil
                             [--plugins <glob>]
 capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
                         [--plugins <pattern>]... [--marketplace <file>]
+capybara-plugin guide <id> [--locale en|zh] [--mode <mode>] [--audience <audience>]
+                      [--var <name>=<value>]...
 ```
 
 - **pack**: a plugin directory (`package.json` + `.capybara-plugin/plugin.json`, an optional
@@ -30,6 +32,13 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   so once installed it resolves by package name (a test loads `@capybara-hq/plugin-model-fake`
   from npm). `--all <root>` packs every plugin of a repository. Output: `artifacts/plugins`. (The
   bootstrap plugins a kernel pins are no longer packed here: a starting kernel downloads them.)
+  Each setup guide declared in `plugin.json` `setupGuides` ships as `guides/<id>.md` (required)
+  and `guides/<id>.zh.md` (optional), validated with the SDK's `validateSetupGuide`: title,
+  sections, check lines, variables known to the place and allowed where they stand, limits, the
+  zh document's parity with the English one, and every plugin check id declared in the
+  extension's `permissions.setupChecks` (a plugin without an extension may only use `capybara:`
+  checks). Errors fail the pack; warnings (such as a text variable outside double quotes in a
+  yaml block) are printed and fail neither `pack` nor `check` (`plugin-pack-guide`).
 - **check**: every plugin check, on the plugins under `<root>/plugins/*` (or `--plugins <glob>`, or
   the root itself when it is a plugin): the dependency boundary (a plugin depends only on
   `@capybara-hq/plugin-sdk` and third-party packages), extension state under multiple replicas (no
@@ -46,6 +55,12 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   has no `zh`). Warnings are printed under `passed with N warning(s)`. `--base <ref>` also fails when the diff edits, deletes or renames an applied
   migration, or adds one numbered at or below the highest number of its directory at `<ref>`. No plugin found is an error. A plugin may list `@capybara-hq/plugin-tools` (like
   `@capybara-hq/testing`) in its devDependencies.
+- **guide**: prints a setup guide of the plugin in the current directory as the kernel renders
+  it for one locale (`en` default, `zh` falling back to English), mode (default: the place's
+  first) and audience (default: the place's first), with `--var name=value` for the place's
+  variables (`{{mode}}` is the mode rendered, so `--var mode` is refused): the title, each block (Markdown as is, code fenced with its title, a check as
+  `[check <id>] <label>`), then `unresolved: …` (variables the text uses without a value, or
+  `none`). An invalid guide prints its issues and exits 1; warnings go to stderr.
 - **sync-versions**: after `changeset version` (which bumps only `package.json`), copies each
   plugin's version into its `.capybara-plugin/plugin.json` and its extension manifest
   (`src/index.ts`, `  version: "x"`), which the packer requires equal.

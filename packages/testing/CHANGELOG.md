@@ -1,5 +1,65 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- ba8ebaf: The fake-im fixture's setup guide is a v2 Markdown document (`guides/fake-im-app.md` and its zh
+  translation) instead of the v1 steps and template files.
+- 2f01b01: `fake-im` registers setup checks for the kernel's check runner tests (`pass`, `fail`, `proxy`,
+  `throw`, `hang`, `ignore-signal`, `long`, `echo-secret`, `pad-to-limit`), and
+  `startFakeChannelServer` records the `proxy` check's `POST /checks` calls (`checks`) and can hold
+  their answers (`holdChecks`).
+- Updated dependencies [848fb39]
+- Updated dependencies [2f01b01]
+- Updated dependencies [155c1cf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [6622107]
+- Updated dependencies [ba8ebaf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/kernel@0.1.0-rc.14
+  - @capybara-hq/plugin-tools@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
+## 0.1.0-rc.12
+
+### Patch Changes
+
+- 8b10c58: The fake extensions declare UI slots; `fake-tools-ui` adds views for `agent.detail.section`, `org.settings.section` and `platform.page`.
+- 18defa0: `platform.page` contributions are served to super admins on org-less routes under
+  `/api/v1/admin/ui/` (`contributions`, `views/:plugin/:id`, `actions/:plugin/:id`,
+  `embeds/:plugin/:id/token`, `stream`): the extension must be running (no org enablement applies)
+  and gets the platform's deployment config. `UiRenderArgs` / `UiActionArgs` become unions narrowed
+  on `scope`: the platform variant has `role: "superAdmin"` and no `orgId`. `EmbedClaims` gain
+  `scope: "org" | "platform"` (`orgId` absent exactly for the platform scope); a platform token
+  verifies only for a `platform.page` contribution while the account is still an active super admin,
+  and an org token never verifies for one. `ctx.ui.invalidate` takes no `orgId` for a `platform.page`
+  contribution (refreshing the admin console's stream) and throws when one is given.
+- cf93278: The org UI routes gate every contribution by its slot: the slot's `minRole` (`org.settings.section`
+  admin and above, `org.page` member and above, conversation and agent slots any member), then its
+  scope (a readable conversation; an agent the caller can read in this org). `platform.page` is never
+  listed or served through an org route. `GET /orgs/:orgId/ui/contributions` takes `?slot=` and lists
+  `slot` and the resolved `after` anchor instead of `place`, ordered by extension name, then manifest
+  order. Views, actions and embed tokens take `agentId` for `agent.detail.section`; embed claims carry
+  it, and `ctx.ui.verifyEmbedToken` returns null when the current role no longer meets the slot's
+  `minRole`. `UiRenderArgs` gains `slot`, `scope` and `agentId`; `EmbedClaims` gains `agentId`.
+- Updated dependencies [ec79610]
+- Updated dependencies [0a5b15d]
+- Updated dependencies [c12e7a7]
+- Updated dependencies [17fdfb1]
+- Updated dependencies [0e765e2]
+- Updated dependencies [adfc0af]
+- Updated dependencies [d495d7d]
+- Updated dependencies [18defa0]
+- Updated dependencies [0a35407]
+- Updated dependencies [cf93278]
+- Updated dependencies [199f895]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.9
+  - @capybara-hq/kernel@0.1.0-rc.13
+  - @capybara-hq/plugin-tools@0.1.0-rc.10
+
 ## 0.1.0-rc.11
 
 ### Minor Changes

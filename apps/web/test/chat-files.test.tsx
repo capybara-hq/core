@@ -158,6 +158,7 @@ const dropZone = (container: HTMLElement) =>
 const transfer = (files: File[]) => ({
   files,
   types: ["Files"],
+  getData: () => "",
   items: files.map((f) => ({ kind: "file", type: f.type, getAsFile: () => f })),
 });
 

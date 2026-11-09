@@ -22,7 +22,7 @@ import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.j
 import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor } from "../helpers/identity.js";
-import { sandboxServiceFor, seedEnvironment } from "../helpers/sandbox.js";
+import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -39,7 +39,7 @@ let store: BackgroundTaskStore;
 let config: KernelConfig;
 let root: string;
 let seed: Awaited<ReturnType<typeof seedConversation>>;
-/** The environment the seeded conversation is bound to. */
+/** The device the seeded conversation is bound to. */
 let envId: string;
 let provider: SandboxProvider | undefined;
 let fake: SandboxProvider;
@@ -89,7 +89,7 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
   );
   root = await mkdtemp(join(tmpdir(), "cap-bash-bg-"));
   handles = [];
@@ -126,7 +126,7 @@ beforeEach(async () => {
   provider = fake;
   config = configWith({});
   seed = await seedConversation(raw);
-  envId = await seedEnvironment(raw, seed.orgId, seed.accountId);
+  envId = await seedDevice(raw, seed.orgId, seed.accountId);
 });
 
 afterEach(async () => {
@@ -170,7 +170,7 @@ function bash(): BuiltinTool {
   }) as typeof sandbox.withSandbox;
   const deps: SandboxToolDeps = {
     sandbox: wrapped,
-    environments: { forTool: async () => envId },
+    devices: { forTool: async () => envId },
     background: store,
     attachments: {
       listForConversation: async () => [],
@@ -210,9 +210,9 @@ const textOf = (r: Awaited<ReturnType<BuiltinTool["run"]>>): string =>
 const sandboxCreatedAt = async (env: string): Promise<Date> =>
   (
     await db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .select("created_at")
-      .where("environment_id", "=", env)
+      .where("device_id", "=", env)
       .executeTakeFirstOrThrow()
   ).created_at;
 
@@ -266,7 +266,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
       orgId: seed.orgId,
       conversationId: seed.conversationId,
       sandboxConversationId: seed.conversationId,
-      environmentId: envId,
+      deviceId: envId,
       runId: "run-1",
       callId: c.callId,
       triggerAccountId: seed.accountId,
@@ -295,7 +295,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     expect(row).toMatchObject({
       conversationId: child,
       sandboxConversationId: seed.conversationId,
-      environmentId: envId,
+      deviceId: envId,
     });
     expect(row?.sandboxCreatedAt).toEqual(await sandboxCreatedAt(envId));
     expect(await store.countRunning(seed.conversationId)).toBe(1);

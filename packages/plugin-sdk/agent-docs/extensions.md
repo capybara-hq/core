@@ -32,9 +32,33 @@ The platform runs several replicas, so:
   and periodic work) and `ctx.bus`.
 - Queue names and job ids contain no `:`.
 - Migrations are plain SQL under `migrations/`, in the schema `plugin_<name>`, expand-only.
-- Declare every capability you use (`ctx.secrets`, `ctx.storage`, `ctx.tools`, `ctx.ui`, hooks)
-  in `permissions`. `capybara-plugin check` verifies this.
+- Declare every capability you use (`ctx.secrets`, `ctx.storage`, `ctx.tools`, `ctx.ui`, hooks,
+  `ctx.setup.check` ids in `permissions.setupChecks`) in `permissions`. `capybara-plugin check`
+  verifies this.
 - Hooks observe or deny; they never rewrite.
+
+## Setup checks
+
+A setup guide's `::check <id> <label>` line (see `plugin-format`) runs a check of the plugin's
+extension:
+
+```ts
+ctx.setup.check("bot-token", {
+  place: "channel-connection",
+  run: async ({ target, config, mode, signal }) => {
+    // one or two read calls, passing signal; return ok, failing (with reason and fix) or unknown
+    return { status: "ok", reason: { en: "The platform accepted the token." } };
+  },
+});
+```
+
+- Register in `setup` and list each id in `permissions.setupChecks` (`^[a-z0-9][a-z0-9-]{0,47}$`).
+- A check never writes (at the third party or in the platform), never retries, and never puts a
+  secret in its `reason` or `fix` (plain text, `{ en, zh? }`, at most 300 / 500 characters).
+- A channel connection target carries the connection config; a connector target carries ids and a
+  manual OAuth client id, never the client secret or a member's token.
+- The platform runs checks only when a person or an agent asks, caches results for five minutes,
+  times a run out after 10 seconds and redacts known secrets from results.
 
 ## Extension points
 
@@ -44,7 +68,7 @@ look like `channel@1`: name and major version. The registered points:
 <!-- generated:extension-points -->
 | Extension point | Providers | Per org | What it is |
 |---|---|---|---|
-| `sandbox` | single | no | Runs an environment's instance and keeps its files for agents' commands (Docker, E2B). |
+| `sandbox` | single | no | Runs a device's instance and keeps its files for agents' commands (Docker, E2B). |
 | `config-source` | single | no | Supplies deployment configuration from an external store such as Nacos. |
 | `secret-store` | single | no | Stores and resolves secrets (connector credentials, secret config) outside the database. |
 | `object-store` | single | no | Stores files and artifacts in S3-compatible object storage, with presigned uploads. |

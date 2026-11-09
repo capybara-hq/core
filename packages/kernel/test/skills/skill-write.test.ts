@@ -957,7 +957,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
           throw new Error("unused");
         },
       },
-      environments: { forTool: async () => randomUUID() },
+      devices: { forTool: async () => randomUUID() },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,

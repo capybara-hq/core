@@ -9,6 +9,7 @@ import { LockService } from "../../src/infra/lock/lock.service.js";
 import { DOWNGRADE_SHARED_LEASE, RENEW_SHARED_LEASE } from "../../src/infra/lock/shared-lease.js";
 import { WithLock } from "../../src/infra/lock/with-lock.decorator.js";
 import { createLogger } from "../../src/log.js";
+import { LOCK_FAKE_CLOCK, renewalPeriods } from "../helpers/lock-clock.js";
 
 let rd: TestContainer;
 let r1: Redis;
@@ -102,18 +103,25 @@ describe("LockService", () => {
   });
 
   it("renews past the TTL while held", async () => {
-    const a = new LockService(r1, log);
+    // the watchdog's clock is fake and its TTL long in real time: Redis cannot expire the key
+    // between two renewals however slow the machine is, and no real time is spent waiting
+    const ttlMs = 30_000;
     const key = k("renew");
-    const ttlMs = 600;
-    const h = await a.acquire(key, { ttlMs });
-    // Observe the key for 2.5 TTLs; poll fast so a slow event loop cannot hide an expiry.
-    const end = Date.now() + ttlMs * 2.5;
-    while (Date.now() < end) {
+    const evals = vi.spyOn(r1, "eval");
+    vi.useFakeTimers(LOCK_FAKE_CLOCK);
+    try {
+      const h = await new LockService(r1, log).acquire(key, { ttlMs });
+      // 8 renewal periods = 2.67 TTLs: without renewals moving the deadline, lost fires at 2/3 TTL
+      const answers = await renewalPeriods(evals, ttlMs / 3, 8);
+      expect(answers).toEqual(Array(8).fill(1)); // each PEXPIRE applied to our key
+      expect(Date.now()).toBeGreaterThan(ttlMs * 2.5);
       expect(await r2.exists(`lock:${key}`)).toBe(1);
-      await sleep(25);
+      expect(h?.lost.aborted).toBe(false);
+      await h?.release();
+    } finally {
+      vi.useRealTimers();
+      evals.mockRestore();
     }
-    expect(h?.lost.aborted).toBe(false);
-    await h?.release();
     expect(await r2.exists(`lock:${key}`)).toBe(0);
   });
 
@@ -556,13 +564,25 @@ describe("LockService shared leases", () => {
   });
 
   it("renewal keeps a shared lease past its TTL", async () => {
+    // a fake clock for the watchdog, as in "renews past the TTL while held"
+    const ttlMs = 30_000;
     const a = new LockService(r1, log);
     const keys = keysOf("renew");
-    const s = await a.tryShared(keys, "s", 4, 300);
-    await sleep(700);
-    expect(s?.lost.aborted).toBe(false);
-    expect(await a.sharedCount(keys)).toBe(1);
-    await s?.release();
+    const evals = vi.spyOn(r1, "eval");
+    vi.useFakeTimers(LOCK_FAKE_CLOCK);
+    try {
+      const s = await a.tryShared(keys, "s", 4, ttlMs);
+      expect(s).toBeDefined();
+      const answers = await renewalPeriods(evals, ttlMs / 3, 8);
+      expect(answers.map(Number)).toEqual(Array(8).fill(1));
+      expect(s?.lost.aborted).toBe(false);
+      expect(await a.sharedCount(keys)).toBe(1);
+      await s?.release();
+    } finally {
+      vi.useRealTimers();
+      evals.mockRestore();
+    }
+    expect(await a.sharedCount(keys)).toBe(0);
   });
 });
 

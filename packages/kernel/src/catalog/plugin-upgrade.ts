@@ -14,6 +14,7 @@ import { ExtensionBlobs } from "../extensions/blobs.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../extensions/package.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
+import { PluginGuides, type TemplateGuideChange } from "../extensions/plugin-guides.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import type { SingleProviderNote } from "../extensions/single-provider.js";
 import { audit } from "../identity/audit.js";
@@ -155,6 +156,13 @@ export interface PlatformUpdatePreview {
     needsApproval: boolean;
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * Connector templates whose setup guide the update changes (code blocks or checks of the admin
+   * text): "the setup guide of template X changed; org admins of N orgs will be asked to update
+   * their app" (spec 2026-11-09-setup-guides-v2-design.md §11). Counts only. Not covered by
+   * `diffHash` (nothing the confirm does depends on it).
+   */
+  guideChanges: TemplateGuideChange[];
   /**
    * The themes the update removes that are on in some org (themes spec §6): the orgs whose default
    * each is and how many people picked it. Absent when no such theme is removed.
@@ -381,6 +389,8 @@ export class PlatformPluginUpdater {
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(PluginScopeSync) private readonly sync: PluginScopeSync,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** The connector template guides an update changes (the preview's `guideChanges`). */
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "templateGuideChanges">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -389,7 +399,15 @@ export class PlatformPluginUpdater {
 
   /** The update preview (see the class comment); writes nothing. */
   async preview(itemId: string, version: string): Promise<PlatformUpdatePreview> {
-    return previewOf(await this.diff(itemId, version));
+    return this.withGuideChanges(await this.diff(itemId, version));
+  }
+
+  /** The preview of a diff with the template guides it changes. */
+  private async withGuideChanges(d: UpdateDiff): Promise<PlatformUpdatePreview> {
+    return {
+      ...previewOf(d),
+      guideChanges: await this.guides.templateGuideChanges(d.itemId, d.from, d.to),
+    };
   }
 
   /**
@@ -413,7 +431,7 @@ export class PlatformPluginUpdater {
         `internal: previewForOwner got the staged target of version ${staged.version} for version ${version}`,
       );
     }
-    const preview = previewOf(
+    const preview = await this.withGuideChanges(
       await this.diff(itemId, version, {
         owner: { orgId },
         ...(staged !== undefined && { target: staged }),
@@ -1871,8 +1889,8 @@ export class PlatformPluginUpdater {
   }
 }
 
-/** The preview of a diff. */
-function previewOf(d: UpdateDiff): PlatformUpdatePreview {
+/** The preview of a diff (without `guideChanges`, which reads PG). */
+function previewOf(d: UpdateDiff): Omit<PlatformUpdatePreview, "guideChanges"> {
   return {
     itemId: d.itemId,
     name: d.name,

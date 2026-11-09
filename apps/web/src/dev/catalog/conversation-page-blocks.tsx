@@ -60,7 +60,7 @@ import {
   AGENTS_CHIP_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
-  ENVIRONMENT_FIXTURE,
+  DEVICE_FIXTURE,
   FILE_FIXTURE,
   type FixtureFile,
   type FixtureSubagent,
@@ -414,8 +414,8 @@ type ComposerState =
   | "focus"
   | "no-effort"
   | "skill"
-  | "environment"
-  | "environment-locked";
+  | "device"
+  | "device-locked";
 
 function modelLabel(provider: string, id: string): string {
   return (
@@ -487,21 +487,21 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "lo
   };
   // the agent picker only in a new conversation: after the first message the title bar's path
   // names the agent (issue U)
-  const agentPart = state === "new" || state === "environment" ? { agent } : {};
-  // the environment picker between the agent and the model; locked after the first message
-  const envPart =
-    state === "environment" || state === "environment-locked"
+  const agentPart = state === "new" || state === "device" ? { agent } : {};
+  // the device picker between the agent and the model; locked after the first message
+  const devicePart =
+    state === "device" || state === "device-locked"
       ? {
-          environment: {
-            label: K.environment,
-            value: ENVIRONMENT_FIXTURE.items.find((i) => i.id === ENVIRONMENT_FIXTURE.selected)
+          device: {
+            label: K.device,
+            value: DEVICE_FIXTURE.items.find((i) => i.id === DEVICE_FIXTURE.selected)
               ?.label as string,
-            ...(state === "environment-locked" ? { locked: { hint: K.environmentLocked } } : {}),
+            ...(state === "device-locked" ? { locked: { hint: K.deviceLocked } } : {}),
             groups: [
               {
-                items: ENVIRONMENT_FIXTURE.items.map((i) => ({
+                items: DEVICE_FIXTURE.items.map((i) => ({
                   ...i,
-                  checked: i.id === ENVIRONMENT_FIXTURE.selected,
+                  checked: i.id === DEVICE_FIXTURE.selected,
                 })),
               },
             ],
@@ -510,8 +510,8 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "lo
         }
       : {};
   return state === "no-effort"
-    ? { ...agentPart, ...envPart, model: modelPicker }
-    : { ...agentPart, ...envPart, model: modelPicker, effort };
+    ? { ...agentPart, ...devicePart, model: modelPicker }
+    : { ...agentPart, ...devicePart, model: modelPicker, effort };
 }
 
 function composerProps(
@@ -529,7 +529,7 @@ function composerProps(
     value,
     onChange: noop,
     placeholder:
-      state === "new" || state === "environment"
+      state === "new" || state === "device"
         ? K.newPlaceholder.replace("研究助手", C.agent.name)
         : K.placeholder,
     ...(state === "running" ? { hint: K.runningHint } : {}),
@@ -571,8 +571,8 @@ function composerBlocks(): ReactNode {
     "focus",
     "no-effort",
     "skill",
-    "environment",
-    "environment-locked",
+    "device",
+    "device-locked",
   ];
   return (
     <>

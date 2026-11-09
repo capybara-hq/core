@@ -11,6 +11,8 @@ export interface NamedThrottler {
   ttl: number;
   /** The 429 message (today's text of the route that used the limiter). */
   message: string;
+  /** The 429 error code; default `auth.rate_limited` (the credential routes'). */
+  code?: "auth.rate_limited" | "rate_limited";
   /** The credential group: throttlers of one group are reserved together (one Redis hash tag). */
   group: string;
   /** What a successful attempt does to this counter: delete it, or give one attempt back. */
@@ -60,7 +62,8 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  *
  * `POST /api/v1/device/authorize` and `POST /api/v1/device/token` opt in to `device-authorize-ip`
  * and `device-token-ip` with `@Throttled` (every request counts; neither checks a guessable
- * credential: the device code is 32 random bytes).
+ * credential: the device code is 32 random bytes). `POST …/guides/:guideId/checks/:checkId/run`
+ * opts in to `setup-check` (setup guides v2 §10.3: each run may call a third party).
  */
 export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // (login, IP): 10; an attacker filling one login from one IP leaves the owner's other IPs alone (R25)
@@ -188,6 +191,20 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     limit: 20,
     ttl: 60_000,
     message: "Too many client reports; try again later",
+    getTracker: (req) => sha256(principalAccountId(req)),
+  },
+  // setup check runs per signed-in person (setup guides v2 §10.5): 30 a minute, every request
+  // counts (@Throttled); a cached answer costs no third-party call but still counts, as the page
+  // asks at most once per row and stale result. The edge of the route (with `retry-after`): the
+  // budget shared with the Platform tool's setup.check is SetupChecksService's own counter
+  {
+    name: "setup-check",
+    group: "setup-check",
+    onSuccess: "clear",
+    limit: 30,
+    ttl: 60_000,
+    message: "Too many setup check runs; try again in a minute",
+    code: "rate_limited",
     getTracker: (req) => sha256(principalAccountId(req)),
   },
 ];

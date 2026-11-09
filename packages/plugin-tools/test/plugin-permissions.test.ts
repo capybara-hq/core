@@ -111,6 +111,34 @@ describe("perm-hooks", () => {
   });
 });
 
+describe("perm-setup-check", () => {
+  it("undeclared id fails perm-setup-check, even with an exemption comment", () => {
+    const d = "plugin-perm-setup-check-undeclared";
+    const f = checkPluginPermissions([fixture(d)]);
+    expect(f.map((x) => x.line)).toEqual(flagged(d));
+    expect(f.every((x) => x.rule === "perm-setup-check")).toBe(true);
+    expect(f[0]?.message).toContain('Setup check "bot-scopes" is not declared');
+    expect(f[0]?.message).toContain("permissions.setupChecks");
+    expect(f[1]?.message).toContain('Setup check "app-token" is not declared');
+    expect(f.some((x) => x.message.includes("Cannot statically"))).toBe(false);
+  });
+
+  it('dynamic id reports "Cannot statically confirm"; exempted dynamic id passes; empty reason fails', () => {
+    const d = "plugin-perm-setup-check-dynamic";
+    const f = checkPluginPermissions([fixture(d)]);
+    // the FLAG lines, plus the last call whose exemption has an empty reason
+    expect(f.map((x) => x.line)).toEqual([...flagged(d), 19]);
+    expect(f.every((x) => x.rule === "perm-setup-check")).toBe(true);
+    expect(f[0]?.message).toContain("Cannot statically confirm the ctx.setup.check id");
+    expect(f[1]?.message).toContain("Cannot statically confirm how ctx.setup is used");
+    expect(f[2]?.message).toContain("reason");
+  });
+
+  it("declared literal and same-file const pass (also through a same-file function)", () => {
+    expect(checkPluginPermissions([fixture("plugin-perm-setup-check-ok")])).toEqual([]);
+  });
+});
+
 describe("解构、计算成员与参数默认值", () => {
   it("解构 ctx / 计算成员 / 解构参数报无法静态确认（带原因的豁免不报）；默认值参数照常跟踪", () => {
     const f = checkPluginPermissions([fixture("plugin-perm-destructure")]);
