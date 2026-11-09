@@ -145,6 +145,32 @@ describe("renderThemeCss", () => {
     ]);
   });
 
+  it("theme css is one @layer theme block", () => {
+    // Client extensions spec §7.2: unlayered CSS beats every layer, so the theme sits in the
+    // `theme` layer the design stylesheet declares (design, theme, extensions).
+    for (const theme of [
+      nightCity(),
+      parse({ name: { en: "Empty", zh: "空" }, schemes: { dark: {}, light: {} } }),
+    ]) {
+      const css = renderThemeCss(theme, url);
+      expect(css.startsWith("@layer theme {\n")).toBe(true);
+      expect(css.endsWith("\n}\n")).toBe(true);
+      expect(css.match(/@layer/g)).toHaveLength(1);
+      // Braces balance, and the layer block closes only at the end
+      let depth = 0;
+      const body = css.slice("@layer theme {".length, -"}\n".length);
+      for (const ch of body) {
+        if (ch === "{") depth++;
+        if (ch === "}") depth--;
+        expect(depth).toBeGreaterThanOrEqual(0);
+      }
+      expect(depth).toBe(0);
+    }
+    const css = renderThemeCss(nightCity(), url);
+    expect(css).toContain("@font-face {");
+    expect(block(css, ':root[data-theme="dark"]')).toContain("--cb-accent: #FCE300;");
+  });
+
   it("reports nothing for a clean theme", () => {
     const reports: string[][] = [];
     renderThemeCss(nightCity(), url, (s) => reports.push(s));
