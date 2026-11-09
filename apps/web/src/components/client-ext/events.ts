@@ -60,23 +60,26 @@ export function clientEventOf(e: ConversationEvent): CapybaraEvent | null {
 }
 
 /**
- * Follows one conversation's log. The first list it sees is the history loaded on open: it sets the
- * baseline and emits nothing. Every later list emits the events past the highest seq seen, once
- * each and in order (a stream catch-up after a reconnect lands here too); events below the
- * baseline (an earlier page of history) never emit.
+ * Follows one conversation's log. The first list it sees is the history loaded on open: its
+ * highest seq is the baseline and it emits nothing. Every later list emits each event above the
+ * baseline once, in the list's order (a stream catch-up after a reconnect lands here too). An
+ * event with a lower seq arriving after a higher one (a send's own event can reach the cache
+ * before the stream delivers the ones before it) still emits, once: the feed keeps the seqs it has
+ * seen above the baseline, not a high-water mark. Events at or below the baseline (an earlier page
+ * of history) never emit.
  */
 export function createEventFeed(emit: (e: CapybaraEvent) => void) {
-  let last: number | null = null;
+  let baseline: number | null = null;
+  const seen = new Set<number>();
   return {
     observe(events: readonly ConversationEvent[]): void {
-      if (last === null) {
-        last = events.reduce((m, e) => Math.max(m, e.seq), 0);
+      if (baseline === null) {
+        baseline = events.reduce((m, e) => Math.max(m, e.seq), 0);
         return;
       }
-      const from = last;
       for (const e of events) {
-        if (e.seq <= from || e.seq <= last) continue;
-        last = e.seq;
+        if (e.seq <= baseline || seen.has(e.seq)) continue;
+        seen.add(e.seq);
         const out = clientEventOf(e);
         if (out !== null) emit(out);
       }

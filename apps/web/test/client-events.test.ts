@@ -1,4 +1,6 @@
+// @vitest-environment jsdom
 // Client events (client extensions spec §7.5): derived from the conversation log on the client.
+import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type CapybaraEvent,
@@ -6,6 +8,7 @@ import {
   createEventFeed,
   emitClientEvent,
   subscribeClientEvents,
+  useClientEventFeed,
 } from "../src/components/client-ext/events";
 import type { ConversationEvent } from "../src/lib/conversations";
 
@@ -132,6 +135,72 @@ describe("the event feed", () => {
       [3, "run.finished"],
       [4, "run.started"],
     ]);
+  });
+});
+
+describe("the event feed with late events", () => {
+  const started = (seq: number) => log(seq, "run_started", {});
+
+  it("a lower seq arriving after a higher one still emits, once", () => {
+    const seen: CapybaraEvent[] = [];
+    const feed = createEventFeed((e) => seen.push(e));
+    feed.observe([started(1)]);
+    // a send's own event (seq 3) lands in the cache before the stream delivers seq 2
+    const sent = log(3, "user_message", { content: [], authorAccountId: "a1" });
+    feed.observe([started(1), sent]);
+    feed.observe([started(1), log(2, "assistant_message", { content: [] }), sent]);
+    // and the same list again: nothing more
+    feed.observe([started(1), log(2, "assistant_message", { content: [] }), sent]);
+    expect(seen.map((e) => [e.seq, e.type])).toEqual([
+      [3, "message.sent"],
+      [2, "message.received"],
+    ]);
+  });
+});
+
+describe("useClientEventFeed", () => {
+  const started = (seq: number) => log(seq, "run_started", {});
+  const unsubs: (() => void)[] = [];
+  afterEach(() => {
+    for (const u of unsubs.splice(0)) u();
+  });
+  const heard = () => {
+    const seen: [string, number, string][] = [];
+    unsubs.push(subscribeClientEvents((e) => seen.push([e.conversationId, e.seq, e.type])));
+    return seen;
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it("waits for the log, takes the history as the baseline, then emits what is appended", async () => {
+    const seen = heard();
+    const { rerender } = renderHook(
+      ({ events, loaded }: { events: ConversationEvent[]; loaded: boolean }) =>
+        useClientEventFeed("c1", events, loaded),
+      { initialProps: { events: [] as ConversationEvent[], loaded: false } },
+    );
+    // still loading: the empty list is not the baseline
+    rerender({ events: [started(1), started(2)], loaded: true });
+    await tick();
+    expect(seen).toEqual([]);
+    rerender({ events: [started(1), started(2), started(3)], loaded: true });
+    await tick();
+    expect(seen).toEqual([["c1", 3, "run.started"]]);
+  });
+
+  it("another conversation starts a new feed: its history emits nothing", async () => {
+    const seen = heard();
+    const other = (seq: number) => ({ ...started(seq), conversationId: "c2" }) as ConversationEvent;
+    const { rerender } = renderHook(
+      ({ id, events }: { id: string; events: ConversationEvent[] }) =>
+        useClientEventFeed(id, events, true),
+      { initialProps: { id: "c1", events: [started(1)] } },
+    );
+    rerender({ id: "c2", events: [other(1), other(2), other(3)] });
+    await tick();
+    expect(seen).toEqual([]);
+    rerender({ id: "c2", events: [other(1), other(2), other(3), other(4)] });
+    await tick();
+    expect(seen).toEqual([["c2", 4, "run.started"]]);
   });
 });
 
