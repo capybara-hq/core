@@ -112,6 +112,9 @@ export interface AgentTemplateSubagents {
 export type AgentTemplateTier = "inherit" | "fast" | "standard" | "capable";
 
 // @public
+export function appearanceIssues(manifest: PluginManifest, themeIds: readonly string[]): string[];
+
+// @public
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void;
 
 // @public
@@ -362,6 +365,28 @@ export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme
 
 // @public
 export function checkWoff2(bytes: Uint8Array): string | undefined;
+
+// @public
+export const CLIENT_API_VERSION = 1;
+
+// @public
+export const CLIENT_ASSET_TYPES: Readonly<Record<string, string>>;
+
+// @public
+export const CLIENT_ENTRY_PATH = "./dist/client/client.mjs";
+
+// @public
+export const CLIENT_LIMITS: {
+    readonly entryBytes: 1048576;
+    readonly styleFiles: 8;
+    readonly styleBytes: 262144;
+    readonly assetFiles: 64;
+    readonly assetBytes: 2097152;
+    readonly totalBytes: 8388608;
+    readonly loadTimeoutMs: 10000;
+    readonly pendingMs: 1500;
+    readonly crashBudget: 3;
+};
 
 // @public
 export function clipMediaName(name: string, max?: number): string;
@@ -2126,6 +2151,7 @@ export const PLUGIN_MANIFEST_LIMITS: {
     readonly publisherChars: 100;
     readonly displayNameChars: 100;
     readonly pathChars: 512;
+    readonly appearanceReplacements: 8;
 };
 
 // @public
@@ -2134,6 +2160,15 @@ export const PLUGIN_MANIFEST_SCHEMA_VERSION = 1;
 // @public
 export interface PluginAgentRef {
     path: string;
+}
+
+// @public
+export interface PluginClientSection {
+    apiVersion: number;
+    assets?: string[];
+    entry?: string;
+    integrity: Record<string, string>;
+    styles?: string[];
 }
 
 // @public
@@ -2161,6 +2196,7 @@ export function pluginDescription(d: PluginDescription): {
 
 // @public
 export interface PluginExtensionSection {
+    client?: PluginClientSection;
     configSchemas?: {
         deployment?: JsonSchema;
         org?: JsonSchema;
@@ -2188,6 +2224,7 @@ export interface PluginManifest {
     schemaVersion: 1;
     setupGuides?: PluginSetupGuide[];
     skills?: PluginSkillRef[];
+    suggestedAppearance?: SuggestedAppearance;
     themes?: PluginThemeRef[];
     version: string;
 }
@@ -2607,6 +2644,12 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest;
 
 // @public
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
+
+// @public
+export interface SuggestedAppearance {
+    replacements?: Record<string, string>;
+    theme?: string;
+}
 
 // @public
 export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];
@@ -3341,6 +3384,9 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[];
 
 // @public
 export function validateChannelCard(card: unknown): string[];
+
+// @public
+export function validateClientSection(s: unknown): string[];
 
 // @public
 export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org" | "connection"): ConfigUiProblem[];
