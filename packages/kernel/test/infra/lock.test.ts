@@ -33,6 +33,35 @@ async function until(cond: () => boolean | Promise<boolean>, ms = 3000) {
     await sleep(10);
   }
 }
+/**
+ * Moves a watchdog through `periods` renewal periods of `intervalMs` on a fake clock (the caller
+ * installed it before taking the lease), against real Redis: after each tick, waits in real time
+ * for the one renewal it sent (an `eval` on `spy`'s client), then lets the watchdog take the
+ * answer before the next tick. The watchdog's clock moves only when the test moves it, so a slow
+ * event loop or a busy shared Redis cannot push a renewal past the loss deadline (TTL - TTL/3
+ * after the last success, by design: a stalled holder gives the lock up). Returns the answers.
+ */
+async function renewalPeriods(
+  spy: { mock: { calls: unknown[]; results: { value: unknown }[] } },
+  intervalMs: number,
+  periods: number,
+): Promise<unknown[]> {
+  const answers: unknown[] = [];
+  for (let i = 0; i < periods; i++) {
+    const before = spy.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(intervalMs);
+    expect(spy.mock.calls.length).toBe(before + 1);
+    answers.push(await spy.mock.results[before]?.value);
+    // setImmediate is not faked: it runs after the watchdog's continuation took the answer
+    await new Promise((r) => setImmediate(r));
+  }
+  return answers;
+}
+const FAKE_CLOCK = {
+  toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  now: 0,
+} satisfies Parameters<typeof vi.useFakeTimers>[0];
+
 let n = 0;
 const k = (name: string) => `${name}-${++n}-${Math.random().toString(36).slice(2)}`;
 
@@ -102,18 +131,25 @@ describe("LockService", () => {
   });
 
   it("renews past the TTL while held", async () => {
-    const a = new LockService(r1, log);
+    // the watchdog's clock is fake and its TTL long in real time: Redis cannot expire the key
+    // between two renewals however slow the machine is, and no real time is spent waiting
+    const ttlMs = 30_000;
     const key = k("renew");
-    const ttlMs = 600;
-    const h = await a.acquire(key, { ttlMs });
-    // Observe the key for 2.5 TTLs; poll fast so a slow event loop cannot hide an expiry.
-    const end = Date.now() + ttlMs * 2.5;
-    while (Date.now() < end) {
+    const evals = vi.spyOn(r1, "eval");
+    vi.useFakeTimers(FAKE_CLOCK);
+    try {
+      const h = await new LockService(r1, log).acquire(key, { ttlMs });
+      // 8 renewal periods = 2.67 TTLs: without renewals moving the deadline, lost fires at 2/3 TTL
+      const answers = await renewalPeriods(evals, ttlMs / 3, 8);
+      expect(answers).toEqual(Array(8).fill(1)); // each PEXPIRE applied to our key
+      expect(Date.now()).toBeGreaterThan(ttlMs * 2.5);
       expect(await r2.exists(`lock:${key}`)).toBe(1);
-      await sleep(25);
+      expect(h?.lost.aborted).toBe(false);
+      await h?.release();
+    } finally {
+      vi.useRealTimers();
+      evals.mockRestore();
     }
-    expect(h?.lost.aborted).toBe(false);
-    await h?.release();
     expect(await r2.exists(`lock:${key}`)).toBe(0);
   });
 
@@ -556,13 +592,25 @@ describe("LockService shared leases", () => {
   });
 
   it("renewal keeps a shared lease past its TTL", async () => {
+    // a fake clock for the watchdog, as in "renews past the TTL while held"
+    const ttlMs = 30_000;
     const a = new LockService(r1, log);
     const keys = keysOf("renew");
-    const s = await a.tryShared(keys, "s", 4, 300);
-    await sleep(700);
-    expect(s?.lost.aborted).toBe(false);
-    expect(await a.sharedCount(keys)).toBe(1);
-    await s?.release();
+    const evals = vi.spyOn(r1, "eval");
+    vi.useFakeTimers(FAKE_CLOCK);
+    try {
+      const s = await a.tryShared(keys, "s", 4, ttlMs);
+      expect(s).toBeDefined();
+      const answers = await renewalPeriods(evals, ttlMs / 3, 8);
+      expect(answers.map(Number)).toEqual(Array(8).fill(1));
+      expect(s?.lost.aborted).toBe(false);
+      expect(await a.sharedCount(keys)).toBe(1);
+      await s?.release();
+    } finally {
+      vi.useRealTimers();
+      evals.mockRestore();
+    }
+    expect(await a.sharedCount(keys)).toBe(0);
   });
 });
 
