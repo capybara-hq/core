@@ -402,7 +402,10 @@ export class Credentials {
       if (r.key === clientKey(connectorId)) {
         // the client id is not a secret (a plugin check gets it); the secret and DCR token are
         if (typeof v.clientId === "string") clientId = v.clientId;
-        push(v.clientSecret, (v.registration as { accessToken?: unknown } | undefined)?.accessToken);
+        push(
+          v.clientSecret,
+          (v.registration as { accessToken?: unknown } | undefined)?.accessToken,
+        );
       } else if (typeof v.access_token === "string") {
         push(v.access_token, v.refresh_token);
       } else {

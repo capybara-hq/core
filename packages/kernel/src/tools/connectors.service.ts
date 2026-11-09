@@ -1242,15 +1242,17 @@ export class ConnectorsService {
    * 「我已更新应用」 for a connector made from a template: records the template's current guide as
    * the one it is set up with. `hash` is the admin drift hash of the guide the person was shown;
    * when the plugin moved on since, 409 `connector.guide_changed` (show the new guide first). A
-   * connector without a template guide -> 404 `catalog.guide_not_found`.
+   * connector without a template guide, or whose item the org's catalog does not show -> 404
+   * `catalog.guide_not_found`.
    */
   async ackGuide(
-    orgId: string,
+    org: { orgId: string; role: OrgRole },
     connectorId: string,
     hash: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
+    const { orgId } = org;
     const r = await this.db
       .selectFrom("connectors as c")
       .leftJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
@@ -1262,7 +1264,8 @@ export class ConnectorsService {
     if (!r) throw notFound();
     const ack =
       r.catalog_item_id && r.template_id
-        ? await this.guides.templateAck(r.catalog_item_id, r.template_id)
+        ? // the guide read's visibility: an item the org's catalog does not show has no guide
+          await this.guides.templateAck(r.catalog_item_id, r.template_id, org)
         : null;
     if (ack === null) {
       throw new ApiError("catalog.guide_not_found", "The connector has no template setup guide");

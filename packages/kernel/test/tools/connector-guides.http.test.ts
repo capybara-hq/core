@@ -7,6 +7,7 @@ import {
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
+  setScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { mcpTemplate, templateFiles } from "../catalog/packages.js";
@@ -423,6 +424,27 @@ describe("setup guides v2: connector templates", { timeout: 60_000 }, () => {
     const none = await ack(custom.json().connector.id, current);
     expect(none.statusCode).toBe(404);
     expect(none.json().error.code).toBe("catalog.guide_not_found");
+  });
+
+  it("ack route applies the guide read's visibility: an item the org cannot see is 404", async () => {
+    const itemId = await importPlugin(env, await ghPlugin());
+    const connectorId = await installWithConnector(itemId);
+    const current = adminHash(doc());
+    // a named item this org is not listed for (and not requestable): neither the guide nor its ack
+    await setScope(env, itemId, "named");
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    expect((await renderReq(itemId, `?connectorId=${connectorId}`)).statusCode).toBe(404);
+    const hidden = await ack(connectorId, current);
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("catalog.guide_not_found");
+    // listed again: the ack goes through
+    await setScope(env, itemId, "named", [env.orgId]);
+    const ok = await ack(connectorId, current);
+    expect(ok.statusCode, ok.body).toBe(200);
   });
 
   it("upgrade preview reports a changed template guide with counts, never org names", async () => {

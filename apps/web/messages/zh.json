@@ -267,7 +267,8 @@
       "item_removed": "这个插件已被删除。",
       "preview_stale": "删除这个插件的影响在预览之后发生了变化，请重新预览后再确认。",
       "not_owned": "只能共享本组织自己的技能和智能体模板。",
-      "guide_not_found": "插件没有这份接入指南。"
+      "guide_not_found": "插件没有这份接入指南。",
+      "check_not_found": "这项检查不在当前显示的接入指南里，请刷新页面。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"

@@ -34,6 +34,7 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import { createRedactor, type KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
+import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { adaptToFeatures } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
@@ -720,19 +721,23 @@ export class ChannelConnections implements OnApplicationShutdown {
    * 「我已更新应用」: records the plugin's current channel-connection guide for the connection's
    * mode as the one it is set up with. `hash` is the drift hash of the guide the person was
    * shown; when the plugin has moved on since, 409 `channel.guide_changed` (show the new guide
-   * first). A plugin without a guide -> 404 `catalog.guide_not_found`.
+   * first). A plugin without a guide, or whose item the org's catalog does not show -> 404
+   * `catalog.guide_not_found`.
    */
   async ackGuide(
-    orgId: string,
+    org: { orgId: string; role: OrgRole },
     id: string,
     hash: string,
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<ChannelConnectionView> {
+    const { orgId } = org;
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
     if (!current) throw notFound();
+    // the guide read's visibility: an item the org's catalog does not show has no guide to ack
     const ack = await this.guides.currentAck(current.plugin, "channel-connection", {
       mode: current.inbound_mode,
+      org,
     });
     if (ack === null) {
       throw new ApiError("catalog.guide_not_found", "The plugin has no channel setup guide");

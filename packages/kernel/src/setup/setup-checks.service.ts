@@ -16,14 +16,16 @@ import type { Keyring } from "../ctx/secrets.js";
 import { ApiError } from "../errors.js";
 import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
+import { deepFreeze } from "../extensions/hooks.js";
+import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { PluginGuides } from "../extensions/plugin-guides.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import { Credentials } from "../tools/credentials.js";
 import { checkRedactor, describeCheckError, redactCheckResult } from "./redact-check.js";
@@ -85,10 +87,7 @@ const REASONS = {
     "This check needs a newer version of the plugin.",
     "这项检查需要更新版本的插件。",
   ),
-  otherPlace: text(
-    "This check does not apply on this page.",
-    "这项检查不适用于本页面。",
-  ),
+  otherPlace: text("This check does not apply on this page.", "这项检查不适用于本页面。"),
   failed: text("The check failed to run; retry later.", "检查运行失败，请稍后重试。"),
   timedOut: text("The check timed out.", "检查超时。"),
   invalid: text(
@@ -191,6 +190,7 @@ export class SetupChecksService {
     @Inject(SetupCheckRegistry) private readonly registry: SetupCheckRegistry,
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "current">,
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
+    @Inject(OrgExtensionConfigs) private readonly orgConfigs: Pick<OrgExtensionConfigs, "get">,
     @Inject(ChannelConnections)
     private readonly channels: Pick<
       ChannelConnections,
@@ -258,15 +258,17 @@ export class SetupChecksService {
     body: CheckSelection & { force?: boolean | undefined },
   ): Promise<SetupCheckState> {
     const p = await this.prepare(caller, itemId, guideId, body, checkId);
-    const check = this.registry.resolve(p.plugin, checkId);
-    if (!check) return unknownState(REASONS.unregistered);
-    if (check.place !== "any" && check.place !== p.place) return unknownState(REASONS.otherPlace);
+    // a plugin check: the extension must run here, be on in the org and have a valid effective
+    // config before its registration is even looked at (nothing is called otherwise)
     let config: unknown;
-    if (check.source === "plugin") {
+    if (!checkId.startsWith("capybara:")) {
       const gate = await this.pluginGate(caller.orgId, p.plugin);
       if ("state" in gate) return gate.state;
       config = gate.config;
     }
+    const check = this.registry.resolve(p.plugin, checkId);
+    if (!check) return unknownState(REASONS.unregistered);
+    if (check.place !== "any" && check.place !== p.place) return unknownState(REASONS.otherPlace);
     const keys = this.keys(p, checkId);
     const revision = await this.revision(p);
     const fingerprint = this.fingerprint(p, revision);
@@ -282,7 +284,11 @@ export class SetupChecksService {
     const fresh = cached !== null && cached.fingerprint === fingerprint ? cached : null;
     if (fresh && !body.force) return stateOf(fresh.result, fresh.checkedAt);
     if (fresh && cooldownMs > 0) {
-      return stateOf(fresh.result, fresh.checkedAt, new Date(Date.now() + cooldownMs).toISOString());
+      return stateOf(
+        fresh.result,
+        fresh.checkedAt,
+        new Date(Date.now() + cooldownMs).toISOString(),
+      );
     }
     const token = randomUUID();
     const orgSlots = `capk:setup-check-org:${caller.orgId}`;
@@ -327,13 +333,18 @@ export class SetupChecksService {
     q: CheckSelection,
     checkId?: string,
   ): Promise<Prepared> {
-    const guide = await this.guides.render({ orgId: caller.orgId, role: caller.role }, itemId, guideId, {
-      mode: q.mode,
-      audience: q.audience,
-      connectionId: q.connectionId,
-      connectorId: q.connectorId,
-      locale: "en",
-    });
+    const guide = await this.guides.render(
+      { orgId: caller.orgId, role: caller.role },
+      itemId,
+      guideId,
+      {
+        mode: q.mode,
+        audience: q.audience,
+        connectionId: q.connectionId,
+        connectorId: q.connectorId,
+        locale: "en",
+      },
+    );
     const checks = guide.checks.map((c) => c.id);
     if (checkId !== undefined && !checks.includes(checkId)) {
       throw new ApiError(
@@ -376,14 +387,17 @@ export class SetupChecksService {
     orgId: string,
     plugin: string,
   ): Promise<{ config: unknown } | { state: SetupCheckState }> {
-    if (!this.extensions.current(plugin)) return { state: unknownState(REASONS.notRunning(plugin)) };
+    if (!this.extensions.current(plugin))
+      return { state: unknownState(REASONS.notRunning(plugin)) };
     if (!(await isExtensionEnabled(this.db.db, orgId, plugin))) {
       return { state: unknownState(REASONS.disabled(plugin)) };
     }
     const eff = await this.effective.get(orgId, plugin);
     if (!eff.ok) {
       return {
-        state: unknownState(eff.notRunning ? REASONS.notRunning(plugin) : REASONS.needsConfig(plugin)),
+        state: unknownState(
+          eff.notRunning ? REASONS.notRunning(plugin) : REASONS.needsConfig(plugin),
+        ),
       };
     }
     return { config: eff.config };
@@ -428,7 +442,8 @@ export class SetupChecksService {
       .where("org_id", "=", p.caller.orgId)
       .where("plugin", "=", p.plugin)
       .executeTakeFirst();
-    const iso = (d: Date | string | undefined) => (d === undefined ? "-" : new Date(d).toISOString());
+    const iso = (d: Date | string | undefined) =>
+      d === undefined ? "-" : new Date(d).toISOString();
     return [target, iso(org?.updated_at), iso(copy?.updated_at)].join("|");
   }
 
@@ -467,12 +482,7 @@ export class SetupChecksService {
 
   /** Writes a result (TTL 5 min) and the force cooldown (10 s), outside any transaction. */
   private async store(keys: CheckKeys, value: CachedResult): Promise<void> {
-    await this.redis.set(
-      keys.result,
-      JSON.stringify(value),
-      "PX",
-      SETUP_CHECK_LIMITS.freshMs,
-    );
+    await this.redis.set(keys.result, JSON.stringify(value), "PX", SETUP_CHECK_LIMITS.freshMs);
     await this.redis.set(keys.cooldown, "1", "PX", SETUP_CHECK_LIMITS.cooldownMs);
   }
 
@@ -488,7 +498,11 @@ export class SetupChecksService {
   ): Promise<SetupCheckResult> {
     const material = await this.material(p, check);
     if ("result" in material) return material.result;
-    const secrets = [...material.secrets, ...this.configSecrets(p.plugin, config)];
+    const secrets = [
+      ...material.secrets,
+      ...this.configSecrets(p.plugin, config),
+      ...(await this.orgConfigSecrets(p.caller.orgId, p.plugin)),
+    ];
     const redact = checkRedactor(secrets);
     const fields = { plugin: p.plugin, checkId: check.id, orgId: p.caller.orgId };
     const timeout = AbortSignal.timeout(this.timeoutMs);
@@ -516,7 +530,11 @@ export class SetupChecksService {
         signal,
         secrets: Object.freeze([...material.secrets]) as string[],
       });
-      answer = await raceSignal(signal, () => check.run(args), () => "timeout");
+      answer = await raceSignal(
+        signal,
+        () => check.run(args),
+        () => "timeout",
+      );
     }
     if (answer === "timeout") {
       this.log.warn("setup check timed out", { ...fields, timeoutMs: this.timeoutMs });
@@ -524,7 +542,10 @@ export class SetupChecksService {
     }
     if (answer === "unloaded") return { status: "unknown", reason: REASONS.notRunning(p.plugin) };
     if ("error" in answer) {
-      this.log.warn("setup check failed", { ...fields, error: describeCheckError(answer.error, redact) });
+      this.log.warn("setup check failed", {
+        ...fields,
+        error: describeCheckError(answer.error, redact),
+      });
       return { status: "unknown", reason: REASONS.failed };
     }
     const first = validateSetupCheckResult(answer.value);
@@ -577,7 +598,8 @@ export class SetupChecksService {
       }
       return {
         secrets: [...stored, ...secretValues((rt.channel as Channel).connectionSchema, rt.config)],
-        connectionConfig: rt.config,
+        // a frozen copy: what the check gets cannot change the kernel's object or another call's
+        connectionConfig: deepFreeze(structuredClone(rt.config)),
       };
     }
     const row = await this.db
@@ -611,6 +633,22 @@ export class SetupChecksService {
     ];
   }
 
+  /**
+   * The secret values of the extension's org-level config (`config.org`) in the org: the check
+   * never gets them, but the extension holds them, so a result is redacted by them too. Nothing
+   * when the plugin has no org config or it cannot be read.
+   */
+  private async orgConfigSecrets(orgId: string, plugin: string): Promise<string[]> {
+    const schema = this.extensions.current(plugin)?.manifest.config?.org;
+    if (!schema) return [];
+    try {
+      const c = await this.orgConfigs.get(orgId, plugin);
+      return c?.config == null ? [] : secretValues(schema, c.config);
+    } catch {
+      return [];
+    }
+  }
+
   /** The frozen arguments of a plugin check (the target built field by field). */
   private pluginArgs(
     p: Prepared,
@@ -642,7 +680,6 @@ export class SetupChecksService {
       signal,
     });
   }
-
 }
 
 /** The kernel check's target: ids and the plugin only. */

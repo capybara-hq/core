@@ -212,8 +212,14 @@ export class LockService {
   async takeSlot(key: string, holder: string, limit: number, ttlMs: number): Promise<boolean> {
     assertNoTransaction("takeSlot");
     return (
-      (await this.redis.eval(TAKE_SLOT, 1, key, holder, String(limit), String(Math.ceil(ttlMs)))) ===
-      1
+      (await this.redis.eval(
+        TAKE_SLOT,
+        1,
+        key,
+        holder,
+        String(limit),
+        String(Math.ceil(ttlMs)),
+      )) === 1
     );
   }
 

@@ -267,7 +267,8 @@
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
       "not_owned": "Only your organization's own skills and agent templates can be shared.",
-      "guide_not_found": "The plugin has no such setup guide."
+      "guide_not_found": "The plugin has no such setup guide.",
+      "check_not_found": "This check is not part of the setup guide shown here. Reload the page."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."

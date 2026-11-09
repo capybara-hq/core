@@ -320,7 +320,7 @@ export class ConnectorsController {
   ): Promise<{ connector: ConnectorPage }> {
     const p = requireUser(principal);
     const view = await this.connectors.ackGuide(
-      org.orgId,
+      { orgId: org.orgId, role: org.role },
       connectorId,
       body.hash,
       p.account.id,

@@ -44,8 +44,8 @@ export {
 export {
   FAKE_CHANNEL_BAD_SECRET,
   FAKE_WEBHOOK_SIGNATURE_HEADER,
-  type FakeChannelFailMatch,
   type FakeChannelCheckCall,
+  type FakeChannelFailMatch,
   type FakeChannelPost,
   type FakeChannelSent,
   type FakeChannelServer,

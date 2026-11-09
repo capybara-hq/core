@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { putDisplayFiles } from "../../src/catalog/catalog-files.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 
@@ -43,4 +43,81 @@ export async function seedGuideFiles(
   });
   await putDisplayFiles(db, files);
   return files.map(({ path, size, sha256 }) => ({ path, size, sha256 }));
+}
+
+/**
+ * fake-im's channel guide with the fixture's setup checks (`fake-im/src/checks.ts`): the long
+ * connection mode lists every check plus `missing` (an id the extension never registers); `fail`
+ * is in the webhook mode only.
+ */
+export const FAKE_IM_CHECKS_GUIDE = [
+  "# Create the fake IM app",
+  "",
+  "::: mode long_connection",
+  "```yaml",
+  "socket: true",
+  "```",
+  "",
+  "::check pass The platform accepts the app",
+  "::check proxy The platform answers",
+  "::check throw A check that throws",
+  "::check hang A slow check",
+  "::check ignore-signal A check that ignores its signal",
+  "::check long A check with a long reason",
+  "::check echo-secret A check that echoes the secret",
+  "::check pad-to-limit A check at the reason limit",
+  "::check missing A check the plugin does not register",
+  ":::",
+  "",
+  "::: mode webhook",
+  "```yaml",
+  "webhook: true",
+  "```",
+  "",
+  "::check fail The platform refuses the app",
+  ":::",
+  "",
+].join("\n");
+
+/**
+ * Seeds the catalog item `fake-im` (scope all) whose latest version has the guide `fake-im-app`
+ * ({@link FAKE_IM_CHECKS_GUIDE}); returns the item id.
+ */
+export async function seedFakeImGuideItem(db: KernelSchemaDb): Promise<string> {
+  const itemId = randomUUID();
+  const files = await seedGuideFiles(db, { "guides/fake-im-app.md": FAKE_IM_CHECKS_GUIDE });
+  await db
+    .insertInto("catalog_items")
+    .values({
+      id: itemId,
+      name: "fake-im",
+      package_name: "@capybara-hq/test-plugin-fake-im",
+      publisher: "Capybara",
+      description: "Test fake",
+      latest_version: "0.1.0",
+      policy: "allow",
+      disabled: false,
+    })
+    .execute();
+  await db
+    .insertInto("catalog_item_versions")
+    .values({
+      item_id: itemId,
+      version: "0.1.0",
+      manifest: JSON.stringify({
+        schemaVersion: 1,
+        name: "fake-im",
+        version: "0.1.0",
+        publisher: "Capybara",
+        description: "Test fake",
+        setupGuides: [{ id: "fake-im-app", place: "channel-connection" }],
+      }),
+      source: "file",
+      source_ref: "upload",
+      object_prefix: null,
+      files: JSON.stringify(files),
+      size: 1000,
+    })
+    .execute();
+  return itemId;
 }

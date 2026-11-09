@@ -222,6 +222,13 @@ export class PluginGuides {
     return latestItems(this.db, by, keys);
   }
 
+  /** The rows the org's catalog shows ({@link orgVisibleItems}); all of them without an org. */
+  private visibleTo(rows: ItemRow[], org: { orgId: string; role: OrgRole } | undefined) {
+    return org === undefined
+      ? rows
+      : orgVisibleItems(this.db, rows, org.orgId, roleAtLeast(org.role, "admin"));
+  }
+
   /** The English documents of guides, by `<itemId>/<guideId>` (one PG read); absent when not stored. */
   private async englishSources(
     pairs: { row: ItemRow; guide: PluginSetupGuide }[],
@@ -258,15 +265,16 @@ export class PluginGuides {
   /**
    * The ack of a plugin's current guide for a place (and template) and mode, admin audience:
    * recorded on a target when it is created or switches mode. Null when the plugin has no catalog
-   * item, no such guide or no stored document. Kernel-internal: no org visibility (the target
-   * belongs to the plugin either way).
+   * item, no such guide or no stored document. Without `org` kernel-internal (no org visibility:
+   * the target belongs to the plugin either way); with `org` (a person acking the guide) null
+   * also when the org's catalog does not show the item, the guide read's rule.
    */
   async currentAck(
     plugin: string,
     place: SetupGuidePlace,
-    o: { mode: string | null; templateId?: string },
+    o: { mode: string | null; templateId?: string; org?: { orgId: string; role: OrgRole } },
   ): Promise<GuideAck | null> {
-    const [row] = await this.latest("name", [plugin]);
+    const [row] = await this.visibleTo(await this.latest("name", [plugin]), o.org);
     const guide = row && guideFor(row.manifest, place, o.templateId);
     if (!row || !guide) return null;
     const en = (await this.englishSources([{ row, guide }])).get(`${row.id}/${guide.id}`);
@@ -301,12 +309,17 @@ export class PluginGuides {
   /**
    * The ack of a connector template's current guide (admin audience, no mode): recorded on a
    * connector when it is created from the template. Null when the item has no guide for the
-   * template or no stored document. Kernel-internal: no org visibility (the caller is creating or
-   * reading the org's own connector of that template).
+   * template or no stored document. Without `org` kernel-internal (no org visibility: the caller is
+   * creating or reading the org's own connector of that template); with `org` (a person acking the
+   * guide) null also when the org's catalog does not show the item.
    */
-  async templateAck(itemId: string, templateId: string): Promise<GuideAck | null> {
+  async templateAck(
+    itemId: string,
+    templateId: string,
+    org?: { orgId: string; role: OrgRole },
+  ): Promise<GuideAck | null> {
     if (!UUID_RE.test(itemId)) return null;
-    const [row] = await this.latest("id", [itemId]);
+    const [row] = await this.visibleTo(await this.latest("id", [itemId]), org);
     const guide = row && guideFor(row.manifest, "connector-template", templateId);
     if (!row || !guide) return null;
     const en = (await this.englishSources([{ row, guide }])).get(`${row.id}/${guide.id}`);

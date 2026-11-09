@@ -6,13 +6,13 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { SetupCheckState } from "./setup-check-registry.js";
-import { SetupChecksService } from "./setup-checks.service.js";
 import {
   SetupCheckPathParams,
   SetupCheckRunBody,
   SetupChecksQuery,
   SetupGuidePathParams,
 } from "./setup-checks.schemas.js";
+import { SetupChecksService } from "./setup-checks.service.js";
 
 class SetupGuideParamsDto extends createZodDto(SetupGuidePathParams, "SetupGuidePathParams") {}
 class SetupCheckParamsDto extends createZodDto(SetupCheckPathParams, "SetupCheckPathParams") {}

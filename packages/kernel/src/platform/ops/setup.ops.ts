@@ -1,20 +1,19 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
-import { type CheckCaller, SetupChecksService } from "../../setup/setup-checks.service.js";
 import {
   SetupCheckPathParams,
   SetupCheckRunBody,
   SetupChecksQuery,
   SetupGuidePathParams,
 } from "../../setup/setup-checks.schemas.js";
+import { type CheckCaller, SetupChecksService } from "../../setup/setup-checks.service.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { roleOf } from "./role.js";
 
 const ITEM = "00000000-0000-4000-8000-000000000000";
 const CONNECTION = "00000000-0000-4000-8000-000000000001";
-
 
 /**
  * Setup guide operations of the `Platform` tool (spec 2026-11-09-setup-guides-v2-design.md §12),
@@ -81,7 +80,12 @@ export class SetupOperations implements OnModuleInit {
         description:
           "Run one check of a plugin's setup guide for one target (a channel connection or a connector made from a template) and return its state: ok, failing (with a reason and a fix to explain), unknown, or running (try again in a moment). A fresh cached result is returned as is; force reruns it, at most once per 10 seconds per check and target. A check only reads; run it after the person says they finished a step.",
         input: SetupCheckPathParams.extend(SetupCheckRunBody.shape).strict(),
-        example: { itemId: ITEM, guideId: "slack-app", checkId: "bot-token", connectionId: CONNECTION },
+        example: {
+          itemId: ITEM,
+          guideId: "slack-app",
+          checkId: "bot-token",
+          connectionId: CONNECTION,
+        },
         authz: { orgAction: "catalog.read" },
         mirrors: ["POST /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId/checks/:checkId/run"],
         confirm: "read",

@@ -521,6 +521,22 @@ describe("channel setup guide drift", () => {
       .where("id", "=", itemId)
       .execute();
     expect((await get(id)).setupGuide).not.toBeNull(); // org admins still see disabled items
+    // a named item this org is not listed for (and not requestable): no guide, and its ack is
+    // refused like the read
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: false, scope: "named", shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    expect((await get(id)).setupGuide).toBeNull();
+    const hidden = await owner({
+      method: "POST",
+      url: `${base()}/${id}/guide-ack`,
+      payload: { hash: hashOf("e", "c", "long_connection") },
+    });
+    expect(hidden.statusCode).toBe(404);
+    expect(errCode(hidden)).toBe("catalog.guide_not_found");
+    await db.updateTable("catalog_items").set({ scope: "all" }).where("id", "=", itemId).execute();
     await db
       .updateTable("catalog_items")
       .set({ disabled: false, deleted_at: new Date() })

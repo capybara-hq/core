@@ -160,7 +160,7 @@ export class ChannelConnectionsController {
   ): Promise<{ channel: ChannelConnectionPage }> {
     const p = requireUser(principal);
     const view = await this.channels.ackGuide(
-      org.orgId,
+      { orgId: org.orgId, role: org.role },
       id,
       body.hash,
       p.account.id,

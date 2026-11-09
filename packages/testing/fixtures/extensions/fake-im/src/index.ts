@@ -7,6 +7,17 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { makeFakeImChannel } from "./channel.js";
+import {
+  echoSecretCheck,
+  failCheck,
+  hangCheck,
+  ignoreSignalCheck,
+  longCheck,
+  padToLimitCheck,
+  passCheck,
+  proxyCheck,
+  throwCheck,
+} from "./checks.js";
 import { FakeImOrgConfig, fakeImDirectory } from "./directory.js";
 import { fakeImIdentitySource } from "./identity.js";
 
@@ -70,13 +81,27 @@ const postHandler =
  * 假 IM 平台的完整测试插件（连 `@capybara-hq/testing` 的 startFakeChannelServer）：
  * `channel@1`（机器人）+ `identity-source@1`（登录）+ `directory@1`（通讯录），另带一个默认需要批准的写工具。
  * 三处的身份源键都是 `fake-im:<租户>`，同一个人只对应一行身份。T15–T18 的真实渠道插件照这个形状写。
+ * It also registers setup checks for the kernel's check runner tests (`checks.ts`).
  */
 export default defineExtension({
   name: "fake-im",
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["channel@1", "identity-source@1", "directory@1"],
-  permissions: { tools: ["post_announcement"] },
+  permissions: {
+    tools: ["post_announcement"],
+    setupChecks: [
+      "pass",
+      "fail",
+      "proxy",
+      "throw",
+      "hang",
+      "ignore-signal",
+      "long",
+      "echo-secret",
+      "pad-to-limit",
+    ],
+  },
   config: { deployment: Deployment, org: FakeImOrgConfig },
   setup(ctx) {
     const config = () => Deployment.parse(ctx.config);
@@ -87,5 +112,15 @@ export default defineExtension({
     ctx.provide("identity-source@1", fakeImIdentitySource);
     ctx.provide("directory@1", fakeImDirectory);
     ctx.tools.register(POST_SPEC, postHandler(config));
+    // setup checks for the kernel's check runner tests (checks.ts says what each does)
+    ctx.setup.check("pass", passCheck);
+    ctx.setup.check("fail", failCheck);
+    ctx.setup.check("proxy", proxyCheck);
+    ctx.setup.check("throw", throwCheck);
+    ctx.setup.check("hang", hangCheck);
+    ctx.setup.check("ignore-signal", ignoreSignalCheck);
+    ctx.setup.check("long", longCheck);
+    ctx.setup.check("echo-secret", echoSecretCheck);
+    ctx.setup.check("pad-to-limit", padToLimitCheck);
   },
 });

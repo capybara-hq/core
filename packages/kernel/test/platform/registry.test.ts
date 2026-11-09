@@ -60,6 +60,7 @@ describe("PlatformOperations", () => {
       "channels",
       "org-settings",
       "environments",
+      "setup",
       "themes",
     ]);
   });
