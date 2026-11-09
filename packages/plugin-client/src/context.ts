@@ -31,7 +31,11 @@ export type ActionFn = (
   input?: { payload?: JsonValue; answer?: Record<string, unknown> },
 ) => Promise<{ view?: UiView; toast?: string }>;
 
-/** What the host implements per rendered component; the hooks read it, nothing else. */
+/**
+ * What the host implements per rendered component; the hooks read it, nothing else. The host keeps
+ * the functions (`action`, `assetUrl`, `subscribe`) and `storage` referentially stable across
+ * renders: `useCapybaraEvents` resubscribes whenever `subscribe` changes.
+ */
 export interface HostApi {
   view: ViewState;
   action: ActionFn;

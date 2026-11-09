@@ -1,7 +1,10 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DESIGN_NAMES } from "../src/design.js";
+import * as exports from "../src/index.js";
 import {
   PluginClientContextError,
+  useAccess,
   useCapybaraEvents,
   useClientStorage,
   useLocale,
@@ -83,6 +86,59 @@ describe("hooks", () => {
     const en = renderWithFakeHost(<Probe />, { slot: "org.page", locale: "en" });
     expect(screen.getByText("hello")).toBeTruthy();
     en.unmount();
-    void act;
+  });
+});
+
+describe("hooks, more", () => {
+  it("storage never throws when the browser store is blocked", () => {
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    let read: string | null | undefined;
+    function Probe() {
+      const s = useClientStorage();
+      s.set("k", "v");
+      read = s.get("k");
+      return null;
+    }
+    const host = renderWithFakeHost(<Probe />, { slot: "org.page" });
+    expect(read).toBeNull();
+    host.unmount();
+    get.mockRestore();
+    set.mockRestore();
+  });
+
+  it("useAccess().atLeast ranks roles", () => {
+    const seen: Record<string, boolean> = {};
+    function Probe() {
+      const a = useAccess();
+      seen.memberIsAdmin = a.atLeast("admin");
+      seen.memberIsMember = a.atLeast("member");
+      seen.memberIsGuest = a.atLeast("guest");
+      seen.memberIsSuper = a.atLeast("superAdmin");
+      return null;
+    }
+    const host = renderWithFakeHost(<Probe />, { slot: "org.page", role: "member" });
+    expect(seen).toEqual({
+      memberIsAdmin: false,
+      memberIsMember: true,
+      memberIsGuest: true,
+      memberIsSuper: false,
+    });
+    host.unmount();
+    function Owner() {
+      seen.ownerIsAdmin = useAccess().atLeast("admin");
+      return null;
+    }
+    renderWithFakeHost(<Owner />, { slot: "org.page", role: "owner" }).unmount();
+    expect(seen.ownerIsAdmin).toBe(true);
+  });
+
+  it("every design name is a package export", () => {
+    expect(DESIGN_NAMES.length).toBe(12);
+    expect(DESIGN_NAMES.filter((n) => !(n in exports))).toEqual([]);
   });
 });

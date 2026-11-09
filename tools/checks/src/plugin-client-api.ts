@@ -89,11 +89,15 @@ export function checkPluginClientApi(
 }
 
 /** The package's public API report (api-extractor), as `plugin-client-api-stale` findings. */
-export async function checkPluginClientApiReport(opts: { update: boolean }): Promise<Finding[]> {
+export async function checkPluginClientApiReport(opts: {
+  update: boolean;
+  /** Relative to the package directory; the committed report by default. */
+  reportFile?: string;
+}): Promise<Finding[]> {
   const findings = await checkSdkApi({
     ...opts,
     sdkDir: PLUGIN_CLIENT_DIR,
-    reportFile: PLUGIN_CLIENT_API_REPORT_FILE,
+    reportFile: opts.reportFile ?? PLUGIN_CLIENT_API_REPORT_FILE,
   });
   return findings.map((f) => ({
     ...f,

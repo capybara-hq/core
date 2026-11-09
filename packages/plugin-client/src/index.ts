@@ -1,4 +1,4 @@
-export { PluginClientContextError } from "./context.js";
+export { type ActionFn, PluginClientContextError, type ViewState } from "./context.js";
 export {
   CLIENT_API_VERSION,
   type ClientComponent,
@@ -10,17 +10,29 @@ export {
 } from "./define.js";
 export {
   Badge,
+  type BadgeProps,
   Button,
+  type ButtonProps,
   Icon,
+  type IconProps,
   Kbd,
+  type KbdProps,
   KeyValue,
+  type KeyValueProps,
   Logo,
+  type LogoProps,
   PropertySection,
+  type PropertySectionProps,
   Spinner,
+  type SpinnerProps,
   Stack,
+  type StackProps,
   Text,
+  type TextProps,
   Tooltip,
+  type TooltipProps,
   ViewBlocks,
+  type ViewBlocksProps,
 } from "./design.js";
 export {
   useAccess,
@@ -41,7 +53,11 @@ export type {
   CapybaraEventOf,
   CapybaraEventType,
   ClientApi,
+  ClientRole,
   ClientStorage,
+  EventBase,
+  JsonValue,
   RunState,
   SlotComponentProps,
+  UiView,
 } from "./types.js";

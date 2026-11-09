@@ -7,10 +7,23 @@
 import { ComponentType } from 'react';
 import { ReactNode } from 'react';
 
-// Warning: (ae-forgotten-export) The symbol "DesignProps" needs to be exported by the entry point index.d.ts
-//
 // @public
-export const Badge: ComponentType<DesignProps>;
+export type ActionFn = (actionId: string, input?: {
+    payload?: JsonValue;
+    answer?: Record<string, unknown>;
+}) => Promise<{
+    view?: UiView;
+    toast?: string;
+}>;
+
+// @public
+export const Badge: ComponentType<BadgeProps>;
+
+// @public
+export interface BadgeProps {
+    children?: ReactNode;
+    tone?: "default" | "accent" | "warn" | "count";
+}
 
 // @public
 export interface BaseComponentProps {
@@ -20,10 +33,21 @@ export interface BaseComponentProps {
 }
 
 // @public
-export const Button: ComponentType<DesignProps>;
+export const Button: ComponentType<ButtonProps>;
 
-// Warning: (ae-forgotten-export) The symbol "EventBase" needs to be exported by the entry point index.d.ts
-//
+// @public
+export interface ButtonProps {
+    "aria-label"?: string;
+    children?: ReactNode;
+    disabled?: boolean;
+    loading?: boolean;
+    onClick?: () => void;
+    shortcut?: string;
+    title?: string;
+    type?: "button" | "submit" | "reset";
+    variant?: "primary" | "secondary" | "default" | "ghost" | "danger" | "danger-solid";
+}
+
 // @public
 export type CapybaraEvent = ({
     type: "run.started";
@@ -91,6 +115,9 @@ export interface ClientExtensionDefinition {
 }
 
 // @public
+export type ClientRole = "owner" | "admin" | "member" | "guest" | "superAdmin";
+
+// @public
 export interface ClientStorage {
     get(key: string, scope?: "local" | "session"): string | null;
     set(key: string, value: string | null, scope?: "local" | "session"): void;
@@ -99,10 +126,8 @@ export interface ClientStorage {
 // @public
 export type ComponentProps<S extends ComponentSlotId> = BaseComponentProps & SlotComponentProps[S];
 
-// Warning: (ae-forgotten-export) The symbol "COMPONENT_SLOT_IDS" needs to be exported by the entry point index.d.ts
-//
 // @public
-export type ComponentSlotId = (typeof COMPONENT_SLOT_IDS)[number];
+export type ComponentSlotId = "conversation.panel" | "conversation.properties.section" | "conversation.tool-result.card" | "org.page" | "agent.detail.section" | "org.settings.section" | "platform.page" | "shell.brand" | "shell.overlay" | "conversation.empty" | "conversation.composer.frame";
 
 // @public
 export function defineClientExtension(def: ClientExtensionDefinition): ClientExtension;
@@ -111,16 +136,57 @@ export function defineClientExtension(def: ClientExtensionDefinition): ClientExt
 export function defineComponent<S extends ComponentSlotId>(slot: S, render: ComponentType<ComponentProps<S>>): ClientComponent<S>;
 
 // @public
-export const Icon: ComponentType<DesignProps>;
+export interface EventBase {
+    at: string;
+    conversationId: string;
+    seq: number;
+}
 
 // @public
-export const Kbd: ComponentType<DesignProps>;
+export const Icon: ComponentType<IconProps>;
 
 // @public
-export const KeyValue: ComponentType<DesignProps>;
+export interface IconProps {
+    label?: string;
+    name: string;
+    size?: 16 | 14 | 12;
+}
 
 // @public
-export const Logo: ComponentType<DesignProps>;
+export type JsonValue = string | number | boolean | null | JsonValue[] | {
+    [key: string]: JsonValue;
+};
+
+// @public
+export const Kbd: ComponentType<KbdProps>;
+
+// @public
+export interface KbdProps {
+    children?: ReactNode;
+}
+
+// @public
+export const KeyValue: ComponentType<KeyValueProps>;
+
+// @public
+export interface KeyValueProps {
+    columns?: 1 | 2;
+    keyWidth?: `${number}ch`;
+    rows: {
+        k: ReactNode;
+        v: ReactNode;
+    }[];
+}
+
+// @public
+export const Logo: ComponentType<LogoProps>;
+
+// @public
+export interface LogoProps {
+    scale?: 2 | 3 | 6;
+    tone?: "accent" | "muted";
+    wordmark?: boolean;
+}
 
 // @public
 export class PluginClientContextError extends Error {
@@ -128,7 +194,20 @@ export class PluginClientContextError extends Error {
 }
 
 // @public
-export const PropertySection: ComponentType<DesignProps>;
+export const PropertySection: ComponentType<PropertySectionProps>;
+
+// @public
+export interface PropertySectionProps {
+    children?: ReactNode;
+    failure?: {
+        reason?: string;
+    };
+    onRetry?(): void;
+    state?: "loading" | "ready" | "failed";
+    title: string;
+    value?: ReactNode;
+    valueTone?: "ink" | "muted";
+}
 
 // @public
 export type RunState = "idle" | "running" | "waiting" | "failed";
@@ -175,17 +254,63 @@ export interface SlotComponentProps {
 }
 
 // @public
-export const Spinner: ComponentType<DesignProps>;
+export const Spinner: ComponentType<SpinnerProps>;
 
 // @public
-export const Stack: ComponentType<DesignProps>;
+export interface SpinnerProps {
+    label?: string;
+    size?: 12 | 16;
+}
 
 // @public
-const Text_2: ComponentType<DesignProps>;
+export const Stack: ComponentType<StackProps>;
+
+// @public
+export interface StackProps {
+    align?: "start" | "center" | "end" | "stretch" | "baseline";
+    children?: ReactNode;
+    direction?: "column" | "row";
+    gap?: 0 | 4 | 8 | 12 | 16 | 24 | 32;
+    justify?: "start" | "center" | "end" | "between";
+    wrap?: boolean;
+}
+
+// @public
+const Text_2: ComponentType<TextProps>;
 export { Text_2 as Text }
 
 // @public
-export const Tooltip: ComponentType<DesignProps>;
+export interface TextProps {
+    children?: ReactNode;
+    icon?: string;
+    pre?: boolean;
+    title?: string;
+    tone?: "ink" | "muted" | "faint" | "accent" | "ok" | "fail" | "warn";
+    truncate?: boolean;
+    variant?: "h1" | "h2" | "h3" | "body" | "small" | "micro" | "prose";
+}
+
+// @public
+export const Tooltip: ComponentType<TooltipProps>;
+
+// @public
+export interface TooltipProps {
+    children: React.ReactElement;
+    content: ReactNode;
+    side?: "top" | "right" | "bottom" | "left";
+    sideOffset?: number;
+}
+
+// @public
+export interface UiView {
+    badge?: string;
+    blocks: Array<{
+        type: string;
+        [key: string]: unknown;
+    }>;
+    data?: JsonValue;
+    open?: unknown;
+}
 
 // @public
 export function useAccess(): {
@@ -194,8 +319,6 @@ export function useAccess(): {
     atLeast(role: "guest" | "member" | "admin" | "superAdmin"): boolean;
 };
 
-// Warning: (ae-forgotten-export) The symbol "ActionFn" needs to be exported by the entry point index.d.ts
-//
 // @public
 export function useAction(): ActionFn;
 
@@ -232,13 +355,23 @@ export function useTheme(): {
     scheme: "dark" | "light";
 };
 
-// Warning: (ae-forgotten-export) The symbol "ViewState" needs to be exported by the entry point index.d.ts
-//
 // @public
 export function useView(): ViewState;
 
 // @public
-export const ViewBlocks: ComponentType<DesignProps>;
+export const ViewBlocks: ComponentType<ViewBlocksProps>;
+
+// @public
+export interface ViewBlocksProps {
+    view: UiView;
+}
+
+// @public
+export interface ViewState {
+    retry(): void;
+    status: "loading" | "ready" | "failed";
+    view: UiView | null;
+}
 
 // (No @packageDocumentation comment for this package)
 

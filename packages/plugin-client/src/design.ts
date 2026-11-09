@@ -1,37 +1,137 @@
 import { type ComponentType, createElement, type ReactNode } from "react";
+import type { UiView } from "./types.js";
 
-type DesignProps = { children?: ReactNode } & Record<string, unknown>;
+/** Every design name this package forwards to the host (one source for the package and its tests). */
+export const DESIGN_NAMES = [
+  "Badge",
+  "Button",
+  "Icon",
+  "Kbd",
+  "KeyValue",
+  "Logo",
+  "PropertySection",
+  "Spinner",
+  "Stack",
+  "Text",
+  "Tooltip",
+  "ViewBlocks",
+] as const;
 
-declare global {
-  // The host sets this before it loads a client entry; in tests, the fake host does.
-  var __CAPYBARA_CLIENT_HOST__: { design: Record<string, ComponentType<DesignProps>> } | undefined;
+type HostDesign = Record<string, ComponentType<never>>;
+interface ClientHostGlobal {
+  design: HostDesign;
+}
+const HOST_KEY = "__CAPYBARA_CLIENT_HOST__";
+
+/** The host's design components (the host sets the global before it loads a client entry). */
+export function clientHost(): ClientHostGlobal | undefined {
+  return (globalThis as unknown as Record<string, ClientHostGlobal | undefined>)[HOST_KEY];
 }
 
-function forward(name: string): ComponentType<DesignProps> {
-  const Forwarded = (props: DesignProps) => {
-    const Target = globalThis.__CAPYBARA_CLIENT_HOST__?.design[name];
+export function setClientHost(host: ClientHostGlobal | undefined): void {
+  (globalThis as unknown as Record<string, ClientHostGlobal | undefined>)[HOST_KEY] = host;
+}
+
+// The props below are hand-written minimal copies of the design system's (frozen per
+// CLIENT_API_VERSION); tools/checks tests prove each is compatible with the design component.
+export interface ButtonProps {
+  variant?: "primary" | "secondary" | "default" | "ghost" | "danger" | "danger-solid";
+  loading?: boolean;
+  shortcut?: string;
+  disabled?: boolean;
+  type?: "button" | "submit" | "reset";
+  title?: string;
+  "aria-label"?: string;
+  onClick?: () => void;
+  children?: ReactNode;
+}
+export interface BadgeProps {
+  tone?: "default" | "accent" | "warn" | "count";
+  children?: ReactNode;
+}
+export interface IconProps {
+  name: string;
+  size?: 16 | 14 | 12;
+  label?: string;
+}
+export interface KeyValueProps {
+  rows: { k: ReactNode; v: ReactNode }[];
+  keyWidth?: `${number}ch`;
+  columns?: 1 | 2;
+}
+export interface KbdProps {
+  children?: ReactNode;
+}
+export interface LogoProps {
+  scale?: 2 | 3 | 6;
+  tone?: "accent" | "muted";
+  wordmark?: boolean;
+}
+export interface SpinnerProps {
+  label?: string;
+  size?: 12 | 16;
+}
+export interface StackProps {
+  gap?: 0 | 4 | 8 | 12 | 16 | 24 | 32;
+  direction?: "column" | "row";
+  align?: "start" | "center" | "end" | "stretch" | "baseline";
+  justify?: "start" | "center" | "end" | "between";
+  wrap?: boolean;
+  children?: ReactNode;
+}
+export interface TextProps {
+  variant?: "h1" | "h2" | "h3" | "body" | "small" | "micro" | "prose";
+  tone?: "ink" | "muted" | "faint" | "accent" | "ok" | "fail" | "warn";
+  truncate?: boolean;
+  pre?: boolean;
+  icon?: string;
+  title?: string;
+  children?: ReactNode;
+}
+export interface TooltipProps {
+  content: ReactNode;
+  side?: "top" | "right" | "bottom" | "left";
+  sideOffset?: number;
+  children: React.ReactElement;
+}
+export interface PropertySectionProps {
+  title: string;
+  value?: ReactNode;
+  valueTone?: "ink" | "muted";
+  state?: "loading" | "ready" | "failed";
+  failure?: { reason?: string };
+  onRetry?(): void;
+  children?: ReactNode;
+}
+export interface ViewBlocksProps {
+  view: UiView;
+}
+
+function forward<P>(name: string): ComponentType<P> {
+  const Forwarded = (props: P) => {
+    const Target = clientHost()?.design[name] as ComponentType<P> | undefined;
     if (!Target) {
       throw new Error(
         `The Capybara client host provides no design component "${name}"; ` +
           "this package only works inside the host or @capybara-hq/plugin-client/testing.",
       );
     }
-    return createElement(Target, props);
+    return createElement(Target as ComponentType<object>, props as object);
   };
   Forwarded.displayName = name;
   return Forwarded;
 }
 
-export const Button = forward("Button");
-export const Badge = forward("Badge");
-export const Icon = forward("Icon");
-export const KeyValue = forward("KeyValue");
-export const Kbd = forward("Kbd");
-export const Logo = forward("Logo");
-export const Spinner = forward("Spinner");
-export const Stack = forward("Stack");
-export const Text = forward("Text");
-export const Tooltip = forward("Tooltip");
-export const PropertySection = forward("PropertySection");
+export const Button = forward<ButtonProps>("Button");
+export const Badge = forward<BadgeProps>("Badge");
+export const Icon = forward<IconProps>("Icon");
+export const KeyValue = forward<KeyValueProps>("KeyValue");
+export const Kbd = forward<KbdProps>("Kbd");
+export const Logo = forward<LogoProps>("Logo");
+export const Spinner = forward<SpinnerProps>("Spinner");
+export const Stack = forward<StackProps>("Stack");
+export const Text = forward<TextProps>("Text");
+export const Tooltip = forward<TooltipProps>("Tooltip");
+export const PropertySection = forward<PropertySectionProps>("PropertySection");
 /** The host's renderer of a `UiView`. */
-export const ViewBlocks = forward("ViewBlocks");
+export const ViewBlocks = forward<ViewBlocksProps>("ViewBlocks");

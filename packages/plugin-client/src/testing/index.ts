@@ -14,6 +14,7 @@ import {
   type HostContextValue,
 } from "../context.js";
 import type { ClientExtension } from "../define.js";
+import { clientHost, DESIGN_NAMES, setClientHost } from "../design.js";
 import type { ComponentSlotId } from "../slots.generated.js";
 import type { CapybaraEvent, ClientApi, ClientRole, RunState, UiView } from "../types.js";
 
@@ -43,30 +44,15 @@ export interface FakeHost {
   unmount(): void;
 }
 
-type DesignStub = ComponentType<{ children?: ReactNode } & Record<string, unknown>>;
-
-const DESIGN_NAMES = [
-  "Button",
-  "Badge",
-  "Icon",
-  "KeyValue",
-  "Kbd",
-  "Logo",
-  "Spinner",
-  "Stack",
-  "Text",
-  "Tooltip",
-  "PropertySection",
-  "ViewBlocks",
-];
+type DesignStub = ComponentType<{ children?: ReactNode }>;
 
 /** Plain stand-ins for the host's design components: `<span data-fake-design="Name">`. */
-function fakeDesign(): Record<string, DesignStub> {
+function fakeDesign(): Record<string, ComponentType<never>> {
   const out: Record<string, DesignStub> = {};
   for (const name of DESIGN_NAMES) {
     out[name] = ({ children }) => createElement("span", { "data-fake-design": name }, children);
   }
-  return out;
+  return out as Record<string, ComponentType<never>>;
 }
 
 /**
@@ -89,8 +75,14 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
     storage,
     assetUrl,
   };
-  const previousHost = globalThis.__CAPYBARA_CLIENT_HOST__;
-  globalThis.__CAPYBARA_CLIENT_HOST__ = { design: fakeDesign() };
+  const previousHost = clientHost();
+  setClientHost({ design: fakeDesign() });
+
+  // Stable across renders, like the real host's (useCapybaraEvents resubscribes on change).
+  const subscribe: HostApi["subscribe"] = (handler) => {
+    subscribers.add(handler);
+    return () => subscribers.delete(handler);
+  };
 
   let setRun: (s: RunState) => void = () => {};
 
@@ -114,10 +106,7 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
       theme: { key: null, scheme: "dark" },
       storage,
       assetUrl,
-      subscribe: (handler) => {
-        subscribers.add(handler);
-        return () => subscribers.delete(handler);
-      },
+      subscribe,
     };
     const value: HostContextValue = {
       plugin,
@@ -154,7 +143,7 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
     unmount() {
       act(() => root.unmount());
       container.remove();
-      globalThis.__CAPYBARA_CLIENT_HOST__ = previousHost;
+      setClientHost(previousHost);
     },
   };
 }

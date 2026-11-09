@@ -41,7 +41,7 @@ export type CapybaraEventType =
   | "tool.finished"
   | "approval.requested";
 
-interface EventBase {
+export interface EventBase {
   conversationId: string;
   seq: number;
   /** ISO time of the event. */
