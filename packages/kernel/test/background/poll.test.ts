@@ -13,6 +13,7 @@ import {
   BackgroundTaskPollJob,
   launchAbandonedAfterMs,
 } from "../../src/background/poll.job.js";
+import { killSessionScript } from "../../src/background/session.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import {
   type BackgroundTaskRow,
@@ -377,7 +378,10 @@ describe("polling", () => {
   it("a task whose session was killed from outside ends lost (process_gone)", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 303");
-    expect((await inSandbox(c, `pkill -KILL -s ${t.sid}`)).exitCode).toBe(0);
+    // killed until the session is empty, as the product kills one: a single pkill can miss a
+    // process forked between its listing and its signals (timeout starting bash), which lives on
+    const killed = await inSandbox(c, `${killSessionScript(t.sid as string)}; exit "$ks"`);
+    expect(killed.exitCode).toBe(0);
     const row = await pollUntilFinished(t);
     expect(row).toMatchObject({
       status: "lost",
@@ -421,7 +425,7 @@ describe("polling", () => {
       .select("handle")
       .where("device_id", "=", c.deviceId)
       .executeTakeFirstOrThrow();
-    await inSandbox(c, `pkill -KILL -s ${t.sid}`);
+    await inSandbox(c, killSessionScript(t.sid as string));
     await removeFakeSandbox(root, (row.handle as { id: string }).id);
     // the next use finds the instance gone and rebuilds it
     expect((await inSandbox(c, "true")).exitCode).toBe(0);
