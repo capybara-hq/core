@@ -106,6 +106,33 @@ export const ClientExtensionsSetting = z.object({
 });
 export type ClientExtensionsKillSwitch = z.infer<typeof ClientExtensionsSetting>;
 
+/** The kill switch's default (and what a missing or invalid stored value reads as): everything on. */
+export const clientExtensionsDefault = (): ClientExtensionsKillSwitch => ({
+  enabled: true,
+  disabled: [],
+});
+
+/**
+ * Parses a stored `clientExtensions` value (the `deployment_settings` row's `value`, undefined when
+ * the row is missing): the default when missing; when invalid the default too, with a warning naming
+ * the key (a kill switch that fails open is worth a log line, as {@link SettingsService.get} logs
+ * every other invalid key). The one parser of the setting: the settings service and every access
+ * check read through it.
+ */
+export function parseClientExtensions(
+  value: unknown,
+  log?: Pick<KernelLogger, "warn">,
+): ClientExtensionsKillSwitch {
+  if (value === undefined) return clientExtensionsDefault();
+  const parsed = ClientExtensionsSetting.safeParse(value);
+  if (parsed.success) return parsed.data;
+  log?.warn("invalid deployment setting; using default", {
+    key: CLIENT_EXTENSIONS_SETTING,
+    issues: parsed.error.issues.map((i) => i.message),
+  });
+  return clientExtensionsDefault();
+}
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "super_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
@@ -139,7 +166,7 @@ export const DEPLOYMENT_SETTINGS = z.object({
    */
   uiArrangement: UiArrangementSchema.default({}),
   /** The client code kill switch (client extensions spec §10.2). */
-  clientExtensions: ClientExtensionsSetting.default({ enabled: true, disabled: [] }),
+  clientExtensions: ClientExtensionsSetting.default(clientExtensionsDefault),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -333,19 +360,19 @@ export async function readUiArrangement(db: KernelSchemaDb): Promise<UiArrangeme
 
 /**
  * The client code kill switch, read live from PG on every request (in the caller's transaction when
- * there is one; never cached: every replica sees a change at once). Missing or invalid -> the
- * default, everything on.
+ * there is one; never cached: every replica sees a change at once), through
+ * {@link parseClientExtensions} (missing or invalid -> everything on; invalid also warns on `log`).
  */
 export async function readClientExtensions(
   db: KernelSchemaDb,
+  log?: Pick<KernelLogger, "warn">,
 ): Promise<ClientExtensionsKillSwitch> {
   const row = await db
     .selectFrom("deployment_settings")
     .select("value")
     .where("key", "=", CLIENT_EXTENSIONS_SETTING)
     .executeTakeFirst();
-  const parsed = ClientExtensionsSetting.safeParse(row?.value);
-  return parsed.success ? parsed.data : { enabled: true, disabled: [] };
+  return parseClientExtensions(row?.value, log);
 }
 
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */

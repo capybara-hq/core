@@ -1,5 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ReplicaStatusStore } from "../../src/extensions/sources.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { importPlugin, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { accountsFor } from "../helpers/identity.js";
 import { createOrg, enableExtensions, PW } from "../helpers/runs.js";
 import {
@@ -12,6 +14,7 @@ import {
   sha256,
   sha384,
   signIn,
+  waitForServing,
 } from "./client-env.js";
 
 /**
@@ -94,6 +97,24 @@ afterAll(async () => {
 beforeEach(async () => {
   await env.db.deleteFrom("deployment_settings").where("key", "=", "clientExtensions").execute();
 });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const HUD = { id: "hud", slot: "conversation.properties.section" };
+
+/** The org read's builds by plugin, as the member sees them. */
+const listedBuilds = async () => {
+  const r = await mem.req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/ui/client` });
+  expect(r.statusCode, r.body).toBe(200);
+  return Object.fromEntries(
+    (r.json() as { items: { plugin: string; build: string }[] }).items.map((i) => [
+      i.plugin,
+      i.build,
+    ]),
+  );
+};
 
 const integrityOf = async (build: string, key: string) =>
   (
@@ -267,6 +288,109 @@ describe("client delivery", { timeout: 120_000 }, () => {
     const now = await rawGet(env, url("cx-up", sha256(v2), "client.mjs"), mem.cookie());
     expect(now.status).toBe(200);
     expect(now.body.toString()).toContain('v: "2.0.0"');
+  });
+
+  it("an upgrade awaiting approval keeps delivering and listing the build that runs", async () => {
+    const v1 = await clientPlugin({ name: "cx-wait", components: [HUD] });
+    // 2.0.0 adds a component: a blocking key the snapshot has not approved
+    const v2 = await clientPlugin({
+      name: "cx-wait",
+      version: "2.0.0",
+      components: [HUD, { id: "hud2", slot: "conversation.properties.section" }],
+    });
+    await importClientPlugin(env, v1, "cx-wait");
+    await enableExtensions(env.db, env.orgId, "cx-wait");
+    const config = env.k.app.get(KernelConfigService);
+    const real = config.get();
+    vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      extensionPermissions: { ...real.extensionPermissions, autoApprove: false },
+    });
+    // the package is stored by the review; the install moves to it, the approval waits
+    const p = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(v2),
+    });
+    expect(p.statusCode, p.body).toBe(200);
+    const moved = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/extensions/cx-wait/install",
+      payload: { sha256: sha256(v2) },
+    });
+    expect(moved.statusCode, moved.body).toBe(200);
+    await waitForServing(env, "cx-wait", sha256(v2), "pending", sha256(v1));
+    expect(
+      await env.db
+        .selectFrom("extension_installs")
+        .select("sha256")
+        .where("name", "=", "cx-wait")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ sha256: sha256(v2) });
+    const old = await rawGet(env, url("cx-wait", sha256(v1), "client.mjs"), mem.cookie());
+    expect(old.status, old.body.toString()).toBe(200);
+    expect(old.body.toString()).toContain('v: "1.0.0"');
+    const next = await rawGet(env, url("cx-wait", sha256(v2), "client.mjs"), mem.cookie());
+    expectNotFound(next, rawCode(next));
+    expect((await listedBuilds())["cx-wait"]).toBe(sha256(v1));
+  });
+
+  it("a failed upgrade keeps delivering and listing the build that runs", async () => {
+    const v1 = await clientPlugin({ name: "cx-fail", components: [HUD] });
+    const v2 = await clientPlugin({
+      name: "cx-fail",
+      version: "2.0.0",
+      components: [HUD],
+      setupThrows: true,
+    });
+    await importClientPlugin(env, v1, "cx-fail");
+    await enableExtensions(env.db, env.orgId, "cx-fail");
+    await importPlugin(env, v2);
+    await waitForServing(env, "cx-fail", sha256(v2), "failed", sha256(v1));
+    expect((await rawGet(env, url("cx-fail", sha256(v1), "client.mjs"), mem.cookie())).status).toBe(
+      200,
+    );
+    const next = await rawGet(env, url("cx-fail", sha256(v2), "client.mjs"), mem.cookie());
+    expectNotFound(next, rawCode(next));
+    expect((await listedBuilds())["cx-fail"]).toBe(sha256(v1));
+  });
+
+  it("no live replica serving the build is 404 (fails closed)", async () => {
+    const bytes = await clientPlugin({ name: "cx-stale", components: [HUD] });
+    await importClientPlugin(env, bytes, "cx-stale");
+    await enableExtensions(env.db, env.orgId, "cx-stale");
+    const path = url("cx-stale", sha256(bytes), "client.mjs");
+    expect((await rawGet(env, path, mem.cookie())).status).toBe(200);
+    // the replica stops reporting (as a stalled or crashed one does): no heartbeat, no row writes
+    const store = env.k.app.get(ReplicaStatusStore);
+    vi.spyOn(store, "heartbeat").mockResolvedValue();
+    const write = store.write.bind(store);
+    vi.spyOn(store, "write").mockImplementation(async (st) => {
+      if (st.plugin !== "cx-stale") await write(st);
+    });
+    await env.db
+      .updateTable("extension_replica_status")
+      .set({ heartbeat_at: new Date(Date.now() - 3_600_000) })
+      .where("plugin", "=", "cx-stale")
+      .execute();
+    const r = await rawGet(env, path, mem.cookie());
+    expectNotFound(r, rawCode(r));
+    expect(await listedBuilds()).not.toHaveProperty("cx-stale");
+  });
+
+  it("HEAD answers like GET without a body, through the same check", async () => {
+    const ok = await rawGet(env, url(PAGE, pageSha, "client.mjs"), mem.cookie(), "HEAD");
+    expect(ok.status).toBe(200);
+    expect(ok.headers["content-type"]).toBe("text/javascript");
+    expect(ok.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(ok.body.length).toBe(0);
+    const off = await rawGet(env, url(PLAIN, plainSha, "client.mjs"), bmem.cookie(), "HEAD");
+    expect(off.status).toBe(404);
+    expect(off.headers.location).toBeUndefined();
+    expect((await rawGet(env, url(PAGE, pageSha, "client.mjs"), undefined, "HEAD")).status).toBe(
+      401,
+    );
   });
 
   it("an unknown file is 404", async () => {

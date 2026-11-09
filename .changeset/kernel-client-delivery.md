@@ -5,8 +5,11 @@
 The kernel delivers plugin client code. `GET /api/v1/client/<plugin>/<build>/<path>` serves the
 entry, stylesheets and assets of a client build (`build` is the package sha256) to a signed-in
 member, any role, of a live org where the extension is enabled, or to a super admin when the build
-has a `platform.page` component; only while the build is the current package of a running
-extension whose permission snapshot approves `permissions.client` and every `ui.component:<id>`.
+has a `platform.page` component; only while a live replica serves the build's package for an
+enabled install (client code follows the server code that runs: during an upgrade awaiting
+approval or after a failed one the old build stays served; replica status rows gain
+`serving_sha256`) and the permission snapshot approves `permissions.client` and every
+`ui.component:<id>`.
 Files are looked up by their exact manifest key (no decoding, no normalising, never a redirect);
 anything else is 404 `client.not_found`. Responses are `private, max-age=31536000, immutable` with
 `nosniff` and `Cross-Origin-Resource-Policy: same-origin`; SVG assets carry

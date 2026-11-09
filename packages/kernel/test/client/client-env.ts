@@ -34,6 +34,8 @@ export async function clientPlugin(o: {
   components: TestComponent[];
   /** Adds `styles/a.css` (which uses the svg) and `assets/logo.svg`. */
   decorated?: boolean;
+  /** The extension's setup throws (its load fails after approval). */
+  setupThrows?: boolean;
 }): Promise<Uint8Array> {
   const version = o.version ?? "1.0.0";
   const files: Record<string, Uint8Array> = {};
@@ -80,7 +82,9 @@ export async function clientPlugin(o: {
       },
       entry: [
         'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-        `export default defineExtension({ ...${JSON.stringify(base)}, setup() {} });`,
+        `export default defineExtension({ ...${JSON.stringify(base)}, setup() { ${
+          o.setupThrows ? 'throw new Error("setup failed on purpose");' : ""
+        } } });`,
       ].join("\n"),
     },
   });
@@ -140,14 +144,19 @@ export interface RawResponse {
   body: Buffer;
 }
 
-/** GET `path` over real HTTP on the kernel's port, the path sent exactly as given. */
-export function rawGet(env: OrgEnv, path: string, cookie?: string): Promise<RawResponse> {
+/** GET (or `method`) `path` over real HTTP on the kernel's port, the path sent exactly as given. */
+export function rawGet(
+  env: OrgEnv,
+  path: string,
+  cookie?: string,
+  method: "GET" | "HEAD" = "GET",
+): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const r = request(
       {
         host: "127.0.0.1",
         port: env.k.port,
-        method: "GET",
+        method,
         path,
         headers: cookie ? { cookie } : {},
       },
@@ -177,6 +186,32 @@ export const rawCode = (r: RawResponse): string | undefined => {
     return undefined;
   }
 };
+
+/**
+ * Waits until this replica's status row for `name` names package `sha` in `state` while serving
+ * `serving` (`serving_sha256`): the old package beside a pending or failed new one.
+ */
+export async function waitForServing(
+  env: OrgEnv,
+  name: string,
+  sha: string,
+  state: "pending" | "failed" | "loaded",
+  serving: string | null,
+): Promise<void> {
+  await waitFor(
+    async () =>
+      (await env.db
+        .selectFrom("extension_replica_status")
+        .select("plugin")
+        .where("plugin", "=", name)
+        .where("sha256", "=", sha)
+        .where("state", "=", state)
+        .where("serving_sha256", serving === null ? "is" : "=", serving)
+        .executeTakeFirst()) !== undefined,
+    15_000,
+    `${name} ${state} serving ${serving}`,
+  );
+}
 
 /** Writes the kill switch through the admin route (the super admin's session). */
 export async function setKillSwitch(

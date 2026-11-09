@@ -5,7 +5,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { readClientExtensions } from "../../src/identity/settings.js";
+import { parseClientExtensions, readClientExtensions } from "../../src/identity/settings.js";
 import { accountsFor, settingsFor } from "../helpers/identity.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -217,7 +217,15 @@ describe("SettingsService", () => {
       .set({ value: JSON.stringify({ enabled: "x" }) })
       .where("key", "=", "clientExtensions")
       .execute();
-    expect(await readClientExtensions(db)).toEqual({ enabled: true, disabled: [] });
+    const warned: Record<string, unknown>[] = [];
+    const log = {
+      warn: (_msg: string, fields?: Record<string, unknown>) => warned.push(fields ?? {}),
+    };
+    expect(await readClientExtensions(db, log)).toEqual({ enabled: true, disabled: [] });
+    expect(warned).toEqual([{ key: "clientExtensions", issues: expect.any(Array) }]);
+    // a missing row is the default, without a warning
+    expect(parseClientExtensions(undefined, log)).toEqual({ enabled: true, disabled: [] });
+    expect(warned).toHaveLength(1);
   });
 
   it("读：库里非法的 sandboxLimitOverrides 回落为 {}", async () => {

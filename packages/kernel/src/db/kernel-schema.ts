@@ -1203,6 +1203,12 @@ export interface ExtensionReplicaStatusTable {
   detail: string | null;
   /** The old version this replica still serves when this row's version did not load (see migration 0030). */
   serving_version: Generated<string | null>;
+  /**
+   * 0105: the package sha256 this replica actually serves for the plugin (the row's `sha256` when
+   * loaded, the older package still running when the row's version is pending or failed, null when
+   * none runs). Client code is delivered for the package a live replica serves.
+   */
+  serving_sha256: Generated<string | null>;
   http_replica_id: string | null;
   heartbeat_at: Ts;
 }

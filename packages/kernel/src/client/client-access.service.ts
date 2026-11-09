@@ -10,16 +10,18 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { enabledExtensionsByOrg, enabledExtensionsQuery } from "../extensions/enabled.js";
+import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { STALE_RECONCILE_PERIODS } from "../extensions/lifecycle-topics.js";
 import {
   CLIENT_EXTENSIONS_SETTING,
   type ClientExtensionsKillSwitch,
-  ClientExtensionsSetting,
+  parseClientExtensions,
   readClientExtensions,
 } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { StorageService } from "../storage/storage.service.js";
 import { canUseSlot } from "../ui/registry.js";
@@ -40,7 +42,7 @@ export interface FetchableBuild {
   objectPrefix: string;
 }
 
-/** A row of {@link ClientAccess.running}. */
+/** A row of {@link ClientAccess.served}. */
 interface RunningBuild {
   plugin: string;
   build: string;
@@ -133,13 +135,16 @@ const stopped = (kill: ClientExtensionsKillSwitch, plugin: string) =>
  * every request: no process state, nothing cached, so every replica answers the same and a change
  * (an org switch, an upgrade, the kill switch) applies at once.
  *
- * A build is **running** when it is the current package of an install (`extension_installs.sha256`)
- * whose desired state is `enabled`, a live replica reports that package loaded
- * (`extension_replica_status`: what the replicas run, approved and migrated, not this replica's
- * memory), and the approved permission snapshot covers its client keys (`permissions.client` and
- * every `ui.component:<id>` of its manifest). An org upload awaiting the super admin has no install,
- * an old build is no install's current package, an unapproved snapshot fails the last test: none of
- * them is running. The kill switch (`clientExtensions`) then stops all of them or the listed ones.
+ * Client code follows the server code that actually runs. A build is **served** when its package
+ * is what a live replica serves for an enabled install (`extension_replica_status.serving_sha256`,
+ * heartbeat within `STALE_RECONCILE_PERIODS` reconcile intervals: the row's own package when
+ * loaded, the older package still running beside a version pending approval or failed) and the
+ * approved permission snapshot covers its client keys (`permissions.client` and every
+ * `ui.component:<id>` of its manifest). So during an upgrade awaiting approval, or after the new
+ * version's migration / setup / import failed, the old build stays served and listed and the new
+ * one is not, until a replica serves it; with no live replica nothing is (fails closed). An org
+ * upload awaiting the super admin has no install, so nothing of it is served. The kill switch
+ * (`clientExtensions`) then stops all builds or those of the listed plugins.
  */
 @Injectable()
 export class ClientAccess {
@@ -147,6 +152,7 @@ export class ClientAccess {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   /**
@@ -170,16 +176,17 @@ export class ClientAccess {
     };
   }
 
-  /** The running client builds (see the class header), one per extension, as a query to narrow. */
-  private running(db: KernelSchemaDb) {
+  /**
+   * The served client builds (see the class header) as a query to narrow: one row per (extension,
+   * served build); during a rollout two replicas may serve two builds of one extension.
+   */
+  private served(db: KernelSchemaDb) {
     const staleSeconds =
       STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds;
     return db
       .selectFrom("extension_installs as i")
-      .innerJoin("extension_packages as p", "p.sha256", "i.sha256")
-      .innerJoin("extension_client_builds as b", (j) =>
-        j.onRef("b.package_sha256", "=", "i.sha256").onRef("b.plugin", "=", "i.name"),
-      )
+      .innerJoin("extension_client_builds as b", "b.plugin", "i.name")
+      .innerJoin("extension_packages as p", "p.sha256", "b.package_sha256")
       .innerJoin("extension_permission_snapshots as s", "s.plugin", "i.name")
       .where("i.desired_state", "=", "enabled")
       .where(sql<boolean>`s.permissions -> 'permissions' -> 'client' = 'true'::jsonb`)
@@ -192,8 +199,7 @@ export class ClientAccess {
             .selectFrom("extension_replica_status as r")
             .select(sql`1`.as("one"))
             .whereRef("r.plugin", "=", "i.name")
-            .whereRef("r.sha256", "=", "i.sha256")
-            .where("r.state", "=", "loaded")
+            .whereRef("r.serving_sha256", "=", "b.package_sha256")
             .where(
               "r.heartbeat_at",
               ">",
@@ -203,7 +209,7 @@ export class ClientAccess {
       )
       .select([
         "i.name as plugin",
-        "i.sha256 as build",
+        "b.package_sha256 as build",
         "p.section as section",
         "b.entry as entry",
         "b.styles as styles",
@@ -214,8 +220,21 @@ export class ClientAccess {
   }
 
   /**
+   * One served build per extension, for the shell reads: the install's current package when a
+   * replica serves it, else the newest build a replica still serves (the old one while the new
+   * version waits for approval or failed).
+   */
+  private listed(db: KernelSchemaDb) {
+    return this.served(db)
+      .distinctOn("i.name")
+      .orderBy("i.name")
+      .orderBy(sql`(b.package_sha256 = i.sha256) desc`)
+      .orderBy("b.created_at", "desc");
+  }
+
+  /**
    * The build `build` of `plugin` when the account may fetch its files, else null; one query, not
-   * cached. It must be running (class header), not stopped by the kill switch, and the account a
+   * cached. It must be served (class header), not stopped by the kill switch, and the account a
    * member (any role) of a live org where the extension is enabled, or a super admin when the
    * build's manifest has a `platform.page` component (the admin console loads only those).
    */
@@ -226,34 +245,44 @@ export class ClientAccess {
     build: string,
   ): Promise<FetchableBuild | null> {
     const db = this.db.db;
-    const row = await this.running(db)
+    const row = await this.served(db)
       .where("i.name", "=", plugin)
-      .where("i.sha256", "=", build)
+      .where("b.package_sha256", "=", build)
       .select((eb) => [
         eb
           .selectFrom("deployment_settings")
           .select("value")
           .where("key", "=", CLIENT_EXTENSIONS_SETTING)
           .as("kill"),
+        // enabled.ts's two sources, per account: a required bootstrap install is on in every org,
+        // otherwise the org's own switch row
         eb
           .exists(
             eb
               .selectFrom("memberships as m")
               .innerJoin("orgs as o", "o.id", "m.org_id")
-              .innerJoin(enabledExtensionsByOrg(db).as("en"), (j) =>
-                j.onRef("en.org_id", "=", "m.org_id"),
-              )
               .select(sql`1`.as("one"))
               .where("m.account_id", "=", accountId)
               .where("o.deleted_at", "is", null)
-              .whereRef("en.plugin", "=", "i.name"),
+              .where((w) =>
+                w.or([
+                  w("i.required", "=", true),
+                  w.exists(
+                    w
+                      .selectFrom("extension_org_configs as c")
+                      .select(sql`1`.as("one"))
+                      .whereRef("c.org_id", "=", "m.org_id")
+                      .whereRef("c.plugin", "=", "i.name")
+                      .where("c.enabled", "=", true),
+                  ),
+                ]),
+              ),
           )
           .as("member"),
       ])
       .executeTakeFirst();
     if (row === undefined) return null;
-    const parsed = ClientExtensionsSetting.safeParse(row.kill);
-    const kill = parsed.success ? parsed.data : { enabled: true, disabled: [] };
+    const kill = parseClientExtensions(row.kill ?? undefined, this.log);
     if (stopped(kill, plugin)) return null;
     const allowed =
       row.member === true ||
@@ -278,19 +307,16 @@ export class ClientAccess {
   }
 
   /**
-   * The org's shell read: every extension enabled in the org (`enabled.ts`) with a running client
-   * build, in name order, minus the stopped ones; `components` are those whose slot the role may
-   * use (`canUseSlot`: its `minRole`, never `platform.page`). An extension with no component left
-   * is still listed (its stylesheets and entry still load).
+   * The org's shell read: every extension enabled in the org (`enabled.ts`) with a served client
+   * build ({@link listed}: one per extension), in name order, minus the stopped ones; `components`
+   * are those whose slot the role may use (`canUseSlot`: its `minRole`, never `platform.page`). An
+   * extension with no component left is still listed (its stylesheets and entry still load).
    */
   async orgSet(orgId: string, role: OrgRole): Promise<ClientExtensionsResponse> {
     const db = this.db.db;
     const [kill, rows] = await Promise.all([
-      readClientExtensions(db),
-      this.running(db)
-        .where("i.name", "in", enabledExtensionsQuery(db, orgId))
-        .orderBy("i.name")
-        .execute(),
+      readClientExtensions(db, this.log),
+      this.listed(db).where("i.name", "in", enabledExtensionsQuery(db, orgId)).execute(),
     ]);
     if (!kill.enabled) return { enabled: false, apiVersion: CLIENT_API_VERSION, items: [] };
     const items = rows
@@ -310,15 +336,15 @@ export class ClientAccess {
   }
 
   /**
-   * The admin console's set (spec §9.6): the running extensions (whatever their org enablement)
-   * with at least one `platform.page` component and an entry, only those components and no
-   * stylesheets (the admin console runs no org client code); with `plugin`, at most that one.
+   * The admin console's set (spec §9.6): the extensions with a served build (whatever their org
+   * enablement) with at least one `platform.page` component and an entry, only those components
+   * and no stylesheets (the admin console runs no org client code); with `plugin`, at most that one.
    */
   async platformSet(plugin?: string): Promise<ClientExtensionsResponse> {
     const db = this.db.db;
-    let q = this.running(db).orderBy("i.name");
+    let q = this.listed(db);
     if (plugin !== undefined) q = q.where("i.name", "=", plugin);
-    const [kill, rows] = await Promise.all([readClientExtensions(db), q.execute()]);
+    const [kill, rows] = await Promise.all([readClientExtensions(db, this.log), q.execute()]);
     if (!kill.enabled) return { enabled: false, apiVersion: CLIENT_API_VERSION, items: [] };
     const items = rows.flatMap((r): ClientExtensionItem[] => {
       if (stopped(kill, r.plugin) || r.entry === null) return [];

@@ -37,3 +37,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS extension_client_reports_key_uq
 
 CREATE INDEX IF NOT EXISTS extension_client_reports_last_at
   ON extension_client_reports (last_at);
+
+-- extension_replica_status.serving_sha256: the package a replica actually serves for the plugin
+-- (the row's own sha256 when loaded; the older package still running when the row's version is
+-- pending approval or failed; null when none runs). Client code follows the server code that runs
+-- (spec §9.3): a build is delivered while a live replica serves its package.
+ALTER TABLE extension_replica_status ADD COLUMN IF NOT EXISTS serving_sha256 text NULL;
