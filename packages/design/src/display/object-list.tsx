@@ -137,6 +137,7 @@ export function ObjectRow({
     ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
   };
   const slots: (RowButton | undefined)[] = [action, single];
+  const hasMeta = meta !== undefined && meta.length > 0;
   return (
     <li className="cb-object-row">
       {mark.avatar !== undefined ? (
@@ -180,23 +181,36 @@ export function ObjectRow({
           ))}
         </span>
         {description ? <span className="cb-object-desc">{description}</span> : null}
-        {meta && meta.length > 0 ? (
-          <span className="cb-object-meta">
-            {typeof meta === "string"
-              ? meta
-              : meta.map((m, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: the parts are positional
-                  <Fragment key={i}>
-                    {i > 0 ? " · " : null}
-                    {typeof m === "string" ? (
-                      m
-                    ) : (
-                      <span className="cb-object-meta-part" data-tone={m.tone}>
-                        {m.label}
-                      </span>
-                    )}
-                  </Fragment>
-                ))}
+        {hasMeta || state ? (
+          // Below 640 the state is drawn at the end of this line (spec §4.3, §6.17): the CSS reads
+          // it from `data-state` / `data-state-tone`, so the label stays one node in the DOM (the
+          // row's own state label, hidden on phones). A row with a state and no meta keeps an
+          // empty meta line for it, drawn only on phones.
+          <span
+            className="cb-object-meta"
+            data-empty={hasMeta ? undefined : "true"}
+            data-state={state?.label}
+            data-state-tone={state?.tone}
+          >
+            {hasMeta && meta !== undefined ? (
+              <span className="cb-object-meta-text">
+                {typeof meta === "string"
+                  ? meta
+                  : meta.map((m, i) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: the parts are positional
+                      <Fragment key={i}>
+                        {i > 0 ? " · " : null}
+                        {typeof m === "string" ? (
+                          m
+                        ) : (
+                          <span className="cb-object-meta-part" data-tone={m.tone}>
+                            {m.label}
+                          </span>
+                        )}
+                      </Fragment>
+                    ))}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </span>
@@ -206,26 +220,32 @@ export function ObjectRow({
         </span>
       ) : null}
       {trailing ? <span className="cb-object-trailing">{trailing}</span> : null}
-      {slots.map((a, i) =>
-        a === undefined ? null : a.href !== undefined ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
-          <LinkButton key={i} href={a.href} variant="default" density="dense">
-            {a.label}
-          </LinkButton>
-        ) : (
-          <Button
-            // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
-            key={i}
-            variant="default"
-            density="dense"
-            loading={a.loading === true}
-            disabled={waiting}
-            {...(a.onSelect ? { onClick: a.onSelect } : {})}
-          >
-            {a.label}
-          </Button>
-        ),
-      )}
+      {action || single ? (
+        // The row's buttons in one group: one flex item below 640 (it moves to the meta line,
+        // or wraps under it as a whole), `display: contents` above, so the row lays them out.
+        <span className="cb-object-actions">
+          {slots.map((a, i) =>
+            a === undefined ? null : a.href !== undefined ? (
+              // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
+              <LinkButton key={i} href={a.href} variant="default" density="dense">
+                {a.label}
+              </LinkButton>
+            ) : (
+              <Button
+                // biome-ignore lint/suspicious/noArrayIndexKey: two fixed slots (the action, a lone menu item)
+                key={i}
+                variant="default"
+                density="dense"
+                loading={a.loading === true}
+                disabled={waiting}
+                {...(a.onSelect ? { onClick: a.onSelect } : {})}
+              >
+                {a.label}
+              </Button>
+            ),
+          )}
+        </span>
+      ) : null}
       {actions.length > 0 && lone === undefined ? (
         <Menu
           items={menu ?? []}
@@ -243,6 +263,7 @@ export function ObjectRow({
               }
               density="dense"
               variant="default"
+              className="cb-object-menu"
               disabled={waiting}
               aria-busy={menuLoading ? true : undefined}
             />

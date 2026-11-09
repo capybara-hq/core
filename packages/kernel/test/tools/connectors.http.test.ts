@@ -807,3 +807,90 @@ describe("连接器 HTTP", () => {
     expect(cross.statusCode).toBe(404);
   });
 });
+
+describe("a member's own tool policies (the card's 权限, decision 2026-11-09)", () => {
+  type Row = {
+    name: string;
+    defaultPolicy: string;
+    annotationPolicy: string;
+    policy: string | null;
+    locked: string | null;
+  };
+  it("each account reads and writes only its own settings on a personal connector", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const a = await memberSession(orgId, "alice", "member");
+    const b = await memberSession(orgId, "bob", "member");
+    const { connector: app } = await createConnector(req, orgId, {
+      auth: { type: "bearer", ownership: "personal" },
+      credential: { token: TOKEN },
+    });
+    const url = `/api/v1/orgs/${orgId}/connectors/${app.id}/tool-policies/me`;
+    const read = async (r: Req) => {
+      const res = await r({ method: "GET", url });
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { tools: Row[] }).tools;
+    };
+    // defaults by annotations: read-only allows, destructive and unannotated ask
+    const before = await read(a.req);
+    expect(before.map((t) => [t.name, t.annotationPolicy, t.defaultPolicy, t.policy])).toEqual([
+      ["create_doc", "ask", "ask", null],
+      ["delete_doc", "ask", "ask", null],
+      ["search", "allow", "allow", null],
+    ]);
+    const put = await a.req({
+      method: "PUT",
+      url,
+      payload: { tools: { delete_doc: "deny", search: "ask" } },
+    });
+    expect(put.statusCode, put.body).toBe(200);
+    expect((await read(a.req)).map((t) => t.policy)).toEqual([null, "deny", "ask"]);
+    // bob's sheet is untouched; his write never reaches alice's rows
+    expect((await read(b.req)).map((t) => t.policy)).toEqual([null, null, null]);
+    await b.req({ method: "PUT", url, payload: { tools: { search: "allow" } } });
+    expect((await read(a.req)).map((t) => t.policy)).toEqual([null, "deny", "ask"]);
+    // null clears
+    await a.req({ method: "PUT", url, payload: { tools: { search: null } } });
+    expect((await read(a.req)).map((t) => t.policy)).toEqual([null, "deny", null]);
+    // an org lock shows: the admin switches create_doc off and sets search to deny
+    const off = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}`,
+      payload: { tools: { create_doc: { status: "disabled" }, search: { defaultPolicy: "deny" } } },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    expect((await read(a.req)).map((t) => t.locked)).toEqual(["disabled", null, "org_deny"]);
+    // unknown tool, and a body that is not a policy
+    const unknown = await a.req({ method: "PUT", url, payload: { tools: { nope: "allow" } } });
+    expect(unknown.statusCode).toBe(404);
+    expect(errCode(unknown)).toBe("connector.tool_not_found");
+    const bad = await a.req({ method: "PUT", url, payload: { tools: { search: "always" } } });
+    expect(bad.statusCode).toBe(400);
+    const audits = await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id"])
+      .where("action", "=", "connector.member_policies_changed")
+      .execute();
+    expect(audits.map((x) => x.actor_account_id).sort()).toEqual(
+      [a.account.id, a.account.id, b.account.id].sort(),
+    );
+  });
+
+  it("a connector with one org credential has none: 409 connector.not_personal; another org's: 404", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const { connector: app } = await createConnector(req, orgId);
+    const res = await req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/connectors/${app.id}/tool-policies/me`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("connector.not_personal");
+    const other = await createOrg(req, "Other");
+    const cross = await req({
+      method: "GET",
+      url: `/api/v1/orgs/${other}/connectors/${app.id}/tool-policies/me`,
+    });
+    expect(cross.statusCode).toBe(404);
+  });
+});

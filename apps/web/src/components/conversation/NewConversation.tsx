@@ -5,6 +5,8 @@ import {
   type AgentRowItem,
   type ConversationPageProps,
   Greeting,
+  isTouchPointer,
+  QuickActionList,
   QuickActions,
   Stack,
   Text,
@@ -71,7 +73,8 @@ export function orderAgents(
 
 /**
  * A new conversation (`/`, the home, spec §5.2, agent profile design §4): the greeting, the agents row,
- * the selected agent's quick actions and the composer (no agent picker: the row picks). The agent
+ * the selected agent's quick actions (the composer's zap menu; on a phone also listed on the page)
+ * and the composer (no agent picker: the row picks). The agent
  * is `?agent=` when usable, else the one most recently talked to, else the first in the row's
  * order. The greeting is picked after mount (the server draws its same-height placeholder, so the
  * first paint matches). A quick action fills the composer (one ⌘Z step brings the text back).
@@ -188,9 +191,16 @@ export function useNewConversationPage(
     avatar: avatarValue(a, orgId),
   }));
   const quickActions = agent?.profile.quickActions ?? [];
+  const quickItems = quickActions.map((q, i) => ({ id: String(i), title: q.title }));
+  // the zap menu and, on a phone, the list on the page: a pick fills the composer
+  const pickQuickAction = (id: string) => {
+    const body = quickActions[Number(id)]?.body;
+    if (body !== undefined) composer.current?.fill(body);
+  };
   const selectAgent = (id: string) => {
     setPicked(id);
-    composer.current?.focus();
+    // the composer takes the focus, except on a touch device: switching agents never pops the keyboard
+    if (!isTouchPointer()) composer.current?.focus();
   };
   // Sent: the conversation layout, the pending bubble then the working line (spec §2.1).
   const sent = pending.shown.length > 0;
@@ -225,6 +235,12 @@ export function useNewConversationPage(
                 onSelect={selectAgent}
               />
             ),
+            // a phone lists them on the page (the composer's zap menu gives way there)
+            ...(quickItems.length > 0
+              ? {
+                  quickActions: <QuickActionList items={quickItems} onPick={pickQuickAction} />,
+                }
+              : {}),
           },
         }),
     // the agents are on the way: the row's placeholder chips keep its box, so nothing moves
@@ -270,11 +286,8 @@ export function useNewConversationPage(
                   <QuickActions
                     // keyed by agent: another agent's menu starts closed
                     key={agent?.id ?? ""}
-                    items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
-                    onPick={(id) => {
-                      const body = quickActions[Number(id)]?.body;
-                      if (body !== undefined) composer.current?.fill(body);
-                    }}
+                    items={quickItems}
+                    onPick={pickQuickAction}
                   />
                 ),
               }

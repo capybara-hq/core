@@ -37,10 +37,17 @@ export {
   ComposerFrame,
   ComposerInput,
   type ComposerToken,
+  isShortPickerValue,
   Picker,
   type PickerItem,
   type PickerProps,
 } from "./composer";
+export {
+  ComposerOptions,
+  type ComposerOptionsProps,
+  shortEnvironmentLabel,
+  shortModelLabel,
+} from "./composer-options";
 export { DiffBlock, type DiffData, type DiffHunk, type DiffLineData } from "./diff-block";
 export { type DividerKind, RunDivider, type RunDividerProps } from "./divider";
 export {
@@ -115,7 +122,13 @@ export {
 } from "./panels";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
-export { type QuickActionItem, QuickActions, type QuickActionsProps } from "./quick-actions";
+export {
+  type QuickActionItem,
+  QuickActionList,
+  type QuickActionListProps,
+  QuickActions,
+  type QuickActionsProps,
+} from "./quick-actions";
 export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
 export {
   AgentCallBlock,

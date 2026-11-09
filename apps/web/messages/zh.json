@@ -189,7 +189,8 @@
       "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
       "tool_not_found": "该连接器没有这个工具。",
       "tool_not_pending": "该工具不在待复核状态。",
-      "resources_disabled": "该连接器已关闭读取资源。"
+      "resources_disabled": "该连接器已关闭读取资源。",
+      "not_personal": "该连接器整个组织共用一个凭据，没有按成员设置的工具权限。"
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
@@ -520,6 +521,7 @@
       "extensionToolOffInOrg": "已在本组织关闭",
       "policiesLabel": "策略",
       "policy": {
+        "allow": "允许",
         "default": "默认",
         "ask": "需审批",
         "deny": "禁止"
@@ -643,6 +645,7 @@
       "sheetTools": "{name} 的工具",
       "sheetDone": "完成",
       "sheetHint": "默认全部开启，取消勾选即对这个智能体关闭；全部取消即整体关闭（之后新增的工具也关闭）。策略只能收紧。修改随本页的保存一起生效。",
+      "connectorPolicyHint": "连接器工具也可以对这个智能体设为允许，覆盖组织默认和成员自己的「询问」；成员在自己的连接上设为「禁止」的工具，对他仍然禁止。",
       "loadingTools": "正在读取工具…",
       "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。"
     },
@@ -1651,6 +1654,7 @@
     "policy": {
       "agent": "智能体的设置要求审批",
       "connector": "连接器的策略要求审批",
+      "member": "你在这个连接器上的设置要求审批",
       "default": "该工具默认需要审批",
       "role": "需要有权限的成员审批",
       "org": "组织策略要求审批",
@@ -2076,6 +2080,35 @@
     "tabs": {
       "all": "全部",
       "disabled": "已停用"
+    },
+    "cards": {
+      "connect": "连接",
+      "connected": "已连接",
+      "notConnected": "未连接",
+      "permissions": "权限"
+    },
+    "permissions": {
+      "title": "{name} 的权限",
+      "hint": "只对你自己的连接生效，用于你使用的所有智能体。智能体可单独覆盖，但你设为「禁止」的工具不会被覆盖。",
+      "listLabel": "工具权限",
+      "allow": "允许",
+      "ask": "询问",
+      "deny": "禁止",
+      "defaultMark": "{label}（默认）",
+      "default": "默认：{label}",
+      "locked": {
+        "disabled": "组织已停用这个工具",
+        "org_deny": "组织已禁止这个工具"
+      },
+      "empty": "这个连接器没有工具。",
+      "save": "保存",
+      "cancel": "取消",
+      "saved": "已保存权限。",
+      "loading": "正在读取工具…"
+    },
+    "templates": {
+      "needsConfig": "需要配置",
+      "configure": "配置"
     }
   },
   "connections": {

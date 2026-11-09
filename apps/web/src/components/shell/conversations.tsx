@@ -13,7 +13,6 @@ import {
   type ConversationSearch,
   deleteConversation,
 } from "../../lib/conversations";
-import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { renameWithRow } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
@@ -370,22 +369,17 @@ export function useConversationGroups(
     href: `/chat/${encodeURIComponent(c.id)}`,
     activity: c.activity ?? null,
   });
-  // The group titles' avatars come from the agents already cached (the sidebar reads none of its
-  // own); a group whose agent is not cached shows the initial of its name.
-  const cachedAgents = useQuery({ ...agentsQuery(orgId), enabled: false }).data?.agents;
-  const agentOf = new Map((cachedAgents ?? []).map((a) => [a.id, a]));
-  const groups: SidebarGroup[] = (mine?.groups ?? []).map((g) => {
-    const a = agentOf.get(g.agent.id);
-    return {
-      agentId: g.agent.id,
-      agentName: g.agent.name,
-      agentAvatar: a ? avatarValue(a, orgId) : null,
-      conversations: g.conversations.map(toRow),
-      more: g.more,
-      onMore: () => void onMore(g),
-      onNew: () => onNew(g.agent.id),
-    };
-  });
+  // The group titles' avatars come with the groups (the sidebar reads no agents list); an agent
+  // without an avatar shows the initial of its name.
+  const groups: SidebarGroup[] = (mine?.groups ?? []).map((g) => ({
+    agentId: g.agent.id,
+    agentName: g.agent.name,
+    agentAvatar: g.agent.profile ? avatarValue(g.agent, orgId) : null,
+    conversations: g.conversations.map(toRow),
+    more: g.more,
+    onMore: () => void onMore(g),
+    onNew: () => onNew(g.agent.id),
+  }));
   const next = mine?.next ?? null;
   return {
     state,

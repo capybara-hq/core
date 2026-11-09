@@ -81,6 +81,106 @@ describe("tabs", () => {
   });
 });
 
+describe("ObjectRow below 640", () => {
+  const narrow = media(css("templates.css"));
+  const row = '.cb-object-row:not([data-skeleton="true"])';
+
+  it("dissolves the text column so its lines and the row's buttons wrap as one row", () => {
+    expect(decls(narrow, ".cb-object-row")).toContain("flex-wrap: wrap;");
+    expect(decls(narrow, `${row} .cb-object-text`)).toContain("display: contents;");
+    // the skeleton rows keep the mark and the text column side by side
+    expect(decls(narrow, '.cb-object-row[data-skeleton="true"] .cb-object-text')).toContain(
+      "flex-basis:",
+    );
+  });
+
+  it("puts the ⋯ menu on the name line and breaks the line after it", () => {
+    expect(decls(narrow, `${row} .cb-object-menu`)).toContain("order: 1;");
+    const brk = decls(narrow, `${row}::after`);
+    expect(brk).toContain("order: 1;");
+    expect(brk).toContain("flex-basis: 100%;");
+  });
+
+  it("draws the state at the end of the meta line in its tone and hides the state label", () => {
+    expect(decls(narrow, ".cb-object-meta[data-state]::after")).toContain(
+      "content: attr(data-state);",
+    );
+    for (const tone of ["ok", "warn", "fail"]) {
+      expect(decls(narrow, `.cb-object-meta[data-state-tone="${tone}"]::after`)).toContain(
+        `color: var(--cb-${tone});`,
+      );
+    }
+    expect(decls(narrow, `${row} > .cb-object-state`)).toContain("display: none;");
+  });
+
+  it("aligns the action group right on the meta line (it wraps under it as a whole)", () => {
+    const actions = decls(narrow, `${row} .cb-object-actions`);
+    expect(actions).toContain("order: 2;");
+    expect(actions).toContain("margin-left: auto;");
+    expect(actions).toContain("display: flex;");
+  });
+
+  it("changes nothing above 640: the action group dissolves, a state-only meta line is hidden", () => {
+    const wide = css("templates.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+    expect(decls(wide, ".cb-object-actions")).toContain("display: contents;");
+    expect(decls(wide, '.cb-object-meta[data-empty="true"]')).toContain("display: none;");
+  });
+});
+
+describe("PageHeader below 640", () => {
+  const narrow = media(css("shell.css"));
+
+  it("gives the title and description the full width, the description wrapping", () => {
+    expect(decls(narrow, ".cb-pageheader-row")).toContain("flex-wrap: wrap;");
+    expect(decls(narrow, ".cb-pageheader-description")).toContain("white-space: normal;");
+  });
+
+  it("puts the actions on their own line under them", () => {
+    expect(decls(narrow, ".cb-pageheader-actions")).toContain("flex: 1 1 100%;");
+  });
+});
+
+describe("SettingsPage sub-nav below 640", () => {
+  it("is a sticky row on the page ground with its hairline, over the scrolling content", () => {
+    const nav = decls(media(css("templates.css")), ".cb-settings-nav");
+    expect(nav).toContain("position: sticky;");
+    expect(nav).toContain("top: 0;");
+    expect(nav).toMatch(/z-index: \d+;/);
+    expect(nav).toContain("background: var(--cb-bg);");
+    expect(nav).toContain("border-bottom: 1px solid var(--cb-line-soft);");
+    expect(nav).toContain("overflow-x: auto;");
+  });
+
+  it("is sticky only on phones (the 200 px rail above 640 is not)", () => {
+    const wide = css("templates.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+    expect(decls(wide, ".cb-settings-nav")).not.toContain("position: sticky;");
+  });
+});
+
+describe("the sidebar drawer", () => {
+  const sidebar = css("sidebar.css");
+
+  it("scrolls its middle as one region; the conversations inside it do not scroll on their own", () => {
+    const region = decls(sidebar, ".cb-sidebar-scroll");
+    expect(region).toContain("overflow-y: auto;");
+    expect(region).toContain("min-height: 0;");
+    expect(region).toContain("flex: 1;");
+    const convs = decls(sidebar, ".cb-sidebar-scroll > .cb-sidebar-convs");
+    expect(convs).toContain("flex: none;");
+    expect(convs).toContain("overflow: visible;");
+  });
+
+  it("indents the 更多 items one level and turns the chevron while open", () => {
+    expect(decls(sidebar, '.cb-sidebar-item[data-depth="1"]')).toContain("padding-left:");
+    expect(
+      decls(
+        sidebar,
+        '.cb-sidebar-item[data-part="more-toggle"][aria-expanded="true"] .cb-sidebar-chevron',
+      ),
+    ).toContain("transform: rotate(90deg);");
+  });
+});
+
 describe("StatCards below 640", () => {
   it("are two columns (2 × 2 for four metrics)", () => {
     const cards = decls(media(css("shell.css")), ".cb-stat-cards");
@@ -159,15 +259,26 @@ describe("tap targets below 640 are at least 40 px", () => {
   for (const sel of [
     ".cb-shell-drawerbar .cb-icon-btn",
     ".cb-title-bar .cb-icon-btn",
-    ".cb-pageheader-actions .cb-btn",
     ".cb-pageheader-tabs .cb-tab",
-    ".cb-object-row .cb-btn",
     ".cb-table-menu .cb-btn",
   ]) {
     it(sel, () => {
       const d = decls(narrow, sel);
       expect(d).toContain("min-height: 40px;");
       expect(d).toContain("min-width: 40px;");
+    });
+  }
+
+  // The page head's actions and an object row's buttons keep their compact look and reach 40 px
+  // through an invisible ring (spec §4.3).
+  for (const sel of [".cb-pageheader-actions .cb-btn", ".cb-object-row .cb-btn"]) {
+    it(`${sel} (a 40 px ring around the compact button)`, () => {
+      expect(decls(narrow, sel)).toContain("position: relative;");
+      const ring = decls(narrow, `${sel}::after`);
+      expect(ring).toContain("position: absolute;");
+      expect(ring).toContain("min-height: 40px;");
+      expect(ring).toContain("min-width: 40px;");
+      expect(decls(narrow, sel)).not.toContain("min-height: 40px;");
     });
   }
 
