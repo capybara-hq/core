@@ -10,7 +10,7 @@ import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { z } from "zod";
-import { configFields, getPath, secretValues } from "../config/fields.js";
+import { configFields, getPath, secretScalars, secretValues } from "../config/fields.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import { ApiError } from "../errors.js";
@@ -891,6 +891,42 @@ export class ChannelConnections implements OnApplicationShutdown {
       return;
     }
     for (const r of rows) await this.changed(r.id, true);
+  }
+
+  /**
+   * For setup checks (setup guides v2 §10.4): the input revision of a live connection of the org
+   * on `plugin`: the `updated_at` of its row and of its secrets row (ISO), never a value. Missing,
+   * deleted, of another org or plugin -> `channel.not_found`.
+   */
+  async checkRevision(orgId: string, plugin: string, id: string): Promise<string> {
+    const row = await this.live(orgId)
+      .where("id", "=", id)
+      .where("plugin", "=", plugin)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const secretRow = await this.db
+      .selectFrom("secrets")
+      .select("updated_at")
+      .where("namespace", "=", SECRETS_NAMESPACE)
+      .where("org_id", "=", orgId)
+      .where("key", "=", connectionSecretKey(id))
+      .executeTakeFirst();
+    const iso = (d: Date | string) => new Date(d).toISOString();
+    return `${iso(row.updated_at)}|${secretRow ? iso(secretRow.updated_at) : "-"}`;
+  }
+
+  /**
+   * For setup checks (setup guides v2 §10.8): the stored secret values of a live connection of the
+   * org on `plugin` (every secret field, decrypted), what a check's result is redacted by. Missing,
+   * deleted, of another org or plugin -> `channel.not_found`. Never echo them.
+   */
+  async checkSecrets(orgId: string, plugin: string, id: string): Promise<string[]> {
+    const row = await this.live(orgId)
+      .where("id", "=", id)
+      .where("plugin", "=", plugin)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    return secretScalars(Object.values(await this.readSecrets(orgId, id)));
   }
 
   /**

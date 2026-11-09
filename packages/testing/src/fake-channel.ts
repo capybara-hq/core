@@ -21,6 +21,9 @@ import type {
  *   `code_challenge`（S256）的，换 token 必须带对应的 `codeVerifier`，否则 `invalid_grant`。
  * - **通讯录**：`GET /d/<key>/members?cursor=<n>` 按页返回 {@link FakeChannelServer.book} 的成员，可让某页失败、让第一页挂起。
  * - **其他写操作**：`POST /posts` 记下插件工具发的「公告」（`posts`），供断言工具确实执行（且只执行一次）。
+ * - **Setup checks**: `POST /checks` records each call of a `fake-im` setup check (`checks`), so a
+ *   test can count third-party calls across replicas; {@link FakeChannelServer.holdChecks} makes
+ *   the answers wait (a slow platform API).
  *
  * - **Webhook** (the platform calling the kernel): {@link signFakeWebhook} signs a body with HMAC-SHA256
  *   for the `x-fake-signature` header; {@link fakeWebhookEvents} / {@link fakeWebhookChallenge} build bodies.
@@ -90,6 +93,16 @@ export interface FakeChannelFailMatch {
   textIncludes?: string;
 }
 
+/** A `fake-im` setup check's call of `POST /checks`. */
+export interface FakeChannelCheckCall {
+  /** The check id. */
+  check: string;
+  connectionId: string;
+  /** The process (replica) that made it (`x-pid`). */
+  pid: number;
+  at: number;
+}
+
 /** 插件工具经 `POST /posts` 发出的一条记录。 */
 export interface FakeChannelPost {
   body: Record<string, unknown>;
@@ -116,6 +129,10 @@ export interface FakeChannelServer {
   duplicateSends: FakeChannelSent[];
   /** 插件工具发的公告。 */
   posts: FakeChannelPost[];
+  /** Calls of `fake-im` setup checks (`POST /checks`). */
+  checks: FakeChannelCheckCall[];
+  /** `POST /checks` answers only once `hold` resolves (null: at once). */
+  holdChecks(hold: Promise<void> | null): void;
   /** 平台用户（OAuth 登录用），按 externalId 索引。 */
   users: Map<string, FakeChannelUser>;
   /**
@@ -188,6 +205,8 @@ export async function startFakeChannelServer(
   const updated: FakeChannelSent[] = [];
   const duplicateSends: FakeChannelSent[] = [];
   const posts: FakeChannelPost[] = [];
+  const checks: FakeChannelCheckCall[] = [];
+  let checkHold: Promise<void> | null = null;
   const users = new Map<string, FakeChannelUser>();
   const books = new Map<string, FakeDirectoryBook>();
   const codes = new Map<
@@ -373,6 +392,20 @@ export async function startFakeChannelServer(
           tenantId: b.tenant ?? "t1",
         });
       }
+      if (route === "POST /checks") {
+        const b = JSON.parse((await readBody(req)) || "{}") as {
+          check?: string;
+          connectionId?: string;
+        };
+        checks.push({
+          check: String(b.check ?? ""),
+          connectionId: String(b.connectionId ?? ""),
+          pid: pidOf(req),
+          at: Date.now(),
+        });
+        if (checkHold) await checkHold;
+        return json(res, 200, { ok: true });
+      }
       if (route === "GET /oauth/authorize") return authorize(res, u);
       if (route === "POST /oauth/token") return token(req, res);
       if (route === "POST /posts") {
@@ -399,6 +432,10 @@ export async function startFakeChannelServer(
     updated,
     duplicateSends,
     posts,
+    checks,
+    holdChecks(hold) {
+      checkHold = hold;
+    },
     users,
     failNext(path, status, count = 1, retryAfterMs, reason, delayMs, match) {
       failures.push({

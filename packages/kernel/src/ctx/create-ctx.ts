@@ -15,6 +15,11 @@ import {
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
   parseExtensionPoint,
+  SETUP_CHECK_ID_RE,
+  SETUP_GUIDE_PLACES,
+  type SetupCheckArgs,
+  type SetupCheckDefinition,
+  type SetupGuidePlace,
   type ToolHandler,
   type ToolSpec,
   validateFilePreviewProvider,
@@ -94,6 +99,16 @@ export type Route = {
 
 /** 插件经 `ctx.tools.register` 注册的工具。 */
 export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
+
+/**
+ * A setup check registered through `ctx.setup.check`: `place` and `run` read once from the
+ * definition at registration and frozen, so the extension cannot swap them afterwards (a getter
+ * on the definition runs once, at registration, never when a check runs).
+ */
+export type RegisteredSetupCheck = Readonly<{
+  place: SetupGuidePlace;
+  run: (args: SetupCheckArgs) => Promise<unknown>;
+}>;
 
 /** 插件经 `ctx.extensionPoints` 取用其他插件能力时，内核注入的访问接口。 */
 export interface ExtensionPointAccess {
@@ -289,7 +304,11 @@ export type KernelExtensionContext = ExtensionContext & {
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
   uiActions: ReadonlyMap<string, UiActionHandler>;
-  /** setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action`、`hooks.on` 抛错。 */
+  /** Setup checks registered through `ctx.setup.check`, by id. */
+  setupChecks: ReadonlyMap<string, RegisteredSetupCheck>;
+  /**
+   * setup 结束后调用：此后 `tools.register`、`ui.view`、`ui.action`、`hooks.on`、`setup.check` 抛错。
+   */
   sealTools(): void;
   /** 中止 signal、封账并逐项撤销仍在账上的登记、关闭队列连接（幂等）。 */
   close(): Promise<void>;
@@ -313,7 +332,8 @@ export class LiveConfig {
  *   only with `permissions.models` (and only its `embedding` purposes, through `deps.models`); `http.route`
  *   only the method + path declared in `permissions.http`; `tools.register` only names declared in
  *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` (during
- *   setup only); `ui.invalidate` sends a refresh over the kernel bus (namespace `kernel`), across
+ *   setup only); `setup.check` only ids declared in `permissions.setupChecks` (during setup only,
+ *   `place` and `run` read once and frozen); `ui.invalidate` sends a refresh over the kernel bus (namespace `kernel`), across
  *   replicas; `ui.verifyEmbedToken` checks an embed token the kernel signed: `claims.plugin` must be
  *   this extension, the extension still enabled in that org and the caller still an active member of
  *   the org (org not deleted); returns the current role;
@@ -403,6 +423,8 @@ export function createExtensionContext(
   ]);
 
   const uiReg = new PluginUiRegistration(manifest, deny);
+  const declaredSetupChecks = new Set(perms.setupChecks ?? []);
+  const setupChecks = new Map<string, RegisteredSetupCheck>();
   const embedTokens = deps.embedTokens;
   const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, c.place]));
 
@@ -588,13 +610,52 @@ export function createExtensionContext(
         });
       },
     },
-    // Placeholder until the setup check runner lands (setup guides v2, plan task 10): fail closed,
-    // so no check is ever registered or run by a kernel that cannot bound and redact it.
+    // Setup checks (setup guides v2 §10.2): only during setup, only ids declared in
+    // permissions.setupChecks (an undeclared or malformed id is a denial, audited); the kernel's
+    // SetupChecksService runs them (bounded, cached, redacted).
     setup: {
-      check(id) {
-        throw new Error(
-          `plugin ${name}: setup check "${id}": this kernel does not run setup checks`,
-        );
+      check(id: string, def: SetupCheckDefinition) {
+        if (toolsSealed) {
+          throw new Error(
+            `plugin ${name}: setup.check is only allowed during setup; setup has completed`,
+          );
+        }
+        if (typeof id !== "string" || !SETUP_CHECK_ID_RE.test(id) || !declaredSetupChecks.has(id)) {
+          // the item names the id only when it has the id shape (an audit row never carries
+          // arbitrary extension text)
+          deny(
+            `permissions.setupChecks ${typeof id === "string" && SETUP_CHECK_ID_RE.test(id) ? id : "(invalid id)"}`,
+          );
+        }
+        if (setupChecks.has(id)) {
+          throw new Error(`plugin ${name}: duplicate setup check "${id}"`);
+        }
+        if (typeof def !== "object" || def === null) {
+          throw new Error(`plugin ${name}: setup check "${id}" needs a definition object`);
+        }
+        // read once: what runs later is exactly what was checked here
+        const place: unknown = def.place;
+        const run: unknown = def.run;
+        if (!(SETUP_GUIDE_PLACES as readonly unknown[]).includes(place)) {
+          throw new Error(
+            `plugin ${name}: setup check "${id}" place must be one of ${SETUP_GUIDE_PLACES.join(", ")}`,
+          );
+        }
+        if (typeof run !== "function") {
+          throw new Error(`plugin ${name}: setup check "${id}" run must be a function`);
+        }
+        const check: RegisteredSetupCheck = Object.freeze({
+          place: place as SetupGuidePlace,
+          run: run as RegisteredSetupCheck["run"],
+        });
+        setupChecks.set(id, check);
+        ledger.add({
+          kind: "setup.check",
+          key: id,
+          dispose: async () => {
+            if (setupChecks.get(id) === check) setupChecks.delete(id);
+          },
+        });
       },
     },
     hooks: {
@@ -721,6 +782,7 @@ export function createExtensionContext(
     registeredHooks,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
+    setupChecks,
     ledger,
     async beginDispose(deadline) {
       drainDeadline = deadline;

@@ -159,6 +159,8 @@ export const ERROR_CODES = {
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,
   "catalog.guide_not_found": 404,
+  /** The check is not in the setup guide rendered for that mode and audience (setup guides v2 §10.3). */
+  "catalog.check_not_found": 404,
   "marketplace.not_found": 404,
   "marketplace.entry_not_found": 404,
   "marketplace.fetch_failed": 502,

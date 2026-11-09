@@ -71,6 +71,6 @@ export class KernelThrottlerGuard extends ThrottlerGuard {
     http.getResponse<FastifyReply>().header("retry-after", String(r.timeToBlockExpire));
     const known = NAMED_THROTTLERS.find((t) => t.name === name);
     if (!known) throw new Error(`unknown throttler "${name}"`);
-    throw new ApiError("auth.rate_limited", known.message);
+    throw new ApiError(known.code ?? "auth.rate_limited", known.message);
   }
 }

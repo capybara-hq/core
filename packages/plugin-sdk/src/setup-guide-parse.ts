@@ -10,6 +10,7 @@ import type { Nodes, Root } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
+import { SETUP_CHECK_ID_RE } from "./setup-check.js";
 
 /** Limits the parser enforces (equal to the matching entries of `SETUP_GUIDE_LIMITS`). */
 const LIMITS = {
@@ -24,8 +25,10 @@ const LIMITS = {
 
 /** `{{name}}`, spaces inside the braces allowed. */
 export const SETUP_GUIDE_VARIABLE_RE = /\{\{\s*([A-Za-z][A-Za-z0-9]*)\s*\}\}/g;
-const PLUGIN_CHECK_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
-const KERNEL_CHECK_RE = /^capybara:[a-z0-9][a-z0-9-]{0,47}$/;
+// The plugin check id is the registration's (`ctx.setup.check`), so a guide can name only ids an
+// extension can register; a kernel check is `capybara:` and the same id shape.
+const PLUGIN_CHECK_RE = SETUP_CHECK_ID_RE;
+const KERNEL_CHECK_RE = new RegExp(`^capybara:${SETUP_CHECK_ID_RE.source.slice(1)}`);
 /** The private-use range the renderer reserves for its sentinels; refused in sources. */
 export const SETUP_GUIDE_RESERVED_RE = /[-]/;
 const FENCE_OPEN_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/;

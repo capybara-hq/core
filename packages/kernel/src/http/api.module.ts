@@ -84,6 +84,8 @@ import {
 } from "../skills/changes.controller.js";
 import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillsController } from "../skills/skills.controller.js";
+import { SetupChecksController } from "../setup/setup-checks.controller.js";
+import { SetupModule } from "../setup/setup.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { OrgThemesController } from "../themes/themes.controller.js";
@@ -162,6 +164,7 @@ const CONTROLLERS: Type[] = [
   EvalRunsController,
   ModelPurposesController,
   OrgCatalogController,
+  SetupChecksController,
   OrgPluginUploadsController,
   OrgOwnedPluginsController,
   OrgComponentsController,
@@ -201,6 +204,7 @@ const CONTROLLERS: Type[] = [
     UiModule,
     InboxModule,
     ThemesModule,
+    SetupModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
