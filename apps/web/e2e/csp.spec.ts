@@ -77,13 +77,16 @@ test("every page boots under the CSP", async ({ page }) => {
   await hydrated(page);
   expect(await violations(page)).toEqual([]);
 
-  // the sign-in page (signed out): the scheme toggle only answers once React has hydrated
+  // the sign-in page (signed out, so dark): only hydrated React moves <html> to the light scheme
   await page.context().clearCookies();
   nonces.add(await visit(page, "/login"));
   const html = page.locator("html");
-  const before = await html.getAttribute("data-theme");
-  await page.getByRole("button", { name: "切换主题", exact: true }).click();
-  await expect(html).not.toHaveAttribute("data-theme", before ?? "");
+  await expect(html).toHaveAttribute("data-theme", "dark");
+  await page
+    .getByRole("radiogroup", { name: "配色" })
+    .getByRole("radio", { name: "浅色", exact: true })
+    .click();
+  await expect(html).toHaveAttribute("data-theme", "light");
   expect(await violations(page)).toEqual([]);
 
   // a fresh nonce per document
