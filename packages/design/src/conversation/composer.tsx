@@ -21,13 +21,19 @@ import { ConvMenu, type ConvMenuEntry } from "./menu";
 // The composer (spec §6.16.2): the floating frame that holds the attachment strip, the textarea and
 // the control row with the pickers and send / stop.
 
-/** The composer box: `raised`, 1px `line`, radius `md`, `shadow-float`; accent + halo on focus. */
+/**
+ * The composer box: `raised`, 1px `line`, radius `md`, `shadow-float`; accent + halo on focus.
+ * `bare`: the same element and part without the box (no padding, border, ground or shadow), for a
+ * plugin's frame drawn around the composer (client extensions spec §5.3).
+ */
 export function ComposerFrame({
   busy,
+  bare,
   children,
 }: {
   /** A send or stop is in flight: `aria-busy` for plugin CSS. */
   busy?: boolean;
+  bare?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   return (
@@ -35,6 +41,7 @@ export function ComposerFrame({
       className="cb-composer"
       data-part="composer"
       data-cap-part="composer"
+      data-frame={bare ? "bare" : undefined}
       aria-busy={busy ? true : undefined}
     >
       {children}
@@ -203,6 +210,11 @@ export type ComposerBoxProps = {
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
   autoFocus?: boolean;
   /**
+   * `false`: the composer's inputs without the frame's box (`ComposerFrame bare`): what a plugin's
+   * `conversation.composer.frame` replacement wraps in its own frame. Default `true`.
+   */
+  frame?: boolean;
+  /**
    * A chip before the text (phase D: the invoked skill, "/fix-issue"). Its `hint` (the skill's
    * argument hint) becomes the placeholder; Backspace with the caret at the start, or its ×,
    * calls `onRemove` and keeps the text.
@@ -267,6 +279,7 @@ export function ComposerBox({
   textareaRef,
   autoFocus,
   token,
+  frame = true,
 }: ComposerBoxProps): JSX.Element {
   const t = useDesignT();
   const id = useId();
@@ -318,7 +331,7 @@ export function ComposerBox({
     />
   );
   return (
-    <ComposerFrame busy={send.busy === true}>
+    <ComposerFrame busy={send.busy === true} bare={!frame}>
       {attachments}
       <label className="cb-sr-only" htmlFor={id}>
         {t("composer.message")}

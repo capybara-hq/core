@@ -208,3 +208,22 @@ describe("ComposerBox environment picker", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 });
+
+describe("ComposerBox frame", () => {
+  it("draws its frame by default", () => {
+    wrap(<ComposerBox {...props()} />);
+    const frame = document.querySelector('[data-part="composer"]');
+    expect(frame?.getAttribute("data-frame")).toBeNull();
+    expect(frame?.getAttribute("data-cap-part")).toBe("composer");
+  });
+
+  it("frame={false} keeps the inputs and the composer part without the box", () => {
+    wrap(<ComposerBox {...props({ frame: false })} />);
+    const frames = document.querySelectorAll('[data-part="composer"]');
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.getAttribute("data-frame")).toBe("bare");
+    expect(frames[0]?.getAttribute("data-cap-part")).toBe("composer");
+    expect(document.querySelector('[data-cap-part~="composer"] textarea')).not.toBeNull();
+    expect(screen.getByRole("button", { name: /send/i })).toBeTruthy();
+  });
+});

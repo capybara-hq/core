@@ -10,6 +10,7 @@ import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { ClientHost } from "../src/components/client-ext/ClientHost";
+import { ComposerBar } from "../src/components/conversation/ComposerBar";
 import { ExtensionSlot } from "../src/components/extension-ui/ExtensionSlot";
 import { AppFrame } from "../src/components/shell/AppFrame";
 import { ThemeRoot } from "../src/components/theme-root";
@@ -132,6 +133,22 @@ describe("ReplaceableSlot", () => {
     expect(wrap.getAttribute("data-collapsed")).toBe("true");
     expect(wrap.contains(screen.getByTestId("builtin"))).toBe(true);
     expect(pending()).toBe(false);
+  });
+
+  it("with the winners prefetched, the winner renders at the slot's first render", async () => {
+    const Brand = () => <span data-testid="fake-client-brand">NEON</span>;
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({ brand: { slot: "shell.brand", render: Brand } }),
+    );
+    // the layout's shell read put the contributions in the cache (getShell, spec §6.3)
+    const view = renderSlot([winner("brand", "shell.brand")], BRAND_SET, null);
+    await flush();
+    // a page that renders the slot once the module is in (a client navigation to `/`)
+    view.again(brandSlot());
+    expect(screen.getByTestId("fake-client-brand")).toBeTruthy();
+    expect(screen.queryByTestId("builtin")).toBeNull();
+    expect(pending()).toBe(false);
+    expect(calls.filter((c) => c.url.includes("/ui/contributions"))).toEqual([]);
   });
 
   it("a throwing winner falls back to the built-in and reports once", async () => {
@@ -313,6 +330,57 @@ describe("ReplaceableSlot", () => {
     expect(frame.getAttribute("data-run")).toBe("running");
     expect(frame.querySelector("textarea")).not.toBeNull();
     expect(reports()).toEqual([]);
+  });
+
+  it("a winner wrapping the composer's children draws one frame, not two", async () => {
+    const Wrap = ({ children }: { children: ReactNode }) => (
+      <div data-testid="plugin-frame">{children}</div>
+    );
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({
+        frame: { slot: "conversation.composer.frame", render: Wrap as ComponentType<never> },
+      }),
+    );
+    const noop = () => {};
+    renderSlot(
+      [winner("frame", "conversation.composer.frame")],
+      setOf([{ id: "frame", slot: "conversation.composer.frame" }]),
+      <ComposerBar
+        orgId="o1"
+        running={false}
+        onSend={async () => ({ ok: true }) as never}
+        pickers={{ model: { label: "Model", value: "m", groups: [], onPick: noop } }}
+        placeholder="Message"
+      />,
+    );
+    await flush();
+    const frame = screen.getByTestId("plugin-frame");
+    // the design composer inside is bare: the plugin's frame is the only box
+    const composers = document.querySelectorAll('[data-part="composer"]');
+    expect(composers).toHaveLength(1);
+    expect(frame.contains(composers[0] as Node)).toBe(true);
+    expect(composers[0]?.getAttribute("data-frame")).toBe("bare");
+    expect(frame.querySelector("textarea")).not.toBeNull();
+    expect(reports()).toEqual([]);
+  });
+
+  it("without a winner the composer keeps its own frame", async () => {
+    const noop = () => {};
+    renderSlot(
+      [],
+      setOf([]),
+      <ComposerBar
+        orgId="o1"
+        running={false}
+        onSend={async () => ({ ok: true }) as never}
+        pickers={{ model: { label: "Model", value: "m", groups: [], onPick: noop } }}
+        placeholder="Message"
+      />,
+    );
+    await flush();
+    const composers = document.querySelectorAll('[data-part="composer"]');
+    expect(composers).toHaveLength(1);
+    expect(composers[0]?.getAttribute("data-frame")).toBeNull();
   });
 
   it("safe mode renders the built-in", async () => {

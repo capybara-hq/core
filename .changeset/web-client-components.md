@@ -11,5 +11,7 @@ component's server view with the slot's args only when asked). The replaceable s
 `conversation.empty` and `conversation.composer.frame` render the kernel's winner or the built-in:
 the built-in in safe mode, under the kill switch, before the host loads, and when the winner fails
 to load, throws or (composer frame) leaves the composer's textarea out; while the winner loads the
-built-in stays hidden for at most 1.5 s. `shell.overlay` renders in the decoration layer. The admin
+built-in stays hidden for at most 1.5 s. A composer frame gets the framed composer as `builtin` and
+its bare inputs as `children`. When the org's client set has a component for one of these slots,
+the layout's shell read also prefetches the contributions, so a winner renders without a read. `shell.overlay` renders in the decoration layer. The admin
 console renders neither the overlay nor replacements.

@@ -1574,6 +1574,15 @@ button.cb-file-card:focus-visible {
     0 0 0 3px var(--cb-focus-ring),
     var(--cb-shadow-float);
 }
+/* Without the box (`ComposerFrame bare`): a plugin's frame around the composer draws it. */
+.cb-composer[data-frame="bare"],
+.cb-composer[data-frame="bare"]:has(.cb-composer-input:focus) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
 /* `font: inherit` first: a textarea's UA font resets `font-kerning` to auto, which sets the skill's
  * argument hint ("[issue-number]") tighter than the reference (blind acceptance 1). */
 .cb-composer-input {

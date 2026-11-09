@@ -11,6 +11,7 @@ import { type ClientExtensionsResponse, clientScopeOf } from "../client-extensio
 import type { ConversationGroupsPage } from "../conversations";
 import type { OrgRole } from "../members";
 import { adminClientExtensionsQuery, clientExtensionsQuery } from "../query/client-extensions";
+import { contributionsQuery } from "../query/conversation";
 import {
   conversationGroupsQuery,
   extensionPagesQuery,
@@ -78,13 +79,34 @@ export function clientSourceOf(path: string, me: Me, orgId: string | null): Clie
   return { kind: "none", orgId };
 }
 
-/** The shell read of a page's client set (a section: a failure loads no client code). */
-const clientRead = (qc: QueryClient, source: ClientSource) =>
-  source.kind === "org"
-    ? section(fetchShell(qc, clientExtensionsQuery(source.orgId)))
-    : source.kind === "admin"
-      ? section(fetchShell(qc, adminClientExtensionsQuery(source.plugin)))
-      : Promise.resolve(null);
+/** The slots the frame renders on every workspace page or the new conversation (spec §6.2). */
+const SHELL_SLOTS = new Set([
+  "shell.brand",
+  "shell.overlay",
+  "conversation.empty",
+  "conversation.composer.frame",
+]);
+
+/**
+ * The shell read of a page's client set (a section: a failure loads no client code). When the
+ * org's set has a component for a shell slot, the contributions (which name the winners) are read
+ * after it, so a replacement renders at its first render once its module is in, without a read
+ * (a failed read leaves the slots on their built-in at worst).
+ */
+async function clientRead(
+  qc: QueryClient,
+  source: ClientSource,
+): Promise<ClientExtensionsResponse | null> {
+  if (source.kind === "admin")
+    return section(fetchShell(qc, adminClientExtensionsQuery(source.plugin)));
+  if (source.kind !== "org") return null;
+  const set = await section(fetchShell(qc, clientExtensionsQuery(source.orgId)));
+  const shellCode =
+    set?.enabled === true &&
+    set.items.some((i) => i.components.some((c) => SHELL_SLOTS.has(c.slot)));
+  if (shellCode) await section(fetchShell(qc, contributionsQuery(source.orgId)));
+  return set;
+}
 
 export type Shell = { kind: "unavailable" } | ({ kind: "ready" } & ShellData);
 

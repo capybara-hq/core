@@ -99,8 +99,9 @@ export type SlotHost = {
   /** `builtin`: the new conversation's hero (`Greeting`); `greeting`: its line ("" until picked). */
   "conversation.empty": { builtin: ReactNode; agentId: string | null; greeting: string };
   /**
-   * `builtin` and `children`: the built-in composer (the winner must render it exactly once: the
-   * host checks after commit that the composer's textarea is in the document).
+   * `builtin`: the framed built-in composer; `children`: its inputs without the frame (`ComposerBox
+   * frame={false}`), which a winner renders exactly once inside its own frame (the host checks
+   * after commit that the composer's textarea is in the document).
    */
   "conversation.composer.frame": {
     builtin: ReactNode;

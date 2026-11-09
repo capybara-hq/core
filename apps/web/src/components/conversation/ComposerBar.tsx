@@ -655,10 +655,12 @@ export function ComposerBar({
     [],
   );
 
-  // The built-in composer: the frame slot's default and what a replacement wraps (the host checks
-  // its textarea is in the document after a replacement commits).
-  const box = (
+  // The built-in composer: framed, the frame slot's default; bare (`frame={false}`), the inputs a
+  // replacement wraps in its own frame (the host checks after commit that the composer's textarea
+  // is in the document). A replacement renders one of the two.
+  const composer = (frame: boolean) => (
     <ComposerBox
+      frame={frame}
       value={text}
       onChange={(v) => onChange(v, textEl.current)}
       onKeyDown={onKeyDown}
@@ -712,7 +714,12 @@ export function ComposerBar({
         <ExtensionSlot
           slot="conversation.composer.frame"
           args={{ orgId }}
-          host={{ builtin: box, children: box, conversationId: conversationId ?? null, runState }}
+          host={{
+            builtin: composer(true),
+            children: composer(false),
+            conversationId: conversationId ?? null,
+            runState,
+          }}
         />
       </FileDrop>
       <input
