@@ -16,7 +16,7 @@ import { useSlotContributions } from "./ExtensionSlot";
 /** `CLIENT_LIMITS.pendingMs`: how long a loading winner may keep the built-in hidden. */
 export const REPLACEABLE_PENDING_MS = 1500;
 
-/** The composer's text field: it must stay inside the composer frame slot. */
+/** The composer's text field: it must stay inside the composer frame slot, exactly once. */
 const COMPOSER_TEXTAREA = '[data-cap-part~="composer"] textarea';
 
 /** The single slots a contribution may take instead of the built-in (spec §6.2). */
@@ -26,17 +26,18 @@ export type ReplaceableSlotId =
   | "conversation.composer.frame";
 
 /**
- * Throws once the composer's textarea is no longer inside the slot (`scope`, the slot's frame):
+ * Throws once the slot (`scope`, the slot's frame) no longer holds exactly one composer textarea:
  * checked after every commit of the slot and on every DOM change inside it, so a winner that drops
- * its `children` on its own re-render is caught too. The boundary around the winner then falls
- * back to the built-in (spec §5.3: the composer must always be usable).
+ * its `children` on its own re-render is caught too, and so is one rendering them twice (two
+ * composers would share one textarea ref). The boundary around the winner then falls back to the
+ * built-in (spec §5.3: the composer must always be usable).
  */
 function ComposerGuard({ scope }: { scope: HTMLDivElement | null }) {
   const [missing, setMissing] = useState(false);
   // `scope` arrives after the frame's first commit (a parent's ref is set after its children's
   // layout effects), so both checks run again once it is there
   const lost = useCallback(
-    () => scope !== null && scope.querySelector(COMPOSER_TEXTAREA) === null,
+    () => scope !== null && scope.querySelectorAll(COMPOSER_TEXTAREA).length !== 1,
     [scope],
   );
   // every commit of the slot: the winner's DOM is in place before layout effects run
@@ -53,7 +54,7 @@ function ComposerGuard({ scope }: { scope: HTMLDivElement | null }) {
     return () => observer.disconnect();
   }, [scope, lost]);
   if (missing) {
-    throw new Error("the composer frame did not render the composer (its children)");
+    throw new Error("the composer frame did not render the composer (its children) exactly once");
   }
   return null;
 }

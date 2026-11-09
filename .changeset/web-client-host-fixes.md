@@ -6,4 +6,5 @@
 Client host fixes: a layout refresh no longer remounts the page after a client navigation from a
 workspace page without client code into the admin console. A contribution's crash counts
 once per document toward the crash budget, however many places draw it. A router push or Back
-across the client-code boundary turns the old scope's plugin code off before the document load.
+across the client-code boundary turns the old scope's plugin code off before the document load. A composer frame must render
+the composer exactly once (two copies fall back to the built-in).

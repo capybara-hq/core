@@ -373,6 +373,42 @@ describe("ReplaceableSlot", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
   });
 
+  it("a composer frame that renders its children twice falls back", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const composer = (
+      <div data-cap-part="composer">
+        <textarea aria-label="Message" />
+      </div>
+    );
+    // two copies of `children` would mount two composers sharing one textarea ref
+    const Twice = ({ children }: { children: ReactNode }) => (
+      <div data-testid="frame">
+        {children}
+        {children}
+      </div>
+    );
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({
+        frame: { slot: "conversation.composer.frame", render: Twice as ComponentType<never> },
+      }),
+    );
+    renderSlot(
+      [winner("frame", "conversation.composer.frame")],
+      setOf([{ id: "frame", slot: "conversation.composer.frame" }]),
+      <ExtensionSlot
+        slot="conversation.composer.frame"
+        args={{ orgId: "o1" }}
+        host={{ builtin: composer, children: composer, conversationId: null, runState: "idle" }}
+      />,
+    );
+    await flush();
+    expect(screen.queryByTestId("frame")).toBeNull();
+    expect(screen.getAllByRole("textbox", { name: "Message" })).toHaveLength(1);
+    expect(reports()).toEqual([
+      expect.objectContaining({ plugin: "fake-client", contribution: "frame", kind: "render" }),
+    ]);
+  });
+
   it("a composer frame that renders its children stays", async () => {
     const composer = (
       <div data-cap-part="composer">
