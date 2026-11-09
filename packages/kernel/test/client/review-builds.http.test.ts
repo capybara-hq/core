@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
 import { type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { enableExtensions, type Req } from "../helpers/runs.js";
 import { clientPlugin, importClientPlugin, sha256 } from "./client-env.js";
@@ -133,5 +135,22 @@ describe("the org extension list", () => {
     for (const e of (await list(env.boss)).filter((x) => x.plugin !== PAGE)) {
       expect(e.client).toBeNull();
     }
+  });
+  it("a bootstrap import of a plugin with client code is refused, object storage or not", async () => {
+    const bytes = await clientPlugin({
+      name: "rb-boot",
+      components: [{ id: "brand", slot: "shell.brand" }],
+    });
+    const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+    await expect(
+      env.k.app
+        .get(PluginImport)
+        .prepare(null, bytes, { kind: "bootstrap", ref: "rb-boot@1.0.0", integrity }),
+    ).rejects.toMatchObject({
+      code: "client.invalid",
+      message: expect.stringContaining(
+        "Bootstrap plugin rb-boot ships client code (extension.client), which a bootstrap plugin may not carry",
+      ),
+    });
   });
 });

@@ -852,8 +852,16 @@ export class PluginImport {
     if (appearance.length > 0) throw invalid(appearance);
     // Client code (client extensions spec §9.1): the section re-checked and every file against it
     // (keys, listed = present, sizes, sha384 recomputed, the CSS layer wrap); delivered from object
-    // storage, so refused without one. The store checks the bytes it writes again.
+    // storage, so refused without one. The store checks the bytes it writes again. A bootstrap
+    // plugin never carries it: a bootstrap run may have no object store (it may be a bootstrap
+    // plugin itself), and a required entry failing on that would stop the start.
     if (ext?.section.client !== undefined) {
+      if (source.kind === "bootstrap") {
+        throw new ApiError(
+          "client.invalid",
+          `Bootstrap plugin ${m.name} ships client code (extension.client), which a bootstrap plugin may not carry: its files are kept in object storage, which a bootstrap run may not have (the object store may be a bootstrap plugin itself); take ${m.name} out of bootstrap.json and import it into the catalog instead`,
+        );
+      }
       checkClientFiles(ext.section.client, pkg.files);
       this.files.assertAvailable();
     }

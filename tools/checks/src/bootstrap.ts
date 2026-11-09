@@ -48,8 +48,10 @@ function lineOf(text: string, name: string): number {
  *   `bootstrap-name`, and a version or sha512 that differs from the pack's is `bootstrap-stale`
  *   (the message gives the expected value; `write` updates them in the file instead).
  *
- * A bootstrap plugin may not carry client code (`bootstrap-client-code`): its package can be stored
- * in PG before an object store runs, and client files are served from object storage.
+ * A bootstrap plugin may not carry client code (`bootstrap-client-code`): client files are kept in
+ * object storage, which a bootstrap run may not have, and the kernel's bootstrap refuses such a
+ * package. Workspace entries are checked here from their pack; npm entries in the network mode,
+ * from the fetched tarball ({@link checkBootstrapNetwork}).
  *
  * `source: "npm"` entries need the network, so they are checked only with `network`
  * ({@link checkBootstrapNetwork}): published on the registry at the pinned version with the pinned
@@ -118,7 +120,7 @@ export async function checkBootstrap(
           at(
             line,
             "bootstrap-client-code",
-            `${e.name}: ${e.path} carries client code; a bootstrap plugin may not (its package can be stored in PG before an object store runs, and client files are served from object storage)`,
+            `${e.name}: ${e.path} carries client code (extension.client); a bootstrap plugin may not (its client files are kept in object storage, which a bootstrap run may not have, and the kernel refuses it)`,
           ),
         );
         continue;

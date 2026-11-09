@@ -207,6 +207,10 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
   const PKG = "@capybara-hq/plugin-fixture-bootstrap-demo";
   let tgz: Uint8Array;
   let pin: string;
+  /** The client-code fixture, published as an npm package (a bootstrap plugin may not carry it). */
+  const CLIENT_PKG = "@capybara-hq/plugin-fixture-bootstrap-client-code";
+  let clientPin: string;
+  let withClient: string;
   let reg: FakeNpmRegistry;
   let git: FakeGitServer;
   /** Marketplace commits: every entry listed as pinned, and three drifted ones. */
@@ -237,6 +241,15 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
       await rm(work, { recursive: true, force: true });
     }
     pin = sri(tgz);
+    const clientWork = await mkdtemp(join(tmpdir(), "check-bootstrap-net-"));
+    let clientTgz: Uint8Array;
+    try {
+      const r = await packPlugin(join(dir, "client-code/plugins/client-code"), clientWork);
+      clientTgz = new Uint8Array(await readFile(r.file));
+    } finally {
+      await rm(clientWork, { recursive: true, force: true });
+    }
+    clientPin = sri(clientTgz);
     const tampered = Uint8Array.from(tgz);
     tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1;
     reg = await startFakeNpmRegistry({
@@ -253,12 +266,17 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         },
         // the pinned bytes, with matching metadata, served under a name they do not carry
         { name: "@capybara-hq/plugin-relabelled", version: "1.2.3", tgz },
+        { name: CLIENT_PKG, version: "1.2.3", tgz: clientTgz },
       ],
     });
     git = await startFakeGitServer();
     wrongVersion = await git.commit("plugins", marketplace([npmEntry("1.2.2", pin)]));
     wrongIntegrity = await git.commit("plugins", marketplace([npmEntry("1.2.3", sri(tampered))]));
     missing = await git.commit("plugins", marketplace([npmEntry("1.2.3", pin, "other")]));
+    withClient = await git.commit(
+      "plugins",
+      marketplace([npmEntry("1.2.3", clientPin, "client-code", CLIENT_PKG)]),
+    );
     good = await git.commit(
       "plugins",
       marketplace([
@@ -357,6 +375,20 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
     expect(rules(f)).toEqual(["bootstrap-npm"]);
     expect(f[0]?.message).toBe(
       `relabelled: the tarball of @capybara-hq/plugin-relabelled@1.2.3 is labelled ${PKG}@1.2.3 in its package.json`,
+    );
+  });
+
+  it("reports a published bootstrap plugin with client code (bootstrap-client-code)", async () => {
+    const f = await checkBootstrap(
+      await npmManifest(withClient, [
+        { name: "client-code", npm: CLIENT_PKG, integrity: clientPin },
+      ]),
+      dir,
+      { network: network() },
+    );
+    expect(rules(f)).toEqual(["bootstrap-client-code"]);
+    expect(f[0]?.message).toBe(
+      `client-code: ${CLIENT_PKG}@1.2.3 carries client code (extension.client); a bootstrap plugin may not (its client files are kept in object storage, which a bootstrap run may not have, and the kernel refuses it): take it out of bootstrap.json`,
     );
   });
 

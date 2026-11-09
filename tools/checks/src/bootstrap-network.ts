@@ -4,12 +4,14 @@ import {
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
   PACKAGES_MAX_BYTES_DEFAULT,
   readGitTree,
+  readPluginPackage,
 } from "@capybara-hq/kernel";
 import {
   type BootstrapEntry,
   type BootstrapManifest,
   type MarketplaceEntry,
   parseMarketplaceManifest,
+  SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
 import { assertNpmTarballLabel, fetchNpmTarball } from "@capybara-hq/plugin-tools/pack";
 import { integrityOf } from "@capybara-hq/plugin-tools/release";
@@ -38,6 +40,7 @@ export interface NetworkProblem {
   line?: number;
   rule:
     | "bootstrap-npm"
+    | "bootstrap-client-code"
     | "bootstrap-marketplace"
     | "bootstrap-marketplace-url"
     | "bootstrap-haproxy"
@@ -62,7 +65,9 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /**
  * `bootstrap-npm`: each npm entry is published on `registry` at its version, the packument's
  * `dist.integrity` equals the pin, the tarball's bytes hash to the pin, and its package.json names
- * the entry's package and version (not mislabelled).
+ * the entry's package and version (not mislabelled); the pinned bytes then read as a plugin
+ * package. `bootstrap-client-code`: that plugin carries no client code (the kernel's bootstrap
+ * refuses it: client files are kept in object storage, which a bootstrap run may not have).
  */
 async function checkNpmEntry(
   e: NpmEntry,
@@ -104,6 +109,24 @@ async function checkNpmEntry(
     await assertNpmTarballLabel(r.bytes, e.npm, e.version);
   } catch (err) {
     out.push(at(errText(err)));
+    return out;
+  }
+  let client: boolean;
+  try {
+    const plugin = await readPluginPackage(r.bytes, {
+      maxBytes: PACKAGES_MAX_BYTES_DEFAULT,
+      hostSdkVersion: SDK_VERSION,
+    });
+    client = plugin.manifest.extension?.client !== undefined;
+  } catch (err) {
+    return [at(`${e.npm}@${e.version} does not read as a plugin package: ${errText(err)}`)];
+  }
+  if (client) {
+    out.push({
+      entry: e.name,
+      rule: "bootstrap-client-code",
+      message: `${e.name}: ${e.npm}@${e.version} carries client code (extension.client); a bootstrap plugin may not (its client files are kept in object storage, which a bootstrap run may not have, and the kernel refuses it): take it out of bootstrap.json`,
+    });
   }
   return out;
 }
