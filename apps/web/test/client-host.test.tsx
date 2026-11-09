@@ -3,10 +3,10 @@
 // applies the crash budget, reports once, feeds the plugins' `events`, withdraws plugins no longer
 // listed and turns client navigations across the boundary into document loads.
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
-import { type ReactNode, useContext } from "react";
+import { type ReactNode, useContext, useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { ClientHost } from "../src/components/client-ext/ClientHost";
+import { ClientHost, ClientHostRoot } from "../src/components/client-ext/ClientHost";
 import { DISABLED_KEY } from "../src/components/client-ext/crash-budget";
 import { type CapybaraEvent, emitClientEvent } from "../src/components/client-ext/events";
 import {
@@ -23,10 +23,11 @@ import {
 import { RunStateProvider, usePublishRunState } from "../src/components/client-ext/run-state";
 import type { ClientExtensionItem, ClientExtensionsResponse } from "../src/lib/client-extensions";
 import { DESIGN_SUBSET, PLUGIN_CLIENT_EXPORTS } from "../src/lib/client-host/api.generated";
+import { clientExtensionsQuery } from "../src/lib/query/client-extensions";
 import { meQuery } from "../src/lib/query/shell";
 import { bodyOf, type Call, noContent, stubApi } from "./support/api";
 import { pathname, resetNavigation } from "./support/navigation";
-import { ME, pageElement, renderPage, testQueryClient } from "./support/render";
+import { currentPageClient, ME, pageElement, renderPage, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -484,6 +485,34 @@ describe("ClientHost", () => {
     view.rerender(pageElement(host(setOf(item()), { safe: true })));
     await flush();
     expect(screen.queryByText(en.clientExtensions.changed)).toBeNull();
+  });
+
+  it("the root keeps its children mounted when the source changes without a document load", async () => {
+    let mounts = 0;
+    const Child = () => {
+      useEffect(() => {
+        mounts++;
+      }, []);
+      return null;
+    };
+    const client = testQueryClient();
+    client.setQueryData(clientExtensionsQuery("o1").queryKey, setOf());
+    const root = (source: Parameters<typeof ClientHostRoot>[0]["source"]) => (
+      <ClientHostRoot source={source} safe={false} hostReady>
+        <RegistryProbe />
+        <Child />
+      </ClientHostRoot>
+    );
+    const view = renderPage(root({ kind: "org", orgId: "o1" }), { client });
+    await flush();
+    expect(currentPageClient()).toBe(client);
+    // a workspace document without client code, client-navigated into the console, then a
+    // `router.refresh()`: the layout renders the source `none`
+    pathname.current = "/admin";
+    view.rerender(pageElement(root({ kind: "none", orgId: "o1" })));
+    await flush();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(mounts).toBe(1);
   });
 
   it("safe mode shows no banner when the viewer has no client code", async () => {

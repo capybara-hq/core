@@ -447,41 +447,31 @@ interface RootProps {
 /**
  * The client host of the `(app)` layout: the set from the query cache (the layout read it with the
  * shell and hydrated it), so a later invalidation withdraws plugins from the open page. `none`:
- * a page that loads no client code (the admin console, no org); the boundary still holds. The
- * source is fixed for a document (a navigation to another source is a document load).
+ * a page that loads no client code (the admin console, no org); the boundary still holds. A
+ * navigation to another source that may carry client code is a document load; one that does not
+ * (a workspace document without client code entering the console) keeps this document, so the root
+ * is one component whose query follows the source: a later layout render never remounts the frame.
  */
-export function ClientHostRoot(props: RootProps) {
-  const { source } = props;
-  if (source.kind === "org") return <OrgClientHost {...props} orgId={source.orgId} />;
-  if (source.kind === "admin") return <AdminClientHost {...props} plugin={source.plugin} />;
+export function ClientHostRoot({ source, safe, hostReady, children }: RootProps) {
+  const q =
+    source.kind === "org"
+      ? clientExtensionsQuery(source.orgId)
+      : source.kind === "admin"
+        ? adminClientExtensionsQuery(source.plugin)
+        : null;
+  const data = useQuery({
+    ...(q ?? clientExtensionsQuery("")),
+    enabled: q !== null,
+    retryOnMount: q === null ? false : retryOnMountOf(q.queryKey),
+  }).data;
   return (
     <ClientHost
-      set={null}
-      safe={props.safe}
-      scope="org"
-      orgId={source.orgId}
-      hostReady={props.hostReady}
+      set={q === null ? null : (data ?? null)}
+      safe={safe}
+      scope={source.kind === "admin" ? "admin" : "org"}
+      orgId={source.kind === "admin" ? null : source.orgId}
+      hostReady={hostReady}
     >
-      {props.children}
-    </ClientHost>
-  );
-}
-
-function OrgClientHost({ orgId, safe, hostReady, children }: RootProps & { orgId: string }) {
-  const q = clientExtensionsQuery(orgId);
-  const set = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? null;
-  return (
-    <ClientHost set={set} safe={safe} scope="org" orgId={orgId} hostReady={hostReady}>
-      {children}
-    </ClientHost>
-  );
-}
-
-function AdminClientHost({ plugin, safe, hostReady, children }: RootProps & { plugin: string }) {
-  const q = adminClientExtensionsQuery(plugin);
-  const set = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? null;
-  return (
-    <ClientHost set={set} safe={safe} scope="admin" orgId={null} hostReady={hostReady}>
       {children}
     </ClientHost>
   );
