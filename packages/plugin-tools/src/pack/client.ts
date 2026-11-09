@@ -79,11 +79,28 @@ export async function hasClientSources(dir: string): Promise<boolean> {
   );
 }
 
+/** How a stylesheet names one of the plugin's assets (styles are served next to `assets/`). */
+const ASSETS_URL = "../assets/";
+
 /**
- * CSS rule of the packer (spec §4.1): no `@import`, no absolute `url()` (only relative paths and
- * `data:`). Returns the problem text, or undefined.
+ * The problem of one URL of a stylesheet (escapes decoded, trimmed), or undefined when it is a
+ * `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` (paths relative to
+ * `client/assets/`) exactly. Every other URL is refused, relative ones too: the stylesheet is served
+ * from the kernel's `/api/v1/client/<plugin>/<build>/styles/`, where `../../../../…` reaches the
+ * kernel's own routes with the viewer's cookies. The kernel checks the same at import.
  */
-export function cssRemoteProblem(css: string): string | undefined {
+export function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | undefined {
+  if (u.startsWith("#") || /^data:/i.test(u)) return undefined;
+  if (u.startsWith(ASSETS_URL) && assets.has(u.slice(ASSETS_URL.length))) return undefined;
+  return `url(${u}) is not allowed; use ../assets/<a file of client/assets>, a data: URL or a #fragment`;
+}
+
+/**
+ * CSS rule of the packer (spec §4.1): no `@import`, and every `url()` and string of `image-set()`
+ * (but a `type()` argument) passes {@link cssUrlProblem} for the plugin's `assets` (paths relative
+ * to `client/assets/`). Returns the problem text, or undefined.
+ */
+export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
   // escapes (`\68 ttps:`, `u\72l(`) are decoded first, so a spelled-out URL is read as it would be
   const bare = css
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -95,22 +112,16 @@ export function cssRemoteProblem(css: string): string | undefined {
   if (/@import\b/i.test(bare)) {
     return "@import is not allowed (a remote stylesheet is not integrity-pinned); inline the rules";
   }
-  const remote = (u: string) =>
-    u !== "" &&
-    !u.startsWith("data:") &&
-    !u.startsWith("#") &&
-    (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith("//") || u.startsWith("/"));
-  const refused = (u: string) =>
-    `url(${u}) is not allowed; use a relative path under ../assets/ or a data: URL`;
   for (const m of bare.matchAll(/url\(\s*(["']?)([^)"']*)\1\s*\)/gi)) {
-    const u = (m[2] ?? "").trim();
-    if (remote(u)) return refused(u);
+    const problem = cssUrlProblem((m[2] ?? "").trim(), assets);
+    if (problem !== undefined) return problem;
   }
   // image-set() takes plain strings as URLs
   for (const m of bare.matchAll(/(?:-webkit-)?image-set\(([^;{}]*)\)/gi)) {
-    for (const q of (m[1] ?? "").matchAll(/(["'])((?:\\.|(?!\1)[^\\])*)\1/g)) {
-      const u = (q[2] ?? "").trim();
-      if (remote(u)) return refused(u);
+    for (const q of (m[1] ?? "").matchAll(/(type\(\s*)?(["'])((?:\\.|(?!\2)[^\\])*)\2/gi)) {
+      if (q[1] !== undefined) continue; // type("image/png") names a type, not a URL
+      const problem = cssUrlProblem((q[3] ?? "").trim(), assets);
+      if (problem !== undefined) return problem;
     }
   }
   return undefined;
@@ -118,13 +129,19 @@ export function cssRemoteProblem(css: string): string | undefined {
 
 const sha384 = (data: Uint8Array) => `sha384-${createHash("sha384").update(data).digest("base64")}`;
 
-/** An asset path the kernel can look up by exact key: no `%`, no `..`, no empty segment or file stem. */
+/**
+ * An asset path the kernel can look up by exact key: segments of `[A-Za-z0-9._-]` only (no `%`,
+ * space, `?`, `#`, backslash or non-ASCII character), no `.` / `..` / empty segment, a file stem.
+ */
 export function assetPathProblem(rel: string): string | undefined {
   const segs = rel.split("/");
   if (rel.includes("%")) return "contains %; use plain characters";
   if (rel.includes("\\")) return "contains a backslash";
   if (segs.some((s) => s === "" || s === "." || s === "..")) {
     return "has an empty, . or .. segment";
+  }
+  if (!segs.every((s) => /^[A-Za-z0-9._-]+$/.test(s))) {
+    return "may use only letters, digits, . _ - and / (no spaces, ?, # or non-ASCII characters)";
   }
   const name = segs[segs.length - 1] as string;
   const dot = name.lastIndexOf(".");
@@ -282,6 +299,8 @@ export async function buildClient(dir: string, stage: string): Promise<PluginCli
   }
 
   const styles: string[] = [];
+  // the URLs a stylesheet may use: ../assets/<path> of a file of client/assets
+  const assetSet = new Set(assetRels);
   if (styleNames.length > CLIENT_LIMITS.styleFiles) {
     throw tooBig("client/styles file count", styleNames.length, CLIENT_LIMITS.styleFiles);
   }
@@ -290,7 +309,7 @@ export async function buildClient(dir: string, stage: string): Promise<PluginCli
       throw new Error(`client/styles/${name}: use letters, digits, . _ - in the file name`);
     }
     const css = await readFile(join(dir, "client/styles", name), "utf8");
-    const problem = cssRemoteProblem(css);
+    const problem = cssRemoteProblem(css, assetSet);
     if (problem !== undefined) {
       throw new PackRuleError("client-css-remote", `client/styles/${name}: ${problem}`);
     }

@@ -240,6 +240,33 @@ describe("pack builds client code", () => {
         await mkdir(join(dir, "client/assets/a"), { recursive: true });
         await writeFile(join(dir, "client/assets/a/100%.png"), "x");
         await expect(packPlugin(dir, join(out, "pct"))).rejects.toThrow(/100%\.png.*%/);
+        await rm(join(dir, "client/assets/a/100%.png"));
+        await writeFile(join(dir, "client/assets/a/my file.png"), "x");
+        await expect(packPlugin(dir, join(out, "space"))).rejects.toThrow(/my file\.png.*letters/);
+      } finally {
+        await rm2();
+      }
+    });
+
+    it("a url() that is not one of the plugin's assets is client-css-remote", async () => {
+      await gen();
+      try {
+        for (const [i, u] of [
+          "../../../../v1/x",
+          "../../../../../plugins/x/y",
+          "../assets/missing.png",
+          "foo.png",
+        ].entries()) {
+          await writeFile(join(dir, "client/styles/theme.css"), `a { b: url(${u}); }\n`);
+          const err = await packPlugin(dir, join(out, `rel${i}`)).catch((e) => e);
+          expect(err.rule, u).toBe("client-css-remote");
+        }
+        await writeFile(
+          join(dir, "client/styles/theme.css"),
+          'a { b: url("../assets/click.ogg"); c: url(data:image/png;base64,AA); d: url(#m); }\n',
+        );
+        const ok = await packPlugin(dir, join(out, "relok"));
+        expect(ok.manifest.extension?.client?.styles).toEqual(["./dist/client/styles/theme.css"]);
       } finally {
         await rm2();
       }
@@ -248,8 +275,12 @@ describe("pack builds client code", () => {
 });
 
 describe("client helpers", () => {
-  it("assetPathProblem refuses %, .., an empty stem and unknown types", () => {
+  it("assetPathProblem refuses %, .., an empty stem, unknown types and other characters", () => {
     expect(assetPathProblem("a/b.png")).toBeUndefined();
+    expect(assetPathProblem("a/b-c_d.1.png")).toBeUndefined();
+    for (const bad of ["a b.png", "a?.png", "a#.png", "café.png"]) {
+      expect(assetPathProblem(bad), bad).toMatch(/letters/);
+    }
     expect(assetPathProblem("a%20b.png")).toMatch(/%/);
     expect(assetPathProblem("../b.png")).toMatch(/\.\./);
     expect(assetPathProblem("a/../b.png")).toMatch(/\.\./);
@@ -259,26 +290,42 @@ describe("client helpers", () => {
     expect(assetPathProblem("a.exe")).toMatch(/unsupported/);
   });
 
+  it("cssRemoteProblem lets a url() name only an asset, data: or a #fragment", () => {
+    const assets = new Set(["a.png", "x.png"]);
+    const check = (css: string) => cssRemoteProblem(css, assets);
+    expect(check('a { background: url("../assets/x.png"); }')).toBeUndefined();
+    expect(check("a { background: url(../assets/a.png); }")).toBeUndefined();
+    expect(check("a { background: url(data:image/png;base64,AA); }")).toBeUndefined();
+    expect(check("a { mask: url(#m); }")).toBeUndefined();
+    expect(check('a { b: image-set("../assets/a.png" type("image/png") 1x); }')).toBeUndefined();
+    for (const u of [
+      "../../../../v1/x",
+      "../../../../../plugins/x/y",
+      "../assets/missing.png",
+      "../assets/../../x",
+      "foo.png",
+      "../assets/a.png?x",
+    ]) {
+      expect(check(`a { b: url(${u}); }`), u).toMatch(/not allowed/);
+    }
+    expect(check('a { b: image-set("x.png" 1x); }')).toMatch(/not allowed/);
+  });
+
   it("cssRemoteProblem refuses @import and absolute url()", () => {
-    expect(cssRemoteProblem('a { background: url("../assets/x.png"); }')).toBeUndefined();
-    expect(cssRemoteProblem("a { background: url(data:image/png;base64,AA); }")).toBeUndefined();
-    expect(cssRemoteProblem("/* @import url(x) */ a {}")).toBeUndefined();
-    expect(cssRemoteProblem('@import "x.css";')).toMatch(/@import/);
-    expect(cssRemoteProblem("a { background: url(https://x.test/a.png); }")).toMatch(/url/);
-    expect(cssRemoteProblem("a { background: url(//x.test/a.png); }")).toMatch(/url/);
-    expect(cssRemoteProblem("a { background: url(/a.png); }")).toMatch(/url/);
-    expect(cssRemoteProblem('a { background: image-set("https://x.test/a.png" 1x); }')).toMatch(
-      /url/,
-    );
-    expect(cssRemoteProblem("a { background: image-set(url(https://x.test/a.png) 1x); }")).toMatch(
-      /url/,
-    );
-    expect(cssRemoteProblem('a { background: -webkit-image-set("//x.test/a.png" 1x); }')).toMatch(
-      /url/,
-    );
-    expect(cssRemoteProblem('a { background: image-set("../assets/a.png" 1x); }')).toBeUndefined();
-    expect(cssRemoteProblem("a { background: u\\72l(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
-    expect(cssRemoteProblem("a { background: url(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
-    expect(cssRemoteProblem("\\40import 'x.css';")).toMatch(/@import/);
+    const check = (css: string) => cssRemoteProblem(css, new Set(["a.png", "x.png"]));
+    expect(check('a { background: url("../assets/x.png"); }')).toBeUndefined();
+    expect(check("a { background: url(data:image/png;base64,AA); }")).toBeUndefined();
+    expect(check("/* @import url(x) */ a {}")).toBeUndefined();
+    expect(check('@import "x.css";')).toMatch(/@import/);
+    expect(check("a { background: url(https://x.test/a.png); }")).toMatch(/url/);
+    expect(check("a { background: url(//x.test/a.png); }")).toMatch(/url/);
+    expect(check("a { background: url(/a.png); }")).toMatch(/url/);
+    expect(check('a { background: image-set("https://x.test/a.png" 1x); }')).toMatch(/url/);
+    expect(check("a { background: image-set(url(https://x.test/a.png) 1x); }")).toMatch(/url/);
+    expect(check('a { background: -webkit-image-set("//x.test/a.png" 1x); }')).toMatch(/url/);
+    expect(check('a { background: image-set("../assets/a.png" 1x); }')).toBeUndefined();
+    expect(check("a { background: u\\72l(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
+    expect(check("a { background: url(\\68 ttps://x.test/a.png); }")).toMatch(/url/);
+    expect(check("\\40import 'x.css';")).toMatch(/@import/);
   });
 });

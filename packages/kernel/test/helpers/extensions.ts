@@ -21,6 +21,7 @@ import { ReplicaStatusStore } from "../../src/extensions/sources.js";
 import type { ExtensionAvailability } from "../../src/extensions/unavailable.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
+import type { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import type { StorageService } from "../../src/storage/storage.service.js";
 import { EmbedTokens } from "../../src/ui/embed-token.js";
@@ -159,7 +160,9 @@ export function blobsFor(
     h.txHost,
     storage,
     { get: () => ({ packages: { maxBytes: o.maxBytes } }) } as unknown as KernelConfigService,
-    new ClientBuilds(h.db, h.txHost, storage),
+    new ClientBuilds(h.db, h.txHost, storage, {
+      run: (_key: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
+    } as unknown as LockService),
   );
 }
 

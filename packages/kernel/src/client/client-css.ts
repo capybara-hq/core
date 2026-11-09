@@ -1,7 +1,10 @@
 /**
  * The import check of a client stylesheet (client extensions spec §4.1, §7.2): the packer wraps
- * every file in `@layer extensions { … }` and refuses `@import` and absolute `url()`; the kernel
- * re-checks the stored bytes, because a tgz can be written by hand.
+ * every file in `@layer extensions { … }`, refuses `@import` and lets a URL name only an asset of
+ * the plugin (`../assets/<path>`, a file of `client.assets`), a `data:` URL or a `#fragment`; the
+ * kernel re-checks the stored bytes, because a tgz can be written by hand. Any other URL, relative
+ * ones included, is refused: the stylesheet is served from `/api/v1/client/<plugin>/<build>/styles/`,
+ * so `../../../../…` would reach the kernel's own routes with the viewer's cookies.
  *
  * Two checks, both must pass:
  * - {@link cssRemoteProblem}: the packer's rule (`capybara-plugin`, `pack/client.ts`), kept the
@@ -9,17 +12,18 @@
  * - a tokenizer that follows the CSS Syntax tokenization (comments, strings, escapes, url tokens)
  *   closely enough that every brace it skips is one a browser skips too: the file must start with
  *   `@layer extensions {` and the block that opens must close at the file's last character, so no
- *   rule lands outside the layer. Every `url(…)`, and every string inside `url()`, `src()`,
- *   `image()`, `image-set()` and `cross-fade()`, is checked after decoding escapes, and an
+ *   rule lands outside the layer. Every `url(…)`, and every string directly inside `url()`,
+ *   `src()`, `image()`, `image-set()` and `cross-fade()`, is checked after decoding escapes, and an
  *   `@import` at-keyword is refused however it is spelled.
  */
 
 /**
- * The packer's rule (mirrors `cssRemoteProblem` of `@capybara-hq/plugin-tools`): no `@import`, no
- * absolute `url()` (only relative paths, `#` fragments and `data:`), escapes decoded first, strings
- * of `image-set()` included. Returns the problem, or undefined.
+ * The packer's rule (mirrors `cssRemoteProblem` of `@capybara-hq/plugin-tools`): no `@import`, and
+ * every `url()` and string of `image-set()` (but a `type()` argument) is {@link cssUrlProblem}-free,
+ * escapes decoded first. `assets` are the plugin's asset paths relative to `assets/` (`a.png`,
+ * `fx/boot.ogg`). Returns the problem, or undefined.
  */
-export function cssRemoteProblem(css: string): string | undefined {
+export function cssRemoteProblem(css: string, assets: ReadonlySet<string>): string | undefined {
   const bare = css
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\\([0-9a-f]{1,6})[ \t\n]?|\\([^\n])/gi, (_m, hex?: string, ch?: string) => {
@@ -29,13 +33,14 @@ export function cssRemoteProblem(css: string): string | undefined {
     });
   if (/@import\b/i.test(bare)) return IMPORT_REFUSED;
   for (const m of bare.matchAll(/url\(\s*(["']?)([^)"']*)\1\s*\)/gi)) {
-    const u = (m[2] ?? "").trim();
-    if (isRemoteUrl(u)) return urlRefused(u);
+    const problem = cssUrlProblem((m[2] ?? "").trim(), assets);
+    if (problem !== undefined) return problem;
   }
   for (const m of bare.matchAll(/(?:-webkit-)?image-set\(([^;{}]*)\)/gi)) {
-    for (const q of (m[1] ?? "").matchAll(/(["'])((?:\\.|(?!\1)[^\\])*)\1/g)) {
-      const u = (q[2] ?? "").trim();
-      if (isRemoteUrl(u)) return urlRefused(u);
+    for (const q of (m[1] ?? "").matchAll(/(type\(\s*)?(["'])((?:\\.|(?!\2)[^\\])*)\2/gi)) {
+      if (q[1] !== undefined) continue; // type("image/png") names a type, not a URL
+      const problem = cssUrlProblem((q[3] ?? "").trim(), assets);
+      if (problem !== undefined) return problem;
     }
   }
   return undefined;
@@ -44,17 +49,17 @@ export function cssRemoteProblem(css: string): string | undefined {
 const IMPORT_REFUSED =
   "@import is not allowed (a remote stylesheet is not integrity-pinned); inline the rules";
 
-const urlRefused = (u: string) =>
-  `url(${u}) is not allowed; use a relative path under ../assets/ or a data: URL`;
+/** How a stylesheet names one of the plugin's assets (it is served from `styles/`). */
+const ASSETS_URL = "../assets/";
 
-/** Absolute or remote: a scheme other than `data:`, a protocol-relative or a root-relative URL. */
-function isRemoteUrl(u: string): boolean {
-  return (
-    u !== "" &&
-    !/^data:/i.test(u) &&
-    !u.startsWith("#") &&
-    (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith("//") || u.startsWith("/"))
-  );
+/**
+ * The problem of one URL of a stylesheet (escapes decoded, trimmed), or undefined when it is a
+ * `#fragment`, a `data:` URL or `../assets/<path>` naming one of `assets` exactly.
+ */
+export function cssUrlProblem(u: string, assets: ReadonlySet<string>): string | undefined {
+  if (u.startsWith("#") || /^data:/i.test(u)) return undefined;
+  if (u.startsWith(ASSETS_URL) && assets.has(u.slice(ASSETS_URL.length))) return undefined;
+  return `url(${u}) is not allowed; use ../assets/<a file of client/assets>, a data: URL or a #fragment`;
 }
 
 /** Functions whose string arguments are URLs. */
@@ -89,6 +94,7 @@ class Scanner {
   constructor(
     private readonly css: string,
     start: number,
+    private readonly assets: ReadonlySet<string>,
   ) {
     this.i = start;
   }
@@ -103,8 +109,10 @@ class Scanner {
         this.i = end + 2;
       } else if (c === '"' || c === "'") {
         const value = this.string(c);
-        if (this.fns.some((f) => URL_FUNCTIONS.has(f)) && isRemoteUrl(value.trim())) {
-          throw new CssProblem(urlRefused(value.trim()));
+        const fn = this.fns[this.fns.length - 1];
+        if (fn !== undefined && URL_FUNCTIONS.has(fn)) {
+          const problem = cssUrlProblem(value.trim(), this.assets);
+          if (problem !== undefined) throw new CssProblem(problem);
         }
       } else if (c === "@") {
         this.i++;
@@ -237,8 +245,8 @@ class Scanner {
       const c = s[this.i] as string;
       if (c === ")") {
         this.i++;
-        const u = out.trim();
-        if (isRemoteUrl(u)) throw new CssProblem(urlRefused(u));
+        const problem = cssUrlProblem(out.trim(), this.assets);
+        if (problem !== undefined) throw new CssProblem(problem);
         return;
       }
       if (c === "\\" && this.i + 1 < s.length && !isNewline(s[this.i + 1])) out += this.escape();
@@ -253,17 +261,18 @@ class Scanner {
 
 /**
  * The problem of a client stylesheet as stored (see the file header), or undefined when it is one
- * `@layer extensions` block with no `@import` and no absolute or remote URL.
+ * `@layer extensions` block with no `@import` and every URL a `#fragment`, a `data:` URL or one of
+ * the plugin's `assets` (paths relative to `assets/`).
  */
-export function clientCssProblem(css: string): string | undefined {
-  const remote = cssRemoteProblem(css);
+export function clientCssProblem(css: string, assets: ReadonlySet<string>): string | undefined {
+  const remote = cssRemoteProblem(css, assets);
   if (remote !== undefined) return remote;
   const wrap = WRAP_RE.exec(css);
   if (wrap === null) {
     return "the file must start with @layer extensions { (capybara-plugin pack wraps every stylesheet)";
   }
   try {
-    new Scanner(css, wrap[0].length).run();
+    new Scanner(css, wrap[0].length, assets).run();
   } catch (e) {
     if (e instanceof CssProblem) return e.message;
     throw e;

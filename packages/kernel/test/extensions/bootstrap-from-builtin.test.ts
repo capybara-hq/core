@@ -118,6 +118,8 @@ afterAll(async () => {
 });
 
 describe("a deployment from before bootstrap (built-in extensions, no install records)", () => {
+  // It migrates from 0050 on and starts a kernel: an explicit timeout like the other container
+  // tests (the default 5 s is exceeded under load)
   it("migrates through 0050 and bootstraps both plugins without losing their config", async () => {
     // A first kernel of the old code made the org; with the new code the org already exists
     const config: KernelConfig = runConfig(
@@ -237,5 +239,5 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
     });
     expect(off.statusCode, off.body).toBe(409);
     expect(off.json().error.code).toBe("extension.required");
-  });
+  }, 120_000);
 });

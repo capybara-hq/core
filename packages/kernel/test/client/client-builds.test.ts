@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PLUGIN_MANIFEST_FILE, type PluginClientSection } from "@capybara-hq/plugin-sdk";
+import {
+  PLUGIN_MANIFEST_FILE,
+  type PluginClientSection,
+  SDK_VERSION,
+} from "@capybara-hq/plugin-sdk";
 import { packFixture } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +15,9 @@ import { ClientBuilds } from "../../src/client/client-builds.service.js";
 import { clientCssProblem } from "../../src/client/client-css.js";
 import { checkClientFiles } from "../../src/client/client-files.js";
 import { ApiError } from "../../src/errors.js";
+import { ExtensionBlobs } from "../../src/extensions/blobs.js";
+import { ExtensionInstalls } from "../../src/extensions/installs.js";
+import { readExtensionPackage } from "../../src/extensions/package.js";
 import { unpackPackageTgz } from "../../src/packages/tgz.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
@@ -35,10 +42,12 @@ interface PackedManifest {
 const WRAPPED = (css: string) => `@layer extensions {\n${css}\n}\n`;
 
 describe("clientCssProblem", () => {
-  const ok = (css: string) => expect(clientCssProblem(css), css).toBeUndefined();
-  const bad = (css: string, like: RegExp) => expect(clientCssProblem(css), css).toMatch(like);
+  const ASSETS = new Set(["a.png", "f.woff2", "fx/boot.ogg"]);
+  const ok = (css: string) => expect(clientCssProblem(css, ASSETS), css).toBeUndefined();
+  const bad = (css: string, like: RegExp) =>
+    expect(clientCssProblem(css, ASSETS), css).toMatch(like);
 
-  it("accepts a wrapped file with relative and data: URLs, strings and comments", () => {
+  it("accepts a wrapped file with asset and data: URLs, strings and comments", () => {
     ok(WRAPPED('[data-cap-part~="shell"] { background: url(../assets/a.png); }'));
     ok(WRAPPED(':root { --x: "}"; } /* } */ a { b: url("data:image/png;base64,AA==") }'));
     ok(WRAPPED(".cx-p-a { mask: url(#m); content: '{'; }"));
@@ -58,8 +67,8 @@ describe("clientCssProblem", () => {
 
   it("follows the tokenizer: a brace in a url token or after a broken string still counts", () => {
     // the browser ends the bad url at `)` and then closes the layer at `}`
-    bad('@layer extensions { a { b: url(x"y) } } .evil { color: red } x" }', /outside|not closed/);
-    bad("@layer extensions { a { b: url(x/*) } } .evil { color: red } */ }", /outside|not closed/);
+    bad('@layer extensions { a { b: url(data:x"y) } } .evil { color: red } x" }', /outside/);
+    bad("@layer extensions { a { b: url(data:x/*) } } .evil { color: red } */ }", /outside/);
     // an unescaped newline ends a string in the browser
     bad('@layer extensions { a { content: "x\n } } .evil { color: red } " }', /string/);
   });
@@ -73,6 +82,28 @@ describe("clientCssProblem", () => {
     bad(WRAPPED("a { b: u\\72l(\\68ttps://evil.example/x) }"), /not allowed/);
     bad(WRAPPED('a { b: image-set("https://evil.example/x.png" 1x) }'), /not allowed/);
     bad(WRAPPED('a { b: src("https://evil.example/x.png") }'), /not allowed/);
+  });
+
+  it("lets a URL name only one of the plugin's assets, a data: URL or a #fragment", () => {
+    ok(WRAPPED("a { b: url(../assets/a.png) }"));
+    ok(WRAPPED('a { b: url( "../assets/fx/boot.ogg" ) }'));
+    ok(WRAPPED("a { b: url(data:image/svg+xml;utf8,x) }"));
+    ok(WRAPPED('a { b: image-set("../assets/a.png" type("image/png") 1x) }'));
+    for (const u of [
+      "../../../../v1/x",
+      "../../../../../plugins/x/y",
+      "../assets/missing.png",
+      "../assets/../../x",
+      "../assets/a.png?x",
+      "foo.png",
+      "",
+    ]) {
+      bad(WRAPPED(`a { b: url(${u}) }`), /not allowed/);
+      bad(WRAPPED(`a { b: url("${u}") }`), /not allowed/);
+    }
+    bad(WRAPPED("a { b: url(\x02e\x02e/assets/../../x) }"), /not allowed/);
+    bad(WRAPPED('a { b: image-set("x.png" 1x) }'), /not allowed/);
+    bad(WRAPPED('a { b: -webkit-image-set(url("../x.png") 1x) }'), /not allowed/);
   });
 });
 
@@ -138,6 +169,10 @@ describe("checkClientFiles", () => {
       "./dist/client/assets/a%2Fb.png",
       "./dist/client/assets/.png",
       "./dist/client/assets/x/../b.png",
+      "./dist/client/assets/a b.png",
+      "./dist/client/assets/a?.png",
+      "./dist/client/assets/a#b.png",
+      "./dist/client/assets/café.png",
     ]) {
       const s = section({
         assets: [asset],
@@ -146,6 +181,29 @@ describe("checkClientFiles", () => {
       const [code] = refusal(s, files({ [asset.slice(2)]: js }));
       expect(code, asset).toBe("client.invalid");
     }
+  });
+
+  it("a stylesheet may use the section's assets and nothing else", () => {
+    const png = enc("png");
+    const withCss = (text: string) => {
+      const data = enc(WRAPPED(text));
+      return [
+        section({
+          assets: ["./dist/client/assets/a.png"],
+          integrity: {
+            ...section().integrity,
+            "./dist/client/styles/a.css": sha384(data),
+            "./dist/client/assets/a.png": sha384(png),
+          },
+        }),
+        files({ "dist/client/styles/a.css": data, "dist/client/assets/a.png": png }),
+      ] as const;
+    };
+    expect(() => checkClientFiles(...withCss("a { b: url(../assets/a.png) }"))).not.toThrow();
+    expect(refusal(...withCss("a { b: url(../assets/b.png) }"))).toEqual([
+      "client.invalid",
+      { file: "./dist/client/styles/a.css", reason: expect.stringContaining("not allowed") },
+    ]);
   });
 });
 
@@ -407,6 +465,60 @@ describe("client builds", { timeout: 240_000 }, () => {
         .execute(),
     ).toEqual([]);
     expect(await builds()).toEqual([]);
+    expect(await keysUnder(prefix)).toEqual([]);
+  });
+  it("a direct extension upload refuses undeclared client code and a missing object store", async () => {
+    const installs = env.k.app.get(ExtensionInstalls);
+    const refusal = async (f: () => Promise<unknown>) => {
+      try {
+        await f();
+      } catch (e) {
+        if (e instanceof ApiError) return [e.status, e.code];
+        throw e;
+      }
+      throw new Error("expected a refusal");
+    };
+    const undeclared = await changed((_files, m) => {
+      delete m.extension.manifest.permissions.client;
+    });
+    expect(
+      await refusal(() => installs.ingest(null, undeclared, { source: "file", ref: "t" })),
+    ).toEqual([400, "client.undeclared"]);
+    vi.spyOn(storage, "available", "get").mockReturnValue(false);
+    expect(
+      await refusal(() => installs.ingest(null, packed, { source: "file", ref: "t" })),
+    ).toEqual([503, "storage.unavailable"]);
+    // ExtensionBlobs.put itself refuses before writing anything
+    const pkg = await readExtensionPackage(packed, {
+      maxBytes: 64 * 1024 * 1024,
+      hostSdkVersion: SDK_VERSION,
+    });
+    expect(
+      await refusal(() =>
+        env.k.app.get(ExtensionBlobs).put(pkg, packed, { source: "file", ref: "t", actor: null }),
+      ),
+    ).toEqual([503, "storage.unavailable"]);
+    vi.restoreAllMocks();
+    expect(await builds()).toEqual([]);
+    expect(
+      await env.db
+        .selectFrom("extension_packages")
+        .select("sha256")
+        .where("name", "=", "fake-client")
+        .execute(),
+    ).toEqual([]);
+  });
+
+  it("a build's files are not deleted while its package row exists", async () => {
+    const r = await prepare(packed);
+    expect(r.statusCode, r.body).toBe(200);
+    const sha = (r.json() as { review: { extension: { sha256: string } } }).review.extension.sha256;
+    const prefix = `platform/client/fake-client/${sha}/`;
+    // a concurrent store of the same bytes recorded the row again: the late delete keeps the files
+    expect(await env.k.app.get(ClientBuilds).deleteFiles(sha, prefix)).toBe(false);
+    expect(await keysUnder(prefix)).toHaveLength(2);
+    await env.db.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
+    expect(await env.k.app.get(ClientBuilds).deleteFiles(sha, prefix)).toBe(true);
     expect(await keysUnder(prefix)).toEqual([]);
   });
 });

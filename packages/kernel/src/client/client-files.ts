@@ -16,9 +16,10 @@ import { clientCssProblem } from "./client-css.js";
  * was not recomputed from the bytes.
  *
  * Files are known only by their manifest key (`./dist/client/<path>`): the object key and, later,
- * the delivery lookup use the exact key, never a decoded or joined path. A key the lookup could
- * read two ways (`%`, a `.` / `..` / empty segment, a backslash, an empty file stem) is refused
- * here even when the SDK validator lets it through.
+ * the delivery lookup use the exact key, never a decoded or joined path. Every segment of a key is
+ * made of `[A-Za-z0-9._-]` only (no `%`, space, `?`, `#`, backslash or non-ASCII character, which a
+ * browser would encode or split), is not `.` or `..`, and the file name has a stem: refused here
+ * even when the SDK validator lets it through.
  */
 
 /** The directory of client files inside the package (relative to the package root). */
@@ -62,20 +63,18 @@ const invalid = (file: string, reason: string) =>
     { file, reason },
   ]);
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused
-const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+/** One segment of a client file key: plain characters only (no decoding is ever needed). */
+const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 
 /** Why a manifest key cannot be stored and looked up by its exact spelling, or undefined. */
 function keyProblem(key: string): string | undefined {
   if (!key.startsWith(KEY_PREFIX)) return `it must be under ${KEY_PREFIX}`;
-  const rel = clientRelPath(key);
-  if (rel.includes("%")) return "the path contains %; use plain characters";
-  if (rel.includes("\\")) return "the path contains a backslash";
-  if (rel.includes("${")) return "the path contains ${";
-  if (CONTROL_RE.test(rel)) return "the path contains a control character";
-  const segs = rel.split("/");
+  const segs = clientRelPath(key).split("/");
   if (segs.some((s) => s === "" || s === "." || s === "..")) {
     return "the path has an empty, . or .. segment";
+  }
+  if (!segs.every((s) => SEGMENT_RE.test(s))) {
+    return "the path may use only letters, digits, . _ - and / (no %, spaces, ? or #)";
   }
   const name = segs[segs.length - 1] as string;
   if (name.lastIndexOf(".") <= 0) return "the file name has an empty stem or no extension";
@@ -121,6 +120,10 @@ export function checkClientFiles(
     if (problem !== undefined) throw invalid(key, problem);
   }
   const listed = new Set(keys);
+  // the URLs a stylesheet may use: ../assets/<path> of a listed asset
+  const assetPaths = new Set(
+    (section.assets ?? []).map((k) => k.slice(`${KEY_PREFIX}assets/`.length)),
+  );
   for (const path of [...files.keys()].sort()) {
     if (path.startsWith(CLIENT_DIR) && !listed.has(`./${path}`)) {
       throw invalid(`./${path}`, "the file is not listed in the plugin's client section");
@@ -151,7 +154,7 @@ export function checkClientFiles(
     if (styles.includes(key)) {
       const css = utf8(data);
       if (css === undefined) throw invalid(key, "the stylesheet is not valid UTF-8 text");
-      const problem = clientCssProblem(css);
+      const problem = clientCssProblem(css, assetPaths);
       if (problem !== undefined) throw invalid(key, problem);
     }
     out.push({ key, data, size, integrity });

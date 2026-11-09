@@ -1992,7 +1992,7 @@ export class PluginImport {
     if (build !== undefined) {
       afterCommit(async () => {
         try {
-          await this.clientBuilds.deleteFiles(build.object_prefix);
+          await this.clientBuilds.deleteFiles(sha, build.object_prefix);
         } catch (err) {
           this.log.warn("cannot delete an expired org upload's client build objects", {
             sha256: sha,
@@ -2511,7 +2511,12 @@ function reviewClient(pkg: ExtensionPackage): PluginReviewClient {
     ...(c.entry !== undefined ? [c.entry] : []),
     ...(c.styles ?? []),
     ...(c.assets ?? []),
-  ].map((path) => ({ path, size: sizes.get(path.slice(2)) ?? 0 }));
+  ].map((path) => {
+    // checkClientFiles ran first: every listed file is in the package
+    const size = sizes.get(path.slice(2));
+    if (size === undefined) throw new Error(`client file ${path} is not in the package`);
+    return { path, size };
+  });
   return {
     files,
     totalBytes: files.reduce((n, f) => n + f.size, 0),

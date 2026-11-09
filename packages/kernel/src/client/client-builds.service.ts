@@ -3,7 +3,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { StorageService } from "../storage/storage.service.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import {
   checkClientFiles,
   clientBuildPrefix,
@@ -36,18 +37,53 @@ export interface ClientBuildRow {
  * Content-addressed by the package sha256, so storing the same package again is harmless.
  *
  * The objects are written before the row's transaction (object storage is never called inside
- * one): a failed transaction leaves unreferenced objects that the next store of the same package
- * rewrites; a row never exists without its files. The row references `extension_packages` (ON
- * DELETE CASCADE); whoever deletes the package row deletes {@link ClientBuildRow.objectPrefix} in
- * `afterCommit` ({@link deleteFiles}).
+ * one). A transaction that rolls back after the objects were written leaves them unreferenced
+ * under the prefix: nothing sweeps them, and the next store of the same package rewrites them
+ * (content-addressed, so they are never wrong, only orphaned). The row references
+ * `extension_packages` (ON DELETE CASCADE); whoever deletes the package row calls
+ * {@link deleteFiles} in `afterCommit`.
+ *
+ * Storing a package's build and deleting its files run under one lock per package sha256
+ * ({@link locked}, `LockService`, never inside a transaction), and the delete first re-checks that
+ * no package row exists: a concurrent store of the same bytes either sees the row gone and writes
+ * everything again, or has recorded the row and the delete leaves its files alone, so a build row
+ * never stays without its files.
  */
 @Injectable()
 export class ClientBuilds {
+  /** Where client files go: the kernel's object storage, or the CLI's own ({@link useCliStorage}). */
+  private storage: PrefixedStorage;
+
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(StorageService) private readonly storage: StorageService,
-  ) {}
+    @Inject(StorageService) storage: StorageService,
+    @Inject(LockService) private readonly locks: LockService,
+  ) {
+    this.storage = storage;
+  }
+
+  /**
+   * CLI only (like `PluginImport.useCliStorage`): client files go to the object store the CLI set
+   * up itself (`loadCliObjectStore`); without one, a package with client code is refused with its
+   * `storage.unavailable`. Called once, right after the command's context is created.
+   */
+  useCliStorage(storage: PrefixedStorage): void {
+    this.storage = storage;
+  }
+
+  /** `storage.unavailable` (503) when client files cannot be stored here. */
+  assertAvailable(): void {
+    this.storage.assertAvailable();
+  }
+
+  /**
+   * Runs `fn` under the lock of package `sha256`'s client build (see the class header): the store
+   * of a package with client code and the delete of its files. Never inside a transaction.
+   */
+  async locked<T>(sha256: string, fn: () => Promise<T>): Promise<T> {
+    return this.locks.run(`client-build:${sha256}`, { ttlMs: 60_000, waitMs: 60_000 }, fn);
+  }
 
   /**
    * Checks the client files of package `sha256` (`files` keyed by their path in the package, see
@@ -141,8 +177,21 @@ export class ClientBuilds {
     };
   }
 
-  /** Deletes a build's objects (call in `afterCommit`, once its package row is gone). */
-  async deleteFiles(objectPrefix: string): Promise<void> {
-    await this.storage.deployment().deletePrefix(objectPrefix);
+  /**
+   * Deletes the objects of package `sha256`'s build (call in `afterCommit`, once its package row is
+   * gone): under {@link locked}, and only while no package row exists (a concurrent store of the
+   * same bytes keeps its files). Returns whether it deleted.
+   */
+  async deleteFiles(sha256: string, objectPrefix: string): Promise<boolean> {
+    return this.locked(sha256, async () => {
+      const again = await this.db
+        .selectFrom("extension_packages")
+        .select("sha256")
+        .where("sha256", "=", sha256)
+        .executeTakeFirst();
+      if (again !== undefined) return false;
+      await this.storage.deployment().deletePrefix(objectPrefix);
+      return true;
+    });
   }
 }

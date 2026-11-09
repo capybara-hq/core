@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS extension_client_builds (
 CREATE TABLE IF NOT EXISTS extension_client_reports (
   plugin text NOT NULL,
   build text NOT NULL,
-  org_id uuid NULL,
+  org_id text NULL,
   contribution text NULL,
   kind text NOT NULL CHECK (kind IN ('load', 'render', 'event', 'api', 'budget')),
   count int NOT NULL DEFAULT 1,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS extension_client_reports (
 
 CREATE UNIQUE INDEX IF NOT EXISTS extension_client_reports_key_uq
   ON extension_client_reports (
-    plugin, build, (coalesce(org_id::text, '')), (coalesce(contribution, '')), kind
+    plugin, build, (coalesce(org_id, '')), (coalesce(contribution, '')), kind
   );
 
 CREATE INDEX IF NOT EXISTS extension_client_reports_last_at

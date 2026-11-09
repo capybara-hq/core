@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { PluginClientSection } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type ClientBuildRow, ClientBuilds } from "../client/client-builds.service.js";
 import { CLIENT_DIR } from "../client/client-files.js";
@@ -21,8 +22,9 @@ import type { ExtensionPackage } from "./package.js";
  * A package with an `extension.client` section also stores its client build (`ClientBuilds`,
  * client extensions spec §9.1): the client files are read again from the bytes being stored,
  * checked against the section and written to object storage before the package row's transaction,
- * and the build row is inserted in that transaction. Without object storage such a package is
- * refused (`storage.unavailable`), so a stored build always has its files.
+ * and the build row is inserted in that transaction, all under the build's lock. Without object
+ * storage (`ClientBuilds`' own, which the CLI points at its store) such a package is refused
+ * (`storage.unavailable`), so a stored build always has its files.
  */
 
 /** 取到的包与 sha256 不符（存储里的字节被篡改或损坏）。 */
@@ -103,8 +105,27 @@ export class ExtensionBlobs {
       throw new ExtensionBlobIntegrityError(p.sha256);
     }
     const client = p.section.client;
+    if (client === undefined) {
+      await this.store(p, bytes, src, undefined);
+      return;
+    }
     // client code is delivered from object storage: refused before anything is written without it
-    if (client !== undefined) this.storage.assertAvailable();
+    this.clientBuilds.assertAvailable();
+    const files = await this.clientFiles(bytes);
+    // one store or delete of this package's client build at a time (ClientBuilds header)
+    await this.clientBuilds.locked(p.sha256, () =>
+      this.store(p, bytes, src, { section: client, files }),
+    );
+  }
+
+  /** {@link put} after its checks; `client` for a package with client code (under its lock). */
+  private async store(
+    p: ExtensionPackage,
+    bytes: Uint8Array,
+    src: ExtensionBlobSource,
+    client: { section: PluginClientSection; files: Map<string, Uint8Array> } | undefined,
+  ): Promise<void> {
+    const plugin = p.section.manifest.name;
     const existing = await this.db
       .selectFrom("extension_packages")
       .select("blob_store")
@@ -115,24 +136,14 @@ export class ExtensionBlobs {
       // restored where the row says, and so are the client build's files and row
       await this.repair(p.sha256, existing.blob_store, bytes);
       if (client !== undefined) {
-        await this.clientBuilds.extract(
-          p.sha256,
-          p.section.manifest.name,
-          await this.clientFiles(bytes),
-          client,
-        );
+        await this.clientBuilds.extract(p.sha256, plugin, client.files, client.section);
       }
       return;
     }
     // checked and written before the transaction (no object storage call inside one)
     const build =
       client !== undefined
-        ? await this.clientBuilds.writeFiles(
-            p.sha256,
-            p.section.manifest.name,
-            await this.clientFiles(bytes),
-            client,
-          )
+        ? await this.clientBuilds.writeFiles(p.sha256, plugin, client.files, client.section)
         : undefined;
     const store = src.store ?? (this.storage.available ? "object" : "pg");
     if (store === "object") {
