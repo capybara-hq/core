@@ -1077,7 +1077,7 @@ describe("features.cards / threads = false 的渠道（Ruling A33）", { timeout
 describe("出站投递：发送失败", { timeout: 40_000 }, () => {
   it("Ruling A14：同一事件不可重试地失败 3 次 → 跳过它并提示去网页查看，之后的回复照常投递", async () => {
     const chat = "grp-poison";
-    im.failNext("/send", 400, 3);
+    im.failNext("/send", 400, 3, undefined, undefined, undefined, chat);
     const failCount = async (c: string) =>
       Number(
         (
@@ -1126,7 +1126,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
 
   it("限流（可重试）→ BullMQ 退避后重试，恰好投递一次", async () => {
     const chat = "grp-rl";
-    im.failNext("/send", 429, 2, 100);
+    im.failNext("/send", 429, 2, 100, undefined, undefined, chat);
     im.push(connId, group("r1", "u-owner", "echo:rate limited reply", { chatId: chat }));
     const conv = await convOf(connId, chat);
     await settled(conv);
@@ -1144,7 +1144,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
   it("Ruling A22：定稿时编辑草稿被平台拒绝 → 改发一条完整的新消息，不计毒事件、不记 last_error", async () => {
     const chat = "grp-edit-rejected";
     // 草稿只发一次、流式 < 1s 不会有中间更新：第一次更新就是定稿
-    im.failNext("/update", 400, 1);
+    im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("er1", "u-owner", "slow:50:Draft then rejected", { chatId: chat }));
     const conv = await convOf(connId, chat);
     await settled(conv);
@@ -1159,7 +1159,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
   it("流式中途编辑草稿被拒 → 不再编辑它，定稿时改发一条完整的新消息（不计毒事件）", async () => {
     const chat = "grp-mid-rejected";
     // 草稿之后的第一次编辑（流式中途，约 1s 后）被拒
-    im.failNext("/update", 400, 1);
+    im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("mr1", "u-owner", `slow:150:${LONG}`, { chatId: chat }));
     const conv = await convOf(connId, chat);
     await settled(conv);
@@ -1175,7 +1175,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
   it("草稿已不能编辑时运行失败 → 失败说明作为新消息发出（不静默跳过）", async () => {
     const chat = "grp-broken-fail";
     // 草稿之后的第一次编辑（流式中途）被拒；随后模型报错、运行失败（没有 assistant_message）
-    im.failNext("/update", 400, 1);
+    im.failNext("/update", 400, 1, undefined, undefined, undefined, chat);
     im.push(
       connId,
       group("bf1", "u-owner", "slowfail:400:abcdefghijklmnopqrstuvwx", { chatId: chat }),
@@ -1201,8 +1201,8 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
     im.push(connId, group("pd1", "u-owner", "slow:50:Poisoned draft text", { chatId: chat }));
     const draft = await waitFor(async () => sentTo("cli_out", chat)[0], 10_000, "draft");
     // 之后 3 次定稿（编辑草稿 + 改发新消息）都被平台拒绝；第 4 次编辑（收尾草稿）与提示放行
-    im.failNext("/update", 400, 3);
-    im.failNext("/send", 400, 3);
+    im.failNext("/update", 400, 3, undefined, undefined, undefined, chat);
+    im.failNext("/send", 400, 3, undefined, undefined, undefined, chat);
     const conv = await convOf(connId, chat);
     const notice = () =>
       sentTo("cli_out", chat).some((s) => s.message.text.startsWith("A request is waiting"));
@@ -1235,7 +1235,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
 
   it("Ruling A22：reason = auth → 记连接 last_error、停止本轮，不计毒事件（连续失败也不跳过）；凭据恢复后照常投递", async () => {
     const chat = "grp-auth";
-    im.failNext("/send", 403, 3, undefined, "auth");
+    im.failNext("/send", 403, 3, undefined, "auth", undefined, chat);
     im.push(noEditId, group("au1", "u-owner", "echo:after auth", { chatId: chat }));
     const conv = await convOf(noEditId, chat);
     const err = await waitFor(() => lastError(noEditId), 15_000, "last_error");
@@ -1267,7 +1267,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
 
   it("Ruling A22：reason = target_gone（机器人被移出群）→ 停止本轮，不计毒事件、不记 last_error", async () => {
     const chat = "grp-gone";
-    im.failNext("/send", 403, 1, undefined, "target_gone");
+    im.failNext("/send", 403, 1, undefined, "target_gone", undefined, chat);
     im.push(noEditId, group("tg1", "u-owner", "echo:bot was removed", { chatId: chat }));
     const conv = await convOf(noEditId, chat);
     // 同一运行之后的事件触发新任务重投（平台这次放行）：恰好投递一次
@@ -1287,7 +1287,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
   it("target_gone 的失败请求很慢：同一运行的后续事件在它持锁期间到达（其任务直接结束），结束时复核补投", async () => {
     const chat = "grp-gone-slow";
     // 失败响应推迟 2 秒：运行在此期间跑完，后续事件的投递任务都见锁被占直接结束（CI 负载下的时序）
-    im.failNext("/send", 403, 1, undefined, "target_gone", 2000);
+    im.failNext("/send", 403, 1, undefined, "target_gone", 2000, chat);
     im.push(noEditId, group("tgs1", "u-owner", "echo:removed while slow", { chatId: chat }));
     const conv = await convOf(noEditId, chat);
     await waitFor(
@@ -1305,7 +1305,7 @@ describe("出站投递：发送失败", { timeout: 40_000 }, () => {
 
   it("不可重试 → 记连接 last_error，停止本轮；会话后续事件触发续投，消息恰好投递一次", async () => {
     const chat = "grp-fatal";
-    im.failNext("/send", 400, 1);
+    im.failNext("/send", 400, 1, undefined, undefined, undefined, chat);
     im.push(connId, group("f1", "u-owner", "echo:delivered later", { chatId: chat }));
     const conv = await convOf(connId, chat);
     const err = await waitFor(
