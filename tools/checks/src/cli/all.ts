@@ -8,6 +8,7 @@ import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkPlatformOps } from "../platform-ops.js";
+import { checkPluginClientApi, checkPluginClientApiReport } from "../plugin-client-api.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
 import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
@@ -52,6 +53,13 @@ const checks: NamedCheck[] = [
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
+  {
+    name: "plugin-client API",
+    run: async () => [
+      ...checkPluginClientApi(root),
+      ...(await checkPluginClientApiReport({ update: false })),
+    ],
+  },
   { name: "Agent docs", run: () => checkAgentDocs(root) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },

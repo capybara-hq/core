@@ -356,6 +356,27 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
 
+  packages/plugin-client:
+    devDependencies:
+      '@microsoft/api-extractor':
+        specifier: 7.59.4
+        version: 7.59.4(@types/node@26.6.5)
+      '@testing-library/react':
+        specifier: ^16.3.3
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      react:
+        specifier: ^19.3.1
+        version: 19.3.1
+      react-dom:
+        specifier: ^19.3.1
+        version: 19.3.1(react@19.3.1)
+
   packages/plugin-sdk:
     dependencies:
       kysely:
@@ -504,6 +525,9 @@ importers:
       '@capybara-hq/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
+      '@capybara-hq/plugin-client':
+        specifier: workspace:*
+        version: link:../../packages/plugin-client
       '@capybara-hq/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
