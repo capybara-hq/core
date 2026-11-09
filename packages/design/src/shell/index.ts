@@ -15,6 +15,8 @@ export { SafeModeBanner } from "./safe-mode-banner";
 export {
   initialOf,
   type SetupStep,
+  SIDEBAR_DRAWER_QUERY,
+  SIDEBAR_RAIL_QUERY,
   Sidebar,
   type SidebarActivity,
   type SidebarBrandVariant,

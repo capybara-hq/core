@@ -4,9 +4,9 @@ import { Icon } from "../icons/icon";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { keyboardInset } from "./pointer";
-import { Sidebar, type SidebarProps } from "./sidebar";
+import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
-import { useHydrated, useMediaQuery } from "./use-media-query";
+import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
   sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "drawer" | "drawerInline">;
@@ -68,13 +68,15 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(drawerRef);
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
-  const narrow = useMediaQuery("(max-width: 959px)");
-  const railWidth = useMediaQuery("(max-width: 1279px)");
+  // the sidebar's own breakpoints (one place: sidebar.tsx)
+  const widthMode = useSidebarWidthMode();
+  const narrow = widthMode === "drawer";
+  const railWidth = widthMode === "rail";
   // Public mirror of the sidebar's mode (`data-mode` is internal); none before hydration, when
   // both panels are drawn and CSS picks one.
   const sidebarMode = !hydrated
     ? null
-    : railRef || (reference === undefined && railWidth && !narrow)
+    : railRef || (reference === undefined && railWidth)
       ? "rail"
       : "full";
   const stateTokens =

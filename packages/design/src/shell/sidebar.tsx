@@ -162,6 +162,20 @@ const countText = (n: { count?: number; countMore?: boolean }): string =>
 type Variant = "full" | "rail" | "panel";
 
 /**
+ * The sidebar's breakpoints (spec §6.13): the rail below 1280, the drawer below 960. The one place
+ * the sidebar and the App Shell read them from (sidebar.css uses the same widths).
+ */
+export const SIDEBAR_RAIL_QUERY = "(max-width: 1279px)";
+export const SIDEBAR_DRAWER_QUERY = "(max-width: 959px)";
+
+/** The sidebar mode the window width gives: `full` before hydration (both panels drawn then). */
+export function useSidebarWidthMode(): "full" | "rail" | "drawer" {
+  const rail = useMediaQuery(SIDEBAR_RAIL_QUERY);
+  const narrow = useMediaQuery(SIDEBAR_DRAWER_QUERY);
+  return narrow ? "drawer" : rail ? "rail" : "full";
+}
+
+/**
  * The left sidebar (spec §6.13): the brand, the context (the org switcher or the admin block),
  * navigation, the conversations grouped by agent (work context), the admin entry and the account.
  *
@@ -171,10 +185,9 @@ type Variant = "full" | "rail" | "panel";
  */
 export function Sidebar(p: SidebarProps) {
   const hydrated = useHydrated();
-  const rail = useMediaQuery("(max-width: 1279px)");
-  const narrow = useMediaQuery("(max-width: 959px)");
+  const widthMode = useSidebarWidthMode();
   const responsive = p.mode === undefined && !hydrated;
-  const mode = p.mode ?? (narrow ? "drawer" : rail ? "rail" : "full");
+  const mode = p.mode ?? widthMode;
   const [ownOpen, setOwnOpen] = useState(false);
   const open = p.drawer?.open ?? ownOpen;
   const setOpen = (o: boolean) => {

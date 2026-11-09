@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -7,6 +9,8 @@ import {
   DesignProvider,
   IconButton,
   Input,
+  SIDEBAR_DRAWER_QUERY,
+  SIDEBAR_RAIL_QUERY,
   Sidebar,
   type SidebarProps,
 } from "../src/index";
@@ -155,6 +159,18 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       expect(stateAt(1440)).toBe("sidebar=full");
       expect(stateAt(1100)).toBe("sidebar=rail");
       expect(stateAt(800)).toBe("sidebar=full");
+      // the sidebar and the shell read one set of breakpoints, the ones sidebar.css uses too
+      expect([SIDEBAR_RAIL_QUERY, SIDEBAR_DRAWER_QUERY]).toEqual([
+        "(max-width: 1279px)",
+        "(max-width: 959px)",
+      ]);
+      const css = readFileSync(resolve(import.meta.dirname, "../src/styles/sidebar.css"), "utf8");
+      for (const q of [SIDEBAR_RAIL_QUERY, SIDEBAR_DRAWER_QUERY]) expect(css).toContain(q);
+      const shellSrc = readFileSync(
+        resolve(import.meta.dirname, "../src/shell/app-shell.tsx"),
+        "utf8",
+      );
+      expect(shellSrc).not.toMatch(/max-width: \d+px/);
     } finally {
       window.matchMedia = real;
     }
