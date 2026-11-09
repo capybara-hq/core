@@ -210,12 +210,12 @@ test("apply appearance picks the brand replacement and the theme", async ({ brow
   await page.evaluate(() => {
     (window as { __beforeApply?: boolean }).__beforeApply = true;
   });
-  const reloaded = page.waitForEvent("framenavigated", (f) => f === page.mainFrame());
+  // the document's `load` (a same-document pushState fires framenavigated too, never load)
+  const reloaded = page.waitForEvent("load");
   await confirm.getByRole("button", { name: zh.applyAppearance.apply, exact: true }).click();
 
   // a new document: the replacement wraps the official brand, the theme's tokens apply
   await reloaded;
-  await page.waitForLoadState("load");
   expect(
     await page.evaluate(() => (window as { __beforeApply?: boolean }).__beforeApply),
   ).toBeUndefined();
