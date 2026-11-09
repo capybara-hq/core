@@ -57,7 +57,8 @@ interface ClientHostProps {
   /**
    * The client set: the first value is the document's (what the head preloaded; modules cannot be
    * unloaded, so it is fixed for the document), later values the live shell read, which only
-   * withdraws (a plugin no longer listed stops rendering; a new build loads at the next document).
+   * withdraws (a plugin no longer listed stops rendering); a new plugin or build loads at the next
+   * document, and a notice offers that reload.
    */
   set: ClientExtensionsResponse | null;
   /**
@@ -80,8 +81,8 @@ interface ClientHostProps {
  * subset, `CLIENT_API_VERSION`), then `import()`s each entry of the document's set in plugin-name
  * order, in parallel (10 s each), checks it (`validateEntry`) and keeps the registry. It delivers
  * client events to the plugins' `events`, applies the crash budget, sends the reports, disables
- * the stylesheets of plugins no longer listed and turns client navigations across the boundary
- * into document loads. Nothing runs on the server or in the first client render: the registry is
+ * the stylesheets of plugins no longer listed, offers a reload when the live set adds client code
+ * and turns client navigations across the boundary into document loads. Nothing runs on the server or in the first client render: the registry is
  * empty until the effect, so hydration never mismatches.
  */
 export function ClientHost({
@@ -304,6 +305,27 @@ export function ClientHost({
     return () => observer.disconnect();
   }, [activeSheets, safe]);
 
+  // Client code the live read lists but the document's set lacks (a plugin turned on or applied,
+  // a new build, the kill switch lifted) cannot load into this document (spec §9.6): a
+  // non-blocking notice offers the reload, once per distinct addition. Not in safe mode.
+  const added = useMemo(() => {
+    if (safe || set?.enabled !== true) return "";
+    const inDoc = new Set(docItems.map((i) => `${i.plugin}/${i.build}`));
+    return set.items
+      .filter(
+        (i) => (i.entry !== null || i.styles.length > 0) && !inDoc.has(`${i.plugin}/${i.build}`),
+      )
+      .map((i) => `${i.plugin}/${i.build}`)
+      .sort()
+      .join("\n");
+  }, [safe, set, docItems]);
+  const notified = useRef("");
+  useEffect(() => {
+    if (added === "" || added === notified.current) return;
+    notified.current = added;
+    toast.success(t("changed"), { actionLabel: t("reload"), onAction: () => ClientHost.reload() });
+  }, [added, toast, t]);
+
   const controls = useMemo<ClientHostControls>(
     () => ({
       item: itemOf,
@@ -399,6 +421,11 @@ function loadWithTimeout(url: string): Promise<unknown> {
  */
 ClientHost.load = (url: string): Promise<unknown> =>
   import(/* webpackIgnore: true */ /* turbopackIgnore: true */ url);
+
+/** The document reload seam (`location.reload`); tests replace it. */
+ClientHost.reload = (): void => {
+  window.location.reload();
+};
 
 /** The document navigation seam (`location.assign`); tests replace it. */
 ClientHost.navigate = (href: string): void => {

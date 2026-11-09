@@ -5,6 +5,7 @@
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { type ReactNode, useContext } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "../messages/en.json";
 import { ClientHost } from "../src/components/client-ext/ClientHost";
 import { DISABLED_KEY } from "../src/components/client-ext/crash-budget";
 import { type CapybaraEvent, emitClientEvent } from "../src/components/client-ext/events";
@@ -97,7 +98,9 @@ const flush = () =>
 
 const realLoad = ClientHost.load;
 const realNavigate = ClientHost.navigate;
+const realReload = ClientHost.reload;
 let navigate: ReturnType<typeof vi.fn>;
+let reload: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   resetNavigation("/agents");
   window.history.replaceState(null, "", "/agents");
@@ -105,6 +108,8 @@ beforeEach(() => {
   calls = stubApi({ [REPORTS]: () => noContent() });
   navigate = vi.fn();
   ClientHost.navigate = navigate as unknown as typeof ClientHost.navigate;
+  reload = vi.fn();
+  ClientHost.reload = reload as unknown as typeof ClientHost.reload;
   controls = null;
   delete (globalThis as Record<string, unknown>).__CAPYBARA_CLIENT_HOST__;
 });
@@ -116,6 +121,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   ClientHost.load = realLoad;
   ClientHost.navigate = realNavigate;
+  ClientHost.reload = realReload;
   for (const l of document.querySelectorAll('link[data-precedence="extensions"]')) l.remove();
 });
 
@@ -421,6 +427,63 @@ describe("ClientHost", () => {
     await flush();
     expect([old.disabled, fresh.disabled]).toEqual([false, true]);
     expect(ClientHost.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("client code added to the live set offers one reload notice", async () => {
+    ClientHost.load = vi.fn(async () => ext());
+    const view = renderPage(host(setOf()));
+    await flush();
+    expect(screen.queryByText(en.clientExtensions.changed)).toBeNull();
+    // the org admin turned a client plugin on: the next shell read lists it
+    view.rerender(pageElement(host(setOf(item()))));
+    await flush();
+    expect(await screen.findByText(en.clientExtensions.changed)).toBeTruthy();
+    // nothing is imported into this document: the new code waits for a document load
+    expect(ClientHost.load).not.toHaveBeenCalled();
+    expect(registryText()).toBe("");
+    // the same set read again: still one notice
+    view.rerender(pageElement(host(setOf(item()))));
+    await flush();
+    expect(screen.getAllByText(en.clientExtensions.changed)).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: en.clientExtensions.reload }));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("a new build of a loaded plugin offers the notice; a withdrawal or a set without code does not", async () => {
+    ClientHost.load = vi.fn(async () => ext());
+    const view = renderPage(host(setOf(item())));
+    await flush();
+    // withdrawn, then listed again with the same build: nothing new to load
+    view.rerender(pageElement(host(setOf())));
+    await flush();
+    view.rerender(pageElement(host(setOf(item()))));
+    await flush();
+    // a plugin without code (components only, no entry or stylesheet) carries nothing to load
+    view.rerender(pageElement(host(setOf(item(), item({ plugin: "bare", entry: null })))));
+    await flush();
+    expect(screen.queryByText(en.clientExtensions.changed)).toBeNull();
+    const next = "e".repeat(64);
+    view.rerender(
+      pageElement(
+        host(
+          setOf(
+            item({
+              build: next,
+              entry: { url: `/api/v1/client/fake-client/${next}/client.mjs`, integrity: "y" },
+            }),
+          ),
+        ),
+      ),
+    );
+    expect(await screen.findByText(en.clientExtensions.changed)).toBeTruthy();
+  });
+
+  it("safe mode offers no reload notice", async () => {
+    const view = renderPage(host(setOf(), { safe: true }));
+    await flush();
+    view.rerender(pageElement(host(setOf(item()), { safe: true })));
+    await flush();
+    expect(screen.queryByText(en.clientExtensions.changed)).toBeNull();
   });
 
   it("safe mode shows no banner when the viewer has no client code", async () => {

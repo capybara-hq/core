@@ -611,6 +611,7 @@ function ExtensionList({
                 <ApplyAppearanceAction
                   level={{ kind: "org", orgId, extension: current.ext.plugin }}
                   name={current.label}
+                  clientCode={current.ext.client != null}
                 />
               ),
             })}

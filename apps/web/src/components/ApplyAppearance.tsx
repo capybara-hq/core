@@ -20,6 +20,7 @@ import {
   applyOrgAppearance,
   applyPlatformAppearance,
 } from "../lib/appearance";
+import { reloadDocument } from "../lib/browser";
 import { componentName } from "../lib/components";
 import { retryOnMountOf } from "../lib/query/client";
 import { invalidateClientSets } from "../lib/query/client-extensions";
@@ -55,10 +56,15 @@ const REASON_KEY: Record<AppearanceSkipReason, string> = {
  * and opens the confirm dialog listing it; confirming applies it (`dryRun: false`). Callers show
  * the action only when the plugin suggests an appearance and the viewer may write the level
  * (members never see it). `dialog` is rendered by the caller.
+ *
+ * `clientCode`: the plugin ships client code (its running build). A loaded document never picks up
+ * new client code (client extensions spec §9.6), so after a successful apply the page reloads and
+ * the replacements, the plugin's stylesheets and its overlay show at once; the dialog says so.
  */
 export function useApplyAppearance(
   level: AppearanceLevel,
   name: string,
+  clientCode = false,
 ): { preview(): void; previewing: boolean; dialog: ReactNode } {
   const toast = useToast();
   const qc = useQueryClient();
@@ -98,6 +104,7 @@ export function useApplyAppearance(
           level={level}
           name={name}
           result={result}
+          clientCode={clientCode}
           onClose={() => setResult(null)}
         />
       ),
@@ -107,17 +114,20 @@ export function useApplyAppearance(
 /**
  * The confirm dialog: the changes of the dry run in the order the kernel answers (the plugin's),
  * each as `from → to` with names (the theme's, the slot's, the contribution's), then what is
- * skipped and why. Nothing to change: one 知道了.
+ * skipped and why. Nothing to change: one 知道了. With client code it says the page reloads after
+ * the apply, and reloads it.
  */
 function ApplyAppearanceDialog({
   level,
   name,
   result,
+  clientCode,
   onClose,
 }: {
   level: AppearanceLevel;
   name: string;
   result: AppearanceResult;
+  clientCode: boolean;
   onClose(): void;
 }) {
   const t = useTranslations("applyAppearance");
@@ -196,6 +206,8 @@ function ApplyAppearanceDialog({
       await write.mutateAsync(undefined);
       toast.success(t("applied", { name }));
       onClose();
+      // the document's client code is fixed (spec §9.6): a new document loads the plugin's
+      if (clientCode) reloadDocument();
     } catch (e) {
       setError(appearanceError(e));
     }
@@ -235,6 +247,7 @@ function ApplyAppearanceDialog({
         <Text variant="prose">
           {unchanged ? t("unchanged") : t(level.kind === "platform" ? "platformHint" : "orgHint")}
         </Text>
+        {!unchanged && clientCode && <Text variant="prose">{t("reloadHint")}</Text>}
         <ItemList label={t("changes")} rows={rows} />
         {error !== undefined && <FormError message={error} />}
       </Stack>
@@ -306,11 +319,19 @@ function useNames(level: AppearanceLevel): {
 
 /**
  * The action as a button with its hint (the org's extension Sheet): 应用此插件的外观 and the
- * confirm dialog it opens.
+ * confirm dialog it opens; `clientCode` as for {@link useApplyAppearance}.
  */
-export function ApplyAppearanceAction({ level, name }: { level: AppearanceLevel; name: string }) {
+export function ApplyAppearanceAction({
+  level,
+  name,
+  clientCode = false,
+}: {
+  level: AppearanceLevel;
+  name: string;
+  clientCode?: boolean;
+}) {
   const t = useTranslations("applyAppearance");
-  const { preview, previewing, dialog } = useApplyAppearance(level, name);
+  const { preview, previewing, dialog } = useApplyAppearance(level, name, clientCode);
   return (
     <Stack gap={8}>
       <Text variant="small" tone="muted">

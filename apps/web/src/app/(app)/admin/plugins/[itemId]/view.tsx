@@ -253,7 +253,11 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   };
 
   // 应用此插件的外观 (client extensions spec §6.5): only for a plugin that suggests one and is on
-  const appearance = useApplyAppearance({ kind: "platform", itemId: item.id }, name);
+  const appearance = useApplyAppearance(
+    { kind: "platform", itemId: item.id },
+    name,
+    platformRelease?.client != null,
+  );
   const suggests =
     detail.suggestedAppearance != null && !deleted && !item.disabled && !awaitingOf(item);
 

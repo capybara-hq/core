@@ -12,6 +12,8 @@ import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+const { reloadDocument } = vi.hoisted(() => ({ reloadDocument: vi.fn() }));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn(), reloadDocument }));
 
 /**
  * 应用此插件的外观 (client extensions spec §6.5): the super admin on the admin plugin detail, an org
@@ -86,7 +88,14 @@ const item = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const detail = (suggestedAppearance: unknown) => ({
+/** A client build summary (the version or the org extension carries one with client code). */
+const CLIENT = {
+  files: [{ path: "client/index.mjs", bytes: 2048 }],
+  totalBytes: 2048,
+  apiVersion: 1,
+};
+
+const detail = (suggestedAppearance: unknown, client: unknown = null) => ({
   item: { ...item(), packageName: "@neon/theme", deletedAt: null },
   versions: [
     {
@@ -100,6 +109,7 @@ const detail = (suggestedAppearance: unknown) => ({
       size: 1024,
       extensionSha256: null,
       importedAt: "2026-11-01T00:00:00.000Z",
+      client,
     },
   ],
   hasIcon: false,
@@ -109,9 +119,10 @@ const detail = (suggestedAppearance: unknown) => ({
 function adminRoutes(
   suggestedAppearance: unknown,
   extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
+  client: unknown = null,
 ) {
   return stubApi({
-    [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(suggestedAppearance)),
+    [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(suggestedAppearance, client)),
     "GET /api/v1/admin/marketplaces": () => json(200, { items: [] }),
     "GET /api/v1/admin/catalog/items": () => json(200, { items: [item()], nextOffset: null }),
     "GET /api/v1/admin/orgs": () => json(200, { orgs: [] }),
@@ -129,7 +140,10 @@ function adminRoutes(
   });
 }
 
-beforeEach(() => resetNavigation(`/admin/plugins/${ID}`));
+beforeEach(() => {
+  resetNavigation(`/admin/plugins/${ID}`);
+  reloadDocument.mockClear();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -180,6 +194,41 @@ describe("应用此插件的外观 on /admin/plugins/[itemId]", () => {
     }
     // the platform arrangement listing the dialog read is read again
     expect(calls.filter((c) => c.url === "/api/v1/admin/ui/arrangement").length).toBeGreaterThan(1);
+  });
+
+  it("a plugin with client code says the page reloads, and reloads it after the apply", async () => {
+    const calls = adminRoutes(
+      SUGGESTION,
+      { [`POST /api/v1/admin/catalog/items/${ID}/appearance`]: () => json(200, RESULT) },
+      CLIENT,
+    );
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: en.catalog.admin.detail.actions.applyAppearance }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(A.reloadHint)).toBeTruthy();
+    expect(reloadDocument).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: A.apply }));
+    await waitFor(() => expect(reloadDocument).toHaveBeenCalledTimes(1));
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
+  });
+
+  it("without client code the apply does not reload the page", async () => {
+    adminRoutes(SUGGESTION, {
+      [`POST /api/v1/admin/catalog/items/${ID}/appearance`]: () => json(200, RESULT),
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: en.catalog.admin.detail.actions.applyAppearance }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(A.reloadHint)).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: A.apply }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(reloadDocument).not.toHaveBeenCalled();
   });
 
   it("a refused dry run names the orgs where the theme is off; no dialog opens", async () => {
@@ -379,6 +428,25 @@ describe("应用此插件的外观 on /extensions", () => {
       expect(after).toContain(`${ORG}/ui/arrangement`);
     });
     expect(client.getQueryState(keys.org("o1").clientExtensions())?.isInvalidated).toBe(true);
+    // no client code: the page stays (the theme applies at once)
+    expect(within(dialog).queryByText(A.reloadHint)).toBeNull();
+    expect(reloadDocument).not.toHaveBeenCalled();
+  });
+
+  it("an org apply of a plugin with client code reloads the page (zh copy)", async () => {
+    const calls = orgRoutes(ext({ suggestedAppearance: SUGGESTION, client: CLIENT }));
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin"), locale: "zh" });
+    const z = zh.applyAppearance;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("row", { name: /霓虹主题/ }));
+    await user.click(
+      await screen.findByRole("button", { name: fill(z.actionLabel, { name: "霓虹主题" }) }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: fill(z.title, { name: "霓虹主题" }) });
+    expect(within(dialog).getByText(z.reloadHint)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: z.apply }));
+    await waitFor(() => expect(reloadDocument).toHaveBeenCalledTimes(1));
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
   });
 
   it("a refused org apply says what the org admin can do (zh)", async () => {
