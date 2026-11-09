@@ -1,49 +1,30 @@
 "use client";
 
-import {
-  Button,
-  EmptyState,
-  FormSection,
-  ObjectMark,
-  SettingsPage,
-  Stack,
-  StatusMark,
-  useToast,
-} from "@capybara-hq/design";
+import { CardGrid, ObjectCard, SettingsPage } from "@capybara-hq/design";
 import { useQueries } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
-import {
-  buildCredential,
-  CredentialFields,
-  EMPTY_CREDENTIAL,
-} from "../../../../components/ConnectorForm";
-import { ConnectorGuideSheet, useMemberGuides } from "../../../../components/ConnectorGuides";
+import { connectionAnchor, usePersonalConnections } from "../../../../components/ConnectionActions";
+import { useMemberGuides } from "../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import type { ApiClientError } from "../../../../lib/api";
-import { useStartConnect } from "../../../../lib/connect";
-import {
-  type ConnectorDetail,
-  type CredentialValue,
-  canManageConnectors,
-  clearMyCredential,
-  personalConnectors,
-  setMyCredential,
-} from "../../../../lib/connectors";
+import { canManageConnectors, personalConnectors } from "../../../../lib/connectors";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { connectorQuery, connectorsQuery } from "../../../../lib/query/conversation";
-import { keys } from "../../../../lib/query/keys";
-import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
-import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/account/connections`：个人连接（SettingsPage）——需要每人各自凭据的连接器，
- * 逐个填写或清除自己的凭据。每个连接器一个分组，锚点 `connector-<connectorId>`（对话里的「连接」按钮跳到这里）。
+ * `/account/connections`: the viewer's personal connections (SettingsPage): one card per
+ * connector that needs each person's own credential, in a `CardGrid` on the page ground (maintainer
+ * decision 2026-11-09), the same cards as `/connectors`: the connector's plugin icon, its name (the
+ * link to its page), 已连接 / 未连接, its auth type and slug, one primary and the rest in ⋯
+ * (`usePersonalConnections`): OAuth 连接, once connected 权限 (⋯ 重新连接, 断开连接); a credential
+ * 填写凭据 / 更新凭据 in a sheet (⋯ 权限, 清除凭据); 如何连接 in ⋯ when the template's guide has a
+ * member section. Each card carries the anchor `connector-<connectorId>` (a conversation's 连接
+ * links here): the page scrolls to it and a credential connector's sheet opens.
  * From the query cache (the layout prefetched it on a first load): the list, then each personal
  * connector's detail (with this person's credential status); one the kernel no longer lets the
  * person see is left out. A change invalidates that connector, which is read again.
@@ -57,6 +38,7 @@ export default function ConnectionsView() {
 function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
   const scope = usePagePath("home");
   const t = useTranslations("connections");
+  const tc = useTranslations("connectors");
   const nav = useAccountNav();
   const list = usePageQuery(connectorsQuery(orgId));
   const personal = list.kind === "ready" ? personalConnectors(list.data.connectors) : [];
@@ -66,206 +48,68 @@ function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
       return { ...q, retryOnMount: retryOnMountOf(q.queryKey) };
     }),
   });
+  // A detail the kernel refuses (403 / 404: the person may no longer see it) is left out, even
+  // when an older answer is cached; any other failure without data is the page's error state.
+  const refused = (e: ApiClientError | null) => e?.status === 403 || e?.status === 404;
+  const shown = details.flatMap((d) => (d.data === undefined || refused(d.error) ? [] : [d.data]));
   // the connectors whose template's guide has a member section: 如何连接 opens it in a sheet
   const memberGuides = useMemberGuides(orgId, personal);
-  const [howTo, setHowTo] = useState<string | null>(null);
+  const connection = usePersonalConnections({
+    orgId,
+    admin,
+    page: "account",
+    connectors: shown,
+    guides: memberGuides,
+    anchor: true,
+  });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const header = {
     path: [...scope, { label: "account", href: "/account/connections" }, { label: "connections" }],
     title: t("nav.connections"),
   };
-  // Until the list and every personal connector's detail answered.
+  // Until the list and every personal connector's detail answered: skeleton cards, one per
+  // personal connector once the list is known.
   if (list.kind === "loading" || details.some((d) => d.data === undefined && d.error === null)) {
-    const sections =
-      list.kind === "loading"
-        ? [{ fields: LOADING_FIELDS }]
-        : personal.map((a) => ({ fields: LOADING_FIELDS, title: a.name }));
     return (
-      <SettingsPage header={header} nav={nav} activeNav="connections" loading={{ sections }} />
+      <SettingsPage header={header} nav={nav} activeNav="connections">
+        <CardGrid
+          label={t("nav.connections")}
+          loading={list.kind === "loading" ? 3 : Math.max(1, personal.length)}
+        />
+      </SettingsPage>
     );
   }
-  // A detail the kernel refuses (403 / 404: the person may no longer see it) is left out, even
-  // when an older answer is cached; any other failure without data is the page's error state.
-  const refused = (e: ApiClientError | null) => e?.status === 403 || e?.status === 404;
   const failed = details.filter(
     (d) => d.data === undefined && d.error !== null && !refused(d.error),
   );
   if (failed.length > 0) {
     return <ErrorFrame reset={() => failed.forEach((d) => void d.refetch())} />;
   }
-  const shown = details.flatMap((d) => (d.data === undefined || refused(d.error) ? [] : [d.data]));
-  const guideOf = howTo === null ? undefined : shown.find((a) => a.id === howTo);
+  const cards = shown.flatMap((app) => {
+    const parts = connection.parts(app);
+    return parts === null ? [] : [{ app, parts }];
+  });
   return (
     <SettingsPage header={header} nav={nav} activeNav="connections">
-      {shown.length === 0 ? (
+      <CardGrid
+        label={t("nav.connections")}
         // The settings content area has nothing to show: the page empty state (spec §6.18)
-        <EmptyState text={t("empty")} hint={t("emptyHint")} />
-      ) : (
-        shown.map((app) => (
-          <ConnectorConnection
+        {...(cards.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
+      >
+        {cards.map(({ app, parts }) => (
+          <ObjectCard
             key={app.id}
-            orgId={orgId}
-            app={app}
-            {...(memberGuides.has(app.id) ? { onHowTo: () => setHowTo(app.id) } : {})}
+            id={connectionAnchor(app.id)}
+            avatar={{ image: app.icon ?? null }}
+            title={app.name}
+            href={`/connectors/${encodeURIComponent(app.id)}`}
+            meta={[tc(`auth.${app.auth.type}`), app.slug]}
+            {...parts}
           />
-        ))
-      )}
-      {guideOf !== undefined && (
-        <ConnectorGuideSheet
-          orgId={orgId}
-          connector={guideOf}
-          admin={admin}
-          onClose={() => setHowTo(null)}
-        />
-      )}
+        ))}
+      </CardGrid>
+      {connection.overlays}
     </SettingsPage>
-  );
-}
-
-/**
- * A connection's status line, led by its template's plugin icon (the name's initial without one).
- */
-function ConnectionStatus({ app, connected }: { app: ConnectorDetail; connected: boolean }) {
-  const t = useTranslations("connections");
-  return (
-    <Stack direction="row" gap={8} align="center">
-      <ObjectMark size={24} text={app.name} image={app.icon ?? null} />
-      <StatusMark
-        status={connected ? "success" : "waiting"}
-        label={connected ? t("connected") : t("missing")}
-      />
-    </Stack>
-  );
-}
-
-/** A personal connector's section while it loads: its status line and a credential field. */
-const LOADING_FIELDS = [{}, {}];
-
-function ConnectorConnection({
-  orgId,
-  app,
-  onHowTo,
-}: {
-  orgId: string;
-  app: ConnectorDetail;
-  /** Its template's guide has a member section: 如何连接 opens it. */
-  onHowTo?: () => void;
-}) {
-  const t = useTranslations("connections");
-  const tg = useTranslations("setupGuide");
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
-  const [values, setValues] = useState(EMPTY_CREDENTIAL);
-  const [pending, setPending] = useState<"save" | "clear">();
-  const { start, starting } = useStartConnect(orgId);
-  // My credential changes this connector's credential status: it is read again.
-  const saveMine = useAppMutation({
-    fn: (credential: CredentialValue) => setMyCredential(orgId, app.id, credential),
-    invalidates: () => [keys.org(orgId).connector(app.id)],
-  });
-  const clearMine = useAppMutation({
-    fn: () => clearMyCredential(orgId, app.id),
-    invalidates: () => [keys.org(orgId).connector(app.id)],
-  });
-  const auth = app.auth;
-  if (auth.type === "none" || auth.type === "oauth_client") return null;
-  const howTo =
-    onHowTo === undefined ? null : (
-      <Button variant="ghost" onClick={onHowTo}>
-        {tg("howToConnect")}
-      </Button>
-    );
-  const connected = app.credential.status === "connected";
-
-  if (auth.type === "oauth_code") {
-    // OAuth：没有可填的凭据，只有授权（连接 / 重新连接）与断开
-    async function disconnect() {
-      setPending("clear");
-      try {
-        await clearMine.mutateAsync(undefined);
-        toast.success(t("cleared", { connector: app.name }));
-      } catch (e) {
-        toast.error(errorMessage(e));
-      } finally {
-        setPending(undefined);
-      }
-    }
-    return (
-      <FormSection id={`app-${app.id}`} title={app.name} description={t("oauthHint")}>
-        <ConnectionStatus app={app} connected={connected} />
-        <Stack direction="row" gap={8}>
-          <Button
-            variant="secondary"
-            loading={starting}
-            disabled={pending !== undefined}
-            onClick={() => void start(app.id)}
-          >
-            {connected ? t("reconnect") : t("oauthConnect")}
-          </Button>
-          {connected && (
-            <Button
-              variant="danger"
-              loading={pending === "clear"}
-              disabled={starting || pending !== undefined}
-              onClick={() => void disconnect()}
-            >
-              {t("disconnect")}
-            </Button>
-          )}
-          {howTo}
-        </Stack>
-      </FormSection>
-    );
-  }
-
-  const names = auth.type === "headers" ? auth.names : [];
-  const credential = buildCredential(auth.type, values, names);
-
-  async function run(kind: "save" | "clear") {
-    setPending(kind);
-    try {
-      if (kind === "save" && credential !== undefined) {
-        await saveMine.mutateAsync(credential);
-        setValues(EMPTY_CREDENTIAL);
-        toast.success(t("saved", { connector: app.name }));
-      } else if (kind === "clear") {
-        await clearMine.mutateAsync(undefined);
-        toast.success(t("cleared", { connector: app.name }));
-      }
-    } catch (e) {
-      toast.error(errorMessage(e));
-    } finally {
-      setPending(undefined);
-    }
-  }
-
-  return (
-    <FormSection id={`app-${app.id}`} title={app.name} description={t("sectionHint")}>
-      <ConnectionStatus app={app} connected={connected} />
-      <CredentialFields auth={auth} values={values} onChange={setValues} />
-      <Stack direction="row" gap={8}>
-        {/* 每个连接器一个分组：保存按钮用次级样式，页面不出现多个主操作 */}
-        <Button
-          variant="secondary"
-          loading={pending === "save"}
-          disabled={credential === undefined || pending !== undefined}
-          onClick={() => void run("save")}
-        >
-          {t("save")}
-        </Button>
-        {connected && (
-          <Button
-            variant="danger"
-            loading={pending === "clear"}
-            disabled={pending !== undefined}
-            onClick={() => void run("clear")}
-          >
-            {t("clear")}
-          </Button>
-        )}
-        {howTo}
-      </Stack>
-    </FormSection>
   );
 }

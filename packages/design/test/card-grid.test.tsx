@@ -261,6 +261,40 @@ describe("ObjectCard", () => {
     expect(within(second as HTMLElement).queryByRole("button", { name: "更多操作" })).toBeNull();
   });
 
+  it("oneButton: beside a primary a lone safe item stays in the menu; without one it is the button", async () => {
+    withNav(
+      grid([
+        card({
+          title: "a",
+          href: "/a",
+          id: "connector-a",
+          oneButton: true,
+          primary: { label: "连接", onSelect: () => {} },
+          menu: [{ label: "如何连接", onSelect: () => {} }],
+        }),
+        (({ primary: _p, ...rest }) => rest)(
+          card({
+            title: "b",
+            href: "/b",
+            oneButton: true,
+            menu: [{ label: "修改配置", href: "/b?tab=settings" }],
+          }) as Extract<ObjectCardProps, { title: string }>,
+        ),
+      ]),
+    );
+    const [first, second] = screen.getAllByRole("listitem");
+    expect(first?.id).toBe("connector-a");
+    expect(
+      within(first as HTMLElement)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["连接", ""]);
+    expect(within(first as HTMLElement).queryByRole("button", { name: "如何连接" })).toBeNull();
+    expect(within(first as HTMLElement).getByRole("button", { name: "更多操作" })).toBeTruthy();
+    expect(within(second as HTMLElement).getByRole("link", { name: "修改配置" })).toBeTruthy();
+    expect(within(second as HTMLElement).queryByRole("button", { name: "更多操作" })).toBeNull();
+  });
+
   it("a primary that is a link is a second link beside the name, never inside it", () => {
     withNav(grid([card({ primary: { label: "查看", href: "/t/1" } })]));
     const item = screen.getByRole("listitem");

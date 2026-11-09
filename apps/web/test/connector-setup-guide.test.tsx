@@ -6,6 +6,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
+import { footControls, MORE, openCardMenu } from "./support/cards";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -340,6 +341,13 @@ describe("connector detail: 接入指南 with the drift notice", () => {
 });
 
 describe("如何连接: the member text in a sheet", () => {
+  /** The card's 如何连接, in its ⋯ beside the one primary: the menu item, once the guide is read. */
+  const howTo = async (locale: "zh" | "en" = "en") => {
+    const more = await screen.findByRole("button", { name: MORE[locale] });
+    const items = await openCardMenu(more.closest("li") as HTMLElement, MORE[locale]);
+    const label = locale === "zh" ? zh.setupGuide.howToConnect : G.howToConnect;
+    return items.find((i) => i.textContent === label) as HTMLElement;
+  };
   const routes = (o: { audiences?: string[] } = {}): Routes => ({
     [`GET ${ORG}/connectors`]: () => json(200, { connectors: [connector()] }),
     [`GET ${ORG}/connectors/app1`]: () => json(200, { connector: connector() }),
@@ -354,7 +362,7 @@ describe("如何连接: the member text in a sheet", () => {
       locale: "en",
       me: MEMBER,
     });
-    const open = await screen.findByRole("button", { name: G.howToConnect });
+    await screen.findByRole("button", { name: MORE.en });
     await settle();
     // the layout read whether the guide has a member section, the member text
     expect(browser).toEqual([]);
@@ -363,7 +371,7 @@ describe("如何连接: the member text in a sheet", () => {
     ).toBe(true);
     expect(findNestedBoxes(view.container)).toEqual([]);
     const calls = stubApi(routes());
-    await userEvent.setup().click(open);
+    await userEvent.setup().click(await howTo());
     const sheet = await screen.findByRole("dialog", { name: "How to connect Slack" });
     expect(within(sheet).getByText("Connect your Slack account")).toBeTruthy();
     expect(within(sheet).queryByText("Create the Slack OAuth app")).toBeNull();
@@ -377,9 +385,7 @@ describe("如何连接: the member text in a sheet", () => {
     resetNavigation("/account/connections");
     stubApi(routes());
     await renderRouteWithCache("/account/connections", lastStubRoutes(), { locale: "zh" });
-    await userEvent
-      .setup()
-      .click(await screen.findByRole("button", { name: zh.setupGuide.howToConnect }));
+    await userEvent.setup().click(await howTo("zh"));
     const sheet = await screen.findByRole("dialog", { name: "如何连接 Slack" });
     // an org admin reads the member text as a member would
     expect(await within(sheet).findByText("Connect your Slack account")).toBeTruthy();
@@ -397,7 +403,8 @@ describe("如何连接: the member text in a sheet", () => {
     });
     expect(await screen.findByRole("button", { name: en.connections.oauthConnect })).toBeTruthy();
     await settle();
-    expect(screen.queryByRole("button", { name: G.howToConnect })).toBeNull();
+    // nothing else for a member: 连接 alone, no ⋯
+    expect(footControls(screen.getByRole("listitem"))).toEqual([en.connections.oauthConnect]);
     // a connector without a guide reads none
     cleanup();
     stubApi({
@@ -422,9 +429,8 @@ describe("如何连接: the member text in a sheet", () => {
     await renderRouteWithCache("/connectors", lastStubRoutes(), { locale: "en", me: MEMBER });
     const list = await screen.findByRole("list", { name: en.connectors.title });
     const card = within(list).getByRole("listitem");
-    await userEvent
-      .setup()
-      .click(await within(card).findByRole("button", { name: G.howToConnect }));
+    expect(footControls(card)).toEqual([en.connections.oauthConnect, MORE.en]);
+    await userEvent.setup().click(await howTo());
     const sheet = await screen.findByRole("dialog", { name: "How to connect Slack" });
     expect(within(sheet).getByText("Connect your Slack account")).toBeTruthy();
     expect(within(sheet).queryByRole("link", { name: G.adminGuideLink })).toBeNull();

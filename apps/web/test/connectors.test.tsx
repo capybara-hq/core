@@ -1,3 +1,4 @@
+import { findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page"
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { cardMenuLabels, findCard, footControls, MORE, openCardMenu } from "./support/cards";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -158,6 +160,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     discovery: "manual",
     client: "manual",
   };
+  const BEARER = { type: "bearer", ownership: "personal" };
   const cardOf = async (name: string, label = en.connectors.title) => {
     const list = await screen.findByRole("list", { name: label });
     const card = within(list)
@@ -285,7 +288,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(within(gh).queryByRole("link", { name: en.connectors.templates.configure })).toBeNull();
   });
 
-  it("a personal OAuth connector: 连接 starts the connect flow; once connected the card offers 权限", async () => {
+  it("a personal OAuth connector: one button each; 连接 starts the connect flow; once connected 权限, the rest in ⋯", async () => {
     let connected = false;
     const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH, icon: ICON });
     const calls = stubApi({
@@ -301,13 +304,19 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       [COMPONENTS]: () => json(200, { components: [] }),
       "POST /api/v1/orgs/o1/connectors/c-slack/connect": () =>
         json(200, { authorizationUrl: "https://slack.example/oauth?x=1" }),
+      "DELETE /api/v1/orgs/o1/connectors/c-slack/credentials/me": () => {
+        connected = false;
+        return noContent();
+      },
     });
     await renderList({ me: MEMBER });
     const card = await cardOf("Slack");
-    expect(within(card).getByText(en.connectors.cards.notConnected)).toBeTruthy();
+    expect(within(card).getByText(en.connections.missing)).toBeTruthy();
+    // a member without a guide: 连接 alone, no menu
+    expect(footControls(card)).toEqual([en.connections.oauthConnect]);
     await userEvent
       .setup()
-      .click(within(card).getByRole("button", { name: en.connectors.cards.connect }));
+      .click(within(card).getByRole("button", { name: en.connections.oauthConnect }));
     await vi.waitFor(() =>
       expect(navigateBrowser).toHaveBeenCalledWith("https://slack.example/oauth?x=1"),
     );
@@ -316,10 +325,106 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     connected = true;
     await renderRouteWithCache("/connectors", lastStubRoutes(), { me: MEMBER });
     const again = await cardOf("Slack");
-    expect(within(again).getByText(en.connectors.cards.connected)).toBeTruthy();
+    expect(within(again).getByText(en.connections.connected)).toBeTruthy();
+    expect(footControls(again)).toEqual([en.connectors.cards.permissions, MORE.en]);
+    expect(await cardMenuLabels(again)).toEqual([
+      en.connections.reconnect,
+      en.connections.disconnect,
+    ]);
+    // 断开连接 acts at once (only the viewer's connection, 连接 restores it): DELETE, a toast, read again
+    const items = await openCardMenu(again);
+    const before = calls.length;
+    await userEvent
+      .setup()
+      .click(items.find((i) => i.textContent === en.connections.disconnect) as HTMLElement);
+    expect(await screen.findByText('Disconnected "Slack".')).toBeTruthy();
+    expect(calls.slice(before).map((c) => `${c.method} ${c.url}`)).toEqual([
+      "DELETE /api/v1/orgs/o1/connectors/c-slack/credentials/me",
+      "GET /api/v1/orgs/o1/connectors/c-slack",
+    ]);
+    expect(await within(again).findByText(en.connections.missing)).toBeTruthy();
+    expect(footControls(again)).toEqual([en.connections.oauthConnect]);
+  });
+
+  it("org admins: 修改配置 in ⋯ on every connector card (the 设置 tab); never two buttons", async () => {
+    const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH });
+    const shared = summary({ id: "c-wiki", name: "Wiki", slug: "wiki" });
+    let connected = false;
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal, shared] }),
+      "GET /api/v1/orgs/o1/connectors/c-slack": () =>
+        json(200, {
+          connector: {
+            ...detail(),
+            ...personal,
+            credential: { ownership: "personal", status: connected ? "connected" : "missing" },
+          },
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+    });
+    await renderList();
+    // a shared connector: 修改配置 is its one button, a link to the 设置 tab
+    const wiki = await cardOf("Wiki");
+    expect(footControls(wiki)).toEqual([en.connections.editConfig]);
     expect(
-      within(again).getByRole("button", { name: en.connectors.cards.permissions }),
-    ).toBeTruthy();
+      within(wiki).getByRole("link", { name: en.connections.editConfig }).getAttribute("href"),
+    ).toBe("/connectors/c-wiki?tab=settings");
+    // not connected: 连接, and 修改配置 stays in ⋯ (a menu of one beside the primary)
+    const slack = await cardOf("Slack");
+    expect(footControls(slack)).toEqual([en.connections.oauthConnect, MORE.en]);
+    const items = await openCardMenu(slack);
+    expect(items.map((i) => i.textContent)).toEqual([en.connections.editConfig]);
+    expect(items[0]?.getAttribute("href")).toBe("/connectors/c-slack?tab=settings");
+    await userEvent.setup().keyboard("{Escape}");
+    cleanup();
+    connected = true;
+    await renderRouteWithCache("/connectors", lastStubRoutes());
+    const again = await cardOf("Slack");
+    expect(footControls(again)).toEqual([en.connectors.cards.permissions, MORE.en]);
+    expect(await cardMenuLabels(again)).toEqual([
+      en.connections.reconnect,
+      en.connections.editConfig,
+      en.connections.disconnect,
+    ]);
+  });
+
+  it("a personal credential connector: 连接 opens the credential sheet in place; once connected ⋯ 更新凭据 / 清除凭据", async () => {
+    let connected = false;
+    const personal = summary({ id: "c-api", name: "Docs API", auth: BEARER });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal] }),
+      "GET /api/v1/orgs/o1/connectors/c-api": () =>
+        json(200, {
+          connector: {
+            ...detail(),
+            ...personal,
+            credential: { ownership: "personal", status: connected ? "connected" : "missing" },
+          },
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+      "PUT /api/v1/orgs/o1/connectors/c-api/credentials/me": () => {
+        connected = true;
+        return noContent();
+      },
+    });
+    await renderList({ me: MEMBER });
+    const card = await cardOf("Docs API");
+    expect(footControls(card)).toEqual([en.connections.oauthConnect]);
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: en.connections.oauthConnect }));
+    const sheet = await screen.findByRole("dialog", { name: "Enter your credential for Docs API" });
+    const save = within(sheet).getByRole("button", { name: en.connections.save });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    await user.type(within(sheet).getByLabelText(en.connectors.form.tokenLabel), "tok");
+    await user.click(save);
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ token: "tok" });
+    expect(await within(card).findByText(en.connections.connected)).toBeTruthy();
+    expect(footControls(card)).toEqual([en.connectors.cards.permissions, MORE.en]);
+    expect(await cardMenuLabels(card)).toEqual([
+      en.connections.updateCredential,
+      en.connections.clearCredential,
+    ]);
   });
 
   it("权限: one row per tool grouped read-only / may write, default marked, locks shown, only changes saved", async () => {
@@ -402,6 +507,18 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       }),
     );
     expect(await screen.findByText(P.saved)).toBeTruthy();
+  });
+
+  it("?tab=settings (a card's 修改配置) opens the connector's 设置 tab", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+    });
+    await renderRouteWithCache("/connectors/app1?tab=settings", lastStubRoutes());
+    expect(
+      await screen.findByRole("tab", { name: en.connectors.detail.tabs.settings }),
+    ).toHaveProperty("ariaSelected", "true");
+    expect(screen.getByRole("button", { name: en.connectors.settings.save })).toBeTruthy();
   });
 
   it("the connector detail leads with its template's plugin icon", async () => {
@@ -875,69 +992,112 @@ describe("连接器详情：OAuth 客户端轮换", () => {
   );
 });
 
-describe("个人连接（SettingsPage）", () => {
+describe("个人连接（SettingsPage, cards）", () => {
+  const routes = (state: { connected: boolean }) => {
+    const personal = { auth: { type: "basic", ownership: "personal" } };
+    return {
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, { connectors: [summary(personal), summary({ id: "app2", name: "Org app" })] }),
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, {
+          connector: detail({
+            ...personal,
+            credential: {
+              ownership: "personal",
+              status: state.connected ? "connected" : "missing",
+            },
+          }),
+        }),
+      "PUT /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
+        state.connected = true;
+        return noContent();
+      },
+      "DELETE /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
+        state.connected = false;
+        return noContent();
+      },
+    };
+  };
+
   it.each(LOCALES)(
-    "只列个人凭据型连接器；填写保存 PUT credentials/me，已连接可清除（%s）",
+    "只列个人凭据型连接器，一张卡一个按钮；填写凭据在 Sheet 里 PUT credentials/me，已连接可从 ⋯ 清除（%s）",
     async (locale) => {
       const m = msgs[locale];
-      let connected = false;
-      const personal = { auth: { type: "basic", ownership: "personal" } };
-      const calls = stubApi({
-        "GET /api/v1/orgs/o1/connectors": () =>
-          json(200, { connectors: [summary(personal), summary({ id: "app2", name: "Org app" })] }),
-        "GET /api/v1/orgs/o1/connectors/app1": () =>
-          json(200, {
-            connector: detail({
-              ...personal,
-              credential: { ownership: "personal", status: connected ? "connected" : "missing" },
-            }),
-          }),
-        "PUT /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
-          connected = true;
-          return noContent();
-        },
-        "DELETE /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
-          connected = false;
-          return noContent();
-        },
-      });
+      const calls = stubApi(routes({ connected: false }));
       const { container } = await renderRouteWithCache("/account/connections", lastStubRoutes(), {
         locale,
       });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
-      const section = await screen.findByRole("region", { name: "Fixture" });
-      // 每个连接器一个分组：页面上没有多个主操作
-      expect(
-        container.querySelectorAll('[data-variant="primary"], .cb-btn-link-primary').length,
-      ).toBeLessThanOrEqual(1);
+      expect(container.querySelector('[data-part="settings-nav"]')).not.toBeNull();
+      const card = await findCard(m.connections.nav.connections, "Fixture");
+      // cards on the page ground: no box in a box, no page-level primary
+      expect(findNestedBoxes(container)).toEqual([]);
+      expect(container.querySelectorAll('[data-variant="primary"]').length).toBe(0);
+      expect(card.id).toBe("connector-app1");
       expect(screen.queryByText("Org app")).toBeNull();
-      expect(within(section).getByText(`${m.connections.missing}`)).toBeTruthy();
+      expect(within(card).getByText(m.connections.missing)).toBeTruthy();
+      expect(card.textContent).toContain(m.connectors.auth.basic);
+      expect(footControls(card)).toEqual([m.connections.enterCredential]);
       const user = userEvent.setup();
-      await user.type(within(section).getByLabelText(m.connectors.form.usernameLabel), "me");
-      await user.type(within(section).getByLabelText(m.connectors.form.passwordLabel), "pw");
-      await user.click(within(section).getByRole("button", { name: m.connections.save }));
+      await user.click(within(card).getByRole("button", { name: m.connections.enterCredential }));
+      const sheet = await screen.findByRole("dialog");
+      await user.type(within(sheet).getByLabelText(m.connectors.form.usernameLabel), "me");
+      await user.type(within(sheet).getByLabelText(m.connectors.form.passwordLabel), "pw");
+      await user.click(within(sheet).getByRole("button", { name: m.connections.save }));
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
         username: "me",
         password: "pw",
       });
-      await vi.waitFor(() =>
-        expect(within(section).getByLabelText(m.connectors.form.passwordLabel)).toHaveProperty(
-          "value",
-          "",
-        ),
-      );
-      expect(within(section).getByLabelText(m.connectors.form.usernameLabel)).toHaveProperty(
-        "value",
-        "",
-      );
-      const clear = await screen.findByRole("button", { name: m.connections.clear });
-      await user.click(clear);
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(await within(card).findByText(m.connections.connected)).toBeTruthy();
+      expect(footControls(card)).toEqual([m.connections.updateCredential, MORE[locale]]);
+      const items = await openCardMenu(card, MORE[locale]);
+      expect(items.map((i) => i.textContent)).toEqual([
+        m.connectors.cards.permissions,
+        m.connections.clearCredential,
+      ]);
+      await user.click(items[1] as HTMLElement);
       expect(calls.some((c) => c.method === "DELETE")).toBe(true);
-      await vi.waitFor(() =>
-        expect(screen.queryByRole("button", { name: m.connections.clear })).toBeNull(),
-      );
+      expect(await within(card).findByText(m.connections.missing)).toBeTruthy();
+      expect(footControls(card)).toEqual([m.connections.enterCredential]);
     },
   );
+
+  it("更新凭据 opens the sheet over the saved credential; 权限 in ⋯ opens the permissions sheet", async () => {
+    stubApi({
+      ...routes({ connected: true }),
+      "GET /api/v1/orgs/o1/connectors/app1/tool-policies/me": () => json(200, { tools: [] }),
+    });
+    await renderRouteWithCache("/account/connections", lastStubRoutes());
+    const card = await findCard(en.connections.nav.connections, "Fixture");
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: en.connections.updateCredential }));
+    const sheet = await screen.findByRole("dialog", { name: "Update your credential for Fixture" });
+    expect(within(sheet).getByText(en.connections.updateHint)).toBeTruthy();
+    await user.click(within(sheet).getByRole("button", { name: en.connections.cancel }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const items = await openCardMenu(card);
+    await user.click(items[0] as HTMLElement);
+    expect(
+      await screen.findByRole("dialog", {
+        name: en.connectors.permissions.title.replace("{name}", "Fixture"),
+      }),
+    ).toBeTruthy();
+  });
+
+  it("#connector-<id> (a conversation's 连接): the card carries the anchor and its credential sheet opens", async () => {
+    stubApi(routes({ connected: false }));
+    window.history.replaceState(null, "", "/account/connections#connector-app1");
+    try {
+      await renderRouteWithCache("/account/connections", lastStubRoutes());
+      expect(
+        await screen.findByRole("dialog", { name: "Enter your credential for Fixture" }),
+      ).toBeTruthy();
+      expect(document.getElementById("connector-app1")?.tagName).toBe("LI");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
 });
 
 describe("连接器详情的工具栏刷新", () => {

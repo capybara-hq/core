@@ -2085,9 +2085,6 @@
       "disabled": "已停用"
     },
     "cards": {
-      "connect": "连接",
-      "connected": "已连接",
-      "notConnected": "未连接",
       "permissions": "权限"
     },
     "permissions": {
@@ -2141,7 +2138,6 @@
     "connected": "已连接",
     "missing": "未连接",
     "save": "保存",
-    "clear": "清除",
     "saved": "「{connector}」的凭据已保存。",
     "cleared": "「{connector}」的凭据已清除。",
     "grants": {
@@ -2161,7 +2157,15 @@
     "reconnect": "重新连接",
     "oauthConnect": "连接",
     "disconnect": "断开连接",
-    "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
+    "disconnected": "已断开「{connector}」。",
+    "clearCredential": "清除凭据",
+    "editConfig": "修改配置",
+    "enterCredential": "填写凭据",
+    "updateCredential": "更新凭据",
+    "cancel": "取消",
+    "enterCredentialTitle": "填写 {name} 的凭据",
+    "updateCredentialTitle": "更新 {name} 的凭据",
+    "updateHint": "保存后替换你已保存的凭据，其他成员使用各自的凭据。"
   },
   "sandboxSettings": {
     "title": "沙箱",

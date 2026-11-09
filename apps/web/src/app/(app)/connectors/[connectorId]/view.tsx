@@ -69,6 +69,8 @@ import NotFound from "../../not-found";
 const TABS = ["tools", "review", "credentials", "settings"] as const;
 /** The tabs, and 接入指南 for org admins on a connector whose template has a setup guide. */
 type Tab = (typeof TABS)[number] | "guide";
+const isTab = (v: string | undefined): v is Tab =>
+  v === "guide" || (TABS as readonly string[]).includes(v ?? "");
 const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy[];
 
 /** Saves a change to the connector; resolves with the connector the kernel answered. */
@@ -86,7 +88,10 @@ export default function ConnectorView({
   tab,
 }: {
   connectorId: string;
-  /** `?tab=guide`: open on 接入指南 (the member sheet's link for org admins). */
+  /**
+   * `?tab=<id>`: open on that tab (`guide`: 接入指南, the member sheet's link for org admins;
+   * `settings`: the cards' 修改配置).
+   */
   tab?: string | undefined;
 }) {
   const ws = useWorkspace();
@@ -98,7 +103,7 @@ export default function ConnectorView({
       orgId={ws.orgId}
       connectorId={connectorId}
       manage={canManageConnectors(ws.me)}
-      initialTab={tab === "guide" ? "guide" : "tools"}
+      initialTab={isTab(tab) ? tab : "tools"}
     />
   );
 }

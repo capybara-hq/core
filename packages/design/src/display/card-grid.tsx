@@ -66,6 +66,14 @@ export type ObjectCardLoaded = {
   primary?: ObjectCardAction;
   /** The ⋯ menu (spec §6.7: no menu of one; a lone safe item is drawn as a second button). */
   menu?: MenuItem[];
+  /**
+   * At most one button beside the ⋯ (spec §6.34, maintainer decision 2026-11-09: the connector
+   * cards): with a `primary`, a lone safe menu item stays in the ⋯ menu instead of becoming a
+   * second button. Without a primary it is still drawn as the card's one button.
+   */
+  oneButton?: boolean;
+  /** The `li`'s id: a page anchor (`#connector-<id>`) that scrolls to this card. */
+  id?: string;
   loading?: false;
 };
 
@@ -370,6 +378,8 @@ function LoadedCard({
   state,
   primary,
   menu,
+  oneButton = false,
+  id,
 }: ObjectCardLoaded) {
   const Link = useDesignLink();
   const t = useDesignT();
@@ -402,7 +412,7 @@ function LoadedCard({
   // Outside a grid every control stays in the tab order; inside, only the holder card's.
   const tabIndex = slot === null ? undefined : slot.holder ? 0 : -1;
   const actions = menuActions(menu ?? []);
-  const lone = menuLone(menu ?? []);
+  const lone = oneButton && primary !== undefined ? undefined : menuLone(menu ?? []);
   const waiting = primary?.loading === true;
   const buttons: ObjectCardAction[] = [];
   if (primary) buttons.push(primary);
@@ -440,6 +450,7 @@ function LoadedCard({
   return (
     <li
       ref={liRef}
+      id={id}
       className="cb-object-card"
       data-part="object-card"
       data-card-key={cardKey ?? undefined}

@@ -2097,9 +2097,6 @@
       "disabled": "Disabled"
     },
     "cards": {
-      "connect": "Connect",
-      "connected": "Connected",
-      "notConnected": "Not connected",
       "permissions": "Permissions"
     },
     "permissions": {
@@ -2153,7 +2150,6 @@
     "connected": "Connected",
     "missing": "Not connected",
     "save": "Save",
-    "clear": "Clear",
     "saved": "Credential for \"{connector}\" saved.",
     "cleared": "Credential for \"{connector}\" cleared.",
     "grants": {
@@ -2173,7 +2169,15 @@
     "reconnect": "Reconnect",
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
-    "oauthHint": "Sign in to this connector with your own account; other members use theirs."
+    "disconnected": "Disconnected \"{connector}\".",
+    "clearCredential": "Clear credential",
+    "editConfig": "Edit configuration",
+    "enterCredential": "Enter credential",
+    "updateCredential": "Update credential",
+    "cancel": "Cancel",
+    "enterCredentialTitle": "Enter your credential for {name}",
+    "updateCredentialTitle": "Update your credential for {name}",
+    "updateHint": "Saving replaces the credential you saved; other members use theirs."
   },
   "sandboxSettings": {
     "title": "Sandbox",
