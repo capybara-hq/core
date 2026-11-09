@@ -170,6 +170,8 @@ describe("serverTransport", () => {
   });
 });
 
+const NO_CLIENT = { enabled: true, apiVersion: 1, items: [] };
+
 describe("getShell", () => {
   it("reads the shell in parallel; optional reads fall back to null", async () => {
     const calls = kernel({
@@ -178,6 +180,7 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [{}, {}], truncated: true }),
+      "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
       "/api/v1/orgs/o1/ui/contributions": () => err(500, "internal"),
     });
     const shell = await getShell();
@@ -190,8 +193,23 @@ describe("getShell", () => {
       pending: { count: 2, more: true },
       extensions: null,
       theme: PAPER,
+      clientSource: { kind: "org", orgId: "o1" },
+      client: NO_CLIENT,
     });
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(7);
+  });
+
+  it("a failed client set read loads no client code; the shell is still ready", async () => {
+    kernel({
+      "/api/v1/me": () => json(200, ME),
+      "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/themes": () => json(200, THEMES),
+      "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+      "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
+      "/api/v1/orgs/o1/ui/client": () => err(500, "internal"),
+    });
+    expect(await getShell()).toMatchObject({ kind: "ready", client: null });
   });
 
   it("keeps only page contributions", async () => {
@@ -201,6 +219,7 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => err(500, "internal"),
       "/api/v1/orgs/o1/inbox": () => err(500, "internal"),
+      "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
       "/api/v1/orgs/o1/ui/contributions": () =>
         json(200, {
           items: [
@@ -240,6 +259,7 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/themes": () => err(500, "internal"),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
       "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
     });
     expect(await getShell()).toMatchObject({ kind: "ready", readiness: READY, theme: null });
@@ -273,6 +293,7 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => err(401, "auth.required"),
+      "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
       "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
     });
     await expect(getShell()).rejects.toThrow(/REDIRECT \/login/);
@@ -285,6 +306,7 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
       "/api/v1/orgs/o1/ui/contributions": () => {
         throw new TypeError("fetch failed");
       },
@@ -299,6 +321,7 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "/api/v1/orgs/o1/ui/client": () => json(200, NO_CLIENT),
       "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
     });
     await expect(getShell()).rejects.toMatchObject({ status: 500, code: "internal" });

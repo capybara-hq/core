@@ -5133,5 +5133,9 @@
       "label": "平台默认主题",
       "notAvailable": "这个主题没有在所有组织启用，不能作为平台默认主题。未启用它的组织：{orgs}。"
     }
+  },
+  "clientExtensions": {
+    "budget": "「{plugin}」的界面代码出错，已在本次会话停用",
+    "safeReload": "以安全模式重新加载"
   }
 }

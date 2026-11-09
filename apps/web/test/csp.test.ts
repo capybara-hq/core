@@ -18,7 +18,7 @@ import proxy, { config } from "../src/proxy";
 /**
  * The document CSP (client extensions spec `docs/superpowers/specs/2026-11-09-client-extensions-design.md`
  * §9.5, with the review rulings): the proxy sets `script-src <host>/_next/ <host>/api/v1/client/
- * 'nonce-<n>'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'` with a
+ * <host>/_capybara/client-host/ 'nonce-<n>'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'` with a
  * fresh nonce on every document request (never `'self'`: the origin also serves user content), both on the forwarded request (Next reads the nonce from
  * it and puts it on its own scripts; the layouts read `x-nonce`) and on the response. `/api`,
  * `/plugin-ui`, `/_next` and the object-store proxy keep their own headers.
@@ -69,7 +69,7 @@ describe("document CSP", () => {
       const nonce = nonceOf(csp);
       expect(nonce, String(csp)).toBeDefined();
       expect(csp).toMatch(
-        /^script-src web\.example\/_next\/ web\.example\/api\/v1\/client\/ 'nonce-[^']+'/,
+        /^script-src web\.example\/_next\/ web\.example\/api\/v1\/client\/ web\.example\/_capybara\/client-host\/ 'nonce-[^']+'/,
       );
       expect(csp).not.toContain("'self' ");
       expect(csp).toContain("object-src 'none'");
@@ -111,10 +111,10 @@ describe("document CSP", () => {
   it("dev adds unsafe-eval and production does not", async () => {
     const tail = "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'";
     expect(documentPolicy({ nonce: "abc=", host: "cap.example", dev: false })).toBe(
-      `script-src cap.example/_next/ cap.example/api/v1/client/ 'nonce-abc='; ${tail}`,
+      `script-src cap.example/_next/ cap.example/api/v1/client/ cap.example/_capybara/client-host/ 'nonce-abc='; ${tail}`,
     );
     expect(documentPolicy({ nonce: "abc=", host: "cap.example", dev: true })).toBe(
-      `script-src cap.example/_next/ cap.example/api/v1/client/ 'nonce-abc=' 'unsafe-eval'; ${tail}`,
+      `script-src cap.example/_next/ cap.example/api/v1/client/ cap.example/_capybara/client-host/ 'nonce-abc=' 'unsafe-eval'; ${tail}`,
     );
     vi.stubEnv("NODE_ENV", "production");
     const prod = (await proxy(page("/"))).headers.get("content-security-policy");
@@ -141,7 +141,7 @@ describe("document CSP", () => {
     const res = await proxy(page("/agents", { host: "Capybara.Example.com:8443" }));
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toMatch(
-      /^script-src capybara\.example\.com:8443\/_next\/ capybara\.example\.com:8443\/api\/v1\/client\/ 'nonce-/,
+      /^script-src capybara\.example\.com:8443\/_next\/ capybara\.example\.com:8443\/api\/v1\/client\/ capybara\.example\.com:8443\/_capybara\/client-host\/ 'nonce-/,
     );
     expect(csp).not.toContain("'self' ");
     expect(csp.split("; ")[0]).not.toContain("'self'");
@@ -180,6 +180,27 @@ describe("document CSP", () => {
     }
   });
 
+  it("the client host shims keep the CSP and skip the session work", async () => {
+    const path = "/_capybara/client-host/0.1.0-abcdef012345/react.mjs";
+    expect(proxied(path)).toBe(true);
+    // signed out with an expired session: a page would renew (fetch) or redirect to sign-in
+    const res = await proxy(new NextRequest(`${WEB}${path}`, { headers: { cookie: "cap_rt=rt" } }));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const csp = res.headers.get("content-security-policy");
+    expect(nonceOf(csp)).toBeDefined();
+    // a missing shim falls through to the catch-all page, which still gets the nonce
+    expect(forwarded(res, NONCE_HEADER)).toBe(nonceOf(csp));
+    expect(forwarded(res, "content-security-policy")).toBe(csp);
+    // other /_capybara paths are pages like any other
+    const page2 = await proxy(
+      new NextRequest(`${WEB}/_capybara/x`, { headers: { cookie: "cap_rt=rt" } }),
+    );
+    expect(fetch).toHaveBeenCalled();
+    expect(page2.headers.get("content-security-policy")).not.toBeNull();
+  });
+
   it("behind a reverse proxy the script sources name X-Forwarded-Host, else Host", async () => {
     const h = (init: Record<string, string>) => documentHost(new Headers(init));
     expect(h({ host: "web:3000", "x-forwarded-host": "cap.example.com" })).toBe("cap.example.com");
@@ -196,7 +217,7 @@ describe("document CSP", () => {
       page("/agents", { host: "web:3000", "x-forwarded-host": "cap.example.com" }),
     );
     expect(res.headers.get("content-security-policy")).toMatch(
-      /^script-src cap\.example\.com\/_next\/ cap\.example\.com\/api\/v1\/client\/ 'nonce-/,
+      /^script-src cap\.example\.com\/_next\/ cap\.example\.com\/api\/v1\/client\/ cap\.example\.com\/_capybara\/client-host\/ 'nonce-/,
     );
   });
 

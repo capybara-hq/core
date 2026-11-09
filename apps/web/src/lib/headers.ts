@@ -19,12 +19,16 @@ export const NONCE_HEADER = "x-nonce";
 /** The CSP header: set on the forwarded request (Next takes its nonce from there) and the response. */
 export const CSP_HEADER = "content-security-policy";
 
+/** Where the client host shims are served (`apps/web/scripts/gen-client-host.mjs`, spec §9.4). */
+export const CLIENT_HOST_PREFIX = "/_capybara/client-host/";
+
 /**
- * The same-origin paths document scripts may load from (besides the nonce): Next's chunks and the
- * client extension bundles (client extensions spec §9.2). Never all of `'self'`: the origin also
- * serves user content (object-store proxy objects, artifacts) that must not run as script.
+ * The same-origin paths document scripts may load from (besides the nonce): Next's chunks, the
+ * client extension bundles (client extensions spec §9.2) and the client host shims their bare
+ * imports resolve to (§9.4). Never all of `'self'`: the origin also serves user content
+ * (object-store proxy objects, artifacts) that must not run as script.
  */
-export const SCRIPT_PATHS: readonly string[] = ["/_next/", "/api/v1/client/"];
+export const SCRIPT_PATHS: readonly string[] = ["/_next/", "/api/v1/client/", CLIENT_HOST_PREFIX];
 
 /** A host a CSP host-source can name: a DNS name or IPv4 address, optionally with a port. */
 const CSP_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;

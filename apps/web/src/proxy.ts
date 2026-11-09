@@ -3,6 +3,7 @@ import { isAppLocale, LOCALE_COOKIE } from "./i18n/routing";
 import { loginPathFor } from "./lib/auth-sources";
 import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
 import {
+  CLIENT_HOST_PREFIX,
   CSP_HEADER,
   documentHost,
   documentPolicy,
@@ -94,6 +95,7 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * 5. the document CSP (client extensions spec §9.5, {@link documentPolicy}) with a fresh nonce goes
  *    on the forwarded request (Next takes the nonce from it and puts it on its own scripts; the
  *    layouts read `x-nonce`) and on the response. A client-sent nonce or policy never survives.
+ * The client host shims (`/_capybara/client-host/…`) get step 5 only.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
  * a credential page with form fields in its query is redirected to the page without them.
@@ -122,6 +124,15 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   // Next falls back to the report-only header for the nonce: never let a client supply one
   headers.delete(`${CSP_HEADER}-report-only`);
   headers.set(NONCE_HEADER, nonce);
+
+  // The client host shims are static files the signed-in page imports in parallel: no session
+  // renewal (it would race the document's) and no sign-in redirect for them. They keep the CSP and
+  // the nonce: a missing file falls through to the app's catch-all page, a document.
+  if (req.method === "GET" && pathname.startsWith(CLIENT_HOST_PREFIX)) {
+    const res = NextResponse.next({ request: { headers } });
+    res.headers.set(CSP_HEADER, policy);
+    return res;
+  }
 
   const pairs = parseCookies(req.headers.get("cookie"));
   const hasRetry = pairs.some(([n]) => n === RETRY_COOKIE);

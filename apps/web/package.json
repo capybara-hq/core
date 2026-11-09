@@ -8,8 +8,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "node server.mjs",
-    "build": "next build",
+    "dev": "node scripts/gen-client-host.mjs && node server.mjs",
+    "build": "node scripts/gen-client-host.mjs && next build",
+    "gen:client-host": "node scripts/gen-client-host.mjs",
     "start": "NODE_ENV=production node server.mjs",
     "typecheck": "next typegen && tsc --noEmit -p .",
     "e2e": "playwright test",

@@ -46,6 +46,8 @@ export function shellOf(me: Me = ME, o: Partial<ShellData> = {}): ShellData {
     pending: org === null ? null : { count: 0, more: false },
     extensions: org === null ? null : [],
     theme: null,
+    clientSource: { kind: "none", orgId: org?.orgId ?? null },
+    client: null,
     ...o,
   };
 }

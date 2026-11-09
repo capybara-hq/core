@@ -5145,5 +5145,9 @@
       "label": "Platform default theme",
       "notAvailable": "This theme is not on in every organization, so it cannot be the platform default. Organizations where it is off: {orgs}."
     }
+  },
+  "clientExtensions": {
+    "budget": "The interface code of “{plugin}” failed and is off for this session.",
+    "safeReload": "Reload in safe mode"
   }
 }
