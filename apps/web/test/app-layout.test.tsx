@@ -331,6 +331,22 @@ describe("the (app) layout's client code (client extensions spec §9.6, §10.1, 
     expect(find(element, "ClientHostRoot")?.props).toMatchObject({ safe: true });
   });
 
+  it("the safe-mode cookie keeps a later render (a refresh without the parameter) safe", async () => {
+    shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
+    req.headers = new Headers({ "x-cap-path": "/skills", cookie: "cap_at=a; cap_safe_ui=1" });
+    const element = await AppLayout({ children: <p>page body</p> });
+    expect(find(element, "ClientExtensionsHead")?.props).toMatchObject({ safe: true });
+    expect(find(element, "ClientHostRoot")?.props).toMatchObject({ safe: true });
+    // ?safe-ui=0 ends it on the request that still carries the cookie
+    shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
+    req.headers = new Headers({
+      "x-cap-path": "/skills?safe-ui=0",
+      cookie: "cap_at=a; cap_safe_ui=1",
+    });
+    const off = await AppLayout({ children: <p>page body</p> });
+    expect(find(off, "ClientExtensionsHead")?.props).toMatchObject({ safe: false });
+  });
+
   it("the admin console reads no client set; a platform page reads only its plugin's", async () => {
     const admin = shellRoutesWith({
       "GET /api/v1/admin/ui/client": () => json(200, SET),

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  CLIENT_API_VERSION,
   CLIENT_ASSET_TYPES,
   CLIENT_ENTRY_PATH,
   CLIENT_LIMITS,
@@ -99,7 +100,9 @@ const utf8 = (data: Uint8Array): string | undefined => {
  *   (file `plugin.json`), a key cannot be looked up exactly, a listed file is missing, a file
  *   under `dist/client/` is not listed, a size limit is exceeded, or a stylesheet fails the CSS
  *   check (`client-css.ts`);
- * - `client.integrity_mismatch` (details `[{ file }]`): a file's sha384 is not the section's.
+ * - `client.integrity_mismatch` (details `[{ file }]`): a file's sha384 is not the section's;
+ * - `client.api_unsupported` (details `[{ apiVersion, supported }]`): the section's `apiVersion`
+ *   is newer than the kernel's `CLIENT_API_VERSION` (the host could not run it).
  */
 export function checkClientFiles(
   section: PluginClientSection,
@@ -108,6 +111,15 @@ export function checkClientFiles(
   const sectionIssues = validateClientSection(section);
   if (sectionIssues.length > 0) {
     throw invalid("plugin.json", sectionIssues[0] as string);
+  }
+  if (section.apiVersion > CLIENT_API_VERSION) {
+    throw new ApiError(
+      "client.api_unsupported",
+      `The plugin's client code was built for client API ${section.apiVersion}; this deployment ` +
+        `supports ${CLIENT_API_VERSION}. Upgrade Capybara, or build the plugin against ` +
+        `@capybara-hq/plugin-client for client API ${CLIENT_API_VERSION}.`,
+      [{ apiVersion: section.apiVersion, supported: CLIENT_API_VERSION }],
+    );
   }
   const styles = section.styles ?? [];
   const keys = [

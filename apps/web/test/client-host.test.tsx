@@ -110,6 +110,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  // biome-ignore lint/suspicious/noDocumentCookie: reset the safe-mode session cookie
+  document.cookie = "cap_safe_ui=; path=/; max-age=0";
   vi.useRealTimers();
   vi.unstubAllGlobals();
   ClientHost.load = realLoad;
@@ -166,6 +168,29 @@ describe("ClientHost", () => {
     await flush();
     expect(order).toEqual(["alpha", "zeta"]);
     expect(registryText()).toBe("alpha:loading[] zeta:loading[]");
+  });
+
+  it("reports go to the admin route with the message cut to 500 characters", async () => {
+    const adminCalls = stubApi({ "POST /api/v1/admin/ui/client/reports": () => noContent() });
+    ClientHost.load = vi.fn(async () => {
+      throw new Error("x".repeat(600));
+    });
+    renderPage(
+      <ClientHost set={setOf(item())} safe={false} scope="admin" orgId={null}>
+        <RegistryProbe />
+      </ClientHost>,
+    );
+    await flush();
+    expect(adminCalls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /api/v1/admin/ui/client/reports",
+    ]);
+    expect(bodyOf(adminCalls[0])).toEqual({
+      plugin: "fake-client",
+      build: BUILD,
+      contribution: null,
+      kind: "load",
+      message: "x".repeat(500),
+    });
   });
 
   it("a module whose name differs is not activated and reported once", async () => {
@@ -329,15 +354,73 @@ describe("ClientHost", () => {
     expect(ClientHost.load).not.toHaveBeenCalled();
     expect((globalThis as Record<string, unknown>).__CAPYBARA_CLIENT_HOST__).toBeUndefined();
     expect(registryText()).toBe("");
-    // the banner, with its exit (a document load without the parameter)
-    const banner = container.querySelector('[data-part="safe-mode-banner"]');
-    expect(banner).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Exit safe mode" }));
-    expect(navigate).toHaveBeenCalledWith("/agents?tab=x");
-    // a client navigation keeps safe mode: no document load across the boundary either
+    expect(container.querySelector('[data-part="safe-mode-banner"]')).not.toBeNull();
+  });
+
+  it("safe mode holds through a client navigation and a refresh; the exit ends it", async () => {
+    // biome-ignore lint/suspicious/noDocumentCookie: the proxy's session cookie, as the browser holds it
+    document.cookie = "cap_safe_ui=1; path=/";
+    window.history.replaceState(null, "", "/agents?safe-ui=1&tab=x");
+    ClientHost.load = vi.fn(async () => ext());
+    const css = `/api/v1/client/fake-client/${BUILD}/styles/a.css`;
+    const withStyle = setOf(item({ styles: [{ url: css, integrity: "x" }] }));
+    const { container, rerender } = renderPage(host(withStyle, { safe: true }));
+    await flush();
+    // a client navigation (the URL loses the parameter), then a refresh whose layout render says
+    // safe=false and hoists the plugin's stylesheet
+    pathname.current = "/skills";
+    window.history.pushState(null, "", "/skills");
+    rerender(pageElement(host(withStyle, { safe: false })));
+    const sheet = document.createElement("link");
+    sheet.rel = "stylesheet";
+    sheet.href = css;
+    sheet.setAttribute("data-precedence", "extensions");
+    document.head.append(sheet);
+    await flush();
+    expect(sheet.disabled).toBe(true);
+    expect(ClientHost.load).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-part="safe-mode-banner"]')).not.toBeNull();
+    // and no document load across the boundary (it would end safe mode)
     pathname.current = "/admin";
-    window.history.replaceState(null, "", "/admin");
-    cleanup();
+    window.history.pushState(null, "", "/admin");
+    rerender(pageElement(host(withStyle, { safe: false })));
+    expect(navigate).not.toHaveBeenCalled();
+    // the exit clears the session cookie and loads the page without the parameter
+    window.history.replaceState(null, "", "/skills?safe-ui=1&tab=x");
+    fireEvent.click(screen.getByRole("button", { name: "Exit safe mode" }));
+    expect(document.cookie).not.toContain("cap_safe_ui=1");
+    expect(navigate).toHaveBeenCalledWith("/skills?tab=x");
+    sheet.remove();
+  });
+
+  it("a stylesheet of a build outside the document's set never applies", async () => {
+    ClientHost.load = vi.fn(async () => ext());
+    const oldCss = `/api/v1/client/fake-client/${BUILD}/styles/a.css`;
+    const next = "e".repeat(64);
+    const newCss = `/api/v1/client/fake-client/${next}/styles/a.css`;
+    const sheet = (href: string) => {
+      const l = document.createElement("link");
+      l.rel = "stylesheet";
+      l.href = href;
+      l.setAttribute("data-precedence", "extensions");
+      document.head.append(l);
+      return l;
+    };
+    const old = sheet(oldCss);
+    const view = renderPage(host(setOf(item({ styles: [{ url: oldCss, integrity: "x" }] }))));
+    await flush();
+    expect(old.disabled).toBe(false);
+    // the plugin upgraded: a refresh lists and hoists the new build's sheet
+    const upgraded = item({
+      build: next,
+      entry: { url: `/api/v1/client/fake-client/${next}/client.mjs`, integrity: "y" },
+      styles: [{ url: newCss, integrity: "y" }],
+    });
+    view.rerender(pageElement(host(setOf(upgraded))));
+    const fresh = sheet(newCss);
+    await flush();
+    expect([old.disabled, fresh.disabled]).toEqual([false, true]);
+    expect(ClientHost.load).toHaveBeenCalledTimes(1);
   });
 
   it("safe mode shows no banner when the viewer has no client code", async () => {

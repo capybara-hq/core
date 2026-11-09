@@ -5,8 +5,8 @@
 // `capybara client host not ready` without it: React stays the one instance inside Next's chunks.
 //
 // Output (gitignored): public/_capybara/client-host/<webBuild>/{react,react-jsx-runtime,react-dom,
-// plugin-client}.mjs and public/_capybara/client-host/manifest.json ({ "build": "<webBuild>" }),
-// which the workspace layout reads for the import map. `<webBuild>` is the web package version plus
+// plugin-client}.mjs and public/_capybara/client-host/manifest.json ({ "build": "<webBuild>",
+// "integrity": { "<file>": "sha384-…" } }), which the workspace layout reads for the import map. `<webBuild>` is the web package version plus
 // the first 12 hex digits of the sha256 of the shims, so a changed shim gets a new URL (they are
 // served as immutable static files). Older builds' folders are removed.
 //
@@ -68,5 +68,12 @@ for (const entry of readdirSync(out, { withFileTypes: true })) {
 }
 mkdirSync(join(out, build), { recursive: true });
 for (const [name, body] of Object.entries(shims)) writeFileSync(join(out, build, name), body);
-writeFileSync(join(out, "manifest.json"), `${JSON.stringify({ build })}\n`);
+// Each shim's sha384, for the import map's `integrity` (every module of the graph is verified).
+const integrity = Object.fromEntries(
+  Object.entries(shims).map(([name, body]) => [
+    name,
+    `sha384-${createHash("sha384").update(body).digest("base64")}`,
+  ]),
+);
+writeFileSync(join(out, "manifest.json"), `${JSON.stringify({ build, integrity })}\n`);
 console.log(`client host shims: ${build}`);

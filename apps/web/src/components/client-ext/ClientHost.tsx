@@ -21,6 +21,7 @@ import {
   type ClientReportKind,
   type ClientReportScope,
   type ClientScopeKey,
+  clearSafeUiCookie,
   setHasCode,
   withSafeUi,
 } from "../../lib/client-extensions";
@@ -59,7 +60,11 @@ interface ClientHostProps {
    * withdraws (a plugin no longer listed stops rendering; a new build loads at the next document).
    */
   set: ClientExtensionsResponse | null;
-  /** Safe mode (`?safe-ui=1`): nothing is imported; the banner shows when client code exists. */
+  /**
+   * Safe mode (`?safe-ui=1` or its session cookie): nothing is imported, every plugin stylesheet is
+   * disabled and the banner shows when client code exists. Pinned at the first render: it holds
+   * for the document whatever a later layout render says.
+   */
   safe: boolean;
   /** Workspace pages (`org`) or a platform page of the admin console (`admin`). */
   scope: "org" | "admin";
@@ -81,7 +86,7 @@ interface ClientHostProps {
  */
 export function ClientHost({
   set,
-  safe,
+  safe: safeProp,
   scope,
   orgId,
   hostReady = true,
@@ -91,7 +96,8 @@ export function ClientHost({
   const locale: "zh" | "en" = useLocale() === "zh" ? "zh" : "en";
   const toast = useToast();
   const qc = useQueryClient();
-  // The document's set (safe mode: nothing loads), fixed at the first render.
+  // Safe mode and the document's set (safe mode: nothing loads), fixed at the first render.
+  const [safe] = useState(safeProp);
   const [doc] = useState<ClientExtensionsResponse | null>(() => (safe ? null : set));
   const [docItems] = useState<ClientExtensionItem[]>(() =>
     doc?.enabled === true
@@ -269,7 +275,11 @@ export function ClientHost({
     };
   }, [loaded, docItems]);
 
-  // Only the stylesheets of active plugins apply (React never removes a hoisted sheet itself).
+  // Only the stylesheets of active plugins of the document's set apply. React never removes a
+  // hoisted sheet itself, and a later layout render (a `router.refresh()`) can hoist new ones: a
+  // newly listed or upgraded build's sheet, or any sheet once the URL has lost `safe-ui=1`. So every
+  // extension sheet in the head is policed, now and whenever one is added: in safe mode all are
+  // disabled, otherwise every sheet that is not an active one of the document's set.
   const activeSheets = useMemo(() => {
     const hrefs = new Set<string>();
     for (const item of docItems) {
@@ -281,12 +291,18 @@ export function ClientHost({
     return [...hrefs].sort().join("\n");
   }, [docItems, exposed, listed]);
   useLayoutEffect(() => {
-    if (!loaded) return;
-    const active = new Set(activeSheets === "" ? [] : activeSheets.split("\n"));
-    for (const link of document.querySelectorAll<HTMLLinkElement>(EXTENSION_SHEETS)) {
-      link.disabled = !active.has(link.getAttribute("href") ?? "");
-    }
-  }, [activeSheets, loaded]);
+    const active = new Set(safe || activeSheets === "" ? [] : activeSheets.split("\n"));
+    const police = () => {
+      for (const link of document.querySelectorAll<HTMLLinkElement>(EXTENSION_SHEETS)) {
+        const off = !active.has(link.getAttribute("href") ?? "");
+        if (link.disabled !== off) link.disabled = off;
+      }
+    };
+    police();
+    const observer = new MutationObserver(police);
+    observer.observe(document.head, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [activeSheets, safe]);
 
   const controls = useMemo<ClientHostControls>(
     () => ({
@@ -336,11 +352,12 @@ export function ClientHost({
         <ClientRegistryProvider value={exposed}>
           {safe && setHasCode(set) ? (
             <SafeModeBanner
-              onExit={() =>
+              onExit={() => {
+                clearSafeUiCookie();
                 navigate(
                   withSafeUi(`${location.pathname}${location.search}${location.hash}`, false),
-                )
-              }
+                );
+              }}
             />
           ) : null}
           {children}
@@ -388,45 +405,56 @@ ClientHost.navigate = (href: string): void => {
   window.location.assign(href);
 };
 
-/**
- * The client host of the `(app)` layout: the set from the query cache (the layout read it with the
- * shell and hydrated it), so a later invalidation withdraws plugins from the open page. `none`:
- * a page that loads no client code (the admin console, no org); the boundary still holds.
- */
-export function ClientHostRoot({
-  source,
-  safe,
-  hostReady,
-  children,
-}: {
-  source:
-    | { kind: "org"; orgId: string }
-    | { kind: "admin"; plugin: string }
-    | { kind: "none"; orgId: string | null };
+type ClientSource =
+  | { kind: "org"; orgId: string }
+  | { kind: "admin"; plugin: string }
+  | { kind: "none"; orgId: string | null };
+
+interface RootProps {
+  source: ClientSource;
   safe: boolean;
   hostReady: boolean;
   children: ReactNode;
-}) {
-  const q =
-    source.kind === "org"
-      ? clientExtensionsQuery(source.orgId)
-      : source.kind === "admin"
-        ? adminClientExtensionsQuery(source.plugin)
-        : null;
-  const read = useQuery({
-    ...(q ?? clientExtensionsQuery("")),
-    enabled: q !== null,
-    retryOnMount: q === null ? false : retryOnMountOf(q.queryKey),
-  });
-  const set = q === null ? null : (read.data ?? null);
+}
+
+/**
+ * The client host of the `(app)` layout: the set from the query cache (the layout read it with the
+ * shell and hydrated it), so a later invalidation withdraws plugins from the open page. `none`:
+ * a page that loads no client code (the admin console, no org); the boundary still holds. The
+ * source is fixed for a document (a navigation to another source is a document load).
+ */
+export function ClientHostRoot(props: RootProps) {
+  const { source } = props;
+  if (source.kind === "org") return <OrgClientHost {...props} orgId={source.orgId} />;
+  if (source.kind === "admin") return <AdminClientHost {...props} plugin={source.plugin} />;
   return (
     <ClientHost
-      set={set}
-      safe={safe}
-      scope={source.kind === "admin" ? "admin" : "org"}
-      orgId={source.kind === "admin" ? null : source.orgId}
-      hostReady={hostReady}
+      set={null}
+      safe={props.safe}
+      scope="org"
+      orgId={source.orgId}
+      hostReady={props.hostReady}
     >
+      {props.children}
+    </ClientHost>
+  );
+}
+
+function OrgClientHost({ orgId, safe, hostReady, children }: RootProps & { orgId: string }) {
+  const q = clientExtensionsQuery(orgId);
+  const set = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? null;
+  return (
+    <ClientHost set={set} safe={safe} scope="org" orgId={orgId} hostReady={hostReady}>
+      {children}
+    </ClientHost>
+  );
+}
+
+function AdminClientHost({ plugin, safe, hostReady, children }: RootProps & { plugin: string }) {
+  const q = adminClientExtensionsQuery(plugin);
+  const set = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? null;
+  return (
+    <ClientHost set={set} safe={safe} scope="admin" orgId={null} hostReady={hostReady}>
       {children}
     </ClientHost>
   );

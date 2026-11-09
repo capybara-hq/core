@@ -72,10 +72,54 @@ export const postClientReport = (scope: ClientReportScope, report: ClientReport)
 /** The query parameter of safe mode (spec §10.1): `?safe-ui=1`. */
 export const SAFE_UI_PARAM = "safe-ui";
 
+/**
+ * The session cookie that keeps safe mode on for the browser session (spec §10.1, fix-round ruling):
+ * set by the proxy on any document requested with `?safe-ui=1`, cleared by `?safe-ui=0` and by
+ * the banner's exit. No Max-Age: it ends with the browser session. Not HttpOnly: the banner clears
+ * it before its reload.
+ */
+export const SAFE_UI_COOKIE = "cap_safe_ui";
+
+/** The `safe-ui` value of a path's query: `"1"`, `"0"` or null. */
+function safeUiParam(pathWithQuery: string): string | null {
+  const q = pathWithQuery.split("#")[0]?.split("?")[1];
+  return q === undefined ? null : new URLSearchParams(q).get(SAFE_UI_PARAM);
+}
+
 /** Whether a path with its query (`/agents?safe-ui=1`) asks for safe mode. */
 export function isSafeUi(pathWithQuery: string): boolean {
-  const q = pathWithQuery.split("#")[0]?.split("?")[1];
-  return q !== undefined && new URLSearchParams(q).get(SAFE_UI_PARAM) === "1";
+  return safeUiParam(pathWithQuery) === "1";
+}
+
+/**
+ * Whether a request renders in safe mode: `?safe-ui=1`, or the session cookie unless the query
+ * says `safe-ui=0` (the request that ends it still carries the cookie).
+ */
+export function safeUiOf(pathWithQuery: string, cookieHeader: string | null): boolean {
+  const param = safeUiParam(pathWithQuery);
+  if (param === "1") return true;
+  if (param === "0") return false;
+  return (cookieHeader ?? "").split(";").some((c) => c.trim() === `${SAFE_UI_COOKIE}=1`);
+}
+
+/** The `Set-Cookie` a document request's query asks for (on, off), or null. */
+export function safeUiCookieFor(pathWithQuery: string, https: boolean): string | null {
+  const param = safeUiParam(pathWithQuery);
+  const secure = https ? "; Secure" : "";
+  if (param === "1") return `${SAFE_UI_COOKIE}=1; Path=/; SameSite=Lax${secure}`;
+  if (param === "0") return `${SAFE_UI_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  return null;
+}
+
+/** Ends safe mode in this browser (the banner's exit, before it reloads without the parameter). */
+export function clearSafeUiCookie(): void {
+  try {
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is async and not everywhere
+    document.cookie = `${SAFE_UI_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  } catch {
+    // a blocked cookie jar: the reload carries safe-ui=0, which the proxy clears it with
+  }
 }
 
 /** The same URL with safe mode on (`withSafeUi(href, true)`) or off. */

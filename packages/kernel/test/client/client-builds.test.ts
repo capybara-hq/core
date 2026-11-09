@@ -97,6 +97,14 @@ describe("checkClientFiles", () => {
     ).toEqual(["client.integrity_mismatch", { file: "./dist/client/client.mjs" }]);
   });
 
+  it("refuses a client API newer than the kernel's", () => {
+    expect(refusal(section({ apiVersion: 2 }), files())).toEqual([
+      "client.api_unsupported",
+      { apiVersion: 2, supported: 1 },
+    ]);
+    expect(() => checkClientFiles(section({ apiVersion: 1 }), files())).not.toThrow();
+  });
+
   it("refuses a key the delivery lookup could read two ways", () => {
     for (const asset of [
       "./dist/client/assets/a%2Fb.png",

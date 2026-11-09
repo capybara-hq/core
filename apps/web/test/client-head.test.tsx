@@ -22,13 +22,23 @@ const SET: ClientExtensionsResponse = {
   ],
 };
 
+const HOST = {
+  build: "0.1.0-abcdef012345",
+  integrity: {
+    "react.mjs": "sha384-r",
+    "react-jsx-runtime.mjs": "sha384-j",
+    "react-dom.mjs": "sha384-d",
+    "plugin-client.mjs": "sha384-p",
+  },
+};
+
 const render = (props: Partial<Parameters<typeof ClientExtensionsHead>[0]> = {}) =>
   renderToString(
     <ClientExtensionsHead
       set={SET}
       nonce="n0nce=="
       safe={false}
-      hostBuild="0.1.0-abcdef012345"
+      host={HOST}
       scope="org"
       {...props}
     />,
@@ -52,7 +62,14 @@ describe("ClientExtensionsHead", () => {
         "react-dom": `${host}/react-dom.mjs`,
         "@capybara-hq/plugin-client": `${host}/plugin-client.mjs`,
       },
-      integrity: { [`${BASE}/client.mjs`]: "sha384-entry" },
+      // every module of the graph: the shims (generator) and the entries (kernel)
+      integrity: {
+        [`${host}/react.mjs`]: "sha384-r",
+        [`${host}/react-jsx-runtime.mjs`]: "sha384-j",
+        [`${host}/react-dom.mjs`]: "sha384-d",
+        [`${host}/plugin-client.mjs`]: "sha384-p",
+        [`${BASE}/client.mjs`]: "sha384-entry",
+      },
     });
     // the entry is fetched and verified in parallel with the page
     const preload = /<link rel="preload"[^>]*>/.exec(html)?.[0] ?? "";
@@ -102,7 +119,7 @@ describe("ClientExtensionsHead", () => {
   });
 
   it("without the host shims no entry is loaded; stylesheets still apply", () => {
-    const html = render({ hostBuild: null });
+    const html = render({ host: null });
     expect(importMapOf(html)).toBeNull();
     expect(html).not.toContain('rel="preload"');
     expect(html).toContain('rel="stylesheet"');

@@ -193,12 +193,38 @@ describe("document CSP", () => {
     // a missing shim falls through to the catch-all page, which still gets the nonce
     expect(forwarded(res, NONCE_HEADER)).toBe(nonceOf(csp));
     expect(forwarded(res, "content-security-policy")).toBe(csp);
-    // other /_capybara paths are pages like any other
-    const page2 = await proxy(
-      new NextRequest(`${WEB}/_capybara/x`, { headers: { cookie: "cap_rt=rt" } }),
+    // any other path there, the prefix's folder included, is a page like the rest
+    for (const other of [
+      "/_capybara/x",
+      "/_capybara/client-host/",
+      "/_capybara/client-host/b/manifest.json",
+      "/_capybara/client-host/b/sub/react.mjs",
+      "/_capybara/client-host/b/React.mjs",
+    ]) {
+      vi.mocked(fetch).mockClear();
+      const res2 = await proxy(
+        new NextRequest(`${WEB}${other}`, { headers: { cookie: "cap_rt=rt" } }),
+      );
+      expect(fetch, other).toHaveBeenCalled();
+      expect(res2.headers.get("content-security-policy"), other).not.toBeNull();
+    }
+  });
+
+  it("?safe-ui=1 sets the safe-mode session cookie, ?safe-ui=0 clears it", async () => {
+    const on = await proxy(page("/agents?safe-ui=1"));
+    const set = on.headers.get("set-cookie") ?? "";
+    expect(set).toContain("cap_safe_ui=1; Path=/; SameSite=Lax");
+    // a session cookie: it ends with the browser session
+    expect(set).not.toMatch(/Max-Age|Expires/i);
+    expect(set).not.toContain("Secure");
+    const https = await proxy(
+      new NextRequest("https://web.example/agents?safe-ui=1", { headers: { cookie: "cap_at=at" } }),
     );
-    expect(fetch).toHaveBeenCalled();
-    expect(page2.headers.get("content-security-policy")).not.toBeNull();
+    expect(https.headers.get("set-cookie")).toContain("SameSite=Lax; Secure");
+    const off = await proxy(page("/agents?safe-ui=0", { cookie: "cap_at=at; cap_safe_ui=1" }));
+    expect(off.headers.get("set-cookie")).toContain("cap_safe_ui=; Path=/; Max-Age=0");
+    // without the parameter the cookie is left alone
+    expect((await proxy(page("/agents"))).headers.get("set-cookie")).toBeNull();
   });
 
   it("behind a reverse proxy the script sources name X-Forwarded-Host, else Host", async () => {

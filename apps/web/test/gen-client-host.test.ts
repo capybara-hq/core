@@ -1,6 +1,7 @@
 // Client extensions spec §9.4: the client host shims re-export, by name, from the host global and
 // throw without it; their build id is the web version plus a hash of their contents.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import pkg from "../package.json";
 import { PLUGIN_CLIENT_EXPORTS } from "../src/lib/client-host/api.generated";
-import { clientHostBuild } from "../src/lib/server/client-host";
+import { clientHost } from "../src/lib/server/client-host";
 
 vi.mock("server-only", () => ({}));
 
@@ -68,9 +69,30 @@ describe("gen-client-host", () => {
 
   it("the layout reads the build id from the manifest; none without it", async () => {
     const cwd = vi.spyOn(process, "cwd").mockReturnValue(dir);
-    expect(await clientHostBuild()).toBe(build);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const info = await clientHost();
+    expect(info?.build).toBe(build);
+    // each shim's sha384, from its bytes
+    for (const name of [
+      "react.mjs",
+      "react-jsx-runtime.mjs",
+      "react-dom.mjs",
+      "plugin-client.mjs",
+    ]) {
+      const bytes = readFileSync(join(out, build, name));
+      expect(info?.integrity[name as keyof NonNullable<typeof info>["integrity"]]).toBe(
+        `sha384-${createHash("sha384").update(bytes).digest("base64")}`,
+      );
+    }
+    expect(warn).not.toHaveBeenCalled();
     cwd.mockReturnValue(join(dir, "missing"));
-    expect(await clientHostBuild()).toBeNull();
+    expect(await clientHost()).toBeNull();
+    // the server says once that client entries will not load
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("gen:client-host");
+    await clientHost();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
     cwd.mockRestore();
   });
 });

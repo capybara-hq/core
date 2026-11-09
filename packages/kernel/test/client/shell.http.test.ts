@@ -187,6 +187,32 @@ describe("client shell reads", { timeout: 120_000 }, () => {
     expect(r.statusCode).toBe(404);
   });
 
+  it("a build of a client API the host does not run is never listed", async () => {
+    const setVersion = (v: number) =>
+      env.db
+        .updateTable("extension_client_builds")
+        .set({ api_version: v })
+        .where("package_sha256", "=", plainSha)
+        .execute();
+    await setVersion(2);
+    try {
+      expect((await orgRead(env.mem)).items.map((i) => i.plugin)).toEqual([PAGE]);
+      await setVersion(1);
+      expect((await orgRead(env.mem)).items.map((i) => i.plugin).sort()).toEqual(
+        [PAGE, PLAIN].sort(),
+      );
+      // the admin read drops it too
+      await env.db
+        .updateTable("extension_client_builds")
+        .set({ api_version: 2 })
+        .where("package_sha256", "=", pageSha)
+        .execute();
+      expect((await adminRead()).items).toEqual([]);
+    } finally {
+      await env.db.updateTable("extension_client_builds").set({ api_version: 1 }).execute();
+    }
+  });
+
   it("enabled false under the kill switch with no items", async () => {
     await setKillSwitch(env.root, { enabled: false });
     expect(await orgRead(env.mem)).toEqual({ enabled: false, apiVersion: 1, items: [] });

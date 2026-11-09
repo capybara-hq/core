@@ -3,6 +3,7 @@ import "server-only";
 import "./register";
 import { headers } from "next/headers";
 import { ApiClientError } from "../api";
+import { safeUiOf } from "../client-extensions";
 import { NONCE_HEADER, PATH_HEADER } from "../headers";
 import { isSignedOut } from "../signed-out";
 
@@ -19,6 +20,16 @@ export async function currentPath(): Promise<string> {
  */
 export async function currentNonce(): Promise<string> {
   return (await headers()).get(NONCE_HEADER) ?? "";
+}
+
+/**
+ * Whether this document renders in safe mode (client extensions spec §10.1): `?safe-ui=1` or the
+ * session cookie the proxy set for it, so a `router.refresh()` after a client navigation (the URL
+ * no longer has the parameter) still renders no client code.
+ */
+export async function currentSafeUi(): Promise<boolean> {
+  const h = await headers();
+  return safeUiOf(h.get(PATH_HEADER) ?? "/", h.get("cookie"));
 }
 
 export { isSignedOut };

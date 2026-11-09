@@ -131,6 +131,12 @@ const stopped = (kill: ClientExtensionsKillSwitch, plugin: string) =>
   !kill.enabled || kill.disabled.includes(plugin);
 
 /**
+ * Whether the web host runs a build of this client API version (spec §4.2: one version before
+ * 0.1.0). Imports refuse newer ones; a build the host cannot run is never listed in a shell read.
+ */
+const supported = (r: { api_version: number }) => r.api_version === CLIENT_API_VERSION;
+
+/**
  * Who may load which client code (client extensions spec §9.2, §9.3, §10.2), decided from PG on
  * every request: no process state, nothing cached, so every replica answers the same and a change
  * (an org switch, an upgrade, the kill switch) applies at once.
@@ -216,6 +222,7 @@ export class ClientAccess {
         "b.assets as assets",
         "b.integrity as integrity",
         "b.object_prefix as object_prefix",
+        "b.api_version as api_version",
       ]);
   }
 
@@ -320,7 +327,7 @@ export class ClientAccess {
     ]);
     if (!kill.enabled) return { enabled: false, apiVersion: CLIENT_API_VERSION, items: [] };
     const items = rows
-      .filter((r) => !stopped(kill, r.plugin))
+      .filter((r) => !stopped(kill, r.plugin) && supported(r))
       .map(
         (r): ClientExtensionItem => ({
           plugin: r.plugin,
@@ -347,7 +354,7 @@ export class ClientAccess {
     const [kill, rows] = await Promise.all([readClientExtensions(db, this.log), q.execute()]);
     if (!kill.enabled) return { enabled: false, apiVersion: CLIENT_API_VERSION, items: [] };
     const items = rows.flatMap((r): ClientExtensionItem[] => {
-      if (stopped(kill, r.plugin) || r.entry === null) return [];
+      if (stopped(kill, r.plugin) || !supported(r) || r.entry === null) return [];
       const components = componentsOf(r.section)
         .filter((c) => c.slot.id === "platform.page")
         .map((c) => ({ id: c.id, slot: c.slot.id }));

@@ -9,11 +9,10 @@ import { AppFrame } from "../../components/shell/AppFrame";
 import { KernelStarting } from "../../components/shell/KernelStarting";
 import { ThemeRoot } from "../../components/theme-root";
 import { setupReady } from "../../lib/agents";
-import { isSafeUi } from "../../lib/client-extensions";
 import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
-import { clientHostBuild } from "../../lib/server/client-host";
-import { currentNonce, currentPath } from "../../lib/server/page";
+import { clientHost } from "../../lib/server/client-host";
+import { currentNonce, currentPath, currentSafeUi } from "../../lib/server/page";
 import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server/query";
 import { getShell } from "../../lib/server/session";
 import { workspaceThemeMetadata } from "../../lib/server/theme";
@@ -28,8 +27,9 @@ export const generateMetadata = workspaceThemeMetadata;
  * wave (web query cache spec §3.1), and hands both to the browser's cache. The shell's themes read
  * gives the viewer's theme, linked and branded by `ThemeRoot` before the first paint (themes spec
  * §8). The page's client extensions (client extensions spec §11): unless safe mode
- * (`?safe-ui=1`), their import map, preloads and stylesheets, and `ClientHost` around the frame,
- * which imports them after hydration. Client navigations don't re-render it. The URL has no `(app)`.
+ * (`?safe-ui=1` or its session cookie), their import map, preloads and stylesheets, and
+ * `ClientHost` around the frame, which imports them after hydration. Client navigations don't
+ * re-render it. The URL has no `(app)`.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const qc = serverQueryClient();
@@ -53,9 +53,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // No page serves the path. `[...rest]` throws `notFound()` itself, below this layout, so its 404
   // renders inside the App Shell.
   if (prefetched.route === "unknown" && matchRoute(pathname) === null) notFound();
-  // Safe mode holds for the document (client navigations never re-render this layout).
-  const safe = isSafeUi(path);
-  const [hostBuild, nonce] = await Promise.all([clientHostBuild(), currentNonce()]);
+  // Safe mode: `?safe-ui=1` or its session cookie, so a refresh after a client navigation (the URL
+  // without the parameter) still renders no client code.
+  const [safe, host, nonce] = await Promise.all([currentSafeUi(), clientHost(), currentNonce()]);
   const source = shell.clientSource;
   return (
     <HydrateCache state={dehydrateFor(qc)}>
@@ -65,10 +65,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           set={shell.client}
           nonce={nonce}
           safe={safe}
-          hostBuild={hostBuild}
+          host={host}
           scope={source.kind === "admin" ? "admin" : "org"}
         />
-        <ClientHostRoot source={source} safe={safe} hostReady={hostBuild !== null}>
+        <ClientHostRoot source={source} safe={safe} hostReady={host !== null}>
           <AppFrame version={`v${pkg.version}`}>{children}</AppFrame>
         </ClientHostRoot>
       </ThemeRoot>

@@ -400,6 +400,7 @@
       "undeclared": "This plugin ships client code that its extension does not declare (permissions.client). Repack it with capybara-plugin pack and import it again.",
       "integrity_mismatch": "A client file of this plugin does not match the integrity recorded in its manifest. The package may be damaged or altered; get a fresh copy and import it again.",
       "invalid": "The client code of this plugin is invalid: a file is missing, unlisted, too large, or a stylesheet is not allowed. Repack it with capybara-plugin pack and import it again.",
+      "api_unsupported": "This plugin's client code was built for a newer client API than this deployment supports. Upgrade Capybara, or rebuild the plugin for this version.",
       "not_found": "This plugin's interface code is not available: the plugin may have been switched off or upgraded, or its interface code stopped. Reload the page."
     },
     "invitation": {

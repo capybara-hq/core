@@ -151,6 +151,11 @@ export const ERROR_CODES = {
    */
   "client.invalid": 400,
   /**
+   * The client section's `apiVersion` is newer than the deployment's `CLIENT_API_VERSION` (spec
+   * §4.2): the web host could not run the bundle; details `[{ apiVersion, supported }]`.
+   */
+  "client.api_unsupported": 400,
+  /**
    * A client file URL (`/api/v1/client/<plugin>/<build>/<file>`, spec §9.3) the caller may not
    * fetch: an unknown or old build, a file the build does not list (by its exact key), an extension
    * not running or not approved, not enabled in any live org the caller belongs to, or stopped by
