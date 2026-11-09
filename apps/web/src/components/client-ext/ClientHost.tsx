@@ -342,6 +342,7 @@ export function ClientHost({
 
   const controls = useMemo<ClientHostControls>(
     () => ({
+      safe,
       item: itemOf,
       reportError: (plugin, contribution, kind, error) => {
         const item = itemOf(plugin);
@@ -360,7 +361,7 @@ export function ClientHost({
           },
         ),
     }),
-    [itemOf],
+    [safe, itemOf],
   );
 
   const targetHasCode = useCallback(

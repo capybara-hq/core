@@ -1,7 +1,8 @@
 "use client";
 
-import { useToast } from "@capybara-hq/design";
-import { useLocale } from "next-intl";
+import { EmptyState, LoadFailed, SkeletonBars, useToast } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Component,
   type ComponentType,
@@ -12,11 +13,15 @@ import {
   useRef,
   useState,
 } from "react";
+import { reloadDocument } from "../../lib/browser";
 import type { ClientExtensionItem } from "../../lib/client-extensions";
 import type { FormAnswer } from "../../lib/conversations";
+import { deploymentSettingsQuery } from "../../lib/query/admin";
+import { retryOnMountOf } from "../../lib/query/client";
 import { useAppMutation } from "../../lib/query/mutation";
 import { postUiAction, type UiContributionItem, type UiView, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { isDisabledForSession } from "../client-ext/crash-budget";
 import {
   type ActionFn,
   type HostApi,
@@ -100,6 +105,51 @@ export function useOfferedContributions(items: UiContributionItem[]): UiContribu
       ),
     [items, registry, controls],
   );
+}
+
+/**
+ * The admin console's platform pages it may offer (its sidebar's 扩展 group). The console document
+ * loads no client set (a platform page's own document loads only its plugin's), so a component page
+ * is offered unless its code is off as far as this document can tell: safe mode, the kill switch or
+ * its list (the deployment settings, read only when a component page is listed), or the plugin
+ * switched off in this document or for its build in this session (the crash budget).
+ */
+export function useOfferedPlatformPages(items: UiContributionItem[]): UiContributionItem[] {
+  const registry = useClientRegistry();
+  const controls = useClientHostControls();
+  const components = items.some((c) => c.kind === "component");
+  const q = deploymentSettingsQuery();
+  const kill = useQuery({
+    ...q,
+    enabled: components && !controls.safe,
+    retryOnMount: retryOnMountOf(q.queryKey),
+  }).data?.clientExtensions;
+  return useMemo(
+    () =>
+      items.filter((c) => {
+        if (c.kind !== "component") return true;
+        if (controls.safe || kill?.enabled === false || kill?.disabled.includes(c.plugin))
+          return false;
+        if (registry[c.plugin]?.status === "disabled") return false;
+        const item = controls.item(c.plugin);
+        return item === undefined || !isDisabledForSession(item.plugin, item.build);
+      }),
+    [items, registry, controls, kill],
+  );
+}
+
+/**
+ * Where a `component` contribution stands in this document: `ready`, `loading`, `failed` (the set
+ * delivers it but its entry failed to load or lacks it) or `off` (safe mode, the kill switch, a
+ * plugin outside the document's set, withdrawn or switched off by the crash budget).
+ */
+export function useComponentAvailability(c: ComponentRef): "ready" | "loading" | "failed" | "off" {
+  const found = useClientComponent(c);
+  const registry = useClientRegistry();
+  const controls = useClientHostControls();
+  if (found.status !== "none") return found.status;
+  if (!delivered(controls.item(c.plugin), c)) return "off";
+  return registry[c.plugin]?.status === "disabled" ? "off" : "failed";
 }
 
 /** The `component` contributions whose client component is ready (registered and active). */
@@ -331,4 +381,36 @@ export function ClientComponentBlock({
     </BlockBoundary>
   );
   return frame ? frame(block) : block;
+}
+
+/**
+ * A `component` contribution that is the body of a page or a section (`org.page`, `platform.page`,
+ * `agent.detail.section`; client extensions spec §10.3): the host always draws it, like a
+ * component panel. The component in its block once ready; the loading state while its module
+ * loads; the failure line (retry reloads the page) when its load failed; the designed "not
+ * available" state when its code is off (safe mode, the kill switch, a spent crash budget, a
+ * withdrawn plugin). `size`: the empty state's (`page` for a page body, `panel` inside a section).
+ */
+export function ClientComponentBody({
+  c,
+  args,
+  hostProps,
+  size,
+}: {
+  c: UiContributionItem;
+  args: ComponentArgs;
+  hostProps: Record<string, unknown>;
+  size: "page" | "panel";
+}): ReactNode {
+  const t = useTranslations("clientExtensions");
+  const locale = uiLocale(useLocale());
+  const state = useComponentAvailability(c);
+  if (state === "ready") return <ClientComponentBlock c={c} args={args} hostProps={hostProps} />;
+  if (state === "loading") return <SkeletonBars />;
+  if (state === "failed") {
+    return (
+      <LoadFailed name={c.title[locale]} reason={t("componentFailed")} onRetry={reloadDocument} />
+    );
+  }
+  return <EmptyState size={size} text={t("componentOff")} hint={t("componentOffHint")} />;
 }

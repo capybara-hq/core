@@ -31,6 +31,7 @@ import type { RunState } from "../client-ext/run-state";
 import { BlockBoundary } from "../conversation/BlockBoundary";
 import {
   ClientComponentBlock,
+  ClientComponentBody,
   useClientComponent,
   useReadyContributions,
   useSlotHasClientCode,
@@ -466,7 +467,13 @@ function OrgPageSlot({
   const key = uiKey(c.plugin, c.id);
   if (c.kind === "component")
     return (
-      <ClientComponentBlock key={key} c={c} args={{ orgId: args.orgId }} hostProps={NO_PROPS} />
+      <ClientComponentBody
+        key={key}
+        c={c}
+        args={{ orgId: args.orgId }}
+        hostProps={NO_PROPS}
+        size="page"
+      />
     );
   return (
     <BlockBoundary name={c.title[locale]}>
@@ -510,7 +517,15 @@ function PlatformPageSlot({
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
   if (c.kind === "component")
-    return <ClientComponentBlock key={key} c={c} args={{ orgId: null }} hostProps={NO_PROPS} />;
+    return (
+      <ClientComponentBody
+        key={key}
+        c={c}
+        args={{ orgId: null }}
+        hostProps={NO_PROPS}
+        size="page"
+      />
+    );
   return (
     <BlockBoundary name={c.title[locale]}>
       {c.kind === "embed" ? (
@@ -591,18 +606,19 @@ function AgentSectionSlot({
   const title = c.title[locale];
   const key = uiKey(c.plugin, c.id);
   if (c.kind === "component") {
+    // the section always draws its frame, with the component's state inside
     return (
-      <ClientComponentBlock
-        key={`${key}/${args.agentId}`}
-        c={c}
-        args={{ orgId: args.orgId, agentId: args.agentId }}
-        hostProps={{ agentId: args.agentId }}
-        frame={(block) => (
-          <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
-            <div data-extension-section={key}>{block}</div>
-          </FormSection>
-        )}
-      />
+      <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+        <div data-extension-section={key}>
+          <ClientComponentBody
+            key={`${key}/${args.agentId}`}
+            c={c}
+            args={{ orgId: args.orgId, agentId: args.agentId }}
+            hostProps={{ agentId: args.agentId }}
+            size="panel"
+          />
+        </div>
+      </FormSection>
     );
   }
   return (

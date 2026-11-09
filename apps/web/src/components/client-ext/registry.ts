@@ -68,6 +68,8 @@ export function useShellBanner(): ReactNode {
 
 /** What the host offers the blocks that render client components (Task 18's boundaries). */
 export interface ClientHostControls {
+  /** Safe mode, fixed for the document: no client code runs, no component is offered. */
+  safe: boolean;
   /** The set's item of a plugin (its build: asset URLs, reports). */
   item(plugin: string): ClientExtensionItem | undefined;
   /**
@@ -93,6 +95,7 @@ export interface ClientHostControls {
 }
 
 const ControlsContext = createContext<ClientHostControls>({
+  safe: false,
   item: () => undefined,
   reportError: () => {},
   subscribe: () => () => {},

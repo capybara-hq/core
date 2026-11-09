@@ -11,6 +11,7 @@ import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
 import { type UiContributionItem, uiLocale } from "../../lib/ui";
 import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
+import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 
 /**
  * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
@@ -226,18 +227,22 @@ export const pluginPageHref = (plugin: string, id: string) =>
 
 /**
  * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
- * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
- * share a title, each label gets its plugin name. Empty while loading, without pages or on a failed
- * read (the group is then hidden).
+ * enabled extensions, schema views, embeds and client components, labelled by the page title; when
+ * two pages share a title, each label gets its plugin name. A component page is listed only while
+ * its code may run (not in safe mode, under the kill switch or after the crash budget). Empty
+ * while loading, without pages or on a failed read (the group is then hidden).
  */
 export function useExtensions(
   orgId: string,
   locale: string,
 ): { id: string; label: string; href: string }[] {
   const query = extensionPagesQuery(orgId);
-  const pages = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? [];
-  return extensionItems(pages, locale);
+  const pages =
+    useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? NO_PAGES;
+  return extensionItems(useOfferedContributions(pages), locale);
 }
+
+const NO_PAGES: UiContributionItem[] = [];
 
 /** The Extensions group's items for `pages`. */
 function extensionItems(
