@@ -9,8 +9,8 @@ import { usePathname } from "../../i18n/navigation";
 import { type ClientScopeKey, clientScopeOf } from "../../lib/client-extensions";
 
 /**
- * Whether a navigation from `from` to `to` must load a new document. Never in safe mode (a reload
- * without the parameter would end it); never within one scope. Out of a document that loaded client
+ * Whether a navigation from `from` to `to` must load a new document. Never in safe mode (nothing
+ * is loaded, and the session cookie keeps the next document safe anyway); never within one scope. Out of a document that loaded client
  * code, always; into a scope that may carry client code (`targetHasCode` says unknown or yes), too:
  * the plain admin console carries none.
  */

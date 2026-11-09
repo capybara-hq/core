@@ -410,11 +410,10 @@ describe("ClientHost", () => {
     window.history.pushState(null, "", "/admin");
     rerender(pageElement(host(withStyle, { safe: false })));
     expect(navigate).not.toHaveBeenCalled();
-    // the exit clears the session cookie and loads the page without the parameter
+    // the exit loads the page with safe-ui=0: the proxy clears the (HttpOnly) session cookie
     window.history.replaceState(null, "", "/skills?safe-ui=1&tab=x");
     fireEvent.click(screen.getByRole("button", { name: "Exit safe mode" }));
-    expect(document.cookie).not.toContain("cap_safe_ui=1");
-    expect(navigate).toHaveBeenCalledWith("/skills?tab=x");
+    expect(navigate).toHaveBeenCalledWith("/skills?safe-ui=0&tab=x");
     sheet.remove();
   });
 

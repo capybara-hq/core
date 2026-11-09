@@ -21,7 +21,6 @@ import {
   type ClientReportKind,
   type ClientReportScope,
   type ClientScopeKey,
-  clearSafeUiCookie,
   setHasCode,
   withSafeUi,
 } from "../../lib/client-extensions";
@@ -395,12 +394,12 @@ export function ClientHost({
         <ClientRegistryProvider value={exposed}>
           {safe && setHasCode(set) ? (
             <SafeModeBanner
-              onExit={() => {
-                clearSafeUiCookie();
+              onExit={() =>
+                // `safe-ui=0`: the proxy clears the HttpOnly session cookie on this request
                 navigate(
                   withSafeUi(`${location.pathname}${location.search}${location.hash}`, false),
-                );
-              }}
+                )
+              }
             />
           ) : null}
           {children}

@@ -74,9 +74,9 @@ export const SAFE_UI_PARAM = "safe-ui";
 
 /**
  * The session cookie that keeps safe mode on for the browser session (spec §10.1, fix-round ruling):
- * set by the proxy on any document requested with `?safe-ui=1`, cleared by `?safe-ui=0` and by
- * the banner's exit. No Max-Age: it ends with the browser session. Not HttpOnly: the banner clears
- * it before its reload.
+ * set by the proxy on any document requested with `?safe-ui=1`, cleared by the proxy on
+ * `?safe-ui=0` (the banner's exit loads the page with it). No Max-Age: it ends with the browser
+ * session. HttpOnly: only the proxy reads or writes it.
  */
 export const SAFE_UI_COOKIE = "cap_safe_ui";
 
@@ -106,27 +106,19 @@ export function safeUiOf(pathWithQuery: string, cookieHeader: string | null): bo
 export function safeUiCookieFor(pathWithQuery: string, https: boolean): string | null {
   const param = safeUiParam(pathWithQuery);
   const secure = https ? "; Secure" : "";
-  if (param === "1") return `${SAFE_UI_COOKIE}=1; Path=/; SameSite=Lax${secure}`;
-  if (param === "0") return `${SAFE_UI_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  if (param === "1") return `${SAFE_UI_COOKIE}=1; Path=/; HttpOnly; SameSite=Lax${secure}`;
+  if (param === "0")
+    return `${SAFE_UI_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`;
   return null;
 }
 
-/** Ends safe mode in this browser (the banner's exit, before it reloads without the parameter). */
-export function clearSafeUiCookie(): void {
-  try {
-    const secure = window.location.protocol === "https:" ? "; Secure" : "";
-    // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is async and not everywhere
-    document.cookie = `${SAFE_UI_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
-  } catch {
-    // a blocked cookie jar: the reload carries safe-ui=0, which the proxy clears it with
-  }
-}
-
-/** The same URL with safe mode on (`withSafeUi(href, true)`) or off. */
+/**
+ * The same URL asking for safe mode on (`safe-ui=1`) or off (`safe-ui=0`: the request that ends it,
+ * so the proxy clears the session cookie).
+ */
 export function withSafeUi(href: string, on = true): string {
   const url = new URL(href, "http://x");
-  if (on) url.searchParams.set(SAFE_UI_PARAM, "1");
-  else url.searchParams.delete(SAFE_UI_PARAM);
+  url.searchParams.set(SAFE_UI_PARAM, on ? "1" : "0");
   const abs = /^[a-z][a-z0-9+.-]*:/i.test(href);
   return abs ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
 }

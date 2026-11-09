@@ -213,7 +213,7 @@ describe("document CSP", () => {
   it("?safe-ui=1 sets the safe-mode session cookie, ?safe-ui=0 clears it", async () => {
     const on = await proxy(page("/agents?safe-ui=1"));
     const set = on.headers.get("set-cookie") ?? "";
-    expect(set).toContain("cap_safe_ui=1; Path=/; SameSite=Lax");
+    expect(set).toContain("cap_safe_ui=1; Path=/; HttpOnly; SameSite=Lax");
     // a session cookie: it ends with the browser session
     expect(set).not.toMatch(/Max-Age|Expires/i);
     expect(set).not.toContain("Secure");
@@ -222,7 +222,7 @@ describe("document CSP", () => {
     );
     expect(https.headers.get("set-cookie")).toContain("SameSite=Lax; Secure");
     const off = await proxy(page("/agents?safe-ui=0", { cookie: "cap_at=at; cap_safe_ui=1" }));
-    expect(off.headers.get("set-cookie")).toContain("cap_safe_ui=; Path=/; Max-Age=0");
+    expect(off.headers.get("set-cookie")).toContain("cap_safe_ui=; Path=/; Max-Age=0; HttpOnly");
     // without the parameter the cookie is left alone
     expect((await proxy(page("/agents"))).headers.get("set-cookie")).toBeNull();
   });
