@@ -19,7 +19,7 @@ In core, extensions are exercised by `plugins/model-fake` and by the fake extens
 |---|---|---|
 | May only import `@capybara-hq/plugin-sdk`, `zod` and other third-party npm packages; **may not** import `@capybara-hq/kernel` or files outside the extension directory. Tests may use the devDependency `@capybara-hq/testing` | `pnpm check:deps` | `plugin-imports-kernel`, `plugin-imports-outside` |
 | Must not use `setTimeout` / `setInterval` / `setImmediate` / `node:timers` (browser-only client modules are exempt: the files `src/client.ts[x]` reaches through relative or `#` imports and `src/index.ts` does not) | `pnpm check:extension-state` | `plugin-timer` |
-| No top-level `let` / `var` / `new Map/Set/WeakMap/WeakSet` / array literals at module level | `pnpm check:extension-state` | `plugin-module-state` |
+| No top-level `let` / `var` / `new Map/Set/WeakMap/WeakSet` / array literals at module level (browser-only client modules are exempt, as for timers) | `pnpm check:extension-state` | `plugin-module-state` |
 | `ctx.secrets` / `ctx.storage` / `ctx.models` / `ctx.http.route` / `ctx.tools.register` / `ctx.extensionPoints` / `ctx.ui.view` / `ctx.ui.action` / `ctx.setup.check` used in `setup(ctx)` must be declared in the manifest | `pnpm check:extension-permissions` | `perm-secrets`, `perm-storage`, `perm-models`, `perm-http`, `perm-tools`, `perm-extension-point`, `perm-ui`, `perm-setup-check`, `perm-reserved` (access that cannot be confirmed) |
 | `ctx.kv` writes must carry `ttlSeconds` (enforced at the type level) | `pnpm typecheck` | — |
 | Queue names and job ids contain no `:` (a BullMQ limit) | Runtime: `ctx.queue.define` / `add` throw `TypeError` directly | — |
