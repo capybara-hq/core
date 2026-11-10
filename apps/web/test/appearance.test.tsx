@@ -94,6 +94,7 @@ const orgRoutes = (
   [`GET ${O}/components?kind=theme`]: () => json(200, components),
   "GET /api/v1/platform/theme": () => json(200, platformDefault),
   [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "zh" } }),
+  [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
 });
 
 beforeEach(() => resetNavigation("/"));

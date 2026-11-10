@@ -491,9 +491,10 @@ interface UiSlotSpec {
 - **The arrangement gains `use`** for single slots: `{ [slotId]: { use: string | null } }`, keyed
   `<extension>/<contribution>` (`UI_CONTRIBUTION_KEY_RE`); `hidden` / `order` are refused on a
   single slot and `use` on a list slot (400 `validation_failed`).
-- Org admins set the org's (the 界面位置 section on `/extensions` gains, per
-  replaceable slot, a select 内置 / each contribution); the super admin sets the platform default
-  (平台设置 › 界面位置). Storage, merge and routes are L1's (`orgs.settings.uiArrangement`,
+- Org admins set the org's (the section 替换 on 组织设置 › 外观, `/settings/appearance`, before
+  界面位置: per replaceable slot a select 内置 / each contribution and one 来源 column, 本组织 with
+  改为跟随平台 or 跟随平台; maintainer decision 2026-11-10); the super admin sets the platform
+  default (平台设置 › 替换, no 来源). Storage, merge and routes are L1's (`orgs.settings.uiArrangement`,
   `deployment_settings` key `uiArrangement`, per-slot replace, `null` removes the entry).
 - **Resolution** (C4): the org's entry for the slot if present, else the platform's, else none.
   `use: null` or no entry = the built-in. A `use` naming a contribution that is not available in

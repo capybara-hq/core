@@ -2592,6 +2592,8 @@
     "search": "Search extensions",
     "emptyTab": "No extensions of this kind",
     "noResults": "No extension name contains \"{query}\".",
+    "arrangementPointer": "Replacing, showing, hiding and ordering extension UI is set on the organization's Appearance settings.",
+    "arrangementLink": "UI placement is in Org settings → Appearance",
     "stateTitle": "State",
     "capabilitiesTitle": "Capabilities",
     "permissionsNone": "None",
@@ -4723,8 +4725,7 @@
       "move": "Order",
       "slot": "Place",
       "use": "Uses",
-      "source": "From",
-      "reset": "Follow"
+      "source": "From"
     },
     "slots": {
       "conversationPanel": "Conversation panels",

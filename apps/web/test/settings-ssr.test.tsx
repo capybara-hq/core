@@ -487,7 +487,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
-      [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
     };
     const calls = stubApi({
       ...routes,
@@ -506,11 +505,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       );
     await vi.waitFor(() => expect(screen.getByText(en.extensions.disabled)).toBeTruthy());
     // the list is not read again (the answer is the extension); the shown readiness,
-    // 界面位置, previewers and default providers are, and the cached models and purposes are stale
+    // previewers and default providers are, and the cached models and purposes are stale
+    // (界面位置 lives on 组织设置 › 外观: not shown here, so not read)
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `PUT ${O}/extensions/todo`,
       `GET ${O}/readiness`,
-      `GET ${O}/ui/arrangement`,
       `GET ${O}/file-previewers`,
       `GET ${O}/extension-points`,
     ]);
