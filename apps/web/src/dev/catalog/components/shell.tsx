@@ -1,4 +1,15 @@
-import { ActionRow, Grid, PageHeader, StatCards, StatusBar, StatusMark } from "@capybara-hq/design";
+import {
+  ActionRow,
+  DecorationLayer,
+  Grid,
+  PageHeader,
+  ReplaceableFrame,
+  SafeModeBanner,
+  StatCards,
+  StatusBar,
+  StatusMark,
+  Text,
+} from "@capybara-hq/design";
 import { DETAIL_KPIS } from "../fixtures";
 import { Row, Section } from "../frame";
 import { statusFixture } from "../shell-fixture";
@@ -57,6 +68,26 @@ export function ShellSection() {
         <Grid columns={1}>
           <StatusBar {...statusFixture("/agents/support-triage")} pageStatus="已筛选 18 / 24" />
         </Grid>
+      </Row>
+      <Row label="SafeModeBanner">
+        <Grid columns={1}>
+          <SafeModeBanner onExit={noop} />
+        </Grid>
+      </Row>
+      <Row label="ReplaceableFrame · 已就绪 / 等待替换（隐藏但保留占位）">
+        <Grid columns={2}>
+          <ReplaceableFrame pending={false}>
+            <Text>内置内容</Text>
+          </ReplaceableFrame>
+          <ReplaceableFrame pending>
+            <Text>内置内容</Text>
+          </ReplaceableFrame>
+        </Grid>
+      </Row>
+      <Row label="DecorationLayer（全视口、aria-hidden、不拦截指针；此处无可见内容）">
+        <DecorationLayer>
+          <span data-cap-interactive="true" />
+        </DecorationLayer>
       </Row>
     </Section>
   );

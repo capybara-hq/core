@@ -1,6 +1,7 @@
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
+export { DecorationLayer } from "./decoration-layer";
 export {
   assertHeader,
   type HeaderAction,
@@ -9,11 +10,16 @@ export {
 } from "./page-header";
 export { isTouchPointer, keyboardInset } from "./pointer";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
+export { ReplaceableFrame } from "./replaceable-frame";
+export { SafeModeBanner } from "./safe-mode-banner";
 export {
   initialOf,
   type SetupStep,
+  SIDEBAR_DRAWER_QUERY,
+  SIDEBAR_RAIL_QUERY,
   Sidebar,
   type SidebarActivity,
+  type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversation,
   type SidebarConversations,

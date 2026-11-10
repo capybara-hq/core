@@ -47,6 +47,12 @@ export interface ExtensionLoadStatus {
    * 省略视同 null。
    */
   servingVersion?: string | null;
+  /**
+   * The package sha256 this replica serves for the plugin: the row's own `sha256` when `loaded`,
+   * the older package still running beside a failed / pending version, null when none runs.
+   * Omitted counts as null.
+   */
+  servingSha256?: string | null;
 }
 
 /** detail 的长度上限（报错信息可能很长）。 */
@@ -90,6 +96,7 @@ export class ReplicaStatusStore {
       reason: s.reason,
       detail: s.detail === null ? null : this.cleanDetail(s.detail),
       serving_version: s.servingVersion ?? null,
+      serving_sha256: s.servingSha256 ?? null,
       http_replica_id: this.httpReplicaId ?? null,
       heartbeat_at: sql<Date>`now()` as unknown as Date,
     };
@@ -105,6 +112,7 @@ export class ReplicaStatusStore {
           reason: values.reason,
           detail: values.detail,
           serving_version: values.serving_version,
+          serving_sha256: values.serving_sha256,
           http_replica_id: values.http_replica_id,
           heartbeat_at: values.heartbeat_at,
         }),

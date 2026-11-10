@@ -12,6 +12,7 @@ import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -41,11 +42,11 @@ const ref = (id: string, en: string, zhName: string, schemes: ("dark" | "light")
   schemes,
   singleScheme: schemes.length === 1 ? schemes[0] : null,
   logo: null,
-  cssUrl: `/api/v1/themes/${id}/1/theme.css`,
+  cssUrl: themeCssUrl(id, "1"),
 });
 const sw = (bg: string) => ({ bg, panel: "#111", ink: "#eee", accent: "#f60" });
 const NIGHT = {
-  ...ref("t-night", "Night City", "夜之城", ["dark"]),
+  ...ref("t-night", "Neon Grid", "霓虹网格", ["dark"]),
   swatches: { dark: sw("#05070d") },
 };
 const PAPER = {
@@ -62,7 +63,7 @@ const themesOf = (org: { id: string | null; personal: "allowed" | "locked" }) =>
 const orgComp = (over: Record<string, unknown>) => ({
   kind: "theme",
   id: "t-night",
-  name: "night-city",
+  name: "neon-grid",
   description: null,
   plugin: "fake-theme",
   itemId: "11111111-1111-4111-8111-111111111111",
@@ -85,7 +86,7 @@ const ORG_COMPONENTS = {
 
 const orgRoutes = (
   org: { id: string | null; personal: "allowed" | "locked" } = { id: null, personal: "allowed" },
-  // the platform default (public read); the fixture's is Night City, locked on in the org
+  // the platform default (public read); the fixture's is Neon Grid, locked on in the org
   platformDefault: unknown = NIGHT,
   components: unknown = ORG_COMPONENTS,
 ): Routes => ({
@@ -107,7 +108,7 @@ describe("/settings/appearance (组织设置 › 外观)", () => {
     await renderRouteWithCache("/settings/appearance", orgRoutes(), { locale: "zh" });
     expect(await screen.findByRole("heading", { name: A.themes.title })).toBeTruthy();
     const list = screen.getByRole("list", { name: A.themes.label });
-    const night = within(list).getByRole("switch", { name: "夜之城" });
+    const night = within(list).getByRole("switch", { name: "霓虹网格" });
     expect(night.getAttribute("aria-checked")).toBe("true");
     expect((night as HTMLButtonElement).disabled).toBe(true);
     expect(within(list).getByText(A.themes.lockedDefault)).toBeTruthy();
@@ -116,7 +117,7 @@ describe("/settings/appearance (组织设置 › 外观)", () => {
     );
     const picker = screen.getByRole("radiogroup", { name: A.org.label });
     const radios = within(picker).getAllByRole("radio");
-    expect(radios.map((r) => r.textContent)).toEqual([A.followPlatform, "夜之城", "纸"]);
+    expect(radios.map((r) => r.textContent)).toEqual([A.followPlatform, "霓虹网格", "纸"]);
     expect(radios[0]?.getAttribute("aria-checked")).toBe("true");
     await settle();
     expect(browser).toEqual([]);
@@ -147,7 +148,7 @@ describe("/settings/appearance (组织设置 › 外观)", () => {
     expect(await screen.findByRole("radiogroup", { name: A.org.label })).toBeTruthy();
   });
 
-  it("an org admin sets night-city with 允许成员自选 off; the save invalidates the org's themes", async () => {
+  it("an org admin sets neon-grid with 允许成员自选 off; the save invalidates the org's themes", async () => {
     let org: { id: string | null; personal: "allowed" | "locked" } = {
       id: null,
       personal: "allowed",
@@ -163,7 +164,7 @@ describe("/settings/appearance (组织设置 › 外观)", () => {
     const calls = stubApi(routes);
     await renderRouteWithCache("/settings/appearance", routes, { locale: "zh" });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("radio", { name: /夜之城/ }));
+    await user.click(await screen.findByRole("radio", { name: /霓虹网格/ }));
     await user.click(screen.getByRole("switch", { name: A.org.personal }));
     await user.click(screen.getByRole("button", { name: A.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
@@ -229,7 +230,7 @@ describe("/account/preferences › 外观", () => {
     client.setQueryData(orgThemesQuery("o2").queryKey, themesOf({ id: null, personal: "allowed" }));
     const picker = await screen.findByRole("radiogroup", { name: A.personal.label });
     const radios = within(picker).getAllByRole("radio");
-    expect(radios.map((r) => r.textContent)).toEqual([A.personal.default, "夜之城", "纸"]);
+    expect(radios.map((r) => r.textContent)).toEqual([A.personal.default, "霓虹网格", "纸"]);
     // above the time zone
     const headings = screen.getAllByRole("heading").map((h) => h.textContent);
     expect(headings.indexOf(A.personal.title)).toBeLessThan(
@@ -262,7 +263,7 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
   const comp = (over: Record<string, unknown>) => ({
     kind: "theme",
     id: "t-night",
-    name: "night-city",
+    name: "neon-grid",
     description: null,
     plugin: "fake-theme",
     itemId: "11111111-1111-4111-8111-111111111111",
@@ -278,7 +279,7 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     shownToOthers: true,
     version: "1",
     onIn: ["o1"],
-    theme: { name: { en: "Night City", zh: "夜之城" }, swatches: { dark: sw("#05070d") } },
+    theme: { name: { en: "Neon Grid", zh: "霓虹网格" }, swatches: { dark: sw("#05070d") } },
     ...over,
   });
   const PAPER_THEME = { name: { en: "Paper", zh: "纸" }, swatches: PAPER.swatches };
@@ -302,6 +303,8 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
   };
   const routes = (put: Routes[string]): Routes => ({
     ...orgRoutes(),
+    // 插件界面代码 lists the extensions with client code
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     "GET /api/v1/admin/components?kind=theme": () => json(200, THEMES),
@@ -326,9 +329,9 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
       within(picker)
         .getAllByRole("radio")
         .map((x) => x.textContent),
-    ).toEqual([A.builtin, "夜之城", "纸"]);
+    ).toEqual([A.builtin, "霓虹网格", "纸"]);
     const user = userEvent.setup();
-    await user.click(within(picker).getByRole("radio", { name: /夜之城/ }));
+    await user.click(within(picker).getByRole("radio", { name: /霓虹网格/ }));
     await user.click(screen.getByRole("button", { name: zh.admin.settings.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ uiTheme: { id: "t-night" } });
@@ -362,7 +365,7 @@ describe("/admin/themes", () => {
   const comp = (over: Record<string, unknown>) => ({
     kind: "theme",
     id: "t-night",
-    name: "night-city",
+    name: "neon-grid",
     description: null,
     plugin: "fake-theme",
     itemId: "11111111-1111-4111-8111-111111111111",
@@ -378,7 +381,7 @@ describe("/admin/themes", () => {
     shownToOthers: true,
     version: "1",
     onIn: ["o1"],
-    theme: { name: { en: "Night City", zh: "夜之城" }, swatches: { dark: sw("#05070d") } },
+    theme: { name: { en: "Neon Grid", zh: "霓虹网格" }, swatches: { dark: sw("#05070d") } },
     ...over,
   });
   const versions = () =>
@@ -398,6 +401,8 @@ describe("/admin/themes", () => {
         ],
       }),
     "GET /api/v1/admin/orgs": () => json(200, { orgs: [], limitDefaults: {} }),
+    // 插件界面代码 lists the extensions with client code
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/settings": () => json(200, { uiTheme: { id: "t-night" } }),
     "GET /api/v1/admin/components/theme/t-night/versions": versions,
     "GET /api/v1/admin/components/theme/t-paper/versions": versions,
@@ -408,7 +413,7 @@ describe("/admin/themes", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/themes", routes);
     const table = await screen.findByRole("table", { name: en.adminComponents.titles.theme });
-    const night = within(table).getByRole("link", { name: "Night City" });
+    const night = within(table).getByRole("link", { name: "Neon Grid" });
     expect(night.getAttribute("href")).toBe("/admin/themes/t-night");
     expect(
       within(night.closest("tr") as HTMLElement).getByText(
@@ -417,7 +422,7 @@ describe("/admin/themes", () => {
     ).toBeTruthy();
     const paper = within(table).getByRole("link", { name: "Paper" }).closest("tr") as HTMLElement;
     expect(within(paper).queryByText(en.adminComponents.state.platformDefault)).toBeNull();
-    expect(within(table).queryByText("night-city")).toBeNull();
+    expect(within(table).queryByText("neon-grid")).toBeNull();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -425,7 +430,7 @@ describe("/admin/themes", () => {
   it("the platform default's detail: its name, the note why, and neither 设置范围 nor 停用 (nor an upload)", async () => {
     stubApi(routes);
     await renderRouteWithCache("/admin/themes/t-night", routes);
-    expect(await screen.findByRole("heading", { name: "Night City" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Neon Grid" })).toBeTruthy();
     expect(screen.getByText(D.platformDefaultNote)).toBeTruthy();
     for (const label of [D.actions.scope, D.actions.disable, D.actions.upload]) {
       expect(screen.queryByRole("button", { name: label })).toBeNull();

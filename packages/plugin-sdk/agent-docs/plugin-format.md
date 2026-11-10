@@ -40,6 +40,7 @@ file is strict: an unknown key is an error. Fields (agent templates are listed u
 | `agents` | array of object | no |
 | `themes` | array of object | no |
 | `setupGuides` | array of object | no |
+| `suggestedAppearance` | object | no |
 | `extension` | object | no |
 <!-- /generated -->
 

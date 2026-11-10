@@ -13,10 +13,10 @@ import {
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AgentSelect, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
-import { channelConfig } from "../../../../components/config-form/channel";
+import { channelConfig, channelSchemaForMode } from "../../../../components/config-form/channel";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -26,13 +26,14 @@ import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
 import { configIssues, issueLines } from "../../../../lib/api";
 import type { LocalizedName } from "../../../../lib/catalog";
-import { createChannel, type UnboundPolicy } from "../../../../lib/channels";
+import { createChannel, type InboundMode, type UnboundPolicy } from "../../../../lib/channels";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import { provides } from "../../../../lib/extensions";
 import type { ConfigIssue } from "../../../../lib/json-schema";
 import { agentsQuery } from "../../../../lib/query/agents";
 import {
   channelGuideRefQuery,
+  channelInboundQuery,
   channelSchemaQuery,
   orgExtensionsQuery,
 } from "../../../../lib/query/channels";
@@ -162,13 +163,47 @@ function NewChannelForm({
   const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
   // No plugin picked yet: nothing to read until the person picks one (the key's plugin is unused).
   const schema = useQuery({ ...channelSchemaQuery(orgId, plugin), enabled: plugin !== "" });
-  // The plugin's setup guide (接入指南), rendered with the name typed so far (settled for 400 ms)
+  // The plugin's setup guide (接入指南), rendered with the name typed so far (settled for 250 ms;
+  // the guide keeps the last render on screen meanwhile)
   const guideRef = useQuery({ ...channelGuideRefQuery(orgId, plugin), enabled: plugin !== "" });
+  const inbound = useQuery({ ...channelInboundQuery(orgId, plugin), enabled: plugin !== "" });
   const [guideName, setGuideName] = useState("");
   useEffect(() => {
-    const timer = setTimeout(() => setGuideName(name.trim()), 400);
+    const timer = setTimeout(() => setGuideName(name.trim()), 250);
     return () => clearTimeout(timer);
   }, [name]);
+  // The inbound mode (channel inbound mode fields spec §5): the guide's mode switch picks it. The
+  // default is the guide's, except long connection when webhook has no public https address. Both
+  // belong to the plugin picked then.
+  const [picked, setPicked] = useState<{ plugin: string; mode: string }>();
+  const [shown, setShown] = useState<{ plugin: string; mode: string | null }>();
+  const webhook = inbound.data;
+  const requested =
+    picked?.plugin === plugin
+      ? picked.mode
+      : webhook !== undefined && !webhook.webhookPublic
+        ? "long_connection"
+        : undefined;
+  const shownMode = shown?.plugin === plugin ? shown.mode : null;
+  const mode: InboundMode =
+    (requested ?? shownMode) === "webhook" && shownMode !== null ? "webhook" : "long_connection";
+  const modeBlocked = mode === "webhook" && webhook?.webhookAvailable !== true;
+  const modeNote =
+    webhook === undefined
+      ? null
+      : modeBlocked
+        ? {
+            tone: "warn" as const,
+            text: webhook.webhookSupported
+              ? t("form.webhookUnavailable")
+              : t("detail.inboundUnsupported"),
+          }
+        : !webhook.webhookPublic
+          ? {
+              tone: "muted" as const,
+              text: t(mode === "webhook" ? "form.webhookNotPublic" : "form.webhookDefaultLong"),
+            }
+          : null;
   // A new connection invalidates the org's connections (the list, an agent's channels section).
   const create = useAppMutation({
     fn: (input: Parameters<typeof createChannel>[1]) => createChannel(orgId, input),
@@ -176,6 +211,8 @@ function NewChannelForm({
   });
 
   const js = schema.data ?? null;
+  // The fields follow the mode: another mode's fields are not drawn, this mode's are required
+  const formSchema = useMemo(() => channelSchemaForMode(js, mode), [js, mode]);
   const current = form?.plugin === plugin ? form : undefined;
   const config = current?.config ?? {};
   const configInvalid = current?.ok === false;
@@ -185,6 +222,7 @@ function NewChannelForm({
     agentId === "",
     schema.data === undefined,
     configInvalid,
+    modeBlocked,
   ].filter(Boolean).length;
   const back = () => router.push(preset.returnTo ?? "/channels");
 
@@ -199,6 +237,7 @@ function NewChannelForm({
         agentId,
         config,
         unboundPolicy: policy,
+        inboundMode: mode,
       });
       router.push(preset.returnTo ?? `/channels/${channel.id}`);
     } catch (e) {
@@ -261,13 +300,17 @@ function NewChannelForm({
           <Input value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
         </Field>
       </FormSection>
-      {plugin !== "" && guideRef.data ? (
+      {plugin !== "" && guideRef.data && webhook !== undefined ? (
         <FormSection id="guide" title={tg("title")} description={tg("hint")}>
           <SetupGuideSection
             key={plugin}
             orgId={orgId}
             guide={guideRef.data}
             query={guideName === "" ? {} : { name: guideName }}
+            mode={requested}
+            onModeChange={(m) => setPicked({ plugin, mode: m })}
+            onModeShown={(m) => setShown({ plugin, mode: m })}
+            modeNote={modeNote}
           />
         </FormSection>
       ) : null}
@@ -281,7 +324,7 @@ function NewChannelForm({
         ) : (
           <ConfigForm
             key={plugin}
-            schema={js}
+            schema={formSchema}
             value={{}}
             issues={error?.issues ?? []}
             disabled={pending}

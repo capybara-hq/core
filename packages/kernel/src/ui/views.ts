@@ -30,9 +30,14 @@ import {
   arrange,
   arrangeBySlot,
   effectiveEntry,
+  isSingle,
+  keyOf,
   ORG_ARRANGEABLE,
   orderItems,
+  resolveSingleSlot,
+  storedUse,
   type UiArrangement,
+  type UiListEntry,
 } from "./arrangement.js";
 import { callExtension } from "./call-extension.js";
 import { canUseSlot, UUID_RE } from "./registry.js";
@@ -58,12 +63,28 @@ export interface UiContributionItem {
   icon: UiIcon;
 }
 
-/** One slot of an arrangement listing: where its entry comes from and its items in order. */
-export interface UiArrangementSlot {
+/** A list slot of an arrangement listing: where its entry comes from and its items in order. */
+export interface UiArrangementListSlot {
   slot: UiSlotId;
   source: "org" | "platform" | "none";
   items: (UiContributionItem & { hidden: boolean })[];
 }
+
+/**
+ * A single slot of an arrangement listing (client extensions spec §6.3): the contributions that may
+ * replace the built-in, the stored `use` (null = the built-in; it may name a key that is not a
+ * candidate any more, which renders the built-in) and whether it is the platform's (the org has no
+ * entry; always false on the platform's own listing).
+ */
+export interface UiArrangementSingleSlot {
+  slot: UiSlotId;
+  candidates: { key: string; title: UiContribution["title"] }[];
+  use: string | null;
+  followsPlatform: boolean;
+}
+
+/** One slot of an arrangement listing. */
+export type UiArrangementSlot = UiArrangementListSlot | UiArrangementSingleSlot;
 
 /** 嵌入应用的签发目标：已核对组织启用与对话访问。 */
 export interface UiEmbedTarget {
@@ -242,13 +263,16 @@ export function dropForeignOpens(view: UiView, panels: ReadonlySet<string>): UiV
 }
 
 /**
- * Lists contributions for a listing route: no alias, a view's render registered; base order
- * (spec §5): extension name, then manifest order (stable).
+ * Lists contributions for a listing route: no alias, a view's render registered (an embed or a
+ * component is listed without one: a component's server view is optional); base order (spec §5):
+ * extension name, then manifest order (stable).
  */
 function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
   return entries
     .filter(
-      (c) => c.contribution.aliasOf === undefined && (c.contribution.kind === "embed" || c.render),
+      (c) =>
+        c.contribution.aliasOf === undefined &&
+        (c.contribution.kind === "embed" || c.contribution.kind === "component" || c.render),
     )
     .map((c, i) => ({ c, i }))
     .sort((x, y) => (x.c.plugin === y.c.plugin ? x.i - y.i : x.c.plugin < y.c.plugin ? -1 : 1))
@@ -264,10 +288,14 @@ function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
     }));
 }
 
+/** The candidates of a single slot in an arrangement listing. */
+const candidatesOf = (items: UiContributionItem[]): UiArrangementSingleSlot["candidates"] =>
+  items.map((i) => ({ key: keyOf(i), title: i.title }));
+
 /** The items in effective order, each marked hidden or not (hidden ones stay in place). */
 function withHidden(
   items: UiContributionItem[],
-  entry: { hidden: string[]; order: string[] },
+  entry: UiListEntry,
 ): (UiContributionItem & { hidden: boolean })[] {
   const hidden = new Set(entry.hidden);
   return orderItems(items, entry).map((i) => ({ ...i, hidden: hidden.has(`${i.plugin}/${i.id}`) }));
@@ -287,10 +315,13 @@ const notFound = () => new ApiError("ui.not_found", "UI contribution not found")
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** 校验动作结果，返回问题列表（空 = 合法）。 */
-function actionResultProblems(r: unknown): string[] {
+/**
+ * 校验动作结果，返回问题列表（空 = 合法）。A new `view` may carry `data` only for a component
+ * (`component`).
+ */
+function actionResultProblems(r: unknown, component: boolean): string[] {
   if (!isObj(r)) return ["action result must be an object"];
-  if (r.view !== undefined) return validateUiView(r.view).map((p) => `view: ${p}`);
+  if (r.view !== undefined) return validateUiView(r.view, { component }).map((p) => `view: ${p}`);
   if (r.toast === undefined) return [];
   if (!isObj(r.toast)) return ["toast must be an object with zh and en"];
   const out: string[] = [];
@@ -310,6 +341,8 @@ function actionResultProblems(r: unknown): string[] {
  *   org; org: the role alone); refused is 404 `ui.not_found`, the same as not existing;
  * - a view takes only the context id of its scope (`conversationId` / `agentId`): a missing one or
  *   one of another scope is 400 `validation_failed`;
+ * - a component's server view (`ctx.ui.view(<component id>)`) is served like a view of its slot;
+ *   only its views carry `data` (a plain view's `data` is 502 `ui.invalid_view`);
  * - 调用带 5 秒时限与中止信号：render 抛错 502 `ui.render_failed`、action 抛错 502 `ui.action_failed`、
  *   超时 504 `ui.timeout`、返回非法视图 502
  *   `ui.invalid_view`，都记告警日志、不写对话日志（这些不是模型可见的内容）。
@@ -349,9 +382,15 @@ export class UiViews {
 
   /**
    * The contributions the role may use in the org, of one slot or of every org-reachable slot:
-   * the extension enabled and loaded, a view's render registered, the slot's `minRole`
-   * ({@link canUseSlot}, so never `platform.page`); no alias, no `file.preview` contribution (the
-   * file previewers list those). Base order (spec §5): extension name, then manifest order.
+   * the extension enabled and loaded, a view's render registered (a component is listed with or
+   * without a server view), the slot's `minRole` ({@link canUseSlot}, so never `platform.page`);
+   * no alias, no `file.preview` contribution (the file previewers list those). Base order (spec
+   * §5): extension name, then manifest order. A single slot lists at most its winner
+   * ({@link resolveSingleSlot} over what this role may use: none until one is chosen, and the web
+   * renders the built-in); display only, the routes that serve a contribution never read it. The
+   * winner is listed whether or not its client code may load (kill switch, per-plugin disable,
+   * client API support): the web renders the built-in when the org's client set has no such
+   * component, and any other consumer must do the same.
    */
   async contributions(
     orgId: string,
@@ -364,7 +403,16 @@ export class UiViews {
       this.d.orgArrangement(orgId),
       this.d.platformArrangement(),
     ]);
-    return arrangeBySlot(items, (s) => effectiveEntry(org, platform, s).entry);
+    const winners = new Map<UiSlotId, string | null>();
+    const winnerOf = (s: UiSlotId): string | null => {
+      if (!winners.has(s)) {
+        const available = new Set(items.filter((i) => i.slot === s).map(keyOf));
+        winners.set(s, resolveSingleSlot(s, org?.[s], platform[s], available));
+      }
+      return winners.get(s) ?? null;
+    };
+    const shown = items.filter((i) => !isSingle(i.slot) || keyOf(i) === winnerOf(i.slot));
+    return arrangeBySlot(shown, (s) => effectiveEntry(org, platform, s).entry);
   }
 
   /** {@link contributions} before the arrangement: what the role may use, in base order. */
@@ -389,7 +437,8 @@ export class UiViews {
 
   /**
    * The arrangement page of an org: every org-arrangeable slot with the contributions the role may
-   * use, in effective order with the hidden ones in place, and where the entry comes from.
+   * use: a list slot in effective order with the hidden ones in place, and where the entry comes
+   * from; a single slot with its candidates, the stored `use` and whether it follows the platform.
    */
   async arrangementView(orgId: string, role: OrgRole): Promise<UiArrangementSlot[]> {
     // the page is for people who arrange or at least see the org's UI, not for a guest
@@ -399,45 +448,41 @@ export class UiViews {
       this.d.orgArrangement(orgId),
       this.d.platformArrangement(),
     ]);
-    return ORG_ARRANGEABLE.map((slot) => {
+    return ORG_ARRANGEABLE.map((slot): UiArrangementSlot => {
+      const items = base.filter((i) => i.slot === slot);
+      if (isSingle(slot)) {
+        return { slot, candidates: candidatesOf(items), ...storedUse(org, platform, slot) };
+      }
       const { entry, source } = effectiveEntry(org, platform, slot);
-      return {
-        slot,
-        source,
-        items: withHidden(
-          base.filter((i) => i.slot === slot),
-          entry,
-        ),
-      };
+      return { slot, source, items: withHidden(items, entry) };
     });
   }
 
   /**
    * The platform's arrangement page: every arrangeable slot with the contributions of every running
-   * extension (whatever its org enablement), ordered by the platform entry, hidden ones in place.
+   * extension (whatever its org enablement): a list slot ordered by the platform entry, hidden ones
+   * in place; a single slot with its candidates and the platform's `use`.
    */
   async platformArrangementView(): Promise<UiArrangementSlot[]> {
     const [base, platform] = await Promise.all([
       listed(this.d.host.uiContributions().filter((c) => c.slot.id !== "file.preview")),
       this.d.platformArrangement(),
     ]);
-    return UI_ARRANGEABLE_SLOTS.map((slot) => {
+    return UI_ARRANGEABLE_SLOTS.map((slot): UiArrangementSlot => {
+      const items = base.filter((i) => i.slot === slot);
+      if (isSingle(slot)) {
+        const { use } = storedUse(undefined, platform, slot);
+        return { slot, candidates: candidatesOf(items), use, followsPlatform: false };
+      }
       const { entry, source } = effectiveEntry(undefined, platform, slot);
-      return {
-        slot,
-        source,
-        items: withHidden(
-          base.filter((i) => i.slot === slot),
-          entry,
-        ),
-      };
+      return { slot, source, items: withHidden(items, entry) };
     });
   }
 
   /**
    * The `platform.page` contributions of the running extensions, for the admin console (super
-   * admins; no org enablement applies): no alias, a view's render registered. Base order like
-   * {@link contributions}.
+   * admins; no org enablement applies): no alias, a view's render registered (a component is
+   * listed with or without a server view). Base order like {@link contributions}.
    */
   async platformContributions(): Promise<UiContributionItem[]> {
     const items = listed(
@@ -506,7 +551,12 @@ export class UiViews {
     const { entry, args } = await this.resolve(t, "render");
     const render = entry.render as NonNullable<LoadedUiContribution["render"]>;
     const view = await this.call(t, "render", (signal) => render({ ...args, signal }));
-    this.check(t, "render", validateUiView(view));
+    // `data` only from a component's view (client extensions spec §5.2)
+    this.check(
+      t,
+      "render",
+      validateUiView(view, { component: entry.contribution.kind === "component" }),
+    );
     return dropForeignOpens(view, this.panels(t.plugin));
   }
 
@@ -526,7 +576,7 @@ export class UiViews {
         ...(input.answer !== undefined && { answer: input.answer }),
       }),
     );
-    this.check(t, "action", actionResultProblems(r));
+    this.check(t, "action", actionResultProblems(r, entry.contribution.kind === "component"));
     const res = r as { view?: UiView; toast?: { zh: string; en: string } };
     if (res.view !== undefined) return { view: dropForeignOpens(res.view, this.panels(t.plugin)) };
     return res.toast !== undefined ? { toast: { zh: res.toast.zh, en: res.toast.en } } : {};
@@ -569,7 +619,9 @@ export class UiViews {
         c.contribution.aliasOf === undefined &&
         (need === "embed"
           ? c.contribution.kind === "embed"
-          : c.contribution.kind === "view" && c[need] !== undefined),
+          : // a view, or a component's server view (served like a view of its slot)
+            (c.contribution.kind === "view" || c.contribution.kind === "component") &&
+            c[need] !== undefined),
     );
     if (t.scope === "platform") {
       const found = platformEntry(entry);

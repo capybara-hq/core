@@ -1,6 +1,7 @@
 import semver from "semver";
 import { z } from "zod";
 import { AGENT_TEMPLATE_LIMITS } from "./agent-template.js";
+import { type PluginClientSection, validateClientSection } from "./client-section.js";
 import { CONFIG_UI_LIMITS, type JsonSchema } from "./config-ui.js";
 import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
 import {
@@ -16,6 +17,7 @@ import {
 import { hasUpperBound } from "./semver-range.js";
 import { type PluginSetupGuide, SETUP_GUIDE_LIMITS, SETUP_GUIDE_PLACES } from "./setup-guide.js";
 import { type PluginThemeRef, THEME_LIMITS, themeIdOf } from "./theme.js";
+import { parseSlotRef, uiSlot } from "./ui-slots.js";
 
 /**
  * The plugin manifest `.capybara-plugin/plugin.json` (package ecosystem spec §4.1). A plugin is a
@@ -66,6 +68,8 @@ export const PLUGIN_MANIFEST_LIMITS = {
   publisherChars: 100,
   displayNameChars: 100,
   pathChars: 512,
+  /** Entries of `suggestedAppearance.replacements`. */
+  appearanceReplacements: 8,
 } as const;
 
 /** A plugin this one depends on: a plugin name and a semver range. */
@@ -109,6 +113,19 @@ export interface PluginExtensionSection {
    * {@link CONFIG_UI_LIMITS}`.configSchemaBytes`. Not part of the `manifest_mismatch` comparison.
    */
   configSchemas?: { deployment?: JsonSchema; org?: JsonSchema };
+  /** Browser code, styles and assets (needs `permissions.client: true`); see {@link PluginClientSection}. */
+  client?: PluginClientSection;
+}
+
+/**
+ * How the plugin suggests it should look when chosen (client extensions spec §6.5). Nothing applies
+ * on install; an admin applies it in one confirmed step.
+ */
+export interface SuggestedAppearance {
+  /** A theme id (file base name) of this plugin. */
+  theme?: string;
+  /** Replaceable slot id → a `component` contribution id of this plugin's extension in that slot. */
+  replacements?: Record<string, string>;
 }
 
 /**
@@ -155,6 +172,8 @@ export interface PluginManifest {
    * {@link PluginSetupGuide}.
    */
   setupGuides?: PluginSetupGuide[];
+  /** See {@link SuggestedAppearance}. */
+  suggestedAppearance?: SuggestedAppearance;
   extension?: PluginExtensionSection;
 }
 
@@ -177,6 +196,7 @@ export interface ConnectorTemplateFile {
 const L = PLUGIN_MANIFEST_LIMITS;
 const MAX_ERRORS = 50;
 const ICON_RE = /\.(?:svg|png)$/i;
+const COMPONENT_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const HTTPS_URL_RE = /^https:\/\/\S+$/;
 
 const text = (max: number, what: string) =>
@@ -243,6 +263,27 @@ const setupGuide = z.strictObject({
     .optional(),
 });
 
+const clientSection = z
+  .strictObject({
+    entry: z.string().max(L.pathChars).optional(),
+    styles: z.array(z.string().max(L.pathChars)).max(64).optional(),
+    assets: z.array(z.string().max(L.pathChars)).max(256).optional(),
+    integrity: z.record(z.string().max(L.pathChars), z.string().max(128)),
+    apiVersion: z.number().int().min(1),
+  })
+  .superRefine((c, ctx) => {
+    for (const e of validateClientSection(c))
+      ctx.addIssue({ code: "custom", path: [], message: e });
+  });
+
+const suggestedAppearance = z.strictObject({
+  theme: z
+    .string()
+    .regex(CATALOG_ITEM_NAME_RE, { message: "theme must match ^[a-z0-9][a-z0-9-]{0,63}$" })
+    .optional(),
+  replacements: z.record(z.string().max(100), z.string().max(100)).optional(),
+});
+
 const extensionSection = z.strictObject({
   entry: dotPath("entry").refine((p) => p.endsWith(".mjs"), {
     message: "entry must be a .mjs file",
@@ -253,6 +294,7 @@ const extensionSection = z.strictObject({
   configSchemas: z
     .strictObject({ deployment: configSchemaJson.optional(), org: configSchemaJson.optional() })
     .optional(),
+  client: clientSection.optional(),
 });
 
 const schema = z
@@ -336,6 +378,7 @@ const schema = z
       .max(L.themes)
       .optional(),
     setupGuides: z.array(setupGuide).max(SETUP_GUIDE_LIMITS.guides).optional(),
+    suggestedAppearance: suggestedAppearance.optional(),
     extension: extensionSection.optional(),
   })
   .superRefine((m, ctx) => {
@@ -429,6 +472,76 @@ const schema = z
         );
       }
     });
+    const sa = m.suggestedAppearance;
+    if (sa !== undefined) {
+      const at = ["suggestedAppearance"];
+      if (sa.theme === undefined && sa.replacements === undefined) {
+        issue(at, "suggestedAppearance needs theme or replacements");
+      }
+      if (sa.theme !== undefined && m.themes !== undefined && !themeIds.has(sa.theme)) {
+        issue(
+          [...at, "theme"],
+          `suggestedAppearance.theme names ${sa.theme}, which is not a theme of the plugin`,
+        );
+      }
+      if (sa.replacements !== undefined) {
+        const entries = Object.entries(sa.replacements);
+        if (m.extension === undefined) {
+          issue([...at, "replacements"], "suggestedAppearance.replacements needs an extension");
+        }
+        if (entries.length > L.appearanceReplacements) {
+          issue(
+            [...at, "replacements"],
+            `suggestedAppearance.replacements has ${entries.length} entries; the limit is ${L.appearanceReplacements}`,
+          );
+        }
+        const seen = new Set<string>();
+        for (const [slot, id] of entries) {
+          const ref = parseSlotRef(slot);
+          if (ref === null) {
+            issue(
+              [...at, "replacements"],
+              `suggestedAppearance.replacements: ${slot} is not a slot ref`,
+            );
+            continue;
+          }
+          if (seen.has(ref.id)) {
+            issue(
+              [...at, "replacements"],
+              `suggestedAppearance.replacements: ${slot} names the slot ${ref.id} again; give each slot once`,
+            );
+            continue;
+          }
+          seen.add(ref.id);
+          if (!COMPONENT_ID_RE.test(id)) {
+            issue(
+              [...at, "replacements"],
+              `suggestedAppearance.replacements: ${slot} names ${id}, which is not a contribution id`,
+            );
+            continue;
+          }
+          const known = uiSlot(ref.id);
+          if (known === undefined) continue;
+          if (known.cardinality !== "single") {
+            issue(
+              [...at, "replacements"],
+              `suggestedAppearance.replacements: ${slot} is not a replaceable slot`,
+            );
+            continue;
+          }
+          const ok = (m.extension?.manifest.ui ?? []).some((u) => {
+            const us = typeof u.slot === "string" ? parseSlotRef(u.slot) : null;
+            return u.id === id && u.kind === "component" && us?.id === ref.id;
+          });
+          if (!ok) {
+            issue(
+              [...at, "replacements"],
+              `suggestedAppearance.replacements: ${slot} names ${id}, which is not a component contribution in that slot`,
+            );
+          }
+        }
+      }
+    }
     if (
       m.extension === undefined &&
       m.skills?.length === 0 &&
@@ -444,6 +557,16 @@ const schema = z
     const ext = m.extension;
     if (ext === undefined) return;
     const em = ext.manifest;
+    const hasClientPermission = em.permissions.client === true;
+    if (ext.client !== undefined && !hasClientPermission) {
+      issue(["extension", "client"], "extension.client needs permissions.client: true");
+    }
+    if (ext.client === undefined && hasClientPermission) {
+      issue(
+        ["extension", "manifest", "permissions", "client"],
+        "permissions.client is true but extension.client is missing (pack the plugin with its client code, or drop permissions.client)",
+      );
+    }
     if (!EXTENSION_NAME_RE.test(m.name)) {
       issue(["name"], `a plugin with an extension needs an extension name (${EXTENSION_NAME_RE})`);
     }
@@ -588,4 +711,14 @@ export function parseConnectorTemplateFile(
   json: unknown,
 ): ConnectorTemplateFile | { errors: string[] } {
   return parseWith(ConnectorTemplateFileSchema, json, "connector template file");
+}
+
+/**
+ * The theme check of `suggestedAppearance` after the themes are known (the manifest may omit
+ * `themes` and let the scan find them): shared by the packer and the kernel.
+ */
+export function appearanceIssues(manifest: PluginManifest, themeIds: readonly string[]): string[] {
+  const theme = manifest.suggestedAppearance?.theme;
+  if (theme === undefined || themeIds.includes(theme)) return [];
+  return [`suggestedAppearance.theme names ${theme}, which is not a theme of the plugin`];
 }

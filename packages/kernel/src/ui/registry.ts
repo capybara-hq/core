@@ -63,22 +63,33 @@ export const uiFrame = (m: UiBusMessage): string =>
 /**
  * 单个插件在 setup 期间注册的视图与动作：进程内的静态登记（同 `ctx.tools.register`），
  * 不是跨请求的共享状态——各副本加载同一插件得到同样的登记。
- * id 必须是 `permissions.ui.views` 里的（与清单 `ui` 里 kind view 的贡献一一对应，`defineExtension` 已交叉核对）。
+ * The id must be in `permissions.ui.views` or `permissions.ui.components` (a component's server
+ * view, client extensions spec §5.2); `defineExtension` already cross-checked them with the
+ * manifest `ui`.
  */
 export class PluginUiRegistration {
   readonly views = new Map<string, UiRender>();
   readonly actions = new Map<string, UiActionHandler>();
   private readonly declaredViews: Set<string>;
   private readonly contributions: Set<string>;
+  /** The ids of the manifest's `component` contributions: their permission is `ui.components`. */
+  private readonly components: Set<string>;
   private sealed = false;
 
   constructor(
     private readonly manifest: ExtensionManifest,
-    /** 越权（id 未在 `permissions.ui.views` 声明）：抛 ExtensionPermissionError 并写审计。 */
+    /**
+     * Out of scope (the id is in neither `permissions.ui.views` nor `permissions.ui.components`):
+     * throws ExtensionPermissionError and writes an audit entry.
+     */
     private readonly deny: (item: string) => never,
   ) {
-    this.declaredViews = new Set(manifest.permissions?.ui?.views ?? []);
+    const ui = manifest.permissions?.ui;
+    this.declaredViews = new Set([...(ui?.views ?? []), ...(ui?.components ?? [])]);
     this.contributions = new Set((manifest.ui ?? []).map((c) => c.id));
+    this.components = new Set(
+      (manifest.ui ?? []).filter((c) => c.kind === "component").map((c) => c.id),
+    );
   }
 
   /** setup 结束后调用：此后 view / action 抛错。 */
@@ -144,7 +155,9 @@ export class PluginUiRegistration {
       );
     }
     if (typeof id !== "string" || !this.declaredViews.has(id)) {
-      this.deny(`permissions.ui.views ${String(id)}`);
+      // name the list the id belongs in: a component's server view is declared under components
+      const list = typeof id === "string" && this.components.has(id) ? "components" : "views";
+      this.deny(`permissions.ui.${list} ${String(id)}`);
     }
     if (typeof fn !== "function") {
       throw new Error(`plugin ${name}: ui.${what} "${id}" handler must be a function`);

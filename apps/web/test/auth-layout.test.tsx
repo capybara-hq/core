@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { json } from "./support/api";
 import { ME } from "./support/render";
 import { serverRoutes as serverRoutesOnly } from "./support/server";
+import { themeCssUrl } from "./support/themes";
 
 const { pendingBindingQuery } = await import("../src/lib/query/auth");
 const { serverQueryClient, settledQuery } = await import("../src/lib/server/query");
@@ -110,7 +111,7 @@ describe("the (auth) layout's first-load prefetch", () => {
   });
 
   it("the platform theme is dehydrated; a failed read is the built-in theme, not a failure", async () => {
-    const THEME = { id: "t1", cssUrl: "/api/v1/themes/t1/1.0.0/theme.css" };
+    const THEME = { id: "t1", cssUrl: themeCssUrl("t1", "1.0.0") };
     serverRoutes({ [`GET ${PLATFORM_THEME}`]: () => json(200, THEME) });
     expect(dataOf(stateOf(await layoutAt("/setup")), "platformTheme")).toMatchObject({
       status: "success",

@@ -14,10 +14,12 @@ import {
   type HeaderAction,
   PageHeader,
   type PageHeaderProps,
+  SafeModeBanner,
   StatCards,
   StatusBar,
   useStatusBar,
 } from "../src/index";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 afterEach(() => {
   cleanup();
@@ -101,6 +103,58 @@ describe("AppShell", () => {
     expect(column.contains(nav)).toBe(false);
     expect(content.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("a banner (safe mode) is a row of the shell: the regions share the rest of the window", () => {
+    zh(
+      <AppShell
+        sidebar={sidebar}
+        commands={commands}
+        status={status}
+        banner={<SafeModeBanner onExit={() => {}} />}
+      >
+        <div>内容区</div>
+      </AppShell>,
+    );
+    const shellEl = document.querySelector('[data-cap-part="shell"]') as HTMLElement;
+    const banner = document.querySelector('[data-part="safe-mode-banner"]') as HTMLElement;
+    const row = document.querySelector('[data-part="shell-banner"]') as HTMLElement;
+    // inside the 100dvh shell, never a sibling above it (that clipped the status bar)
+    expect(shellEl.getAttribute("data-banner")).toBe("true");
+    expect(row.parentElement).toBe(shellEl);
+    expect(row.contains(banner)).toBe(true);
+    const column = shellEl.querySelector('[data-part="shell-content"]') as HTMLElement;
+    expect(row.compareDocumentPosition(column) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(column.contains(screen.getByRole("contentinfo"))).toBe(true);
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    // the geometry: a grid whose first row is the banner, across both columns; the sidebar and
+    // the content column share the second row (minmax(0, 1fr): the shell keeps the window height)
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    const rule = (sel: string) => {
+      const m = new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{([^}]*)\\}`).exec(css);
+      return m?.[1] ?? "";
+    };
+    const grid = rule('.cb-shell[data-banner="true"]');
+    expect(grid).toMatch(/display: grid;/);
+    expect(grid).toMatch(/grid-template-columns: auto minmax\(0, 1fr\);/);
+    expect(grid).toMatch(/grid-template-rows: auto minmax\(0, 1fr\);/);
+    expect(rule('.cb-shell[data-banner="true"] > .cb-shell-banner')).toMatch(
+      /grid-column: 1 \/ -1;/,
+    );
+    // the content column keeps the second column even when no sidebar panel is drawn (drawer)
+    expect(rule('.cb-shell[data-banner="true"] > .cb-shell-column')).toMatch(
+      /grid-column: 2;\s*grid-row: 2;/,
+    );
+    expect(rule('.cb-shell[data-banner="true"] > .cb-sidebar')).toMatch(
+      /grid-column: 1;\s*grid-row: 2;/,
+    );
+  });
+
+  it("without a banner the shell has no banner row", () => {
+    zh(shell());
+    const shellEl = document.querySelector('[data-cap-part="shell"]') as HTMLElement;
+    expect(shellEl.hasAttribute("data-banner")).toBe(false);
+    expect(document.querySelector('[data-part="shell-banner"]')).toBeNull();
   });
 
   it("status bar: context left, version and time zone right, no `> ` prefix", () => {

@@ -1,10 +1,12 @@
 "use client";
 
 import {
+  Badge,
   Button,
   Callout,
   Dialog,
   Field,
+  formatBytes,
   KeyValue,
   ListPage,
   ObjectRow,
@@ -27,6 +29,7 @@ import { useRouter } from "../../../../../i18n/navigation";
 import {
   type CatalogItem,
   type CatalogRequest,
+  type ClientBuildSummary,
   confirmPending,
   decideDeploymentRequest,
   declaredPermissions,
@@ -369,9 +372,26 @@ function ConfirmPermissionsDialog({
           >
             <KeyValue
               keyWidth="16ch"
-              rows={declaredPermissions(ext).map((g) => ({
+              rows={declaredPermissions(ext, latest?.manifest.extension?.client).map((g) => ({
                 k: label(g.category),
-                v: g.items.join(", "),
+                // components and client code run the plugin's own code in members' browsers
+                v: g.sensitive ? (
+                  <Stack gap={4}>
+                    <Badge tone="warn">{tp("sensitive")}</Badge>
+                    <Text variant="small" tone="muted">
+                      {tp(
+                        `review.reason.${g.category === "client" ? "client_code" : "ui_component"}`,
+                      )}
+                    </Text>
+                    {g.category === "client" && latest?.client != null ? (
+                      <ClientBuildFiles build={latest.client} />
+                    ) : (
+                      <Text>{g.items.join(", ")}</Text>
+                    )}
+                  </Stack>
+                ) : (
+                  g.items.join(", ")
+                ),
               }))}
             />
           </Subsection>
@@ -436,5 +456,22 @@ function RejectDialog({
         {error !== undefined && <FormError message={error} />}
       </Stack>
     </Dialog>
+  );
+}
+
+/** The pending package's client build: each file with its size, then the total (spec §5.4). */
+function ClientBuildFiles({ build }: { build: ClientBuildSummary }) {
+  const t = useTranslations("extensions.review");
+  return (
+    <Stack gap={4}>
+      {build.files.map((f) => (
+        <Text key={f.path} variant="small">
+          {`${f.path} · ${formatBytes(f.bytes)}`}
+        </Text>
+      ))}
+      <Text variant="small" tone="muted">
+        {t("clientTotal", { files: build.files.length, size: formatBytes(build.totalBytes) })}
+      </Text>
+    </Stack>
   );
 }

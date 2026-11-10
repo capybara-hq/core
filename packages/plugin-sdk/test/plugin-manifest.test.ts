@@ -3,6 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 import {
+  appearanceIssues,
   ConnectorTemplateFileSchema,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
@@ -657,5 +658,142 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ]) {
       expect(template(json)).toBe(ConnectorTemplateFileSchema.safeParse(json).success);
     }
+  });
+});
+
+describe("client section and suggestedAppearance", () => {
+  const sri = `sha384-${"A".repeat(64)}`;
+  const ENTRY = "./dist/client/client.mjs";
+  const clientSection = { entry: ENTRY, integrity: { [ENTRY]: sri }, apiVersion: 1 };
+  const comp = (slot: string, id = "brand") => ({
+    id,
+    title: { zh: "品牌", en: "Brand" },
+    slot,
+    kind: "component" as const,
+  });
+  const withClient = (
+    over: Record<string, unknown> = {},
+    ext: Partial<StaticExtensionManifest> = {},
+    section: Record<string, unknown> | null = clientSection,
+  ) => {
+    const base = withExtension(over, {
+      permissions: { client: true, ui: { components: ["brand"] } },
+      ui: [comp("shell.brand")],
+      ...ext,
+    });
+    if (section !== null) (base.extension as Record<string, unknown>).client = section;
+    return base;
+  };
+
+  it("client needs permissions.client and the reverse", () => {
+    expect(errorsOf(withClient())).toEqual([]);
+    expect(errorsOf(withExtension({ extension: undefined }))).not.toContain("x");
+    const noPerm = withExtension();
+    (noPerm.extension as Record<string, unknown>).client = clientSection;
+    expect(errorsOf(noPerm)).toContain(
+      "extension.client: extension.client needs permissions.client: true",
+    );
+    // the reverse says what is missing, at the permission's path
+    expect(
+      errorsOf(withClient({}, { ui: undefined, permissions: { client: true } }, null)),
+    ).toContain(
+      "extension.manifest.permissions.client: permissions.client is true but extension.client is missing (pack the plugin with its client code, or drop permissions.client)",
+    );
+  });
+
+  it("a bad client section is reported", () => {
+    const bad = withClient({}, {}, { ...clientSection, integrity: {} });
+    expect(errorsOf(bad).some((e) => e.includes("client.integrity: missing entry"))).toBe(true);
+  });
+
+  it("suggestedAppearance needs theme or replacements", () => {
+    expect(errorsOf(withClient({ suggestedAppearance: {} }))).toContain(
+      "suggestedAppearance: suggestedAppearance needs theme or replacements",
+    );
+  });
+
+  it("a replacement in a list slot is refused", () => {
+    const m = withClient(
+      { suggestedAppearance: { replacements: { "shell.overlay": "brand" } } },
+      { ui: [comp("shell.overlay")] },
+    );
+    expect(errorsOf(m).join("\n")).toContain("shell.overlay is not a replaceable slot");
+  });
+
+  it("a replacement naming a view is refused", () => {
+    const m = withClient(
+      { suggestedAppearance: { replacements: { "shell.brand": "brand" } } },
+      {
+        permissions: { client: true, ui: { views: ["brand"] } },
+        ui: [
+          {
+            id: "brand",
+            title: { zh: "品牌", en: "Brand" },
+            slot: "org.page",
+            kind: "view" as const,
+          },
+        ],
+      },
+    );
+    expect(errorsOf(m).join("\n")).toContain(
+      "shell.brand names brand, which is not a component contribution in that slot",
+    );
+  });
+
+  it("two refs to one slot are refused", () => {
+    const m = withClient({
+      suggestedAppearance: { replacements: { "shell.brand": "brand", "shell.brand@1": "brand" } },
+    });
+    expect(errorsOf(m).join("\n")).toContain(
+      "suggestedAppearance.replacements: shell.brand@1 names the slot shell.brand again; give each slot once",
+    );
+    // unknown slots are compared by id too
+    const u = withClient({
+      suggestedAppearance: { replacements: { "future.slot": "brand", "future.slot@2": "brand" } },
+    });
+    expect(errorsOf(u).join("\n")).toContain("future.slot@2 names the slot future.slot again");
+  });
+
+  it("a replacement in an unknown slot is accepted", () => {
+    const m = withClient({ suggestedAppearance: { replacements: { "future.slot": "brand" } } });
+    expect(errorsOf(m)).toEqual([]);
+  });
+
+  it("a valid replacement and theme parse; replacements need an extension", () => {
+    expect(
+      errorsOf(withClient({ suggestedAppearance: { replacements: { "shell.brand": "brand" } } })),
+    ).toEqual([]);
+    expect(
+      errorsOf(
+        skillsOnly({ suggestedAppearance: { replacements: { "shell.brand": "brand" } } }),
+      ).join("\n"),
+    ).toContain("needs an extension");
+  });
+
+  it("nine replacements are refused", () => {
+    const replacements = Object.fromEntries(
+      Array.from({ length: 9 }, (_, i) => [`future.slot${i}`, "brand"]),
+    );
+    expect(errorsOf(withClient({ suggestedAppearance: { replacements } })).join("\n")).toContain(
+      "9 entries",
+    );
+  });
+
+  it("a listed theme the plugin does not carry is refused", () => {
+    const m = skillsOnly({
+      themes: [{ path: "./themes/neon.json" }],
+      suggestedAppearance: { theme: "other" },
+    });
+    expect(errorsOf(m).join("\n")).toContain("suggestedAppearance.theme names other");
+  });
+
+  it("appearanceIssues refuses a theme the plugin does not carry", () => {
+    const m = parsePluginManifest(
+      skillsOnly({ suggestedAppearance: { theme: "neon" } }),
+    ) as PluginManifest;
+    expect(appearanceIssues(m, ["neon"])).toEqual([]);
+    expect(appearanceIssues(m, ["other"])).toEqual([
+      "suggestedAppearance.theme names neon, which is not a theme of the plugin",
+    ]);
   });
 });

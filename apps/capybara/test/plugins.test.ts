@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
 import {
   type FakeGitServer,
+  packFixture,
   startFakeGitServer,
   startTestPostgres,
   startTestRedis,
@@ -243,6 +244,25 @@ describe("capybara plugins list / import", () => {
     );
     expect(row).toEqual({ name: "withext", desired_state: "enabled" });
   }, 90_000);
+
+  it("a plugin with client code stores its client build in the CLI's object store", async () => {
+    const packed = await packFixture("fake-client", work);
+    const r = await run(["plugins", "import", packed.file, "--yes"]);
+    expect(r.code, r.stderr).toBe(0);
+    const row = await query((db) =>
+      db
+        .selectFrom("extension_client_builds")
+        .select(["plugin", "object_prefix"])
+        .where("package_sha256", "=", packed.sha256)
+        .executeTakeFirst(),
+    );
+    expect(row).toEqual({
+      plugin: "fake-client",
+      object_prefix: `platform/client/fake-client/${packed.sha256}/`,
+    });
+    // the row is inserted only after its files were written to the CLI's object store
+    expect(r.stdout).toContain("Extension fake-client 0.1.0");
+  }, 120_000);
 
   it("a plugin with files needs object storage; the error says so", async () => {
     const file = join(work, "more.tgz");

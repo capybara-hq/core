@@ -1,0 +1,13 @@
+{
+  "name": { "en": "Neon Grid", "zh": "霓虹网格" },
+  "schemes": {
+    "dark": {
+      "color": { "bg": "#05070D", "panel": "#0A0E18", "accent": "#FCE300", "on-accent": "#141200" },
+      "radius": { "sm": 0, "md": 2 }
+    }
+  },
+  "fonts": [
+    { "family": "Fixture", "file": "./fonts/Fixture-Regular.woff2", "weight": 400, "role": "prose" }
+  ],
+  "logo": { "mark": "./logo.svg", "wordmark": "NEON GRID" }
+}

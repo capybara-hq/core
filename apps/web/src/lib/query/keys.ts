@@ -75,6 +75,7 @@ export const keys = {
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
       /** Where a channel plugin's setup guide is. */
       channelGuideRef: (plugin: string): readonly unknown[] => [...all, "channelGuideRef", plugin],
+      channelInbound: (plugin: string): readonly unknown[] => [...all, "channelInbound", plugin],
       /** Every rendered setup guide (an invalidation prefix). */
       setupGuidesAll: (): readonly unknown[] => [...all, "setupGuide"],
       /**
@@ -205,6 +206,8 @@ export const keys = {
       /** An agent's latest connector setup request (its 待配置 notice). */
       setupRequest: (agentId: string): readonly unknown[] => [...all, "setupRequest", agentId],
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
+      /** The org's client extensions for the viewer (the shell read, client extensions §9.2). */
+      clientExtensions: (): readonly unknown[] => [...all, "clientExtensions"],
       /** The org's members. */
       members: (): readonly unknown[] => [...all, "members"],
       /** The org's settings (with the deployment's defaults and the sandbox limits). */
@@ -404,6 +407,14 @@ export const keys = {
        * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
        */
       pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
+      /** Every plugin's platform client set (an invalidation prefix: the kill switch). */
+      clientExtensionsAll: (): readonly unknown[] => [...all, "clientExtensions"],
+      /** One plugin's platform client set (its `/admin/p/<plugin>/<id>` page, §9.6). */
+      clientExtensions: (plugin: string): readonly unknown[] => [
+        ...all,
+        "clientExtensions",
+        plugin,
+      ],
       /** A template's setup guide as the super admin sees it (no org, no target), per language. */
       adminSetupGuide: (
         itemId: string,

@@ -23,6 +23,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type Ref,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -37,6 +38,7 @@ import {
   renderConnectorPrompt,
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
+import { focusWhenPossible } from "../../lib/deferred-focus";
 import {
   connectorPromptsQuery,
   connectorResourcesQuery,
@@ -45,6 +47,8 @@ import {
 import { useAppMutation } from "../../lib/query/mutation";
 import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useRunStateValue } from "../client-ext/run-state";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
 import type { SendResult } from "./useConversation";
 
@@ -625,6 +629,7 @@ export function ComposerBar({
   ];
 
   const hint = running ? t("runningHint") : undefined;
+  const runState = useRunStateValue().state;
   const textEl = useRef<HTMLTextAreaElement>(null);
   /**
    * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
@@ -633,6 +638,14 @@ export function ComposerBar({
   const undoFill = useRef<{ before: string; text: string } | null>(null);
   const textNow = useRef(text);
   textNow.current = text;
+  // A pending composer frame hides the composer for up to 1.5 s (focus() is a no-op then): the
+  // focus waits for the reveal or the winner's composer (client extensions spec §6.3)
+  const cancelFocus = useRef<() => void>(() => {});
+  const focusText = useCallback(() => {
+    cancelFocus.current();
+    cancelFocus.current = focusWhenPossible(() => textEl.current);
+  }, []);
+  useEffect(() => () => cancelFocus.current(), []);
   useImperativeHandle(
     control,
     () => ({
@@ -643,64 +656,82 @@ export function ComposerBar({
         setText(next);
         // a value set from outside puts the caret after the text; on a touch device the text is
         // only placed, never focused (focus would pop the keyboard for a tap on a quick action)
-        if (!isTouchPointer()) textEl.current?.focus();
+        if (!isTouchPointer()) focusText();
       },
       focus() {
-        textEl.current?.focus();
+        focusText();
       },
     }),
-    [],
+    [focusText],
+  );
+
+  // The built-in composer: framed, the frame slot's default; bare (`frame={false}`), the inputs a
+  // replacement wraps in its own frame (the host checks after commit that the composer's textarea
+  // is in the document). A replacement renders one of the two.
+  const composer = (frame: boolean) => (
+    <ComposerBox
+      frame={frame}
+      value={text}
+      onChange={(v) => onChange(v, textEl.current)}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      {...(hint !== undefined ? { hint } : {})}
+      {...(skill !== null
+        ? {
+            token: {
+              label: `/${skill.name}`,
+              ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
+              onRemove: () => setSkill(null),
+            },
+          }
+        : {})}
+      {...(strip.length > 0
+        ? {
+            attachments: (
+              // biome-ignore lint/a11y/useSemanticElements: a labelled group of draft files (no styles in web)
+              <div role="group" aria-label={t("files")}>
+                <AttachmentStrip items={strip} />
+              </div>
+            ),
+          }
+        : {})}
+      onAttach={() => {
+        if (!drafts.limits.available) toast.error(t("filesUnavailable"));
+        else fileInput.current?.click();
+      }}
+      attachDisabled={!drafts.limits.available}
+      pickers={pickers}
+      {...(quickActions !== undefined ? { quickActions } : {})}
+      {...(agents !== undefined ? { agents } : {})}
+      send={
+        running && stop
+          ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
+          : {
+              // Never busy: the message is pending in the thread, not in the composer.
+              mode: "send",
+              disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
+              onClick: () => void submit(),
+            }
+      }
+      // the token warning's 仍然发送 sends as ↵ does, also while the button is Stop
+      onSend={() => void submit()}
+      textareaRef={textEl}
+    />
   );
 
   return (
     <>
       <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
-        <ComposerBox
-          value={text}
-          onChange={(v) => onChange(v, textEl.current)}
-          onKeyDown={onKeyDown}
-          placeholder={placeholder}
-          {...(hint !== undefined ? { hint } : {})}
-          {...(skill !== null
-            ? {
-                token: {
-                  label: `/${skill.name}`,
-                  ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
-                  onRemove: () => setSkill(null),
-                },
-              }
-            : {})}
-          {...(strip.length > 0
-            ? {
-                attachments: (
-                  // biome-ignore lint/a11y/useSemanticElements: a labelled group of draft files (no styles in web)
-                  <div role="group" aria-label={t("files")}>
-                    <AttachmentStrip items={strip} />
-                  </div>
-                ),
-              }
-            : {})}
-          onAttach={() => {
-            if (!drafts.limits.available) toast.error(t("filesUnavailable"));
-            else fileInput.current?.click();
+        {/* a plugin may draw the frame around the composer (client extensions spec §6.2) */}
+        <ExtensionSlot
+          slot="conversation.composer.frame"
+          args={{ orgId }}
+          host={{
+            builtin: composer(true),
+            children: composer(false),
+            conversationId: conversationId ?? null,
+            runState,
           }}
-          attachDisabled={!drafts.limits.available}
-          pickers={pickers}
-          {...(quickActions !== undefined ? { quickActions } : {})}
-          {...(agents !== undefined ? { agents } : {})}
-          send={
-            running && stop
-              ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
-              : {
-                  // Never busy: the message is pending in the thread, not in the composer.
-                  mode: "send",
-                  disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
-                  onClick: () => void submit(),
-                }
-          }
-          // the token warning's 仍然发送 sends as ↵ does, also while the button is Stop
-          onSend={() => void submit()}
-          textareaRef={textEl}
         />
       </FileDrop>
       <input

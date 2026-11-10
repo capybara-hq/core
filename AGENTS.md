@@ -23,6 +23,7 @@ their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` ro
 | Path | What it is |
 |---|---|
 | `packages/plugin-sdk` | SDK for plugins: types and pure functions; imports no other `@capybara-hq/*` |
+| `packages/plugin-client` | Published client SDK for plugin UI components (`defineClientExtension`, hooks, design re-exports, `/testing` fake host); React as a peer, imports no `@capybara-hq/*` |
 | `packages/kernel` | The kernel: one NestJS + Fastify app (config, db, `ctx`, extension host, HTTP) |
 | `packages/testing` | Test containers, dual-replica helpers, fake servers, fake extensions (`fixtures/extensions/*`) |
 | `packages/plugin-tools` | The published plugin toolchain `capybara-plugin` (`pack`, `check`, `marketplace`, `release`, …) |
@@ -40,12 +41,16 @@ their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` ro
 Kernel / extensions / external apps; dependencies only point downward.
 
 - External apps (including `apps/web`) -> the kernel HTTP API only. `apps/web` depends only on
-  `@capybara-hq/design`.
+  `@capybara-hq/design`; it implements `@capybara-hq/plugin-client`'s interface without importing it
+  (an import map points plugins' client entries at the web's implementation; generated copies keep
+  them in step: `check:plugin-client-api`, `check:ui-slots`).
 - Extensions -> `@capybara-hq/plugin-sdk` and third-party npm packages, **never** the kernel. Nest
   stops at the extension boundary: an extension sees only the SDK `ctx`.
 - `kernel` -> `plugin-sdk`; `testing` -> `kernel`; `plugin-tools` -> `plugin-sdk`, `kernel`;
-  the CLI -> `kernel` only; `device` -> `plugin-sdk` only (`pnpm check:deps`); `plugin-sdk` and
-  `design` depend on no `@capybara-hq/*`.
+  the CLI -> `kernel` only; `device` -> `plugin-sdk` only (`pnpm check:deps`); `plugin-sdk`,
+  `plugin-client` and `design` depend on no `@capybara-hq/*`. Plugins may import `plugin-client`
+  (client entries; shared files from server code too); `testing` (its client fixtures) and
+  `tools/checks` (`check:plugin-client-api`) have it as a devDependency.
 - Tests use `@capybara-hq/testing` as a devDependency. Core tests load no official plugin except
   `model-fake`, listed in `tools/ci/test-plugins.json`, never as a devDependency
   (`pnpm check:test-plugins`).

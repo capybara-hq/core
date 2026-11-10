@@ -625,6 +625,7 @@ export function AdminExtensionPermissions({
         added={plugin.addedItems}
         removed={plugin.removed}
         warnings={plugin.warnings}
+        {...(plugin.client != null && { clientFiles: plugin.client.files })}
       />
       {/* The approval is a subsection under the review, not a card: the permissions sit in the
           list's Sheet too (spec §6.7, §6.32) */}

@@ -40,10 +40,17 @@ export interface PermissionSet {
     models: { purpose: string; kind: string }[];
     network: string[];
     /**
-     * 界面贡献（`permissions.ui`）：`views` 记入快照但不卡加载（升级时自动补进快照）；
-     * `embeds` 与其他权限一样卡加载。旧快照没有这一项（按空处理）。
+     * Client code (`permissions.client`, client extensions spec §5.4): the plugin ships a browser
+     * bundle that runs with full trust in members' browsers. Sensitive and blocking. Older snapshots
+     * lack it (read as false).
      */
-    ui: { views: string[]; embeds: string[] };
+    client: boolean;
+    /**
+     * UI contributions (`permissions.ui`): `views` are recorded in the snapshot without blocking the
+     * load (added to the snapshot automatically on upgrade); `embeds` and `components` block the
+     * load like any other permission. Older snapshots lack `ui` or `components` (read as empty).
+     */
+    ui: { views: string[]; embeds: string[]; components: string[] };
     /**
      * Setup check ids (`permissions.setupChecks`, setup guides v2 §10.2): recorded and shown at
      * review but never blocking loading, like `ui.views` (a check gets only data the extension
@@ -185,7 +192,12 @@ export function buildPermissionSet(input: {
         .map((m) => ({ purpose: m.purpose, kind: m.kind }))
         .sort((a, b) => cmp(a.purpose, b.purpose)),
       network: sortedUnique(p.network),
-      ui: { views: sortedUnique(p.ui?.views), embeds: sortedUnique(p.ui?.embeds) },
+      client: p.client === true,
+      ui: {
+        views: sortedUnique(p.ui?.views),
+        embeds: sortedUnique(p.ui?.embeds),
+        components: sortedUnique(p.ui?.components),
+      },
       // only when declared: sets (and snapshots) of plugins without setup checks stay as they were
       ...(p.setupChecks && p.setupChecks.length > 0
         ? { setupChecks: sortedUnique(p.setupChecks) }
@@ -197,7 +209,8 @@ export function buildPermissionSet(input: {
 
 /**
  * 权限集合的稳定字符串键（排序），如 `provides:channel@1`、`config.org.secret:apiKey`、`table:todos`、
- * `permissions.tools:write`、`permissions.http.public:POST /events`、`ui.view:tasks`、`ui.embed:board`。
+ * `permissions.tools:write`、`permissions.http.public:POST /events`、`ui.view:tasks`、`ui.embed:board`,
+ * `permissions.client`, `ui.component:hud`.
  * 容忍旧快照缺字段（按空处理），快照格式演进时不会抛错。
  */
 export function permissionKeys(set: PermissionSet): string[] {
@@ -223,8 +236,10 @@ export function permissionKeys(set: PermissionSet): string[] {
   for (const h of p.policyHooks ?? []) keys.push(`${POLICY_HOOK_KEY_PREFIX}${h}`);
   for (const m of p.models ?? []) keys.push(`permissions.models:${m.purpose} (${m.kind})`);
   for (const d of p.network ?? []) keys.push(`permissions.network:${d}`);
+  if (p.client) keys.push(CLIENT_KEY);
   for (const v of p.ui?.views ?? []) keys.push(`${UI_VIEW_KEY_PREFIX}${v}`);
   for (const e of p.ui?.embeds ?? []) keys.push(`ui.embed:${e}`);
+  for (const c of p.ui?.components ?? []) keys.push(`${UI_COMPONENT_KEY_PREFIX}${c}`);
   for (const c of p.setupChecks ?? []) keys.push(`${SETUP_CHECK_KEY_PREFIX}${c}`);
   if (s.warningsDigest) keys.push(`${WARNINGS_KEY_PREFIX}${s.warningsDigest}`);
   return sortedUnique(keys);
@@ -235,6 +250,15 @@ export function permissionKeys(set: PermissionSet): string[] {
  * Lower-case letters and dots only, as catalog permission keys require (`PERMISSION_KEY_RE`).
  */
 export const POLICY_HOOK_KEY_PREFIX = "permissions.hooks.policy:";
+
+/**
+ * Permission key of client code (`permissions.client`): sensitive and blocking. The key, not the
+ * bundle's bytes, is reviewed: an upgrade that only changes the bundle adds no key.
+ */
+export const CLIENT_KEY = "permissions.client";
+
+/** Key prefix of a client component (`ui.component:<id>`): sensitive and blocking. */
+export const UI_COMPONENT_KEY_PREFIX = "ui.component:";
 
 /** 渲染 schema 视图的权限键前缀：记入快照但不卡加载（见 {@link blockingKeys}）。 */
 export const UI_VIEW_KEY_PREFIX = "ui.view:";

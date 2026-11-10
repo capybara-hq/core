@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { leaves, resolveHashImport } from "./package-imports.js";
 import {
   collectImports,
   type Finding,
@@ -13,6 +14,8 @@ export type { Finding };
 
 const SCOPE = "@capybara-hq/";
 const SDK = "@capybara-hq/plugin-sdk";
+/** The browser-side SDK of a plugin's client code (`src/client.tsx`): a plugin depends on it. */
+const PLUGIN_CLIENT = "@capybara-hq/plugin-client";
 const TESTING = "@capybara-hq/testing";
 /** The scripted model provider that stays in core: plugin tests load it to drive agent runs. */
 const MODEL_FAKE = "@capybara-hq/plugin-model-fake";
@@ -42,11 +45,16 @@ const PLUGIN_RULES: Rules = {
   pkgRule: "plugin-imports-kernel",
   outsideRule: "plugin-imports-outside",
   pkgMessage: (what) =>
-    `a plugin may depend only on ${SDK} and third-party npm packages, not on ${what}; what it needs comes through ctx (extend the plugin-sdk contract if it is missing)`,
+    `a plugin may depend only on ${SDK}, ${PLUGIN_CLIENT} and third-party npm packages, not on ${what}; what it needs comes through ctx (extend the plugin-sdk contract if it is missing)`,
   outsideMessage: (what) =>
     `${what} points outside the plugin directory, which bypasses the package check and depends on kernel sources directly; a plugin may reference only files inside its own directory`,
+  // plugin-client is allowed everywhere, server code included, not only in src/client.tsx: it
+  // depends on no @capybara-hq/* package (only React as a peer), and a plugin's shared files
+  // (component ids, data types such as ComponentSlotId) may import it from both sides. The browser
+  // side is guarded by the packer's client bundle rule (`client-import-forbidden`)
   allowed: (pkg, where) =>
     pkg === SDK ||
+    pkg === PLUGIN_CLIENT ||
     ((pkg === TESTING || pkg === MODEL_FAKE || pkg === PLUGIN_TOOLS) &&
       (where === "devDependencies" || where === "test")),
 };
@@ -91,14 +99,6 @@ function judge(
 }
 
 type Json = unknown;
-
-/** Every string leaf of a JSON subtree. */
-function leaves(v: Json): string[] {
-  if (typeof v === "string") return [v];
-  if (Array.isArray(v)) return v.flatMap(leaves);
-  if (typeof v === "object" && v !== null) return Object.values(v).flatMap(leaves);
-  return [];
-}
 
 /** Reads package.json; undefined when there is none. */
 function readPackage(
@@ -152,23 +152,6 @@ function packageFindings(dir: string, rules: Rules): Finding[] {
     }
   }
   return out;
-}
-
-/** Expands a `#xxx` subpath import of the sources through the package.json imports map (empty when unmapped). */
-function resolveHashImport(spec: string, imports: Record<string, Json>): string[] {
-  const direct = imports[spec];
-  if (direct !== undefined) return leaves(direct);
-  for (const [key, v] of Object.entries(imports)) {
-    const star = key.indexOf("*");
-    if (star === -1) continue;
-    const head = key.slice(0, star);
-    const tail = key.slice(star + 1);
-    if (spec.startsWith(head) && spec.endsWith(tail) && spec.length >= head.length + tail.length) {
-      const mid = spec.slice(head.length, spec.length - tail.length);
-      return leaves(v).map((t) => t.replace("*", mid));
-    }
-  }
-  return [];
 }
 
 function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {

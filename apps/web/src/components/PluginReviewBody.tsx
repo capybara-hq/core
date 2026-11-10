@@ -331,6 +331,9 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
             removed: extension.removed,
           })}
           warnings={extension.warnings}
+          {...(extension.client !== undefined && {
+            clientFiles: extension.client.files.map((f) => ({ path: f.path, bytes: f.size })),
+          })}
         />
       </Stack>
     </Subsection>

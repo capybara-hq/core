@@ -22,7 +22,7 @@ export default defineConfig({
         test: {
           name: "node",
           include: ["{packages,apps,plugins,tools}/*/test/**/*.test.ts"],
-          exclude: ["packages/design/**", "**/node_modules/**"],
+          exclude: ["packages/design/**", "packages/plugin-client/**", "**/node_modules/**"],
           // One PostgreSQL + one Valkey per run, handed to workers via env vars: startTestPostgres()
           // creates a database per file on it. CAPYBARA_TEST_NO_SHARED=1 restores per-file containers.
           globalSetup: ["packages/testing/src/global-setup.ts"],
@@ -37,6 +37,16 @@ export default defineConfig({
           include: ["packages/design/test/**/*.test.{ts,tsx}"],
           environment: "jsdom",
           setupFiles: ["packages/design/test/setup.ts"],
+        },
+      },
+      // jsdom: @capybara-hq/plugin-client (hooks need a DOM; no containers).
+      {
+        extends: true,
+        oxc: { jsx: { runtime: "automatic" } },
+        test: {
+          name: "plugin-client",
+          include: ["packages/plugin-client/test/**/*.test.{ts,tsx}"],
+          environment: "jsdom",
         },
       },
       // jsdom 环境：apps/web 的组件 / 浏览器端测试（*.test.tsx）。

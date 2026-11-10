@@ -1,0 +1,11 @@
+[data-cap-part~="button.primary"] {
+  outline-color: rgb(1, 2, 3);
+}
+
+[data-cap-part~="composer"] [data-cap-part~="button"] {
+  outline-color: rgb(1, 2, 3);
+}
+
+[data-cap-state~="run=running"] {
+  --cx-fake-client-run: 1;
+}

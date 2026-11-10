@@ -57,6 +57,8 @@ import {
 } from "../../lib/timeline";
 import { useToolInfo } from "../../lib/tool-info";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useClientEventFeed } from "../client-ext/events";
+import { usePublishRunState } from "../client-ext/run-state";
 import { FormError } from "../form-error";
 import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
@@ -365,6 +367,12 @@ export function useConversationPage(
             ? t("status.failed")
             : t("status.idle");
   const statusFailed = !active && stats.last === "failed";
+  // The shell's `run=` token and the client events (client extensions spec §7.3, §7.5).
+  usePublishRunState(
+    conversationId,
+    conv.waiting ? "waiting" : busy ? "running" : statusFailed ? "failed" : "idle",
+  );
+  useClientEventFeed(conversationId, conv.events, !conv.loading);
   // The properties panel's last-run line (spec §6.16.17): the newest run row's parts.
   const lastRun = useMemo(() => {
     const r = base.entries.findLast((e) => e.kind === "run");

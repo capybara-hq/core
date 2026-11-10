@@ -2,6 +2,14 @@
   "name": "@capybara-hq/plugin-slack",
   "version": "0.0.0",
   "private": true,
+  "imports": {
+    "#client-testing": "@capybara-hq/plugin-client/testing",
+    "#helpers/*": "./test/helpers/*.ts",
+    "#zod": "zod",
+    "#kernel": "@capybara-hq/kernel",
+    "#core/*": "../../../packages/core/test/*.ts",
+    "#cond": { "node": "@capybara-hq/kernel", "default": "./src/index.ts" }
+  },
   "devDependencies": {
     "@capybara-hq/plugin-model-fake": "workspace:*",
     "@capybara-hq/testing": "workspace:*"

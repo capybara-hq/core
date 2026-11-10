@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import {
   AGENT_TEMPLATE_LIMITS,
+  appearanceIssues,
   checkEntryImports,
   defineExtension,
   type ExtensionManifest,
@@ -34,6 +35,7 @@ import {
   parseThemeFile,
   SDK_VERSION,
   type StaticExtensionManifest,
+  type SuggestedAppearance,
   setupGuideDocPath,
   setupGuideDocProblem,
   staticManifestOf,
@@ -44,9 +46,10 @@ import {
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
-import { build, type Plugin } from "esbuild";
+import { type BuildOptions, build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
 import { assetRefs, themePathsOf } from "../check/themes.js";
+import { buildClient, hasClientSources, PackRuleError } from "./client.js";
 import { extensionConfigSchemas, formatConfigSchemaProblem } from "./config-schemas.js";
 
 /** The extension entry the packer writes (relative to the package root). */
@@ -335,6 +338,14 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const stripDot = (p: string) => p.replace(/^\.\//, "");
 
+/** The error for a manifest that does not parse: `appearance-invalid` when it is about suggestedAppearance. */
+function manifestError(where: string, errors: string[]): Error {
+  const message = `${where}: ${errors.join("; ")}`;
+  return errors.some((e) => e.startsWith("suggestedAppearance"))
+    ? new PackRuleError("appearance-invalid", message)
+    : new Error(message);
+}
+
 /**
  * Reads and validates the source `.capybara-plugin/plugin.json` (without `extension`, which the
  * packer writes).
@@ -356,9 +367,14 @@ export async function readSourceManifest(dir: string, label: string): Promise<Pl
       `${label}: ${PLUGIN_MANIFEST_FILE}: extension is written by the packer; remove it from the source`,
     );
   }
-  const m = parsePluginManifest(data);
-  if ("errors" in m) throw new Error(`${label}: ${PLUGIN_MANIFEST_FILE}: ${m.errors.join("; ")}`);
-  return m;
+  // suggestedAppearance names the plugin's own components and themes, which only the packed
+  // manifest knows: it is validated with the final parse ({@link manifestError})
+  const { suggestedAppearance, ...rest } = isObj(data) ? data : { suggestedAppearance: undefined };
+  const m = parsePluginManifest(isObj(data) ? rest : data);
+  if ("errors" in m) throw manifestError(`${label}: ${PLUGIN_MANIFEST_FILE}`, m.errors);
+  return suggestedAppearance === undefined
+    ? m
+    : { ...m, suggestedAppearance: suggestedAppearance as SuggestedAppearance };
 }
 
 /**
@@ -523,21 +539,14 @@ async function contentFiles(
 }
 
 /**
- * Bundles `src/index.ts` into `<stage>/package/dist/index.mjs` (esbuild, single-file ESM), checks
- * the bundle's imports, imports it and runs its default export through defineExtension. Returns the
- * bundle, the defined manifest and the bundled inputs (for the notices).
+ * The esbuild options of the extension's server bundle (`src/index.ts`, platform node, only the
+ * host-provided packages and Node builtins external), without an output: the packer adds
+ * `outfile`; `serverBundleInputs` builds with `write: false` to learn which files the bundle holds.
  */
-async function buildAndImport(
-  dir: string,
-  label: string,
-  stage: string,
-): Promise<{ code: Buffer; m: ExtensionManifest; inputs: string[] }> {
-  await linkHostPackages(dir, stage);
-  const entryOut = join(stage, "package", EXTENSION_ENTRY);
-  const result = await build({
+export function serverBuildOptions(dir: string): BuildOptions {
+  return {
     absWorkingDir: dir,
     entryPoints: [join(dir, "src/index.ts")],
-    outfile: entryOut,
     bundle: true,
     platform: "node",
     format: "esm",
@@ -551,7 +560,45 @@ async function buildAndImport(
     metafile: true,
     // Notices of bundled dependencies go to THIRD-PARTY-NOTICES.txt (built from the metafile).
     legalComments: "none",
-  });
+  };
+}
+
+/**
+ * The files the extension's server bundle holds (the metafile inputs of {@link serverBuildOptions},
+ * absolute and with symlinks resolved), built in memory. `undefined` when the build fails or gives
+ * no metafile (callers then treat every file as server code).
+ */
+export async function serverBundleInputs(pluginDir: string): Promise<Set<string> | undefined> {
+  const dir = resolve(pluginDir);
+  try {
+    const result = await build({ ...serverBuildOptions(dir), write: false });
+    if (result.errors.length > 0 || result.metafile === undefined) return undefined;
+    const out = new Set<string>();
+    for (const input of Object.keys(result.metafile.inputs)) {
+      // a namespaced input (`<define:…>`, a plugin's virtual module) is no file of the plugin
+      if (/^[a-z-]+:/i.test(input)) continue;
+      const abs = resolve(dir, input);
+      out.add(existsSync(abs) ? await realpath(abs) : abs);
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Bundles `src/index.ts` into `<stage>/package/dist/index.mjs` (esbuild, single-file ESM), checks
+ * the bundle's imports, imports it and runs its default export through defineExtension. Returns the
+ * bundle, the defined manifest and the bundled inputs (for the notices).
+ */
+async function buildAndImport(
+  dir: string,
+  label: string,
+  stage: string,
+): Promise<{ code: Buffer; m: ExtensionManifest; inputs: string[] }> {
+  await linkHostPackages(dir, stage);
+  const entryOut = join(stage, "package", EXTENSION_ENTRY);
+  const result = await build({ ...serverBuildOptions(dir), outfile: entryOut });
   if (result.errors.length > 0) {
     throw new Error(`${label}: esbuild failed: ${result.errors.map((e) => e.text).join("; ")}`);
   }
@@ -580,6 +627,17 @@ export async function importPluginExtension(pluginDir: string): Promise<Extensio
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
+}
+
+/** The files {@link buildClient} wrote, keyed by their package path (`dist/client/…`). */
+async function readClientFiles(stage: string): Promise<Map<string, Buffer>> {
+  const root = join(stage, "package");
+  const out = new Map<string, Buffer>();
+  for (const f of await listFiles(join(root, "dist", "client"))) {
+    const rel = posix.join("dist/client", f);
+    out.set(rel, await readFile(join(root, rel)));
+  }
+  return out;
 }
 
 /**
@@ -643,6 +701,23 @@ async function bundleExtension(
     if (config.schemas.deployment !== undefined || config.schemas.org !== undefined) {
       extension.configSchemas = config.schemas;
     }
+    const client = await buildClient(dir, stage);
+    if (client === null && m.permissions?.client === true) {
+      throw new PackRuleError(
+        "client-undeclared",
+        `${label}: the extension declares permissions.client: true but the plugin has no client code (src/client.ts[x] or client/styles/*.css)`,
+      );
+    }
+    if (client !== null) {
+      if (m.permissions?.client !== true) {
+        throw new PackRuleError(
+          "client-undeclared",
+          `${label}: the plugin has client code (src/client.ts[x], client/) but its extension does not declare permissions.client: true`,
+        );
+      }
+      for (const [path, data] of await readClientFiles(stage)) files.set(path, data);
+      extension.client = client;
+    }
     const notices = await thirdPartyNotices(dir, inputs);
     if (notices !== undefined) files.set(NOTICES_FILE, Buffer.from(notices));
     return { files, extension };
@@ -688,6 +763,12 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       `${label}: a plugin must contain an extension, a skill, a connector template, an agent template or a theme (src/index.ts, skills/<name>/SKILL.md, connectors/<id>.json, agents/<name>.md or themes/<id>.json)`,
     );
   }
+  if (!hasExtension && (await hasClientSources(dir))) {
+    throw new PackRuleError(
+      "client-undeclared",
+      `${label}: client code needs the plugin's extension (src/index.ts) with permissions.client: true`,
+    );
+  }
   const ext = hasExtension ? await bundleExtension(dir, label, srcPkg.version) : undefined;
   if (ext === undefined && source.setupGuides?.some((g) => g.place === "channel-connection")) {
     throw new Error(
@@ -704,7 +785,15 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     ext === undefined ? source : { ...source, extension: ext.extension };
   const parsed = parsePluginManifest(manifest);
   if ("errors" in parsed) {
-    throw new Error(`${label}: packed ${PLUGIN_MANIFEST_FILE}: ${parsed.errors.join("; ")}`);
+    throw manifestError(`${label}: packed ${PLUGIN_MANIFEST_FILE}`, parsed.errors);
+  }
+  // the theme ids are known only after the scan (the manifest may omit `themes`)
+  const themeIssues = appearanceIssues(
+    parsed,
+    themePathsOf(dir).paths.map((p) => themeIdOf(p)),
+  );
+  if (themeIssues.length > 0) {
+    throw new PackRuleError("appearance-invalid", `${label}: ${themeIssues.join("; ")}`);
   }
 
   const deps = (srcPkg.dependencies ?? {}) as Record<string, string>;

@@ -1,0 +1,11 @@
+{
+  "name": { "en": "Fake client", "zh": "客户端样例" },
+  "schemes": {
+    "light": {
+      "color": { "accent": "#1F5FBF", "on-accent": "#FFFFFF" }
+    },
+    "dark": {
+      "color": { "accent": "#8FB8FF", "on-accent": "#0B1220" }
+    }
+  }
+}

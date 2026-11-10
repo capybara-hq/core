@@ -634,9 +634,9 @@ Common to every place:
 
 | Variable | Type | Value | Unresolved when |
 |---|---|---|---|
-| `webhookUrl` | url | `<channels.webhookBaseUrl>/channels/webhook/<connectionId>` | before the connection exists; no webhook base URL |
+| `webhookUrl` | url | `<channels.webhookBaseUrl>/channels/webhook/<connectionId>` | before the connection exists (`not_saved`); no webhook base URL (`webhook_base`) |
 | `signInCallbackUrl` | url | `<publicUrl>/api/v1/auth/sso/<plugin>/callback` | no `publicUrl` |
-| `connectionName` | text | the connection's name; on 新建渠道 the name typed so far | nothing typed |
+| `connectionName` | text | the connection's name; on 新建渠道 the name typed so far | nothing typed (`no_name`) |
 
 `connector-template` (no modes; audiences `admin`, `member`):
 
@@ -649,7 +649,7 @@ Common to every place:
 | `connectorName` | text | the org's connector made from the template, when the page has one | no connector yet |
 
 - An unknown variable stays as written; a known one without a value stays as written and is
-  listed in `unresolved` with a reason code (`not_saved`, `public_url`, `webhook_base`,
+  listed in `unresolved` with a reason code (`not_saved`, `no_name`, `public_url`, `webhook_base`,
   `no_connector`), so the web can say why and who fixes it (v1 computed the reasons in the web;
   v2 moves them to the kernel so the `Platform` tool gets them too) **(designer's call)**.
 - No variable reads a target's config, a secret, a token, a client id or deployment config
@@ -786,8 +786,12 @@ just new place ids).
 ### 9.2 Channel connections (as v1)
 
 - 新建渠道: once a plugin with a `channel-connection` guide is picked, a 接入指南 FormSection after
-  the plugin section renders the guide with `name` (the name typed so far) and no target. Check
-  rows render as "保存后检查" / "Checked after saving" (checks need a saved target, §10.4).
+  the plugin section renders the guide with `name` (the name typed so far) and no target. The
+  check rows collapse into one line 「保存后可以逐项检查」 / "Each check runs once saved" (checks
+  need a saved target, §10.4), and everything after the document's last top-level thematic break
+  (`---`) is reference material for a saved connection, not shown before save (amended 2026-11-09,
+  `2026-11-09-channel-inbound-mode-fields-design.md` §5). The mode switch is the connection's
+  inbound mode there (sent as `inboundMode` on create, same spec).
 - Channel detail: a 接入指南 section for the connection (its mode by default) with live checks, and
   above it the drift notice and 「我已更新 Slack 应用」 when drifted, as v1.
 - `GET channels/schema/:plugin` keeps `guide: { itemId, guideId } | null`; connection views keep

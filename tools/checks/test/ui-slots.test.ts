@@ -6,6 +6,8 @@ import { UI_SLOTS, type UiSlotSpec } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   checkUiSlots,
+  PLUGIN_CLIENT_SLOTS_TS,
+  renderPluginClientSlotsTs,
   renderUiSlotsDoc,
   renderUiSlotsTs,
   UI_SLOTS_DOC,
@@ -34,6 +36,7 @@ describe("check:ui-slots", () => {
     for (const [rel, text] of [
       [UI_SLOTS_TS, renderUiSlotsTs(UI_SLOTS)],
       [UI_SLOTS_DOC, renderUiSlotsDoc(UI_SLOTS)],
+      [PLUGIN_CLIENT_SLOTS_TS, renderPluginClientSlotsTs(UI_SLOTS)],
     ] as const) {
       mkdirSync(join(dir, rel, ".."), { recursive: true });
       writeFileSync(join(dir, rel), text);

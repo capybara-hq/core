@@ -116,7 +116,7 @@ export interface ParseThemeOptions {
   readability?: boolean;
 }
 
-/** `themes/night-city.json` → `night-city`. */
+/** `themes/neon-grid.json` → `neon-grid`. */
 export function themeIdOf(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.json$/, "");
 }

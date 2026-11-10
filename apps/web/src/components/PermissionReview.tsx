@@ -1,6 +1,14 @@
 "use client";
 
-import { Badge, CodeBlock, ItemList, ItemListItem, Stack, Text } from "@capybara-hq/design";
+import {
+  Badge,
+  CodeBlock,
+  formatBytes,
+  ItemList,
+  ItemListItem,
+  Stack,
+  Text,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { PackageWarning } from "../lib/admin-extensions";
 import type { PermissionGroup, PermissionItem } from "../lib/extensions";
@@ -16,7 +24,10 @@ import type { PermissionGroup, PermissionItem } from "../lib/extensions";
  * - 给了 `added` / `removed`（升级、相对已批准快照）时列出新增（a sensitive one carries the mark and its
  *   reason）/ 减少的权限键；
  * - 给了 `warnings`（迁移里的破坏性语句、DO 块）时逐条列出，同样算敏感：the last row, its hint a warn
- *   line with the `circle-alert` icon, its body each statement's place and its (borderless) code.
+ *   line with the `circle-alert` icon, its body each statement's place and its (borderless) code;
+ * - given `clientFiles` (the build's files, client extensions spec §5.4), the 客户端代码 row lists
+ *   each file with its size and the total under the group's key; client components have their own
+ *   row (界面组件), apart from views and embeds.
  */
 export function PermissionReview({
   plugin,
@@ -24,16 +35,22 @@ export function PermissionReview({
   added = [],
   removed = [],
   warnings = [],
+  clientFiles,
 }: {
   plugin: string;
   groups: PermissionGroup[];
   added?: PermissionItem[];
   removed?: string[];
   warnings?: PackageWarning[];
+  /** The client build's files with their sizes (the `client` group's row lists them). */
+  clientFiles?: { path: string; bytes: number }[];
 }) {
   const t = useTranslations("extensions");
   const label = (category: string) =>
     t.has(`category.${category}`) ? t(`category.${category}`) : category;
+  /** An item as shown: the client code item (reason `client_code`) is translated. */
+  const itemText = (item: PermissionItem): string =>
+    item.reason === "client_code" ? t("review.clientItem") : item.value;
   const reasonText = (item: PermissionItem): string | null => {
     if (item.reason === undefined) return null;
     const key = `review.reason.${item.reason}`;
@@ -80,9 +97,12 @@ export function PermissionReview({
                     <Stack gap={4}>
                       {g.entries.map((e) => (
                         <Text key={e.value} variant="small" tone="muted">
-                          {`· ${e.value}`}
+                          {`· ${itemText(e)}`}
                         </Text>
                       ))}
+                      {g.category === "client" && clientFiles !== undefined && (
+                        <ClientFiles files={clientFiles} />
+                      )}
                     </Stack>
                   )}
                 </ItemListItem>
@@ -148,5 +168,23 @@ export function PermissionReview({
         )}
       </Stack>
     </section>
+  );
+}
+
+/** The files of a client build with their sizes, then the total (the 客户端代码 row's body). */
+function ClientFiles({ files }: { files: { path: string; bytes: number }[] }) {
+  const t = useTranslations("extensions.review");
+  const total = files.reduce((n, f) => n + f.bytes, 0);
+  return (
+    <>
+      {files.map((f) => (
+        <Text key={f.path} variant="small" tone="muted">
+          {`· ${f.path} · ${formatBytes(f.bytes)}`}
+        </Text>
+      ))}
+      <Text variant="small" tone="muted">
+        {t("clientTotal", { files: files.length, size: formatBytes(total) })}
+      </Text>
+    </>
   );
 }

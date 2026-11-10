@@ -276,8 +276,9 @@ interface PipelineDeps {
   /** The org's switches of single extension tools: a turned-off one is not called (spec A §7). */
   readonly switches: Pick<OrgToolSwitches, "isToolOff">;
   /**
-   * Ids of an extension's `inline` ui contributions (read live, no alias): a plugin tool's
-   * `ToolResult.card` must name one of them, otherwise it is dropped with a warning.
+   * Ids of an extension's `conversation.tool-result.card` contributions of any kind (view, embed
+   * or component; read live, no alias): a plugin tool's `ToolResult.card` must name one of them,
+   * otherwise it is dropped with a warning.
    */
   inlineViews(plugin: string): ReadonlySet<string>;
   /**

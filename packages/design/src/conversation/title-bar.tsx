@@ -135,7 +135,7 @@ export function TitleBar({
         },
   );
   return (
-    <header ref={ref} className="cb-title-bar" data-part="title-bar">
+    <header ref={ref} className="cb-title-bar" data-part="title-bar" data-cap-part="title-bar">
       {path !== undefined && path.length > 0 ? (
         <nav className="cb-title-path" data-part="title-path" aria-label={t("shell.path")}>
           {path.map((c, i) => (
@@ -247,7 +247,7 @@ export function TitleBar({
 export function NewTitleBar(): JSX.Element {
   const t = useDesignT();
   return (
-    <header className="cb-title-bar" data-part="title-bar">
+    <header className="cb-title-bar" data-part="title-bar" data-cap-part="title-bar">
       <span className="cb-title-btn" data-part="title" data-untitled="true">
         <span className="cb-title-text">{t("titlebar.new")}</span>
       </span>

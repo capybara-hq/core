@@ -11,6 +11,9 @@
       "path": "../../packages/kernel"
     },
     {
+      "path": "../../packages/plugin-client"
+    },
+    {
       "path": "../../packages/plugin-tools"
     }
   ]

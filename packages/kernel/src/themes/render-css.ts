@@ -88,7 +88,8 @@ const declarations = (d: Map<string, string>, extra: string[] = []): string =>
  * the theme's families first, then the built-in stack. Every stored value is re-validated (token
  * names against the overridable list, values against the SDK grammar, radius 0-16, families,
  * paths, weights, styles, roles); one that fails is left out, and `onSkipped` (when given and
- * something was skipped) is called once with the paths of every skipped value.
+ * something was skipped) is called once with the paths of every skipped value. The whole
+ * stylesheet is one `@layer theme { … }` block (client extensions spec §7.2).
  */
 export function renderThemeCss(
   theme: ParsedTheme,
@@ -150,5 +151,7 @@ export function renderThemeCss(
   if (stacks.length > 0) rules.push(`:root { ${stacks.join(" ")} }`);
 
   if (skipped.length > 0) onSkipped?.(skipped);
-  return `${rules.join("\n")}\n`;
+  // One block in the `theme` cascade layer (client extensions spec §7.2): the design stylesheet
+  // declares the order design, theme, extensions; an unlayered theme would beat plugin CSS.
+  return `@layer theme {\n${rules.join("\n")}\n}\n`;
 }

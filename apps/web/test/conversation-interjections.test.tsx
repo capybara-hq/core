@@ -95,6 +95,11 @@ describe("interjections on the conversation page (spec D4)", () => {
     await renderChatRoute();
     await screen.findByText("I can.");
     expect(order()).toEqual(["user:Can you understand yourself?", "prose", "user:haha"]);
+    // the public part hooks of the thread (client extensions spec §7.1)
+    expect(
+      screen.getByText("I can.").closest('[data-cap-part="message.assistant"]'),
+    ).not.toBeNull();
+    expect(screen.getByText("haha").closest('[data-cap-part="message.user"]')).not.toBeNull();
     const pending = screen.getByText("haha").closest('[data-part="bubble"]') as HTMLElement;
     expect(pending.getAttribute("data-queued")).toBe("true");
     const entry = pending.closest("[data-entry]") as HTMLElement;

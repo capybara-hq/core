@@ -70,7 +70,11 @@ describe("permissionKeys / permissionGroups 的 ui 项", () => {
       }),
       "/tmp",
     );
-    expect(set.permissions.ui).toEqual({ views: ["notes", "tasks"], embeds: ["board"] });
+    expect(set.permissions.ui).toEqual({
+      views: ["notes", "tasks"],
+      embeds: ["board"],
+      components: [],
+    });
     expect(permissionKeys(set)).toEqual([
       "permissions.http:GET /ui/x",
       "ui.embed:board",

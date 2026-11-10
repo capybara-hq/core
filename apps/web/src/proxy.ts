@@ -1,12 +1,27 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { isAppLocale, LOCALE_COOKIE } from "./i18n/routing";
 import { loginPathFor } from "./lib/auth-sources";
+import { safeUiCookieFor } from "./lib/client-extensions";
 import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
-import { PATH_HEADER, SESSION_STATE_HEADER } from "./lib/headers";
+import {
+  CSP_HEADER,
+  documentHost,
+  documentPolicy,
+  NONCE_HEADER,
+  newNonce,
+  PATH_HEADER,
+  SESSION_STATE_HEADER,
+} from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
 import { isPublicPath } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
 import { accessTokenExpiresSoon, renewSession, setCookieValue } from "./lib/session-renewal";
+
+/**
+ * A client host shim file (`CLIENT_HOST_PREFIX` of `lib/headers.ts`, written by
+ * `scripts/gen-client-host.mjs`); any other path there is a page like the rest.
+ */
+const CLIENT_HOST_SHIM = /^\/_capybara\/client-host\/[^/]+\/[a-z-]+\.mjs$/;
 
 /** The kernel's refresh-token cookie (`cap_rt`, Path=/, SameSite=Lax). */
 const REFRESH_COOKIE = "cap_rt";
@@ -82,11 +97,17 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  *    the response);
  * 3. a protected page still without `cap_at` redirects to `/setup` (fresh deployment) or sign-in;
  * 4. the forwarded request carries `x-cap-path` (path + query), and `x-cap-session: unavailable`
- *    when the kernel could not be reached.
+ *    when the kernel could not be reached;
+ * 5. the document CSP (client extensions spec §9.5, {@link documentPolicy}) with a fresh nonce goes
+ *    on the forwarded request (Next takes the nonce from it and puts it on its own scripts; the
+ *    layouts read `x-nonce`) and on the response. A client-sent nonce or policy never survives.
+ * 6. `?safe-ui=1` sets the safe-mode session cookie, `?safe-ui=0` clears it (client extensions spec
+ *    §10.1), so safe mode holds through client navigations and refreshes.
+ * The client host shims (`/_capybara/client-host/<build>/<name>.mjs`) get step 5 only.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
  * a credential page with form fields in its query is redirected to the page without them.
- * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/*` and files never come here.
+ * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/ui/*` and `/icon.svg` never come here (`config`).
  */
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const legacy = localeRedirect(req);
@@ -101,13 +122,36 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const headers = new Headers(req.headers);
   headers.delete(SESSION_STATE_HEADER);
   headers.set(PATH_HEADER, `${pathname}${search}`);
+  const nonce = newNonce();
+  const policy = documentPolicy({
+    nonce,
+    host: documentHost(req.headers) ?? req.nextUrl.host,
+    dev: process.env.NODE_ENV !== "production",
+  });
+  headers.set(CSP_HEADER, policy);
+  // Next falls back to the report-only header for the nonce: never let a client supply one
+  headers.delete(`${CSP_HEADER}-report-only`);
+  headers.set(NONCE_HEADER, nonce);
+
+  // The client host shims are static files the signed-in page imports in parallel: no session
+  // renewal (it would race the document's) and no sign-in redirect for them. They keep the CSP and
+  // the nonce: a missing file falls through to the app's catch-all page, a document.
+  if (req.method === "GET" && CLIENT_HOST_SHIM.test(pathname)) {
+    const res = NextResponse.next({ request: { headers } });
+    res.headers.set(CSP_HEADER, policy);
+    return res;
+  }
+
+  const setCookies: string[] = [];
+  // Safe mode for the browser session: `?safe-ui=1` sets the cookie, `?safe-ui=0` clears it.
+  const safeCookie = safeUiCookieFor(search, req.nextUrl.protocol === "https:");
+  if (safeCookie !== null) setCookies.push(safeCookie);
 
   const pairs = parseCookies(req.headers.get("cookie"));
   const hasRetry = pairs.some(([n]) => n === RETRY_COOKIE);
   const accessToken = cookieValue(pairs, ACCESS_COOKIE);
   let signedIn = accessToken !== undefined;
   let unavailable = false;
-  const setCookies: string[] = [];
   const refreshToken = cookieValue(pairs, REFRESH_COOKIE);
   // Renew without cap_at, and also when cap_at outlived its token or is about to expire.
   const renew =
@@ -167,10 +211,17 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     return withCookies(NextResponse.redirect(new URL(to, req.nextUrl), 307), setCookies);
   }
 
-  return withCookies(NextResponse.next({ request: { headers } }), setCookies);
+  const res = NextResponse.next({ request: { headers } });
+  res.headers.set(CSP_HEADER, policy);
+  return withCookies(res, setCookies);
 }
 
 export const config = {
-  // Every page: not /api, /plugin-ui, /_next, /dev, nor any path with a dot (files).
-  matcher: ["/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev(?:/|$)|.*\\.).*)"],
+  // Every document. Skipped are only the paths a non-page route always answers: `/api/<x>` and
+  // `/plugin-ui/<x>` (catch-all route handlers needing at least one segment), `/_next/<x>`, the
+  // design catalog `/dev/ui` (optional catch-all, so `/dev/ui` itself too) and the metadata icon
+  // `/icon.svg`. Any other path, the slash-less `/api`, `/plugin-ui`, `/_next` and dotted ones
+  // (`/chat/x.y`, `/dev/x`, `/a/b.png`) included, can land in the (app) layout through a dynamic
+  // segment or `[...rest]`, so it must get the CSP and a nonce the client cannot choose.
+  matcher: ["/((?!api/|plugin-ui/|_next/|dev/ui(?:/|$)|icon\\.svg$).*)"],
 };

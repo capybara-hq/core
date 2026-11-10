@@ -79,6 +79,8 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-web": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-config-form": { provides: [] },
+  "fake-client": { provides: [] },
+  "fake-client-broken": { provides: [] },
 };
 
 let out: string;
@@ -1163,7 +1165,7 @@ describe("fake-theme (a declarative plugin, no extension)", () => {
       expect(list).toEqual(
         expect.arrayContaining([
           ".capybara-plugin/plugin.json",
-          "themes/night-city.json",
+          "themes/neon-grid.json",
           "themes/paper.json",
           "fonts/FakeSans.woff2",
           "logo.svg",

@@ -18,10 +18,16 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AgentSelect, ChannelStatusMark, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
-import { channelConfig, channelFormMeta } from "../../../../components/config-form/channel";
+import {
+  channelConfig,
+  channelFormMeta,
+  channelSchemaFields,
+  channelSchemaForMode,
+  missingModeFields,
+} from "../../../../components/config-form/channel";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -65,6 +71,8 @@ export interface ChannelData {
   schema: JsonSchema | null | undefined;
   agents: Agent[];
 }
+
+type Obj = Record<string, unknown>;
 
 /** Saves a change to the connection; resolves with the connection the kernel answered. */
 type Update = (input: UpdateChannelInput) => Promise<ChannelConnection>;
@@ -152,7 +160,7 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
       facts={<ChannelFacts data={data} />}
     >
       {tab === "overview" ? (
-        <OverviewTab orgId={orgId} channel={data.channel} update={update} />
+        <OverviewTab orgId={orgId} channel={data.channel} schema={data.schema} update={update} />
       ) : tab === "credentials" ? (
         <CredentialsTab
           key={data.channel.updatedAt}
@@ -199,10 +207,12 @@ function ChannelFacts({ data }: { data: ChannelData }) {
 function OverviewTab({
   orgId,
   channel,
+  schema,
   update,
 }: {
   orgId: string;
   channel: ChannelConnection;
+  schema: JsonSchema | null | undefined;
   update: Update;
 }) {
   const t = useTranslations("channels");
@@ -253,7 +263,7 @@ function OverviewTab({
           </Stack>
         </Stack>
       </Card>
-      <InboundCard key={channel.inboundMode} channel={channel} update={update} />
+      <InboundCard key={channel.inboundMode} channel={channel} schema={schema} update={update} />
       {channel.setupGuide ? (
         <GuideSection
           // a mode switch renders the guide of the new mode
@@ -317,24 +327,66 @@ function GuideSection({
 /**
  * Inbound mode: long connection (default) or webhook. Webhook needs plugin support and the
  * deployment's webhook base URL; the callback URL to register with the platform is read-only.
+ * The fields the new mode requires that are not set yet (`x-ui.inboundModes`, channel inbound mode
+ * fields spec §5) are asked for here and saved with the mode in one PATCH.
  */
-function InboundCard({ channel, update }: { channel: ChannelConnection; update: Update }) {
+function InboundCard({
+  channel,
+  schema,
+  update,
+}: {
+  channel: ChannelConnection;
+  schema: JsonSchema | null | undefined;
+  update: Update;
+}) {
   const t = useTranslations("channels");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [mode, setMode] = useState<InboundMode>(channel.inboundMode);
   const [pending, setPending] = useState(false);
+  const [fields, setFields] = useState<{ mode: InboundMode; config: Obj; ok: boolean }>();
+  const [error, setError] = useState<{ message: string; issues: ConfigIssue[] }>();
   const available = channel.webhookSupported && channel.webhookUrl !== null;
   // Switching is offered when webhooks are available, or to get back from webhook mode
   const switchable = available || channel.inboundMode === "webhook";
+  const missing = useMemo(
+    () =>
+      mode === channel.inboundMode
+        ? []
+        : missingModeFields(schema, mode, (field) => {
+            const secret = channel.secrets.find((x) => x.path === field);
+            if (secret !== undefined) return secret.set;
+            const v = channel.config?.[field];
+            return v !== undefined && v !== null && v !== "";
+          }),
+    [schema, mode, channel],
+  );
+  const missingKey = missing.join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the missing fields' names
+  const missingSchema = useMemo(
+    () => (schema && missing.length > 0 ? channelSchemaFields(schema, missing) : null),
+    [schema, missingKey],
+  );
+  const own = fields?.mode === mode ? fields : undefined;
+  const fieldsInvalid = missingSchema !== null && own?.ok !== true;
 
   async function save() {
     setPending(true);
+    setError(undefined);
     try {
-      await update({ inboundMode: mode });
+      await update({
+        inboundMode: mode,
+        // the whole config (secrets left out are kept) with the new mode's fields
+        ...(missingSchema !== null &&
+          own !== undefined && {
+            config: { ...channelConfig(channel.config ?? {}), ...own.config },
+          }),
+      });
       toast.success(t("detail.inboundSaved"));
     } catch (e) {
-      toast.error(errorMessage(e));
+      const issues = configIssues(e);
+      if (issues.length > 0) setError({ message: errorMessage(e), issues });
+      else toast.error(errorMessage(e));
     } finally {
       setPending(false);
     }
@@ -372,12 +424,34 @@ function InboundCard({ channel, update }: { channel: ChannelConnection; update: 
             <Input value={channel.webhookUrl} readOnly />
           </Field>
         )}
+        {missingSchema !== null && (
+          <Stack gap={8}>
+            <Text variant="small" tone="muted">
+              {t("detail.inboundFieldsHint", { mode: t(`inboundMode.${mode}`) })}
+            </Text>
+            <ConfigForm
+              key={mode}
+              schema={missingSchema}
+              value={{}}
+              issues={error?.issues ?? []}
+              disabled={pending}
+              onChange={(value, _entries, state) =>
+                setFields({
+                  mode,
+                  config: channelConfig(value),
+                  ok: state.problems.length === 0,
+                })
+              }
+            />
+          </Stack>
+        )}
+        {error !== undefined && <FormError message={error.message} />}
         {switchable && (
           <Stack direction="row">
             <Button
               variant="primary"
               loading={pending}
-              disabled={mode === channel.inboundMode}
+              disabled={mode === channel.inboundMode || fieldsInvalid}
               onClick={() => void save()}
             >
               {t("detail.saveInbound")}
@@ -409,6 +483,11 @@ function CredentialsTab({
   });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
+  // The fields of the connection's mode (channel inbound mode fields spec §5)
+  const modeSchema = useMemo(
+    () => channelSchemaForMode(schema, channel.inboundMode),
+    [schema, channel.inboundMode],
+  );
   if (schema === undefined) {
     return (
       <Card title={t("detail.credentialsTitle")}>
@@ -449,7 +528,7 @@ function CredentialsTab({
           {t("detail.credentialsHint")}
         </Text>
         <ConfigForm
-          schema={schema}
+          schema={modeSchema}
           value={channel.config ?? {}}
           meta={channelFormMeta(channel.secrets)}
           issues={error?.issues ?? []}

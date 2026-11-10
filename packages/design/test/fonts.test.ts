@@ -43,7 +43,8 @@ describe("fonts.css", () => {
   it("base.css declares no faces and index.css imports fonts.css first", () => {
     expect(readFileSync(resolve(stylesDir, "base.css"), "utf8")).not.toContain("@font-face");
     const index = readFileSync(resolve(stylesDir, "index.css"), "utf8");
-    expect(index.split("\n")[0]).toBe('@import "./fonts.css";');
+    // Line 1 declares the cascade layer order (client extensions spec §7.2)
+    expect(index.split("\n")[1]).toBe('@import "./fonts.css" layer(design);');
   });
 
   it("each font has its license next to it", () => {

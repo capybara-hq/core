@@ -20,6 +20,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useComponentScopeText } from "../../../../../components/AdminComponents";
+import { useApplyAppearance } from "../../../../../components/ApplyAppearance";
 import {
   ComponentSection,
   LicenseView,
@@ -45,6 +46,7 @@ import {
   type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
+  clientFilesOf,
   compareSemver,
   declaredPermissions,
   descriptionOf,
@@ -86,6 +88,9 @@ import NotFound from "../../../not-found";
 const TABS = ["components", "orgs", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
+/** An org's upload whose first version waits for the super admin (no platform action yet). */
+const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation === true;
+
 /**
  * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name, the
  * platform's version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope dialog with
@@ -100,7 +105,9 @@ type Tab = (typeof TABS)[number];
  * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
  * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
  * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
- * license folded at the end; 删除 is the head's ⋯ menu item. From the query cache (the layout
+ * license folded at the end; 删除 is the head's ⋯ menu item. 应用此插件的外观 (a plugin with a
+ * suggested appearance, client extensions spec §6.5) previews the platform changes in a confirm
+ * dialog, then applies them. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
  * the catalog and the orgs are sections.
  */
@@ -246,6 +253,15 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     }
   };
 
+  // 应用此插件的外观 (client extensions spec §6.5): only for a plugin that suggests one and is on
+  const appearance = useApplyAppearance(
+    { kind: "platform", itemId: item.id },
+    name,
+    platformRelease?.client != null,
+  );
+  const suggests =
+    detail.suggestedAppearance != null && !deleted && !item.disabled && !awaitingOf(item);
+
   const owner = ownerOrgOf(item);
   // An org's upload: its org uploads its versions (ruling P3-12); a first version waiting for the
   // confirmation takes no scope change or disable (409 catalog.item_pending, ruling P3-9)
@@ -276,6 +292,16 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                 onSelect: () => setDialog("disable"),
               },
         ]),
+    ...(suggests
+      ? [
+          {
+            label: t("detail.actions.applyAppearance"),
+            variant: "default" as const,
+            loading: appearance.previewing,
+            onSelect: appearance.preview,
+          },
+        ]
+      : []),
     ...(updateTo !== null && owner === null && !deleted && !item.disabled
       ? [
           {
@@ -438,6 +464,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           )}
         </Stack>
       </DetailPage>
+      {appearance.dialog}
       {dialog === "scope" && (
         <PluginScopeDialog item={item} orgId={orgId} onClose={() => setDialog(null)} />
       )}
@@ -501,16 +528,29 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
 type ComponentRow = {
   key: string;
   name: string;
-  kind: "extension" | "skill" | "connectorTemplate" | "agentTemplate";
+  kind:
+    | "extension"
+    | "component"
+    | "clientCode"
+    | "skill"
+    | "connectorTemplate"
+    | "agentTemplate"
+    | "theme";
   version: string;
+  /** The client code row: its file count (the name is drawn from it). */
+  files?: number;
 };
 
 /** The platform component kind of a manifest row (an extension has none). */
 const PLATFORM_KIND: Record<ComponentRow["kind"], PlatformComponentKind | null> = {
   extension: null,
+  component: null,
+  clientCode: null,
   skill: "skill",
   connectorTemplate: "connector_template",
   agentTemplate: "agent_template",
+  // themes are listed without a link (this page reads no theme list)
+  theme: null,
 };
 
 /** The plugin's platform components of each kind (sections: empty while they load or failed). */
@@ -535,12 +575,33 @@ function usePluginComponents(itemId: string): (row: ComponentRow) => PlatformCom
   };
 }
 
-/** The components of a version (its plugin.json): the extension, skills, templates. */
+/**
+ * The components of a version (its plugin.json): the extension with its client components and
+ * client code (client extensions spec §5), skills, templates and themes.
+ */
 function componentsOf(m: PluginManifest): ComponentRow[] {
   const ext = m.extension?.manifest;
+  const client = m.extension?.client;
   return [
     ...(ext
       ? [{ key: `e:${ext.name}`, name: ext.name, kind: "extension" as const, version: ext.version }]
+      : []),
+    ...(ext?.permissions.ui?.components ?? []).map((id) => ({
+      key: `u:${id}`,
+      name: id,
+      kind: "component" as const,
+      version: ext?.version ?? m.version,
+    })),
+    ...(client !== undefined
+      ? [
+          {
+            key: "client",
+            name: "",
+            kind: "clientCode" as const,
+            version: ext?.version ?? m.version,
+            files: clientFilesOf(client).length,
+          },
+        ]
       : []),
     ...(m.skills ?? []).map((s) => ({
       key: `s:${s.path}`,
@@ -558,6 +619,12 @@ function componentsOf(m: PluginManifest): ComponentRow[] {
       key: `a:${a.path}`,
       name: agentTemplateNameOf(a.path),
       kind: "agentTemplate" as const,
+      version: m.version,
+    })),
+    ...(m.themes ?? []).map((th) => ({
+      key: `t:${th.path}`,
+      name: templateIdOf(th.path),
+      kind: "theme" as const,
       version: m.version,
     })),
   ];
@@ -587,6 +654,7 @@ function ComponentsTab({
       key: "name",
       header: t("componentColumns.name"),
       cell: (row) => {
+        if (row.kind === "clientCode") return t("clientFiles", { files: row.files ?? 0 });
         const c = componentOf(row);
         return c === undefined ? (
           row.name

@@ -38,6 +38,21 @@ export const channelGuideRefQuery = (orgId: string, plugin: string) =>
     freshness: "orgConfig",
   });
 
+/**
+ * Whether a channel plugin's connections can use webhook inbound (channel inbound mode fields spec
+ * §4); none known (an older kernel) reads as unavailable. The schema route answers it.
+ */
+export const channelInboundQuery = (orgId: string, plugin: string) =>
+  defineQuery({
+    key: keys.org(orgId).channelInbound(plugin),
+    fn: () =>
+      getChannelSchema(orgId, plugin).then(
+        (r) =>
+          r.inbound ?? { webhookSupported: false, webhookAvailable: false, webhookPublic: false },
+      ),
+    freshness: "orgConfig",
+  });
+
 /** The org's extensions (`{ extensions }`): which channel plugins it can connect. */
 export const orgExtensionsQuery = (orgId: string) =>
   defineQuery({

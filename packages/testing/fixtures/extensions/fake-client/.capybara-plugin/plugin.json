@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-client",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: client extension components in five slots, CSS decoration, an events listener and a suggested appearance",
+  "suggestedAppearance": {
+    "theme": "fake",
+    "replacements": { "shell.brand": "brand" }
+  }
+}

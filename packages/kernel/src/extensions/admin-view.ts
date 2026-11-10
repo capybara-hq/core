@@ -59,6 +59,9 @@ export interface PublishBus {
   publish(topic: string, payload: unknown): Promise<void>;
 }
 
+/** The most client reports an extension view lists (the newest). */
+const CLIENT_REPORTS_SHOWN = 50;
+
 /** The raw material for one extension in the admin console (before building the {@link AdminExtensionView}). */
 interface Subject {
   name: string;
@@ -461,8 +464,13 @@ export class ExtensionAdmin {
           .execute()
       ).map((r) => [r.plugin, Number(r.n)] as const),
     );
+    const { clients, reports } = await this.clientsOf(subjects, rows);
     return subjects.map((s) => {
       const of = items.get(s.name);
+      const clientFields = {
+        client: clients.get(s.name) ?? null,
+        clientReports: reports.get(s.name) ?? [],
+      };
       const builtin = of?.some((i) => i.builtin) === true || s.install?.required === true;
       const scopeInfo = {
         scope: of?.[0]
@@ -515,6 +523,7 @@ export class ExtensionAdmin {
           ...scopeInfo,
           installSource: install?.source ?? null,
           uiDropped: this.host.uiDropped(s.name),
+          ...clientFields,
           error: s.broken,
         };
       }
@@ -569,8 +578,88 @@ export class ExtensionAdmin {
         ...scopeInfo,
         installSource: install?.source ?? null,
         uiDropped: this.host.uiDropped(s.name),
+        ...clientFields,
       };
     });
+  }
+
+  /**
+   * The client build of each subject and its newest reports (at most {@link CLIENT_REPORTS_SHOWN}
+   * per extension, limited in SQL), in two queries over all subjects. The build is the one a live
+   * replica serves (`serving_sha256` of the fresh rows `live`, like the shell reads: the install's
+   * own package when it runs, else the newest still served, e.g. the old one beside an upgrade
+   * awaiting approval or failed); with none served, the install record package's build.
+   */
+  private async clientsOf(
+    subjects: Subject[],
+    live: { plugin: string; serving_sha256: string | null }[],
+  ): Promise<{
+    clients: Map<string, NonNullable<AdminExtensionView["client"]>>;
+    reports: Map<string, AdminExtensionView["clientReports"]>;
+  }> {
+    const targets = subjects.flatMap((s) => {
+      if (s.install === undefined || s.install === null || s.broken !== undefined) return [];
+      const serving = new Set(
+        live.flatMap((r) =>
+          r.plugin === s.name && r.serving_sha256 !== null ? [r.serving_sha256] : [],
+        ),
+      );
+      return [{ plugin: s.name, sha: s.install.sha256, serving }];
+    });
+    const clients = new Map<string, NonNullable<AdminExtensionView["client"]>>();
+    const reports = new Map<string, AdminExtensionView["clientReports"]>();
+    if (targets.length === 0) return { clients, reports };
+    const shas = [...new Set(targets.flatMap((t) => [t.sha, ...t.serving]))];
+    const builds = await this.db
+      .selectFrom("extension_client_builds")
+      .select(["package_sha256", "plugin", "sizes", "api_version", "created_at"])
+      .where("package_sha256", "in", shas)
+      .orderBy("created_at", "desc")
+      .execute();
+    for (const t of targets) {
+      const mine = builds.filter((x) => x.plugin === t.plugin);
+      const b =
+        (t.serving.has(t.sha) ? mine.find((x) => x.package_sha256 === t.sha) : undefined) ??
+        mine.find((x) => t.serving.has(x.package_sha256)) ??
+        (t.serving.size === 0 ? mine.find((x) => x.package_sha256 === t.sha) : undefined);
+      if (b === undefined) continue;
+      clients.set(t.plugin, {
+        build: b.package_sha256,
+        files: Object.entries(b.sizes)
+          .map(([path, bytes]) => ({ path, bytes }))
+          .sort((x, y) => x.path.localeCompare(y.path)),
+        apiVersion: b.api_version,
+      });
+    }
+    const built = [...clients].map(([plugin, c]) => ({ plugin, build: c.build }));
+    if (built.length === 0) return { clients, reports };
+    const ranked = this.db
+      .selectFrom("extension_client_reports")
+      .selectAll()
+      .select(sql<number>`row_number() over (partition by plugin order by last_at desc)`.as("rank"))
+      .where((eb) =>
+        eb.or(built.map((c) => eb.and([eb("plugin", "=", c.plugin), eb("build", "=", c.build)]))),
+      );
+    const rows = await this.db
+      .selectFrom(ranked.as("r"))
+      .selectAll()
+      .where("r.rank", "<=", CLIENT_REPORTS_SHOWN)
+      .orderBy("r.last_at", "desc")
+      .execute();
+    for (const r of rows) {
+      const list = reports.get(r.plugin) ?? [];
+      list.push({
+        orgId: r.org_id,
+        contribution: r.contribution,
+        kind: r.kind,
+        count: r.count,
+        firstAt: r.first_at.toISOString(),
+        lastAt: r.last_at.toISOString(),
+        lastMessage: r.last_message,
+      });
+      reports.set(r.plugin, list);
+    }
+    return { clients, reports };
   }
 }
 

@@ -7,7 +7,7 @@ import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { StorageService } from "../storage/storage.service.js";
 import { renderThemeCss } from "./render-css.js";
-import { themeUrl } from "./theme-state.js";
+import { THEME_CSS_REVISION, themeUrl } from "./theme-state.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A version number as it appears in a delivery URL: a positive int4. */
@@ -69,9 +69,14 @@ export class ThemeDeliveryService {
   /**
    * The stylesheet of version `version` of theme `id` ({@link renderThemeCss}, asset URLs from
    * {@link themeUrl}); a stored value that fails re-validation is left out with one warning per
-   * render naming every skipped value. Unknown theme or version: 404 `theme.not_found`.
+   * render naming every skipped value. Unknown theme or version, or a `revision` other than the
+   * current `r<THEME_CSS_REVISION>` (an older one promised another format; a later one belongs to a
+   * newer replica): 404 `theme.not_found`, never cached.
    */
-  async stylesheet(id: string, version: string): Promise<string> {
+  async stylesheet(id: string, version: string, revision: string): Promise<string> {
+    if (revision !== `r${THEME_CSS_REVISION}`) {
+      throw notFound(`Theme ${id} version ${version} stylesheet revision ${revision}`);
+    }
     const { definition } = await this.version(id, version);
     return renderThemeCss(
       definition,

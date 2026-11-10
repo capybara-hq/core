@@ -242,6 +242,27 @@
         "additionalProperties": false
       }
     },
+    "suggestedAppearance": {
+      "type": "object",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+        },
+        "replacements": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "extension": {
       "type": "object",
       "properties": {
@@ -402,6 +423,52 @@
               "additionalProperties": {}
             }
           },
+          "additionalProperties": false
+        },
+        "client": {
+          "type": "object",
+          "properties": {
+            "entry": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "styles": {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 512
+              }
+            },
+            "assets": {
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 512
+              }
+            },
+            "integrity": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "apiVersion": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "integrity",
+            "apiVersion"
+          ],
           "additionalProperties": false
         }
       },

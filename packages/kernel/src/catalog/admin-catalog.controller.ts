@@ -1,3 +1,4 @@
+import type { SuggestedAppearance } from "@capybara-hq/plugin-sdk";
 import {
   Controller,
   Delete,
@@ -12,6 +13,7 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { type ClientBuildSummary, ClientBuilds } from "../client/client-builds.service.js";
 import { ApiError } from "../errors.js";
 import { PluginGuides, type RenderedSetupGuide } from "../extensions/plugin-guides.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
@@ -39,6 +41,12 @@ import {
   CatalogScopePreviewBody as ScopePreviewBody,
   CatalogShownBody as ShownBody,
 } from "./admin-catalog.schemas.js";
+import { AppearanceApplyBody } from "./appearance.schemas.js";
+import {
+  type AppearanceResult,
+  AppearanceService,
+  suggestedAppearanceOf,
+} from "./appearance.service.js";
 import {
   type ActorOpts,
   type CatalogItemDetail,
@@ -98,6 +106,7 @@ class CatalogUpdatePreviewBodyDto extends createZodDto(
   "CatalogUpdatePreviewBody",
 ) {}
 class CatalogUpdateBodyDto extends createZodDto(CatalogUpdateBody, "CatalogUpdateBody") {}
+class AppearanceApplyBodyDto extends createZodDto(AppearanceApplyBody, "AppearanceApplyBody") {}
 
 /**
  * The platform catalog (`/api/v1/admin/catalog/*`, super admins): plugin import (upload / npm
@@ -115,6 +124,8 @@ export class AdminCatalogController {
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
+    @Inject(AppearanceService) private readonly appearance: AppearanceService,
+    @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
     @Inject(PluginGuides) private readonly guides: PluginGuides,
   ) {}
 
@@ -269,13 +280,63 @@ export class AdminCatalogController {
   }
 
   /**
-   * 条目详情与各版本，另给出 `hasIcon`（最新版本有图标，`GET items/:id/icon` 可取）；不存在 → 404
-   * `catalog.item_not_found`。
+   * The item with its versions, plus `hasIcon` (the latest version has an icon, served by `GET
+   * items/:id/icon`) and `suggestedAppearance` (the platform version's, null without one: the page
+   * offers 应用此插件的外观 when set). Each version carries `client`: its extension package's
+   * client build (files with sizes, total, client API version; null without one), what the
+   * permission confirmation of an org's upload shows in its 客户端代码 group (client extensions spec
+   * §5.4). Unknown -> 404 `catalog.item_not_found`.
    */
   @Get("items/:id")
-  async get(@Param("id") id: string): Promise<CatalogItemDetail & { hasIcon: boolean }> {
+  async get(@Param("id") id: string): Promise<
+    Omit<CatalogItemDetail, "versions"> & {
+      versions: (CatalogItemDetail["versions"][number] & { client: ClientBuildSummary | null })[];
+      hasIcon: boolean;
+      suggestedAppearance: SuggestedAppearance | null;
+    }
+  > {
     const detail = await this.catalog.get(id);
-    return { ...detail, hasIcon: await this.orgCatalog.hasIcon(id) };
+    const platform = detail.versions.find((v) => v.version === detail.item.platformVersion);
+    const [hasIcon, builds] = await Promise.all([
+      this.orgCatalog.hasIcon(id),
+      this.clientBuilds.summaries(
+        detail.versions.flatMap((v) => (v.extensionSha256 === null ? [] : [v.extensionSha256])),
+      ),
+    ]);
+    return {
+      ...detail,
+      versions: detail.versions.map((v) => ({
+        ...v,
+        client: v.extensionSha256 === null ? null : (builds.get(v.extensionSha256) ?? null),
+      })),
+      hasIcon,
+      suggestedAppearance: suggestedAppearanceOf(platform?.manifest),
+    };
+  }
+
+  /**
+   * 应用此插件的外观 (client extensions spec §6.5): sets the plugin's suggested theme as the platform
+   * default theme and each suggested replacement as the platform arrangement's `use` of its slot, in
+   * one transaction. `dryRun: true` answers the same changes and writes nothing. A theme that cannot
+   * be the platform default -> 400 `theme.not_available` (nothing written); a replacement not
+   * available on the platform is skipped. No such item, or no suggestion -> 404
+   * `catalog.item_not_found`.
+   */
+  @Post("items/:id/appearance")
+  @HttpCode(200)
+  applyAppearance(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(AppearanceApplyBodyDto) body: z.infer<typeof AppearanceApplyBody>,
+  ): Promise<AppearanceResult> {
+    const actor = requireUser(principal);
+    const tokenId = patTokenId(actor);
+    return this.appearance.apply(
+      { platform: true },
+      id,
+      { accountId: actor.account.id, ...(tokenId !== undefined && { tokenId }) },
+      body.dryRun === true,
+    );
   }
 
   /**

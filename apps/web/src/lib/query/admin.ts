@@ -124,8 +124,8 @@ export const adminExtensionQuery = (name: string) =>
  * the deployment or in the org) changes there besides the org's extensions list: its readiness (a
  * model provider enabled or configured), what the extensions bring (UI, pages, file previewers),
  * the models they provide and the purposes that map to them, the connector kinds, and the default
- * providers of the `org-default` points (their candidates and whether a point has a provider now)
- * and the extension tools an agent can select.
+ * providers of the `org-default` points (their candidates and whether a point has a provider now),
+ * the extension tools an agent can select and the client code the org's pages load.
  */
 export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] => {
   const k = keys.org(orgId);
@@ -142,6 +142,8 @@ export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] =>
     k.models(),
     k.modelsCatalog(),
     k.orgPurposes(),
+    // the client code the org's pages load (client extensions spec §11)
+    k.clientExtensions(),
   ];
 };
 

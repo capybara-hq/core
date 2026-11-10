@@ -1,11 +1,11 @@
 import { findNestedBoxes } from "@capybara-hq/design/reference";
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { setupGuideQuery } from "../src/lib/query/setup";
-import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { pickOption } from "./support/select";
@@ -158,12 +158,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function openNewChannel(routes: Record<string, (c: { url: string }) => Response> = {}) {
+/** Webhook inbound usable at a public https address (channel inbound mode fields spec §4). */
+const PUBLIC = { webhookSupported: true, webhookAvailable: true, webhookPublic: true };
+
+async function openNewChannel(
+  routes: Record<string, (c: Call) => Response> = {},
+  o: { schema?: unknown; inbound?: unknown } = {},
+) {
   const calls = stubApi({
     [`GET ${BASE}/extensions`]: () => json(200, { extensions: PLUGINS }),
     [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
     [`GET ${BASE}/channels/schema/slack`]: () =>
-      json(200, { plugin: "slack", schema: SCHEMA, guide: { itemId: "item1", guideId: "app" } }),
+      json(200, {
+        plugin: "slack",
+        schema: o.schema ?? SCHEMA,
+        guide: { itemId: "item1", guideId: "app" },
+        inbound: o.inbound ?? PUBLIC,
+      }),
     [`GET ${GUIDE_URL}`]: guideRoute,
     ...routes,
   });
@@ -213,16 +224,146 @@ describe("新建渠道: 接入指南 once the plugin is picked", () => {
     await user.click(screen.getByRole("radio", { name: g.modes.webhook }));
     expect(await screen.findByText("manifest.webhook.yaml")).toBeTruthy();
     expect(calls.some((c) => c.url === `${GUIDE_URL}?mode=webhook&locale=zh`)).toBe(true);
-    // the rows follow the mode
-    expect(screen.getByRole("group", { name: "Slack 已调用回调地址" })).toBeTruthy();
-    expect(screen.queryByRole("group", { name: "应用令牌有效" })).toBeNull();
+    // a full-width switch (a form choice: Segmented `fill`)
+    expect(screen.getByRole("radiogroup", { name: g.modeLabel }).getAttribute("data-fill")).toBe(
+      "true",
+    );
   });
 
-  it("check rows static with 保存后检查 on 新建渠道", async () => {
+  it("the mode switch is the inbound mode: the fields follow it and it is sent on create", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        appToken: {
+          type: "string",
+          title: "App token",
+          "x-secret": true,
+          "x-ui": { inboundModes: ["long_connection"] },
+        },
+        botToken: { type: "string", title: "Bot token", "x-secret": true },
+        signingSecret: {
+          type: "string",
+          title: "Signing secret",
+          "x-secret": true,
+          "x-ui": { inboundModes: ["webhook"] },
+        },
+      },
+      required: ["botToken"],
+    };
+    const { calls, user } = await openNewChannel(
+      {
+        [`POST ${BASE}/channels`]: (c) =>
+          json(201, { channel: { ...CHANNEL, ...(bodyOf(c) as object) } }),
+      },
+      { schema },
+    );
+    await screen.findByText("manifest.socket.yaml");
+    // long connection: the app token is drawn and required, the signing secret is not drawn
+    expect(screen.getByLabelText(/^App token/)).toBeTruthy();
+    expect(screen.queryByLabelText(/^Signing secret/)).toBeNull();
+    await user.type(
+      screen.getByRole("textbox", { name: new RegExp(`^${zh.channels.form.nameLabel}`) }),
+      "Sales",
+    );
+    await user.type(screen.getByLabelText(/^Bot token/), "xoxb-1");
+    await pickOption(
+      screen.getByRole("combobox", { name: new RegExp(`^${zh.channels.form.agentLabel}`) }),
+      "ag1",
+      user,
+    );
+    const submit = screen.getByRole("button", { name: zh.channels.form.submit });
+    // the app token is still missing
+    expect(submit.hasAttribute("disabled")).toBe(true);
+    await user.type(screen.getByLabelText(/^App token/), "xapp-1");
+    await vi.waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    // webhook: the signing secret instead (the app token typed is kept, but not sent)
+    await user.click(screen.getByRole("radio", { name: g.modes.webhook }));
+    expect(await screen.findByLabelText(/^Signing secret/)).toBeTruthy();
+    expect(screen.queryByLabelText(/^App token/)).toBeNull();
+    await vi.waitFor(() => expect(submit.hasAttribute("disabled")).toBe(true));
+    await user.type(screen.getByLabelText(/^Signing secret/), "sig-1");
+    await vi.waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    await user.click(submit);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      inboundMode: "webhook",
+      config: { botToken: "xoxb-1", signingSecret: "sig-1" },
+    });
+    expect(
+      (bodyOf(calls.find((c) => c.method === "POST")) as { config: object }).config,
+    ).not.toHaveProperty("appToken");
+  });
+
+  it("without a public https webhook address: long connection by default, with a hint", async () => {
+    const { calls, user } = await openNewChannel(
+      {},
+      { inbound: { webhookSupported: true, webhookAvailable: false, webhookPublic: false } },
+    );
+    await screen.findByText("manifest.socket.yaml");
+    expect(calls.some((c) => c.url === `${GUIDE_URL}?mode=long_connection&locale=zh`)).toBe(true);
+    expect(screen.getByText(zh.channels.form.webhookDefaultLong)).toBeTruthy();
+    // webhook cannot be saved here: why, and 创建 stays disabled
+    await user.click(screen.getByRole("radio", { name: g.modes.webhook }));
+    expect(await screen.findByText(zh.channels.form.webhookUnavailable)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: zh.channels.form.submit }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("a usable but private webhook address: long connection by default; webhook warns", async () => {
+    const { user } = await openNewChannel(
+      {},
+      { inbound: { webhookSupported: true, webhookAvailable: true, webhookPublic: false } },
+    );
+    await screen.findByText("manifest.socket.yaml");
+    expect(screen.getByText(zh.channels.form.webhookDefaultLong)).toBeTruthy();
+    await user.click(screen.getByRole("radio", { name: g.modes.webhook }));
+    expect(await screen.findByText(zh.channels.form.webhookNotPublic)).toBeTruthy();
+  });
+
+  it("the reference part after the last thematic break is not shown before save", async () => {
+    await openNewChannel({
+      [`GET ${GUIDE_URL}`]: () => {
+        const r = rendered("long_connection");
+        return json(200, {
+          guide: {
+            ...r,
+            blocks: [
+              ...r.blocks,
+              {
+                kind: "markdown",
+                text: "## 4. 保存渠道\n\n保存。\n\n***\n\n## Slack 登录\n\n说明。",
+              },
+              { kind: "check", id: "capybara:public-url", label: "已设置公网地址" },
+              { kind: "markdown", text: "## 插件更新了 manifest 时\n\n粘贴新的。" },
+            ],
+          },
+        });
+      },
+    });
+    expect(await screen.findByRole("heading", { name: "4. 保存渠道" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Slack 登录" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "插件更新了 manifest 时" })).toBeNull();
+    expect(screen.queryByRole("separator")).toBeNull();
+  });
+
+  it("{{connectionName}} without a name typed says to type one (no_name), not 保存后显示", async () => {
+    await openNewChannel({
+      [`GET ${GUIDE_URL}`]: () =>
+        json(200, {
+          guide: rendered("long_connection", {
+            unresolved: [{ name: "connectionName", reason: "no_name" }],
+          }),
+        }),
+    });
+    expect(await screen.findByText(names(g.unresolved.no_name, "connectionName"))).toBeTruthy();
+    expect(screen.queryByText(/保存后显示/)).toBeNull();
+  });
+
+  it("before save the check rows are one line 保存后可以逐项检查", async () => {
     await openNewChannel();
-    const row = await screen.findByRole("group", { name: "应用令牌有效" });
-    expect(within(row).getByText(g.checkAfterSave)).toBeTruthy();
-    expect(within(row).queryByRole("button")).toBeNull();
+    expect(await screen.findByText(g.checksAfterSave)).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "应用令牌有效" })).toBeNull();
   });
 
   it("unresolved lines by reason (not saved yet)", async () => {
@@ -445,8 +586,9 @@ describe("channel detail: 接入指南 and the drift notice", () => {
     // both check rows, a saved connection's: not 保存后检查
     for (const label of ["机器人令牌可用", "已设置公网地址"]) {
       const row = screen.getByRole("group", { name: label });
-      expect(within(row).queryByText(g.checkAfterSave)).toBeNull();
+      expect(row).toBeTruthy();
     }
+    expect(screen.queryByText(g.checksAfterSave)).toBeNull();
     expect(screen.getByText(names(g.unresolved.webhook_base, "webhookUrl"))).toBeTruthy();
     // the ack posts the hash the kernel sent for the connection's own mode
     await userEvent.setup().click(screen.getByRole("button", { name: /^我已更新/ }));
@@ -490,8 +632,8 @@ describe("channel detail: 接入指南 and the drift notice", () => {
       }),
     );
     await renderRouteWithCache("/channels/ch1", lastStubRoutes(), { locale: "zh" });
-    const row = await screen.findByRole("group", { name: "应用令牌有效" });
-    expect(within(row).queryByText(g.checkAfterSave)).toBeNull();
+    expect(await screen.findByRole("group", { name: "应用令牌有效" })).toBeTruthy();
+    expect(screen.queryByText(g.checksAfterSave)).toBeNull();
   });
 
   it("the guide read is keyed by version, target, mode, audience and language", () => {

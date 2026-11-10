@@ -16,6 +16,7 @@ import {
 import { BackgroundController } from "../background/background.controller.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
+import { AppearanceModule } from "../catalog/appearance.service.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import {
   AdminComponentsController,
@@ -40,6 +41,9 @@ import {
 } from "../catalog/org-plugin-uploads.controller.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
+import { AdminClientController, OrgClientController } from "../client/client.controller.js";
+import { ClientModule } from "../client/client.module.js";
+import { ClientDeliveryController } from "../client/client-delivery.controller.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
@@ -179,6 +183,9 @@ const CONTROLLERS: Type[] = [
   ThemeDeliveryController,
   PlatformThemeController,
   DeviceAuthController,
+  ClientDeliveryController,
+  OrgClientController,
+  AdminClientController,
 ];
 
 /**
@@ -197,6 +204,8 @@ const CONTROLLERS: Type[] = [
     AdminModule,
     ExtensionsModule,
     CatalogModule,
+    // a plugin's suggested appearance (its own module: it writes through the org settings)
+    AppearanceModule,
     ToolsModule,
     AgentsModule,
     ConversationsModule,
@@ -210,6 +219,7 @@ const CONTROLLERS: Type[] = [
     UiModule,
     InboxModule,
     ThemesModule,
+    ClientModule,
     SetupModule,
   ],
   controllers: CONTROLLERS,

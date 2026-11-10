@@ -7,8 +7,11 @@ import { notFound, redirect } from "next/navigation";
 import type { OrgReadiness } from "../agents";
 import { ApiClientError } from "../api";
 import { loginPathFor } from "../auth-sources";
+import { type ClientExtensionsResponse, clientScopeOf } from "../client-extensions";
 import type { ConversationGroupsPage } from "../conversations";
 import type { OrgRole } from "../members";
+import { adminClientExtensionsQuery, clientExtensionsQuery } from "../query/client-extensions";
+import { contributionsQuery } from "../query/conversation";
 import {
   conversationGroupsQuery,
   extensionPagesQuery,
@@ -52,6 +55,57 @@ export interface ShellData {
    * without a current org; `null` for the built-in theme or when the read failed.
    */
   theme: ThemeRef | null;
+  /** Which client set the page loads (client extensions spec §9.6, §11). */
+  clientSource: ClientSource;
+  /** That set; `null` without one, or when the read failed (then no client code loads). */
+  client: ClientExtensionsResponse | null;
+}
+
+/**
+ * Where a page's client code comes from (spec §9.6): the org's set on workspace pages, one
+ * plugin's platform set on its `/admin/p/<plugin>/<id>` page (super admins), nothing elsewhere
+ * (the admin console, no current org).
+ */
+export type ClientSource =
+  | { kind: "org"; orgId: string }
+  | { kind: "admin"; plugin: string }
+  | { kind: "none"; orgId: string | null };
+
+export function clientSourceOf(path: string, me: Me, orgId: string | null): ClientSource {
+  const scope = clientScopeOf(path.split(/[?#]/)[0] ?? "/");
+  if (scope === "org" && orgId !== null) return { kind: "org", orgId };
+  if (scope.startsWith("admin-p:") && me.account.isSuperAdmin === true)
+    return { kind: "admin", plugin: scope.slice("admin-p:".length) };
+  return { kind: "none", orgId };
+}
+
+/** The slots the frame renders on every workspace page or the new conversation (spec §6.2). */
+const SHELL_SLOTS = new Set([
+  "shell.brand",
+  "shell.overlay",
+  "conversation.empty",
+  "conversation.composer.frame",
+]);
+
+/**
+ * The shell read of a page's client set (a section: a failure loads no client code). When the
+ * org's set has a component for a shell slot, the contributions (which name the winners) are read
+ * after it, so a replacement renders at its first render once its module is in, without a read
+ * (a failed read leaves the slots on their built-in at worst).
+ */
+async function clientRead(
+  qc: QueryClient,
+  source: ClientSource,
+): Promise<ClientExtensionsResponse | null> {
+  if (source.kind === "admin")
+    return section(fetchShell(qc, adminClientExtensionsQuery(source.plugin)));
+  if (source.kind !== "org") return null;
+  const set = await section(fetchShell(qc, clientExtensionsQuery(source.orgId)));
+  const shellCode =
+    set?.enabled === true &&
+    set.items.some((i) => i.components.some((c) => SHELL_SLOTS.has(c.slot)));
+  if (shellCode) await section(fetchShell(qc, contributionsQuery(source.orgId)));
+  return set;
 }
 
 export type Shell = { kind: "unavailable" } | ({ kind: "ready" } & ShellData);
@@ -102,9 +156,14 @@ export async function getShell(
   const org = me.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
   const orgId = org?.orgId ?? null;
   const route = alongside?.({ me, orgId });
+  const clientSource = clientSourceOf(await currentPath(), me, orgId);
   if (orgId === null) {
     try {
-      const [theme] = await Promise.all([section(fetchShell(qc, platformThemeQuery())), route]);
+      const [theme, client] = await Promise.all([
+        section(fetchShell(qc, platformThemeQuery())),
+        clientRead(qc, clientSource),
+        route,
+      ]);
       return {
         kind: "ready",
         me,
@@ -114,6 +173,8 @@ export async function getShell(
         pending: null,
         extensions: null,
         theme,
+        clientSource,
+        client,
       };
     } catch (e) {
       if (isKernelUnavailable(e)) return { kind: "unavailable" };
@@ -121,16 +182,28 @@ export async function getShell(
     }
   }
   try {
-    const [readiness, groups, pending, extensions, themes] = await Promise.all([
+    const [readiness, groups, pending, extensions, themes, client] = await Promise.all([
       read(fetchShell(qc, readinessQuery(orgId))),
       section(fetchShell(qc, conversationGroupsQuery(orgId))),
       section(fetchShell(qc, inboxCountQuery(orgId))),
       section(fetchShell(qc, extensionPagesQuery(orgId))),
       section(fetchShell(qc, orgThemesQuery(orgId))),
+      clientRead(qc, clientSource),
       route,
     ]);
     const theme = themes?.resolved ?? null;
-    return { kind: "ready", me, org, readiness, groups, pending, extensions, theme };
+    return {
+      kind: "ready",
+      me,
+      org,
+      readiness,
+      groups,
+      pending,
+      extensions,
+      theme,
+      clientSource,
+      client,
+    };
   } catch (e) {
     if (isKernelUnavailable(e)) return { kind: "unavailable" };
     throw e;

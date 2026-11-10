@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AgentsModule } from "../agents/agents.module.js";
 import { BackgroundModule } from "../background/background.module.js";
+import { AppearanceModule } from "../catalog/appearance.service.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
@@ -107,6 +108,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     AgentsModule,
     OrgsModule,
     CatalogModule,
+    AppearanceModule,
     ExtensionsModule,
     ToolsModule,
     ConversationsModule,

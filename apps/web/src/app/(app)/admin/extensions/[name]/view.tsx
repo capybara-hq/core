@@ -12,6 +12,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { AdminClientCode } from "../../../../../components/AdminClientCode";
 import {
   AdminExtensionOverview,
   AdminExtensionPermissions,
@@ -49,6 +50,8 @@ type Tab = (typeof TABS)[number];
  * - Config: the deployment config (sources read-only, secrets can only be set or cleared, hot fields
  *   apply at once, the others reload after saving); a pending-config extension opens on it, with
  *   the missing fields listed.
+ * 界面代码 (an extension with client code): its build, files, sizes and error reports, and
+ * 停用界面代码 (client extensions spec §10.2, §10.4).
  * Actions only write the desired state and return; the page re-reads while the state is converging.
  * From the query cache (the layout prefetched the list and the config on a first load). An action's
  * answer is the extension as it is now: it replaces that one in the cached list, and what an
@@ -182,6 +185,7 @@ function Detail({
             {...changed}
           />
           <UiDropped dropped={plugin.uiDropped} />
+          <AdminClientCode plugin={plugin} />
         </Stack>
       ) : tab === "permissions" ? (
         <AdminExtensionPermissions plugin={plugin} {...changed} />

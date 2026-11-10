@@ -13,7 +13,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
@@ -25,6 +25,7 @@ import { adminSetupGuideQuery, setupGuideQuery } from "../lib/query/setup";
 import { setupCheckStatesQuery } from "../lib/query/setup-checks";
 import { draftConversationPath } from "../lib/routes";
 import {
+  beforeReference,
   type RenderedSetupGuide,
   runSetupCheck,
   type SetupCheckSelection,
@@ -69,6 +70,16 @@ export type SetupGuideSectionProps = {
    * 让智能体协助 draft; defaults to the name typed so far, else the plugin's label.
    */
   targetLabel?: string;
+  /**
+   * The mode switch is the page's own choice (新建渠道: the connection's inbound mode, channel
+   * inbound mode fields spec §5): `mode` is the mode to show (undefined: the kernel's default) and
+   * `onModeChange` gets every switch. `onModeShown` gets the mode the kernel rendered.
+   */
+  mode?: string | undefined;
+  onModeChange?: (mode: string) => void;
+  onModeShown?: (mode: string | null) => void;
+  /** A line under the mode switch (why a mode is the default, or why it cannot be used). */
+  modeNote?: { text: string; tone: "muted" | "warn" } | null;
 };
 
 /**
@@ -89,18 +100,34 @@ export function SetupGuideSection({
   admin = false,
   pluginLabel,
   targetLabel,
+  mode: controlledMode,
+  onModeChange,
+  onModeShown,
+  modeNote = null,
 }: SetupGuideSectionProps) {
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
   const errorMessage = useErrorMessage();
   // Undefined: the kernel's default (the target's mode, else the guide's first)
-  const [mode, setMode] = useState<string>();
+  const [ownMode, setOwnMode] = useState<string>();
+  const controlled = onModeChange !== undefined;
+  const mode = controlled ? controlledMode : ownMode;
+  const setMode = (m: string) => (controlled ? onModeChange(m) : setOwnMode(m));
   const q = { ...query, locale };
-  const read = useQuery(
-    admin
+  const read = useQuery({
+    ...(admin
       ? adminSetupGuideQuery(guide, locale)
-      : setupGuideQuery(orgId, guide, { ...q, ...(mode && { mode }) }),
-  );
+      : setupGuideQuery(orgId, guide, { ...q, ...(mode && { mode }) })),
+    // the name typed so far re-renders the guide: keep the last one on screen meanwhile
+    placeholderData: keepPreviousData,
+  });
+  const shown = read.data?.mode;
+  const onModeShownRef = useRef(onModeShown);
+  onModeShownRef.current = onModeShown;
+  // ssr-exempt: reports the rendered mode to the page (no fetch)
+  useEffect(() => {
+    if (shown !== undefined) onModeShownRef.current?.(shown);
+  }, [shown]);
   if (read.data === undefined) {
     if (read.error !== null) return <FormError message={errorMessage(read.error)} />;
     return <Skeleton rows={4} />;
@@ -110,6 +137,10 @@ export function SetupGuideSection({
   // live checks (`checks="live"`, spec §10) draw them.
   const saved =
     g.target !== null || query.connectionId !== undefined || query.connectorId !== undefined;
+  // Before save (新建渠道): the reference part after the last thematic break is not shown, and the
+  // check rows, which need a saved target, are one line (channel inbound mode fields spec §5)
+  const blocks = saved || admin ? g.blocks : beforeReference(g.blocks);
+  const pendingChecks = !saved && !admin && blocks.some((b) => b.kind === "check");
   return (
     <Stack gap={16}>
       {drift !== null && !admin ? (
@@ -124,15 +155,23 @@ export function SetupGuideSection({
       ) : null}
       <Text variant="h3">{g.title}</Text>
       {g.modes.length > 1 && (
-        <Segmented
-          label={t("modeLabel")}
-          value={g.mode ?? g.modes[0] ?? ""}
-          onChange={setMode}
-          options={g.modes.map((m) => ({
-            value: m,
-            label: KNOWN_MODES.has(m) ? t(`modes.${m as "long_connection" | "webhook"}`) : m,
-          }))}
-        />
+        <Stack gap={8}>
+          <Segmented
+            label={t("modeLabel")}
+            fill
+            value={(controlled ? mode : undefined) ?? g.mode ?? g.modes[0] ?? ""}
+            onChange={setMode}
+            options={g.modes.map((m) => ({
+              value: m,
+              label: KNOWN_MODES.has(m) ? t(`modes.${m as "long_connection" | "webhook"}`) : m,
+            }))}
+          />
+          {modeNote !== null && (
+            <Text variant="small" tone={modeNote.tone}>
+              {modeNote.text}
+            </Text>
+          )}
+        </Stack>
       )}
       {checks === "live" && !admin && saved ? (
         <LiveGuideDocument
@@ -150,20 +189,18 @@ export function SetupGuideSection({
         />
       ) : (
         <GuideDocument
-          blocks={g.blocks}
+          blocks={blocks}
           renderCheck={(c) =>
-            // the platform view has no target to check (spec §9.3): no rows
-            admin ? null : saved ? (
-              <CheckRow label={c.label} state={{ status: "not_run" }} />
-            ) : (
-              <CheckRow
-                label={c.label}
-                state={{ status: "static" }}
-                staticNote={t("checkAfterSave")}
-              />
-            )
+            // the platform view has no target to check (spec §9.3), and before save the rows are
+            // the one line below
+            admin || !saved ? null : <CheckRow label={c.label} state={{ status: "not_run" }} />
           }
         />
+      )}
+      {pendingChecks && (
+        <Text variant="small" tone="muted">
+          {t("checksAfterSave")}
+        </Text>
       )}
       {unresolvedLines(g).map(([reason, names]) => (
         <Text key={reason} variant="small" tone="muted">

@@ -23,7 +23,11 @@ import {
   ChannelGuideAckSchema as GuideAckBody,
   ChannelPatchSchema as PatchBody,
 } from "./channels.schemas.js";
-import { ChannelConnections, type ChannelConnectionView } from "./connections.service.js";
+import {
+  ChannelConnections,
+  type ChannelConnectionView,
+  type ChannelInboundInfo,
+} from "./connections.service.js";
 
 class ChannelCreateBody extends createZodDto(CreateBody, "ChannelCreateBody") {}
 class ChannelPatchBody extends createZodDto(PatchBody, "ChannelPatchBody") {}
@@ -90,18 +94,25 @@ export class ChannelConnectionsController {
   }
 
   /**
-   * The connection form's JSON Schema, and where the plugin's setup guide is (`guide`, null when
-   * the plugin has none the org may see): 新建渠道 shows it once the plugin is picked.
+   * The connection form's JSON Schema, where the plugin's setup guide is (`guide`, null when the
+   * plugin has none the org may see): 新建渠道 shows it once the plugin is picked; and whether its
+   * connections can use webhook inbound (`inbound`, channel inbound mode fields spec §4).
    */
   @Get("schema/:plugin")
   @OrgAction("channels.manage")
   async schema(
     @CurrentOrg() org: OrgContext,
     @Param("plugin") plugin: string,
-  ): Promise<{ plugin: string; schema: JsonSchema; guide: Omit<SetupGuideRef, "version"> | null }> {
+  ): Promise<{
+    plugin: string;
+    schema: JsonSchema;
+    guide: Omit<SetupGuideRef, "version"> | null;
+    inbound: ChannelInboundInfo;
+  }> {
     const schema = this.channels.jsonSchema(plugin);
+    const inbound = this.channels.inboundInfo(plugin);
     const g = (await this.guides.channelGuides([plugin], org)).get(plugin);
-    return { plugin, schema, guide: g ? { itemId: g.itemId, guideId: g.guideId } : null };
+    return { plugin, schema, guide: g ? { itemId: g.itemId, guideId: g.guideId } : null, inbound };
   }
 
   @Post()

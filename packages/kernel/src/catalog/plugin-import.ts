@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   type AgentTemplate,
   type AgentTemplateTier,
+  appearanceIssues,
   type ConnectorTemplateSpec,
   type LocalizedName,
   PLUGIN_MANIFEST_FILE,
@@ -17,6 +18,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
+import { ClientBuilds } from "../client/client-builds.service.js";
+import { checkClientFiles } from "../client/client-files.js";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps, type InstallView } from "../extensions/admin-ops.js";
@@ -213,6 +216,22 @@ export interface PluginReviewExtension {
   reviewHash: string;
   /** Sensitive permissions or migration warnings. */
   sensitive: boolean;
+  /**
+   * The extension's client code (client extensions spec §5.4, §9.1), for the 客户端代码 group of
+   * the review: every file of `extension.client` by its manifest key with its size, checked
+   * against its integrity when the import was prepared. Absent without client code.
+   */
+  client?: PluginReviewClient;
+}
+
+/** The client code of an extension in a review. */
+export interface PluginReviewClient {
+  /** Entry, styles and assets in that order; `path` is the manifest key (`./dist/client/...`). */
+  files: { path: string; size: number }[];
+  /** Total bytes. */
+  totalBytes: number;
+  /** The client API version the bundle was built against. */
+  apiVersion: number;
 }
 
 /** One connector template in a review. */
@@ -463,6 +482,11 @@ interface StagedPlugin {
   size: number;
   /** The normalized plugin.json (skills and connector templates listed). */
   manifest: PluginManifest;
+  /**
+   * The keys of `manifest.suggestedAppearance.replacements` in plugin.json order, taken before the
+   * staging's jsonb column loses it (absent without replacements).
+   */
+  appearanceOrder?: string[];
   files: { path: string; size: number; sha256: string }[];
   /** A marketplace import's permission summary differs from the package (shown with the review). */
   permissionsMismatch?: PermissionsMismatch;
@@ -527,13 +551,15 @@ const mismatch = (what: string) =>
 
 /**
  * The API error of a plugin package that cannot be read in a catalog path: the pre-0.1.0 format ->
- * `catalog.legacy_format`; a failing theme (themes spec §5) -> `theme.invalid` (details
- * `[{ theme, errors }]`) or `theme.unreadable` (details `[{ theme, issues }]`, the failing pairs);
- * anything else -> `catalog.invalid_manifest` (issues as details).
+ * `catalog.legacy_format`; undeclared client code -> `client.undeclared`; a failing theme (themes
+ * spec §5) -> `theme.invalid` (details `[{ theme, errors }]`) or `theme.unreadable` (details
+ * `[{ theme, issues }]`, the failing pairs); anything else -> `catalog.invalid_manifest` (issues as
+ * details).
  */
 export function catalogPackageError(e: PluginPackageError | ExtensionPackageError): ApiError {
   const legacy = e.code === "catalog.legacy_format" || e.code === "extension.legacy_format";
   if (legacy) return new ApiError("catalog.legacy_format", e.message, e.issues);
+  if (e.code === "client.undeclared") return new ApiError("client.undeclared", e.message);
   if (e.code === "theme.invalid" || e.code === "theme.unreadable") {
     return themeApiError(e as PluginPackageError);
   }
@@ -599,6 +625,8 @@ export class PluginImport {
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
     /** A failed platform sync enqueues a run of the migration job here (it heals the item). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
+    /** The client build of a dropped org upload's package is deleted with it. */
+    @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
   ) {
     this.files = storage;
   }
@@ -816,6 +844,27 @@ export class PluginImport {
           )
         : undefined;
     const content = this.checkContent(pkg, format);
+    // suggestedAppearance.theme against the themes the scan found (the manifest may not list them)
+    const appearance = appearanceIssues(
+      m,
+      pkg.themes.map((t) => t.id),
+    );
+    if (appearance.length > 0) throw invalid(appearance);
+    // Client code (client extensions spec §9.1): the section re-checked and every file against it
+    // (keys, listed = present, sizes, sha384 recomputed, the CSS layer wrap); delivered from object
+    // storage, so refused without one. The store checks the bytes it writes again. A bootstrap
+    // plugin never carries it: a bootstrap run may have no object store (it may be a bootstrap
+    // plugin itself), and a required entry failing on that would stop the start.
+    if (ext?.section.client !== undefined) {
+      if (source.kind === "bootstrap") {
+        throw new ApiError(
+          "client.invalid",
+          `Bootstrap plugin ${m.name} ships client code (extension.client), which a bootstrap plugin may not carry: its files are kept in object storage, which a bootstrap run may not have (the object store may be a bootstrap plugin itself); take ${m.name} out of bootstrap.json and import it into the catalog instead`,
+        );
+      }
+      checkClientFiles(ext.section.client, pkg.files);
+      this.files.assertAvailable();
+    }
     // A name live for another owner (an org's for the super admin; the platform's or another
     // org's for an org) -> 409 plugin.name_taken naming it (P3-14); the same owner adds a version
     await assertNameFree(this.db, m.name, owner?.orgId ?? null);
@@ -971,13 +1020,16 @@ export class PluginImport {
       opts.expect?.marketplace?.permissions,
       ext ? keys : undefined,
     );
+    const manifest = normalizedManifest(pkg);
+    const replacements = manifest.suggestedAppearance?.replacements;
     const staged: StagedPlugin = {
       itemId,
       packageName,
       version,
       contentDigest: pkg.contentDigest,
       size: tgz.size,
-      manifest: normalizedManifest(pkg),
+      manifest,
+      ...(replacements !== undefined && { appearanceOrder: Object.keys(replacements) }),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
       ...(mismatch !== null && { permissionsMismatch: mismatch }),
       sourceFormat: format,
@@ -1388,6 +1440,22 @@ export class PluginImport {
     await assertOrgsExist(t, scope.orgs);
     // Checked again before this upload claims anything (ruling P3-51)
     if (owner !== undefined) await assertPackageFree(t, staged.packageName, owner.orgId);
+    // The item's name lock and its live row before the extension's install lock: the global lock
+    // order is the item, then the install lock (ruling P3-50; ExtensionAdminOps.install locks the
+    // source item row before the install lock, an org deletion its items before it). Taken after
+    // the install lock instead, a confirmation of an org upload racing a replacement upload
+    // deadlocks (40P01).
+    const m = manifest;
+    await this.itemLock.lock(m.name);
+    // The scope the audit records: the review's for a new item, the item's own for a new version
+    // of a live item (which keeps its scope)
+    const existing = await t
+      .selectFrom("catalog_items")
+      .select(["id", "scope", "awaiting_confirmation", "package_name"])
+      .where("name", "=", m.name)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
     let now: PluginReviewExtension | undefined;
     let previous: PreviousSnapshot | null | undefined;
     if (reviewed) {
@@ -1424,8 +1492,6 @@ export class PluginImport {
         previous = await this.approve(actor, review, staged, now, stored as ExtensionPackage, opts);
       }
     }
-    const m = manifest;
-    await this.itemLock.lock(m.name);
     // Under the name's lock: the first confirm of a name wins, a later one of another owner is
     // refused naming it, before anything of it is written (P3-14)
     await assertNameFree(t, m.name, owner?.orgId ?? null);
@@ -1433,15 +1499,6 @@ export class PluginImport {
       await assertNameNotReserved(t, m.name);
       await this.resolveDependencies(m, owner);
     }
-    // The scope the audit records: the review's for a new item, the item's own for a new version
-    // of a live item (which keeps its scope)
-    const existing = await t
-      .selectFrom("catalog_items")
-      .select(["id", "scope", "awaiting_confirmation", "package_name"])
-      .where("name", "=", m.name)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
     const actual =
       existing === undefined
         ? scope
@@ -1489,6 +1546,7 @@ export class PluginImport {
       version: staged.version,
       contentDigest: staged.contentDigest,
       manifest: m,
+      appearanceOrder: staged.appearanceOrder ?? null,
       listing: {
         publisher: m.publisher,
         description: pluginDescription(m.description).en,
@@ -1945,8 +2003,26 @@ export class PluginImport {
         .where(sql<boolean>`review->'extension'->>'sha256' = ${sha}`)
         .executeTakeFirst());
     if (used !== undefined) return;
-    // extension_blobs (a PG-stored package) goes with the row (ON DELETE CASCADE)
+    const build = await t
+      .selectFrom("extension_client_builds")
+      .select("object_prefix")
+      .where("package_sha256", "=", sha)
+      .executeTakeFirst();
+    // extension_blobs (a PG-stored package) and extension_client_builds go with the row (ON
+    // DELETE CASCADE)
     await t.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
+    if (build !== undefined) {
+      afterCommit(async () => {
+        try {
+          await this.clientBuilds.deleteFiles(sha, build.object_prefix);
+        } catch (err) {
+          this.log.warn("cannot delete an expired org upload's client build objects", {
+            sha256: sha,
+            err,
+          });
+        }
+      });
+    }
     // The object only once the row is gone for good: a failure leaves an unreferenced object
     // (harmless; a later upload of the same bytes rewrites it), never a row without its bytes
     if (pkg.blob_store === "object") {
@@ -2288,6 +2364,7 @@ export class PluginImport {
       warnings,
       reviewHash: extensionReviewHash(set, warnings),
       sensitive: permissions.some((g) => g.sensitive) || warnings.length > 0,
+      ...(pkg.section.client !== undefined && { client: reviewClient(pkg) }),
     };
   }
 
@@ -2446,6 +2523,27 @@ export function pluginReviewHash(
       : []),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+}
+
+/** The client code of a read extension package for its review (sizes from the package's files). */
+function reviewClient(pkg: ExtensionPackage): PluginReviewClient {
+  const c = pkg.section.client as NonNullable<ExtensionPackage["section"]["client"]>;
+  const sizes = new Map(pkg.files.map((f) => [f.path, f.size]));
+  const files = [
+    ...(c.entry !== undefined ? [c.entry] : []),
+    ...(c.styles ?? []),
+    ...(c.assets ?? []),
+  ].map((path) => {
+    // checkClientFiles ran first: every listed file is in the package
+    const size = sizes.get(path.slice(2));
+    if (size === undefined) throw new Error(`client file ${path} is not in the package`);
+    return { path, size };
+  });
+  return {
+    files,
+    totalBytes: files.reduce((n, f) => n + f.size, 0),
+    apiVersion: c.apiVersion,
+  };
 }
 
 /**

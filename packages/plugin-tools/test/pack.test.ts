@@ -272,7 +272,7 @@ describe("packPlugin: other behavior", () => {
         "fonts/Fixture-Regular.woff2",
         "logo.svg",
         "package.json",
-        "themes/night-city.json",
+        "themes/neon-grid.json",
       ].sort(),
     );
     expect(spies.build).not.toHaveBeenCalled();
