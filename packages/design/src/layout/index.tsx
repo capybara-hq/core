@@ -106,7 +106,7 @@ export function CardFrame({
   actions?: ReactNode;
   tone?: "default" | "danger" | "accent";
   part?: string;
-  state?: string;
+  state?: string | undefined;
   children?: ReactNode;
 }) {
   return (

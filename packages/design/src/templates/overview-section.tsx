@@ -75,7 +75,7 @@ export function OverviewSection({
             onClick={() => error.onRetry()}
           >
             <Icon name="refresh" size={12} />
-            {t("conv.retry")}
+            {t("overviewSection.retry")}
           </button>
         ) : null}
       </div>
@@ -84,7 +84,12 @@ export function OverviewSection({
     body = children;
   }
   return (
-    <CardFrame title={title} actions={actions} part="overview-section" state={state}>
+    <CardFrame
+      title={title}
+      actions={actions}
+      part="overview-section"
+      state={state === "ready" ? undefined : state}
+    >
       {body}
     </CardFrame>
   );

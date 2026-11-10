@@ -30,7 +30,8 @@ describe("OverviewSection", () => {
     );
     const cards = container.querySelectorAll(".cb-card");
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.getAttribute("data-state")).toBe("ready");
+    // the loaded state is the reference set's `default`: no data-state, as on a plain Card
+    expect(cards[0]?.hasAttribute("data-state")).toBe(false);
     expect(screen.getByText(F.title)).toBeTruthy();
     expect(screen.getByText(F.action)).toBeTruthy();
     expect(screen.getByText(F.rows[0]?.title ?? "")).toBeTruthy();
