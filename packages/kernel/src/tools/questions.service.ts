@@ -421,10 +421,18 @@ export class QuestionsService {
         .forUpdate()
         .execute();
     }
+    // only the conversations locked above: a question asked meanwhile in another one waits for
+    // the run's stop (offboarding aborts it) or the sweep, so no conversation is locked after a row
+    if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("questions")
       .selectAll()
       .where("org_id", "=", orgId)
+      .where(
+        "conversation_id",
+        "in",
+        convs.map((c) => c.conversation_id),
+      )
       .where("status", "=", "pending")
       .where("run_id", "in", (eb) =>
         eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),

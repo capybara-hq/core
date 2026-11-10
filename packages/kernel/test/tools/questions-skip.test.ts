@@ -8,6 +8,7 @@ import { createDb } from "../../src/db/pool.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { INPUT_SKIPPED_TEXT, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -382,6 +383,30 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
     expect(last?.payload.request.absorbedUpToSeq).toBeGreaterThanOrEqual(msgSeq);
     expect(ofType(evs, "assistant_message").at(-1)?.payload.content).toEqual([
       { type: "text", text: "after both" },
+    ]);
+  });
+
+  it("a queued item sent now while the question waits skips it like a direct message", async () => {
+    const convId = await createConv(reqA, orgId, await createAgent());
+    await postMessage(reqA, orgId, convId, ASK);
+    const { runId, questionIds } = await waiting(convId);
+    const queued = await seedQueued(ka.app, orgId, convId, ownerId, {
+      text: "echo:from the queue",
+      clientMessageId: "q-1",
+    });
+    expect(queued.statusCode, queued.body).toBe(201);
+    const itemId = (queued.json() as { item: { id: string } }).item.id;
+    const res = await reqB({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/queue/${itemId}/send`,
+    });
+    expect(res.statusCode, res.body).toBeLessThan(300);
+    await waitForTerminal(db, convId, 1);
+    expect((await questionRow(questionIds[0] as string)).status).toBe("skipped");
+    const evs = await eventsOf(db, convId);
+    expect(ofType(evs, "run_finished").map((e) => e.runId)).toEqual([runId]);
+    expect(ofType(evs, "assistant_message").at(-1)?.payload.content).toEqual([
+      { type: "text", text: "from the queue" },
     ]);
   });
 

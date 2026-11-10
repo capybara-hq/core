@@ -447,7 +447,8 @@ export class EventLog {
       }
     });
     // written by this call: the first input of each new event (a repeat in the batch points to it)
-    const isFresh = events.map((_, i) => fresh.includes(i));
+    const freshSet = new Set(fresh);
+    const isFresh = events.map((_, i) => freshSet.has(i));
     if (fresh.length === 0) {
       return {
         events: plan.map((p) => (p as { kind: "old"; event: ConversationEvent }).event),

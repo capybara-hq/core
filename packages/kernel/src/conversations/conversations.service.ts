@@ -1097,16 +1097,7 @@ export class ConversationsService {
       invoked,
     );
     await this.eventLog.notify(conversationId, toSeq);
-    // the skipped questions' runs resume (waits) and their IM cards update (channel jobs)
-    for (const q of skipped) {
-      await this.events.emit("question.answered", {
-        id: q.id,
-        orgId: q.orgId,
-        conversationId: q.conversationId,
-        runId: q.runId,
-        outcome: "skipped",
-      });
-    }
+    await this.announceSkipped(skipped);
     if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
     // The message is written: it brings an archived conversation back into the default lists
     if (conv.archivedAt !== null) {
@@ -1203,6 +1194,37 @@ export class ConversationsService {
   }
 
   /**
+   * Skips, in the caller's transaction (it wrote `accountId`'s message at `messageSeq` and holds the
+   * conversation row lock), the pending questions that message closes (reply-while-question spec
+   * §8.1). The queue's "send now" uses it as the direct send does; announce after the commit with
+   * {@link announceSkipped}.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async skipQuestionsIn(
+    conversationId: string,
+    accountId: string,
+    messageSeq: number,
+  ): Promise<{ records: QuestionRecord[]; toSeq: number | null }> {
+    return this.questions.skipPendingIn(conversationId, accountId, messageSeq);
+  }
+
+  /**
+   * After the commit: announces each skipped question (`question.answered`, outcome `skipped`), so
+   * its run resumes (waits) and its IM card updates (channel jobs).
+   */
+  async announceSkipped(records: readonly QuestionRecord[]): Promise<void> {
+    for (const q of records) {
+      await this.events.emit("question.answered", {
+        id: q.id,
+        orgId: q.orgId,
+        conversationId: q.conversationId,
+        runId: q.runId,
+        outcome: "skipped",
+      });
+    }
+  }
+
+  /**
    * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
    * `conversations.selection`; returns the events written, in seq order (the `user_message`
    * last). A message this call newly wrote (not a retry's deduped one) then skips the pending
@@ -1246,7 +1268,7 @@ export class ConversationsService {
     const message = written.at(-1) as ConversationEvent;
     const skips =
       fresh.at(-1) === true
-        ? await this.questions.skipPendingIn(conversationId, accountId, message.seq)
+        ? await this.skipQuestionsIn(conversationId, accountId, message.seq)
         : { records: [], toSeq: null };
     if (next !== null) {
       const t = this.db.db;

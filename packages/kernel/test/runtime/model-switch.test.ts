@@ -324,14 +324,9 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
     await waitFor(async () =>
       (await runsOf(db, conv)).some((r) => r.id === runId && r.status === "waiting"),
     );
-    // switch back to the agent's model while the run waits
+    // switch back to the agent's model while the run waits: the message skips the question and
+    // resumes the run (reply-while-question spec D1), which keeps its own selection
     expect((await send(conv, { text: "echo:meanwhile", model: FAKE_1 })).statusCode).toBe(202);
-    const answered = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/questions/${asked.payload.questionId}/answer`,
-      payload: { answer: { q0: "A" } },
-    });
-    expect(answered.statusCode, answered.body).toBe(200);
     await waitFor(
       async () => (await runsOf(db, conv)).find((r) => r.id === runId)?.status === "completed",
       20_000,
