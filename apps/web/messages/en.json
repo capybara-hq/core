@@ -315,7 +315,11 @@
     "sandbox": {
       "not_found": "This conversation has no sandbox yet.",
       "unavailable": "No sandbox is available in this deployment.",
-      "busy": "The sandbox is busy; try again shortly."
+      "busy": "The sandbox is busy; try again shortly.",
+      "file_invalid_path": "The path must be absolute and inside the sandbox.",
+      "file_not_found": "No file at this path in the sandbox.",
+      "file_is_directory": "This path is a directory; pass one file.",
+      "file_too_large": "The file is too large."
     },
     "device": {
       "not_found": "The device does not exist or has been deleted.",

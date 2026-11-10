@@ -316,6 +316,14 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
+  /** A sandbox file path the kernel reads is not absolute or not under the sandbox roots. */
+  "sandbox.file_invalid_path": 422,
+  /** No file at the sandbox path the kernel reads. */
+  "sandbox.file_not_found": 422,
+  /** The sandbox path the kernel reads is a directory, not one file. */
+  "sandbox.file_is_directory": 422,
+  /** The sandbox file the kernel reads is over the caller's size limit. */
+  "sandbox.file_too_large": 422,
   /** The device is missing, deleted, or not the caller's (never 403, so ids cannot be probed). */
   "device.not_found": 404,
   /** The cloud device's file system is gone at the provider; reset its files to start empty. */

@@ -315,7 +315,11 @@
     "sandbox": {
       "not_found": "本会话还没有沙箱。",
       "unavailable": "当前部署没有可用的沙箱。",
-      "busy": "沙箱正忙，请稍后再试。"
+      "busy": "沙箱正忙，请稍后再试。",
+      "file_invalid_path": "路径必须是沙箱内的绝对路径。",
+      "file_not_found": "沙箱里没有这个文件。",
+      "file_is_directory": "这个路径是目录，请指定一个文件。",
+      "file_too_large": "文件过大。"
     },
     "device": {
       "not_found": "该设备不存在或已被删除。",
