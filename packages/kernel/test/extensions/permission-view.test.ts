@@ -37,6 +37,19 @@ describe("permissionGroups", () => {
     expect(permissionGroups(base)).toEqual([]);
   });
 
+  it("a secret at both levels is two distinct items, prefixed like the config group", () => {
+    const groups = permissionGroups({
+      ...base,
+      config: {
+        deployment: [{ path: "appSecret", secret: true }],
+        org: [{ path: "appSecret", secret: true }],
+      },
+    });
+    const secrets = groups.find((g) => g.category === "secrets");
+    expect(secrets?.items).toEqual(["deployment:appSecret", "org:appSecret"]);
+    expect(new Set(secrets?.entries.map((e) => e.value)).size).toBe(2);
+  });
+
   it("按类别分组，敏感项为密钥、公开路由、工具、hook（及下面的敏感能力）；公开路由与普通路由分开", () => {
     const groups = permissionGroups({
       ...base,
@@ -75,10 +88,10 @@ describe("permissionGroups", () => {
     expect(by.secrets).toEqual({
       category: "secrets",
       sensitive: true,
-      items: ["secret store", "token"],
+      items: ["secret store", "org:token"],
       entries: [
         { value: "secret store", sensitive: true, reason: "secrets" },
-        { value: "token", sensitive: true, reason: "secrets" },
+        { value: "org:token", sensitive: true, reason: "secrets" },
       ],
     });
     expect(by.http).toEqual({
