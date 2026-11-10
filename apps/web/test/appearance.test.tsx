@@ -123,6 +123,35 @@ describe("/settings/appearance (组织设置 › 外观)", () => {
     expect(browser).toEqual([]);
   });
 
+  it.each(["zh", "en"] as const)(
+    "a theme's description follows the UI language (%s; browser review F08)",
+    async (locale) => {
+      const described = {
+        components: [
+          orgComp({
+            locked: true,
+            switchable: false,
+            description: "Neon on black.",
+            descriptionZh: "黑底霓虹。",
+          }),
+          orgComp({ id: "t-paper", name: "paper", description: "Plain paper." }),
+        ],
+      };
+      await renderRouteWithCache(
+        "/settings/appearance",
+        orgRoutes(undefined, undefined, described),
+        { locale },
+      );
+      const list = await screen.findByRole("list", {
+        name: (locale === "zh" ? zh : en).appearance.themes.label,
+      });
+      expect(within(list).queryByText("黑底霓虹。") !== null).toBe(locale === "zh");
+      expect(within(list).queryByText("Neon on black.") !== null).toBe(locale === "en");
+      // without a Chinese text the one description shows in both languages
+      expect(within(list).getByText("Plain paper.")).toBeTruthy();
+    },
+  );
+
   it("an empty cache shows the template's loading state, then the data", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {

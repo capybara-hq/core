@@ -524,6 +524,8 @@ function ExtensionList({
     {
       key: "state",
       header: tc("state"),
+      // "已启用 · 平台默认" whole; the wrapping capabilities give way
+      fit: true,
       cell: (r) => <Text tone={r.state.tone}>{r.state.label}</Text>,
     },
     ...(canEdit
@@ -532,6 +534,7 @@ function ExtensionList({
             key: "switch",
             header: tc("switch"),
             interactive: true,
+            fit: true,
             cell: (r: Row) => (
               <Switch
                 label={t("enableLabel", { plugin: r.label })}

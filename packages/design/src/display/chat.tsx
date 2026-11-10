@@ -299,6 +299,7 @@ export function CodeBlock({ language, text, framed, title, copyable }: CodeBlock
     <figure
       className="cb-code"
       data-part="code-block"
+      data-cap-part="code-block"
       data-framed={(framed ?? !inBox) ? "true" : "false"}
       data-state={copied === "yes" ? "copied" : undefined}
     >

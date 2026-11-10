@@ -684,7 +684,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       }
       case "prose":
         return (
-          <div data-cap-part="message.assistant">
+          <div data-cap-part="message.assistant" aria-busy={e.streaming ? "true" : undefined}>
             <Prose
               markdown={e.text}
               streaming={e.streaming}

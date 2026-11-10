@@ -50,6 +50,8 @@ export interface PlatformComponent {
   /** Its plugin's icon (the admin icon route; null without one). */
   icon?: string | null;
   description: string | null;
+  /** The description's Chinese text (a theme's `description.zh`; null: one text for both). */
+  descriptionZh?: string | null;
   /** The plugin it came from (null: none). */
   plugin: string | null;
   itemId: string | null;
@@ -171,6 +173,18 @@ export const componentLabel = (
   locale: string,
 ): string => (c.displayName ? (locale === "zh" ? c.displayName.zh : c.displayName.en) : c.name);
 
+/**
+ * A component's description in the reader's language (browser review F08): its Chinese text in the
+ * zh UI when it has one, else the one it has; null when it has none.
+ */
+export const componentDescription = (
+  c: { description: string | null; descriptionZh?: string | null },
+  locale: string,
+): string | null => {
+  const text = locale === "zh" ? (c.descriptionZh ?? c.description) : c.description;
+  return text === null || text === "" ? null : text;
+};
+
 const enc = encodeURIComponent;
 const base = "/api/v1/admin/components";
 const one = (kind: PlatformComponentKind, id: string) => `${base}/${kind}/${enc(id)}`;
@@ -254,6 +268,8 @@ export interface OrgComponent {
   /** Its plugin's icon on the org's icon route (null without one or when the org cannot see it). */
   icon?: string | null;
   description: string | null;
+  /** The description's Chinese text (a theme's `description.zh`; null: one text for both). */
+  descriptionZh?: string | null;
   plugin: string | null;
   itemId: string | null;
   version: string;

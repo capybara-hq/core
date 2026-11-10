@@ -3,7 +3,7 @@
 import {
   AgentsChip,
   type ConversationPageProps,
-  elapsed,
+  formatDuration,
   QuickActions,
   RenameDialog,
   Stack,
@@ -103,7 +103,9 @@ function RunStatsText({ stats }: { stats: RunStats }) {
   // the server's time while hydrating (a running run's elapsed time then matches its render)
   const now = useNow(stats.resumedAt !== null ? 1000 : 0);
   const ms = workedMsAt(stats, now);
-  return <>{t("stats", { n: stats.turns, elapsed: ms === null ? "—" : elapsed(ms, locale) })}</>;
+  // the one duration format (F29): a counter while the run is active, the run row's figure after
+  const shown = ms === null ? "—" : formatDuration(ms, locale, { live: stats.endedAt === null });
+  return <>{t("stats", { n: stats.turns, elapsed: shown })}</>;
 }
 
 /**

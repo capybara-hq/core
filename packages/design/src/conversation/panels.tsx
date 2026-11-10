@@ -250,19 +250,21 @@ export function ContextSection({
       >
         <span style={{ width: `${pct}%` }} />
       </div>
-      <div className="cb-muted cb-small">{[model, sandbox].filter(Boolean).join(" · ")}</div>
+      <div className="cb-muted cb-small cb-context-line">
+        {[model, sandbox].filter(Boolean).join(" · ")}
+      </div>
       {connectors.length > 0 ? (
-        <div className="cb-muted cb-small">
+        <div className="cb-muted cb-small cb-context-line">
           {fillCopy(t("props.connectors"), { list: connectors.join(t("props.listJoin")) })}
         </div>
       ) : null}
       {lastRun ? (
-        <div className="cb-muted cb-small" data-part="context-last-run">
+        <div className="cb-muted cb-small cb-context-line" data-part="context-last-run">
           {lastRun}
         </div>
       ) : null}
       {total ? (
-        <div className="cb-muted cb-small" data-part="context-total">
+        <div className="cb-muted cb-small cb-context-line" data-part="context-total">
           {total}
         </div>
       ) : null}

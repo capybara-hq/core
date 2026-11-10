@@ -222,12 +222,27 @@ button.cb-tool-line:focus-visible {
   font-weight: 400;
   text-align: left;
 }
+/* Cells (spec §6.16.4): space.3 on both sides (none before the first column, none after the last),
+   at least four characters wide, a `line` under the head and between the body rows (on the page
+   ground, where line-soft barely shows). */
 .cb-md-table th,
 .cb-md-table td {
-  padding: var(--cb-pad-dense-y) var(--cb-space-4) var(--cb-pad-dense-y) 0;
+  min-width: 4em;
+  padding: var(--cb-pad-dense-y) var(--cb-space-3);
 }
-.cb-md-table td {
-  border-top: 1px solid var(--cb-line-soft);
+.cb-md-table th:first-child,
+.cb-md-table td:first-child {
+  padding-left: 0;
+}
+.cb-md-table th:last-child,
+.cb-md-table td:last-child {
+  padding-right: 0;
+}
+.cb-md-table th {
+  border-bottom: 1px solid var(--cb-line);
+}
+.cb-md-table tbody tr + tr {
+  border-top: 1px solid var(--cb-line);
 }
 .cb-md-table [data-align="right"] {
   text-align: right;

@@ -16,7 +16,11 @@ import {
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
-import { componentName, type PlatformComponent } from "../../../../../lib/components";
+import {
+  componentDescription,
+  componentName,
+  type PlatformComponent,
+} from "../../../../../lib/components";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
@@ -76,6 +80,7 @@ function AdminTheme({ c, orgId }: { c: PlatformComponent; orgId: string | null }
   const versions = useQuery({ ...vq, retryOnMount: retryOnMountOf(vq.queryKey) }).data?.versions;
   const locale = useLocale();
   const name = componentName(c, locale);
+  const description = componentDescription(c, locale);
   const isDefault = usePlatformDefaultTheme() === c.id;
   // the dialogs and toasts name the theme as the page does
   const { actions, dialog } = useComponentActions({ ...c, name }, orgId, {
@@ -99,9 +104,9 @@ function AdminTheme({ c, orgId }: { c: PlatformComponent; orgId: string | null }
         }}
       >
         <Stack gap={16}>
-          {c.description !== null && c.description !== "" && (
+          {description !== null && (
             <Text variant="prose" tone="muted" pre>
-              {c.description}
+              {description}
             </Text>
           )}
           <ComponentNotes c={c} platformDefault={isDefault} />

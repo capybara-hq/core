@@ -115,15 +115,3 @@ export function RunRow({
     </div>
   );
 }
-
-/** A run's duration as a short mono figure: `0.9s`, `3.7s`, `42s`, `2m 05s`, `1h 02m`. */
-export function runDuration(ms: number): string {
-  const v = Math.max(0, ms);
-  if (v < 10_000) return `${(Math.round(v / 100) / 10).toFixed(1)}s`;
-  const total = Math.round(v / 1000);
-  if (total < 60) return `${total}s`;
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
-  return `${m}m ${String(total % 60).padStart(2, "0")}s`;
-}

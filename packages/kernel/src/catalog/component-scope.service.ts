@@ -122,6 +122,8 @@ export interface ComponentView {
   /** A connector template's localized display name (null: show `name`). */
   displayName: { zh: string; en: string } | null;
   description: string | null;
+  /** The description's Chinese text (null: show `description` in every locale). */
+  descriptionZh: string | null;
   /** The plugin it came from (null: none). */
   plugin: string | null;
   itemId: string | null;
@@ -193,6 +195,8 @@ export interface OrgOfferedComponentView extends OrgComponentView {
   /** A connector template's localized display name (null: show `name`). */
   displayName: { zh: string; en: string } | null;
   description: string | null;
+  /** The description's Chinese text (null: show `description` in every locale). */
+  descriptionZh: string | null;
   itemId: string | null;
   version: string;
   scopeMode: "follow" | "own";
@@ -487,6 +491,7 @@ export class ComponentScopeService {
         name: c.name,
         displayName: c.displayName,
         description: c.description,
+        descriptionZh: c.descriptionZh,
         plugin: c.plugin,
         itemId: c.itemId,
         owner: ownerOf(c.ownerOrgId, owners),
@@ -563,6 +568,7 @@ export class ComponentScopeService {
           name: c.name,
           displayName: c.displayName,
           description: c.description,
+          descriptionZh: c.descriptionZh,
           plugin: c.plugin,
           itemId: c.itemId,
           version: c.version,
@@ -680,6 +686,7 @@ export class ComponentScopeService {
       name: r.name,
       displayName: null,
       description: r.description,
+      descriptionZh: null,
       plugin: r.plugin,
       itemId: r.catalog_item_id,
       owner: ownerOf(r.org_id, owners),
@@ -1496,6 +1503,7 @@ const virtualOf = (o: OrgRow): ComponentRow => ({
   plugin: o.plugin,
   version: String(o.version),
   description: null,
+  descriptionZh: null,
   displayName: null,
   itemId: null,
   scopeMode: "own",

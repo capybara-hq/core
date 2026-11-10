@@ -239,12 +239,22 @@ export interface ClientExtension extends ClientExtensionDefinition {
 /** The entry module's default export. */
 export function defineClientExtension(def: ClientExtensionDefinition): ClientExtension;
 
+/** The viewer's sign-in as this plugin sees it (§9.2 `signInId`). */
+export interface SignIn {
+  /** Opaque: the same for one sign-in (every page and tab, across token refreshes), new after
+   *  the next sign-in; no credential, reveals nothing else about the session. Derived per
+   *  plugin, but no isolation boundary: client code is full trust (D2) and can read every
+   *  plugin's id from the shell read. */
+  id: string;
+}
+
 /** What `events` listeners get (no React context there). */
 export interface ClientApi {
   locale: "zh" | "en";
   reducedMotion: boolean;
   storage: ClientStorage;
   assetUrl(path: string): string;
+  signIn: SignIn;
 }
 ```
 
@@ -299,6 +309,10 @@ export function useClientStorage(): ClientStorage;
 
 /** URL of a file under dist/client/assets/ of this plugin's build. */
 export function useAssetUrl(): (path: string) => string;
+
+/** The viewer's sign-in: once per sign-in = run when `id` differs from the id stored last time
+ *  (`useClientStorage`, scope "local"). */
+export function useSignIn(): SignIn;
 ```
 
 Design re-exports (a versioned subset; their props are the design system's, frozen per
@@ -607,8 +621,9 @@ interface SuggestedAppearance {
 | `title-bar` | the conversation title bar | design `conversation/` (title bar) | — |
 | `page-header` | a page's header | design `shell/page-header.tsx` | — |
 | `thread` | the conversation stream | design `conversation/` (thread) | `aria-busy` |
-| `message.user` | a person's message | design `conversation/bubble.tsx` | — |
-| `message.assistant` | an assistant turn | design `conversation/` | — |
+| `message.user` | a person's message (the full-width row) | design `conversation/bubble.tsx` | — |
+| `message.user.bubble` | the bubble of a person's message, inside the `message.user` row | design `conversation/bubble.tsx` | — |
+| `message.assistant` | an assistant turn | web `conversation/Thread.tsx` | `aria-busy` while its text streams |
 | `tool-row` | a tool call line | design `conversation/` | `aria-expanded` |
 | `composer` | the composer box | design `conversation/composer.tsx` | `aria-busy` |
 | `properties-panel` | the conversation properties panel | design `conversation/` | — |
@@ -620,6 +635,17 @@ interface SuggestedAppearance {
 | `card` | `Card`, `InlineCard`, `ObjectCard` | design `layout/`, `display/` | — |
 | `input` | text inputs, textareas, selects | design `controls/inputs.tsx` | `disabled` |
 | `dialog` | `Dialog`, `Sheet` | design `overlays/` | — |
+| `code-block` | a `CodeBlock` (Markdown code, setup guides, diffs) | design `display/chat.tsx` | — |
+| `menu` | a `Menu`, submenu, `Popover`, the composer's menus | design `overlays/menus.tsx`, `conversation/menu.tsx` | — |
+| `segmented` | a `Segmented` control (its segments are radios, `aria-checked`) | design `display/tabs.tsx` | — |
+| `stat-card` | one card of `StatCards` | design `display/stat-cards.tsx` | — |
+| `switch` | a `Switch` | design `controls/toggles.tsx` | `aria-checked`, `disabled` |
+| `switch.knob` | the knob inside a `switch` | design `controls/toggles.tsx` | — (follow the switch's state) |
+| `org-avatar` | the org's initial block in the org switcher | design `shell/sidebar.tsx` | — |
+| `agent-chip` | an agent chip of the new conversation's agents row | design `conversation/agent-row.tsx` | `aria-pressed` |
+
+  Added after the theme plugin round (2026-11-10): themes style only what carries a part, so
+  these were added on their owning elements; no existing part was renamed.
 
   A part attribute may hold several names separated by spaces; plugin CSS selects with
   `[data-cap-part~="button.primary"]`. The builder fixes the exact owner file of each row while
@@ -810,6 +836,7 @@ interface ClientExtensionsResponse {
     entry: { url: string; integrity: string } | null;
     styles: { url: string; integrity: string }[]; // empty in the admin set (§9.6)
     components: { id: string; slot: ComponentSlotId }[];
+    signInId: string;   // the viewer's sign-in id for this plugin (ClientApi.signIn.id)
   }[];
 }
 ```
@@ -934,7 +961,9 @@ interface ClientExtensionsResponse {
   exception is platform-scope client code: `platform.page` components, loaded only on their own
   page `/admin/p/<plugin>/<id>` (the admin set of §9.2 is read by that page alone). The admin
   console stays the official UI, so a broken decoration can never stop the super admin from
-  switching it off.
+  switching it off. It therefore has the platform look by design: the L0 theme's tokens and logo,
+  never a plugin's brand styling (a stylized wordmark, HUD parts) or its overlay, even while the
+  workspace beside it wears them (browser review F07, 2026-11-10: decided, no change).
 - **Crossing the boundary**: modules cannot be unloaded, so the loaded set is fixed for a
   document. A client navigation to a page whose client set differs (workspace ↔ admin, into or out
   of a `/admin/p/<plugin>/<id>` page with client code, or to another org), while a client extension
@@ -1181,7 +1210,7 @@ theme gets no decoration.
 | Run-state HUD panel in the conversation properties panel | L1 `view` in `conversation.properties.section` (or a `component` with `useRunState` and `useView` data) |
 | Scanlines | plugin CSS on `[data-cap-part~="shell"]::after`, or a `shell.overlay` component |
 | Chamfered borders | plugin CSS (`clip-path`) on `card`, `button.primary`, `composer`, `section`, `dialog` parts |
-| Boot animation | a `shell.overlay` component, once per session (`useClientStorage()` with scope `"session"`), skipped when `usePrefersReducedMotion()` |
+| Boot animation | a `shell.overlay` component, once per sign-in (`useSignIn().id` compared with the id stored by `useClientStorage()`), skipped when `usePrefersReducedMotion()` |
 | HUD colour change with the run state | plugin CSS on `[data-cap-state~="run=running"]` / `run=waiting` / `run=failed` |
 | Optional sound, off by default, reduced motion honoured | an `events` listener on `run.started` / `run.finished` / `approval.requested` / `tool.finished`, gated by a toggle stored with `useClientStorage`; the toggle is a `Button` in the HUD component |
 | At least one built-in block replaced | `shell.brand` (glitch wordmark around `builtin`) and `conversation.empty` (cyberpunk hero) |
@@ -1319,5 +1348,23 @@ Adjustments made by the final fix wave (2026-11-10), each the smallest change:
 - **A crash counts once per contribution per document** (§10.3).
 - **Pending replaceable slots**: the server render draws a pending frame when a winner is listed,
   and CSS alone reveals the built-in after 1 500 ms (§6.4).
+
+Added after the fix wave (2026-11-10):
+
+- **Sign-in id** (`ClientApi.signIn`, `useSignIn()`, §4.2): the boot animation plays once per
+  sign-in, which neither `sessionStorage` (per tab, survives a sign-out) nor `localStorage`
+  (forever) can express. Each shell-read item carries `signInId` (§9.2): HMAC-SHA256, with a key
+  derived from the master keyring (`client-sign-in/v1`), of the session id (a personal token: its
+  token id) and the plugin name, truncated to 128 bits, base64url. It is stable across token
+  refreshes, tabs and the org and admin reads of one sign-in, new after the next, never a
+  credential; derived per request from the principal, so no state and every replica answers the
+  same. The plugin name is an input only so that the id is not the same string in every plugin:
+  that is **not an isolation boundary**, because client code runs with full trust in the page (D2)
+  and any plugin can read the whole shell read or the query cache, which lists every plugin's id.
+  Riding on the shell read costs no request; the web host takes it from the document's set (a
+  sign-in always starts a new document), and the id is never empty. A master key rotation changes
+  every id once, which client code sees as one more sign-in (during a rolling restart old and new
+  replicas answer different ids until all restarted, so possibly a few more). Additive:
+  `CLIENT_API_VERSION` stays 1.
 
 No open questions remain.

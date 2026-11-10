@@ -759,6 +759,13 @@ span.cb-title-btn {
   height: 100%;
   background: var(--cb-ink);
 }
+/* A context line ("deepseek-flash · 设备：个人设备 · 已暂停") breaks between its words, never inside
+   one (「已暂/停」): CJK runs keep together like Latin words, and only a word longer than the line
+   breaks anywhere (spec §6.16.17). */
+.cb-context-line {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .cb-property-list {
   display: flex;
   flex-direction: column;
@@ -918,6 +925,21 @@ button.cb-property-row {
 .cb-conv-scroll:not([data-center="true"]) {
   display: flex;
   flex-direction: column-reverse;
+  /* A short fade at both scroll edges (spec §5.4): a line cut under the title bar or above the
+     composer fades out instead of ending mid-line. The fade is the thread's padding high, so a
+     thread at rest (its first or last line inside the padding's edge) is never dimmed. */
+  -webkit-mask-image: linear-gradient(
+    transparent,
+    black var(--cb-space-4),
+    black calc(100% - var(--cb-space-4)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    transparent,
+    black var(--cb-space-4),
+    black calc(100% - var(--cb-space-4)),
+    transparent
+  );
 }
 .cb-conv-scroll[data-center="true"] {
   display: flex;

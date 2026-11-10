@@ -43,6 +43,7 @@ export {
   useLocale,
   usePrefersReducedMotion,
   useRunState,
+  useSignIn,
   useTheme,
   useView,
 } from "./hooks.js";
@@ -58,6 +59,7 @@ export type {
   EventBase,
   JsonValue,
   RunState,
+  SignIn,
   SlotComponentProps,
   UiView,
 } from "./types.js";

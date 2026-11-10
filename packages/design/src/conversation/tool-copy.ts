@@ -129,14 +129,4 @@ export function summarizeTools(rows: readonly SummaryRow[], locale: Locale): str
     .join("");
 }
 
-/** Elapsed time of a running call: "12 秒" / "1 分 03 秒", "12s" / "1m 03s". */
-export function elapsed(ms: number, locale: Locale): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  const t = messages[locale];
-  if (m === 0) return fmt(t["tool.elapsedS"], { s });
-  return fmt(t["tool.elapsedMS"], { m, s: String(s).padStart(2, "0") });
-}
-
 export { fmt as fillCopy };

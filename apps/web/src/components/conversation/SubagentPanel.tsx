@@ -2,11 +2,11 @@
 
 import {
   Button,
+  formatDuration,
   RightPanel,
   Spinner,
   StatusBar,
   SubagentTask,
-  subagentDuration,
   subagentWaitingLabel,
   ThreadHistory,
   useNow,
@@ -125,6 +125,8 @@ function ChildRecord({
   const stats = useMemo(() => runStats(child.events), [child.events]);
   const now = useNow(stats.resumedAt !== null ? 1000 : 0);
   const ms = workedMsAt(stats, now) ?? undefined;
+  const duration =
+    ms === undefined ? "" : formatDuration(ms, locale, { live: stats.endedAt === null });
   const waitingFor = child.waiting ? stats.waitingFor : null;
   const usage = latestUsage(child.events);
   const window_ = usage
@@ -142,11 +144,11 @@ function ChildRecord({
       meta={
         ms === undefined ? undefined : waitingFor !== null ? (
           // waiting for a person: the waiting word instead of the spinner, the time stopped
-          `${subagentWaitingLabel(waitingFor, locale)} · ${subagentDuration(ms, locale)}`
+          `${subagentWaitingLabel(waitingFor, locale)} · ${duration}`
         ) : (
           <>
             {child.running ? <Spinner /> : null}
-            {subagentDuration(ms, locale)}
+            {duration}
           </>
         )
       }

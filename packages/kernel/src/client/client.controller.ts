@@ -13,6 +13,7 @@ import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { AdminClientQuery, type ClientExtensionsResponse, ReportBody } from "./client.schemas.js";
 import { ClientAccess } from "./client-access.service.js";
 import { ClientReports } from "./client-reports.service.js";
+import { ClientSignIn } from "./client-sign-in.service.js";
 
 class AdminClientQueryDto extends createZodDto(AdminClientQuery, "AdminClientQuery") {}
 class ReportBodyDto extends createZodDto(ReportBody, "ClientReportBody") {}
@@ -21,7 +22,8 @@ class ReportBodyDto extends createZodDto(ReportBody, "ClientReportBody") {}
  * The workspace shell read of client extensions (client extensions spec §9.2), `ui.use` (guest and
  * up; a person, not a service token): `GET /api/v1/orgs/:orgId/ui/client` →
  * {@link ClientExtensionsResponse}: the extensions enabled in the org that run with an approved
- * client build, their file URLs and integrity, and the components the caller's role may use;
+ * client build, their file URLs and integrity, the components the caller's role may use and the
+ * caller's sign-in id per plugin (`ClientSignIn`);
  * `enabled: false` with no items under the kill switch. `no-store`: the set changes with an org
  * switch, an upgrade or the kill switch.
  */
@@ -30,6 +32,7 @@ export class OrgClientController {
   constructor(
     @Inject(ClientAccess) private readonly access: ClientAccess,
     @Inject(ClientReports) private readonly reports: ClientReports,
+    @Inject(ClientSignIn) private readonly signIn: ClientSignIn,
   ) {}
 
   @Get()
@@ -39,8 +42,8 @@ export class OrgClientController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
   ): Promise<ClientExtensionsResponse> {
-    requireUser(principal);
-    return this.access.orgSet(org.orgId, org.role);
+    const user = requireUser(principal);
+    return this.access.orgSet(org.orgId, org.role, this.signIn.of(user));
   }
 
   /**
@@ -75,6 +78,7 @@ export class AdminClientController {
   constructor(
     @Inject(ClientAccess) private readonly access: ClientAccess,
     @Inject(ClientReports) private readonly reports: ClientReports,
+    @Inject(ClientSignIn) private readonly signIn: ClientSignIn,
   ) {}
 
   @Get()
@@ -83,8 +87,8 @@ export class AdminClientController {
     @CurrentPrincipal() principal: Principal,
     @ZQuery(AdminClientQueryDto) q: z.infer<typeof AdminClientQuery>,
   ): Promise<ClientExtensionsResponse> {
-    requireUser(principal);
-    return this.access.platformSet(q.plugin);
+    const user = requireUser(principal);
+    return this.access.platformSet(this.signIn.of(user), q.plugin);
   }
 
   /**
