@@ -137,6 +137,7 @@ describe("registration", () => {
       "agents.list",
       "agents.preview-from-template",
       "agents.readiness",
+      "agents.register-skill",
       "agents.request-connector-setup",
       "agents.skills",
       "agents.update",

@@ -2,9 +2,13 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { AgentsService } from "../../agents/agents.service.js";
 import { ApiError } from "../../errors.js";
-import { AgentSkillsService } from "../../skills/agent-skills.service.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { rootConversationOf } from "../../runtime/subagents/child.js";
+import { SandboxFileReader } from "../../sandbox/sandbox-file-reader.js";
+import { AgentSkillsService, type RegisterOutcome } from "../../skills/agent-skills.service.js";
 import { SkillChangesService } from "../../skills/changes.service.js";
 import { SkillInvoker } from "../../skills/invoke.js";
+import { SKILL_PACKAGE_MAX_BYTES } from "../../skills/package.js";
 import {
   AgentSkillPathParams,
   AgentSkillsListParams,
@@ -26,6 +30,30 @@ const AgentId = AgentSkillsListParams.shape.agentId;
 const DESCRIPTION_MAX = 200;
 const clip = (s: string): string =>
   s.length > DESCRIPTION_MAX ? `${s.slice(0, DESCRIPTION_MAX)}…` : s;
+
+/** A sandbox path (the sandbox tools' bound). */
+const FILE_PATH_MAX = 4096;
+const PATH_SHOWN_MAX = 200;
+const shownPath = (p: string): string =>
+  p.length > PATH_SHOWN_MAX ? `${p.slice(0, PATH_SHOWN_MAX)}…` : p;
+
+const subagentRefusal = () =>
+  new ApiError(
+    "skill.subagent_register",
+    "A sub-agent cannot register skills on its agent; only the agent the person talks with can.",
+  );
+
+/** The model-facing result line of `agents.register-skill`. */
+function registeredText(o: RegisterOutcome, files: number | null): string {
+  const counted = files === null ? "" : ` (${files} file${files === 1 ? "" : "s"})`;
+  if (o.kind === "proposed") {
+    return `Proposed version ${o.version} of the org skill "${o.name}"${counted}; it waits for an org admin to approve it in the inbox. Until then only this conversation sees the new version.`;
+  }
+  const head = `${o.created ? "Created" : "Updated"} skill "${o.name}", version ${o.version}${counted}.`;
+  return o.manualOnly
+    ? `${head} It is manual-only: it is not in your skill catalog; a person invokes it with /${o.name} in any conversation with this agent.`
+    : `${head} It applies to every conversation with this agent from now on; in this run, load it with the Skill tool (skill "${o.name}").`;
+}
 
 const skillRow = (s: SkillSummary) => ({
   id: s.id,
@@ -50,7 +78,45 @@ export class AgentSkillsOperations implements OnModuleInit {
     @Inject(SkillChangesService) private readonly changes: SkillChangesService,
     @Inject(AgentSkillsService) private readonly agentSkills: AgentSkillsService,
     @Inject(SkillInvoker) private readonly invoker: SkillInvoker,
+    @Inject(SandboxFileReader) private readonly files: SandboxFileReader,
+    @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
+
+  /**
+   * Class of registering a skill on the run's agent: `personal` on a private agent the actor owns
+   * whose `skills.writePolicy` is not `ask`; otherwise `org` (asked every time, never remembered).
+   */
+  private async registerClass(ctx: OperationContext): Promise<ConfirmClass> {
+    const a = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
+    return a.visibility === "private" &&
+      a.ownerAccountId === ctx.actorAccountId &&
+      a.definition.skills?.writePolicy !== "ask"
+      ? "personal"
+      : "org";
+  }
+
+  /**
+   * The refusals read before anything touches the sandbox (the reader checks only the device):
+   * a sub-agent conversation, then an actor who is not the agent's current owner.
+   */
+  private async registerCheck(ctx: OperationContext): Promise<void> {
+    if ((await rootConversationOf(this.db.db, ctx.conversationId)) !== ctx.conversationId) {
+      throw subagentRefusal();
+    }
+    await this.agentSkills.assertOwner(ctx.orgId, ctx.agentId, ctx.actorAccountId);
+  }
+
+  /** The file count of a registered version (null for a proposal or when the row is gone). */
+  private async filesOf(o: RegisterOutcome): Promise<number | null> {
+    if (o.kind !== "version") return null;
+    const v = await this.db.db
+      .selectFrom("skill_versions")
+      .select("manifest")
+      .where("skill_id", "=", o.skillId)
+      .where("version", "=", o.version)
+      .executeTakeFirst();
+    return v?.manifest.files.length ?? null;
+  }
 
   /** Class of deleting a skill: your own private agent is personal; a shared agent is the org's. */
   private async deleteClass(agentId: string, ctx: OperationContext): Promise<ConfirmClass> {
@@ -211,6 +277,105 @@ export class AgentSkillsOperations implements OnModuleInit {
             viaAgent("agents.delete-skill", ctx),
           );
           return { id: input.skillId, deleted: true };
+        },
+      }),
+      defineOperation({
+        id: "agents.register-skill",
+        description:
+          "Register a zip package from your sandbox as one of this agent's own skills: a new skill, or the next version of this agent's skill with the same name. Build the package in the sandbox first: a zip with SKILL.md at its root (frontmatter name and description, then the instructions) plus any scripts or references, then pass its absolute path. Only the agent's owner can, and only from the conversation the person talks in (not a sub-agent). The new version applies to every conversation with this agent; in this run, load it with Skill.",
+        input: z.object({ filePath: z.string().min(1).max(FILE_PATH_MAX) }).strict(),
+        example: { filePath: "/workspace/out/weekly-report.zip" },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/skills"],
+        // the agent is always the run's own (ctx.agentId); the zip comes from the sandbox
+        omits: ["agentId", "uploadId"],
+        extras: ["filePath"],
+        confirm: "personal",
+        confirmFor: (_i, ctx) => this.registerClass(ctx),
+        errors: [
+          {
+            code: "skill.subagent_register",
+            next: "Hand the skill files back to your parent agent; only the agent the person talks with registers skills.",
+          },
+          {
+            code: "forbidden",
+            next: "Only the agent's owner can add or update its skills; tell the person, and the owner can register the package (or upload it on the agent's page).",
+          },
+          {
+            code: "agent.not_found",
+            next: "This agent is deleted or no longer visible to the person; tell them.",
+          },
+          {
+            code: "sandbox.file_invalid_path",
+            next: "Pass the absolute path of the zip inside the sandbox (e.g. under the workspace); check it with Glob.",
+          },
+          {
+            code: "sandbox.file_not_found",
+            next: "Check the path with Glob, or build the zip first with Bash (cd into the skill directory, then zip -r ../<name>.zip .).",
+          },
+          {
+            code: "sandbox.file_is_directory",
+            next: "Archive the directory into one zip with Bash (zip -r) and pass the zip's path.",
+          },
+          {
+            code: "sandbox.file_too_large",
+            next: "The package is over 50 MB; leave out large or generated files, rebuild the zip and retry.",
+          },
+          {
+            code: "skill.invalid_package",
+            next: "Fix the package as the message says (SKILL.md at the zip's root with name and description frontmatter, allowed paths and sizes), rebuild the zip and retry.",
+          },
+          {
+            code: "skill.agent_cap",
+            next: "Register a new version of an existing skill (same name) instead, or ask the agent's owner to delete one of its skills (agents.skills lists them).",
+          },
+          {
+            code: "skill.proposal_pending_elsewhere",
+            next: "Another conversation has a proposed version of this skill waiting for an org admin; wait for that decision, or continue in that conversation.",
+          },
+          {
+            code: "storage.unavailable",
+            next: "File storage is unavailable; try again later, or tell the person to contact the super admin.",
+          },
+        ],
+        precheck: (_i, ctx) => precheckBy(() => this.registerCheck(ctx)),
+        summary: (i) => ({
+          zh: `从 ${shownPath(i.filePath)} 为智能体登记技能`,
+          en: `Register a skill on this agent from ${shownPath(i.filePath)}`,
+        }),
+        run: async (input, ctx) => {
+          await this.registerCheck(ctx);
+          const zip = await this.files.read({
+            orgId: ctx.orgId,
+            conversationId: ctx.conversationId,
+            actorAccountId: ctx.actorAccountId,
+            path: input.filePath,
+            maxBytes: SKILL_PACKAGE_MAX_BYTES,
+            signal: ctx.signal,
+          });
+          const o = await this.agentSkills.register(
+            {
+              orgId: ctx.orgId,
+              agentId: ctx.agentId,
+              accountId: ctx.actorAccountId,
+              conversationId: ctx.conversationId,
+              runId: ctx.runId,
+              auditDetail: viaAgent("agents.register-skill", ctx),
+            },
+            zip,
+          );
+          const files = await this.filesOf(o);
+          return {
+            skill: {
+              id: o.skillId,
+              name: o.name,
+              state: o.kind === "proposed" ? "pending" : o.manualOnly ? "manual" : "active",
+              version: o.version,
+              ...(files !== null && { files }),
+              ...(o.kind === "proposed" && { requestId: o.requestId }),
+            },
+            message: registeredText(o, files),
+          };
         },
       }),
       defineOperation({

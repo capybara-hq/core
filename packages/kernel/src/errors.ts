@@ -365,6 +365,8 @@ export const ERROR_CODES = {
   "skill.invalid_package": 400,
   /** An agent already has `AGENT_SKILLS_MAX` own skills (pending new skills included). */
   "skill.agent_cap": 409,
+  /** A sub-agent conversation tried to register a skill on its agent (only the root registers). */
+  "skill.subagent_register": 403,
   /**
    * A person invoked a skill (`/name`, phase D) that is not one of the agent's effective skills
    * (`details: [{ reason: "not_found" }]`) or is hidden from the menu (`not_user_invocable`).
