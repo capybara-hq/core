@@ -163,6 +163,7 @@ describe("registration and who may call", () => {
       "admin.agent-delete",
       "admin.agent-get",
       "admin.agents-list",
+      "admin.attention",
       "admin.audit",
       "admin.connector-delete",
       "admin.connector-get",
@@ -378,7 +379,11 @@ describe("orgs", () => {
 
 describe("admin and models", () => {
   it("reads the overview and settings, and changes a deployment setting", async () => {
-    expect(await run("admin.overview", {})).toMatchObject({ orgs: 2, accounts: 2 });
+    // the same numbers as GET /admin/overview, nothing else
+    const overview = await run("admin.overview", {});
+    expect(Object.keys(overview as object).sort()).toEqual(["accounts", "attentionTotal", "orgs"]);
+    expect(overview).toMatchObject({ orgs: 2, accounts: 2 });
+    expect((await root({ method: "GET", url: "/api/v1/admin/overview" })).json()).toEqual(overview);
     expect(await run("admin.settings", {})).toMatchObject({ orgCreation: "anyone" });
     const out = await run("admin.update-settings", { orgCreation: "super_admin" });
     expect(out).toMatchObject({ orgCreation: "super_admin" });

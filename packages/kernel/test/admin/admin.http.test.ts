@@ -272,6 +272,8 @@ describe("超级管理员端点", () => {
     { method: "GET", url: "/api/v1/admin/settings" },
     { method: "PUT", url: "/api/v1/admin/settings" },
     { method: "GET", url: "/api/v1/admin/overview" },
+    { method: "GET", url: "/api/v1/admin/overview/attention" },
+    { method: "GET", url: "/api/v1/admin/audit" },
     { method: "GET", url: "/api/v1/admin/models" },
   ] as const;
 
@@ -669,18 +671,19 @@ describe("超级管理员端点", () => {
     );
   });
 
-  it("GET /admin/overview：账号数、组织数、待处理插件数与目录申请数（T26 之前为 0）", async () => {
+  it("GET /admin/overview: orgs, accounts and attentionTotal only", async () => {
     await orgs.create({ name: "One" }, user);
     await orgs.create({ name: "Two" }, admin);
     const req = await session("admin");
     const res = await req({ method: "GET", url: "/api/v1/admin/overview" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      accounts: 2,
-      orgs: 2,
-      extensionsNeedingAction: 0,
-      catalogRequestsPending: 0,
-    });
+    // no extension, provider or inbox item in this deployment: nothing waits
+    expect(res.json()).toEqual({ accounts: 2, orgs: 2, attentionTotal: 0 });
+    // reading the overview is not audited (decision D5)
+    const before = await db.selectFrom("audit_events").select("id").execute();
+    await req({ method: "GET", url: "/api/v1/admin/overview/attention" });
+    await req({ method: "GET", url: "/api/v1/admin/audit" });
+    expect(await db.selectFrom("audit_events").select("id").execute()).toEqual(before);
   });
 
   it("old routes are gone: the plugin / directory / catalogs / app-installs paths are 404", async () => {

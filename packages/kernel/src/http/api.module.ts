@@ -6,6 +6,7 @@ import { AdminAgentsController } from "../admin/admin-agents.controller.js";
 import { AdminConnectorsController } from "../admin/admin-connectors.controller.js";
 import { AdminAuditController } from "../admin/audit.controller.js";
 import { AdminExtensionsController } from "../admin/extensions.controller.js";
+import { AdminOverviewController } from "../admin/overview.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsModule } from "../agents/agents.module.js";
@@ -130,6 +131,7 @@ const CONTROLLERS: Type[] = [
   AdminAgentsController,
   AdminConnectorsController,
   AdminAuditController,
+  AdminOverviewController,
   AdminExtensionsController,
   AdminCatalogController,
   AdminComponentsController,

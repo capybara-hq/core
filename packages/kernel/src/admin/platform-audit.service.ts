@@ -37,7 +37,7 @@ export class PlatformAuditService {
   constructor(@Inject(KernelDb) private readonly kdb: KernelDb) {}
 
   /** `limit` events with an id below `after` (from the newest without it); one extra row tells `next`. */
-  async list(q: { after?: string; limit: number }): Promise<PlatformAuditPage> {
+  async list(q: { after?: string | undefined; limit: number }): Promise<PlatformAuditPage> {
     let query = this.kdb.db
       .selectFrom("audit_events as a")
       .leftJoin("accounts as ac", "ac.id", "a.actor_account_id")
