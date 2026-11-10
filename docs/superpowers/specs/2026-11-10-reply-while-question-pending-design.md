@@ -108,7 +108,7 @@ A `user_message` newly written by account `A` into conversation `C` skips each q
 | Case | Outcome |
 |---|---|
 | One pending question | skipped; run resumes; model sees the skipped result, then the message. |
-| Several pending questions (parallel calls of one step, e.g. two `AskUserQuestion`, or one plus an extension tool's form) | all skipped by the one message, one resume, each call gets its skipped result. |
+| Several question calls in one step (e.g. two `AskUserQuestion`, or one plus an extension tool's form) | the pipeline runs a step's calls in order and suspends on the first wait, so only the first question is pending: the message skips it; on the resume the next call asks, after the message, and waits (D5). The person answers it or replies again; the next model call takes every message in. Several questions pending at once (e.g. a run resumed by the sweep) are all skipped by one message, one resume. (Implementation finding, 2026-11-10.) |
 | Question and approval pending in the same step | the question is skipped, the approval stays; the run keeps waiting until the approval is decided, then takes in the message (§4.4). |
 | Message logged before the question was asked (sent while the step was streaming) | not skipped (D5). The card appears after the person's message; they answer it or write again. The first message is taken in after the question settles, as today. |
 | Question overdue but still `pending` (its timeout job has not run yet) | not skipped; the timeout job (or the wait sweep) expires it, the run resumes, the message is taken in after the expired result. Matches the answer path, which refuses an overdue question. |
@@ -118,6 +118,7 @@ A `user_message` newly written by account `A` into conversation `C` skips each q
 | Slash command / skill invocation (`/name args`, web or IM) | a `user_message` with `skill`: skips. The rendered invocation is the message the model reads. |
 | IM `/device`, `/new` | not messages to this conversation: skip nothing (`/new` archives the thread; the old question keeps waiting, see non-goals). |
 | Message with a model / effort switch | skips; `model_switched` is logged before the message as today; the running run keeps its model. |
+| A queued item sent now (`POST …/queue/:itemId/send`) during the run | a `user_message` by the item's author: skips like a direct message. Queue dispatch at the end of a run has no active run, so nothing to skip. |
 | Message in a sub-agent's conversation | refused today (`conversation.read_only`); unchanged. |
 
 ### 4.3 Sub-agent questions surfaced in the parent
@@ -312,7 +313,7 @@ it settles).
 | Answer (web or IM button) and message at once, same or different replicas | Both take the conversation lock, then the question row; one commits first. Answer first → the message finds no pending question and is an interjection taken in after the answer's result. Message first → the answer gets 409 `question.already_answered` (web toast; IM `alreadyHandled` phrase). Exactly one `question_answered`. |
 | Expiry job and message | Same: one wins. An overdue question is never skipped (it is the expiry's). |
 | Two messages at once | The first skips; the second finds nothing pending; both are taken in by the next call. |
-| Stop (abort) and message | `abortWaitingIn` locks the conversation first, as the message does. Abort first → questions `cancelled`, run `aborted`; the message starts the next run. Message first → skipped and resume queued; the abort then finds the run `queued`/`running` and stops it the usual way. |
+| Stop (abort) and message | `abortWaitingIn` locks the conversation first, as the message does. Abort first → questions `cancelled`, run `aborted`; the message starts the next run. Message first → skipped; if the resume already moved the run to `queued`/`running`, the abort stops it the usual way; if the stop lands between the skip's commit and the resume, the run is still `waiting` and `abortWaitingIn` writes the stop result (`INPUT_CANCELLED_TEXT`) for the skipped call, the question stays `skipped`, and the message is taken in by the next run. |
 | Resume job and a late timeout job | `resume` is a conditional update; the late job's `expire` returns `settled`. |
 | Rolling deploy: an old replica runs the resumed run | Old pipeline code sees a non-pending last round and re-calls the tool with `answer: null` (`AskUserQuestion` says "did not answer within Nh"). Harmless and pre-0.1.0; deploy order in §14 keeps the window short. |
 
