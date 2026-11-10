@@ -11,7 +11,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 
-export type QuestionStatus = "pending" | "answered" | "expired" | "cancelled";
+export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled";
 
 /**
  * `questions.spec` 的内容：表单、插件 state（续跑时原样带回 `ctx.resume.state`），
@@ -223,8 +223,30 @@ export class QuestionsService {
       orgId: record.orgId,
       conversationId: record.conversationId,
       runId: record.runId,
+      outcome: "answered",
     });
     return record;
+  }
+
+  /**
+   * Locks the conversation row of question `questionId` (`SELECT … FOR UPDATE`; re-entrant with the
+   * lock `EventLog.appendIn` takes later). Every write to a question row takes the conversation lock
+   * first, then the question row (reply-while-question spec §8.2, D7), as the message's skip and
+   * the stop of a waiting run do, so no two of them can deadlock. False: no such question (in `orgId`).
+   */
+  private async lockConversationOf(questionId: string, orgId?: string): Promise<boolean> {
+    const t = this.db.db;
+    let q = t.selectFrom("questions").select("conversation_id").where("id", "=", questionId);
+    if (orgId !== undefined) q = q.where("org_id", "=", orgId);
+    const row = await q.executeTakeFirst();
+    if (!row) return false;
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", row.conversation_id)
+      .forUpdate()
+      .executeTakeFirst();
+    return true;
   }
 
   // its own transaction (as the legacy one was): `question.answered` is emitted only after the
@@ -237,6 +259,7 @@ export class QuestionsService {
     orgId: string | undefined,
   ): Promise<{ record: QuestionRecord; toSeq: number }> {
     const t = this.db.db;
+    if (!(await this.lockConversationOf(questionId, orgId))) throw notFound();
     let q = t
       .selectFrom("questions")
       .selectAll()
@@ -252,6 +275,12 @@ export class QuestionsService {
       .executeTakeFirst();
     if (run?.trigger_account_id !== accountId) throw notInitiator();
     const before = toRecord(locked);
+    if (before.status === "skipped") {
+      throw new ApiError(
+        "question.already_answered",
+        "Question was skipped: the user sent a message instead",
+      );
+    }
     if (before.status !== "pending") {
       throw new ApiError("question.already_answered", "Question has already been answered");
     }
@@ -305,6 +334,7 @@ export class QuestionsService {
     toSeq?: number;
   }> {
     const t = this.db.db;
+    if (!(await this.lockConversationOf(questionId))) return { outcome: "settled" as const };
     const locked = await t
       .selectFrom("questions")
       .selectAll()
@@ -367,6 +397,30 @@ export class QuestionsService {
     accountId: string,
   ): Promise<{ records: QuestionRecord[]; seqs: Map<string, number> }> {
     const t = this.db.db;
+    // the conversations first, in id order (lock order D7: conversation, then question rows)
+    const convs = await t
+      .selectFrom("questions")
+      .select("conversation_id")
+      .distinct()
+      .where("org_id", "=", orgId)
+      .where("status", "=", "pending")
+      .where("run_id", "in", (eb) =>
+        eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),
+      )
+      .execute();
+    if (convs.length > 0) {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where(
+          "id",
+          "in",
+          convs.map((c) => c.conversation_id),
+        )
+        .orderBy("id")
+        .forUpdate()
+        .execute();
+    }
     const rows = await t
       .selectFrom("questions")
       .selectAll()
@@ -394,19 +448,72 @@ export class QuestionsService {
     return { records, seqs };
   }
 
+  /**
+   * Skips, in the caller's transaction (`mandatory`, the message's), every question a message by
+   * `accountId` just written at `messageSeq` closes (reply-while-question spec §4.2, §8.1): pending,
+   * not yet due, asked in `conversationId` (a sub-agent's question lives in the child conversation)
+   * by a run of it that is `running` or `waiting` and was started by `accountId`. The caller holds
+   * the conversation row lock (its `appendIn`), so only questions logged before the message are
+   * seen. Each becomes `skipped` with `question_answered { outcome: "skipped", skippedBySeq }`.
+   * Returns the records and the highest seq written (null: none); the caller notifies and emits
+   * `question.answered` after the commit.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async skipPendingIn(
+    conversationId: string,
+    accountId: string,
+    messageSeq: number,
+  ): Promise<{ records: QuestionRecord[]; toSeq: number | null }> {
+    const t = this.db.db;
+    const rows = await t
+      .selectFrom("questions as q")
+      .innerJoin("runs as r", "r.id", "q.run_id")
+      .selectAll("q")
+      .where("q.conversation_id", "=", conversationId)
+      .where("q.status", "=", "pending")
+      .where(sql<boolean>`q.expires_at > now()`)
+      .where("r.status", "in", ["running", "waiting"])
+      .where("r.trigger_account_id", "=", accountId)
+      .orderBy("q.created_at")
+      .orderBy("q.id")
+      .forUpdate("q")
+      .execute();
+    const records: QuestionRecord[] = [];
+    let toSeq: number | null = null;
+    for (const row of rows) {
+      const updated = await t
+        .updateTable("questions")
+        .set({ status: "skipped", answered_by: accountId, answered_at: sql<Date>`now()` })
+        .where("id", "=", row.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      toSeq = await this.answeredEvent(toRecord(row), null, accountId, "skipped", messageSeq);
+      records.push(toRecord(updated));
+    }
+    return { records, toSeq };
+  }
+
   /** `question_answered` in the current transaction; returns its seq. */
   private async answeredEvent(
     q: QuestionRecord,
     answer: FormAnswer | null,
     byAccountId: string | null,
-    outcome: "answered" | "expired" | "cancelled",
+    outcome: "answered" | "skipped" | "expired" | "cancelled",
+    skippedBySeq?: number,
   ): Promise<number> {
     const written = await this.eventLog.appendIn(q.conversationId, [
       {
         type: "question_answered",
         runId: q.runId,
         idemKey: `question_answered:${q.id}`,
-        payload: { questionId: q.id, callId: q.callId, answer, byAccountId, outcome },
+        payload: {
+          questionId: q.id,
+          callId: q.callId,
+          answer,
+          byAccountId,
+          outcome,
+          ...(skippedBySeq !== undefined && { skippedBySeq }),
+        },
       },
     ]);
     return Math.max(...written.map((e) => e.seq));

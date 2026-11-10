@@ -70,7 +70,7 @@ describe("questionRenderableInline", () => {
     );
     const two: InputForm = {
       title: "t",
-      fields: [...enumForm(2).fields, { ...(enumForm(2).fields[0] as never), key: "k2" }],
+      fields: [...enumForm(2).fields, ...enumForm(2).fields.map((f) => ({ ...f, key: "k2" }))],
     };
     expect(questionRenderableInline(two, on)).toBe(false);
   });
@@ -510,15 +510,21 @@ describe("question cards: text reply and skipped (reply-while-question spec §10
     const zh = renderCardAsText({ ...question, textReply: "plain" }, "zh").split("\n");
     expect(zh.at(-1)).toBe("也可以直接回复文字");
     expect(zh.at(-2)).toContain(question.webUrl);
-    expect(renderCardAsText({ ...question, textReply: "plain" }, "en").split("\n").at(-1)).toBe(
-      "You can also just reply with text",
-    );
-    expect(renderCardAsText({ ...question, textReply: "mention" }, "zh").split("\n").at(-1)).toBe(
-      "也可以在本话题 @我 回复文字",
-    );
-    expect(renderCardAsText({ ...question, textReply: "mention" }, "en").split("\n").at(-1)).toBe(
-      "You can also reply in this thread, mentioning me",
-    );
+    expect(
+      renderCardAsText({ ...question, textReply: "plain" }, "en")
+        .split("\n")
+        .at(-1),
+    ).toBe("You can also just reply with text");
+    expect(
+      renderCardAsText({ ...question, textReply: "mention" }, "zh")
+        .split("\n")
+        .at(-1),
+    ).toBe("也可以在本话题 @我 回复文字");
+    expect(
+      renderCardAsText({ ...question, textReply: "mention" }, "en")
+        .split("\n")
+        .at(-1),
+    ).toBe("You can also reply in this thread, mentioning me");
     // only pending cards carry it
     expect(
       renderCardAsText({ ...question, state: "answered", textReply: "plain" }, "en"),

@@ -172,8 +172,22 @@ export class EventLog {
    */
   @Transactional({ propagation: "mandatory" })
   async appendIn(conversationId: string, events: AppendEvent[]): Promise<ConversationEvent[]> {
+    return (await this.appendInReport(conversationId, events)).events;
+  }
+
+  /**
+   * {@link appendIn} that also says, per input, whether this call wrote the event (`fresh[i]`) or
+   * returned an earlier one by its idempotency key (a retried message, reply-while-question spec
+   * §8.1). Same transaction contract: the caller's, `mandatory`.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async appendInReport(
+    conversationId: string,
+    events: AppendEvent[],
+  ): Promise<{ events: ConversationEvent[]; fresh: boolean[] }> {
     const bodies = events.map((e) => this.validate(e));
-    return (await this.write(conversationId, events, bodies)).events;
+    const { events: out, fresh } = await this.write(conversationId, events, bodies);
+    return { events: out, fresh };
   }
 
   @Transactional({ propagation: "requires_new" })
@@ -182,7 +196,8 @@ export class EventLog {
     events: AppendEvent[],
     bodies: ConversationEventBody[],
   ): Promise<{ events: ConversationEvent[]; toSeq: number | null }> {
-    return this.write(conversationId, events, bodies);
+    const { events: out, toSeq } = await this.write(conversationId, events, bodies);
+    return { events: out, toSeq };
   }
 
   /**
@@ -390,7 +405,7 @@ export class EventLog {
     conversationId: string,
     events: AppendEvent[],
     bodies: ConversationEventBody[],
-  ): Promise<{ events: ConversationEvent[]; toSeq: number | null }> {
+  ): Promise<{ events: ConversationEvent[]; toSeq: number | null; fresh: boolean[] }> {
     const t = this.db;
     // 先锁会话行：之后的幂等查询与 seq 分配都在这把锁内，并发 append 依次执行。
     const conv = await t
@@ -431,10 +446,13 @@ export class EventLog {
         fresh.push(i);
       }
     });
+    // written by this call: the first input of each new event (a repeat in the batch points to it)
+    const isFresh = events.map((_, i) => fresh.includes(i));
     if (fresh.length === 0) {
       return {
         events: plan.map((p) => (p as { kind: "old"; event: ConversationEvent }).event),
         toSeq: null,
+        fresh: isFresh,
       };
     }
 
@@ -471,6 +489,7 @@ export class EventLog {
         p.kind === "old" ? p.event : (bySeq.get(base + p.index + 1) as ConversationEvent),
       ),
       toSeq,
+      fresh: isFresh,
     };
   }
 }

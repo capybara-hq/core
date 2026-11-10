@@ -17,7 +17,7 @@ describe("KernelEvents", () => {
     });
     const base = { orgId: "o", conversationId: "c", runId: "r" };
     await events.emit("approval.decided", { id: "a1", status: "approved", ...base });
-    await events.emit("question.answered", { id: "q1", ...base });
+    await events.emit("question.answered", { id: "q1", outcome: "answered", ...base });
     expect(seen).toEqual(["a1"]);
     expect(log.warn).toHaveBeenCalledWith(
       "kernel event handler failed",

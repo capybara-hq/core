@@ -179,7 +179,14 @@ function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; re
 
 type Plan =
   | { kind: "text"; text: string; chunk: number; delayMs: number; failAfter?: ModelError }
-  | { kind: "tool"; name: string; input: unknown; more?: { name: string; input: unknown }[] }
+  | {
+      kind: "tool";
+      name: string;
+      input: unknown;
+      more?: { name: string; input: unknown }[];
+      /** `slowtool:`: wait this long before the call (a message can arrive while it streams). */
+      delayMs?: number;
+    }
   | { kind: "stall" }
   | { kind: "fail"; error: ModelError };
 
@@ -251,6 +258,23 @@ function scripted(req: ModelRequest): Plan {
       return {
         kind: "fail",
         error: new ModelError("invalid_request", "tools directive carries invalid JSON"),
+      };
+    }
+  }
+  // `slowtool:<ms>:<name>:<json>`: the tool call after a wait (the step is still streaming)
+  const slowTool = /^slowtool:(\d+):([^:]+):([\s\S]*)$/.exec(text);
+  if (slowTool) {
+    try {
+      return {
+        kind: "tool",
+        name: slowTool[2] as string,
+        input: JSON.parse(slowTool[3] as string),
+        delayMs: Number(slowTool[1]),
+      };
+    } catch {
+      return {
+        kind: "fail",
+        error: new ModelError("invalid_request", "slowtool directive carries invalid JSON"),
       };
     }
   }
@@ -424,6 +448,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
       });
 
       if (p.kind === "tool") {
+        if (p.delayMs !== undefined && p.delayMs > 0) await sleep(p.delayMs, signal);
         const calls = [{ name: p.name, input: p.input }, ...(p.more ?? [])];
         const content: ContentBlock[] = calls.map((c, i) => ({
           type: "tool_call",

@@ -13,6 +13,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { UNSUPPORTED_ELICITATION_NOTE } from "../../src/tools/elicitation.js";
+import { INPUT_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -316,6 +317,24 @@ describe("MCP elicitation", () => {
     ]);
     const evs = JSON.stringify(await eventsOf(db, convId));
     expect(evs.includes(TOKEN)).toBe(false);
+  }, 60_000);
+
+  it("a message instead of the form: the kernel writes the skipped result; the remote is not called again", async () => {
+    const agentId = await agentFor(await installConnector());
+    const convId = await createConv(req, orgId, agentId);
+    const q = await askedBy(convId, "mcp__forms__signup");
+    await postMessage(req, orgId, convId, "echo:skip the signup");
+    const r = await lastResult(convId, 1);
+    expect(r).toMatchObject({
+      toolKey: "mcp__forms__signup",
+      content: INPUT_SKIPPED_TEXT,
+      isError: true,
+    });
+    expect(mcp.calls.filter((c) => c.name === "signup")).toHaveLength(1);
+    const answered = ofType(await eventsOf(db, convId), "question_answered");
+    expect(answered.map((e) => [e.payload.questionId, e.payload.outcome])).toEqual([
+      [q.payload.questionId, "skipped"],
+    ]);
   }, 60_000);
 
   it("URL 模式：卡片带链接与「已完成」；确认后远端收到 accept", async () => {

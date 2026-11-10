@@ -73,10 +73,7 @@ const MAX_INLINE_MULTI = 10;
  * (pass `{ textReply: card.textReply !== undefined }`): the Other path is then a plain reply, so
  * never draw an Other button. Otherwise the card only links to the web.
  */
-export function questionRenderableInline(
-  form: InputForm,
-  opts?: { textReply?: boolean },
-): boolean {
+export function questionRenderableInline(form: InputForm, opts?: { textReply?: boolean }): boolean {
   if (form.fields.length !== 1) return false;
   const f = form.fields[0];
   if (!f || (f.allowOther && opts?.textReply !== true)) return false;

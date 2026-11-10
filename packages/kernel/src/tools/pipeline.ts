@@ -92,6 +92,15 @@ export const approvalExpiredText = (hours: number) =>
 export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for approval.";
 /** 等待用户输入期间 run 被中止。 */
 export const INPUT_CANCELLED_TEXT = "The run was stopped while waiting for user input.";
+/**
+ * The result of an `AskUserQuestion` call whose question the user skipped by sending a message
+ * (reply-while-question spec §7.1): the message follows in the log as an ordinary user message.
+ */
+export const QUESTION_SKIPPED_TEXT =
+  "The user did not answer this question and sent a message instead; read it below and continue.";
+/** The result of any other tool's input request (extension `input_required`, MCP elicitation) skipped by a message. */
+export const INPUT_SKIPPED_TEXT =
+  "The user did not provide the requested input and sent a message instead; read it below and continue. Call the tool again only if it is still needed.";
 /** 同一调用连续请求输入超过上限。 */
 export const TOO_MANY_INPUT_REQUESTS_TEXT = "Tool requested user input too many times.";
 /** run 已被中止 / 到达截止时间，调用尚未开始执行。 */
@@ -99,6 +108,29 @@ export const RUN_STOPPED_TEXT = "The run was stopped before this tool call was e
 /** 调用执行中 run 被中止 / 到达截止时间。 */
 export const RUN_STOPPED_DURING_TEXT =
   "The run was stopped while this tool call was running; its outcome is unknown. Verify before retrying.";
+
+/** The fixed result of a call whose input request was skipped by a message (spec §7.1). */
+const skippedResult = (
+  toolKey: string,
+): { content: string; isError: boolean; display: ToolDisplay } =>
+  toolKey === "AskUserQuestion"
+    ? {
+        content: QUESTION_SKIPPED_TEXT,
+        isError: false,
+        display: {
+          summary: {
+            zh: "用户没有回答，直接发了消息",
+            en: "User sent a message instead of answering",
+          },
+        },
+      }
+    : {
+        content: INPUT_SKIPPED_TEXT,
+        isError: true,
+        display: {
+          summary: { zh: "用户没有提供输入，直接发了消息", en: "User sent a message instead" },
+        },
+      };
 
 const timeoutText = (key: string, ms: number) =>
   `Tool ${key} timed out after ${ms / 1000}s. The operation may or may not have completed; verify before retrying.`;
@@ -593,6 +625,12 @@ export class ToolPipeline {
     const rounds = await this.deps.questions.forCall(ctx.runId, call.id);
     const last = rounds.at(-1);
     if (last?.status === "pending") return inputWait(last);
+    // skipped by the starter's message: the kernel writes the result, the tool is not called again
+    // (spec D6: an extension would only see `answer: null`, an MCP call would be re-sent)
+    if (last?.status === "skipped") {
+      await this.writeResult(ctx, call.id, last.toolKey, skippedResult(last.toolKey));
+      return undefined;
+    }
     const attempt = rounds.length + 1;
     const started = await this.deps.eventLog.findByIdem(
       ctx.conversationId,

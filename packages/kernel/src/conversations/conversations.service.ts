@@ -15,6 +15,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
@@ -22,6 +23,7 @@ import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
+import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
 import { ConversationAccess, parentReachable } from "./access.js";
 import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
 import { AttachmentsService } from "./attachments.service.js";
@@ -329,6 +331,10 @@ export class ConversationsService {
     /** The device a new conversation is bound to (environments spec §4.1 item 1). */
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forNew">,
+    /** A starter's message skips the run's pending questions (reply-while-question spec §8.1). */
+    @Inject(QuestionsService)
+    private readonly questions: Pick<QuestionsService, "skipPendingIn">,
+    @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -457,7 +463,9 @@ export class ConversationsService {
     // a concurrent retry committed first: answer with its conversation below
     if (!row) return undefined;
     const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
-    return this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked);
+    // a new conversation has no run yet, so nothing to skip
+    return (await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked))
+      .events;
   }
 
   /**
@@ -1079,8 +1087,26 @@ export class ConversationsService {
         : await this.prepareSkill(orgId, conv.agentId, conversationId, agent, input);
     // one transaction: the sender, time zone and language are read with the message's write
     // (run context spec §3.2)
-    const event = await this.postIn(orgId, conversationId, accountId, input, next, extra, invoked);
-    await this.eventLog.notify(conversationId, event.seq);
+    const { event, skipped, toSeq } = await this.postIn(
+      orgId,
+      conversationId,
+      accountId,
+      input,
+      next,
+      extra,
+      invoked,
+    );
+    await this.eventLog.notify(conversationId, toSeq);
+    // the skipped questions' runs resume (waits) and their IM cards update (channel jobs)
+    for (const q of skipped) {
+      await this.events.emit("question.answered", {
+        id: q.id,
+        orgId: q.orgId,
+        conversationId: q.conversationId,
+        runId: q.runId,
+        outcome: "skipped",
+      });
+    }
     if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
     // The message is written: it brings an archived conversation back into the default lists
     if (conv.archivedAt !== null) {
@@ -1109,7 +1135,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
-  ): Promise<ConversationEvent> {
+  ): Promise<{ event: ConversationEvent; skipped: QuestionRecord[]; toSeq: number }> {
     const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
     const written = await this.writeMessage(
       orgId,
@@ -1121,7 +1147,12 @@ export class ConversationsService {
       blocks,
       invoked,
     );
-    return written.at(-1) as ConversationEvent;
+    const event = written.events.at(-1) as ConversationEvent;
+    return {
+      event,
+      skipped: written.skipped,
+      toSeq: Math.max(event.seq, written.skippedToSeq ?? 0),
+    };
   }
 
   /**
@@ -1174,7 +1205,9 @@ export class ConversationsService {
   /**
    * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
    * `conversations.selection`; returns the events written, in seq order (the `user_message`
-   * last). The caller notifies after commit.
+   * last). A message this call newly wrote (not a retry's deduped one) then skips the pending
+   * questions its author may answer (reply-while-question spec §8.1): `skipped` and the highest
+   * seq their events took. The caller notifies and emits `question.answered` after commit.
    */
   @Transactional({ propagation: "mandatory" })
   private async writeMessage(
@@ -1186,7 +1219,11 @@ export class ConversationsService {
     extra: ResolvedExtra,
     blocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
-  ): Promise<ConversationEvent[]> {
+  ): Promise<{
+    events: ConversationEvent[];
+    skipped: QuestionRecord[];
+    skippedToSeq: number | null;
+  }> {
     const events: AppendEvent[] = [];
     if (next !== null) {
       events.push({
@@ -1205,7 +1242,12 @@ export class ConversationsService {
       im: input.im,
     });
     events.push(this.userMessage(accountId, input, extra, blocks, invoked, context));
-    const written = await this.eventLog.appendIn(conversationId, events);
+    const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
+    const message = written.at(-1) as ConversationEvent;
+    const skips =
+      fresh.at(-1) === true
+        ? await this.questions.skipPendingIn(conversationId, accountId, message.seq)
+        : { records: [], toSeq: null };
     if (next !== null) {
       const t = this.db.db;
       // the cache follows the log (a retried message's switch may be an old, deduped event that a
@@ -1216,7 +1258,7 @@ export class ConversationsService {
         .where("id", "=", conversationId)
         .execute();
     }
-    return written;
+    return { events: written, skipped: skips.records, skippedToSeq: skips.toSeq };
   }
 
   /**
