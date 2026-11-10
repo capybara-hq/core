@@ -74,6 +74,16 @@ export class GatewayRole {
     checkpoint();
   }
 
+  /** The channel long connections this process holds (replica presence). */
+  channelsHeld(): number {
+    return this.supervisor.heldCount();
+  }
+
+  /** The device sockets open on this process (replica presence). */
+  devicesConnected(): number {
+    return this.devices.connectionCount();
+  }
+
   /** Stops watching extension instance changes (the stop's first step). */
   unwatch(): void {
     this.unwatchPlugins?.();

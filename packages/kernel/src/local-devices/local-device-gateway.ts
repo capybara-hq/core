@@ -540,6 +540,11 @@ export class LocalDeviceGateway {
     conn.start();
   }
 
+  /** How many device sockets are open on this process (replica presence reports it). */
+  connectionCount(): number {
+    return this.connections.size;
+  }
+
   /** @internal a connection that ended. */
   forget(conn: DeviceConnection): void {
     this.connections.delete(conn);
