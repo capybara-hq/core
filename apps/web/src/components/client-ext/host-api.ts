@@ -89,6 +89,7 @@ export interface HostServices {
   theme: { key: string | null; scheme: "dark" | "light" };
   storage: ClientApi["storage"];
   assetUrl(path: string): string;
+  signIn: ClientApi["signIn"];
   subscribe(handler: (e: CapybaraEvent) => void): () => void;
 }
 
@@ -180,7 +181,7 @@ const schemeNow = (): "dark" | "light" =>
 
 /** The listener api of a plugin's `events` (no React context there). */
 export function clientApiFor(
-  item: Pick<ClientExtensionItem, "plugin" | "build">,
+  item: Pick<ClientExtensionItem, "plugin" | "build" | "signInId">,
   locale: "zh" | "en",
 ): ClientApi {
   return {
@@ -188,12 +189,14 @@ export function clientApiFor(
     reducedMotion: reducedMotionNow(),
     storage: createPrefixedStorage(item.plugin),
     assetUrl: (path) => assetUrlOf(item, path),
+    signIn: { id: item.signInId },
   };
 }
 
 /**
  * The view-independent host api of one component of `plugin`: access, locale, run state, motion,
- * theme, storage, asset URLs and client events (delivered while the plugin is active; a throwing
+ * theme, storage, asset URLs, the sign-in (the document's shell read: a sign-in is a new
+ * document) and client events (delivered while the plugin is active; a throwing
  * handler counts against its crash budget). Task 18 adds the component's view and action.
  */
 export function useHostServices(plugin: string, contribution: string | null): HostServices {
@@ -210,6 +213,7 @@ export function useHostServices(plugin: string, contribution: string | null): Ho
   const role: ClientRole = scope === "admin" ? "superAdmin" : isOrgRole(member) ? member : "guest";
   const item = controls.item(plugin);
   const build = item?.build ?? "";
+  const signInId = item?.signInId ?? "";
   const storage = useMemo(() => createPrefixedStorage(plugin), [plugin]);
   const assetUrl = useMemo(
     () => (path: string) => assetUrlOf({ plugin, build }, path),
@@ -224,6 +228,7 @@ export function useHostServices(plugin: string, contribution: string | null): Ho
     [plugin, contribution],
   );
   const theme = useMemo(() => ({ key: themeKey, scheme }), [themeKey, scheme]);
+  const signIn = useMemo(() => ({ id: signInId }), [signInId]);
   return useMemo(
     () => ({
       orgId: scope === "admin" ? null : orgId,
@@ -235,9 +240,10 @@ export function useHostServices(plugin: string, contribution: string | null): Ho
       theme,
       storage,
       assetUrl,
+      signIn,
       subscribe,
     }),
-    [scope, orgId, role, locale, run, reducedMotion, theme, storage, assetUrl, subscribe],
+    [scope, orgId, role, locale, run, reducedMotion, theme, storage, assetUrl, signIn, subscribe],
   );
 }
 
@@ -333,4 +339,5 @@ export const PLUGIN_CLIENT: Record<string, unknown> = {
   useTheme: () => useHost("useTheme").api.theme,
   useClientStorage: () => useHost("useClientStorage").api.storage,
   useAssetUrl: () => useHost("useAssetUrl").api.assetUrl,
+  useSignIn: () => useHost("useSignIn").api.signIn,
 };
