@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { parseSkillMd, SKILL_ENTRY_FILE, ToolError } from "@capybara-hq/plugin-sdk";
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
-import { visibleTo } from "../agents/agent-lookup.js";
 import { skillFilesPrefix } from "../conversations/attachments.service.js";
 import { EventLog } from "../conversations/event-log.js";
 import type {
@@ -17,21 +16,22 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import {
-  type CatalogSkill,
-  type PinnedSkill,
-  type SkillsSnapshot,
-  sameSnapshot,
-} from "../runtime/context/skills.js";
 import { StorageService } from "../storage/storage.service.js";
 import { BUILTIN } from "../tools/builtin-names.js";
-import { fitPinned, invocationOf, lockLatestCatalog } from "./catalog.js";
+import {
+  AGENT_SKILLS_MAX,
+  assertBelowAgentSkillCap,
+  createAgentSkillVersion,
+  keyShareOrg,
+  skillMdBody,
+} from "./agent-skills.service.js";
+import { invocationOf } from "./catalog.js";
+import {
+  appendConversationCatalog,
+  type ConversationCatalogDeps,
+  revertTrialCatalog,
+} from "./conversation-catalog.js";
 
-/**
- * 每个 agent 自己的技能（`scope = agent`）上限，含待批准的新技能。远低于目录快照的上限（`SKILLS_CATALOG_MAX`），
- * 正常使用不会让目录被截断。
- */
-export const AGENT_SKILLS_MAX = 50;
 /** 写技能文件时的并发数。 */
 const PUT_CONCURRENCY = 4;
 /** 详情里读取文件内容的上限（草稿 ≤ 1MB，留余量）。 */
@@ -122,22 +122,7 @@ const AGENT_GONE_TEXT =
   "This agent no longer exists, so the skill cannot be saved; ask the user to start a conversation with another agent.";
 
 const iso = (v: Date | string): string => new Date(v).toISOString();
-const byName = (a: CatalogSkill, b: CatalogSkill) =>
-  a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-
 const notFound = () => new ApiError("skill_change.not_found", "Skill change not found");
-
-/** The body of the SKILL.md a SkillWrite just stored (as run start would read it); null if unparsable. */
-function writtenBody(pkg: SkillWritePackage): string | null {
-  const md = pkg.files.find((f) => f.path === SKILL_ENTRY_FILE);
-  if (!md) return null;
-  try {
-    const parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(md.data));
-    return "errors" in parsed ? null : parsed.body;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * agent 自写技能与共享 agent 的技能变更审批（M5 T15，R4）：
@@ -152,13 +137,17 @@ function writtenBody(pkg: SkillWritePackage): string | null {
  */
 @Injectable()
 export class SkillChangesService {
+  private readonly catalogDeps: ConversationCatalogDeps;
+
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-  ) {}
+  ) {
+    this.catalogDeps = { db, log, eventLog };
+  }
 
   /** 写技能（见类注释）。模型可见的失败抛 `ToolError`。 */
   async write(ctx: SkillWriteContext, pkg: SkillWritePackage): Promise<SkillWriteOutcome> {
@@ -222,30 +211,6 @@ export class SkillChangesService {
     return view;
   }
 
-  /**
-   * 软删除 agent 自己的一个技能（只有该 agent 当前的负责人；其他人 403 `forbidden`）：技能不存在 / 已删除 / 不属于该
-   * agent → `skill.not_found`。同名的待处理改动一并取消（发起对话追加回退快照，提交后删草稿）。审计 `skill.deleted`。
-   * 各对话下一次运行开始时目录里去掉它；之后同名可再写为新技能。
-   */
-  async deleteAgentSkill(
-    orgId: string,
-    agentId: string,
-    skillId: string,
-    accountId: string,
-    actorTokenId?: string,
-    auditDetail?: Record<string, unknown>,
-  ): Promise<void> {
-    const cancelled = await this.deleteAgentSkillIn(
-      orgId,
-      agentId,
-      skillId,
-      accountId,
-      actorTokenId,
-      auditDetail,
-    );
-    await this.finishCancel(orgId, cancelled);
-  }
-
   /** The transaction of {@link write}. */
   @Transactional()
   private async writeIn(
@@ -254,8 +219,8 @@ export class SkillChangesService {
     id: string,
     prefix: string,
   ): Promise<{ outcome: SkillWriteOutcome; drop: string[]; toSeq: number | null }> {
-    await this.keyShareOrg(ctx.orgId);
-    // NO KEY UPDATE, not UPDATE (here, in decide and in deleteAgentSkill): it still serializes
+    await keyShareOrg(this.db, ctx.orgId);
+    // NO KEY UPDATE, not UPDATE (here, in decide and in AgentSkillsService): it still serializes
     // the writes and decisions of one agent, but not the foreign key check (FOR KEY SHARE) of a
     // transaction that already holds the conversation row this one locks last, e.g. an event
     // log append updating that row a second time (the title job): FOR UPDATE made that 40P01
@@ -267,7 +232,7 @@ export class SkillChangesService {
       .forNoKeyUpdate()
       .executeTakeFirst();
     if (!agent || agent.deleted_at !== null) throw new ToolError(AGENT_GONE_TEXT);
-    // Then the conversation row (appendCatalog's lock, still after the agent row like decide),
+    // Then the conversation row (appendConversationCatalog's lock, still after the agent row like decide),
     // before the change request insert: its foreign key check takes FOR KEY SHARE on that row,
     // and upgrading to FOR UPDATE afterwards deadlocked with another writer doing the same
     await this.db
@@ -320,12 +285,19 @@ export class SkillChangesService {
         },
       });
     }
-    if (!existing) await this.assertBelowCap(ctx.agentId, pend?.id);
+    if (!existing) {
+      try {
+        await assertBelowAgentSkillCap(this.db, ctx.agentId, pend?.id);
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "skill.agent_cap") throw new ToolError(capText());
+        throw e;
+      }
+    }
     const version = (existing?.current_version ?? 0) + 1;
     const skillId = existing?.id ?? pend?.proposed_version.skillId ?? randomUUID();
     let outcome: SkillWriteOutcome;
     if (agent.visibility === "private") {
-      await this.createVersion({
+      await createAgentSkillVersion(this.db, {
         orgId: ctx.orgId,
         agentId: ctx.agentId,
         skillId,
@@ -385,10 +357,11 @@ export class SkillChangesService {
     // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志；来源 = 本次的对象前缀）
     // A pinned entry of this skill gets the version, source and body just written (phase B)
     // A manual-only version (phase D) is never in the model's catalog: it removes the skill from
-    // the snapshot instead, and appendCatalog drops its pinned entry with it (no longer live)
+    // the snapshot instead, and appendConversationCatalog drops its pinned entry with it (no longer live)
     const forModel = invocationOf(pkg.manifest).model;
-    const pinnedBody = writtenBody(pkg);
-    const toSeq = await this.appendCatalog(
+    const pinnedBody = skillMdBody(pkg.files);
+    const toSeq = await appendConversationCatalog(
+      this.catalogDeps,
       ctx.conversationId,
       (base) => ({
         ...base,
@@ -431,7 +404,7 @@ export class SkillChangesService {
     agentId: string,
   ): Promise<{ updated: Selectable<SkillChangeRequestsTable>; revertSeq: number | null }> {
     // 加锁顺序与 write 一致：组织行（KEY SHARE）→ agent 行 → 申请行 → 会话行
-    await this.keyShareOrg(orgId);
+    await keyShareOrg(this.db, orgId);
     const agent = await this.db
       .selectFrom("agents")
       .select(["owner_account_id", "deleted_at"])
@@ -476,7 +449,7 @@ export class SkillChangesService {
         .executeTakeFirst();
       skillId = existing?.id ?? p.skillId;
       version = (existing?.current_version ?? 0) + 1;
-      await this.createVersion({
+      await createAgentSkillVersion(this.db, {
         orgId,
         agentId: req.agent_id,
         skillId,
@@ -516,88 +489,8 @@ export class SkillChangesService {
       },
     });
     // 拒绝：发起对话立即回退到正式版本（或移除），模型在当前位置看到提醒
-    const revertSeq = approved ? null : await this.revertTrial(req);
+    const revertSeq = approved ? null : await revertTrialCatalog(this.catalogDeps, req);
     return { updated, revertSeq };
-  }
-
-  /** The transaction of {@link deleteAgentSkill}. */
-  @Transactional()
-  private async deleteAgentSkillIn(
-    orgId: string,
-    agentId: string,
-    skillId: string,
-    accountId: string,
-    actorTokenId: string | undefined,
-    auditDetail?: Record<string, unknown>,
-  ): Promise<CancelledDrafts> {
-    await this.keyShareOrg(orgId);
-    const agent = await this.db
-      .selectFrom("agents")
-      .select(["owner_account_id", "deleted_at"])
-      .where("id", "=", agentId)
-      .where("org_id", "=", orgId)
-      .forNoKeyUpdate()
-      .executeTakeFirst();
-    const agentNotFound = () => new ApiError("agent.not_found", "Agent not found");
-    if (!agent || agent.deleted_at !== null) throw agentNotFound();
-    if (agent.owner_account_id !== accountId) {
-      // 与 AgentsService 一致：看不到的 agent → 404，看得到但不是负责人 → 403
-      const visible = await this.db
-        .selectFrom("agents")
-        .select("id")
-        .where("id", "=", agentId)
-        .where(visibleTo(accountId))
-        .executeTakeFirst();
-      if (!visible) throw agentNotFound();
-      throw new ApiError("forbidden", "Only the agent's owner can delete its skills");
-    }
-    const r = await this.db
-      .updateTable("skills")
-      .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
-      .where("id", "=", skillId)
-      .where("org_id", "=", orgId)
-      .where("scope", "=", "agent")
-      .where("agent_id", "=", agentId)
-      .where("deleted_at", "is", null)
-      .returning(["name"])
-      .executeTakeFirst();
-    if (!r) throw new ApiError("skill.not_found", "Skill not found");
-    const out: CancelledDrafts = { prefixes: [], seqs: [] };
-    const pend = await this.db
-      .selectFrom("skill_change_requests")
-      .selectAll()
-      .where("agent_id", "=", agentId)
-      .where("status", "=", "pending")
-      .where(sql<string>`proposed_version -> 'manifest' ->> 'name'`, "=", r.name)
-      .forUpdate()
-      .executeTakeFirst();
-    if (pend) {
-      await this.db
-        .updateTable("skill_change_requests")
-        .set({ status: "cancelled", decided_at: sql<Date>`now()` })
-        .where("id", "=", pend.id)
-        .execute();
-      await audit(this.db.db, {
-        actorAccountId: accountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "skill.change_decided",
-        target: pend.id,
-        detail: { decision: "cancelled", reason: "skill_deleted", agentId, name: r.name },
-      });
-      const seq = await this.revertTrial(pend);
-      if (seq !== null) out.seqs.push([pend.requested_in_conversation, seq]);
-      out.prefixes.push(pend.object_prefix);
-    }
-    await audit(this.db.db, {
-      actorAccountId: accountId,
-      ...(actorTokenId !== undefined && { actorTokenId }),
-      orgId,
-      action: "skill.deleted",
-      target: skillId,
-      detail: { name: r.name, agentId, ...auditDetail },
-    });
-    return out;
   }
 
   /** 当前用户（作为 agent 负责人）能决定的待处理申请，新的在前，最多 {@link SKILL_CHANGES_LIST_MAX} 条。 */
@@ -675,104 +568,6 @@ export class SkillChangesService {
   }
 
   /**
-   * 在事务 `t` 里由对话最新一份快照推出下一份并追加（不同才写）：先锁会话行（与 `EventLog.append` 同一把锁），
-   * 锁内读最新快照，保证「读最新 → 追加」之间没有别的快照插进来。返回写入的 seq，没写返回 null。
-   * Phase B: `derive` gets the whole latest payload, so `pinned` and `toolMap` are carried forward;
-   * a pinned entry is kept only while `skills` has the same id, version and source (pinned ⊆
-   * skills), and the pinned bodies still fit the size limit. The tool map is only recomputed at run
-   * start.
-   */
-  private async appendCatalog(
-    conversationId: string,
-    derive: (base: SkillsSnapshot) => SkillsSnapshot | null,
-    idemKey: string,
-    runId?: string,
-  ): Promise<number | null> {
-    const base = (await lockLatestCatalog(this.db.db, conversationId)) ?? { skills: [] };
-    const derived = derive(base);
-    if (derived === null) return null;
-    const skills = [...derived.skills].sort(byName);
-    const live = (p: PinnedSkill) =>
-      skills.some((s) => s.id === p.id && s.version === p.version && s.source === p.source);
-    const pinned = fitPinned((derived.pinned ?? []).filter(live), this.log, {
-      conversationId,
-    });
-    const next: SkillsSnapshot = {
-      skills,
-      ...(pinned.length > 0 && { pinned }),
-      ...(derived.toolMap !== undefined && { toolMap: derived.toolMap }),
-    };
-    if (sameSnapshot(base, next)) return null;
-    const written = await this.eventLog.appendIn(conversationId, [
-      {
-        type: "skills_catalog",
-        ...(runId !== undefined && { runId }),
-        idemKey,
-        payload: next,
-      },
-    ]);
-    return Math.max(...written.map((e) => e.seq));
-  }
-
-  /**
-   * 草稿不再生效（拒绝 / 取消）时，在事务 `t` 里给发起对话追加一份回退快照：由该对话最新一份快照推出——
-   * 来源是这份草稿的条目换成这个 agent 技能当前的正式版本（`t` 里已是决定之后的状态），没有正式版本就移除。
-   * 快照里已没有这份草稿 → 不写。对话正在运行时，提醒落在当前位置（构建时排在工具结果之后），下一步即生效。
-   * 移除时不推测同名的组织技能（快照里已被替换掉），下一次运行开始的解析会把它补回来。
-   */
-  private async revertTrial(req: Selectable<SkillChangeRequestsTable>): Promise<number | null> {
-    const name = req.proposed_version.manifest.name;
-    const real = await this.db
-      .selectFrom("skills")
-      .innerJoin("skill_versions", (j) =>
-        j
-          .onRef("skill_versions.skill_id", "=", "skills.id")
-          .onRef("skill_versions.version", "=", "skills.current_version"),
-      )
-      .select([
-        "skills.id",
-        "skills.current_version",
-        "skill_versions.manifest",
-        "skill_versions.object_prefix",
-      ])
-      .where("skills.org_id", "=", req.org_id)
-      .where("skills.scope", "=", "agent")
-      .where("skills.agent_id", "=", req.agent_id)
-      .where("skills.name", "=", name)
-      .where("skills.deleted_at", "is", null)
-      .executeTakeFirst();
-    return this.appendCatalog(
-      req.requested_in_conversation,
-      (base) => {
-        if (!base.skills.some((s) => s.source === req.object_prefix)) return null;
-        const rest = base.skills.filter((s) => s.source !== req.object_prefix);
-        // The draft's pinned entry goes (Decision 8): the next run start pins the real version
-        return {
-          ...base,
-          // A manual-only current version (phase D) stays out of the model's catalog
-          skills:
-            real && invocationOf(real.manifest).model
-              ? [
-                  ...rest,
-                  {
-                    id: real.id,
-                    name,
-                    description: real.manifest.description,
-                    version: real.current_version,
-                    source: real.object_prefix,
-                  },
-                ]
-              : rest,
-          ...(base.pinned && {
-            pinned: base.pinned.filter((p) => p.source !== req.object_prefix),
-          }),
-        };
-      },
-      `skills_catalog:revert:${req.id}`,
-    );
-  }
-
-  /**
    * In the caller's transaction (`mandatory`: `AgentsService.softDelete` holds the org and agent
    * row locks), cancels every pending skill change of the agent: marks them cancelled, audits, and
    * appends a reverting snapshot to each requesting conversation. After the commit the caller runs
@@ -810,7 +605,7 @@ export class SkillChangesService {
         target: r.id,
         detail: { decision: "cancelled", reason, agentId, name: r.proposed_version.manifest.name },
       });
-      const seq = await this.revertTrial(r);
+      const seq = await revertTrialCatalog(this.catalogDeps, r);
       if (seq !== null) out.seqs.push([r.requested_in_conversation, seq]);
       out.prefixes.push(r.object_prefix);
     }
@@ -821,87 +616,6 @@ export class SkillChangesService {
   async finishCancel(orgId: string, c: CancelledDrafts): Promise<void> {
     for (const [conv, seq] of c.seqs) await this.eventLog.notify(conv, seq);
     for (const p of c.prefixes) await this.deletePrefix(orgId, p);
-  }
-
-  /** 新技能的数量上限（含待批准的新技能；`excluding` 是将被取代的申请）。 */
-  private async assertBelowCap(agentId: string, excluding?: string): Promise<void> {
-    const skills = await this.db
-      .selectFrom("skills")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("scope", "=", "agent")
-      .where("agent_id", "=", agentId)
-      .where("deleted_at", "is", null)
-      .executeTakeFirstOrThrow();
-    let q = this.db
-      .selectFrom("skill_change_requests")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("agent_id", "=", agentId)
-      .where("status", "=", "pending")
-      .where("skill_id", "is", null);
-    if (excluding !== undefined) q = q.where("id", "!=", excluding);
-    const drafts = await q.executeTakeFirstOrThrow();
-    if (Number(skills.n) + Number(drafts.n) >= AGENT_SKILLS_MAX) throw new ToolError(capText());
-  }
-
-  /** 写一个版本并让 `current_version` 指向它（技能不存在则新建）。 */
-  private async createVersion(v: {
-    orgId: string;
-    agentId: string;
-    skillId: string;
-    exists: boolean;
-    version: number;
-    manifest: SkillManifest;
-    prefix: string;
-    createdBy: string;
-  }): Promise<void> {
-    if (v.exists) {
-      await this.db
-        .updateTable("skills")
-        .set({
-          current_version: v.version,
-          description: v.manifest.description,
-          updated_at: sql`now()`,
-        })
-        .where("id", "=", v.skillId)
-        .execute();
-    } else {
-      await this.db
-        .insertInto("skills")
-        .values({
-          id: v.skillId,
-          org_id: v.orgId,
-          scope: "agent",
-          agent_id: v.agentId,
-          name: v.manifest.name,
-          description: v.manifest.description,
-          current_version: v.version,
-          created_by: v.createdBy,
-        })
-        .execute();
-    }
-    await this.db
-      .insertInto("skill_versions")
-      .values({
-        skill_id: v.skillId,
-        version: v.version,
-        manifest: JSON.stringify(v.manifest),
-        object_prefix: v.prefix,
-        created_by: v.createdBy,
-      })
-      .execute();
-  }
-
-  /**
-   * 先给组织行加 KEY SHARE 锁，再锁 agent 行：与 `AgentsService`（组织行 FOR UPDATE → agent 行）同一顺序。
-   * 不先锁的话，本事务持有 agent 行后插入引用组织的行（外键取 KEY SHARE）会与之互相等待（40P01）。
-   */
-  private async keyShareOrg(orgId: string): Promise<void> {
-    await this.db
-      .selectFrom("orgs")
-      .select("id")
-      .where("id", "=", orgId)
-      .forKeyShare()
-      .executeTakeFirst();
   }
 
   /** 尽力删除草稿对象（失败只记日志：孤儿对象随组织数据清理删除）。 */

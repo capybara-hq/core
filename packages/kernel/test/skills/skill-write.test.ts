@@ -21,8 +21,9 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
+import { AGENT_SKILLS_MAX } from "../../src/skills/agent-skills.service.js";
 import { SkillsCatalogService } from "../../src/skills/catalog.js";
-import { AGENT_SKILLS_MAX, SkillChangesService } from "../../src/skills/changes.service.js";
+import { SkillChangesService } from "../../src/skills/changes.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";

@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { AgentsService } from "../../agents/agents.service.js";
 import { ApiError } from "../../errors.js";
+import { AgentSkillsService } from "../../skills/agent-skills.service.js";
 import { SkillChangesService } from "../../skills/changes.service.js";
 import { SkillInvoker } from "../../skills/invoke.js";
 import {
@@ -47,6 +48,7 @@ export class AgentSkillsOperations implements OnModuleInit {
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(SkillChangesService) private readonly changes: SkillChangesService,
+    @Inject(AgentSkillsService) private readonly agentSkills: AgentSkillsService,
     @Inject(SkillInvoker) private readonly invoker: SkillInvoker,
   ) {}
 
@@ -200,7 +202,7 @@ export class AgentSkillsOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
-          await this.changes.deleteAgentSkill(
+          await this.agentSkills.deleteAgentSkill(
             ctx.orgId,
             input.agentId,
             input.skillId,

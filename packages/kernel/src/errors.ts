@@ -363,6 +363,8 @@ export const ERROR_CODES = {
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,
+  /** An agent already has `AGENT_SKILLS_MAX` own skills (pending new skills included). */
+  "skill.agent_cap": 409,
   /**
    * A person invoked a skill (`/name`, phase D) that is not one of the agent's effective skills
    * (`details: [{ reason: "not_found" }]`) or is hidden from the menu (`not_user_invocable`).

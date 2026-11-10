@@ -12,6 +12,7 @@ import { InboxService, type InboxView } from "../inbox/inbox.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { AgentSkillsService } from "./agent-skills.service.js";
 import {
   type SkillChangeDetail,
   SkillChangesService,
@@ -76,7 +77,7 @@ export class SkillChangesController {
 @Controller("api/v1/orgs/:orgId/agents/:agentId/skills")
 export class AgentSkillsController {
   constructor(
-    @Inject(SkillChangesService) private readonly changes: SkillChangesService,
+    @Inject(AgentSkillsService) private readonly agentSkills: AgentSkillsService,
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(SkillsService) private readonly skills: SkillsService,
   ) {}
@@ -106,7 +107,13 @@ export class AgentSkillsController {
     @Param("skillId") skillId: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.changes.deleteAgentSkill(org.orgId, agentId, skillId, p.account.id, patTokenId(p));
+    await this.agentSkills.deleteAgentSkill(
+      org.orgId,
+      agentId,
+      skillId,
+      p.account.id,
+      patTokenId(p),
+    );
   }
 }
 
