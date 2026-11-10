@@ -1,14 +1,15 @@
 # Replying with a message while a question waits
 
 - Date: 2026-11-10.
-- Status: design, waiting for maintainer review. No code yet.
+- Status: approved by the maintainer (2026-11-10, core PR #145); open questions decided in §15.
+  Plan: `docs/superpowers/plans/2026-11-10-reply-while-question-pending.md`.
 - Amends: the input request mechanism (`packages/kernel/src/tools/questions.service.ts`, the tool
   pipeline's resume of `input_required`), the IM card spec (`ChannelCard` kind `question`,
   `questionRenderableInline`, `renderCardAsText` in `packages/plugin-sdk/src/cards.ts`), the run input
   spec `2026-11-07-run-input-and-live-drafts-design.md` (messages during a run), the design spec
   `docs/design/spec.md` §6.16.12 (question block states).
-- Markers: **(decided)** is the maintainer's direction (2026-11-10); **(designer's call)** is decided
-  here and may be overturned in review; **(open)** is listed in §15 with a recommendation.
+- Markers: **(decided)** is the maintainer's direction (2026-11-10); **(designer's call)** was decided
+  here and approved with the spec; the former open questions are recorded as decisions in §15.
 
 ## 1. Why
 
@@ -52,10 +53,10 @@ Non-goals:
 - No matching of the reply against the options or 「其他」, no keyword rules (decided: rejected by the
   maintainer).
 - Approvals are not touched: a message never decides, denies or skips an approval (§4.4).
-- No new HTTP route; no new "skip" button (see §15 Q3).
+- No new HTTP route; no new "skip" button (see §15 decision 3).
 - IM `/new` keeps its meaning (archives the thread's conversation); it does not post into the old
   conversation, so the old question keeps waiting there until it is answered on its card or expires.
-- Sub-agent questions are not skipped by a message in the root conversation (§4.3, §15 Q1).
+- Sub-agent questions are not skipped by a message in the root conversation (§4.3, §15.1).
 
 ## 3. Decisions
 
@@ -64,11 +65,11 @@ Non-goals:
 | D1 | A `user_message` written while one of the run's questions is pending, by the account that may answer it, sets that question to the new status `skipped` in the same transaction and logs `question_answered { outcome: "skipped" }`; the run resumes after the commit. | decided |
 | D2 | The question's call gets a fixed English `tool_result` (§7); the message is the ordinary `user_message` already in the log, taken in by the next model call. No option matching. | decided |
 | D3 | Who may skip = who may answer: the run's starter (`runs.trigger_account_id`), the existing rule of `QuestionsService.answer`. | existing rule, confirmed |
-| D4 | Which questions: every `pending`, not yet overdue question of a run **of this conversation** whose starter wrote the message. Several pending questions are all skipped by one message; one resume follows. | designer's call |
-| D5 | The log order decides: a message skips only the questions already logged (`question_asked`) and still pending when the message is written, under the conversation row lock. A message logged before the question was asked never skips it. | designer's call (§15 Q2) |
-| D6 | For a skipped question the kernel writes the call's result itself and does not call the tool again, for all three question sources (`AskUserQuestion`, an extension tool's `input_required`, MCP elicitation). | designer's call (§15 Q4) |
+| D4 | Which questions: every `pending`, not yet overdue question of a run **of this conversation** whose starter wrote the message. Several pending questions are all skipped by one message; one resume follows. Sub-agent questions are not skipped (§4.3). | designer's call; sub-agents decided (§15.1) |
+| D5 | The log order decides: a message skips only the questions already logged (`question_asked`) and still pending when the message is written, under the conversation row lock. A message logged before the question was asked never skips it. | decided (§15.2) |
+| D6 | For a skipped question the kernel writes the call's result itself and does not call the tool again, for all three question sources (`AskUserQuestion`, an extension tool's `input_required`, MCP elicitation). | decided (§15.4) |
 | D7 | Every write to a `questions` row takes the conversation row lock first (the lock `EventLog.appendIn` takes), then the question row. The answer and expiry paths change their lock order to match. | designer's call (needed for D5 and to rule out deadlocks) |
-| D8 | IM question cards gain `textReply` and the state `skipped`; `questionRenderableInline` accepts `{ textReply }`, which lifts the `allowOther` restriction. Option buttons are drawn for a single choice with 「其他」, and for a multi-select with 「其他」 too. | decided (single choice); designer's call (multi-select) |
+| D8 | IM question cards gain `textReply` and the state `skipped`; `questionRenderableInline` accepts `{ textReply }`, which lifts the `allowOther` restriction. Option buttons are drawn for a single choice with 「其他」, and for a multi-select with 「其他」 too. | decided (single choice; multi-select §15.5) |
 | D9 | The web composer says a message skips the question while one the viewer can skip waits; the question card has a distinct skipped state; the trajectory viewer shows the outcome and links the message. | decided (direction), copy designer's call |
 | D10 | No `DriftReason`: the skipped result is a logged `tool_result`, the message a logged `user_message`, its placement the existing `absorbedUpToSeq`. | designer's call (§12) |
 
@@ -123,7 +124,7 @@ A `user_message` newly written by account `A` into conversation `C` skips each q
 
 A sub-agent's question belongs to the child run; the root shows it through `subagent_waiting`
 (`Waits.surfaceInRoot`) and IM delivers the same card in the root's thread. A message in the root
-conversation does **not** skip it (designer's call, §15 Q1):
+conversation does **not** skip it (decided, §15.1):
 
 - the message lands in the root's log; the child would be told "read it below" about a message it can
   never read;
@@ -518,22 +519,23 @@ cancelled vs skipped; design `conversation-shell.test.tsx` for the new state; `p
 3. Deploy: the migration runs before the new code serves (standard start gate); during a rolling
    deploy an old replica may run a resumed run (§8.3, harmless).
 
-## 15. Open questions (maintainer)
+## 15. Decisions on the open questions (maintainer, 2026-11-10)
 
-1. **Sub-agent questions.** Should a message in the root skip a pending question of a *fork*
-   sub-agent that holds the root run? Recommendation: **no, not in this change** (§4.3): the child
+The maintainer answered every open question as recommended.
+
+1. **Sub-agent questions: not skipped by a parent message (this round).** A message in the root
+   conversation never skips a pending question of a sub-agent, fork or background (§4.3): the child
    cannot read a message logged in the root, and forks that ask are rare; the card stays answerable.
    Revisit if acceptance hits it (the fix would give the child a variant text, "the user sent a
    message to the main conversation instead; finish with what you have and report back").
-2. **A message sent just before the question.** When the person's message was logged while the step
-   that asks was still streaming, should the new question be skipped at once? Recommendation: **no**
-   (D5): the log order is the rule, the card appears after their message and they can answer or reply
-   again; auto-skipping would close questions the person never saw.
-3. **The design's Skip button.** `QuestionBlock` already has an unused `onSkip` (spec §6.16.12 shows
-   跳过 / Skip). Wire it to the same `skipped` outcome without a message ("The user skipped this
-   question.")? Recommendation: **defer** to a small follow-up with its own route; this design leaves
-   room (`skippedBySeq` absent = skipped without a message).
-4. **Extension tools and MCP elicitation.** Apply the same rule to every question source and have the
-   kernel write the result instead of calling the tool again (D6)? Recommendation: **yes**: one rule,
-   no repeated remote side effects, and an extension cannot tell a skip from a cancel today anyway
-   (`ctx.resume.answer` is only `null`).
+2. **A message logged before the question was asked does not skip it.** The log order rules (D5):
+   the card appears after the person's message and they can answer or reply again; auto-skipping
+   would close questions the person never saw.
+3. **The design's Skip button is a separate later change.** `QuestionBlock`'s unused `onSkip` (spec
+   §6.16.12 shows 跳过 / Skip) gets its own route and the text "The user skipped this question." in a
+   follow-up; this change keeps `skippedBySeq` optional (absent = skipped without a message).
+4. **Extension tools and MCP elicitation follow the same rule.** The kernel writes the skipped result
+   itself and never calls the tool again (D6): one rule, no repeated remote side effects, and an
+   extension cannot tell a skip from a cancel today anyway (`ctx.resume.answer` is only `null`).
+5. **Multi-select questions with 「其他」 draw checkboxes in IM too** (D8), with the 「其他」 path a
+   plain reply as for a single choice.
