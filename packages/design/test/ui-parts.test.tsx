@@ -3,16 +3,22 @@ import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AgentRow,
   AppShell,
   Button,
   Card,
+  CodeBlock,
   DesignProvider,
   IconButton,
   Input,
+  Segmented,
   SIDEBAR_DRAWER_QUERY,
   SIDEBAR_RAIL_QUERY,
   Sidebar,
   type SidebarProps,
+  StatCards,
+  Switch,
+  UserBubble,
 } from "../src/index";
 import { UI_PART_NAMES } from "../src/ui-parts.generated";
 
@@ -208,5 +214,75 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
     expect(screen.getByRole("button", { name: "go" }).getAttribute("data-cap-part")).toBe(
       "button button.primary",
     );
+  });
+
+  // The theme plugin round (2026-11-10): parts on the owning elements, never on a wrapper.
+  it("the user bubble, code blocks, segmented controls, stat cards and switches carry their parts", () => {
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <UserBubble text="hi" />
+        <CodeBlock text="ls" language="sh" />
+        <Segmented
+          label="view"
+          value="a"
+          onChange={() => {}}
+          options={[
+            { value: "a", label: "A" },
+            { value: "b", label: "B" },
+          ]}
+        />
+        <StatCards metrics={[{ label: "runs", value: 3 }]} />
+        <Switch label="on" checked onChange={() => {}} />
+        <Switch label="off" checked={false} onChange={() => {}} disabled />
+      </DesignProvider>,
+    );
+    const row = container.querySelector('[data-cap-part="message.user"]') as HTMLElement;
+    const bubble = row.querySelector('[data-cap-part="message.user.bubble"]') as HTMLElement;
+    expect(bubble.textContent).toContain("hi");
+    expect(bubble.getAttribute("data-part")).toBe("bubble");
+    expect(container.querySelector('[data-cap-part="code-block"]')?.tagName).toBe("FIGURE");
+    expect(screen.getByRole("radiogroup", { name: "view" }).getAttribute("data-cap-part")).toBe(
+      "segmented",
+    );
+    expect(container.querySelectorAll('[data-cap-part="stat-card"]')).toHaveLength(1);
+    const on = screen.getByRole("switch", { name: "on" });
+    const off = screen.getByRole("switch", { name: "off" });
+    expect(on.getAttribute("data-cap-part")).toBe("switch");
+    expect(on.getAttribute("aria-checked")).toBe("true");
+    expect(off.getAttribute("aria-checked")).toBe("false");
+    expect((off as HTMLButtonElement).disabled).toBe(true);
+    // the knob is reachable as a child part of each switch
+    expect(on.querySelector('[data-cap-part="switch.knob"]')).not.toBeNull();
+    for (const token of parts()) expect(UI_PART_NAMES as readonly string[]).toContain(token);
+  });
+
+  it("the org switcher's initial block is org-avatar", () => {
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <Sidebar {...sidebarProps()} />
+      </DesignProvider>,
+    );
+    expect(container.querySelector('[data-cap-part="org-avatar"]')?.textContent).toBe("示");
+  });
+
+  it("the agents row's chips are agent-chip, the selected one aria-pressed", () => {
+    render(
+      <DesignProvider locale="zh">
+        <AgentRow
+          agents={[
+            { id: "a1", name: "助手", avatar: null },
+            { id: "a2", name: "塞尔达", avatar: null },
+          ]}
+          selected="a2"
+          onSelect={() => {}}
+        />
+      </DesignProvider>,
+    );
+    const chips = [...document.querySelectorAll('[data-cap-part="agent-chip"]')];
+    const name = (c: Element) => c.querySelector('[data-part="agent-chip-name"]')?.textContent;
+    expect(chips.map((c) => [name(c), c.getAttribute("aria-pressed")])).toEqual([
+      ["助手", "false"],
+      ["塞尔达", "true"],
+    ]);
   });
 });

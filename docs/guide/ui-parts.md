@@ -15,7 +15,8 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | `page-header` | 1 | none | The header of a page. |
 | `thread` | 1 | `aria-busy` | The conversation stream. |
 | `message.user` | 1 | none | A person's message. |
-| `message.assistant` | 1 | none | An assistant turn. |
+| `message.user.bubble` | 1 | none | The bubble of a person's message (inside the full-width `message.user` row). |
+| `message.assistant` | 1 | `aria-busy` | An assistant turn; `aria-busy` while its text is still streaming (the live reply). |
 | `tool-row` | 1 | `aria-expanded` | A tool call line. |
 | `composer` | 1 | `aria-busy` | The composer box. |
 | `properties-panel` | 1 | none | The conversation properties panel. |
@@ -27,6 +28,14 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | `card` | 1 | none | A card, inline card or object card. |
 | `input` | 1 | `disabled` | Text inputs, textareas and selects. |
 | `dialog` | 1 | none | A dialog or sheet. |
+| `code-block` | 1 | none | A code block (Markdown code, setup guides, diffs). |
+| `menu` | 1 | none | A menu, submenu, popover or the composer's menus. |
+| `segmented` | 1 | none | A segmented control (its segments are radios with `aria-checked`). |
+| `stat-card` | 1 | none | A metric card of a StatCards row. |
+| `switch` | 1 | `aria-checked`, `disabled` | A switch; `aria-checked` says on or off. |
+| `switch.knob` | 1 | none | The knob inside a `switch` (style it from the switch's state). |
+| `org-avatar` | 1 | none | The org's initial block in the sidebar's org switcher. |
+| `agent-chip` | 1 | `aria-pressed` | An agent chip of the new conversation's agents row; `aria-pressed` on the selected one. |
 
 ## `shell`
 
@@ -100,12 +109,21 @@ A person's message.
 - Owner: `packages/design/src/conversation/bubble.tsx`
 - Selector: `[data-cap-part~="message.user"]`
 
-## `message.assistant`
+## `message.user.bubble`
 
-An assistant turn.
+The bubble of a person's message (inside the full-width `message.user` row).
 
 - Version: 1
 - States: none
+- Owner: `packages/design/src/conversation/bubble.tsx`
+- Selector: `[data-cap-part~="message.user.bubble"]`
+
+## `message.assistant`
+
+An assistant turn; `aria-busy` while its text is still streaming (the live reply).
+
+- Version: 1
+- States: `aria-busy`
 - Owner: `apps/web/src/components/conversation/Thread.tsx`
 - Selector: `[data-cap-part~="message.assistant"]`
 
@@ -207,3 +225,75 @@ A dialog or sheet.
 - States: none
 - Owner: `packages/design/src/overlays/dialog.tsx`, `packages/design/src/overlays/sheet.tsx`
 - Selector: `[data-cap-part~="dialog"]`
+
+## `code-block`
+
+A code block (Markdown code, setup guides, diffs).
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/display/chat.tsx`
+- Selector: `[data-cap-part~="code-block"]`
+
+## `menu`
+
+A menu, submenu, popover or the composer's menus.
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/overlays/menus.tsx`, `packages/design/src/conversation/menu.tsx`
+- Selector: `[data-cap-part~="menu"]`
+
+## `segmented`
+
+A segmented control (its segments are radios with `aria-checked`).
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/display/tabs.tsx`
+- Selector: `[data-cap-part~="segmented"]`
+
+## `stat-card`
+
+A metric card of a StatCards row.
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/display/stat-cards.tsx`
+- Selector: `[data-cap-part~="stat-card"]`
+
+## `switch`
+
+A switch; `aria-checked` says on or off.
+
+- Version: 1
+- States: `aria-checked`, `disabled`
+- Owner: `packages/design/src/controls/toggles.tsx`
+- Selector: `[data-cap-part~="switch"]`
+
+## `switch.knob`
+
+The knob inside a `switch` (style it from the switch's state).
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/controls/toggles.tsx`
+- Selector: `[data-cap-part~="switch.knob"]`
+
+## `org-avatar`
+
+The org's initial block in the sidebar's org switcher.
+
+- Version: 1
+- States: none
+- Owner: `packages/design/src/shell/sidebar.tsx`
+- Selector: `[data-cap-part~="org-avatar"]`
+
+## `agent-chip`
+
+An agent chip of the new conversation's agents row; `aria-pressed` on the selected one.
+
+- Version: 1
+- States: `aria-pressed`
+- Owner: `packages/design/src/conversation/agent-row.tsx`
+- Selector: `[data-cap-part~="agent-chip"]`

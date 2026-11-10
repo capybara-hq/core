@@ -339,6 +339,9 @@ describe("the conversation page (ConversationPage)", () => {
     expect(
       screen.getByText("hello").closest('[data-streaming="true"]')?.getAttribute("aria-busy"),
     ).toBe("true");
+    // the live reply's public part says so too (UI part message.assistant, state aria-busy)
+    const live = () => screen.getByText(/^hello/).closest('[data-cap-part="message.assistant"]');
+    expect(live()?.getAttribute("aria-busy")).toBe("true");
     act(() =>
       es.emit(
         "event",
@@ -351,6 +354,7 @@ describe("the conversation page (ConversationPage)", () => {
     );
     expect(screen.queryByText("hello")).toBeNull();
     expect(screen.getByText("hello world")).toBeTruthy();
+    expect(live()?.getAttribute("aria-busy")).toBeNull();
   });
 
   it("↵, ⌘↵ and Ctrl+↵ while running all post a message (an interjection); nothing is queued", async () => {

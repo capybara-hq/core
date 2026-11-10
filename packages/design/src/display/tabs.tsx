@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useRef, useState } from "react";
+import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import type { ControlA11y } from "../controls/a11y";
 import { type Density, useDensity } from "../controls/density";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
@@ -49,9 +49,49 @@ export type TabsProps = {
   label: string;
 };
 
+/** Which edges of a sideways-scrolling row hide tabs (none until measured, and in a server render). */
+type ScrollEdges = { start: boolean; end: boolean };
+
+/**
+ * Follows a tab row's horizontal overflow (spec §6.4): which edges have tabs scrolled out of view,
+ * so the row fades there (the scroll hint on a phone, where the tabs do not fit). Updated on
+ * scroll and on a resize of the row or its tabs.
+ */
+function useScrollEdges(ref: RefObject<HTMLElement | null>, deps: unknown): ScrollEdges {
+  const [edges, setEdges] = useState<ScrollEdges>({ start: false, end: false });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `deps` re-measures after the tabs change
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const start = el.scrollLeft > 1;
+      const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+    };
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    for (const child of Array.from(el.children)) ro?.observe(child);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      ro?.disconnect();
+    };
+  }, [ref, deps]);
+  return edges;
+}
+
+const edgeAttrs = (e: ScrollEdges) => ({
+  "data-fade-start": e.start ? "true" : undefined,
+  "data-fade-end": e.end ? "true" : undefined,
+});
+
 export function Tabs({ items, value, onChange, label }: TabsProps) {
   const Link = useDesignLink();
   const ref = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const hasLinks = items.some((i) => i.href);
+  const edges = useScrollEdges(hasLinks ? navRef : ref, `${hasLinks}:${items.length}`);
   // The tab a pointer focused: it draws no ring (spec §2.5), until a key press or a blur. A press
   // only arms it (`pressed`); the mark is set when focus arrives from that press, in the same
   // task. WebKit and Firefox on macOS do not focus a clicked button, so an armed press that gives
@@ -70,11 +110,10 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
       if (pressed.current === id) pressed.current = null;
     }, 0);
   };
-  const hasLinks = items.some((i) => i.href);
 
   if (hasLinks) {
     return (
-      <nav className="cb-tabs" aria-label={label}>
+      <nav className="cb-tabs" aria-label={label} ref={navRef} {...edgeAttrs(edges)}>
         {items.map((it) => {
           const current = it.id === value;
           if (it.disabled || !it.href) {
@@ -128,7 +167,14 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
   };
 
   return (
-    <div className="cb-tabs" role="tablist" aria-label={label} ref={ref} onKeyDown={onKey}>
+    <div
+      className="cb-tabs"
+      role="tablist"
+      aria-label={label}
+      ref={ref}
+      onKeyDown={onKey}
+      {...edgeAttrs(edges)}
+    >
       {items.map((it) => {
         const selected = it.id === value;
         return (
@@ -202,6 +248,7 @@ export function Segmented({
       {...a11y}
       className="cb-segmented"
       data-part="segmented"
+      data-cap-part="segmented"
       data-density={step}
       data-fill={fill ? "true" : undefined}
       role="radiogroup"

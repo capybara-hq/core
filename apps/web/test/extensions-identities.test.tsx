@@ -435,6 +435,9 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       const state = screen.getByText(m.unavailable);
       expect(state.closest(".cb-badge")).toBeNull();
       expect(state.getAttribute("data-tone")).toBe("warn");
+      // The state and the switch take their content's width, never an ellipsis (F13).
+      expect(state.closest("td")?.getAttribute("data-fit")).toBe("true");
+      expect(toggle.closest("td")?.getAttribute("data-fit")).toBe("true");
       const user = userEvent.setup();
       await user.click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);

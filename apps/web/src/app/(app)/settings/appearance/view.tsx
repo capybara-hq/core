@@ -21,7 +21,7 @@ import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
-import type { OrgComponent } from "../../../../lib/components";
+import { componentDescription, type OrgComponent } from "../../../../lib/components";
 import {
   canUpdateOrg,
   type OrgThemeSetting,
@@ -211,12 +211,11 @@ function Appearance({
             label={t("themes.label")}
             rows={rows.map((c) => {
               const state = stateOf(c);
+              const description = componentDescription(c, locale);
               return {
                 id: c.id,
                 name: c.on ? nameOf(c.id) : c.name,
-                ...(c.description !== null && c.description !== ""
-                  ? { description: c.description }
-                  : {}),
+                ...(description !== null ? { description } : {}),
                 meta: c.locked ? t("themes.lockedDefault") : state.label,
                 checked: c.on,
                 disabled: !admin || sw.busy || c.locked || !c.pluginOn || !c.switchable,

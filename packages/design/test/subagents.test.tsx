@@ -7,7 +7,6 @@ import {
   SubagentGroup,
   type SubagentRowData,
   SubagentTask,
-  subagentDuration,
   subagentRowFromView,
   subagentRowsFromViews,
   subagentStatusOfFinish,
@@ -148,20 +147,20 @@ describe("SubagentGroup (§6.16.15)", () => {
     const fail = within(head).getByText("（1 个失败）");
     expect(fail.getAttribute("data-part")).toBe("fail-word");
     // totals: 21 calls, from the first start to the last finish (2:40)
-    expect(head.textContent).toContain("共 21 次调用 · 2分40秒");
+    expect(head.textContent).toContain("共 21 次调用 · 2 分 40 秒");
     expect(blocks()).toHaveLength(0);
     await userEvent.click(head);
     expect(head.getAttribute("aria-expanded")).toBe("true");
     const [map, ids, draft] = blocks();
-    expect(statusText(map as HTMLElement)).toBe("完成 · 1分12秒 · 63.4k tokens");
+    expect(statusText(map as HTMLElement)).toBe("完成 · 1 分 12 秒 · 63.4k tokens");
     expect(statusText(ids as HTMLElement)).toBe("完成 · 41 秒");
-    expect(statusText(draft as HTMLElement)).toBe("失败 · 1分07秒 · 12.8k tokens");
+    expect(statusText(draft as HTMLElement)).toBe("失败 · 1 分 07 秒 · 12.8k tokens");
   });
 
   it("a finished call's time is its exact duration when known", async () => {
     const row = { ...(done[0] as SubagentRowData), durationMs: 65_000 };
     wrap(<SubagentGroup rows={[row]} onOpen={() => {}} defaultOpen />);
-    expect(statusText(blocks()[0] as HTMLElement)).toBe("完成 · 1分05秒 · 63.4k tokens");
+    expect(statusText(blocks()[0] as HTMLElement)).toBe("完成 · 1 分 05 秒 · 63.4k tokens");
   });
 
   it("no failure count when nothing failed", () => {
@@ -177,7 +176,7 @@ describe("SubagentGroup (§6.16.15)", () => {
         defaultOpen
       />,
     );
-    expect(statusText(blocks()[0] as HTMLElement)).toBe("已停止 · 1分12秒 · 63.4k tokens");
+    expect(statusText(blocks()[0] as HTMLElement)).toBe("已停止 · 1 分 12 秒 · 63.4k tokens");
   });
 
   it("a block's action opens that sub-agent", async () => {
@@ -381,11 +380,5 @@ describe("phase C shapes (sub-agents spec §14)", () => {
       expect(subagentStatusOfFinish(s)).toBe("limit");
     for (const s of ["failed", "timed_out"] as const)
       expect(subagentStatusOfFinish(s)).toBe("failed");
-  });
-
-  it("formats durations like the reference", () => {
-    expect(subagentDuration(41_000, "zh")).toBe("41 秒");
-    expect(subagentDuration(72_000, "zh")).toBe("1分12秒");
-    expect(subagentDuration(67_000, "en")).toBe("1m 07s");
   });
 });

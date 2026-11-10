@@ -5,10 +5,10 @@ import {
   type BackgroundTaskItem,
   type BackgroundTaskStatus,
   BackgroundTasks,
+  formatDuration,
   PropertySection,
   RightPanel,
   type SubagentStatus,
-  subagentDuration,
   subagentWaitKind,
   TaskOutputPanel,
   useNow,
@@ -199,7 +199,7 @@ export function BackgroundTaskPanel({
           description={task.description}
           command={task.command}
           status={status}
-          elapsed={subagentDuration(Math.max(0, end - started), locale)}
+          elapsed={formatDuration(end - started, locale, { live: status === "running" })}
           text={out === null ? (lastLines ?? "") : out.text}
           source={out === null || out.source === "event" ? "event" : "sandbox"}
           stopping={task.stopping || stopping}

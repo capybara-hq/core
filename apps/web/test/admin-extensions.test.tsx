@@ -224,6 +224,12 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       expect(demo.textContent).not.toContain(p.required);
       expect(demo.textContent).toContain(`${c.optional} · ${fill(p.meta.orgs, { n: 3 })}`);
       expect(demo.textContent).toContain(fill(p.replicas.consistent, { ok: 2, n: 2 }));
+      // The replica and status cells take their content's width, never an ellipsis (F13).
+      const replicaCell = within(demo).getByText(fill(p.replicas.consistent, { ok: 2, n: 2 }));
+      expect(replicaCell.closest("td")?.getAttribute("data-fit")).toBe("true");
+      expect(within(demo).getByText(p.status.enabled).closest("td")?.getAttribute("data-fit")).toBe(
+        "true",
+      );
       expect(tableRow("split").textContent).toContain(fill(p.replicas.diverged, { ok: 1, n: 2 }));
       const user = userEvent.setup();
       await user.click(tab("storage"));

@@ -621,8 +621,9 @@ interface SuggestedAppearance {
 | `title-bar` | the conversation title bar | design `conversation/` (title bar) | — |
 | `page-header` | a page's header | design `shell/page-header.tsx` | — |
 | `thread` | the conversation stream | design `conversation/` (thread) | `aria-busy` |
-| `message.user` | a person's message | design `conversation/bubble.tsx` | — |
-| `message.assistant` | an assistant turn | design `conversation/` | — |
+| `message.user` | a person's message (the full-width row) | design `conversation/bubble.tsx` | — |
+| `message.user.bubble` | the bubble of a person's message, inside the `message.user` row | design `conversation/bubble.tsx` | — |
+| `message.assistant` | an assistant turn | web `conversation/Thread.tsx` | `aria-busy` while its text streams |
 | `tool-row` | a tool call line | design `conversation/` | `aria-expanded` |
 | `composer` | the composer box | design `conversation/composer.tsx` | `aria-busy` |
 | `properties-panel` | the conversation properties panel | design `conversation/` | — |
@@ -634,6 +635,17 @@ interface SuggestedAppearance {
 | `card` | `Card`, `InlineCard`, `ObjectCard` | design `layout/`, `display/` | — |
 | `input` | text inputs, textareas, selects | design `controls/inputs.tsx` | `disabled` |
 | `dialog` | `Dialog`, `Sheet` | design `overlays/` | — |
+| `code-block` | a `CodeBlock` (Markdown code, setup guides, diffs) | design `display/chat.tsx` | — |
+| `menu` | a `Menu`, submenu, `Popover`, the composer's menus | design `overlays/menus.tsx`, `conversation/menu.tsx` | — |
+| `segmented` | a `Segmented` control (its segments are radios, `aria-checked`) | design `display/tabs.tsx` | — |
+| `stat-card` | one card of `StatCards` | design `display/stat-cards.tsx` | — |
+| `switch` | a `Switch` | design `controls/toggles.tsx` | `aria-checked`, `disabled` |
+| `switch.knob` | the knob inside a `switch` | design `controls/toggles.tsx` | — (follow the switch's state) |
+| `org-avatar` | the org's initial block in the org switcher | design `shell/sidebar.tsx` | — |
+| `agent-chip` | an agent chip of the new conversation's agents row | design `conversation/agent-row.tsx` | `aria-pressed` |
+
+  Added after the theme plugin round (2026-11-10): themes style only what carries a part, so
+  these were added on their owning elements; no existing part was renamed.
 
   A part attribute may hold several names separated by spaces; plugin CSS selects with
   `[data-cap-part~="button.primary"]`. The builder fixes the exact owner file of each row while
@@ -949,7 +961,9 @@ interface ClientExtensionsResponse {
   exception is platform-scope client code: `platform.page` components, loaded only on their own
   page `/admin/p/<plugin>/<id>` (the admin set of §9.2 is read by that page alone). The admin
   console stays the official UI, so a broken decoration can never stop the super admin from
-  switching it off.
+  switching it off. It therefore has the platform look by design: the L0 theme's tokens and logo,
+  never a plugin's brand styling (a stylized wordmark, HUD parts) or its overlay, even while the
+  workspace beside it wears them (browser review F07, 2026-11-10: decided, no change).
 - **Crossing the boundary**: modules cannot be unloaded, so the loaded set is fixed for a
   document. A client navigation to a page whose client set differs (workspace ↔ admin, into or out
   of a `/admin/p/<plugin>/<id>` page with client code, or to another org), while a client extension

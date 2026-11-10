@@ -121,6 +121,8 @@ export interface ComponentRow extends ComponentScopeFacts {
   /** The current version (a connector template: the catalog version that last changed it). */
   version: string;
   description: string | null;
+  /** The description's Chinese text (a theme's or skill's `description.zh`); null without one. */
+  descriptionZh: string | null;
   /**
    * A connector template's localized display name (its file's `displayName`); null for skills and
    * agent templates, whose name is what they are shown by.
@@ -204,6 +206,7 @@ export async function loadComponents(
         plugin: r.item_name,
         version: r.current_version,
         description: typeof file?.description === "string" ? file.description : null,
+        descriptionZh: null,
         displayName: localizedName(file?.displayName),
         originOrgId: null,
       };
@@ -223,6 +226,7 @@ export async function loadComponents(
       "p.plugin_name",
       "p.name",
       "p.description",
+      "p.description_zh",
       "p.current_version",
       "p.scope_mode",
       "p.scope",
@@ -243,6 +247,7 @@ export async function loadComponents(
     plugin: r.plugin_name,
     version: String(r.current_version),
     description: r.description as string | null,
+    descriptionZh: r.description_zh,
     displayName: null,
     originOrgId: r.origin_org_id,
   }));

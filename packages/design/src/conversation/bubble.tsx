@@ -110,7 +110,12 @@ export function UserBubble({
         </div>
       ) : null}
       {attachments}
-      <div className="cb-bubble" data-part="bubble" data-queued={queued ? "true" : undefined}>
+      <div
+        className="cb-bubble"
+        data-part="bubble"
+        data-cap-part="message.user.bubble"
+        data-queued={queued ? "true" : undefined}
+      >
         <div
           ref={bodyRef}
           id={bodyId}

@@ -1,4 +1,4 @@
-import { runDuration } from "@capybara-hq/design";
+import { formatDuration } from "@capybara-hq/design";
 import { myRole, roleAtLeast } from "./members";
 import type { RunData } from "./timeline";
 
@@ -40,7 +40,9 @@ export function runParts(
 ): string[] {
   return [
     ...(run.model ? [run.model.model] : []),
-    ...(run.durationMs !== null ? [runDuration(run.durationMs)] : []),
+    ...(run.durationMs !== null
+      ? [formatDuration(run.durationMs, locale === "zh" ? "zh" : "en")]
+      : []),
     ...(run.tokens ? [tokens(run.tokens.total.toLocaleString(locale))] : []),
   ];
 }

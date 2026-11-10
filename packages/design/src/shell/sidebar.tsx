@@ -466,7 +466,12 @@ function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
   const t = useDesignT();
   const label = t("sidebar.orgSwitch").replace("{org}", org.name);
   const initial = (
-    <span className="cb-sidebar-org-initial" data-part="org-initial" aria-hidden="true">
+    <span
+      className="cb-sidebar-org-initial"
+      data-part="org-initial"
+      data-cap-part="org-avatar"
+      aria-hidden="true"
+    >
       {org.initial}
     </span>
   );

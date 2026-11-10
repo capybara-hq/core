@@ -22,6 +22,7 @@ import { Link, useRouter } from "../i18n/navigation";
 import {
   COMPONENT_ROUTES,
   type ComponentVersion,
+  componentDescription,
   componentName,
   isOrgRow,
   moveTo,
@@ -233,12 +234,13 @@ export function ComponentCard({ c, orgId }: { c: PlatformComponent; orgId: strin
   const ownerText = useOwnerText();
   const { menu, dialog } = useComponentActions(c, orgId, { inList: true });
   const href = `${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}`;
+  const description = componentDescription(c, useLocale());
   return (
     <>
       <ObjectCard
         title={c.name}
         href={href}
-        {...(c.description !== null && c.description !== "" ? { description: c.description } : {})}
+        {...(description !== null ? { description } : {})}
         meta={[
           c.plugin ?? (platformOwned(c) ? t("from.none") : t("from.org")),
           ownerText(c),

@@ -1,11 +1,12 @@
 import { type JSX, type ReactNode, useId, useState } from "react";
 import { formatBytes } from "../display/attachments";
+import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
-import { elapsed, fillCopy, type ToolKind, type ToolWaiting, waitingText } from "./tool-copy";
+import { fillCopy, type ToolKind, type ToolWaiting, waitingText } from "./tool-copy";
 
 export type ToolRowData = {
   id: string;
@@ -198,6 +199,7 @@ export function ToolDetail({
   animate?: boolean;
 }): JSX.Element | null {
   const t = useDesignT();
+  const locale = useDesignLocale();
   const d = row.detail;
   if (!d) return null;
   if (d.diff) {
@@ -229,11 +231,7 @@ export function ToolDetail({
     }
   } else {
     if (row.durationMs !== undefined) {
-      foot.push(
-        <span key="dur">
-          {fillCopy(t("tool.duration"), { n: (row.durationMs / 1000).toFixed(1) })}
-        </span>,
-      );
+      foot.push(<span key="dur">{formatDuration(row.durationMs, locale)}</span>);
       // Copy rides on the duration line: a call that never ran (a hook denial) has no footer.
       if (onCopy && out !== undefined) {
         foot.push(
@@ -351,7 +349,7 @@ export function ToolRow({
     row.startedAt !== undefined ? (
       // a ticking timer: hidden from screen readers so the live thread does not chatter (I2)
       <span className="cb-tool-end cb-faint" aria-hidden="true">
-        {elapsed(clock - row.startedAt, locale)}
+        {formatDuration(clock - row.startedAt, locale, { live: true })}
       </span>
     ) : null
   ) : expandable ? (

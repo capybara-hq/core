@@ -4,6 +4,8 @@ export type UiPartState =
   | "aria-selected"
   | "aria-expanded"
   | "aria-busy"
+  | "aria-checked"
+  | "aria-pressed"
   | "disabled";
 
 /** Every part name of the catalog, in catalog order. */
@@ -16,6 +18,7 @@ export const UI_PART_NAMES = [
   "page-header",
   "thread",
   "message.user",
+  "message.user.bubble",
   "message.assistant",
   "tool-row",
   "composer",
@@ -28,6 +31,14 @@ export const UI_PART_NAMES = [
   "card",
   "input",
   "dialog",
+  "code-block",
+  "menu",
+  "segmented",
+  "stat-card",
+  "switch",
+  "switch.knob",
+  "org-avatar",
+  "agent-chip",
 ] as const;
 
 export type UiPartName = (typeof UI_PART_NAMES)[number];
@@ -131,13 +142,23 @@ export const UI_PARTS: readonly UiPartSpec[] = [
     },
   },
   {
+    name: "message.user.bubble",
+    version: 1,
+    owner: ["packages/design/src/conversation/bubble.tsx"],
+    states: [],
+    description: {
+      en: "The bubble of a person's message (inside the full-width `message.user` row).",
+      zh: "用户消息的气泡本身（在占满宽度的 message.user 行之内）。",
+    },
+  },
+  {
     name: "message.assistant",
     version: 1,
     owner: ["apps/web/src/components/conversation/Thread.tsx"],
-    states: [],
+    states: ["aria-busy"],
     description: {
-      en: "An assistant turn.",
-      zh: "智能体的一轮回复。",
+      en: "An assistant turn; `aria-busy` while its text is still streaming (the live reply).",
+      zh: "智能体的一轮回复；正在流式输出时带 aria-busy（正在生成的回复）。",
     },
   },
   {
@@ -255,6 +276,86 @@ export const UI_PARTS: readonly UiPartSpec[] = [
     description: {
       en: "A dialog or sheet.",
       zh: "对话框或抽屉。",
+    },
+  },
+  {
+    name: "code-block",
+    version: 1,
+    owner: ["packages/design/src/display/chat.tsx"],
+    states: [],
+    description: {
+      en: "A code block (Markdown code, setup guides, diffs).",
+      zh: "代码块（Markdown 代码、设置指引、差异）。",
+    },
+  },
+  {
+    name: "menu",
+    version: 1,
+    owner: ["packages/design/src/overlays/menus.tsx", "packages/design/src/conversation/menu.tsx"],
+    states: [],
+    description: {
+      en: "A menu, submenu, popover or the composer's menus.",
+      zh: "菜单、子菜单、弹出层或输入框的菜单。",
+    },
+  },
+  {
+    name: "segmented",
+    version: 1,
+    owner: ["packages/design/src/display/tabs.tsx"],
+    states: [],
+    description: {
+      en: "A segmented control (its segments are radios with `aria-checked`).",
+      zh: "分段控件（各段是带 aria-checked 的单选项）。",
+    },
+  },
+  {
+    name: "stat-card",
+    version: 1,
+    owner: ["packages/design/src/display/stat-cards.tsx"],
+    states: [],
+    description: {
+      en: "A metric card of a StatCards row.",
+      zh: "指标卡片行里的一张指标卡。",
+    },
+  },
+  {
+    name: "switch",
+    version: 1,
+    owner: ["packages/design/src/controls/toggles.tsx"],
+    states: ["aria-checked", "disabled"],
+    description: {
+      en: "A switch; `aria-checked` says on or off.",
+      zh: "开关；aria-checked 表示开或关。",
+    },
+  },
+  {
+    name: "switch.knob",
+    version: 1,
+    owner: ["packages/design/src/controls/toggles.tsx"],
+    states: [],
+    description: {
+      en: "The knob inside a `switch` (style it from the switch's state).",
+      zh: "开关里的滑块（按所在开关的状态设置样式）。",
+    },
+  },
+  {
+    name: "org-avatar",
+    version: 1,
+    owner: ["packages/design/src/shell/sidebar.tsx"],
+    states: [],
+    description: {
+      en: "The org's initial block in the sidebar's org switcher.",
+      zh: "侧边栏组织切换器里的组织首字方块。",
+    },
+  },
+  {
+    name: "agent-chip",
+    version: 1,
+    owner: ["packages/design/src/conversation/agent-row.tsx"],
+    states: ["aria-pressed"],
+    description: {
+      en: "An agent chip of the new conversation's agents row; `aria-pressed` on the selected one.",
+      zh: "新会话智能体行里的智能体标签；选中的那个带 aria-pressed。",
     },
   },
 ];

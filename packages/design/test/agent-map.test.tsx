@@ -54,10 +54,10 @@ describe("AgentMapTree (§6.16.28)", () => {
     for (const n of all) {
       const metas = n.querySelectorAll('[data-part="agent-node-meta"]');
       expect(metas).toHaveLength(1);
-      expect(metas[0]?.textContent).toMatch(/^\w+ 5\.5 · (\d+分)?\d+ ?秒 · [\d.]+k tokens$/);
+      expect(metas[0]?.textContent).toMatch(/^\w+ 5\.5 · (\d+ 分 )?[\d.]+ 秒 · [\d.]+k tokens$/);
     }
     expect(
-      within(all[0] as HTMLElement).getByText("opus 5.5 · 42分18秒 · 392.7k tokens"),
+      within(all[0] as HTMLElement).getByText("opus 5.5 · 42 分 18 秒 · 392.7k tokens"),
     ).toBeTruthy();
     // Equal height: one fixed height for every node, and both lines one line with an ellipsis.
     expect(rule(".cb-amap-node")).toMatch(/height: 62px;/);
@@ -67,7 +67,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     }
     // The full text on hover.
     expect(all[0]?.getAttribute("title")).toBe(
-      "整理季度经营报告\nopus 5.5 · 42分18秒 · 392.7k tokens",
+      "整理季度经营报告\nopus 5.5 · 42 分 18 秒 · 392.7k tokens",
     );
   });
 
@@ -121,7 +121,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     const section = screen.getByRole("region", { name: "后台任务 · 2" });
     const rows = within(section).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.textContent).toBe("Bash启动本地预览服务8分02秒");
+    expect(rows[0]?.textContent).toBe("Bash启动本地预览服务8 分 02 秒");
     expect(rows[0]?.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
       "running",
     );
@@ -466,7 +466,7 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
     wrap(detail({ onBack, onClose, onOpenParent }));
     expect(screen.getByRole("heading", { name: "核对供应商发票与付款记录" })).toBeTruthy();
     expect(screen.getByText("运行中 · 财务助手 · opus 5.5 · 后台")).toBeTruthy();
-    expect(screen.getByText("16分25秒 · 266.5k tokens")).toBeTruthy();
+    expect(screen.getByText("16 分 25 秒 · 266.5k tokens")).toBeTruthy();
     expect(screen.getByText(D.latestText)).toBeTruthy();
     const spawned = screen.getByText(
       (_, el) => (el as HTMLElement | null)?.dataset.part === "agent-spawned-by",
@@ -537,7 +537,7 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
     await userEvent.click(toggle(/^后台任务/));
     const bg = screen.getByRole("region", { name: "后台任务 1" });
     expect(within(bg).getByText("同步 ERP 付款流水")).toBeTruthy();
-    expect(within(bg).getByText("1分35秒")).toBeTruthy();
+    expect(within(bg).getByText("1 分 35 秒")).toBeTruthy();
 
     await userEvent.click(toggle(/^工具调用/));
     expect(screen.queryByText("运行核对脚本")).toBeNull();
@@ -603,7 +603,7 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
     const done: AgentMapNode = { ...invoice, status: "completed" };
     wrap(frame({ node: done, onBack }, { live: false }));
     expect(document.querySelector('[data-part="agent-meta"]')?.textContent).toBe(
-      "完成 · 财务助手 · opus 5.5 · 后台 · 由 整理季度经营报告 派出 · 16分25秒 · 266.5k tokens",
+      "完成 · 财务助手 · opus 5.5 · 后台 · 由 整理季度经营报告 派出 · 16 分 25 秒 · 266.5k tokens",
     );
     expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
     expect(screen.queryByText(/上下文/)).toBeNull();
@@ -641,7 +641,7 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
   it("a foreground agent (inBackground={false}) has no background label", () => {
     wrap(frame({ inBackground: false }));
     expect(document.querySelector('[data-part="agent-meta"]')?.textContent).toBe(
-      "运行中 · 财务助手 · opus 5.5 · 由 整理季度经营报告 派出 · 16分25秒 · 266.5k tokens",
+      "运行中 · 财务助手 · opus 5.5 · 由 整理季度经营报告 派出 · 16 分 25 秒 · 266.5k tokens",
     );
   });
 });
@@ -760,7 +760,7 @@ describe("AgentCallBlock (§6.16.15)", () => {
       call({ status: "completed", durationMs: 985_000, tokens: 266_500, current: "x" }),
     );
     const text = () => status()?.querySelector('[data-part="agent-call-text"]') as HTMLElement;
-    expect(text().textContent).toBe("完成 · 16分25秒 · 266.5k tokens");
+    expect(text().textContent).toBe("完成 · 16 分 25 秒 · 266.5k tokens");
     expect(status()?.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
       "completed",
     );
@@ -771,7 +771,7 @@ describe("AgentCallBlock (§6.16.15)", () => {
         {call({ status: "failed", durationMs: 192_000, tokens: 30_400 })}
       </DesignProvider>,
     );
-    expect(text().textContent).toBe("失败 · 3分12秒 · 30.4k tokens");
+    expect(text().textContent).toBe("失败 · 3 分 12 秒 · 30.4k tokens");
     expect(within(text()).getByText("失败").dataset.part).toBe("fail-word");
 
     rerender(

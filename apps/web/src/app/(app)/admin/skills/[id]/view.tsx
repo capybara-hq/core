@@ -2,7 +2,7 @@
 
 import { DetailPage, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   ComponentFacts,
@@ -15,7 +15,7 @@ import {
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
-import type { PlatformComponent } from "../../../../../lib/components";
+import { componentDescription, type PlatformComponent } from "../../../../../lib/components";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
@@ -72,6 +72,7 @@ function AdminSkillRead({ id, orgId }: { id: string; orgId: string | null }) {
 function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("adminComponents.detail");
+  const description = componentDescription(c, useLocale());
   const [tab, setTab] = useState<Tab>("versions");
   const vq = componentVersionsQuery("skill", c.id);
   const versions = useQuery({ ...vq, retryOnMount: retryOnMountOf(vq.queryKey) }).data?.versions;
@@ -95,9 +96,9 @@ function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }
       >
         <Stack gap={16}>
           {/* The full description, first in the column (the head's line would cut it) */}
-          {c.description !== null && c.description !== "" && (
+          {description !== null && (
             <Text variant="prose" tone="muted" pre>
-              {c.description}
+              {description}
             </Text>
           )}
           <ComponentNotes c={c} />
