@@ -5060,13 +5060,13 @@
           "instructions": "Instructions",
           "quickActions": "Quick actions",
           "skills": "Skills",
-          "connectors": "Connectors to bind",
-          "subagents": "Sub-agents"
+          "connectors": "Connectors",
+          "subagents": "Sub-agents",
+          "pending": "Connectors to bind"
         },
         "instructionsEmpty": "No instructions",
         "quickActionsEmpty": "No quick actions",
-        "skillsCount": "{count, plural, one {# org skill} other {# org skills}} selected",
-        "skillsNone": "No org skills selected",
+        "skillsNone": "No skills",
         "subagents": {
           "general": "General sub-agent",
           "templates": "Templates",
@@ -5075,7 +5075,16 @@
           "on": "On",
           "off": "Off"
         },
-        "subagentsNone": "No sub-agents"
+        "subagentsNone": "No sub-agents",
+        "skillScope": {
+          "org": "Org skill",
+          "agent": "Its own"
+        },
+        "connectorsNone": "No connectors to use",
+        "connectorStatus": {
+          "active": "Active",
+          "disabled": "Disabled"
+        }
       },
       "actions": {
         "transfer": "Transfer owner",

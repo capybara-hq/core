@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -151,6 +152,63 @@ beforeEach(async () => {
   f = { orgA, orgB, ownerA, memberA, ownerB, memberB, agentA, agentB, deleted, inDeletedOrg };
 });
 
+/** An org skill (or the agent's own, with `agentId`) with one version; returns its id. */
+async function seedSkill(orgId: string, by: string, name: string, agentId?: string) {
+  const id = randomUUID();
+  await db
+    .insertInto("skills")
+    .values({
+      id,
+      org_id: orgId,
+      scope: agentId === undefined ? "org" : "agent",
+      agent_id: agentId ?? null,
+      name,
+      description: `Use for ${name} work.`,
+      current_version: 1,
+      created_by: by,
+    })
+    .execute();
+  await db
+    .insertInto("skill_versions")
+    .values({
+      skill_id: id,
+      version: 1,
+      manifest: JSON.stringify({
+        name,
+        description: `Use for ${name} work.`,
+        files: [{ path: "SKILL.md", size: 1, sha256: "0".repeat(64) }],
+      }),
+      object_prefix: `skills/${id}/`,
+      created_by: by,
+    })
+    .execute();
+  return id;
+}
+
+/** A connector of `orgId` with `tools`; returns its id. */
+async function seedConnector(orgId: string, by: string, name: string, tools: string[]) {
+  const id = randomUUID();
+  await sql`INSERT INTO capybara.connectors (id, org_id, slug, name, connector, endpoint, auth, created_by)
+    VALUES (${id}, ${orgId}, ${name.toLowerCase()}, ${name}, 'mcp', '{}'::jsonb,
+      ${JSON.stringify({ type: "none" })}::jsonb, ${by})`.execute(raw);
+  if (tools.length > 0) {
+    await db
+      .insertInto("connector_tools")
+      .values(
+        tools.map((t) => ({
+          connector_id: id,
+          name: t,
+          spec: JSON.stringify({ name: t, description: "d", inputSchema: { type: "object" } }),
+          spec_hash: "h",
+          status: "enabled" as const,
+          default_policy: "allow" as const,
+        })),
+      )
+      .execute();
+  }
+  return id;
+}
+
 describe("AdminAgents", () => {
   it("lists live agents of every org, private ones included", async () => {
     const { agents: rows, next } = await admin.list({ limit: 50 });
@@ -207,6 +265,56 @@ describe("AdminAgents", () => {
     });
     expect(d.createdAt).toBeInstanceOf(Date);
     expect(JSON.stringify(d)).not.toContain("full detail");
+  });
+
+  it("detail names the skills and connectors it uses, never their bodies or auth", async () => {
+    const by = f.ownerA.id;
+    const live = await seedSkill(f.orgA, by, "triage");
+    const gone = await seedSkill(f.orgA, by, "old-style");
+    const github = await seedConnector(f.orgA, by, "GitHub", ["issues", "prs"]);
+    const jira = await seedConnector(f.orgA, by, "Jira", ["search"]);
+    const notion = await seedConnector(f.orgA, by, "Notion", ["read"]);
+    const empty = await seedConnector(f.orgA, by, "Empty", []);
+    const removed = await seedConnector(f.orgA, by, "Removed", ["x"]);
+    await seedConnector(f.orgB, f.ownerB.id, "Other org", ["y"]);
+    const id = (
+      await agents.create(f.orgA, f.memberA.id, {
+        definition: def({
+          name: "Skilled",
+          skills: { orgSkills: [live, gone] },
+          disabledTools: [
+            // one tool of two off: still listed
+            { kind: "connector", connectorId: github, tools: ["prs"] },
+            // every tool off by name, or as a unit: not listed
+            { kind: "connector", connectorId: jira, tools: ["search"] },
+            { kind: "connector", connectorId: notion, tools: "all" },
+          ],
+        }),
+        visibility: "private",
+      })
+    ).agent.id;
+    const own = await seedSkill(f.orgA, f.memberA.id, "my-notes", id);
+    await db.updateTable("skills").set({ deleted_at: sql`now()` }).where("id", "=", gone).execute();
+    await db
+      .updateTable("connectors")
+      .set({ deleted_at: sql`now()`, status: "disabled" })
+      .where("id", "=", removed)
+      .execute();
+    await db
+      .updateTable("connectors")
+      .set({ status: "disabled" })
+      .where("id", "=", empty)
+      .execute();
+    const d = await admin.get(id);
+    expect(d.skills).toEqual([
+      { id: own, name: "my-notes", scope: "agent" },
+      { id: live, name: "triage", scope: "org" },
+    ]);
+    expect(d.connectors).toEqual([
+      { id: empty, name: "Empty", slug: "empty", status: "disabled" },
+      { id: github, name: "GitHub", slug: "github", status: "active" },
+    ]);
+    expect(JSON.stringify(d.connectors)).not.toContain("auth");
   });
 
   it("get of a deleted agent is agent.not_found", async () => {

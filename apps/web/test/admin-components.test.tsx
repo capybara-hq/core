@@ -354,6 +354,21 @@ describe("admin component lists", () => {
     expect(zh.admin.nav.agents).toBe("智能体");
   });
 
+  it("the template details' path links agents / connectors to their lists", async () => {
+    await open("/admin/agents/templates/a1");
+    await screen.findByRole("heading", { level: 1, name: "researcher" });
+    expect(screen.getByRole("link", { name: "agents" }).getAttribute("href")).toBe("/admin/agents");
+    cleanup();
+    await open("/admin/connectors/templates/c1", {
+      "GET /api/v1/admin/components/connector_template/c1/versions": () =>
+        json(200, { versions: [] }),
+    });
+    await screen.findByRole("heading", { level: 1, name: "gh" });
+    expect(screen.getByRole("link", { name: "connectors" }).getAttribute("href")).toBe(
+      "/admin/connectors",
+    );
+  });
+
   it("no source file links to the old template routes", () => {
     const root = join(__dirname, "../src");
     const files: string[] = [];

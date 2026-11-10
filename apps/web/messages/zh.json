@@ -5048,13 +5048,13 @@
           "instructions": "指令",
           "quickActions": "快捷操作",
           "skills": "技能",
-          "connectors": "待绑定的连接器",
-          "subagents": "子智能体"
+          "connectors": "连接器",
+          "subagents": "子智能体",
+          "pending": "待绑定的连接器"
         },
         "instructionsEmpty": "没有指令",
         "quickActionsEmpty": "没有快捷操作",
-        "skillsCount": "选用 {count} 个组织技能",
-        "skillsNone": "没有选用组织技能",
+        "skillsNone": "没有技能",
         "subagents": {
           "general": "通用子智能体",
           "templates": "模板",
@@ -5063,7 +5063,16 @@
           "on": "开启",
           "off": "关闭"
         },
-        "subagentsNone": "没有子智能体"
+        "subagentsNone": "没有子智能体",
+        "skillScope": {
+          "org": "组织技能",
+          "agent": "自带技能"
+        },
+        "connectorsNone": "没有可用的连接器",
+        "connectorStatus": {
+          "active": "启用",
+          "disabled": "停用"
+        }
       },
       "actions": {
         "transfer": "转移所有者",

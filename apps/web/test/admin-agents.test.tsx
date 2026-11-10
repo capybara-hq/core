@@ -98,6 +98,14 @@ const DETAIL = {
   },
   versions: 3,
   createdAt: T,
+  skills: [
+    { id: "sk2", name: "my-notes", scope: "agent" },
+    { id: "sk1", name: "web-research", scope: "org" },
+  ],
+  connectors: [
+    { id: "c1", name: "Jira", slug: "jira", status: "disabled" },
+    { id: "c2", name: "Slack", slug: "slack", status: "active" },
+  ],
 };
 const MEMBERS = {
   members: [
@@ -227,6 +235,24 @@ describe("/admin/agents", () => {
     expect(screen.queryByRole("button", { name: A.loadMore })).toBeNull();
   });
 
+  it("a refetch of the first page drops the later pages read so far", async () => {
+    let page2 = [ROWS[1]];
+    const { client } = await open("/admin/agents", {
+      [`GET ${LIST}`]: (c) =>
+        c.url.includes("after=ag1")
+          ? json(200, { agents: page2, next: null })
+          : json(200, { agents: [ROWS[0]], next: "ag1" }),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: A.loadMore }));
+    expect(await screen.findByText("Writer")).toBeTruthy();
+    // Writer is deleted elsewhere; the list is invalidated (the first page answers the same)
+    page2 = [];
+    await act(() => client.invalidateQueries({ queryKey: keys.deployment().adminAgentsAll() }));
+    await waitFor(() => expect(screen.queryByText("Writer")).toBeNull());
+    expect(screen.getByRole("button", { name: A.loadMore })).toBeTruthy();
+  });
+
   it("empty: no org has created an agent yet", async () => {
     await open("/admin/agents", { [`GET ${LIST}`]: () => json(200, { agents: [], next: null }) });
     expect(await screen.findByText(A.empty)).toBeTruthy();
@@ -275,7 +301,25 @@ describe("/admin/agents/[id]", () => {
     expect(screen.getByText(A.needsReassignment)).toBeTruthy();
     expect(screen.getByText(A.visibility.private)).toBeTruthy();
     expect(screen.getByText("research-kit")).toBeTruthy();
-    expect(screen.getByText("GitHub")).toBeTruthy();
+    // the skills and connectors by name: a scope word, a status word
+    const skills = screen.getByRole("list", { name: A.detail.sections.skills });
+    const skillRows = within(skills).getAllByRole("listitem");
+    expect(skillRows.map((r) => r.textContent)).toEqual([
+      `my-notes${A.detail.skillScope.agent}`,
+      `web-research${A.detail.skillScope.org}`,
+    ]);
+    const connectors = screen.getByRole("list", { name: A.detail.sections.connectors });
+    const connectorText = within(connectors)
+      .getAllByRole("listitem")
+      .map((r) => r.textContent ?? "");
+    expect(connectorText[0]).toContain("Jira");
+    expect(connectorText[0]).toContain(A.detail.connectorStatus.disabled);
+    expect(connectorText[1]).toContain("Slack");
+    expect(connectorText[1]).toContain(A.detail.connectorStatus.active);
+    // the pending connector stays in its own list
+    const pending = screen.getByRole("list", { name: A.detail.sections.pending });
+    expect(within(pending).getByText("GitHub")).toBeTruthy();
+    expect(within(connectors).queryByText("GitHub")).toBeNull();
     expect(screen.getByText("writer")).toBeTruthy();
     expect(screen.getByRole("button", { name: A.actions.transfer })).toBeTruthy();
     expect(screen.getByRole("button", { name: A.actions.delete })).toBeTruthy();

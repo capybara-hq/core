@@ -212,12 +212,15 @@ function AgentTable({
   const router = useRouter();
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
-  // Later pages belong to the first page they continue (a newer first page starts over)
-  const [more, setMore] = useState<{ source: AdminAgentsPage; pages: AdminAgentsPage[] }>({
-    source: first,
+  // Later pages belong to the first page they continue: a newer answer for the first page (a
+  // refetch after an invalidation, even an equal one) starts over, so a deleted row on a later page
+  // never stays
+  const firstAt = useQuery(adminAgentsQuery(filter)).dataUpdatedAt;
+  const [more, setMore] = useState<{ source: number; pages: AdminAgentsPage[] }>({
+    source: firstAt,
     pages: [],
   });
-  const pages = more.source === first ? more.pages : [];
+  const pages = more.source === firstAt ? more.pages : [];
   const rows = [...first.agents, ...pages.flatMap((p) => p.agents)];
   const next = pages.length > 0 ? (pages.at(-1) as AdminAgentsPage).next : first.next;
   const [loadingMore, setLoadingMore] = useState(false);
@@ -228,7 +231,7 @@ function AgentTable({
     setMoreError(null);
     try {
       const page = await qc.fetchQuery(adminAgentsQuery(filter, after));
-      setMore({ source: first, pages: [...pages, page] });
+      setMore({ source: firstAt, pages: [...pages, page] });
     } catch (e) {
       setMoreError(errorMessage(e));
     } finally {

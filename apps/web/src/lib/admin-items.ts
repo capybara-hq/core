@@ -46,6 +46,10 @@ export interface AdminAgentDetail extends AdminAgentRow {
   /** How many versions the agent has. */
   versions: number;
   createdAt: string;
+  /** The skills it uses by name: selected org skills that resolve, and its own (`agent`). */
+  skills: { id: string; name: string; scope: "org" | "agent" }[];
+  /** The org's live connectors it uses (all but those it turns off entirely), by name. */
+  connectors: { id: string; name: string; slug: string; status: "active" | "disabled" }[];
 }
 
 export interface AdminAgentsPage {

@@ -29,6 +29,7 @@ import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { type AdminAgentDetail, adminAvatarValue } from "../../../../../lib/admin-items";
+import { TEMPLATE_EFFORTS, type TemplateEffort } from "../../../../../lib/agent-templates";
 import { labelLocale, modelLabel } from "../../../../../lib/extension-label";
 import { adminAgentQuery, adminOrgMembersQuery } from "../../../../../lib/query/admin-items";
 import { useDeleteAgent, useTransferAgent } from "../../../../../lib/query/admin-items-mutations";
@@ -41,8 +42,9 @@ import NotFound from "../../../not-found";
  * `/admin/agents/[id]` (super admins; spec 2026-11-10-admin-agents-connectors §3.3): one agent of
  * any org, read-only. The facts (org, owner with 待重新指派, visibility and members, model,
  * fallback and effort, the template it came from, versions, times), then the description, the
- * instructions in full, the quick actions by label, the org skills it selects (how many: their
- * names are the org's), the connectors it waits to bind and its sub-agents. Never its
+ * instructions in full, the quick actions by label, the skills it uses by name (org skills and its
+ * own), the org's connectors it uses by name with their status, the connectors it waits to bind
+ * and its sub-agents. Never its
  * conversations, runs or credentials. Actions: 转移所有者 (a member of the agent's org, never its
  * anonymous guest) and 删除 (a confirmation naming the org and the owner, then back to the list).
  * From the query cache (the layout prefetched the agent on a first load).
@@ -104,6 +106,10 @@ function AdminAgent({ agent }: { agent: AdminAgentDetail }) {
   );
 }
 
+/** Whether a saved `effort` param is one of the levels the UI names. */
+const isEffort = (v: unknown): v is TemplateEffort =>
+  (TEMPLATE_EFFORTS as readonly unknown[]).includes(v);
+
 /** The agent's facts: a KeyValue in two columns under the head. */
 function AgentFacts({ agent }: { agent: AdminAgentDetail }) {
   const t = useTranslations("adminItems.agents.detail");
@@ -138,9 +144,7 @@ function AgentFacts({ agent }: { agent: AdminAgentDetail }) {
         },
         { k: t("facts.model"), v: model(def.model) },
         ...(def.fallback ? [{ k: t("facts.fallback"), v: model(def.fallback) }] : []),
-        ...(typeof effort === "string" && ["low", "medium", "high", "xhigh", "max"].includes(effort)
-          ? [{ k: t("facts.effort"), v: te(effort as "low") }]
-          : []),
+        ...(isEffort(effort) ? [{ k: t("facts.effort"), v: te(effort) }] : []),
         { k: t("facts.from"), v: agent.createdFrom?.name ?? t("none") },
         { k: t("facts.versions"), v: String(agent.versions) },
         { k: t("facts.updated"), v: <DateTime value={agent.updatedAt} /> },
@@ -155,7 +159,6 @@ function AgentSections({ agent }: { agent: AdminAgentDetail }) {
   const t = useTranslations("adminItems.agents.detail");
   const def = agent.definition;
   const description = agent.profile.description ?? def.description ?? "";
-  const skills = def.skills?.orgSkills ?? [];
   const pending = def.pendingConnectors ?? [];
   const sub = def.subagents;
   const subRows = [
@@ -194,14 +197,32 @@ function AgentSections({ agent }: { agent: AdminAgentDetail }) {
           ))}
         </ItemList>
       </FormSection>
-      <FormSection id="skills" title={t("sections.skills")}>
-        <Text tone={skills.length === 0 ? "muted" : "ink"}>
-          {skills.length === 0 ? t("skillsNone") : t("skillsCount", { count: skills.length })}
-        </Text>
+      <FormSection id="skills" title={t("sections.skills")} flush>
+        <ItemList label={t("sections.skills")} inset="flush" empty={t("skillsNone")}>
+          {agent.skills.map((x) => (
+            <ItemListItem
+              key={x.id}
+              title={x.name}
+              marks={<Text tone="muted">{t(`skillScope.${x.scope}`)}</Text>}
+            />
+          ))}
+        </ItemList>
+      </FormSection>
+      <FormSection id="connectors" title={t("sections.connectors")} flush>
+        <ItemList label={t("sections.connectors")} inset="flush" empty={t("connectorsNone")}>
+          {agent.connectors.map((c) => (
+            <ItemListItem
+              key={c.id}
+              title={c.name}
+              code={c.slug}
+              marks={<Text tone="muted">{t(`connectorStatus.${c.status}`)}</Text>}
+            />
+          ))}
+        </ItemList>
       </FormSection>
       {pending.length > 0 && (
-        <FormSection id="connectors" title={t("sections.connectors")} flush>
-          <ItemList label={t("sections.connectors")} inset="flush">
+        <FormSection id="pending-connectors" title={t("sections.pending")} flush>
+          <ItemList label={t("sections.pending")} inset="flush">
             {pending.map((c) => (
               <ItemListItem key={c.key} title={c.label} />
             ))}

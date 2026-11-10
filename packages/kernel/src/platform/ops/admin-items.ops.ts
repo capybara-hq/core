@@ -92,7 +92,7 @@ export class AdminItemsOperations implements OnModuleInit {
       defineOperation({
         id: "admin.agent-get",
         description:
-          "Read one agent of this org as the admin console shows it (super admin): its definition with the instructions in full, members, profile with quick action labels, versions count. Never its conversations or credentials.",
+          "Read one agent of this org as the admin console shows it (super admin): its definition with the instructions in full, members, profile with quick action labels, versions count, the skills and connectors it uses by name. Never its conversations or credentials.",
         input: AgentIdInput,
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { superAdmin: true },

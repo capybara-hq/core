@@ -3,8 +3,9 @@ import { sql } from "kysely";
 import { escapeLike } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { selectedSkills } from "../skills/usable.js";
 import { AgentLookup, type AgentVisibility } from "./agent-lookup.js";
-import type { AgentDefinition } from "./definition.js";
+import type { AgentDefinition, DisabledToolRef } from "./definition.js";
 import type { AgentAvatar } from "./profile.js";
 
 /** One row of the super admin's cross-org agent list (admin agents spec §3.2). */
@@ -35,6 +36,23 @@ export interface AdminAgentDetail extends AdminAgentRow {
   /** How many versions the agent has. */
   versions: number;
   createdAt: Date;
+  /**
+   * The skills it uses by name: the selected org skills that resolve in the org (a deleted one is
+   * left out) and its own skills (`scope: "agent"`). Never a skill body.
+   */
+  skills: { id: string; name: string; scope: "org" | "agent" }[];
+  /**
+   * The org's live connectors it can use by name (tools default-on): every one but those whose
+   * every tool it turns off. Never auth, credentials or a member's state.
+   */
+  connectors: AdminAgentConnector[];
+}
+
+export interface AdminAgentConnector {
+  id: string;
+  name: string;
+  slug: string;
+  status: "active" | "disabled";
 }
 
 export interface AdminAgentListQuery {
@@ -90,8 +108,20 @@ export class AdminAgents {
         .where("agent_id", "=", agentId)
         .executeTakeFirstOrThrow(),
     ]);
+    const [skills, connectors] = await Promise.all([
+      selectedSkills(this.db.db, {
+        orgId: row.org_id,
+        agentId,
+        orgSkills: view.definition.skills?.orgSkills ?? [],
+      }),
+      this.connectorsOf(row.org_id, view.definition.disabledTools),
+    ]);
     return {
       ...toRow(row),
+      skills: skills
+        .map((s) => ({ id: s.id, name: s.name, scope: s.scope }))
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+      connectors,
       profile: {
         description: view.profile.description === "" ? null : view.profile.description,
         quickActions: view.profile.quickActions.map((a) => ({ label: a.title })),
@@ -101,6 +131,44 @@ export class AdminAgents {
       versions: Number(versions.n),
       createdAt: view.createdAt,
     };
+  }
+
+  /**
+   * The org's live connectors by name, minus those the agent turns off as a whole: `tools: "all"`,
+   * or a list naming every tool the connector has (a connector without tools stays listed).
+   */
+  private async connectorsOf(
+    orgId: string,
+    disabled: readonly DisabledToolRef[] | undefined,
+  ): Promise<AdminAgentConnector[]> {
+    const rows = await this.db
+      .selectFrom("connectors as c")
+      .select(["c.id", "c.name", "c.slug", "c.status"])
+      .select(
+        sql<string[]>`coalesce((SELECT array_agg(t.name) FROM capybara.connector_tools t
+          WHERE t.connector_id = c.id), '{}')`.as("tools"),
+      )
+      .where("c.org_id", "=", orgId)
+      .where("c.deleted_at", "is", null)
+      .orderBy("c.name")
+      .orderBy("c.id")
+      .execute();
+    const offByConnector = new Map<string, "all" | Set<string>>();
+    for (const r of disabled ?? []) {
+      if (r.kind !== "connector") continue;
+      const prev = offByConnector.get(r.connectorId);
+      if (prev === "all" || r.tools === "all") offByConnector.set(r.connectorId, "all");
+      else offByConnector.set(r.connectorId, new Set([...(prev ?? []), ...r.tools]));
+    }
+    const allOff = (id: string, tools: readonly string[]): boolean => {
+      const off = offByConnector.get(id);
+      if (off === undefined) return false;
+      if (off === "all") return true;
+      return tools.length > 0 && tools.every((t) => off.has(t));
+    };
+    return rows
+      .filter((r) => !allOff(r.id, r.tools))
+      .map((r) => ({ id: r.id, name: r.name, slug: r.slug, status: r.status }));
   }
 
   /** The list columns of live agents in live orgs. */
