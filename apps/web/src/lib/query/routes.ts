@@ -38,6 +38,7 @@ import {
   marketplaceEntriesQuery,
   marketplacesQuery,
   pendingPluginsQuery,
+  platformAuditQuery,
   stagedImportQuery,
 } from "./admin";
 import {
@@ -237,8 +238,18 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin",
-    // Super admins (no org needed): the four numbers.
-    queries: ({ me }) => (superAdmin(me) ? [q(adminOverviewQuery())] : []),
+    // Super admins (no org needed): the numbers, the inbox (待处理's counts by type) and the
+    // newest platform audit events, all PG reads. The other 待处理 lists are not prefetched: they
+    // may wait on a provider's model list, and their section draws its own skeleton.
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [q(adminOverviewQuery()), q(adminInboxQuery()), q(platformAuditQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/audit",
+    // Super admins: the newest page of the platform audit log.
+    queries: ({ me }) => (superAdmin(me) ? [q(platformAuditQuery())] : []),
   },
   {
     pattern: "/admin/accounts",

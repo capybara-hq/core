@@ -246,10 +246,50 @@ const ROUTES: Routes = {
       ],
       truncated: false,
       total: 2,
+      byType: {
+        catalog_request: 0,
+        permission_confirmation: 0,
+        scope_sync_failed: 1,
+        platform_migration: 1,
+        ownership_transferred: 0,
+        org_upload_pending: 0,
+      },
     }),
   "GET /api/v1/admin/inbox/count": () => json(200, { total: 2 }),
-  "GET /api/v1/admin/overview": () =>
-    json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 1, orgs: 2, accounts: 7 }),
+  "GET /api/v1/admin/overview": () => json(200, { orgs: 2, accounts: 7, attentionTotal: 3 }),
+  "GET /api/v1/admin/overview/attention": () =>
+    json(200, {
+      extensions: [],
+      updates: [
+        {
+          itemId: ITEM_ID,
+          name: "crm",
+          displayName: null,
+          icon: null,
+          version: "1.0.0",
+          marketplaceVersion: "1.1.0",
+          marketplaceId: "official",
+        },
+      ],
+      providers: [],
+      more: { extensions: 0, updates: 0, providers: 0 },
+      unavailable: [],
+    }),
+  "GET /api/v1/admin/audit": () =>
+    json(200, {
+      events: [
+        {
+          id: "5",
+          at: T,
+          actor: { id: "a1", name: "Grant", email: null },
+          viaToken: false,
+          viaAgent: false,
+          action: "marketplace.added",
+          target: "official",
+        },
+      ],
+      next: null,
+    }),
   "GET /api/v1/admin/accounts": () =>
     json(200, { accounts: [ACCOUNT("a1", "Grant"), ACCOUNT("a2", "Alice")], next: "a2" }),
   "GET /api/v1/admin/orgs": () =>
@@ -318,13 +358,43 @@ async function expectLoading(name: string, text: string) {
 }
 
 describe("first paint comes from the hydrated cache (no browser read)", () => {
-  it("/admin: a first render from the hydrated cache makes no browser read", async () => {
+  it("/admin: the numbers, the inbox counts and the audit events paint from the hydrated cache; only 待处理's lists are read after mount", async () => {
+    const O = en.admin.overview;
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin", ROUTES);
     expect(screen.getByText("7")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
+    // the audit section is ready on the first paint
+    const audit = screen.getByText(O.audit.title).closest('[data-part="overview-section"]');
+    expect(audit?.getAttribute("data-state")).toBe("ready");
+    expect(within(audit as HTMLElement).getByText("Grant")).toBeTruthy();
+    // 待处理 draws its skeleton: its lists were not prefetched
+    const attention = screen
+      .getAllByText(O.attention.title)
+      .map((el) => el.closest('[data-part="overview-section"]'))
+      .find((el) => el !== null);
+    expect(attention?.getAttribute("data-state")).toBe("loading");
     await settle();
-    expect(browser).toEqual([]);
+    // (the browser stub answers nothing here, so the one read is retried once)
+    expect(new Set(browser.map((c) => new URL(c.url, "http://x").pathname))).toEqual(
+      new Set(["/api/v1/admin/overview/attention"]),
+    );
+  });
+
+  it("/admin: 待处理 shows its skeleton, then its lists (the inbox from the cache)", async () => {
+    const O = en.admin.overview.attention;
+    stubApi(ROUTES);
+    await renderRouteWithCache("/admin", ROUTES);
+    const box = () =>
+      screen
+        .getAllByText(O.title)
+        .map((el) => el.closest('[data-part="overview-section"]'))
+        .find((el): el is HTMLElement => el !== null) as HTMLElement;
+    expect(box().getAttribute("data-state")).toBe("loading");
+    expect(box().querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(await within(box()).findByText("v1.0.0 → v1.1.0")).toBeTruthy();
+    expect(within(box()).getByText(O.inboxTypes.scope_sync_failed)).toBeTruthy();
+    expect(within(box()).getByText(O.inboxTypes.platform_migration)).toBeTruthy();
   });
 
   it("/admin/accounts: a first render from the hydrated cache makes no browser read (load more when there is a next)", async () => {
@@ -378,11 +448,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin: while the numbers load the note stays and the numbers are stat slots", async () => {
+  it("/admin: while the numbers load the sections and the footnote stay and the numbers are three stat slots", async () => {
     const { release } = await renderHeld("/admin", "GET /api/v1/admin/overview");
     await expectLoading("OverviewPage", "7");
-    expect(screen.getByText(en.admin.overview.noConversations)).toBeTruthy();
-    expect(document.querySelectorAll('[data-part="stat-card"]')).toHaveLength(4);
+    expect(screen.getByText(en.admin.overview.footnote)).toBeTruthy();
+    expect(document.querySelectorAll('[data-part="stat-card"]')).toHaveLength(3);
+    expect(await screen.findByText("Grant")).toBeTruthy();
     await release();
   });
 
@@ -516,10 +587,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await client.prefetchQuery({
       queryKey: ["deployment", "adminOverview"],
       queryFn: () => ({
-        extensionsNeedingAction: 0,
-        catalogRequestsPending: 0,
         orgs: 0,
         accounts: 0,
+        attentionTotal: 0,
       }),
     });
     const u = userEvent.setup();
@@ -832,10 +902,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await client.prefetchQuery({
       queryKey: ["deployment", "adminOverview"],
       queryFn: () => ({
-        extensionsNeedingAction: 0,
-        catalogRequestsPending: 1,
         orgs: 0,
         accounts: 0,
+        attentionTotal: 1,
       }),
     });
     await userEvent

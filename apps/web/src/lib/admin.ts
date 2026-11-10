@@ -1,4 +1,6 @@
+import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
 import type { UiArrangementEntry } from "./ui";
 
 /**
@@ -6,14 +8,95 @@ import type { UiArrangementEntry } from "./ui";
  * 界面上的隐藏只是方便，最终由内核判定。
  */
 
-/** 后台概览的四个数字（`GET /admin/overview`）。 */
+/** The admin overview's numbers (`GET /admin/overview`, kernel `admin/overview.service.ts`). */
 export interface AdminOverview {
-  /** 需要处理的插件：待批准、待配置、失败、依赖缺失、副本不一致。 */
-  extensionsNeedingAction: number;
-  /** 待处理的平台目录申请（目录申请上线前恒为 0）。 */
-  catalogRequestsPending: number;
   orgs: number;
   accounts: number;
+  /**
+   * What waits for a super admin: the platform inbox total plus the extensions, plugin updates and
+   * model providers of {@link AdminAttention} (counted in full, not capped).
+   */
+  attentionTotal: number;
+}
+
+/**
+ * Why an extension needs a look: `config` (missing deployment config while `pending_config`, else
+ * invalid), `load_failed`, `approval`, `dependency`, `conflict`, `converging`, `legacy_format`.
+ */
+export type AttentionExtensionReason =
+  | "config"
+  | "load_failed"
+  | "approval"
+  | "dependency"
+  | "conflict"
+  | "converging"
+  | "legacy_format";
+
+/** What is wrong with a model provider: its model list failed, or no usable chat model. */
+export type AttentionProviderProblem = "list_failed" | "no_chat_model";
+
+/** An attention list (a source the kernel reads on its own). */
+export type AttentionSource = "extensions" | "updates" | "providers";
+
+export interface AttentionExtension {
+  name: string;
+  displayName: LocalizedName | null;
+  /** The plugin's icon URL, or null (the mark falls back to the initial). */
+  icon: string | null;
+  status: ExtensionStatus;
+  reason: AttentionExtensionReason;
+}
+
+/** A platform plugin whose marketplace has a newer version than the newest imported one. */
+export interface AttentionUpdate {
+  itemId: string;
+  name: string;
+  displayName: LocalizedName | null;
+  icon: string | null;
+  version: string;
+  marketplaceVersion: string;
+  marketplaceId: string | null;
+}
+
+export interface AttentionProvider {
+  /** The provider's plugin name. */
+  plugin: string;
+  displayName: LocalizedName | null;
+  icon: string | null;
+  problem: AttentionProviderProblem;
+}
+
+/**
+ * `GET /admin/overview/attention`: what needs a super admin besides the inbox, each list capped
+ * (the rest counted in `more`); `unavailable` names the lists the kernel could not read.
+ */
+export interface AdminAttention {
+  extensions: AttentionExtension[];
+  updates: AttentionUpdate[];
+  providers: AttentionProvider[];
+  more: Record<AttentionSource, number>;
+  unavailable: AttentionSource[];
+}
+
+/**
+ * One platform-level audit event (`GET /admin/audit`, org-less events only): who (null: the
+ * kernel), whether through a personal token or their agent, the action and its target. Never the
+ * event's detail.
+ */
+export interface PlatformAuditEvent {
+  id: string;
+  at: string;
+  actor: { id: string; name: string | null; email: string | null } | null;
+  viaToken: boolean;
+  viaAgent: boolean;
+  action: string;
+  target: string | null;
+}
+
+/** A page of platform audit events, newest first; `next` is the `after` of the next page. */
+export interface PlatformAuditPage {
+  events: PlatformAuditEvent[];
+  next: string | null;
 }
 
 export interface AdminAccount {
@@ -142,6 +225,15 @@ export interface AdminAccountsPage {
 }
 
 export const getAdminOverview = () => apiFetch<AdminOverview>("/api/v1/admin/overview");
+
+/** The overview's 待处理 lists (may wait on a provider's model list). */
+export const getAdminAttention = () => apiFetch<AdminAttention>("/api/v1/admin/overview/attention");
+
+/** A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. */
+export const listPlatformAudit = (after?: string) =>
+  apiFetch<PlatformAuditPage>(
+    `/api/v1/admin/audit?limit=20${after === undefined ? "" : `&after=${encodeURIComponent(after)}`}`,
+  );
 
 /** 账号分页（按 id 升序）：`next` 为下一页游标，没有更多时为 null。 */
 export const listAdminAccounts = (after?: string) =>

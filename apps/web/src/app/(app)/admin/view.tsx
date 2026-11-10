@@ -1,6 +1,6 @@
 "use client";
 
-import { Callout, OverviewPage } from "@capybara-hq/design";
+import { OverviewPage, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
@@ -9,13 +9,17 @@ import { adminOverviewQuery } from "../../../lib/query/admin";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useAdmin } from "../../../lib/query/workspace";
 import NotFound from "../not-found";
+import { AttentionSection } from "./overview/AttentionSection";
+import { AuditSection } from "./overview/AuditSection";
 
 /**
- * `/admin`: the admin console overview (super admins, OverviewPage). Four header numbers,
- * each linking to its page: extensions needing action, pending catalog requests, orgs, accounts.
- * The sidebar is the way to the other pages, so the body holds only the quiet note that
- * super admins cannot read conversations. From the query cache (the layout prefetched the
- * numbers on a first load); while they load the note stays and the numbers are stat slots.
+ * `/admin`: the admin console overview (super admins, OverviewPage; spec
+ * 2026-11-11-admin-overview-design.md §3). The header's numbers (待处理, linking to the inbox, then
+ * orgs and accounts), then one section per part, each on its own read with its own loading and
+ * error state, so one failing source never blanks the page: 待处理 (the inbox by type and the
+ * attention lists) and 最近的平台操作; the privacy footnote last. From the query cache: the layout
+ * prefetched the numbers, the inbox and the audit events on a first load; the attention lists
+ * load in their section.
  */
 export default function AdminOverviewView() {
   const gate = useAdmin();
@@ -30,13 +34,22 @@ function AdminOverview() {
   const read = usePageQuery(adminOverviewQuery());
   const value = (n: number) => n.toLocaleString("en-US");
   const header = { path: [...scope], title: t("title"), description: t("overview.intro") };
-  const note = <Callout tone="info">{t("overview.noConversations")}</Callout>;
+  // The sections read for themselves: they render while the numbers load.
+  const sections = (
+    <Stack gap={16}>
+      <AttentionSection />
+      <AuditSection />
+      <Text variant="prose" tone="muted">
+        {t("overview.footnote")}
+      </Text>
+    </Stack>
+  );
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
     return (
-      <OverviewPage header={header} loading={{ stats: 4, keep: true }}>
-        {note}
+      <OverviewPage header={header} loading={{ stats: 3, keep: true }}>
+        {sections}
       </OverviewPage>
     );
   }
@@ -49,14 +62,9 @@ function AdminOverview() {
         description: header.description,
         metrics: [
           {
-            label: t("overview.metrics.extensions"),
-            value: value(data.extensionsNeedingAction),
-            href: "/admin/extensions",
-          },
-          {
-            label: t("overview.metrics.catalogRequests"),
-            value: value(data.catalogRequestsPending),
-            href: "/admin/plugins/pending",
+            label: t("overview.metrics.attention"),
+            value: value(data.attentionTotal),
+            href: "/admin/inbox",
           },
           { label: t("overview.metrics.orgs"), value: value(data.orgs), href: "/admin/orgs" },
           {
@@ -67,7 +75,7 @@ function AdminOverview() {
         ],
       }}
     >
-      {note}
+      {sections}
     </OverviewPage>
   );
 }

@@ -1,9 +1,11 @@
 import {
   type DeploymentSettingsPatch,
+  getAdminAttention,
   getAdminOverview,
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
+  listPlatformAudit,
 } from "../admin";
 import {
   getAdminExtension,
@@ -30,9 +32,28 @@ import { keys } from "./keys";
 
 const d = () => keys.deployment();
 
-/** The overview's four numbers. */
+/** The overview's numbers (`{ orgs, accounts, attentionTotal }`). */
 export const adminOverviewQuery = () =>
   defineQuery({ key: d().adminOverview(), fn: () => getAdminOverview(), freshness: "deployment" });
+
+/**
+ * The overview's 待处理 lists (extensions, plugin updates, model providers). Not prefetched: it
+ * may wait on a provider's model list, so its section draws its own skeleton.
+ */
+export const adminAttentionQuery = () =>
+  defineQuery({
+    key: d().adminAttention(),
+    fn: () => getAdminAttention(),
+    freshness: "deployment",
+  });
+
+/** A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. */
+export const platformAuditQuery = (after?: string) =>
+  defineQuery({
+    key: d().platformAudit(after),
+    fn: () => listPlatformAudit(after),
+    freshness: "deployment",
+  });
 
 /**
  * The super admin's inbox (`{ items, truncated }`): requests, permission confirmations, failed

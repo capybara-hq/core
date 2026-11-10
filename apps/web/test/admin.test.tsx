@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,41 +44,286 @@ describe("管理后台导航", () => {
   });
 });
 
+const OV_T = "2026-11-10T08:00:00.000Z";
+const BY_TYPE = {
+  catalog_request: 3,
+  permission_confirmation: 0,
+  scope_sync_failed: 2,
+  platform_migration: 1,
+  ownership_transferred: 0,
+  org_upload_pending: 0,
+};
+const OV_INBOX = { items: [], truncated: false, total: 6, byType: BY_TYPE };
+const ATTENTION = {
+  extensions: [
+    {
+      name: "crm",
+      displayName: { zh: "客户管理", en: "CRM" },
+      icon: null,
+      status: "pending_config",
+      reason: "config",
+    },
+    { name: "bad-config", displayName: null, icon: null, status: "enabled", reason: "config" },
+    { name: "lark", displayName: null, icon: null, status: "failed", reason: "load_failed" },
+  ],
+  updates: [
+    {
+      itemId: "item-1",
+      name: "slack",
+      displayName: null,
+      icon: null,
+      version: "1.2.0",
+      marketplaceVersion: "1.3.0",
+      marketplaceId: "official",
+    },
+  ],
+  providers: [{ plugin: "model-openai", displayName: null, icon: null, problem: "list_failed" }],
+  more: { extensions: 2, updates: 0, providers: 0 },
+  unavailable: [],
+};
+const EMPTY_ATTENTION = {
+  extensions: [],
+  updates: [],
+  providers: [],
+  more: { extensions: 0, updates: 0, providers: 0 },
+  unavailable: [],
+};
+const AUDIT = {
+  events: [
+    {
+      id: "3",
+      at: OV_T,
+      actor: null,
+      viaToken: false,
+      viaAgent: false,
+      action: "bootstrap.completed",
+      target: null,
+    },
+    {
+      id: "2",
+      at: OV_T,
+      actor: { id: "a1", name: "Grant", email: null },
+      viaToken: false,
+      viaAgent: true,
+      action: "marketplace.added",
+      target: "official",
+    },
+    {
+      id: "1",
+      at: OV_T,
+      actor: { id: "a2", name: "Alice", email: "alice@example.com" },
+      viaToken: true,
+      viaAgent: false,
+      action: "weird.unlabelled_action",
+      target: "x-1",
+    },
+  ],
+  next: null,
+};
+const overviewRoutes = (over: Record<string, () => Response> = {}) => ({
+  "GET /api/v1/admin/overview": () => json(200, { orgs: 2, accounts: 7, attentionTotal: 12 }),
+  "GET /api/v1/admin/inbox": () => json(200, OV_INBOX),
+  "GET /api/v1/admin/inbox/count": () => json(200, { total: 6 }),
+  "GET /api/v1/admin/overview/attention": () => json(200, ATTENTION),
+  "GET /api/v1/admin/audit": () => json(200, AUDIT),
+  ...over,
+});
+/** The section titled `title` (an OverviewSection is the section's Card). */
+const section = (title: string) =>
+  screen
+    .getAllByText(title)
+    .map((el) => el.closest('[data-part="overview-section"]'))
+    .find((el): el is HTMLElement => el !== null) as HTMLElement;
+const metricsOf = async (container: HTMLElement) =>
+  vi.waitFor(() => {
+    const m = container.querySelector('[data-part="stat-cards"]');
+    if (!m) throw new Error("no metrics yet");
+    return m as HTMLElement;
+  });
+
 describe("/admin 概览（OverviewPage）", () => {
-  it.each(LOCALES)("超级管理员：四个数字与各页入口（%s）", async (locale) => {
+  it.each(LOCALES)("超级管理员：三个数字与各页入口，页脚说明（%s）", async (locale) => {
     const a = msgs[locale].admin;
-    stubApi({
-      "GET /api/v1/admin/overview": () =>
-        json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 0, orgs: 2, accounts: 7 }),
-    });
+    stubApi(overviewRoutes());
     const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
     expect(template("OverviewPage")).not.toBeNull();
-    const metrics = await vi.waitFor(() => {
-      const m = container.querySelector('[data-part="stat-cards"]');
-      if (!m) throw new Error("no metrics yet");
-      return m as HTMLElement;
-    });
+    const metrics = await metricsOf(container);
     const metric = (label: string) =>
       within(within(metrics).getByText(label).parentElement as HTMLElement);
-    await vi.waitFor(() =>
-      expect(metric(a.overview.metrics.extensions).getByText("3")).toBeTruthy(),
-    );
-    expect(metric(a.overview.metrics.catalogRequests).getByText("0")).toBeTruthy();
+    expect(metric(a.overview.metrics.attention).getByText("12")).toBeTruthy();
     expect(metric(a.overview.metrics.orgs).getByText("2")).toBeTruthy();
     expect(metric(a.overview.metrics.accounts).getByText("7")).toBeTruthy();
-    // each number links to its page (the stat card is the link); no section cards duplicate the
-    // sidebar
+    expect(container.querySelectorAll('[data-part="stat-card"]')).toHaveLength(3);
     const statLink = (label: string) =>
       within(metrics).getByText(label).closest("a")?.getAttribute("href");
-    expect(statLink(a.overview.metrics.extensions)).toBe("/admin/extensions");
-    expect(statLink(a.overview.metrics.catalogRequests)).toBe("/admin/plugins/pending");
+    expect(statLink(a.overview.metrics.attention)).toBe("/admin/inbox");
     expect(statLink(a.overview.metrics.orgs)).toBe("/admin/orgs");
     expect(statLink(a.overview.metrics.accounts)).toBe("/admin/accounts");
-    expect(container.querySelectorAll('[data-part="link-card"]')).toHaveLength(0);
-    // one sentence under the title; the privacy fact is its own quiet note
     const description = container.querySelector('[data-part="page-header-description"]');
     expect(description?.textContent).toBe(a.overview.intro);
-    expect(screen.getByRole("note").textContent).toBe(a.overview.noConversations);
+    // the privacy footnote is muted prose under the sections, not a callout
+    const footnote = screen.getByText(a.overview.footnote);
+    expect(footnote.getAttribute("data-variant")).toBe("prose");
+    expect(footnote.getAttribute("data-tone")).toBe("muted");
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it.each(LOCALES)("待处理：收件箱按类型、扩展、插件更新与模型供应商（%s）", async (locale) => {
+    const o = msgs[locale].admin.overview.attention;
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+    const box = await vi.waitFor(() => {
+      const s = section(o.title);
+      if (s.getAttribute("data-state") !== "ready") throw new Error("not ready");
+      return within(s);
+    });
+    // the inbox: one row per type with items, its count and where it is handled
+    const inbox = box.getByRole("list", { name: o.groups.inbox });
+    const typeRow = (label: string) => within(inbox).getByText(label).closest("li") as HTMLElement;
+    expect(within(typeRow(o.inboxTypes.catalog_request)).getByText("3")).toBeTruthy();
+    expect(
+      within(inbox).getByRole("link", { name: o.inboxTypes.catalog_request }).getAttribute("href"),
+    ).toBe("/admin/plugins/pending");
+    expect(
+      within(inbox)
+        .getByRole("link", { name: o.inboxTypes.scope_sync_failed })
+        .getAttribute("href"),
+    ).toBe("/admin/inbox?type=scope_sync_failed");
+    expect(within(typeRow(o.inboxTypes.platform_migration)).getByText("1")).toBeTruthy();
+    expect(within(inbox).queryByText(o.inboxTypes.permission_confirmation)).toBeNull();
+    expect(box.getByRole("link", { name: o.viewInbox }).getAttribute("href")).toBe("/admin/inbox");
+    // extensions: the reason in words, linking to the extension
+    const exts = box.getByRole("list", { name: o.groups.extensions });
+    const crm = locale === "zh" ? "客户管理" : "CRM";
+    expect(within(exts).getByRole("link", { name: crm }).getAttribute("href")).toBe(
+      "/admin/extensions/crm",
+    );
+    const extRow = (name: string) => within(exts).getByText(name).closest("li") as HTMLElement;
+    expect(within(extRow(crm)).getByText(o.reasons.missingConfig)).toBeTruthy();
+    expect(within(extRow("bad-config")).getByText(o.reasons.invalidConfig)).toBeTruthy();
+    expect(within(extRow("lark")).getByText(o.reasons.load_failed)).toBeTruthy();
+    // a capped list ends with "+n", linking to the full list
+    const more = fill(o.more, { n: 2 });
+    expect(within(exts).getByRole("link", { name: more }).getAttribute("href")).toBe(
+      "/admin/extensions",
+    );
+    // plugin updates: the two versions
+    const updates = box.getByRole("list", { name: o.groups.updates });
+    expect(within(updates).getByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    expect(within(updates).getByRole("link", { name: "slack" }).getAttribute("href")).toBe(
+      "/admin/plugins/item-1",
+    );
+    // providers: the problem in words
+    const providers = box.getByRole("list", { name: o.groups.providers });
+    expect(within(providers).getByText(o.problems.list_failed)).toBeTruthy();
+    expect(within(providers).getByRole("link", { name: "model-openai" }).getAttribute("href")).toBe(
+      "/admin/models",
+    );
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("待处理：读不到的列表显示「暂时无法读取」，其余照常", async () => {
+    const o = zh.admin.overview.attention;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, { ...ATTENTION, providers: [], unavailable: ["providers"] }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    expect(await screen.findByText(o.unavailable)).toBeTruthy();
+    const box = within(section(o.title));
+    expect(box.getByText(o.groups.providers)).toBeTruthy();
+    expect(box.queryByRole("list", { name: o.groups.providers })).toBeNull();
+    expect(box.getByRole("list", { name: o.groups.extensions })).toBeTruthy();
+  });
+
+  it("待处理：什么都没有时是区块里的空状态", async () => {
+    const o = zh.admin.overview.attention;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/inbox": () =>
+          json(200, {
+            ...OV_INBOX,
+            total: 0,
+            byType: Object.fromEntries(Object.keys(BY_TYPE).map((k) => [k, 0])),
+          }),
+        "GET /api/v1/admin/overview/attention": () => json(200, EMPTY_ATTENTION),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const empty = await screen.findByText(o.empty);
+    expect(section(o.title).contains(empty)).toBe(true);
+    expect(within(section(o.title)).queryByRole("list")).toBeNull();
+  });
+
+  it("待处理读取失败：只有这个区块出错，重试只重读它；数字与平台操作照常", async () => {
+    const o = zh.admin.overview;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          failing
+            ? json(500, { error: { code: "internal", message: "boom" } })
+            : json(200, ATTENTION),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const alert = await vi.waitFor(() => within(section(o.attention.title)).getByRole("alert"), {
+      timeout: 3000,
+    });
+    expect(within(alert).getByText(o.attention.failed)).toBeTruthy();
+    // the numbers and the audit section are there
+    const metrics = await metricsOf(container);
+    expect(within(metrics).getByText("12")).toBeTruthy();
+    expect(within(section(o.audit.title)).getByText("Grant")).toBeTruthy();
+    const before = calls.map((c) => c.url);
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    await vi.waitFor(() =>
+      expect(within(section(o.attention.title)).getByText("v1.2.0 → v1.3.0")).toBeTruthy(),
+    );
+    const after = calls.slice(before.length).map((c) => new URL(c.url, "http://x").pathname);
+    expect(after).toEqual(["/api/v1/admin/overview/attention"]);
+  });
+
+  it.each(LOCALES)(
+    "最近的平台操作：系统、经由智能体、个人令牌、未知操作原样显示（%s）",
+    async (locale) => {
+      const m = msgs[locale].admin;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = within(section(m.overview.audit.title));
+      const table = box.getByRole("table", { name: m.overview.audit.title });
+      for (const h of Object.values(m.audit.columns)) {
+        expect(within(table).getByRole("columnheader", { name: h })).toBeTruthy();
+      }
+      const row = (text: string) => within(table).getByText(text).closest("tr") as HTMLElement;
+      expect(
+        within(row(m.audit.system)).getByText(m.audit.actions.bootstrapCompleted),
+      ).toBeTruthy();
+      expect(within(row("Grant")).getByText(m.audit.viaAgent)).toBeTruthy();
+      expect(within(row("Grant")).getByText(m.audit.actions.marketplaceAdded)).toBeTruthy();
+      expect(within(row("Grant")).getByText("official")).toBeTruthy();
+      expect(within(row("Alice")).getByText(m.audit.viaToken)).toBeTruthy();
+      // an action without a label is shown as written, in mono (not prose)
+      const raw = within(row("Alice")).getByText("weird.unlabelled_action");
+      expect(raw.getAttribute("data-variant")).toBe("body");
+      expect(box.getByRole("link", { name: m.overview.audit.viewAll }).getAttribute("href")).toBe(
+        "/admin/audit",
+      );
+    },
+  );
+
+  it("最近的平台操作：没有记录时是区块里的空状态", async () => {
+    stubApi(
+      overviewRoutes({ "GET /api/v1/admin/audit": () => json(200, { events: [], next: null }) }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const empty = await screen.findByText(zh.admin.audit.empty);
+    expect(section(zh.admin.overview.audit.title).contains(empty)).toBe(true);
   });
 
   it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {
@@ -1013,5 +1259,75 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
     expect(zh.catalog.admin.pending.upload.update).toBe("更新 {from} → {to}");
     expect(zh.admin.inbox.orgUpload.title).toBe("{org} 上传了 {name}，等待确认");
     expect(zh.admin.inbox.transferred.dismiss).toBe("知道了");
+  });
+});
+
+describe("/admin/inbox?type=（按类型过滤）", () => {
+  const SYNC = (id: string, org: string) => ({
+    type: "scope_sync_failed",
+    id,
+    createdAt: "2026-11-10T08:00:00.000Z",
+    failure: {
+      item: { id: "item-1", name: "crm", displayName: null },
+      org: { id: `o-${org}`, name: org },
+      op: "install",
+      code: "plugin.skill_conflict",
+      message: "A skill named pdf already exists",
+      failedAt: "2026-11-10T08:00:00.000Z",
+    },
+  });
+  const MIGRATION = {
+    type: "platform_migration",
+    id: "run1",
+    createdAt: "2026-11-10T09:00:00.000Z",
+    run: {
+      id: "run1",
+      startedAt: "2026-11-10T09:00:00.000Z",
+      finishedAt: null,
+      stuck: true,
+      itemsFailed: [],
+    },
+  };
+  const routes = () => ({
+    "GET /api/v1/admin/inbox": () =>
+      json(200, {
+        items: [MIGRATION, SYNC("s1", "Beta"), SYNC("s2", "Gamma")],
+        truncated: false,
+        total: 3,
+        byType: {
+          catalog_request: 0,
+          permission_confirmation: 0,
+          scope_sync_failed: 2,
+          platform_migration: 1,
+          ownership_transferred: 0,
+          org_upload_pending: 0,
+        },
+      }),
+    "GET /api/v1/admin/inbox/count": () => json(200, { total: 3 }),
+  });
+
+  it.each(LOCALES)("只列出该类型的事项，并能清除过滤（%s）", async (locale) => {
+    const I = msgs[locale].admin.inbox;
+    const types = msgs[locale].admin.overview.attention.inboxTypes;
+    stubApi(routes());
+    await renderRouteWithCache("/admin/inbox?type=scope_sync_failed", lastStubRoutes(), {
+      locale,
+    });
+    const table = await screen.findByRole("table", { name: I.listLabel });
+    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(2);
+    expect(within(table).queryByText(I.migration.label)).toBeNull();
+    expect(screen.getByText(fill(I.filtered, { type: types.scope_sync_failed }))).toBeTruthy();
+    expect(screen.getByRole("link", { name: I.clearFilter }).getAttribute("href")).toBe(
+      "/admin/inbox",
+    );
+  });
+
+  it("未知类型被忽略：列出全部，没有过滤提示", async () => {
+    const I = zh.admin.inbox;
+    stubApi(routes());
+    await renderRouteWithCache("/admin/inbox?type=nope", lastStubRoutes(), { locale: "zh" });
+    const table = await screen.findByRole("table", { name: I.listLabel });
+    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(3);
+    expect(screen.queryByRole("link", { name: I.clearFilter })).toBeNull();
   });
 });

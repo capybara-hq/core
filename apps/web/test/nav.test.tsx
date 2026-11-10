@@ -161,7 +161,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("admin")).toEqual(["new-agent", "new-app"]);
   });
 
-  it("the admin context lists 概览 收件箱 账号 组织 插件 扩展 技能 智能体 连接器 主题 模型 部署设置 (no 平台目录 or 市场)", () => {
+  it("the admin context lists 概览 收件箱 审计日志 账号 组织 插件 扩展 技能 智能体 连接器 主题 模型 部署设置 (no 平台目录 or 市场)", () => {
     function Admin() {
       const items = useAdminItems();
       return <pre data-testid="admin">{JSON.stringify(items.map((i) => [i.label, i.href]))}</pre>;
@@ -174,6 +174,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(JSON.parse(screen.getByTestId("admin").textContent ?? "[]")).toEqual([
       ["概览", "/admin"],
       ["收件箱", "/admin/inbox"],
+      ["审计日志", "/admin/audit"],
       ["账号", "/admin/accounts"],
       ["组织", "/admin/orgs"],
       ["插件", "/admin/plugins"],
