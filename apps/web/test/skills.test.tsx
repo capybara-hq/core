@@ -581,7 +581,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
   );
 });
 
-describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview", () => {
+describe("plugin scope phase 3: the 可共享 switch and the delete preview", () => {
   const GUEST = {
     ...ME,
     account: { ...ME.account, isSuperAdmin: false },

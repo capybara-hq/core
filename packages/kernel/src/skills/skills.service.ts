@@ -26,7 +26,6 @@ import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import {
-  checkBuiltSkillFiles,
   readSkillPackage,
   type SkillPackageFile,
   type SkillPackageInput,
@@ -257,11 +256,6 @@ export interface UploadedSkill {
 }
 
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
-const nameExists = (name: string) =>
-  new ApiError(
-    "skill.name_exists",
-    `A skill named "${name}" already exists in this organization. Choose another name.`,
-  );
 
 /**
  * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
@@ -694,8 +688,6 @@ export class SkillsService {
       auditDetail?: Record<string, unknown>;
       /** The owner shares a new skill with other orgs (default false). */
       shareable?: boolean;
-      /** A live org skill of the name is `skill.name_exists` instead of getting a new version. */
-      failIfExists?: boolean;
       /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
       catalog?: {
         itemId: string;
@@ -766,7 +758,6 @@ export class SkillsService {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
-    if (existing && opts.failIfExists) throw nameExists(pkg.name);
     // The org's own skill it promoted (ruling P3-3): its new version goes to the platform row and
     // reaches every org using it (ruling P3-4); the files were written there before this
     // transaction, for the platform version current then
