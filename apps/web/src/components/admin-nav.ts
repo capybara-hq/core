@@ -14,8 +14,8 @@ export const ADMIN_PAGES = [
   { id: "plugins", href: "/admin/plugins" },
   { id: "extensions", href: "/admin/extensions" },
   { id: "skills", href: "/admin/skills" },
-  { id: "connector-templates", href: "/admin/connector-templates" },
-  { id: "agent-templates", href: "/admin/agent-templates" },
+  { id: "agents", href: "/admin/agents" },
+  { id: "connectors", href: "/admin/connectors" },
   { id: "themes", href: "/admin/themes" },
   { id: "models", href: "/admin/models" },
   { id: "settings", href: "/admin/settings" },
@@ -62,7 +62,7 @@ export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 /**
  * The admin console's (super admins) navigation: overview, the inbox, accounts, orgs, plugins (its
  * tabs hold the marketplaces and the pending confirmations), extensions, the platform skills,
- * connector templates, agent templates and themes, models, deployment settings, then a 扩展 group
+ * agents and connectors (each with a 模板 tab), and themes, models, deployment settings, then a 扩展 group
  * of the extensions' platform pages (hidden when there are none). It feeds the sidebar's admin
  * context only; admin pages carry no inner navigation. An org's own settings stay under
  * `/settings/*`.

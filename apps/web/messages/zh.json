@@ -3321,8 +3321,8 @@
       "settings": "部署设置",
       "extensions": "扩展",
       "skills": "技能",
-      "connector-templates": "连接器模板",
-      "agent-templates": "智能体模板",
+      "agents": "智能体",
+      "connectors": "连接器",
       "themes": "主题",
       "models": "模型",
       "plugins": "插件",
@@ -4995,6 +4995,13 @@
       "doneTransferred": "已删除「{name}」，其他组织仍在使用，它已转为平台所有。"
     }
   },
+  "adminItems": {
+    "tabs": {
+      "agents": "智能体",
+      "connectors": "连接器",
+      "templates": "模板"
+    }
+  },
   "adminComponents": {
     "titles": {
       "skill": "技能",
@@ -5004,11 +5011,12 @@
     },
     "descriptions": {
       "skill": "整个部署的技能：插件带来的和平台上的。范围、停用和版本在这里管理。",
-      "connector_template": "组织按模板填入地址和凭据，得到自己的连接器。范围和停用在这里管理。",
-      "agent_template": "预先配好的智能体定义，也可以作为子智能体类型使用。范围、停用和版本在这里管理。",
+      "connector_template": "管理所有组织的连接器及其模板：组织按模板填入地址和凭据得到自己的连接器。范围和停用在模板上管理。",
+      "agent_template": "管理所有组织的智能体及其模板：模板是预先配好的智能体定义，也可作为子智能体类型。范围、停用和版本在模板上管理。",
       "theme": "整个部署的主题：插件带来的配色、字体和标志。范围、停用和版本在这里管理；平台默认主题在平台设置的「外观」里选择。"
     },
     "tabs": {
+      "label": "按归属筛选",
       "all": "全部",
       "platform": "平台",
       "org": "组织创建"

@@ -3333,8 +3333,8 @@
       "settings": "Deployment settings",
       "extensions": "Extensions",
       "skills": "Skills",
-      "connector-templates": "Connector templates",
-      "agent-templates": "Agent templates",
+      "agents": "Agents",
+      "connectors": "Connectors",
       "themes": "Themes",
       "models": "Models",
       "plugins": "Plugins",
@@ -5007,6 +5007,13 @@
       "doneTransferred": "\"{name}\" deleted; other organizations still use it, so it is now platform-owned."
     }
   },
+  "adminItems": {
+    "tabs": {
+      "agents": "Agents",
+      "connectors": "Connectors",
+      "templates": "Templates"
+    }
+  },
   "adminComponents": {
     "titles": {
       "skill": "Skills",
@@ -5016,11 +5023,12 @@
     },
     "descriptions": {
       "skill": "Every skill on the deployment: from plugins and from the platform. Manage scope, disabling and versions here.",
-      "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
-      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here.",
+      "connector_template": "Manage every organization's connectors and their templates: organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling on the templates.",
+      "agent_template": "Manage every organization's agents and their templates: a template is a ready-made agent definition, also usable as a sub-agent type. Manage scope, disabling and versions on the templates.",
       "theme": "Every theme on the deployment: the colors, fonts and logo plugins bring. Manage scope, disabling and versions here; choose the platform default theme under Appearance in the deployment settings."
     },
     "tabs": {
+      "label": "Filter by owner",
       "all": "All",
       "platform": "Platform",
       "org": "Created by organizations"

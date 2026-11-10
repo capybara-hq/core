@@ -342,12 +342,12 @@ export const ROUTES: readonly RouteEntry[] = [
         : [],
   },
   {
-    pattern: "/admin/connector-templates",
+    pattern: "/admin/connectors/templates",
     queries: ({ me }) =>
       superAdmin(me) ? [q(adminComponentsQuery("connector_template")), q(adminOrgsQuery())] : [],
   },
   {
-    pattern: "/admin/connector-templates/[id]",
+    pattern: "/admin/connectors/templates/[id]",
     queries: ({ me, params }) =>
       superAdmin(me) && params.id !== undefined
         ? [
@@ -369,12 +369,12 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   {
-    pattern: "/admin/agent-templates",
+    pattern: "/admin/agents/templates",
     queries: ({ me }) =>
       superAdmin(me) ? [q(adminComponentsQuery("agent_template")), q(adminOrgsQuery())] : [],
   },
   {
-    pattern: "/admin/agent-templates/[id]",
+    pattern: "/admin/agents/templates/[id]",
     queries: ({ me, params }) =>
       superAdmin(me) && params.id !== undefined
         ? [

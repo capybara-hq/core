@@ -20,16 +20,16 @@ export type PlatformComponentKind = (typeof PLATFORM_COMPONENT_KINDS)[number];
 /** Where each kind's admin pages live. */
 export const COMPONENT_ROUTES: Record<PlatformComponentKind, string> = {
   skill: "/admin/skills",
-  connector_template: "/admin/connector-templates",
-  agent_template: "/admin/agent-templates",
+  connector_template: "/admin/connectors/templates",
+  agent_template: "/admin/agents/templates",
   theme: "/admin/themes",
 };
 
 /** The path segment each kind's pages show (`/admin/skills` -> `skills`). */
 export const COMPONENT_SEGMENTS: Record<PlatformComponentKind, string> = {
   skill: "skills",
-  connector_template: "connector-templates",
-  agent_template: "agent-templates",
+  connector_template: "connectors/templates",
+  agent_template: "agents/templates",
   theme: "themes",
 };
 
