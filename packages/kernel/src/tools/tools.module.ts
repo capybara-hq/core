@@ -16,6 +16,7 @@ import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { AdminConnectors } from "./admin-connectors.js";
 import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
@@ -79,6 +80,7 @@ import { ToolRegistry } from "./registry.js";
     ConnectorContent,
     ToolPipeline,
     ConnectorsService,
+    AdminConnectors,
     ConnectorAccountPolicies,
     OAuthFlow,
     ConversationToolInfo,
@@ -97,6 +99,7 @@ import { ToolRegistry } from "./registry.js";
     ConnectorContent,
     ToolPipeline,
     ConnectorsService,
+    AdminConnectors,
     ConnectorAccountPolicies,
     OAuthFlow,
     ConversationToolInfo,

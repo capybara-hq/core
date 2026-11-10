@@ -1,7 +1,7 @@
 import AdminAgentTemplateView from "./view";
 
 /**
- * `/admin/agent-templates/[id]` (super admins): one platform agent template. It reads nothing: the
+ * `/admin/agents/templates/[id]` (super admins): one platform agent template. It reads nothing: the
  * layout prefetches the list, its versions and the orgs on a first load (`lib/query/routes.ts`).
  */
 export default async function AdminAgentTemplatePage({

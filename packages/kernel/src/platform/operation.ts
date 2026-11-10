@@ -212,7 +212,8 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   },
   {
     id: "admin",
-    description: "The admin console (super admin): dashboard totals and deployment settings.",
+    description:
+      "The admin console (super admin): dashboard totals, deployment settings, the org's members, and the agents and connectors of the org (read, delete, disable or enable; other orgs' only in the console).",
   },
   {
     id: "models",

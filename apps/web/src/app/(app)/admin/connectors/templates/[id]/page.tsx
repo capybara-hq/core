@@ -1,7 +1,7 @@
 import AdminConnectorTemplateView from "./view";
 
 /**
- * `/admin/connector-templates/[id]` (super admins): one platform connector template. It reads nothing: the
+ * `/admin/connectors/templates/[id]` (super admins): one platform connector template. It reads nothing: the
  * layout prefetches the list, its versions and the orgs on a first load (`lib/query/routes.ts`).
  */
 export default async function AdminConnectorTemplatePage({

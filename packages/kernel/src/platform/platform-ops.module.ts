@@ -20,6 +20,7 @@ import { ThemesModule } from "../themes/themes.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
+import { AdminItemsOperations } from "./ops/admin-items.ops.js";
 import { AgentSkillsOperations } from "./ops/agent-skills.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
@@ -94,6 +95,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   SetupOperations,
   // UI slot catalog (UI slots spec §3)
   UiOperations,
+  // every org's agents and connectors, the conversation org's through the tool (spec §4.5)
+  AdminItemsOperations,
 ] as const;
 
 /**

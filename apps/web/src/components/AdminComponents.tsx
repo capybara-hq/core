@@ -11,6 +11,7 @@ import {
   ObjectCard,
   ObjectMark,
   Stack,
+  Tabs,
   Text,
   useToast,
   versionLabel,
@@ -486,6 +487,29 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
     ],
     active,
     rows: active === "platform" ? platform : active === "org" ? org : rows,
+  };
+}
+
+/**
+ * The 全部 / 平台 / 组织创建 owner filter of a template list, a secondary Tabs row above the list
+ * (the header tab row holds 智能体 / 模板 or 连接器 / 模板), and the rows it leaves.
+ */
+export function useOwnerFilter(rows: PlatformComponent[] | null): {
+  filters: ReactNode;
+  rows: PlatformComponent[] | null;
+} {
+  const t = useTranslations("adminComponents.tabs");
+  const tabs = useOwnerTabs(rows);
+  return {
+    filters: (
+      <Tabs
+        label={t("label")}
+        value={tabs.active}
+        onChange={(id) => tabs.items.find((i) => i.id === id)?.onSelect()}
+        items={tabs.items.map(({ onSelect: _s, ...it }) => it)}
+      />
+    ),
+    rows: tabs.rows,
   };
 }
 

@@ -97,7 +97,7 @@ export function platformInboxHref(item: PlatformInboxItem): string {
           ? "/admin/plugins"
           : ref.kind === "skill"
             ? "/admin/skills"
-            : "/admin/agent-templates";
+            : "/admin/agents/templates";
       return `${base}/${encodeURIComponent(ref.id)}`;
     }
   }

@@ -11,22 +11,25 @@ import {
   ComponentVersions,
   StateBadges,
   useComponentActions,
-} from "../../../../../components/AdminComponents";
-import { ErrorFrame } from "../../../../../components/ErrorFrame";
-import { NoAccess } from "../../../../../components/NoAccess";
-import { usePagePath } from "../../../../../components/shell/path";
-import { componentDescription, type PlatformComponent } from "../../../../../lib/components";
-import { retryOnMountOf } from "../../../../../lib/query/client";
-import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
-import { usePageQuery } from "../../../../../lib/query/page-query";
-import { useAdmin } from "../../../../../lib/query/workspace";
-import NotFound from "../../../not-found";
+} from "../../../../../../components/AdminComponents";
+import { ErrorFrame } from "../../../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../../../components/NoAccess";
+import { usePagePath } from "../../../../../../components/shell/path";
+import { componentDescription, type PlatformComponent } from "../../../../../../lib/components";
+import { retryOnMountOf } from "../../../../../../lib/query/client";
+import {
+  adminComponentsQuery,
+  componentVersionsQuery,
+} from "../../../../../../lib/query/components";
+import { usePageQuery } from "../../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../../lib/query/workspace";
+import NotFound from "../../../../not-found";
 
 const TABS = ["versions", "orgs"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * `/admin/agent-templates/[id]` (super admins; spec §9): one platform agent template. Head: its
+ * `/admin/agents/templates/[id]` (super admins; spec §9): one platform agent template. Head: its
  * name, version and state; actions 设置范围 (跟随插件 or its own scope, with the impact preview),
  * 停用 / 启用, 上传新版本 (a new version on its own, spec §7.2). Tabs 版本 / 组织;
  * one centred column: the full description first, the facts (来自, 归属, 范围, 在用组织) as a
@@ -52,7 +55,8 @@ function AdminAgentTemplateRead({ id, orgId }: { id: string; orgId: string | nul
         header={{
           path: [
             ...scope,
-            { label: "agent-templates", href: "/admin/agent-templates" },
+            { label: "agents", href: "/admin/agents" },
+            { label: "templates", href: "/admin/agents/templates" },
             { label: id },
           ],
           title: "",
@@ -87,7 +91,8 @@ function AdminAgentTemplate({ c, orgId }: { c: PlatformComponent; orgId: string 
         header={{
           path: [
             ...scope,
-            { label: "agent-templates", href: "/admin/agent-templates" },
+            { label: "agents", href: "/admin/agents" },
+            { label: "templates", href: "/admin/agents/templates" },
             { label: c.name },
           ],
           title: c.name,

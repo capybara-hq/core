@@ -11,27 +11,30 @@ import {
   ComponentVersions,
   StateBadges,
   useComponentActions,
-} from "../../../../../components/AdminComponents";
-import { ErrorFrame } from "../../../../../components/ErrorFrame";
-import { NoAccess } from "../../../../../components/NoAccess";
-import { SetupGuideSection } from "../../../../../components/SetupGuideSection";
-import { usePagePath } from "../../../../../components/shell/path";
-import { templateGuideIn } from "../../../../../lib/catalog";
-import { componentLabel, type PlatformComponent } from "../../../../../lib/components";
-import { catalogItemQuery } from "../../../../../lib/query/admin";
-import { retryOnMountOf } from "../../../../../lib/query/client";
-import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
-import { usePageQuery } from "../../../../../lib/query/page-query";
-import { useAdmin } from "../../../../../lib/query/workspace";
-import type { SetupGuideRef } from "../../../../../lib/setup-guides";
-import NotFound from "../../../not-found";
+} from "../../../../../../components/AdminComponents";
+import { ErrorFrame } from "../../../../../../components/ErrorFrame";
+import { NoAccess } from "../../../../../../components/NoAccess";
+import { SetupGuideSection } from "../../../../../../components/SetupGuideSection";
+import { usePagePath } from "../../../../../../components/shell/path";
+import { templateGuideIn } from "../../../../../../lib/catalog";
+import { componentLabel, type PlatformComponent } from "../../../../../../lib/components";
+import { catalogItemQuery } from "../../../../../../lib/query/admin";
+import { retryOnMountOf } from "../../../../../../lib/query/client";
+import {
+  adminComponentsQuery,
+  componentVersionsQuery,
+} from "../../../../../../lib/query/components";
+import { usePageQuery } from "../../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../../lib/query/workspace";
+import type { SetupGuideRef } from "../../../../../../lib/setup-guides";
+import NotFound from "../../../../not-found";
 
 const TABS = ["versions", "orgs"] as const;
 /** The tabs, and 接入指南 when the template's plugin has a setup guide for it. */
 type Tab = (typeof TABS)[number] | "guide";
 
 /**
- * `/admin/connector-templates/[id]` (super admins; spec §9): one platform connector template. Head: its
+ * `/admin/connectors/templates/[id]` (super admins; spec §9): one platform connector template. Head: its
  * name, version and state; actions 设置范围 (跟随插件 or its own scope, with the impact preview),
  * 停用 / 启用. Tabs 版本 / 组织;
  * one centred column: the full description first, the facts (来自, 归属, 范围, 在用组织) as a
@@ -57,7 +60,8 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
         header={{
           path: [
             ...scope,
-            { label: "connector-templates", href: "/admin/connector-templates" },
+            { label: "connectors", href: "/admin/connectors" },
+            { label: "templates", href: "/admin/connectors/templates" },
             { label: id },
           ],
           title: "",
@@ -104,7 +108,8 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
         header={{
           path: [
             ...scope,
-            { label: "connector-templates", href: "/admin/connector-templates" },
+            { label: "connectors", href: "/admin/connectors" },
+            { label: "templates", href: "/admin/connectors/templates" },
             { label: c.name },
           ],
           // the display name with its plugin's mark; the id stays in the path

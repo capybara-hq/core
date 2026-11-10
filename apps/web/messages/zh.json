@@ -3321,8 +3321,8 @@
       "settings": "部署设置",
       "extensions": "扩展",
       "skills": "技能",
-      "connector-templates": "连接器模板",
-      "agent-templates": "智能体模板",
+      "agents": "智能体",
+      "connectors": "连接器",
       "themes": "主题",
       "models": "模型",
       "plugins": "插件",
@@ -4995,6 +4995,197 @@
       "doneTransferred": "已删除「{name}」，其他组织仍在使用，它已转为平台所有。"
     }
   },
+  "adminItems": {
+    "tabs": {
+      "agents": "智能体",
+      "connectors": "连接器",
+      "templates": "模板"
+    },
+    "connectors": {
+      "title": "连接器",
+      "description": "所有组织的连接器及其模板：查看配置，停用、启用或删除。",
+      "listLabel": "所有组织的连接器",
+      "columns": {
+        "name": "名称",
+        "org": "组织",
+        "kind": "类型",
+        "from": "来自模板",
+        "status": "状态",
+        "tools": "工具数",
+        "synced": "上次同步",
+        "createdBy": "创建者"
+      },
+      "status": {
+        "active": "启用",
+        "disabled": "停用"
+      },
+      "filters": {
+        "org": "组织",
+        "allOrgs": "全部组织",
+        "status": "状态",
+        "allStatuses": "全部状态"
+      },
+      "search": "搜索名称",
+      "loadMore": "加载更多",
+      "empty": "还没有组织添加连接器",
+      "emptyHint": "组织添加或安装的连接器会列在这里。",
+      "noMatch": "没有符合条件的连接器",
+      "never": "从未",
+      "fromPlatform": "平台模板",
+      "fromCatalog": "插件目录",
+      "detail": {
+        "facts": {
+          "org": "组织",
+          "kind": "类型",
+          "slug": "标识",
+          "status": "状态",
+          "from": "来自模板",
+          "auth": "认证方式",
+          "ownership": "归属",
+          "createdBy": "创建者",
+          "synced": "上次同步",
+          "updated": "更新于",
+          "created": "创建于"
+        },
+        "auth": {
+          "none": "无需认证",
+          "bearer": "Bearer 令牌",
+          "api_key": "API Key",
+          "basic": "用户名与密码",
+          "headers": "自定义请求头",
+          "oauth_code": "OAuth 授权码",
+          "oauth_client": "OAuth 客户端凭据"
+        },
+        "ownership": {
+          "org": "组织共用",
+          "personal": "每人各自"
+        },
+        "sections": {
+          "endpoint": "服务端点",
+          "tools": "工具"
+        },
+        "endpointEmpty": "没有服务端点",
+        "toolsNone": "该连接器没有工具",
+        "toolStatus": {
+          "enabled": "启用",
+          "disabled": "停用",
+          "pending_review": "待复核"
+        },
+        "policy": {
+          "allow": "允许",
+          "ask": "需审批",
+          "deny": "禁止"
+        }
+      },
+      "actions": {
+        "disable": "停用",
+        "enable": "启用",
+        "delete": "删除"
+      },
+      "toggle": {
+        "disabled": "已停用「{name}」",
+        "enabled": "已启用「{name}」"
+      },
+      "delete": {
+        "title": "删除连接器「{name}」？",
+        "hint": "它属于组织「{org}」。删除后它的智能体将无法再使用它，凭据也会一并清除；组织的审计日志会记下这次操作。",
+        "confirm": "删除",
+        "done": "已删除「{name}」"
+      }
+    },
+    "agents": {
+      "title": "智能体",
+      "description": "所有组织的智能体及其模板：查看配置，转移所有者或删除。",
+      "listLabel": "所有组织的智能体",
+      "columns": {
+        "name": "名称",
+        "org": "组织",
+        "owner": "所有者",
+        "visibility": "可见范围",
+        "from": "来自模板",
+        "updated": "更新于"
+      },
+      "needsReassignment": "待重新指派",
+      "visibility": {
+        "private": "私有",
+        "org": "组织",
+        "members": "指定成员"
+      },
+      "filters": {
+        "org": "组织",
+        "allOrgs": "全部组织"
+      },
+      "search": "搜索名称",
+      "loadMore": "加载更多",
+      "empty": "还没有组织创建智能体",
+      "emptyHint": "组织成员创建的智能体会列在这里。",
+      "noMatch": "没有符合条件的智能体",
+      "detail": {
+        "facts": {
+          "org": "组织",
+          "owner": "所有者",
+          "visibility": "可见范围",
+          "members": "成员",
+          "model": "模型",
+          "fallback": "兜底模型",
+          "effort": "推理强度",
+          "from": "来自模板",
+          "versions": "版本数",
+          "updated": "更新于",
+          "created": "创建于"
+        },
+        "membersCount": "{count} 人",
+        "none": "无",
+        "sections": {
+          "instructions": "指令",
+          "quickActions": "快捷操作",
+          "skills": "技能",
+          "connectors": "连接器",
+          "subagents": "子智能体",
+          "pending": "待绑定的连接器"
+        },
+        "instructionsEmpty": "没有指令",
+        "quickActionsEmpty": "没有快捷操作",
+        "skillsNone": "没有技能",
+        "subagents": {
+          "general": "通用子智能体",
+          "templates": "模板",
+          "inline": "自定义",
+          "agents": "其他智能体",
+          "on": "开启",
+          "off": "关闭"
+        },
+        "subagentsNone": "没有子智能体",
+        "skillScope": {
+          "org": "组织技能",
+          "agent": "自带技能"
+        },
+        "connectorsNone": "没有可用的连接器",
+        "connectorStatus": {
+          "active": "启用",
+          "disabled": "停用"
+        }
+      },
+      "actions": {
+        "transfer": "转移所有者",
+        "delete": "删除"
+      },
+      "transfer": {
+        "title": "转移所有者",
+        "owner": "新所有者",
+        "help": "从「{org}」的成员中选择；所有者可以修改和删除这个智能体。",
+        "submit": "转移",
+        "done": "所有者已转移",
+        "none": "这个组织没有可选的成员"
+      },
+      "delete": {
+        "title": "删除智能体「{name}」？",
+        "hint": "它属于组织「{org}」，所有者是 {owner}。删除后组织里的人都无法再使用它，组织的审计日志会记下这次操作。",
+        "confirm": "删除",
+        "done": "已删除「{name}」"
+      }
+    }
+  },
   "adminComponents": {
     "titles": {
       "skill": "技能",
@@ -5004,11 +5195,12 @@
     },
     "descriptions": {
       "skill": "整个部署的技能：插件带来的和平台上的。范围、停用和版本在这里管理。",
-      "connector_template": "组织按模板填入地址和凭据，得到自己的连接器。范围和停用在这里管理。",
-      "agent_template": "预先配好的智能体定义，也可以作为子智能体类型使用。范围、停用和版本在这里管理。",
+      "connector_template": "管理所有组织的连接器及其模板：组织按模板填入地址和凭据得到自己的连接器。范围和停用在模板上管理。",
+      "agent_template": "管理所有组织的智能体及其模板：模板是预先配好的智能体定义，也可作为子智能体类型。范围、停用和版本在模板上管理。",
       "theme": "整个部署的主题：插件带来的配色、字体和标志。范围、停用和版本在这里管理；平台默认主题在平台设置的「外观」里选择。"
     },
     "tabs": {
+      "label": "按归属筛选",
       "all": "全部",
       "platform": "平台",
       "org": "组织创建"
