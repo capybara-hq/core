@@ -17,6 +17,8 @@ export interface AdminOverview {
    * model providers of {@link AdminAttention} (counted in full, not capped).
    */
   attentionTotal: number;
+  /** An attention list could not be read: `attentionTotal` leaves its items out. */
+  partial?: boolean;
 }
 
 /**
@@ -56,6 +58,8 @@ export interface AttentionUpdate {
   version: string;
   marketplaceVersion: string;
   marketplaceId: string | null;
+  /** The marketplace's name; null without one. */
+  marketplaceName: string | null;
 }
 
 export interface AttentionProvider {

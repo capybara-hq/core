@@ -113,7 +113,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.overview",
         description:
-          "The admin console's dashboard numbers (super admin): orgs, accounts and attentionTotal, everything waiting for a super admin (the platform inbox total plus the extensions, plugin updates and model providers admin.attention lists).",
+          "The admin console's dashboard numbers (super admin): orgs, accounts and attentionTotal, everything waiting for a super admin (the platform inbox total plus the extensions, plugin updates and model providers admin.attention lists); partial is true when one of those lists could not be read right now (attentionTotal then leaves it out).",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },

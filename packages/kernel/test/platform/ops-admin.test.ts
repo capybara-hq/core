@@ -9,7 +9,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
@@ -17,6 +17,7 @@ import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -381,7 +382,12 @@ describe("admin and models", () => {
   it("reads the overview and settings, and changes a deployment setting", async () => {
     // the same numbers as GET /admin/overview, nothing else
     const overview = await run("admin.overview", {});
-    expect(Object.keys(overview as object).sort()).toEqual(["accounts", "attentionTotal", "orgs"]);
+    expect(Object.keys(overview as object).sort()).toEqual([
+      "accounts",
+      "attentionTotal",
+      "orgs",
+      "partial",
+    ]);
     expect(overview).toMatchObject({ orgs: 2, accounts: 2 });
     expect((await root({ method: "GET", url: "/api/v1/admin/overview" })).json()).toEqual(overview);
     expect(await run("admin.settings", {})).toMatchObject({ orgCreation: "anyone" });
@@ -392,6 +398,52 @@ describe("admin and models", () => {
       via: "agent",
     });
     await run("admin.update-settings", { orgCreation: "anyone" });
+  });
+
+  it("admin.attention reads compact rows with more and unavailable, never an error text", async () => {
+    const o = op("admin.attention");
+    expect(o.confirm).toBe("read");
+    expect(availability(o, facts("owner")).ok).toBe(false);
+    const spy = vi.spyOn(k.app.get(ProviderRegistry), "listWithStatus").mockResolvedValue([
+      {
+        provider: "model-x",
+        plugin: "model-x",
+        status: "error",
+        error: "upstream said sk-SECRET-123 is invalid",
+        models: [],
+      },
+    ]);
+    try {
+      const out = (await run("admin.attention", {})) as {
+        items: Record<string, unknown>[];
+        more: Record<string, number>;
+        unavailable: string[];
+      };
+      expect(Object.keys(out).sort()).toEqual(["items", "more", "unavailable"]);
+      expect(out.more).toEqual({ extensions: 0, updates: 0, providers: 0 });
+      expect(out.unavailable).toEqual([]);
+      const row = out.items.find((r) => r.kind === "provider");
+      expect(row).toEqual({
+        kind: "provider",
+        id: "model-x",
+        name: "model-x",
+        state: "error",
+        reason: "list_failed",
+        next: expect.stringContaining("/admin/extensions/model-x"),
+      });
+      for (const r of out.items) {
+        expect(Object.keys(r).sort()).toEqual(["id", "kind", "name", "next", "reason", "state"]);
+      }
+      expect(JSON.stringify(out)).not.toContain("sk-SECRET");
+      // a source that fails is named, its rows absent
+      spy.mockRejectedValue(new Error("boom sk-SECRET-123"));
+      const failed = (await run("admin.attention", {})) as typeof out;
+      expect(failed.unavailable).toEqual(["providers"]);
+      expect(failed.items.some((r) => r.kind === "provider")).toBe(false);
+      expect(JSON.stringify(failed)).not.toContain("sk-SECRET");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("admin.audit pages the platform-level audit log like GET /admin/audit, without detail", async () => {

@@ -130,6 +130,7 @@ function AttentionGroups({
       id: u.itemId,
       mark: { text: displayNameOf(u, locale), image: u.icon },
       title: displayNameOf(u, locale),
+      ...(u.marketplaceName !== null && { meta: u.marketplaceName }),
       status: { label: `${versionLabel(u.version)} → ${versionLabel(u.marketplaceVersion)}` },
       href: `/admin/plugins/${encodeURIComponent(u.itemId)}`,
     })),

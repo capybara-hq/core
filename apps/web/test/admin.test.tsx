@@ -76,6 +76,7 @@ const ATTENTION = {
       version: "1.2.0",
       marketplaceVersion: "1.3.0",
       marketplaceId: "official",
+      marketplaceName: "Capybara Official",
     },
   ],
   providers: [{ plugin: "model-openai", displayName: null, icon: null, problem: "list_failed" }],
@@ -211,6 +212,8 @@ describe("/admin 概览（OverviewPage）", () => {
     // plugin updates: the two versions
     const updates = box.getByRole("list", { name: o.groups.updates });
     expect(within(updates).getByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    // and the marketplace it comes from
+    expect(within(updates).getByText("Capybara Official")).toBeTruthy();
     expect(within(updates).getByRole("link", { name: "slack" }).getAttribute("href")).toBe(
       "/admin/plugins/item-1",
     );

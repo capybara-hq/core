@@ -73,6 +73,7 @@ const ATTENTION: AdminAttention = {
       version: "1.2.0",
       marketplaceVersion: "1.3.0",
       marketplaceId: "official",
+      marketplaceName: "Capybara Official",
     },
   ],
   providers: [

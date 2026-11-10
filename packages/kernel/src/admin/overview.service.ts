@@ -5,6 +5,7 @@ import {
   type CatalogItemView,
   CatalogService,
 } from "../catalog/catalog.service.js";
+import { MarketplacesService } from "../catalog/marketplaces.service.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import type {
@@ -30,6 +31,8 @@ export interface AdminOverviewStats {
    * model providers of {@link AdminAttention} (each counted in full, not capped).
    */
   attentionTotal: number;
+  /** An attention source could not be read: `attentionTotal` leaves its items out. */
+  partial: boolean;
 }
 
 /**
@@ -71,6 +74,8 @@ export interface AttentionUpdate {
   version: string;
   marketplaceVersion: string;
   marketplaceId: string | null;
+  /** The marketplace's name; null without a marketplace (or when it was deleted). */
+  marketplaceName: string | null;
 }
 
 export interface AttentionProvider {
@@ -144,6 +149,7 @@ export class AdminOverviewService {
     @Inject(PlatformInboxService) private readonly inbox: PlatformInboxService,
     @Inject(OrgsService) private readonly orgs: OrgsService,
     @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
   ) {}
 
@@ -159,13 +165,17 @@ export class AdminOverviewService {
       orgs: orgs.length,
       accounts,
       attentionTotal: inbox + listed("extensions") + listed("updates") + listed("providers"),
+      partial: attention.unavailable.length > 0,
     };
   }
 
   async attention(): Promise<AdminAttention> {
+    // the catalog is read once: the update rows, and the plugins the inbox already lists
+    const items = this.catalogItems();
+    items.catch(() => {}); // awaited (and reported) by updateRows
     const [extensions, updates, providers] = await Promise.allSettled([
-      this.extensionRows(),
-      this.updateRows(),
+      this.extensionRows(items),
+      this.updateRows(items),
       this.providerRows(),
     ]);
     const out: AdminAttention = {
@@ -195,12 +205,19 @@ export class AdminOverviewService {
     return out;
   }
 
-  private async extensionRows(): Promise<AttentionExtension[]> {
-    const views = await this.extensions.list();
+  /**
+   * The extensions needing a look, but not one pending approval whose plugin waits in the platform
+   * inbox (a permission confirmation or an org upload: the inbox already lists and counts it). A
+   * config-declared extension has no catalog item and stays. Without the catalog nothing is left out.
+   */
+  private async extensionRows(items: Promise<CatalogItemView[]>): Promise<AttentionExtension[]> {
+    const [views, catalog] = await Promise.all([this.extensions.list(), items.catch(() => [])]);
+    const inInbox = new Set(catalog.filter((i) => i.pending).map((i) => i.name));
     return views.flatMap((v) => {
       // every status of extensionNeedsAction has a reason, and so has enabled with an invalid config
       const reason = extensionReason(v);
       if (reason === null) return [];
+      if (v.status === "pending_approval" && inInbox.has(v.name)) return [];
       return [
         {
           name: v.name,
@@ -213,8 +230,8 @@ export class AdminOverviewService {
     });
   }
 
-  /** Every live platform item, page by page (the catalog lists by name). */
-  private async platformItems(): Promise<CatalogItemView[]> {
+  /** Every live catalog item, page by page (the catalog lists by name). */
+  private async catalogItems(): Promise<CatalogItemView[]> {
     const items: CatalogItemView[] = [];
     let offset: number | null = 0;
     while (offset !== null) {
@@ -222,18 +239,24 @@ export class AdminOverviewService {
       items.push(...page.items);
       offset = page.nextOffset;
     }
-    return items.filter((i) => i.owner.kind === "platform");
+    return items;
   }
 
-  private async updateRows(): Promise<AttentionUpdate[]> {
-    const newer = (await this.platformItems()).filter(
-      (i) => i.newerInMarketplace && i.latestMarketplaceVersion !== null,
+  /** Platform plugins with a newer marketplace version (org items are their org admins'). */
+  private async updateRows(items: Promise<CatalogItemView[]>): Promise<AttentionUpdate[]> {
+    const newer = (await items).filter(
+      (i) =>
+        i.owner.kind === "platform" && i.newerInMarketplace && i.latestMarketplaceVersion !== null,
     );
     if (newer.length === 0) return [];
-    const icons = await this.icons.ofItems(
-      newer.map((i) => i.id),
-      { kind: "admin" },
-    );
+    const [icons, marketplaces] = await Promise.all([
+      this.icons.ofItems(
+        newer.map((i) => i.id),
+        { kind: "admin" },
+      ),
+      this.marketplaces.list(),
+    ]);
+    const names = new Map(marketplaces.map((m) => [m.id, m.name]));
     return newer.map((i) => ({
       itemId: i.id,
       name: i.name,
@@ -242,6 +265,7 @@ export class AdminOverviewService {
       version: i.latestVersion,
       marketplaceVersion: i.latestMarketplaceVersion as string,
       marketplaceId: i.marketplaceId,
+      marketplaceName: i.marketplaceId === null ? null : (names.get(i.marketplaceId) ?? null),
     }));
   }
 

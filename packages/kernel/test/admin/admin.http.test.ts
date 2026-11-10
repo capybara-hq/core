@@ -678,7 +678,7 @@ describe("超级管理员端点", () => {
     const res = await req({ method: "GET", url: "/api/v1/admin/overview" });
     expect(res.statusCode).toBe(200);
     // no extension, provider or inbox item in this deployment: nothing waits
-    expect(res.json()).toEqual({ accounts: 2, orgs: 2, attentionTotal: 0 });
+    expect(res.json()).toEqual({ accounts: 2, orgs: 2, attentionTotal: 0, partial: false });
     // reading the overview is not audited (decision D5)
     const before = await db.selectFrom("audit_events").select("id").execute();
     await req({ method: "GET", url: "/api/v1/admin/overview/attention" });

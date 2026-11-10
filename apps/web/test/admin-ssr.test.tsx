@@ -269,6 +269,7 @@ const ROUTES: Routes = {
           version: "1.0.0",
           marketplaceVersion: "1.1.0",
           marketplaceId: "official",
+          marketplaceName: "Capybara Official",
         },
       ],
       providers: [],

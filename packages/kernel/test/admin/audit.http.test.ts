@@ -103,6 +103,7 @@ describe("GET /api/v1/admin/audit", () => {
       "after=abc",
       "after=-1",
       "after=99999999999999999999",
+      "after=9999999999999999999",
     ]) {
       const r = await root({ method: "GET", url: `/api/v1/admin/audit?${q}` });
       expect(r.statusCode, q).toBe(400);

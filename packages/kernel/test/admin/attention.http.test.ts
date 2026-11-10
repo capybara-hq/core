@@ -4,6 +4,10 @@ import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AdminAttention } from "../../src/admin/overview.service.js";
 import { type CatalogItemView, CatalogService } from "../../src/catalog/catalog.service.js";
+import {
+  MarketplacesService,
+  type MarketplaceView,
+} from "../../src/catalog/marketplaces.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
@@ -183,6 +187,9 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
   });
 
   it("lists platform plugins with a newer marketplace version, with both versions", async () => {
+    vi.spyOn(k.app.get(MarketplacesService), "list").mockResolvedValue([
+      { id: "official", name: "Capybara Official" } as MarketplaceView,
+    ]);
     vi.spyOn(k.app.get(CatalogService), "page").mockResolvedValue({
       items: [
         item({}),
@@ -209,6 +216,7 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
         version: "1.2.0",
         marketplaceVersion: "1.3.0",
         marketplaceId: "official",
+        marketplaceName: "Capybara Official",
       },
     ]);
     expect(a.unavailable).toEqual([]);
@@ -241,6 +249,35 @@ describe("GET /api/v1/admin/overview attentionTotal", { timeout: 60_000 }, () =>
     const r = await root({ method: "GET", url: "/api/v1/admin/overview" });
     expect(r.statusCode, r.body).toBe(200);
     // 4 inbox + 23 extensions + 1 update + 2 providers (model-eval, model-embed-probe)
-    expect(r.json()).toEqual({ orgs: 0, accounts: 1, attentionTotal: 30 });
+    expect(r.json()).toEqual({ orgs: 0, accounts: 1, attentionTotal: 30, partial: false });
+  });
+
+  it("counts a plugin waiting for its permission confirmation once, as the inbox item", async () => {
+    // the platform item waits in the inbox (permission_confirmation) and its extension is
+    // pending_approval: listed and counted only in the inbox; a config-declared extension with no
+    // catalog item stays in attention
+    vi.spyOn(k.app.get(ExtensionAdmin), "list").mockResolvedValue([
+      view("crm", { status: "pending_approval" }),
+      view("declared", { status: "pending_approval" }),
+    ]);
+    vi.spyOn(k.app.get(CatalogService), "page").mockResolvedValue({
+      items: [item({ name: "crm", pending: true, newerInMarketplace: false })],
+      nextOffset: null,
+    });
+    const a = await attention();
+    expect(a.extensions.map((e) => e.name)).toEqual(["declared"]);
+    const inbox = await root({ method: "GET", url: "/api/v1/admin/inbox" });
+    expect(inbox.json().byType.permission_confirmation).toBe(1);
+    const r = await root({ method: "GET", url: "/api/v1/admin/overview" });
+    // 1 inbox item + 1 extension (declared) + 2 providers
+    expect(r.json()).toMatchObject({ attentionTotal: 4, partial: false });
+  });
+
+  it("is partial when an attention source could not be read", async () => {
+    vi.spyOn(k.app.get(ProviderRegistry), "listWithStatus").mockRejectedValue(new Error("down"));
+    const r = await root({ method: "GET", url: "/api/v1/admin/overview" });
+    expect(r.statusCode, r.body).toBe(200);
+    // badconfig only: the providers are not counted, and the answer says so
+    expect(r.json()).toEqual({ orgs: 0, accounts: 1, attentionTotal: 1, partial: true });
   });
 });
