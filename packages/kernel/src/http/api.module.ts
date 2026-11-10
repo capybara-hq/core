@@ -86,11 +86,8 @@ import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SetupChecksController } from "../setup/setup-checks.controller.js";
 import { SetupGuidesController } from "../setup/setup-guides.controller.js";
-import {
-  AgentSkillsController,
-  InboxController,
-  SkillChangesController,
-} from "../skills/changes.controller.js";
+import { AgentSkillsController } from "../skills/agent-skills.controller.js";
+import { InboxController, SkillChangesController } from "../skills/changes.controller.js";
 import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";

@@ -345,7 +345,8 @@
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
       "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu.",
-      "name_exists": "A skill with this name already exists in the organization. Choose another name."
+      "name_exists": "A skill with this name already exists in the organization. Choose another name.",
+      "agent_cap": "This agent already has the maximum number of skills. Delete one, or upload a new version of an existing skill (same name)."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",

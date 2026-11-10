@@ -1,6 +1,5 @@
-import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import { AgentsService } from "../agents/agents.service.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -12,13 +11,11 @@ import { InboxService, type InboxView } from "../inbox/inbox.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { AgentSkillsService } from "./agent-skills.service.js";
 import {
   type SkillChangeDetail,
   SkillChangesService,
   type SkillChangeView,
 } from "./changes.service.js";
-import { type SkillSummary, SkillsService } from "./skills.service.js";
 
 const DecideBody = z
   .object({
@@ -64,56 +61,6 @@ export class SkillChangesController {
     return {
       skillChange: await this.changes.decide(org.orgId, id, p.account.id, body, patTokenId(p)),
     };
-  }
-}
-
-/**
- * agent 自己的技能（`/api/v1/orgs/:orgId/agents/:agentId/skills`，M5 T15 / T16）：
- * - `GET /`：列表（`scope=agent`、未删除，按名字），与 `GET /agents/:agentId` 同一可见性（`agents.use`；
- *   看不到的 agent → 404 `agent.not_found`；服务令牌只看到 visibility='org' 的 agent）；
- * - `DELETE /:skillId`：软删除，只有该 agent 当前的负责人（其他人 403 `forbidden`），仅限用户主体
- *   （`agents.create` 属 HUMAN_ONLY）。同名的待处理改动一并取消。
- */
-@Controller("api/v1/orgs/:orgId/agents/:agentId/skills")
-export class AgentSkillsController {
-  constructor(
-    @Inject(AgentSkillsService) private readonly agentSkills: AgentSkillsService,
-    @Inject(AgentsService) private readonly agents: AgentsService,
-    @Inject(SkillsService) private readonly skills: SkillsService,
-  ) {}
-
-  @Get()
-  @OrgAction("agents.use")
-  async list(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("agentId") agentId: string,
-  ): Promise<{ skills: SkillSummary[] }> {
-    await this.agents.get(
-      org.orgId,
-      agentId,
-      principal.kind === "user" ? principal.account.id : null,
-    );
-    return { skills: await this.skills.listForAgent(org.orgId, agentId) };
-  }
-
-  @Delete(":skillId")
-  @HttpCode(204)
-  @OrgAction("agents.create")
-  async remove(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("agentId") agentId: string,
-    @Param("skillId") skillId: string,
-  ): Promise<void> {
-    const p = requireUser(principal);
-    await this.agentSkills.deleteAgentSkill(
-      org.orgId,
-      agentId,
-      skillId,
-      p.account.id,
-      patTokenId(p),
-    );
   }
 }
 

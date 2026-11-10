@@ -66,11 +66,7 @@ export type RegisterOutcome =
     };
 
 const agentNotFound = () => new ApiError("agent.not_found", "Agent not found");
-const notOwner = () =>
-  new ApiError(
-    "forbidden",
-    "Only this agent's owner can change its skills; tell the user that only the agent's owner can add, update or delete them.",
-  );
+const notOwner = () => new ApiError("forbidden", "Only the agent's owner can change its skills.");
 
 /** The body of a skill's SKILL.md (as run start would read it); null if unparsable. */
 export function skillMdBody(files: readonly { path: string; data: Uint8Array }[]): string | null {
@@ -201,8 +197,17 @@ export class AgentSkillsService {
     this.catalogDeps = { db, log, eventLog };
   }
 
-  /** Registers a zip package as one of the agent's own skills (see the class comment). */
-  async register(actor: AgentSkillActor, zip: Uint8Array): Promise<RegisterOutcome> {
+  /**
+   * Registers a zip package as one of the agent's own skills (see the class comment).
+   * `opts.inTransaction` runs in the register transaction after the agent row lock, before the
+   * skill rows (e.g. consuming the upload the zip came from, so a concurrent retry of the same
+   * upload registers nothing).
+   */
+  async register(
+    actor: AgentSkillActor,
+    zip: Uint8Array,
+    opts: { inTransaction?: () => Promise<void> } = {},
+  ): Promise<RegisterOutcome> {
     const pkg = await readSkillPackage(zip);
     // Refuse early (re-checked under the lock) so a non-owner writes nothing to storage
     await this.assertOwner(actor.orgId, actor.agentId, actor.accountId);
@@ -211,7 +216,7 @@ export class AgentSkillsService {
     let committed: { outcome: RegisterOutcome; toSeq: number | null };
     try {
       await this.putFiles(actor.orgId, prefix, pkg.files);
-      committed = await this.registerIn(actor, pkg, skillManifest(pkg), prefix);
+      committed = await this.registerIn(actor, pkg, skillManifest(pkg), prefix, opts.inTransaction);
     } catch (e) {
       await this.deletePrefix(actor.orgId, prefix);
       throw e;
@@ -294,18 +299,25 @@ export class AgentSkillsService {
     pkg: { name: string; description: string; files: SkillPackageFile[] },
     manifest: SkillManifest,
     prefix: string,
+    inTransaction: (() => Promise<void>) | undefined,
   ): Promise<{ outcome: RegisterOutcome; toSeq: number | null }> {
     await keyShareOrg(this.db, actor.orgId);
     await this.checkOwner(actor.orgId, actor.agentId, actor.accountId, true);
-    // Then the conversation row (the snapshot append's lock), still after the agent row
+    // Then the conversation row (the snapshot append's lock), still after the agent row: a
+    // conversation of this org with this agent only (defense in depth: callers pass the run's own)
     if (actor.conversationId !== undefined) {
-      await this.db
+      const conv = await this.db
         .selectFrom("conversations")
-        .select("id")
+        .select("agent_id")
         .where("id", "=", actor.conversationId)
+        .where("org_id", "=", actor.orgId)
         .forUpdate()
-        .execute();
+        .executeTakeFirst();
+      if (conv?.agent_id !== actor.agentId) {
+        throw new ApiError("conversation.not_found", "Conversation not found");
+      }
     }
+    if (inTransaction !== undefined) await inTransaction();
     const existing = await this.db
       .selectFrom("skills")
       .select(["id", "current_version"])
