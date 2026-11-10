@@ -93,6 +93,7 @@ const inbox = (
 const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
   id,
   orgId: "o1",
+  kind: "version",
   agent: { id: "ag1", name: "Shared agent" },
   skillId: "k1",
   name: "notes-style",
@@ -367,16 +368,28 @@ describe("收件箱：技能变更", () => {
     expect(await screen.findByText(zh.errors.skill_change.already_decided)).toBeTruthy();
   });
 
-  it("新技能（没有当前版本）：全部文件为新增；自己发起的显示「两步确认」说明；列表被截断时提示", async () => {
+  it("新技能（没有当前版本）：全部文件为新增；共享申请显示共享说明、没有发起会话时不显示打开会话；列表被截断时提示", async () => {
     const { container } = await renderInbox({
       [LIST]: () =>
         json(
           200,
-          inbox([], [skillChange("sc1", { skillId: null, version: 1, requestedBy: "a1" })], true),
+          inbox(
+            [],
+            [
+              skillChange("sc1", {
+                kind: "share",
+                version: 1,
+                requestedBy: "a1",
+                requestedInConversation: null,
+                conversationPath: null,
+              }),
+            ],
+            true,
+          ),
         ),
       [DETAIL]: () =>
         json(200, {
-          skillChange: detail({ skillId: null, version: 1, requestedBy: "a1", current: null }),
+          skillChange: detail({ kind: "share", version: 1, requestedBy: "a1", current: null }),
         }),
     });
     expect(await screen.findByText(en.inbox.truncated)).toBeTruthy();
@@ -387,11 +400,48 @@ describe("收件箱：技能变更", () => {
     });
     expect(await within(card).findByText(`SKILL.md · ${en.inbox.skillChange.added}`)).toBeTruthy();
     expect(within(card).getByText(en.inbox.skillChange.newSkill)).toBeTruthy();
-    expect(within(card).getByText(en.inbox.skillChange.selfHint)).toBeTruthy();
+    expect(within(card).getByText(en.inbox.skillChange.shareHint)).toBeTruthy();
+    // a share request has no proposing conversation to open
+    expect(within(card).queryByRole("button", { name: en.inbox.openConversation })).toBeNull();
     const diff = within(card).getByLabelText(
       en.inbox.skillChange.diffLabel.replace("{path}", "SKILL.md"),
     );
     expect(diff.textContent).toContain("+ # Notes");
+  });
+});
+
+describe("inbox: skill change kinds", () => {
+  it.each(LOCALES)("each row names its kind: share or new version (%s)", async (locale) => {
+    const m = msgs[locale];
+    await renderInbox(
+      {
+        [LIST]: () =>
+          json(
+            200,
+            inbox(
+              [],
+              [
+                skillChange("sc1", { kind: "share", name: "alpha" }),
+                skillChange("sc2", { kind: "version", name: "beta" }),
+              ],
+            ),
+          ),
+        "GET /api/v1/orgs/o1/skill-changes/sc1": () => json(404, { error: { code: "x" } }),
+        "GET /api/v1/orgs/o1/skill-changes/sc2": () => json(404, { error: { code: "x" } }),
+      },
+      { locale },
+    );
+    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    const rowOf = (name: string) =>
+      within(table)
+        .getAllByRole("row")
+        .find((r) => r.textContent?.includes(name)) as HTMLElement;
+    expect(rowOf("alpha").textContent).toContain(
+      `${m.inbox.skillChange.kind.share} · Shared agent`,
+    );
+    expect(rowOf("beta").textContent).toContain(
+      `${m.inbox.skillChange.kind.version} · Shared agent`,
+    );
   });
 });
 

@@ -140,13 +140,13 @@ function SkillChangeCard({
   const ti = useTranslations("inbox");
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const { me } = useSession();
   const current = detail?.current ?? null;
+  const conversationPath = change.conversationPath;
   return (
     <div data-skill-change-id={change.id}>
       <Card
-        title={t("title", { name: change.name })}
-        actions={<StatusMark status="waiting" label={t("label")} />}
+        title={t("title", { kind: t(`kind.${change.kind}`), name: change.name })}
+        actions={<StatusMark status="waiting" label={t(`kind.${change.kind}`)} />}
       >
         <Stack gap={12}>
           <KeyValue
@@ -157,7 +157,7 @@ function SkillChangeCard({
               {
                 k: t("version"),
                 v:
-                  change.skillId === null || (detail !== undefined && current === null)
+                  change.kind === "share"
                     ? t("newSkill")
                     : t("update", {
                         from: current?.version ?? change.version - 1,
@@ -175,18 +175,15 @@ function SkillChangeCard({
             </Text>
           </Stack>
           <Text variant="small" tone="muted">
-            {t("ownerHint")}
+            {t(`${change.kind}Hint`)}
           </Text>
-          {change.requestedBy === me.account.id && (
-            <Text variant="small" tone="muted">
-              {t("selfHint")}
-            </Text>
+          {conversationPath !== null && (
+            <Stack direction="row">
+              <Button onClick={() => router.push(conversationPath)}>
+                {ti("openConversation")}
+              </Button>
+            </Stack>
           )}
-          <Stack direction="row">
-            <Button onClick={() => router.push(change.conversationPath)}>
-              {ti("openConversation")}
-            </Button>
-          </Stack>
           <Stack gap={8}>
             <Text variant="small" tone="muted">
               {t("files")}

@@ -421,7 +421,7 @@ describe("the agent page's sections with their own saves (agent profile design Â
   });
 
   it("skills writePolicy shows only for a saved private agent", async () => {
-    const confirm = { name: F.confirmSkillWrite };
+    const confirm = { name: F.confirmSkillRegister };
     stubApi(routes(agent({ visibility: "org" })));
     await renderEditAgent({ section: "skills" });
     expect(screen.queryByRole("checkbox", confirm)).toBeNull();

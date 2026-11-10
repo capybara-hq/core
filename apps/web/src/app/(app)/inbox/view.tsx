@@ -154,7 +154,7 @@ function Inbox({
   }, [active?.id]);
 
   const labels: Labels = {
-    skillChange: t("skillChange.label"),
+    skillChange: { share: t("skillChange.kind.share"), version: t("skillChange.kind.version") },
     request: td("label"),
     skillRenamed: tn("label"),
     setup: ts("label"),
@@ -429,7 +429,7 @@ const subjectOf = (i: InboxItem): string =>
 
 /** The labels the row titles start with. */
 interface Labels {
-  skillChange: string;
+  skillChange: Record<SkillChange["kind"], string>;
   request: string;
   skillRenamed: string;
   setup: string;
@@ -443,7 +443,7 @@ interface Labels {
 /**
  * One list row (spec §5.7): it leads with what the item is about (the tool, the skill, the
  * plugin's display name), the version beside it (never cut, the name takes the ellipsis), and
- * the kind of item on the second line (技能变更 · the agent, 已共享 · the org, 上传已确认 …).
+ * the kind of item on the second line (共享技能 · the agent, 已共享 · the org, 上传已确认 …).
  */
 function rowOf(
   item: InboxItem,
@@ -453,7 +453,11 @@ function rowOf(
   const joined = (...parts: string[]) => parts.filter((p) => p !== "").join(" · ");
   if (item.type === "skill_change") {
     const c = item.skillChange;
-    return { title: c.name, trailing: null, description: joined(labels.skillChange, c.agent.name) };
+    return {
+      title: c.name,
+      trailing: null,
+      description: joined(labels.skillChange[c.kind], c.agent.name),
+    };
   }
   if (
     (item.type === "catalog_request" || item.type === "catalog_request_decided") &&

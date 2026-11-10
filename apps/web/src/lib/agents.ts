@@ -92,7 +92,7 @@ export interface AgentDefinitionInput {
   toolPolicies?: Record<string, AgentToolPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
   /**
-   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 SkillWrite 确认开关，缺省不写），
+   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有智能体登记技能（agents.register-skill）的确认开关，缺省不写），
    * 其余键（新版本内核加的）保存时原样带回。
    */
   skills?: {

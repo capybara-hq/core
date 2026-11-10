@@ -124,11 +124,15 @@ export interface UploadedSkill {
 
 export type SkillChangeStatus = "pending" | "approved" | "rejected" | "cancelled";
 
+/** `share`: an agent's skill offered to the org; `version`: a new version of a shared skill. */
+export type SkillChangeKind = "share" | "version";
+
 export interface SkillChange {
   id: string;
   orgId: string;
+  kind: SkillChangeKind;
   agent: { id: string; name: string };
-  /** 已有技能的 id；新技能为 null。 */
+  /** A share: the agent skill; a version: the shared org skill. */
   skillId: string | null;
   name: string;
   description: string;
@@ -138,9 +142,10 @@ export interface SkillChange {
   status: SkillChangeStatus;
   requestedBy: string;
   requestedByName: string;
-  requestedInConversation: string;
-  /** 网页中发起对话的路径（不含语言前缀）。 */
-  conversationPath: string;
+  /** The proposing conversation; null for a share request and a proposal made on the web. */
+  requestedInConversation: string | null;
+  /** The proposing conversation's web path (no locale prefix), or null. */
+  conversationPath: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
   createdAt: string;
@@ -239,6 +244,48 @@ export const deleteAgentSkill = (orgId: string, agentId: string, skillId: string
   apiFetch<void>(`${org(orgId)}/agents/${enc(agentId)}/skills/${enc(skillId)}`, {
     method: "DELETE",
   });
+
+/** The kernel's answer to registering an agent skill package (`RegisterOutcome`). */
+export type RegisteredAgentSkill =
+  | { kind: "version"; skillId: string; name: string; version: number; created: boolean }
+  | { kind: "proposed"; name: string };
+
+/**
+ * Uploads a skill package to the agent (owner only): `POST /agents/:id/skills/uploads` registers
+ * the upload, the browser posts straight to object storage, then `POST /agents/:id/skills
+ * {uploadId}` unpacks it into the agent's skill (or, for a shared skill the owner maintains, a
+ * new version applied at once for an org admin and proposed to the admins otherwise).
+ */
+export async function uploadAgentSkillZip(
+  orgId: string,
+  agentId: string,
+  file: File,
+  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<RegisteredAgentSkill> {
+  const base = `${org(orgId)}/agents/${enc(agentId)}/skills`;
+  const created = await apiFetch<CreatedAttachment>(`${base}/uploads`, {
+    method: "POST",
+    body: JSON.stringify({ name: file.name, size: file.size }),
+    ...(opts.signal && { signal: opts.signal }),
+  });
+  opts.signal?.throwIfAborted();
+  await uploadToStorage(created.upload, file, opts);
+  opts.signal?.throwIfAborted();
+  const r = await apiFetch<{ skill: RegisteredAgentSkill }>(base, {
+    method: "POST",
+    body: JSON.stringify({ uploadId: created.id }),
+    ...(opts.signal && { signal: opts.signal }),
+  });
+  return r.skill;
+}
+
+/** Shares the agent's own skill with the org: at once for an org admin, else a request. */
+export const shareAgentSkill = (orgId: string, agentId: string, skillId: string) =>
+  apiFetch<{
+    share: { kind: "shared"; skillId: string } | { kind: "requested"; requestId: string };
+  }>(`${org(orgId)}/agents/${enc(agentId)}/skills/${enc(skillId)}/share`, { method: "POST" }).then(
+    (r) => r.share,
+  );
 
 export const getSkillChange = (orgId: string, id: string) =>
   apiFetch<{ skillChange: SkillChangeDetail }>(`${org(orgId)}/skill-changes/${enc(id)}`);
