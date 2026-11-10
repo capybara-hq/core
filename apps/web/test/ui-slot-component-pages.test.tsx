@@ -57,6 +57,7 @@ const setOf = (
           entry: { url: `/api/v1/client/${plugin}/${BUILD}/client.mjs`, integrity: "sha384-e" },
           styles: [],
           components,
+          signInId: "s1",
         },
       ]
     : [],

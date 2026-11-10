@@ -27,6 +27,7 @@ interface Item {
   entry: { url: string; integrity: string } | null;
   styles: { url: string; integrity: string }[];
   components: { id: string; slot: string }[];
+  signInId: string;
 }
 interface Shell {
   enabled: boolean;
@@ -97,6 +98,11 @@ async function adminRead(query = ""): Promise<Shell> {
   return r.json() as Shell;
 }
 
+/** A sign-in id: 128 bits, base64url. */
+const SIGN_IN_ID = expect.stringMatching(/^[A-Za-z0-9_-]{22}$/);
+
+const signInIds = (s: Shell) => Object.fromEntries(s.items.map((i) => [i.plugin, i.signInId]));
+
 const componentsOf = (s: Shell) =>
   Object.fromEntries(s.items.map((i) => [i.plugin, i.components.map((c) => c.id)]));
 
@@ -126,6 +132,7 @@ describe("client shell reads", { timeout: 120_000 }, () => {
             { id: "hud", slot: "conversation.properties.section" },
             { id: "fx", slot: "shell.overlay" },
           ],
+          signInId: SIGN_IN_ID,
         },
         {
           plugin: PLAIN,
@@ -136,6 +143,7 @@ describe("client shell reads", { timeout: 120_000 }, () => {
           },
           styles: [],
           components: [{ id: "hud", slot: "conversation.properties.section" }],
+          signInId: SIGN_IN_ID,
         },
       ],
     });
@@ -160,6 +168,49 @@ describe("client shell reads", { timeout: 120_000 }, () => {
     expect(c.statusCode, c.body).toBe(201);
     await enableExtensions(env.db, env.orgId, "cx-org");
     expect((await orgRead(env.mem)).items.map((i) => i.plugin)).toEqual([PAGE, PLAIN]);
+  });
+
+  it("the sign-in id is stable for one sign-in, new after the next, and differs by plugin", async () => {
+    const person = await signIn(env, "mem");
+    const first = signInIds(await orgRead(person.req));
+    expect(Object.keys(first).sort()).toEqual([PAGE, PLAIN].sort());
+    // the same on every read of the sign-in, across a token refresh
+    expect(signInIds(await orgRead(person.req))).toEqual(first);
+    const refreshed = await person.req({ method: "POST", url: "/api/v1/auth/refresh" });
+    expect(refreshed.statusCode, refreshed.body).toBe(200);
+    expect(signInIds(await orgRead(person.req))).toEqual(first);
+    // a different string per plugin (not an isolation boundary: client code can read the whole set)
+    expect(first[PAGE]).not.toBe(first[PLAIN]);
+    // the next sign-in of the same account gets new ids
+    const next = signInIds(await orgRead((await signIn(env, "mem")).req));
+    expect(next[PAGE]).not.toBe(first[PAGE]);
+    expect(next[PLAIN]).not.toBe(first[PLAIN]);
+    // the admin read gives the same id for the same sign-in and plugin
+    expect(signInIds(await adminRead())[PAGE]).toBe(signInIds(await orgRead(env.root))[PAGE]);
+  });
+
+  it("a personal token is its own sign-in: stable across its requests, unlike a session's", async () => {
+    const person = await signIn(env, "mem");
+    const made = await person.req({
+      method: "POST",
+      url: "/api/v1/me/tokens",
+      payload: { name: "cli" },
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const token = (made.json() as { token: string }).token;
+    const patRead = async () => {
+      const r = await env.k.http.inject({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/ui/client`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return signInIds(r.json() as Shell);
+    };
+    const first = await patRead();
+    expect(first[PAGE]).toEqual(SIGN_IN_ID);
+    expect(await patRead()).toEqual(first);
+    expect(first[PAGE]).not.toBe(signInIds(await orgRead(person.req))[PAGE]);
   });
 
   it("components are filtered by the viewer's role", async () => {
@@ -235,6 +286,7 @@ describe("client shell reads", { timeout: 120_000 }, () => {
       },
       styles: [],
       components: [{ id: "page", slot: "platform.page" }],
+      signInId: SIGN_IN_ID,
     };
     expect(await adminRead()).toEqual({ enabled: true, apiVersion: 1, items: [expected] });
     expect(await adminRead(`?plugin=${PAGE}`)).toEqual({

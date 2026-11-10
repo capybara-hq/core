@@ -6,6 +6,7 @@ import type {
   ClientStorage,
   JsonValue,
   RunState,
+  SignIn,
   UiView,
 } from "./types.js";
 
@@ -48,6 +49,7 @@ export interface HostApi {
   theme: { key: string | null; scheme: "dark" | "light" };
   storage: ClientStorage;
   assetUrl(path: string): string;
+  signIn: SignIn;
   /** Subscribes to client events; returns the unsubscribe function. */
   subscribe(handler: (e: CapybaraEvent) => void): () => void;
 }

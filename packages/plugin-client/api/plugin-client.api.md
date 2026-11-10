@@ -91,6 +91,7 @@ export interface ClientApi {
     assetUrl(path: string): string;
     locale: "zh" | "en";
     reducedMotion: boolean;
+    signIn: SignIn;
     storage: ClientStorage;
 }
 
@@ -213,6 +214,11 @@ export interface PropertySectionProps {
 
 // @public
 export type RunState = "idle" | "running" | "waiting" | "failed";
+
+// @public
+export interface SignIn {
+    id: string;
+}
 
 // @public
 export interface SlotComponentProps {
@@ -351,6 +357,9 @@ export function useRunState(): {
     state: RunState;
     conversationId: string | null;
 };
+
+// @public
+export function useSignIn(): SignIn;
 
 // @public
 export function useTheme(): {

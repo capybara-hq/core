@@ -22,6 +22,8 @@ export interface ClientExtensionItem {
   /** Empty in the admin set (spec §9.6). */
   styles: ClientFileRef[];
   components: { id: string; slot: string }[];
+  /** The viewer's sign-in id for this plugin (`ClientApi.signIn.id`, spec §4.2). */
+  signInId: string;
 }
 
 /** The shell read (spec §9.2). */

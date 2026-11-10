@@ -28,6 +28,7 @@ export const PLUGIN_CLIENT_EXPORTS: readonly string[] = [
   "useLocale",
   "usePrefersReducedMotion",
   "useRunState",
+  "useSignIn",
   "useTheme",
   "useView",
 ];

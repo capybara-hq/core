@@ -313,8 +313,13 @@ export class ClientAccess {
    * build ({@link listed}: one per extension), in name order, minus the stopped ones; `components`
    * are those whose slot the role may use (`canUseSlot`: its `minRole`, never `platform.page`). An
    * extension with no component left is still listed (its stylesheets and entry still load).
+   * `signInId` gives each item the viewer's sign-in id for that plugin (`ClientSignIn`).
    */
-  async orgSet(orgId: string, role: OrgRole): Promise<ClientExtensionsResponse> {
+  async orgSet(
+    orgId: string,
+    role: OrgRole,
+    signInId: (plugin: string) => string,
+  ): Promise<ClientExtensionsResponse> {
     const db = this.db.db;
     const [kill, rows] = await Promise.all([
       readClientExtensions(db, this.log),
@@ -332,6 +337,7 @@ export class ClientAccess {
           components: componentsOf(r.section)
             .filter((c) => canUseSlot(c.slot, role))
             .map((c) => ({ id: c.id, slot: c.slot.id })),
+          signInId: signInId(r.plugin),
         }),
       );
     return { enabled: true, apiVersion: CLIENT_API_VERSION, items };
@@ -342,7 +348,10 @@ export class ClientAccess {
    * enablement) with at least one `platform.page` component and an entry, only those components
    * and no stylesheets (the admin console runs no org client code); with `plugin`, at most that one.
    */
-  async platformSet(plugin?: string): Promise<ClientExtensionsResponse> {
+  async platformSet(
+    signInId: (plugin: string) => string,
+    plugin?: string,
+  ): Promise<ClientExtensionsResponse> {
     const db = this.db.db;
     let q = this.listed(db);
     if (plugin !== undefined) q = q.where("i.name", "=", plugin);
@@ -355,7 +364,14 @@ export class ClientAccess {
         .map((c) => ({ id: c.id, slot: c.slot.id }));
       if (components.length === 0) return [];
       return [
-        { plugin: r.plugin, build: r.build, entry: fileRef(r, r.entry), styles: [], components },
+        {
+          plugin: r.plugin,
+          build: r.build,
+          entry: fileRef(r, r.entry),
+          styles: [],
+          components,
+          signInId: signInId(r.plugin),
+        },
       ];
     });
     return { enabled: true, apiVersion: CLIENT_API_VERSION, items };

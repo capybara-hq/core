@@ -45,6 +45,7 @@ const setOf = (components: { id: string; slot: string }[]): ClientExtensionsResp
     entry: { url: `/api/v1/client/fake-client/${BUILD}/client.mjs`, integrity: "sha384-e" },
     styles: [],
     components,
+    signInId: "s1",
   };
   return { enabled: true, apiVersion: 1, items: [item] };
 };

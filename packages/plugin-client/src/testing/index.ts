@@ -35,6 +35,8 @@ export interface FakeHostOptions {
   /** Listeners of a client extension's `events`, called on `emit` like in the real host. */
   events?: ClientExtension["events"];
   reducedMotion?: boolean;
+  /** The id `useSignIn()` and the listeners' `api.signIn` carry; default "test-sign-in". */
+  signInId?: string;
 }
 
 export interface FakeHost {
@@ -57,7 +59,7 @@ function fakeDesign(): Record<string, ComponentType<never>> {
 
 /**
  * Renders `element` inside a fake host (what the real host provides per component): the slot, the
- * role, the locale, the run state, the view and the design stand-ins. Needs a DOM (jsdom).
+ * role, the locale, the run state, the sign-in, the view and the design stand-ins. Needs a DOM (jsdom).
  */
 export function renderWithFakeHost(element: ReactElement, options: FakeHostOptions): FakeHost {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,11 +71,13 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
   const storage = createPrefixedStorage(plugin);
   const locale = options.locale ?? "en";
   const assetUrl = (path: string) => `/api/v1/client/${plugin}/test-build/assets/${path}`;
+  const signIn = { id: options.signInId ?? "test-sign-in" };
   const clientApi: ClientApi = {
     locale,
     reducedMotion: options.reducedMotion ?? false,
     storage,
     assetUrl,
+    signIn,
   };
   const previousHost = clientHost();
   setClientHost({ design: fakeDesign() });
@@ -106,6 +110,7 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
       theme: { key: null, scheme: "dark" },
       storage,
       assetUrl,
+      signIn,
       subscribe,
     };
     const value: HostContextValue = {

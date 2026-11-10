@@ -9,6 +9,7 @@ import {
   useClientStorage,
   useLocale,
   useRunState,
+  useSignIn,
 } from "../src/index.js";
 import { renderWithFakeHost } from "../src/testing/index.js";
 
@@ -109,6 +110,35 @@ describe("hooks, more", () => {
     host.unmount();
     get.mockRestore();
     set.mockRestore();
+  });
+
+  it("useSignIn throws PluginClientContextError outside the host", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    function Probe() {
+      useSignIn();
+      return null;
+    }
+    expect(() => render(<Probe />)).toThrow(PluginClientContextError);
+    spy.mockRestore();
+  });
+
+  it("useSignIn and the listeners' api carry the fake host's signInId", () => {
+    function Probe() {
+      return <p>{useSignIn().id}</p>;
+    }
+    const ids: string[] = [];
+    const host = renderWithFakeHost(<Probe />, {
+      slot: "shell.overlay",
+      signInId: "s-1",
+      events: { "run.started": (_e, api) => ids.push(api.signIn.id) },
+    });
+    expect(screen.getByText("s-1")).toBeTruthy();
+    host.emit(event("run.started"));
+    expect(ids).toEqual(["s-1"]);
+    host.unmount();
+    const plain = renderWithFakeHost(<Probe />, { slot: "shell.overlay" });
+    expect(screen.getByText("test-sign-in")).toBeTruthy();
+    plain.unmount();
   });
 
   it("useAccess().atLeast ranks roles", () => {
