@@ -233,7 +233,8 @@ export function questionField(f: InputForm["fields"][number], locale: string): Q
 /**
  * A question in the conversation (`AskUserQuestion`, an extension's tool, MCP elicitation; design
  * `QuestionBlock`): options plus Other, a URL shown in full and opened in a new window, Answer.
- * Answered, one question / answer line; expired or cancelled, its line.
+ * Answered, one question / answer line; skipped (a message sent instead), expired or cancelled,
+ * its line.
  */
 export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionItem }) {
   const t = useTranslations("question");
@@ -274,12 +275,20 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   let state: QuestionState;
   if (done !== null) {
     const w = who(done.byAccountId);
-    state =
-      done.outcome === "answered"
-        ? { kind: "answered", pairs: pairs(done.answer ?? {}), ...(w ? { who: w } : {}) }
-        : done.outcome === "expired"
-          ? { kind: "expired" }
-          : { kind: "skipped" };
+    switch (done.outcome) {
+      case "answered":
+        state = { kind: "answered", pairs: pairs(done.answer ?? {}), ...(w ? { who: w } : {}) };
+        break;
+      // the run's starter sent a message instead of answering
+      case "skipped":
+        state = { kind: "skipped", ...(w ? { who: w } : {}) };
+        break;
+      case "expired":
+        state = { kind: "expired" };
+        break;
+      default:
+        state = { kind: "cancelled" };
+    }
   } else if (submitted !== null) {
     state = { kind: "answered", pairs: pairs(submitted), who: t("you") };
   } else {

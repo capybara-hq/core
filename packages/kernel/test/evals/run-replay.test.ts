@@ -14,6 +14,7 @@ import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.j
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
+import { INPUT_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -1191,6 +1192,33 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(step2?.payload.request.absorbedUpToSeq).toBe(inter.seq);
     const text = cand.finalContent.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
     expect(text).toBe("interjected");
+  });
+
+  it("a run whose input request was skipped by a message replays the recorded skipped result and feeds the message at its step; the tool never runs", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(
+      conv,
+      "skipped",
+      "tool:plugin__tools-count__ask:{}",
+      [{ name: "plugin__tools-count__ask", input: {}, content: INPUT_SKIPPED_TEXT }],
+      "echo:moved on",
+    );
+    await addCase(setId, conv, "skipped");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const cand = r?.candidate as RunReplayResult;
+    expect(cand.unmatched).toBe(0);
+    const evs = await evalEvents(r as EvalResultView);
+    expect(evs.flatMap((e) => (e.type === "tool_result" ? [e.payload.content] : []))).toEqual([
+      INPUT_SKIPPED_TEXT,
+    ]);
+    // replays never create questions
+    expect(evs.some((e) => e.type === "question_asked")).toBe(false);
+    const text = cand.finalContent.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+    expect(text).toBe("moved on");
   });
 
   it("a finished background task absorbed mid-run is fed at the step that absorbed it; no task starts (background Bash §4.4)", async () => {

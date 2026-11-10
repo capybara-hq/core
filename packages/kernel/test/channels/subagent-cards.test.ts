@@ -109,6 +109,8 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SA group", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-echo: go" })] },
   },
+  // a root message while the child's question waits (reply-while-question spec §4.3)
+  { when: { lastUserIncludes: "SA aside" }, reply: { text: "noted aside" } },
   // the parent goes on after an immediate `Agent` result; the child works in the background
   { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent dispatched" } },
 ];
@@ -376,6 +378,25 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
       form: COLOR_FORM,
       webUrl: `https://cap.example/chat/${conv}?subagent=${child}`,
     });
+    // a sub-agent's question is answered on its card only: no text reply offered, and a message
+    // in the root conversation leaves it pending (reply-while-question spec §4.3)
+    expect(card.textReply).toBeUndefined();
+    const aside = sent().length;
+    im.push(connId, dm("sa2-m", "u-owner", "SA aside"));
+    await waitFor(
+      async () =>
+        sent()
+          .slice(aside)
+          .some((s) => s.message.text.includes("noted aside")) || null,
+      20_000,
+      "root reply to the aside",
+    );
+    const q = await db
+      .selectFrom("questions")
+      .select("status")
+      .where("id", "=", card.id)
+      .executeTakeFirstOrThrow();
+    expect(q.status).toBe("pending");
     im.push(
       connId,
       cardAction(

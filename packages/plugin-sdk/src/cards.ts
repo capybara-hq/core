@@ -34,9 +34,17 @@ export type ChannelCard =
       kind: "question";
       id: string;
       form: InputForm;
-      state: "pending" | "answered" | "expired" | "cancelled";
+      /** `skipped`: the person sent a message instead of answering (the run went on with it). */
+      state: "pending" | "answered" | "skipped" | "expired" | "cancelled";
       answerSummary?: string;
       webUrl: string;
+      /**
+       * The person may answer by replying with text instead (pending cards only): `plain` in a DM
+       * (any reply reaches the agent), `mention` in a group thread (the reply must mention the bot;
+       * the kernel ignores group messages without it). Absent: only the card's own controls work
+       * (a sub-agent's question). Render the hint with {@link questionTextReplyHint}.
+       */
+      textReply?: "plain" | "mention";
     }
   | { kind: "connect"; appName: string; url: string }
   | { kind: "bind"; url: string; text: string };
@@ -60,13 +68,15 @@ const MAX_INLINE_SINGLE = 5;
 const MAX_INLINE_MULTI = 10;
 
 /**
- * 提问能否在 IM 内直接作答：仅当表单恰有一个枚举字段（单选 ≤ 5 项 / 多选 ≤ 10 项）且不允许「其他」时为真；
- * 否则卡片只给网页链接。
+ * Whether IM can draw the question's controls: exactly one enum field (single choice ≤ 5 options /
+ * multi-select ≤ 10). A field with `allowOther` qualifies only when the card has `textReply`
+ * (pass `{ textReply: card.textReply !== undefined }`): the Other path is then a plain reply, so
+ * never draw an Other button. Otherwise the card only links to the web.
  */
-export function questionRenderableInline(form: InputForm): boolean {
+export function questionRenderableInline(form: InputForm, opts?: { textReply?: boolean }): boolean {
   if (form.fields.length !== 1) return false;
   const f = form.fields[0];
-  if (!f || f.allowOther) return false;
+  if (!f || (f.allowOther && opts?.textReply !== true)) return false;
   if (f.schema.type !== "string" || !("enum" in f.schema)) return false;
   const n = f.schema.enum.length;
   return f.multiSelect ? n <= MAX_INLINE_MULTI : n <= MAX_INLINE_SINGLE;
@@ -75,7 +85,8 @@ export function questionRenderableInline(form: InputForm): boolean {
 const KINDS = ["approval", "question", "connect", "bind"] as const;
 const SCOPES = ["once", "session", "always"] as const;
 const APPROVAL_STATES = ["pending", "approved", "denied", "expired", "cancelled"] as const;
-const QUESTION_STATES = ["pending", "answered", "expired", "cancelled"] as const;
+const QUESTION_STATES = ["pending", "answered", "skipped", "expired", "cancelled"] as const;
+const TEXT_REPLY = ["plain", "mention"] as const;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
 const list = (xs: readonly string[]) => xs.map((x) => JSON.stringify(x)).join(", ");
@@ -132,6 +143,7 @@ export function validateChannelCard(card: unknown): string[] {
       url("webUrl");
       if (c.answerSummary !== undefined && typeof c.answerSummary !== "string")
         out.push("answerSummary must be a string");
+      if (c.textReply !== undefined) oneOf("textReply", TEXT_REPLY);
       // 不能在 IM 内作答的表单（见 questionRenderableInline）同样合法：渠道只渲染网页链接。
       for (const p of validateInputForm(c.form as InputForm)) out.push(`form: ${p}`);
       return out;
@@ -202,8 +214,13 @@ const TEXT = {
     questionStates: {
       pending: "Pending",
       answered: "Answered",
+      skipped: "Skipped (replied instead)",
       expired: "Expired",
       cancelled: "Cancelled",
+    },
+    textReply: {
+      plain: "You can also just reply with text",
+      mention: "You can also reply in this thread, mentioning me",
     },
   },
   zh: {
@@ -232,11 +249,30 @@ const TEXT = {
     questionStates: {
       pending: "待回答",
       answered: "已回答",
+      skipped: "已跳过（已直接回复）",
       expired: "已过期",
       cancelled: "已取消",
     },
+    textReply: {
+      plain: "也可以直接回复文字",
+      mention: "也可以在本话题 @我 回复文字",
+    },
   },
 } as const;
+
+/** The hint line of a pending question card with `textReply`, as {@link renderCardAsText} writes it. */
+export function questionTextReplyHint(mode: "plain" | "mention", locale: Locale): string {
+  return (TEXT[locale] ?? TEXT.en).textReply[mode];
+}
+
+/**
+ * The label of a question card's state, as {@link renderCardAsText} writes it. A state this SDK
+ * does not know (a newer kernel) returns the state itself, never `undefined`.
+ */
+export function questionStateLabel(state: string, locale: Locale): string {
+  const states: Record<string, string> = (TEXT[locale] ?? TEXT.en).questionStates;
+  return states[state] ?? state;
+}
 
 /**
  * 不支持卡片的渠道的统一退回文本（含链接）；固定话术按 locale 取 zh / en。结果是 Markdown（放进
@@ -266,10 +302,12 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
       const title = typeof card.form.title === "string" ? card.form.title : card.form.title[locale];
       const lines = [
         withCode(t.question, asCode(title)),
-        line(t.status, t.questionStates[card.state]),
+        line(t.status, questionStateLabel(card.state, locale)),
       ];
       if (card.answerSummary) lines.push(line(t.answer, asCode(card.answerSummary)));
       lines.push(line(card.state === "pending" ? t.answerOnWeb : t.details, card.webUrl));
+      if (card.state === "pending" && card.textReply !== undefined)
+        lines.push(questionTextReplyHint(card.textReply, locale));
       return lines.join("\n");
     }
     case "connect":

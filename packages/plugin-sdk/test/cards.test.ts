@@ -3,6 +3,8 @@ import {
   type ChannelCard,
   type InputForm,
   questionRenderableInline,
+  questionStateLabel,
+  questionTextReplyHint,
   renderCardAsText,
   validateChannelCard,
 } from "../src/index.js";
@@ -54,6 +56,23 @@ describe("questionRenderableInline", () => {
 
   it("零字段不行", () => {
     expect(questionRenderableInline({ title: "t", fields: [] })).toBe(false);
+  });
+
+  it("with textReply, a field with Other qualifies (the Other path is a plain reply)", () => {
+    const on = { textReply: true };
+    expect(questionRenderableInline(enumForm(2, { allowOther: true }), on)).toBe(true);
+    expect(
+      questionRenderableInline(enumForm(10, { allowOther: true, multiSelect: true }), on),
+    ).toBe(true);
+    expect(questionRenderableInline(enumForm(6, { allowOther: true }), on)).toBe(false);
+    expect(questionRenderableInline(enumForm(2, { allowOther: true }), { textReply: false })).toBe(
+      false,
+    );
+    const two: InputForm = {
+      title: "t",
+      fields: [...enumForm(2).fields, ...enumForm(2).fields.map((f) => ({ ...f, key: "k2" }))],
+    };
+    expect(questionRenderableInline(two, on)).toBe(false);
   });
 });
 
@@ -154,7 +173,7 @@ describe("validateChannelCard", () => {
   it("question：id、state、webUrl、form", () => {
     expect(validateChannelCard({ ...question, id: "" })).toEqual(["id must be a non-empty string"]);
     expect(validateChannelCard({ ...question, state: "approved" })).toEqual([
-      'state must be one of "pending", "answered", "expired", "cancelled"',
+      'state must be one of "pending", "answered", "skipped", "expired", "cancelled"',
     ]);
     expect(validateChannelCard({ ...question, webUrl: "javascript:alert(1)" })).toEqual([
       "webUrl must be an absolute http(s) URL of at most 2000 characters",
@@ -474,5 +493,60 @@ describe("renderCardAsText", () => {
       expect(renderCardAsText({ ...question, state }, "en")).not.toContain("undefined");
       expect(renderCardAsText({ ...question, state }, "zh")).not.toContain("undefined");
     }
+  });
+});
+
+describe("question cards: text reply and skipped (reply-while-question spec §10.1)", () => {
+  it("validateChannelCard accepts skipped and both textReply values, rejects others", () => {
+    expect(validateChannelCard({ ...question, state: "skipped" })).toEqual([]);
+    expect(validateChannelCard({ ...question, textReply: "plain" })).toEqual([]);
+    expect(validateChannelCard({ ...question, textReply: "mention" })).toEqual([]);
+    expect(validateChannelCard({ ...question, textReply: "x" })).toEqual([
+      'textReply must be one of "plain", "mention"',
+    ]);
+  });
+
+  it("a pending card with textReply adds the hint line after the web link", () => {
+    const zh = renderCardAsText({ ...question, textReply: "plain" }, "zh").split("\n");
+    expect(zh.at(-1)).toBe("也可以直接回复文字");
+    expect(zh.at(-2)).toContain(question.webUrl);
+    expect(
+      renderCardAsText({ ...question, textReply: "plain" }, "en")
+        .split("\n")
+        .at(-1),
+    ).toBe("You can also just reply with text");
+    expect(
+      renderCardAsText({ ...question, textReply: "mention" }, "zh")
+        .split("\n")
+        .at(-1),
+    ).toBe("也可以在本话题 @我 回复文字");
+    expect(
+      renderCardAsText({ ...question, textReply: "mention" }, "en")
+        .split("\n")
+        .at(-1),
+    ).toBe("You can also reply in this thread, mentioning me");
+    // only pending cards carry it
+    expect(
+      renderCardAsText({ ...question, state: "answered", textReply: "plain" }, "en"),
+    ).not.toContain("reply with text");
+  });
+
+  it("the skipped state reads as replied instead", () => {
+    expect(renderCardAsText({ ...question, state: "skipped" }, "zh")).toContain(
+      "状态：已跳过（已直接回复）",
+    );
+    expect(renderCardAsText({ ...question, state: "skipped" }, "en")).toContain(
+      "Status: Skipped (replied instead)",
+    );
+  });
+
+  it("exports the hint and state copy for channel plugins; an unknown state falls back to itself", () => {
+    expect(questionTextReplyHint("plain", "zh")).toBe("也可以直接回复文字");
+    expect(questionTextReplyHint("mention", "en")).toBe(
+      "You can also reply in this thread, mentioning me",
+    );
+    expect(questionStateLabel("skipped", "en")).toBe("Skipped (replied instead)");
+    expect(questionStateLabel("answered", "zh")).toBe("已回答");
+    expect(questionStateLabel("someday", "en")).toBe("someday");
   });
 });

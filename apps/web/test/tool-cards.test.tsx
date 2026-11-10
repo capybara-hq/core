@@ -400,6 +400,38 @@ describe("QuestionCard (design QuestionBlock)", () => {
     expect(screen.queryByRole("button", { name: "回答" })).toBeNull();
   });
 
+  it("skipped by a message reads as skipped by the viewer; cancelled reads as cancelled, not skipped", () => {
+    const done = (outcome: "skipped" | "cancelled", byAccountId: string | null) =>
+      item({
+        questionId: "q1",
+        callId: "call_1",
+        answer: null,
+        byAccountId,
+        outcome,
+        ...(outcome === "skipped" ? { skippedBySeq: 9 } : {}),
+      });
+    const state = (c: HTMLElement) =>
+      c.querySelector('[data-part="question-done"]')?.getAttribute("data-state");
+    const zhSkip = renderPage(<QuestionCard orgId="o1" item={done("skipped", ME.account.id)} />, {
+      locale: "zh",
+    });
+    expect(state(zhSkip.container)).toBe("skipped");
+    expect(zhSkip.container.textContent).toContain("已跳过：直接回复了消息 · 你");
+    cleanup();
+    const enSkip = renderPage(<QuestionCard orgId="o1" item={done("skipped", ME.account.id)} />, {
+      locale: "en",
+    });
+    expect(enSkip.container.textContent).toContain("Skipped: replied with a message · You");
+    cleanup();
+    const zhCancel = renderPage(<QuestionCard orgId="o1" item={done("cancelled", null)} />, {
+      locale: "zh",
+    });
+    expect(state(zhCancel.container)).toBe("cancelled");
+    expect(zhCancel.container.textContent).toContain("已取消");
+    expect(zhCancel.container.textContent).not.toContain("已跳过");
+    expect(screen.queryByRole("button", { name: "回答" })).toBeNull();
+  });
+
   it("URL elicitation: the full address as a link in a new window, then I'm done answers", async () => {
     const calls = stubApi({
       "POST /api/v1/orgs/o1/questions/q1/answer": () =>

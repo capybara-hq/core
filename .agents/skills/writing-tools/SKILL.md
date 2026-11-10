@@ -145,6 +145,13 @@ async (input, call) => {
 - `state` must be JSON-serializable and ≤ 16 KB; it is stored in PG and the resume may happen on another replica, so **don't keep anything the resume needs in memory**.
 - The same call may request input at most 3 times in a row; the 4th -> `Tool requested user input too many times.`
 - The builtin `AskUserQuestion` is implemented with this mechanism and can serve as a reference.
+- **Skipped by a message** (spec `2026-11-10-reply-while-question-pending-design.md`): a message from the run's starter
+  in the conversation closes every pending, not yet due question of that conversation's run as `skipped`
+  (`QuestionsService.skipPendingIn`, in the message's transaction, after the conversation row lock). The handler is
+  **not** called again: the pipeline writes `QUESTION_SKIPPED_TEXT` (`AskUserQuestion`, `isError: false`) or
+  `INPUT_SKIPPED_TEXT` (every other tool and MCP elicitation, `isError: true`) itself, and the message follows as an
+  ordinary user message. Sub-agent questions (in the child conversation) and approvals are never skipped. Every write
+  to a `questions` row locks the conversation row first, then the question row (D7); keep that order.
 - MCP connector elicitation (the remote asking the user for input mid-call) is turned by the kernel into the same input request: the kernel aborts the remote call, and after the user answers re-issues the call with the **same input**, and when the remote raises the same elicitation again it is answered with the answer (at most 3 rounds; if the remote stops asking or changes the schema the answer is unused, and side effects before the elicitation are redone once). This is between the connector and the kernel; details are in `.agents/skills/writing-connectors`, and extension tools are not involved.
 
 ## `ToolSearch`: the catalog and on-demand loading when there are many tools

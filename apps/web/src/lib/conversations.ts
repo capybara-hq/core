@@ -257,7 +257,10 @@ type EventBody =
         callId: string;
         answer: FormAnswer | null;
         byAccountId: string | null;
-        outcome: "answered" | "expired" | "cancelled";
+        /** `skipped`: the run's starter sent a message instead of answering. */
+        outcome: "answered" | "skipped" | "expired" | "cancelled";
+        /** `skipped` only: the seq of the `user_message` that skipped it (lower than this event's). */
+        skippedBySeq?: number;
       };
     }
   | {

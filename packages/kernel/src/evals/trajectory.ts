@@ -58,8 +58,10 @@ export interface TrajectoryToolCall {
   question: {
     questionId: string;
     askedAt: string;
-    outcome: "answered" | "expired" | "cancelled" | null;
+    outcome: "answered" | "skipped" | "expired" | "cancelled" | null;
     byAccountId: string | null;
+    /** A skipped question: the seq of the user message that skipped it. */
+    skippedBySeq?: number;
   } | null;
   /** A `tool.preExecute` policy hook denied the call (it never started). */
   hookDenied?: TrajectoryHookDenial;
@@ -456,6 +458,9 @@ function buildRun(
                   askedAt: iso(q.createdAt),
                   outcome: ans?.payload.outcome ?? null,
                   byAccountId: ans?.payload.byAccountId ?? null,
+                  ...(ans?.payload.skippedBySeq !== undefined && {
+                    skippedBySeq: ans.payload.skippedBySeq,
+                  }),
                 },
         };
       });

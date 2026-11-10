@@ -1718,10 +1718,10 @@ States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`,
 
 - `AskUserQuestion` and connector elicitation. **Pending**: a floating card (`line` border, not accent), gap `space.3`, `role="group"` named by the question. The question in the prose font (`prose`, 600). Options as rows (`row.default` minimum height, padding `pad.default`, 1px `line` border, radius `sm`; a 12 round radio, `line-strong`, `accent` when checked; the checked row has an `ink` border); multi-select options use checkboxes; with `allowOther` a last row "其他：" / "Other:" holds a free-text input. Actions: "回答" / "Answer" (primary), "跳过" / "Skip" (default).
 - **URL mode** (the form has a `url`): the full address as a link (`small` `ink`, underlined in `line-strong`, breaking anywhere, `external-link` 14 `muted` before it), "打开链接" / "Open link" (primary, with the icon), Skip, and the note "完成后回到这里继续" / "Come back here when you're done".
-- **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`; **skipped** says "已跳过" / "Skipped".
+- **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`. The other closed states use the same two lines with their word in place of the answer: **skipped** (the run's starter sent a message instead of answering) says "已跳过：直接回复了消息" / "Skipped: replied with a message" with " · <who>"; **cancelled** (the run ended first) says "已取消" / "Cancelled"; **expired** says "已过期" / "Expired". Cancelled and expired name no one.
 
 <!-- states: question-block -->
-States: `pending`, `url`, `answered`, `skipped`
+States: `pending`, `url`, `answered`, `skipped`, `cancelled`, `expired`
 
 <!-- size-table: question-block -->
 | Part | State | Property | Value |
@@ -1739,6 +1739,7 @@ States: `pending`, `url`, `answered`, `skipped`
 | question-url | url | color | color.ink |
 | tool-line | answered | height | row.dense |
 | tool-line | skipped | color | color.muted |
+| tool-line | cancelled | color | color.muted |
 
 #### 6.16.13 Connect block
 

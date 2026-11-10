@@ -40,7 +40,7 @@ import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
-import { hookDeniedText } from "../../src/tools/pipeline.js";
+import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -172,6 +172,20 @@ async function enableProbe(enabled: boolean): Promise<void> {
   });
   expect(res.statusCode, res.body).toBe(200);
 }
+
+const ASK_INPUT = {
+  questions: [
+    {
+      question: "Which database should I use?",
+      header: "Database",
+      multiSelect: false,
+      options: [
+        { label: "Postgres", description: "Relational" },
+        { label: "Mongo", description: "Document store" },
+      ],
+    },
+  ],
+};
 
 const PROBE_TOOLS = [
   { kind: "plugin", plugin: "tools-probe", name: "echo" },
@@ -726,6 +740,97 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
         content: 'Sub-agent sa_new ("Survey the module") handed back a report:\nReport of sa_new.',
       },
     ]);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a question skipped by a message: the skipped result, then the message; zero drift and equal to what the provider received", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "AskUserQuestion" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, `tool:AskUserQuestion:${JSON.stringify(ASK_INPUT)}`);
+    const asked = await waitForEvent(db, conv, (e) => e.type === "question_asked");
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("runs")
+            .select("status")
+            .where("id", "=", asked.runId as string)
+            .executeTakeFirst()
+        )?.status === "waiting",
+      10_000,
+      "run waiting",
+    );
+    await postMessage(owner, orgId, conv, "echo:never mind, use SQLite");
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    const events = await eventsOf(db, conv);
+    expect(
+      events.flatMap((e) => (e.type === "question_answered" ? [e.payload.outcome] : [])),
+    ).toEqual(["skipped"]);
+    const last = sent.at(-1) as ModelRequest;
+    // the tool results turn (the skipped result), then the message
+    const resultAt = last.messages.findIndex(
+      (m) =>
+        typeof m.content !== "string" &&
+        m.content.some((b) => b.type === "tool_result" && b.content === QUESTION_SKIPPED_TEXT),
+    );
+    const messageAt = last.messages.findIndex(
+      (m) =>
+        m.role === "user" &&
+        typeof m.content !== "string" &&
+        m.content.some((b) => b.type === "text" && b.text === "echo:never mind, use SQLite"),
+    );
+    expect(resultAt).toBeGreaterThan(-1);
+    expect(messageAt).toBeGreaterThanOrEqual(resultAt);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a message sent while the asking step streamed: not a skip, the answer then the message; zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "AskUserQuestion" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const before = sent.length;
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `slowtool:500:AskUserQuestion:${JSON.stringify(ASK_INPUT)}`,
+    );
+    await waitFor(async () => sent.length > before, 10_000, "asking step sent");
+    const early = await postMessage(owner, orgId, conv, "echo:sent early");
+    const asked = await waitForEvent(db, conv, (e) => e.type === "question_asked");
+    expect(asked.seq).toBeGreaterThan(early);
+    const questionId = asked.type === "question_asked" ? asked.payload.questionId : "";
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("runs")
+            .select("status")
+            .where("id", "=", asked.runId as string)
+            .executeTakeFirst()
+        )?.status === "waiting",
+      10_000,
+      "run waiting",
+    );
+    const ok = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/questions/${questionId}/answer`,
+      payload: { answer: { q0: "Postgres" } },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
+    expect(
+      events.flatMap((e) => (e.type === "question_answered" ? [e.payload.outcome] : [])),
+    ).toEqual(["answered"]);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

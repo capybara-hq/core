@@ -200,7 +200,7 @@
     },
     "question": {
       "not_found": "The question does not exist or you cannot answer it.",
-      "already_answered": "This question has already been answered or has expired."
+      "already_answered": "This question was already answered, skipped or has expired."
     },
     "credential": {
       "missing": "A credential is required for this connector."
@@ -1346,6 +1346,8 @@
     "fileTypeNotAllowed": "This file type is not supported. Supported: {types}.",
     "newPlaceholder": "What should {agent} do?",
     "runningHint": "Messages sent while it works reach it at its next step",
+    "waitingSkipHint": "Or just reply: sending a message skips the question above",
+    "waitingHint": "New messages reach the agent once the item above is handled",
     "sendAfterCreate": "You can send again once the conversation is created",
     "rename": "Rename",
     "copyLink": "Copy link",
@@ -2848,10 +2850,12 @@
         "questionOutcome": "Answer",
         "questionOutcomes": {
           "answered": "Answered",
+          "skipped": "Skipped (the user sent a message)",
           "expired": "Expired",
           "cancelled": "Cancelled",
           "pending": "Awaiting answer"
         },
+        "skippedBy": "Skipped by message",
         "subagent": "Sub-agent",
         "subagentTrajectory": "Trajectory"
       },

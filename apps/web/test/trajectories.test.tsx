@@ -849,3 +849,69 @@ describe("sub-agent links in the trajectory (phase C)", () => {
     expect(screen.getByRole("button", { name: en.trajectories.addToSet.action })).toBeTruthy();
   });
 });
+
+describe("a question skipped by a message (reply while a question is pending)", () => {
+  function skippedRun(): TrajectoryRun {
+    const base = run();
+    const [s0, s1] = base.steps as [TrajectoryRun["steps"][number], TrajectoryRun["steps"][number]];
+    return {
+      ...base,
+      steps: [
+        {
+          ...s0,
+          toolCalls: [
+            {
+              callId: "q1",
+              step: 0,
+              toolKey: "AskUserQuestion",
+              input: { question: "Which env?" },
+              startedAt: at(4000),
+              durationMs: 2000,
+              result: { content: "skipped", isError: false },
+              approval: null,
+              question: {
+                questionId: "qq",
+                askedAt: at(4000),
+                outcome: "skipped",
+                byAccountId: "a1",
+                skippedBySeq: 7,
+              },
+            },
+          ],
+        },
+        s1,
+      ],
+    };
+  }
+
+  it("its wait span is not an error", () => {
+    const spans = new Map(trajectorySpans([skippedRun()], LABELS).map((s) => [s.id, s]));
+    expect(spans.get("question:r1:qq")).toMatchObject({ kind: "wait", status: "ok" });
+  });
+
+  it.each(["zh", "en"] as const)(
+    "the question line says the user sent a message and names that message's seq (%s)",
+    async (locale) => {
+      const m = msgs[locale].trajectories.detail.tool;
+      stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([skippedRun()])) });
+      await renderRouteWithCache(
+        "/trajectories/c1",
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
+      const list = await screen.findByRole("tree", {
+        name: msgs[locale].trajectories.detail.waterfall,
+      });
+      await userEvent.setup().click(within(list).getAllByText("AskUserQuestion")[0] as HTMLElement);
+      const detail = screen.getByRole("region", {
+        name: msgs[locale].trajectories.detail.region,
+      });
+      expect(m.questionOutcomes.skipped).toBe(
+        locale === "zh" ? "已跳过（用户发了消息）" : "Skipped (the user sent a message)",
+      );
+      expect(within(detail).getByText(m.questionOutcomes.skipped)).toBeTruthy();
+      expect(within(detail).getByText(m.skippedBy)).toBeTruthy();
+      expect(within(detail).getByText("#7")).toBeTruthy();
+    },
+  );
+});

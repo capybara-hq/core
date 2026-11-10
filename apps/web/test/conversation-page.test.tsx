@@ -437,6 +437,89 @@ describe("the conversation page (ConversationPage)", () => {
     expect(en.chat.runningHint).toBe("Messages sent while it works reach it at its next step");
   });
 
+  describe("the composer hint while the run waits (reply while a question is pending, spec §11.1)", () => {
+    const started = (trigger: string) =>
+      ev(2, "run_started", {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: trigger,
+      });
+    const asked = ev(3, "question_asked", {
+      step: 0,
+      callId: "c2",
+      questionId: "q1",
+      form: { title: "Which env?", fields: [] },
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const approval = ev(3, "approval_requested", {
+      step: 0,
+      callId: "c3",
+      approvalId: "ap1",
+      toolKey: "Bash",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    const msgs = { zh, en } as const;
+
+    it("the copy, in both languages (zh says 智能体)", () => {
+      expect(zh.chat.waitingSkipHint).toBe("也可以直接回复：发送消息会跳过上面的提问");
+      expect(en.chat.waitingSkipHint).toBe(
+        "Or just reply: sending a message skips the question above",
+      );
+      expect(zh.chat.waitingHint).toBe("处理完上面的事项后，智能体才会读到新消息");
+      expect(en.chat.waitingHint).toBe(
+        "New messages reach the agent once the item above is handled",
+      );
+    });
+
+    it.each(["zh", "en"] as const)(
+      "a question of the viewer's run: a message skips it; send stays enabled (%s)",
+      async (locale) => {
+        const m = msgs[locale];
+        api({
+          [`GET ${BASE}/events`]: () =>
+            json(200, { events: [userMsg(1, "hi"), started(ME.account.id), asked] }),
+        });
+        await renderChat(locale);
+        await screen.findByText("hi");
+        await vi.waitFor(() =>
+          expect(input(m).getAttribute("placeholder")).toBe(m.chat.waitingSkipHint),
+        );
+        const user = userEvent.setup();
+        await user.type(input(m), "use prod");
+        const send = screen.queryByRole("button", { name: m.chat.send, hidden: true });
+        const stop = screen.queryByRole("button", { name: m.chat.stop, hidden: true });
+        expect((send ?? stop)?.hasAttribute("disabled")).toBe(false);
+      },
+    );
+
+    it.each(["zh", "en"] as const)(
+      "an approval only: the message waits until it is handled (%s)",
+      async (locale) => {
+        const m = msgs[locale];
+        api({
+          [`GET ${BASE}/events`]: () =>
+            json(200, { events: [userMsg(1, "hi"), started(ME.account.id), approval] }),
+          "GET /api/v1/orgs/o1/approvals/ap1": () => json(404, { error: { code: "not_found" } }),
+        });
+        await renderChat(locale);
+        await screen.findByText("hi");
+        await vi.waitFor(() =>
+          expect(input(m).getAttribute("placeholder")).toBe(m.chat.waitingHint),
+        );
+      },
+    );
+
+    it("a question of a run someone else started: no skip promised", async () => {
+      api({
+        [`GET ${BASE}/events`]: () =>
+          json(200, { events: [userMsg(1, "hi"), started("someone-else"), asked] }),
+      });
+      await renderChat("en");
+      await screen.findByText("hi");
+      await vi.waitFor(() => expect(input().getAttribute("placeholder")).toBe(en.chat.waitingHint));
+    });
+  });
+
   describe("instant send (conversation send spec §2.1)", () => {
     /** The user bubbles of `text`, pending or from the log. */
     const bubbles = (text: string) =>
