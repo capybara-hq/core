@@ -1,6 +1,6 @@
 # Skill authoring through files and the Platform tool
 
-Status: draft for maintainer review (2026-11-10). Replaces the builtin tool `SkillWrite` (M5 T15,
+Status: Approved; implemented by plans/2026-11-10-skill-authoring-via-platform.md. Replaces the builtin tool `SkillWrite` (M5 T15,
 R3 / R4) and the shared-agent skill change flow.
 
 ## 1. Intent
