@@ -4,7 +4,7 @@ import "./register";
 import { headers } from "next/headers";
 import { ApiClientError } from "../api";
 import { safeUiOf } from "../client-extensions";
-import { NONCE_HEADER, PATH_HEADER } from "../headers";
+import { NONCE_HEADER, PATH_HEADER, SIGN_IN_HEADER } from "../headers";
 import { isSignedOut } from "../signed-out";
 
 export { PATH_HEADER };
@@ -30,6 +30,14 @@ export async function currentNonce(): Promise<string> {
 export async function currentSafeUi(): Promise<boolean> {
   const h = await headers();
   return safeUiOf(h.get(PATH_HEADER) ?? "/", h.get("cookie"));
+}
+
+/**
+ * Whether this is the first workspace document of the sign-in (the proxy's `x-cap-sign-in`, client
+ * extensions spec §7.3).
+ */
+export async function currentSignInIsNew(): Promise<boolean> {
+  return (await headers()).get(SIGN_IN_HEADER) === "new";
 }
 
 export { isSignedOut };

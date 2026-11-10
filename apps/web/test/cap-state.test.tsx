@@ -63,6 +63,28 @@ describe("data-cap-state", () => {
     expect(builtin?.[1]).toBe("run=idle theme=builtin");
   });
 
+  it("sign-in=new is in the server render of the first workspace document, after the theme", () => {
+    const html = renderToString(
+      frameElement(shellOf(ME, { theme: NEON }), undefined, { newSignIn: true }),
+    );
+    const state = /data-cap-state="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(state.split(" ")).toEqual(["run=idle", "theme=neon/neon-grid", "sign-in=new"]);
+  });
+
+  it("sign-in=new stays through runs and navigations of that document", () => {
+    mediaMock(false);
+    const view = renderFrame(shellOf(ME), <Page id="c1" state="running" />, { newSignIn: true });
+    expect(tokens()).toEqual([
+      "run=running",
+      "theme=builtin",
+      "sign-in=new",
+      "motion=full",
+      "sidebar=full",
+    ]);
+    view.update(shellOf(ME), <p>another page</p>);
+    expect(tokens()).toContain("sign-in=new");
+  });
+
   it("a run turns run=running then run=failed until the next run", () => {
     const view = renderFrame(shellOf(ME), <Page id="c1" state="idle" />);
     expect(tokens()).toContain("run=idle");

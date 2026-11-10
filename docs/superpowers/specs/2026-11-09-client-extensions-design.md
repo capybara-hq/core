@@ -691,13 +691,19 @@ interface SuggestedAppearance {
   - `motion=full|reduced`: `prefers-reduced-motion`, added after hydration;
   - `theme=<plugin>/<theme file id>` or `theme=builtin`: the resolved theme (`ThemeRef.key` falls
     back to the file id when the theme has no plugin);
+  - `sign-in=new`: present, from the server render on, for the whole first workspace document of a
+    sign-in, so a plugin can greet once per sign-in (a boot screen) without the page showing first.
+    The proxy compares the session of the request (the sha256 of the access token's `sid`, read
+    without verifying) with the one in the `cap_seen` cookie, which it sets on that document; only
+    workspace documents count (not the admin console, public pages, RSC fetches or prefetches). A UI
+    hint, never an access check; a forged copy of the internal `x-cap-sign-in` header is dropped;
   - `sidebar=rail|full`: the sidebar's mode, added by the shell after hydration (the drawer below
-    960 px counts as `full`: it is the full sidebar). The order is `run`, `theme`, `motion`,
-    `sidebar`.
+    960 px counts as `full`: it is the full sidebar). The order is `run`, `theme`, `sign-in`,
+    `motion`, `sidebar`.
 - Plugin CSS selects with `[data-cap-state~="run=running"] [data-cap-part~="properties-panel"]`;
   a run-state colour change needs no JS.
-- The server render writes `run=idle` and the theme token (`AppFrame` has the theme from
-  `ThemeRoot`); the browser updates `run` and adds `motion`. CSS that matters at first paint
+- The server render writes `run=idle`, the theme token (`AppFrame` has the theme from
+  `ThemeRoot`) and `sign-in=new` when it applies; the browser updates `run` and adds `motion`. CSS that matters at first paint
   should use `@media (prefers-reduced-motion: reduce)`, which the token mirrors.
 - `ThemeRef` (themes spec §9) gains `key: string`, `"<plugin>/<theme file id>"`, for the token and
   `useTheme()`.
@@ -1367,5 +1373,11 @@ Added after the fix wave (2026-11-10):
   every id once, which client code sees as one more sign-in (during a rolling restart old and new
   replicas answer different ids until all restarted, so possibly a few more). Additive:
   `CLIENT_API_VERSION` stays 1.
+- **`sign-in=new` state token** (§7.3, dev acceptance 2026-11-10): the sign-in id lets a boot
+  screen play once per sign-in, but only after the client code loaded, so the page showed first.
+  The token is in the server render of the first workspace document of a sign-in, so first-paint
+  plugin CSS can cover the page until its component takes over. The proxy decides it from the
+  access token's `sid` against the `cap_seen` cookie (a sha256, never the session id); no kernel
+  state, every web replica answers the same.
 
 No open questions remain.

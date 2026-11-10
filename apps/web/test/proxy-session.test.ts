@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import * as staticInfo from "next/dist/build/analysis/get-page-static-info";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PATH_HEADER, SESSION_STATE_HEADER } from "../src/lib/headers";
+import { PATH_HEADER, SESSION_STATE_HEADER, SIGN_IN_HEADER } from "../src/lib/headers";
 import { PEER_TOKEN_ENV, PEER_TOKEN_HEADER } from "../src/lib/peer";
 import { REFRESH_RACE_GRACE_MS, renewSession, resetRenewals } from "../src/lib/session-renewal";
+import { isDocumentRequest, signInMarker } from "../src/lib/sign-in-state";
 import proxy, { config } from "../src/proxy";
 
 const KERNEL = "http://localhost:8080";
@@ -317,6 +318,103 @@ describe("proxy: sign-in gate", () => {
       expect(res.headers.get("x-middleware-next"), path).toBe("1");
     }
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("proxy: the first workspace document of a sign-in", () => {
+  /** An unsigned JWT-shaped access token for session `sid` (the proxy never verifies it). */
+  const tokenFor = (sid: string | undefined) => {
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    return `${b64({ alg: "EdDSA" })}.${b64({ sid, exp: Math.floor(Date.now() / 1000) + 900 })}.sig`;
+  };
+  const marker = (sid: string) => createHash("sha256").update(sid).digest("hex").slice(0, 32);
+  const seenCookies = (res: Response) =>
+    res.headers.getSetCookie().filter((c) => c.startsWith("cap_seen="));
+
+  it("signInMarker: sha256 of sid, never the sid; null without one or for an opaque token", () => {
+    expect(signInMarker(tokenFor("s-1"))).toBe(marker("s-1"));
+    expect(signInMarker(tokenFor("s-1"))).not.toContain("s-1");
+    expect(signInMarker(tokenFor(undefined))).toBeNull();
+    expect(signInMarker("opaque")).toBeNull();
+    expect(signInMarker("not.a-jwt.x")).toBeNull();
+  });
+
+  it("isDocumentRequest: navigations yes, RSC fetches and prefetches no", () => {
+    expect(isDocumentRequest(new Headers())).toBe(true);
+    expect(isDocumentRequest(new Headers({ "sec-fetch-dest": "document" }))).toBe(true);
+    expect(isDocumentRequest(new Headers({ rsc: "1" }))).toBe(false);
+    expect(isDocumentRequest(new Headers({ "next-router-prefetch": "1" }))).toBe(false);
+    expect(isDocumentRequest(new Headers({ "sec-fetch-dest": "empty" }))).toBe(false);
+  });
+
+  it("a workspace document of a session not seen yet: new, and the session is recorded", async () => {
+    const res = await proxy(page("/", `cap_at=${tokenFor("s-1")}`));
+    expect(forwarded(res, SIGN_IN_HEADER)).toBe("new");
+    expect(seenCookies(res)).toEqual([
+      `cap_seen=${marker("s-1")}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`,
+    ]);
+    // a new sign-in (another session) is new again
+    const next = await proxy(
+      page("/chat/c1", `cap_at=${tokenFor("s-2")}; cap_seen=${marker("s-1")}`),
+    );
+    expect(forwarded(next, SIGN_IN_HEADER)).toBe("new");
+    expect(seenCookies(next)[0]).toMatch(new RegExp(`^cap_seen=${marker("s-2")};`));
+  });
+
+  it("the same session again (a reload, a new tab): not new, nothing set", async () => {
+    const res = await proxy(page("/", `cap_at=${tokenFor("s-1")}; cap_seen=${marker("s-1")}`));
+    expect(forwarded(res, SIGN_IN_HEADER)).toBeNull();
+    expect(seenCookies(res)).toEqual([]);
+  });
+
+  it("after a renewal the renewed token's session counts", async () => {
+    const renewedAt = tokenFor("s-9");
+    refresh = async () => {
+      const headers = new Headers({ "content-type": "application/json" });
+      headers.append(
+        "set-cookie",
+        `cap_at=${renewedAt}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax`,
+      );
+      headers.append(
+        "set-cookie",
+        "cap_rt=new-rt; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax",
+      );
+      return new Response("{}", { status: 200, headers });
+    };
+    const res = await proxy(page("/", "cap_rt=old-rt"));
+    expect(forwarded(res, SIGN_IN_HEADER)).toBe("new");
+    expect(seenCookies(res)[0]).toMatch(new RegExp(`^cap_seen=${marker("s-9")};`));
+  });
+
+  it("the admin console, public pages, RSC fetches and prefetches neither get it nor use it up", async () => {
+    const cookie = `cap_at=${tokenFor("s-1")}`;
+    for (const req of [
+      page("/admin", cookie),
+      page("/admin/plugins", cookie),
+      page("/login", cookie),
+      page("/", cookie, { rsc: "1" }),
+      page("/", cookie, { "next-router-prefetch": "1" }),
+      page("/", cookie, { "sec-fetch-dest": "empty" }),
+    ]) {
+      const res = await proxy(req);
+      expect(forwarded(res, SIGN_IN_HEADER), req.nextUrl.pathname).toBeNull();
+      expect(seenCookies(res), req.nextUrl.pathname).toEqual([]);
+    }
+  });
+
+  it("drops a client-sent x-cap-sign-in; a token without sid and https", async () => {
+    const forged = await proxy(
+      page("/", `cap_at=${tokenFor("s-1")}; cap_seen=${marker("s-1")}`, {
+        [SIGN_IN_HEADER]: "new",
+      }),
+    );
+    expect(forwarded(forged, SIGN_IN_HEADER)).toBeNull();
+    const noSid = await proxy(page("/", `cap_at=${tokenFor(undefined)}`));
+    expect(forwarded(noSid, SIGN_IN_HEADER)).toBeNull();
+    const https = await proxy(
+      new NextRequest("https://web.example/", { headers: { cookie: `cap_at=${tokenFor("s-1")}` } }),
+    );
+    expect(seenCookies(https)[0]).toMatch(/; Secure$/);
   });
 });
 

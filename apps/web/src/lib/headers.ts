@@ -11,6 +11,12 @@ export const SESSION_STATE_HEADER = "x-cap-session";
 export const PATH_HEADER = "x-cap-path";
 
 /**
+ * `new` on the first workspace document of a sign-in (`lib/sign-in-state.ts`); the workspace
+ * layout turns it into the shell's `sign-in=new` state token.
+ */
+export const SIGN_IN_HEADER = "x-cap-sign-in";
+
+/**
  * The document's CSP nonce (16 random bytes, base64), fresh per document request; the layouts read
  * it (`currentNonce()` in `lib/server/page.ts`) for the scripts they render themselves.
  */
