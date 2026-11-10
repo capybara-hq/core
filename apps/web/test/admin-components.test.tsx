@@ -2,6 +2,8 @@
 // 连接器模板 / 智能体模板 lists and details (scope with its impact preview, 跟随插件, disable,
 // versions, a new version uploaded on its own), the plugin detail's scope column and the platform
 // plugin update preview (spec §7.1), and the plugin scope preview's replaced and conflicting items.
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -233,8 +235,8 @@ describe("admin component lists", () => {
     expect(within(table).getByText("web-research")).toBeTruthy();
   });
 
-  it("/admin/connector-templates lists the deployment's connector templates (a table)", async () => {
-    await open("/admin/connector-templates");
+  it("/admin/connectors/templates lists the deployment's connector templates (a table)", async () => {
+    await open("/admin/connectors/templates");
     const table = await screen.findByRole("table", { name: C.titles.connector_template });
     expect(within(table).getByText("gh")).toBeTruthy();
     expect(within(table).getByText(C.owner.platform)).toBeTruthy();
@@ -254,7 +256,7 @@ describe("admin component lists", () => {
   });
 
   it.each(["zh", "en"] as const)(
-    "/admin/connector-templates: the display name with the plugin's mark, the id under it (%s)",
+    "/admin/connectors/templates: the display name with the plugin's mark, the id under it (%s)",
     async (locale) => {
       const routes = {
         ...base,
@@ -262,13 +264,13 @@ describe("admin component lists", () => {
           json(200, { components: [...TEMPLATES, SLACK] }),
       };
       stubApi(routes);
-      await renderRouteWithCache("/admin/connector-templates", routes, { locale });
+      await renderRouteWithCache("/admin/connectors/templates", routes, { locale });
       const table = await screen.findByRole("table", {
         name: { zh, en }[locale].adminComponents.titles.connector_template,
       });
       const label = locale === "zh" ? "Slack 工作区" : "Slack workspace";
       const link = within(table).getByRole("link", { name: label });
-      expect(link.getAttribute("href")).toBe("/admin/connector-templates/c2");
+      expect(link.getAttribute("href")).toBe("/admin/connectors/templates/c2");
       const row = link.closest("tr") as HTMLElement;
       // the id stays as meta, never the title
       const lead = row.querySelector('[data-lead="true"]') as HTMLElement;
@@ -282,8 +284,8 @@ describe("admin component lists", () => {
     },
   );
 
-  it("/admin/connector-templates/<id>: the display name as the title with the plugin's mark", async () => {
-    await open("/admin/connector-templates/c2", {
+  it("/admin/connectors/templates/<id>: the display name as the title with the plugin's mark", async () => {
+    await open("/admin/connectors/templates/c2", {
       "GET /api/v1/admin/components?kind=connector_template": () =>
         json(200, { components: [...TEMPLATES, SLACK] }),
       "GET /api/v1/admin/components/connector_template/c2/versions": () =>
@@ -297,8 +299,8 @@ describe("admin component lists", () => {
     ).toBe(SLACK_ICON);
   });
 
-  it("/admin/agent-templates: cards with source · owner · scope · v, the primary 查看 and ⋯ (ruling P4-17)", async () => {
-    await open("/admin/agent-templates");
+  it("/admin/agents/templates: cards with source · owner · scope · v, the primary 查看 and ⋯ (ruling P4-17)", async () => {
+    await open("/admin/agents/templates");
     expect(screen.queryByRole("table")).toBeNull();
     const grid = await screen.findByRole("list", { name: C.titles.agent_template });
     expect(grid.getAttribute("data-part")).toBe("card-grid");
@@ -306,10 +308,10 @@ describe("admin component lists", () => {
       .getByRole("link", { name: "researcher" })
       .closest("li") as HTMLElement;
     expect(within(card).getByRole("link", { name: "researcher" }).getAttribute("href")).toBe(
-      "/admin/agent-templates/a1",
+      "/admin/agents/templates/a1",
     );
     expect(within(card).getByRole("link", { name: C.view }).getAttribute("href")).toBe(
-      "/admin/agent-templates/a1",
+      "/admin/agents/templates/a1",
     );
     const meta = card.querySelector('[data-part="object-card-meta"]')?.textContent ?? "";
     expect(meta).toContain(`${C.owner.platform} · `);
@@ -325,12 +327,73 @@ describe("admin component lists", () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
-  it("/admin/agent-templates: skeleton cards while loading, then the cards", async () => {
+  it("/admin/agents/templates: header tabs 智能体 / 模板 (模板 active) and the owner filter inside", async () => {
+    await open("/admin/agents/templates");
+    await screen.findByRole("link", { name: "researcher" });
+    const pick = (name: string) => {
+      const l = screen.getByRole("link", { name });
+      return [l.getAttribute("href"), l.getAttribute("aria-current")];
+    };
+    expect(pick(en.adminItems.tabs.agents)).toEqual(["/admin/agents", null]);
+    expect(pick(en.adminItems.tabs.templates)).toEqual(["/admin/agents/templates", "page"]);
+    // the owner filter is a second tab row
+    expect(screen.getByRole("tab", { name: new RegExp(`^${C.tabs.all}`) })).toBeTruthy();
+  });
+
+  it("/admin/connectors/templates: header tabs 连接器 / 模板", async () => {
+    await open("/admin/connectors/templates");
+    await screen.findByRole("table", { name: C.titles.connector_template });
+    const link = screen.getByRole("link", { name: en.adminItems.tabs.templates });
+    expect(link.getAttribute("href")).toBe("/admin/connectors/templates");
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(
+      screen.getByRole("link", { name: en.adminItems.tabs.connectors }).getAttribute("href"),
+    ).toBe("/admin/connectors");
+    expect(zh.adminItems.tabs.connectors).toBe("连接器");
+    expect(zh.adminItems.tabs.templates).toBe("模板");
+    expect(zh.admin.nav.agents).toBe("智能体");
+  });
+
+  it("the template details' path links agents / connectors to their lists", async () => {
+    await open("/admin/agents/templates/a1");
+    await screen.findByRole("heading", { level: 1, name: "researcher" });
+    expect(screen.getByRole("link", { name: "agents" }).getAttribute("href")).toBe("/admin/agents");
+    cleanup();
+    await open("/admin/connectors/templates/c1", {
+      "GET /api/v1/admin/components/connector_template/c1/versions": () =>
+        json(200, { versions: [] }),
+    });
+    await screen.findByRole("heading", { level: 1, name: "gh" });
+    expect(screen.getByRole("link", { name: "connectors" }).getAttribute("href")).toBe(
+      "/admin/connectors",
+    );
+  });
+
+  it("no source file links to the old template routes", () => {
+    const root = join(__dirname, "../src");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.isFile()) files.push(p);
+      }
+    };
+    walk(root);
+    // the walk itself reached the sources (an empty walk would pass silently)
+    expect(files.some((f) => f.endsWith("admin-item-tabs.ts"))).toBe(true);
+    const hits = files.filter((f) =>
+      /\/admin\/(agent|connector)-templates/.test(readFileSync(f, "utf8")),
+    );
+    expect(hits.map((f) => relative(root, f))).toEqual([]);
+  });
+
+  it("/admin/agents/templates: skeleton cards while loading, then the cards", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache("/admin/agent-templates", {
+    await renderRouteEmptyCache("/admin/agents/templates", {
       ...base,
       "GET /api/v1/admin/components?kind=agent_template": async () => {
         await gate;
@@ -344,14 +407,14 @@ describe("admin component lists", () => {
     expect(await screen.findByRole("link", { name: "researcher" })).toBeTruthy();
   });
 
-  it("/admin/agent-templates: none at all, and none under the open tab", async () => {
-    await open("/admin/agent-templates", {
+  it("/admin/agents/templates: none at all, and none under the open tab", async () => {
+    await open("/admin/agents/templates", {
       ...base,
       "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: [] }),
     });
     expect(await screen.findByText(C.empty.agent_template)).toBeTruthy();
     cleanup();
-    await open("/admin/agent-templates");
+    await open("/admin/agents/templates");
     await screen.findByRole("link", { name: "researcher" });
     await userEvent.setup().click(screen.getByRole("tab", { name: new RegExp(`^${C.tabs.org}`) }));
     expect(screen.getByText(C.emptyTab.agent_template)).toBeTruthy();
@@ -408,8 +471,8 @@ describe("admin component detail", () => {
 
   it.each([
     ["/admin/skills/s1", "web-research", "skill"],
-    ["/admin/connector-templates/c1", "gh", "connector_template"],
-    ["/admin/agent-templates/a1", "researcher", "agent_template"],
+    ["/admin/connectors/templates/c1", "gh", "connector_template"],
+    ["/admin/agents/templates/a1", "researcher", "agent_template"],
   ] as const)(
     "%s: one centred column, the full description first, the facts as a KeyValue",
     async (path, name, kind) => {
@@ -610,7 +673,7 @@ describe("admin component detail", () => {
   });
 
   it("上传新版本: an agent template's markdown is sent as { content }", async () => {
-    const calls = await open("/admin/agent-templates/a1", {
+    const calls = await open("/admin/agents/templates/a1", {
       "POST /api/v1/admin/components/agent_template/a1/versions": () =>
         json(201, { kind: "agent_template", id: "a1", name: "researcher", version: 2 }),
     });
@@ -658,7 +721,7 @@ describe("admin component detail", () => {
   });
 
   it("a connector template has no 上传新版本", async () => {
-    await open("/admin/connector-templates/c1", {
+    await open("/admin/connectors/templates/c1", {
       "GET /api/v1/admin/components/connector_template/c1/versions": () =>
         json(200, {
           versions: [
@@ -818,11 +881,11 @@ describe("admin plugin detail: components and the platform update", () => {
       within(row("summarize")).getByRole("link", { name: "summarize" }).getAttribute("href"),
     ).toBe("/admin/skills/s3");
     expect(within(row("gh")).getByRole("link", { name: "gh" }).getAttribute("href")).toBe(
-      "/admin/connector-templates/c1",
+      "/admin/connectors/templates/c1",
     );
     expect(
       within(row("researcher")).getByRole("link", { name: "researcher" }).getAttribute("href"),
-    ).toBe("/admin/agent-templates/a1");
+    ).toBe("/admin/agents/templates/a1");
   });
 
   it("the components table lists the extension's client components, its client code and the themes", async () => {
@@ -1283,7 +1346,7 @@ describe("org-owned components in the admin console (phase 3)", () => {
   });
 
   it("an org's plugin template is shared with its plugin, never on its own (ruling T4-R9)", async () => {
-    await open("/admin/agent-templates/a2", routes);
+    await open("/admin/agents/templates/a2", routes);
     expect(await screen.findByRole("heading", { name: "house-agent" })).toBeTruthy();
     expect(screen.getAllByText(C.share.notOwned).length).toBeGreaterThan(0);
     for (const a of [C.share.show, C.detail.actions.upload]) {
@@ -1292,7 +1355,7 @@ describe("org-owned components in the admin console (phase 3)", () => {
   });
 
   it("an org-created template its org shares: 对其他组织显示 on its card (P3-46 lifted, ruling P4-13)", async () => {
-    const calls = await open("/admin/agent-templates", {
+    const calls = await open("/admin/agents/templates", {
       ...routes,
       "GET /api/v1/admin/components?kind=agent_template": () =>
         json(200, {

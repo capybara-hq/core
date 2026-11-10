@@ -6,6 +6,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { EvalBudget } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
+import type { WriteActor } from "../identity/write-actor.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -366,7 +367,7 @@ export class AgentsService {
       "cancelPendingForAgent" | "finishCancel"
     >,
     /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
-    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize" | "tryLock">,
     /** Resolves the agent's models (and their parameter declarations) when it is saved. */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -679,17 +680,7 @@ export class AgentsService {
   ): Promise<{ visibility: AgentVisibility; current_version: number }> {
     const t = this.db.db;
     const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
-    // NO KEY UPDATE: a soft delete then appends revert snapshots to conversations; FOR UPDATE would
-    // block the agent foreign key check of an append already holding one of them (40P01)
-    const agent = await t
-      .selectFrom("agents")
-      .select(["owner_account_id", "visibility", "current_version"])
-      .where("id", "=", agentId)
-      .where("org_id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forNoKeyUpdate()
-      .executeTakeFirst();
-    if (!agent) throw notFound();
+    const agent = await this.lockAgentRow(orgId, agentId);
     if (agent.owner_account_id === actorAccountId || roleAtLeast(role, "admin")) return agent;
     const visible = await t
       .selectFrom("agents")
@@ -699,6 +690,56 @@ export class AgentsService {
       .executeTakeFirst();
     if (!visible) throw notFound();
     throw new ApiError("forbidden", "Only the agent owner or an organization admin can modify it");
+  }
+
+  /**
+   * Locks the live agent row of `orgId` (the caller holds the org row lock); missing or deleted →
+   * `agent.not_found`.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async lockAgentRow(
+    orgId: string,
+    agentId: string,
+  ): Promise<{
+    owner_account_id: string;
+    needs_reassignment: boolean;
+    visibility: AgentVisibility;
+    current_version: number;
+  }> {
+    // NO KEY UPDATE: a soft delete then appends revert snapshots to conversations; FOR UPDATE would
+    // block the agent foreign key check of an append already holding one of them (40P01)
+    const agent = await this.db.db
+      .selectFrom("agents")
+      .select(["owner_account_id", "needs_reassignment", "visibility", "current_version"])
+      .where("id", "=", agentId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
+    if (!agent) throw notFound();
+    return agent;
+  }
+
+  /**
+   * The platform path's lock (a super admin who need not be a member of the org): finds the live
+   * agent's org, locks the org row, then the agent row. A missing or deleted agent, or one of a
+   * deleted org → `agent.not_found`. The super admin check is the caller's (`@SuperAdmin()`).
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async lockForPlatform(agentId: string): Promise<{
+    orgId: string;
+    agent: { owner_account_id: string; needs_reassignment: boolean };
+  }> {
+    const found = await this.db.db
+      .selectFrom("agents")
+      .select("org_id")
+      .where("id", "=", agentId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!found) throw notFound();
+    const orgId = found.org_id;
+    if (!(await this.orgLock.tryLock(orgId))) throw notFound();
+    return { orgId, agent: await this.lockAgentRow(orgId, agentId) };
   }
 
   /**
@@ -898,8 +939,55 @@ export class AgentsService {
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ) {
-    const t = this.db.db;
     await this.lockForWrite(orgId, agentId, actorAccountId);
+    return this.softDeleteLocked(
+      orgId,
+      agentId,
+      { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+      auditDetail,
+    );
+  }
+
+  /**
+   * The platform's delete (a super admin who need not be a member of the agent's org): the same
+   * effects as {@link softDelete}, under the org row lock, audited `agent.deleted` with
+   * `detail.via = "platform"`. A missing or deleted agent, or one of a deleted org →
+   * `agent.not_found`. `auditDetail` (a Platform tool write's `viaAgent`) is merged into the
+   * detail; `via` stays `"platform"`.
+   */
+  async softDeleteAsPlatform(
+    agentId: string,
+    actor: WriteActor,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<void> {
+    const { orgId, cancelled } = await this.softDeleteAsPlatformIn(agentId, actor, auditDetail);
+    await this.skillChanges.finishCancel(orgId, cancelled);
+  }
+
+  @Transactional()
+  private async softDeleteAsPlatformIn(
+    agentId: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> | undefined,
+  ) {
+    const { orgId } = await this.lockForPlatform(agentId);
+    const cancelled = await this.softDeleteLocked(orgId, agentId, actor, {
+      ...auditDetail,
+      via: "platform",
+    });
+    return { orgId, cancelled };
+  }
+
+  /** The delete itself; the caller holds the org row and agent row locks. */
+  @Transactional({ propagation: "mandatory" })
+  private async softDeleteLocked(
+    orgId: string,
+    agentId: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> | undefined,
+  ) {
+    const t = this.db.db;
+    const { accountId: actorAccountId, tokenId: actorTokenId } = actor;
     await t
       .updateTable("agents")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
@@ -958,17 +1046,45 @@ export class AgentsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<AgentView> {
-    const t = this.db.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.manage");
-    const agent = await t
-      .selectFrom("agents")
-      .select(["owner_account_id", "needs_reassignment"])
-      .where("id", "=", agentId)
-      .where("org_id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!agent) throw notFound();
+    const agent = await this.lockAgentRow(orgId, agentId);
+    return this.reassignOwnerLocked(
+      orgId,
+      agentId,
+      agent,
+      newOwnerId,
+      { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+      undefined,
+    );
+  }
+
+  /**
+   * The platform's owner transfer (a super admin who need not be a member of the agent's org):
+   * the same checks and effects as {@link reassignOwner} (the new owner is a member of the agent's
+   * org and not its anonymous guest), audited with `detail.via = "platform"`. A missing or deleted
+   * agent, or one of a deleted org → `agent.not_found`.
+   */
+  @Transactional()
+  async reassignOwnerAsPlatform(
+    agentId: string,
+    newOwnerId: string,
+    actor: WriteActor,
+  ): Promise<AgentView> {
+    const { orgId, agent } = await this.lockForPlatform(agentId);
+    return this.reassignOwnerLocked(orgId, agentId, agent, newOwnerId, actor, { via: "platform" });
+  }
+
+  /** The owner transfer itself; the caller holds the org row and agent row locks. */
+  @Transactional({ propagation: "mandatory" })
+  private async reassignOwnerLocked(
+    orgId: string,
+    agentId: string,
+    agent: { owner_account_id: string; needs_reassignment: boolean },
+    newOwnerId: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> | undefined,
+  ): Promise<AgentView> {
+    const t = this.db.db;
     const member = await t
       .selectFrom("memberships")
       .select("role")
@@ -985,8 +1101,8 @@ export class AgentsService {
     // the new owner hears about the agent's connector setup request (P4-T6-4)
     await this.setupRequests.retargetIn([agentId], newOwnerId);
     await audit(t, {
-      actorAccountId,
-      ...(actorTokenId !== undefined && { actorTokenId }),
+      actorAccountId: actor.accountId,
+      ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
       orgId,
       action: "agent.owner_changed",
       target: agentId,
@@ -994,6 +1110,7 @@ export class AgentsService {
         from: agent.owner_account_id,
         to: newOwnerId,
         neededReassignment: agent.needs_reassignment,
+        ...auditDetail,
       },
     });
     return this.lookup.view(agentId);

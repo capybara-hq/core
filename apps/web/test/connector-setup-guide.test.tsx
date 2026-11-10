@@ -437,7 +437,7 @@ describe("如何连接: the member text in a sheet", () => {
   });
 });
 
-describe("/admin/connector-templates/<id>: the template's guide for the platform", () => {
+describe("/admin/connectors/templates/<id>: the template's guide for the platform", () => {
   const COMPONENT = {
     kind: "connector_template",
     id: "c2",
@@ -508,7 +508,7 @@ describe("/admin/connector-templates/<id>: the template's guide for the platform
   });
 
   it("admin template page renders the guide without checks", async () => {
-    resetNavigation("/admin/connector-templates/c2");
+    resetNavigation("/admin/connectors/templates/c2");
     const calls = stubApi(
       routes([
         { id: "slack-app", place: "channel-connection" },
@@ -516,7 +516,7 @@ describe("/admin/connector-templates/<id>: the template's guide for the platform
       ]),
     );
     const { container } = await renderRouteWithCache(
-      "/admin/connector-templates/c2",
+      "/admin/connectors/templates/c2",
       lastStubRoutes(),
       { locale: "en" },
     );
@@ -539,9 +539,9 @@ describe("/admin/connector-templates/<id>: the template's guide for the platform
   });
 
   it("no 接入指南 tab when the plugin has no guide for the template", async () => {
-    resetNavigation("/admin/connector-templates/c2");
+    resetNavigation("/admin/connectors/templates/c2");
     stubApi(routes([{ id: "slack-app", place: "channel-connection" }]));
-    await renderRouteWithCache("/admin/connector-templates/c2", lastStubRoutes(), {
+    await renderRouteWithCache("/admin/connectors/templates/c2", lastStubRoutes(), {
       locale: "en",
     });
     expect(

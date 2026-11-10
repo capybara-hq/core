@@ -282,9 +282,9 @@ const ADMIN_ICONS: Record<AdminPageId, IconName> = {
   plugins: "catalog",
   extensions: "extension",
   skills: "skills",
-  "connector-templates": "connector",
+  connectors: "connector",
   themes: "image",
-  "agent-templates": "agent",
+  agents: "agent",
   models: "cpu",
   settings: "sliders",
 };

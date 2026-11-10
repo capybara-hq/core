@@ -3346,8 +3346,8 @@
       "settings": "Deployment settings",
       "extensions": "Extensions",
       "skills": "Skills",
-      "connector-templates": "Connector templates",
-      "agent-templates": "Agent templates",
+      "agents": "Agents",
+      "connectors": "Connectors",
       "themes": "Themes",
       "models": "Models",
       "plugins": "Plugins",
@@ -5020,6 +5020,197 @@
       "doneTransferred": "\"{name}\" deleted; other organizations still use it, so it is now platform-owned."
     }
   },
+  "adminItems": {
+    "tabs": {
+      "agents": "Agents",
+      "connectors": "Connectors",
+      "templates": "Templates"
+    },
+    "connectors": {
+      "title": "Connectors",
+      "description": "Every organization's connectors and their templates: read the setup, disable, enable or delete.",
+      "listLabel": "Every organization's connectors",
+      "columns": {
+        "name": "Name",
+        "org": "Organization",
+        "kind": "Kind",
+        "from": "From template",
+        "status": "Status",
+        "tools": "Tools",
+        "synced": "Last sync",
+        "createdBy": "Created by"
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "filters": {
+        "org": "Organization",
+        "allOrgs": "All organizations",
+        "status": "Status",
+        "allStatuses": "All statuses"
+      },
+      "search": "Search by name",
+      "loadMore": "Load more",
+      "empty": "No organization has added a connector yet",
+      "emptyHint": "Connectors that organizations add or install are listed here.",
+      "noMatch": "No connectors match",
+      "never": "Never",
+      "fromPlatform": "Platform template",
+      "fromCatalog": "Plugin catalog",
+      "detail": {
+        "facts": {
+          "org": "Organization",
+          "kind": "Kind",
+          "slug": "Slug",
+          "status": "Status",
+          "from": "From template",
+          "auth": "Authentication",
+          "ownership": "Ownership",
+          "createdBy": "Created by",
+          "synced": "Last sync",
+          "updated": "Updated",
+          "created": "Created"
+        },
+        "auth": {
+          "none": "None",
+          "bearer": "Bearer token",
+          "api_key": "API key",
+          "basic": "Username and password",
+          "headers": "Custom headers",
+          "oauth_code": "OAuth authorization code",
+          "oauth_client": "OAuth client credentials"
+        },
+        "ownership": {
+          "org": "Shared by the organization",
+          "personal": "Each user's own"
+        },
+        "sections": {
+          "endpoint": "Endpoint",
+          "tools": "Tools"
+        },
+        "endpointEmpty": "No endpoint",
+        "toolsNone": "This connector lists no tools",
+        "toolStatus": {
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "pending_review": "Pending review"
+        },
+        "policy": {
+          "allow": "Allow",
+          "ask": "Ask for approval",
+          "deny": "Deny"
+        }
+      },
+      "actions": {
+        "disable": "Disable",
+        "enable": "Enable",
+        "delete": "Delete"
+      },
+      "toggle": {
+        "disabled": "\"{name}\" disabled",
+        "enabled": "\"{name}\" enabled"
+      },
+      "delete": {
+        "title": "Delete the connector \"{name}\"?",
+        "hint": "It belongs to the organization \"{org}\". Once deleted, its agents can no longer use it and its credentials are removed; the organization's audit log records the deletion.",
+        "confirm": "Delete",
+        "done": "\"{name}\" deleted"
+      }
+    },
+    "agents": {
+      "title": "Agents",
+      "description": "Every organization's agents and their templates: read the setup, transfer the owner or delete.",
+      "listLabel": "Every organization's agents",
+      "columns": {
+        "name": "Name",
+        "org": "Organization",
+        "owner": "Owner",
+        "visibility": "Visibility",
+        "from": "From template",
+        "updated": "Updated"
+      },
+      "needsReassignment": "Needs reassignment",
+      "visibility": {
+        "private": "Private",
+        "org": "Organization",
+        "members": "Selected members"
+      },
+      "filters": {
+        "org": "Organization",
+        "allOrgs": "All organizations"
+      },
+      "search": "Search by name",
+      "loadMore": "Load more",
+      "empty": "No organization has created an agent yet",
+      "emptyHint": "Agents that organization members create are listed here.",
+      "noMatch": "No agents match",
+      "detail": {
+        "facts": {
+          "org": "Organization",
+          "owner": "Owner",
+          "visibility": "Visibility",
+          "members": "Members",
+          "model": "Model",
+          "fallback": "Fallback model",
+          "effort": "Effort",
+          "from": "From template",
+          "versions": "Versions",
+          "updated": "Updated",
+          "created": "Created"
+        },
+        "membersCount": "{count, plural, one {# person} other {# people}}",
+        "none": "None",
+        "sections": {
+          "instructions": "Instructions",
+          "quickActions": "Quick actions",
+          "skills": "Skills",
+          "connectors": "Connectors",
+          "subagents": "Sub-agents",
+          "pending": "Connectors to bind"
+        },
+        "instructionsEmpty": "No instructions",
+        "quickActionsEmpty": "No quick actions",
+        "skillsNone": "No skills",
+        "subagents": {
+          "general": "General sub-agent",
+          "templates": "Templates",
+          "inline": "Custom",
+          "agents": "Other agents",
+          "on": "On",
+          "off": "Off"
+        },
+        "subagentsNone": "No sub-agents",
+        "skillScope": {
+          "org": "Org skill",
+          "agent": "Its own"
+        },
+        "connectorsNone": "No connectors to use",
+        "connectorStatus": {
+          "active": "Active",
+          "disabled": "Disabled"
+        }
+      },
+      "actions": {
+        "transfer": "Transfer owner",
+        "delete": "Delete"
+      },
+      "transfer": {
+        "title": "Transfer owner",
+        "owner": "New owner",
+        "help": "Pick a member of \"{org}\"; the owner can edit and delete this agent.",
+        "submit": "Transfer",
+        "done": "Owner transferred",
+        "none": "This organization has no member to pick"
+      },
+      "delete": {
+        "title": "Delete the agent \"{name}\"?",
+        "hint": "It belongs to the organization \"{org}\" and is owned by {owner}. Once deleted, nobody in the organization can use it; the organization's audit log records the deletion.",
+        "confirm": "Delete",
+        "done": "\"{name}\" deleted"
+      }
+    }
+  },
   "adminComponents": {
     "titles": {
       "skill": "Skills",
@@ -5029,11 +5220,12 @@
     },
     "descriptions": {
       "skill": "Every skill on the deployment: from plugins and from the platform. Manage scope, disabling and versions here.",
-      "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
-      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here.",
+      "connector_template": "Manage every organization's connectors and their templates: organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling on the templates.",
+      "agent_template": "Manage every organization's agents and their templates: a template is a ready-made agent definition, also usable as a sub-agent type. Manage scope, disabling and versions on the templates.",
       "theme": "Every theme on the deployment: the colors, fonts and logo plugins bring. Manage scope, disabling and versions here; choose the platform default theme under Appearance in the deployment settings."
     },
     "tabs": {
+      "label": "Filter by owner",
       "all": "All",
       "platform": "Platform",
       "org": "Created by organizations"

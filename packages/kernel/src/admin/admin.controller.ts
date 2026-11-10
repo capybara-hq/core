@@ -2,6 +2,7 @@ import type { LocalizedName, Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Patch, Post, Put } from "@nestjs/common";
 import type { z } from "zod";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
+import { ApiError } from "../errors.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
@@ -41,11 +42,13 @@ import {
   PurposePutDto,
   withDeclaredByNames,
 } from "../models/purposes.js";
+import { type Member, MembersService } from "../orgs/members.service.js";
 import { type Org, OrgsService } from "../orgs/orgs.service.js";
 import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
 import {
   AccountListQuery,
   AccountParams,
+  AdminOrgParams,
   CreateAccountBody,
   DeploymentSettingsBody,
   PurposeParams,
@@ -70,6 +73,7 @@ class AccountListQueryDto extends createZodDto(AccountListQuery, "AccountListQue
 class CreateAccountBodyDto extends createZodDto(CreateAccountBody, "CreateAccountBody") {}
 class UpdateAccountBodyDto extends createZodDto(UpdateAccountBody, "UpdateAccountBody") {}
 class AccountParamsDto extends createZodDto(AccountParams, "AccountParams") {}
+class AdminOrgParamsDto extends createZodDto(AdminOrgParams, "AdminOrgParams") {}
 class PurposeParamsDto extends createZodDto(PurposeParams, "PurposeParams") {}
 class DeploymentSettingsBodyDto extends createZodDto(
   DeploymentSettingsBody,
@@ -100,6 +104,7 @@ export class AdminController {
     @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
+    @Inject(MembersService) private readonly members: MembersService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -199,6 +204,20 @@ export class AdminController {
     limitDefaults: LimitDefaults;
   }> {
     return { orgs: await this.orgs.listAll(), limitDefaults: limitDefaults(this.config) };
+  }
+
+  /**
+   * The members of any live org (the agent owner transfer picks the new owner from them); the super
+   * admin need not be a member. A missing or deleted org → `org.not_found`.
+   */
+  @Get("orgs/:orgId/members")
+  async orgMembers(
+    @ZParam(AdminOrgParamsDto) { orgId }: z.infer<typeof AdminOrgParams>,
+  ): Promise<{ members: Member[] }> {
+    if ((await this.orgs.get(orgId)) === undefined) {
+      throw new ApiError("org.not_found", "Organization not found");
+    }
+    return { members: await this.members.list(orgId) };
   }
 
   @Get("settings")
