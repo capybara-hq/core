@@ -1031,6 +1031,15 @@ a.cb-object-name:hover {
 }
 
 /* ErrorDetail (spec §6.24): the sentence, then the raw text behind a small toggle */
+/* OverviewSection's error line (spec §5.6): the ErrorDetail, 重试 at the right on the sentence's
+   line (the LoadFailed line, §6.16, with the raw text under the sentence). */
+.cb-overview-section-error {
+  align-items: flex-start;
+}
+.cb-overview-section-error > .cb-link-btn {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-body-line);
+}
 .cb-error-detail {
   display: flex;
   flex-direction: column;

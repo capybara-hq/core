@@ -125,6 +125,8 @@ export const REFERENCE_COMPONENTS = [
   "impact-preview",
   // cards on the page ground (plugin scope phase 4, ruling P4-15)
   "card-grid",
+  // one section of an overview page in its own state (admin overview design §10.2)
+  "overview-section",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // theme picker card (themes spec §10)

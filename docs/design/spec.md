@@ -588,6 +588,23 @@ States: `default`, `loading`, `keep`, `loading-keep`
 | content | keep | max-width | layout.content |
 | content | loading-keep | max-width | layout.content |
 
+- **Sections** (`OverviewSection({ title, actions?, state, loading?, error?, children })`, `state` `"loading" | "error" | "ready"`): a page whose sections read their own data (the admin overview: 待处理, 最近的平台操作) draws each one as an `OverviewSection`, so the page holds no state logic and one failing read never blanks the others. It is the section's one Card (the Card of §6.9: the head with `title` and the static `actions`, such as 查看全部, kept in every state) and provides the box to what it holds, so its content groups with `ItemList` rows, an unframed DataTable or `Subsection`s, never a second box (§1). Its body is, by `state`: `loading`, the loaded block's skeleton from `loading` (`BlockShape[]`, as in §5.2; default three lines), a busy region named by the title (§6.29: inside the page's own loading group it adds no second announcement); `error`, the in-place error line (the extension block's load-failure line of §6.16): the ErrorDetail sentence (`error.summary`, led by `circle-x`, the raw `error.detail` behind 原始错误, §6.24) with 重试 (`refresh` 12, a `small` muted link button) at the line's right, which calls `error.onRetry` and reads that section again; `ready`, the children. An empty section is its content's own empty state (`EmptyState size="panel"`, §6.18), drawn by the page in `ready`.
+
+<!-- states: overview-section -->
+States: `default`, `loading`, `error`
+
+<!-- size-table: overview-section -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| overview-section | default | background-color | color.panel |
+| overview-section | default | border-top-left-radius | radius.md |
+| overview-section | loading | background-color | color.panel |
+| skeleton-text[data-size=body] | loading | height | type.body.line |
+| error-detail-summary | error | color | color.fail |
+| error-detail-summary | error | font-size | type.body |
+| overview-section-retry | error | color | color.muted |
+| overview-section-retry | error | font-size | type.small |
+
 ### 5.7 Inbox (T6)
 - Rail (320, the list column; wider than a filter rail's 240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400). A row leads with the item's display name (one line, the ellipsis on the name, the full text in `title`), its version beside the name in `CellTitle`'s `trailing` (never cut), and what kind of item it is on the second line; the list's column header is neutral (事项 / Item), since rows are requests and notices alike.
 - **Loading** (`InboxPage.loading`, `{ rows?, inspector? }`): the header is its loading state (§4.2); the rail's `filters` stay real (they are static); the list is `rows` rows (default 4) in the object list's own container (§6.17: the same border, radius and first row) in the 64 px row: a 36 px mark and two text slots (a `body` one at 55%, a `small` one at 30%); `loading.list: "records"` (with `loading.table`: `label`, `columns`, `rowHeight`, `framed`) draws the DataTable's loading state (§6.6) in the caller's table shape instead, for the inbox pages whose list is a DataTable (`rowHeight="dense" framed={false}`); the content is one card-shaped block (§5.2) in place of `children`. A real `inspector` stays. A page whose loaded state opens its first item (the rail-inspector layout, an ActionRow for the decision) keeps both while loading: `inspector` (`true`, or `{ rows?, keyWidth? }` as in §5.2) draws KeyValue placeholders in the inspector column, and the page passes its `inspectorTitle` and its decision `actionRow` (the labels are static), which stays with its buttons disabled (as in §5.3). One busy announcement (§6.29). Nothing animates.

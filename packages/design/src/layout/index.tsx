@@ -83,7 +83,40 @@ export function Card({
   children?: ReactNode;
 }) {
   return (
-    <section className="cb-card" data-part="card" data-cap-part="card" data-tone={tone}>
+    <CardFrame title={title} actions={actions} tone={tone}>
+      {children}
+    </CardFrame>
+  );
+}
+
+/**
+ * The Card's markup and box scope, for the design components that are a Card under another name
+ * (OverviewSection, spec §5.6): `part` names it for the size tables, `state` is its `data-state`.
+ * Not exported from the package.
+ */
+export function CardFrame({
+  title,
+  actions,
+  tone = "default",
+  part = "card",
+  state,
+  children,
+}: {
+  title?: ReactNode;
+  actions?: ReactNode;
+  tone?: "default" | "danger" | "accent";
+  part?: string;
+  state?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <section
+      className="cb-card"
+      data-part={part}
+      data-cap-part="card"
+      data-tone={tone}
+      data-state={state}
+    >
       <BoxScope kind="card">
         {title || actions ? (
           <header className="cb-card-head">

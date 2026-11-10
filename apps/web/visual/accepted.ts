@@ -150,6 +150,10 @@ export const ACCEPTED: string[] = [
   // the theme picker's radio group (Task 13 fix round): block and size table in place; the reference
   // PNGs and the side-by-side review wait for the reference-update and visual-update workflows
   "theme-swatch-group",
+  // one section of an overview page in its own state (admin overview design §10.2): blocks and
+  // size table in place; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "overview-section",
 ];
 
 /**

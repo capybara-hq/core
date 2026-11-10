@@ -5414,3 +5414,23 @@ textarea {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cb-layout-swatch-min)), 1fr));
   gap: var(--cb-space-3);
 }
+
+/* ── OverviewSection (spec §5.6): one section of an overview page in its own state ── */
+
+.r-osec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-2);
+}
+.r-osec-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+}
+.r-osec-error > .r-linkbtn {
+  margin-left: auto;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-body-line);
+}

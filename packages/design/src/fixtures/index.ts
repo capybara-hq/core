@@ -663,3 +663,21 @@ export * from "./conversation";
  */
 export const PLUGIN_ICON_FIXTURE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='20' height='20' rx='5'/%3E%3Cpath d='M7 12h10M12 7v10' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E";
+
+/**
+ * The overview section's reference blocks (spec §5.6 "OverviewSection"): a section of the admin
+ * overview (待处理) with its rows, the loading shape (the rows' list), and the in-place error
+ * (a sentence, the raw text behind 原始错误).
+ */
+export const OVERVIEW_SECTION_FIXTURE = {
+  title: "待处理",
+  action: "查看全部",
+  rows: [
+    { id: "requests", title: "扩展权限审批", meta: "2 个扩展等待批准", count: "2" },
+    { id: "updates", title: "可更新的插件", meta: "crm v1.2.0 → v1.3.0", count: "1" },
+    { id: "providers", title: "模型供应商", meta: "deepseek 无法列出模型", count: "1" },
+  ],
+  loadingItems: 3,
+  errorSummary: "无法加载待处理事项。",
+  errorDetail: "GET /api/admin/attention: 503 Service Unavailable (upstream timed out after 10s)",
+};
