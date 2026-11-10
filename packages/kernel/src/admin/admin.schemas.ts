@@ -36,6 +36,9 @@ export const DeploymentSettingsBody = DEPLOYMENT_SETTINGS_PATCH.refine(
 
 export const PurposeParams = z.object({ purpose: z.string().min(1).max(100) });
 
+/** `:orgId` of an admin route: any org, the super admin need not be a member. */
+export const AdminOrgParams = z.object({ orgId: z.string().min(1).max(100) });
+
 export const ADMIN_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/admin/overview" },
   { route: "GET /api/v1/admin/accounts", query: AccountListQuery },
@@ -46,6 +49,8 @@ export const ADMIN_ROUTES: readonly RouteSchemas[] = [
     body: UpdateAccountBody,
   },
   { route: "GET /api/v1/admin/orgs" },
+  // `:orgId` is the conversation's org for the operation, so never an operation field
+  { route: "GET /api/v1/admin/orgs/:orgId/members" },
   { route: "GET /api/v1/admin/settings" },
   { route: "PUT /api/v1/admin/settings", body: DeploymentSettingsBody },
   { route: "GET /api/v1/admin/models" },

@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import { ADMIN_ROUTES } from "../admin/admin.schemas.js";
+import { ADMIN_ITEM_ROUTES } from "../admin/admin-items.schemas.js";
 import { ADMIN_EXTENSION_ROUTES } from "../admin/extensions.schemas.js";
 import { AGENT_ROUTES } from "../agents/agents.schemas.js";
 import { AGENT_TEMPLATE_ROUTES } from "../agents/templates.schemas.js";
@@ -88,4 +89,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...SETUP_GUIDE_ROUTES,
   // UI slots (UI slots spec §3)
   ...UI_ROUTES,
+  // every org's agents and connectors (admin agents and connectors spec §4)
+  ...ADMIN_ITEM_ROUTES,
 ];

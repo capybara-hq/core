@@ -82,6 +82,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason: "Transfers ownership of an agent to another person",
   },
+  {
+    route: "POST /api/v1/admin/agents/:agentId/owner",
+    category: "human-only",
+    reason:
+      "Transfers ownership of an org's agent to another person on the platform's behalf, as the org's own transfer route",
+  },
   // background
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/output",
