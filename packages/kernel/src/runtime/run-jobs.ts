@@ -90,10 +90,13 @@ export class RunJobs {
   }
 }
 
+/** The run queues' registration (re-exported: the admin health reads their counts). */
+const RUN_QUEUES_MODULE = QueueModule.registerQueue(RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME);
+
 /** The run queues' producer (the sub-agent dispatch, the run queue and the waits use it). */
 @Module({
-  imports: [QueueModule.registerQueue(RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME)],
+  imports: [RUN_QUEUES_MODULE],
   providers: [RunJobs],
-  exports: [RunJobs],
+  exports: [RunJobs, RUN_QUEUES_MODULE],
 })
 export class RunJobsModule {}
