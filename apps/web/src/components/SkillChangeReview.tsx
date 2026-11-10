@@ -51,6 +51,9 @@ export function useDecideSkillChange(orgId: string) {
       decideSkillChange(orgId, v.change.id, { decision: v.decision }),
     invalidates: ({ change }) => [
       keys.org(orgId).agentSkills(change.agent.id),
+      // approving a share creates an org skill, approving a version changes one
+      keys.org(orgId).skills(),
+      keys.org(orgId).componentsAll(),
       ...inboxChangeKeys(orgId),
     ],
     // The decided change is stale, but not read again now: the inbox hides it at once.

@@ -365,12 +365,64 @@ describe("编辑 agent（FormPage）", () => {
     expect(await within(list).findByText("fresh-skill")).toBeTruthy();
   });
 
-  it("the owner shares an own skill after a confirm; a request reads as waiting for an org admin", async () => {
-    const calls = stubApi({
+  /** Opens the upload dialog as the owner and returns its parts. */
+  async function openUpload(applyAccept = true) {
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    FakeXhr.instances = [];
+    await renderEditAgent({ section: "skills" });
+    const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
+    const user = userEvent.setup({ applyAccept });
+    await user.click(within(list).getByRole("button", { name: en.agents.form.uploadSkill }));
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    return { user, dialog, input };
+  }
+  const UPLOADS = `POST ${ORG}/agents/ag1/skills/uploads`;
+  const upload = {
+    id: "up1",
+    upload: { method: "POST", url: "http://s3.test/b", headers: {}, fields: { key: "k" } },
+    expiresAt: T,
+  };
+
+  it("an upload that is proposed (a shared skill version for an admin to decide) toasts that", async () => {
+    stubApi({
       ...routes(),
-      [`POST ${ORG}/agents/ag1/skills/k1/share`]: () =>
-        json(200, { share: { kind: "requested", requestId: "r1" } }),
+      [UPLOADS]: () => json(201, upload),
+      [`POST ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skill: { kind: "proposed", name: "shared-notes" } }),
     });
+    const { user, input } = await openUpload();
+    await user.upload(input, new File([new Uint8Array(4)], "shared-notes.zip"));
+    expect(
+      await screen.findByText(
+        en.agents.form.uploadSkillDialog.proposed.replace("{name}", "shared-notes"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a rejected package shows the kernel's error and keeps the dialog open", async () => {
+    stubApi({
+      ...routes(),
+      [UPLOADS]: () => json(201, upload),
+      [`POST ${ORG}/agents/ag1/skills`]: () =>
+        json(409, { error: { code: "skill.agent_cap", message: "cap" } }),
+    });
+    const { user, dialog, input } = await openUpload();
+    await user.upload(input, new File([new Uint8Array(4)], "x.zip"));
+    expect(await within(dialog).findByText(en.errors.skill.agent_cap)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeTruthy();
+  });
+
+  it("a file that is not a zip is refused in the browser, before any request", async () => {
+    const calls = stubApi({ ...routes(), [UPLOADS]: () => json(201, upload) });
+    const { user, dialog, input } = await openUpload(false);
+    await user.upload(input, new File([new Uint8Array(4)], "notes.txt"));
+    expect(await within(dialog).findByText(en.agents.form.uploadSkillDialog.notZip)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  /** Opens the share dialog of notes-style (owner view) and returns the list region. */
+  async function openShare() {
     await renderEditAgent({ section: "skills" });
     const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
     const user = userEvent.setup();
@@ -379,17 +431,67 @@ describe("编辑 agent（FormPage）", () => {
         name: en.agents.form.shareOwnSkillLabel.replace("{name}", "notes-style"),
       }),
     );
+    return { list, user, dialog: await screen.findByRole("dialog") };
+  }
+  const SHARE = `POST ${ORG}/agents/ag1/skills/k1/share`;
+
+  it("a share request: the list marks the skill waiting for an org admin (sharePending from the kernel)", async () => {
+    let pending = false;
+    const calls = stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skills: [{ ...ownSkill, sharePending: pending }] }),
+      [SHARE]: () => {
+        pending = true;
+        return json(200, { share: { kind: "requested", requestId: "r1" } });
+      },
+    });
+    const { list, user, dialog } = await openShare();
     // nothing is sent before the confirm
     expect(calls.some((c) => c.method === "POST")).toBe(false);
-    const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: en.agents.form.shareConfirm }));
     expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
     expect(within(list).queryByRole("button", { name: /Share skill/ })).toBeNull();
-    // the share invalidates the agent's own skills
-    const after = calls.slice(calls.findIndex((c) => c.method === "POST"));
-    await vi.waitFor(() =>
-      expect(after.map((c) => `${c.method} ${c.url}`)).toContain(`GET ${ORG}/agents/ag1/skills`),
-    );
+  });
+
+  it("a skill that is already pending shows waiting from the first read", async () => {
+    stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skills: [{ ...ownSkill, sharePending: true }] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
+    expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
+  });
+
+  it("an org admin owner: the share answer `shared` toasts at once", async () => {
+    stubApi({
+      ...routes(),
+      [SHARE]: () => json(200, { share: { kind: "shared", skillId: "k1" } }),
+    });
+    const { user, dialog } = await openShare();
+    await user.click(within(dialog).getByRole("button", { name: en.agents.form.shareConfirm }));
+    expect(
+      await screen.findByText(en.agents.form.ownSkillShared.replace("{name}", "notes-style")),
+    ).toBeTruthy();
+  });
+
+  it("a 409 skill.share_pending toasts the kernel's message and reads the list again", async () => {
+    let reads = 0;
+    stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () => {
+        reads += 1;
+        return json(200, { skills: [{ ...ownSkill, sharePending: reads > 1 }] });
+      },
+      [SHARE]: () =>
+        json(409, { error: { code: "skill.share_pending", message: "Share is pending" } }),
+    });
+    const { list, user, dialog } = await openShare();
+    await user.click(within(dialog).getByRole("button", { name: en.agents.form.shareConfirm }));
+    expect(await screen.findByText(en.errors.skill.share_pending)).toBeTruthy();
+    expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
   });
 
   it("an agent the kernel does not find is the not-found state in the shell", async () => {

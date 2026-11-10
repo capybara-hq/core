@@ -333,6 +333,9 @@ describe("收件箱：技能变更", () => {
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
     // the sidebar's count is cached (the shell reads it)
     client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
+    client.setQueryData(["org", "o1", "skills"], { skills: [] });
+    client.setQueryData(["org", "o1", "components"], { items: [] });
+    client.setQueryData(["org", "o1", "agentSkills", "ag1"], { skills: [] });
     const row = await screen.findByRole("region", { name: "Pending changes" });
     await userEvent
       .setup()
@@ -349,6 +352,10 @@ describe("收件箱：技能变更", () => {
     ]);
     expect(client.getQueryState(["org", "o1", "skillChange", "sc1"])?.isInvalidated).toBe(true);
     expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
+    // approving a share creates an org skill (a version changes one): the org lists are stale too
+    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "components"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "agentSkills", "ag1"])?.isInvalidated).toBe(true);
   });
 
   it("拒绝失败（已被处理）：toast 显示 skill_change.already_decided 的文案", async () => {

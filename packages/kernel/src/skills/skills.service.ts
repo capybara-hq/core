@@ -1054,6 +1054,32 @@ export class SkillsService {
     );
   }
 
+  /**
+   * The agent's own skills as the agent page lists them: {@link listForAgent} plus `sharePending`,
+   * true while a share request of the skill waits for an org admin.
+   */
+  async listOwnForAgent(
+    orgId: string,
+    agentId: string,
+  ): Promise<(SkillSummary & { sharePending: boolean })[]> {
+    const skills = await this.listForAgent(orgId, agentId);
+    if (skills.length === 0) return [];
+    const pending = await this.db
+      .selectFrom("skill_change_requests")
+      .select("skill_id")
+      .where("org_id", "=", orgId)
+      .where("kind", "=", "share")
+      .where("status", "=", "pending")
+      .where(
+        "skill_id",
+        "in",
+        skills.map((s) => s.id),
+      )
+      .execute();
+    const ids = new Set(pending.map((r) => r.skill_id));
+    return skills.map((s) => ({ ...s, sharePending: ids.has(s.id) }));
+  }
+
   /** 对该 agent 自动生效的技能（`scope=agent`、未删除），按名字排序。 */
   async listForAgent(orgId: string, agentId: string): Promise<SkillSummary[]> {
     const rows = await summaryQuery(this.db.db)

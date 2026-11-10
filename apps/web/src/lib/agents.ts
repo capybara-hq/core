@@ -92,8 +92,9 @@ export interface AgentDefinitionInput {
   toolPolicies?: Record<string, AgentToolPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
   /**
-   * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有智能体登记技能（agents.register-skill）的确认开关，缺省不写），
-   * 其余键（新版本内核加的）保存时原样带回。
+   * Skills settings. The form manages only `orgSkills`, `pinned` and `writePolicy` (the confirmation
+   * switch for skill registration, `agents.register-skill`, on a private agent; absent = allow);
+   * other keys (added by newer kernels) are sent back as saved.
    */
   skills?: {
     orgSkills: string[];

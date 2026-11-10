@@ -27,7 +27,8 @@ class AgentSkillRegisterBodyDto extends createZodDto(
 
 /**
  * An agent's own skills (`/api/v1/orgs/:orgId/agents/:agentId/skills`):
- * - `GET /`: the list (`scope = agent`, live, by name), with the visibility of
+ * - `GET /`: the list (`scope = agent`, live, by name; `sharePending` marks a skill whose share
+ *   request waits for an org admin), with the visibility of
  *   `GET /agents/:agentId` (`agents.use`; an agent not visible -> 404 `agent.not_found`; a service
  *   token sees only `visibility = 'org'` agents);
  * - the writes are `agents.create` (HUMAN_ONLY) and only for the agent's current owner (others 403
@@ -57,13 +58,13 @@ export class AgentSkillsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
-  ): Promise<{ skills: SkillSummary[] }> {
+  ): Promise<{ skills: (SkillSummary & { sharePending: boolean })[] }> {
     await this.agents.get(
       org.orgId,
       agentId,
       principal.kind === "user" ? principal.account.id : null,
     );
-    return { skills: await this.skills.listForAgent(org.orgId, agentId) };
+    return { skills: await this.skills.listOwnForAgent(org.orgId, agentId) };
   }
 
   @Post("uploads")

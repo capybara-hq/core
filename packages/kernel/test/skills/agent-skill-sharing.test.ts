@@ -211,6 +211,32 @@ describe("sharing an agent skill", () => {
     );
   });
 
+  it("the agent's skill list marks a pending share and clears it on decide, cancel or reject", async () => {
+    const agentId = await createAgent(env.mem);
+    const list = async () => {
+      const res = await env.mem({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/agents/${agentId}/skills`,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { skills: { name: string; sharePending: boolean }[] }).skills;
+    };
+    const own = await svc.register(actor(agentId, env.memId), zipOf("notes"));
+    expect(await list()).toMatchObject([{ name: "notes", sharePending: false }]);
+    const out = await svc.share(actor(agentId, env.memId), own.skillId);
+    if (out.kind !== "requested") throw new Error("expected a request");
+    expect(await list()).toMatchObject([{ name: "notes", sharePending: true }]);
+    // a rejected share is no longer pending
+    expect((await decideHttp(env.boss, out.requestId, "reject")).statusCode).toBe(200);
+    expect(await list()).toMatchObject([{ name: "notes", sharePending: false }]);
+    // a new request, cancelled by a new version of the skill
+    const again = await svc.share(actor(agentId, env.memId), own.skillId);
+    if (again.kind !== "requested") throw new Error("expected a request");
+    expect(await list()).toMatchObject([{ sharePending: true }]);
+    await svc.register(actor(agentId, env.memId), zipOf("notes", "V2."));
+    expect(await list()).toMatchObject([{ name: "notes", sharePending: false }]);
+  });
+
   it("an org admin owner shares at once", async () => {
     const agentId = await createAgent(env.boss);
     const own = await svc.register(actor(agentId, env.bossId), zipOf("notes"));

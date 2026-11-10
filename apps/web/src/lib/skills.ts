@@ -50,6 +50,8 @@ export interface SkillSummary {
    * it to other orgs); false for platform skills and agents' skills (absent from older kernels).
    */
   shareable?: boolean;
+  /** The agent's own skill list only: a share request of the skill waits for an org admin. */
+  sharePending?: boolean;
 }
 
 /** The skill's id and the ids of the org copies linked to it (they all select the same skill). */

@@ -16,6 +16,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { ApiClientError, issueLines } from "../lib/api";
@@ -349,13 +350,12 @@ export function OwnSkills({
 }) {
   const t = useTranslations("agents.form");
   const toast = useToast();
+  const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const [target, setTarget] = useState<SkillSummary>();
   const [shareTarget, setShareTarget] = useState<SkillSummary>();
   const [shareError, setShareError] = useState<string>();
   const [uploading, setUploading] = useState(false);
-  /** Skills whose share request waits for an org admin (the kernel lists none: learned here). */
-  const [waiting, setWaiting] = useState<ReadonlySet<string>>(new Set());
   // A delete invalidates the agent's own skills: the list is read again.
   const remove = useAppMutation({
     fn: (skillId: string) => deleteAgentSkill(orgId, agentId, skillId),
@@ -370,7 +370,6 @@ export function OwnSkills({
       keys.org(orgId).componentsAll(),
     ],
   });
-  const markWaiting = (id: string) => setWaiting((cur) => new Set([...cur, id]));
 
   return (
     <Subsection
@@ -397,7 +396,7 @@ export function OwnSkills({
                 actions={
                   canManage ? (
                     <Stack direction="row" gap={8} align="center">
-                      {waiting.has(s.id) ? (
+                      {s.sharePending === true ? (
                         <Text variant="small" tone="muted">
                           {t("shareWaiting")}
                         </Text>
@@ -458,13 +457,13 @@ export function OwnSkills({
                   if (r.kind === "shared")
                     toast.success(t("ownSkillShared", { name: shareTarget.name }));
                   else {
-                    markWaiting(shareTarget.id);
                     toast.success(t("shareRequested", { name: shareTarget.name }));
                   }
                   setShareTarget(undefined);
                 } catch (e) {
                   if (e instanceof ApiClientError && e.code === "skill.share_pending") {
-                    markWaiting(shareTarget.id);
+                    // Already waiting (another tab, or a stale list): read the list again
+                    await qc.invalidateQueries({ queryKey: keys.org(orgId).agentSkills(agentId) });
                     setShareTarget(undefined);
                     toast.error(errorMessage(e));
                   } else setShareError(errorMessage(e));
