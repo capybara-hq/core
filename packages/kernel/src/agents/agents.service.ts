@@ -952,17 +952,29 @@ export class AgentsService {
    * The platform's delete (a super admin who need not be a member of the agent's org): the same
    * effects as {@link softDelete}, under the org row lock, audited `agent.deleted` with
    * `detail.via = "platform"`. A missing or deleted agent, or one of a deleted org →
-   * `agent.not_found`.
+   * `agent.not_found`. `auditDetail` (a Platform tool write's `viaAgent`) is merged into the
+   * detail; `via` stays `"platform"`.
    */
-  async softDeleteAsPlatform(agentId: string, actor: WriteActor): Promise<void> {
-    const { orgId, cancelled } = await this.softDeleteAsPlatformIn(agentId, actor);
+  async softDeleteAsPlatform(
+    agentId: string,
+    actor: WriteActor,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<void> {
+    const { orgId, cancelled } = await this.softDeleteAsPlatformIn(agentId, actor, auditDetail);
     await this.skillChanges.finishCancel(orgId, cancelled);
   }
 
   @Transactional()
-  private async softDeleteAsPlatformIn(agentId: string, actor: WriteActor) {
+  private async softDeleteAsPlatformIn(
+    agentId: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> | undefined,
+  ) {
     const { orgId } = await this.lockForPlatform(agentId);
-    const cancelled = await this.softDeleteLocked(orgId, agentId, actor, { via: "platform" });
+    const cancelled = await this.softDeleteLocked(orgId, agentId, actor, {
+      ...auditDetail,
+      via: "platform",
+    });
     return { orgId, cancelled };
   }
 

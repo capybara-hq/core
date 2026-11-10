@@ -18,6 +18,7 @@ import { AdminConnectors } from "../../tools/admin-connectors.js";
 import { ConnectorsService } from "../../tools/connectors.service.js";
 import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
+import { viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
 /**
@@ -145,9 +146,11 @@ export class AdminItemsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           await this.agentOf(input.agentId, ctx);
-          await this.agents.softDeleteAsPlatform(input.agentId, {
-            accountId: ctx.actorAccountId,
-          });
+          await this.agents.softDeleteAsPlatform(
+            input.agentId,
+            { accountId: ctx.actorAccountId },
+            viaAgent("admin.agent-delete", ctx),
+          );
           return { id: input.agentId, deleted: true };
         },
       }),
@@ -228,9 +231,12 @@ export class AdminItemsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           await this.connectorOf(input.connectorId, ctx);
-          await this.connectors.setStatusAsPlatform(input.connectorId, input.status, {
-            accountId: ctx.actorAccountId,
-          });
+          await this.connectors.setStatusAsPlatform(
+            input.connectorId,
+            input.status,
+            { accountId: ctx.actorAccountId },
+            viaAgent("admin.connector-set-status", ctx),
+          );
           return { connector: await this.adminConnectors.get(input.connectorId) };
         },
       }),
@@ -263,9 +269,11 @@ export class AdminItemsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           await this.connectorOf(input.connectorId, ctx);
-          await this.connectors.removeAsPlatform(input.connectorId, {
-            accountId: ctx.actorAccountId,
-          });
+          await this.connectors.removeAsPlatform(
+            input.connectorId,
+            { accountId: ctx.actorAccountId },
+            viaAgent("admin.connector-delete", ctx),
+          );
           return { id: input.connectorId, deleted: true };
         },
       }),

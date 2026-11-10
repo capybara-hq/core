@@ -1476,13 +1476,15 @@ export class ConnectorsService {
   /**
    * Disables or enables a connector on the platform's behalf (a super admin who need not be a
    * member of the org; the caller checks the super admin): org row lock, the status update, audit
-   * `connector.updated` with `via: "platform"`.
+   * `connector.updated` with `via: "platform"`. `auditDetail` (a Platform tool write's
+   * `viaAgent`) is merged into the detail; `via` stays `"platform"`.
    */
   @Transactional()
   async setStatusAsPlatform(
     connectorId: string,
     status: "active" | "disabled",
     actor: WriteActor,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const t = this.db;
     const orgId = await this.liveOrgOf(connectorId);
@@ -1499,19 +1501,25 @@ export class ConnectorsService {
       orgId,
       action: "connector.updated",
       target: connectorId,
-      detail: { status: { from: app.status, to: status }, via: "platform" },
+      detail: { ...auditDetail, status: { from: app.status, to: status }, via: "platform" },
     });
   }
 
   /**
    * Deletes a connector on the platform's behalf (see {@link setStatusAsPlatform}): org row lock,
-   * then {@link removeIn} with `via: "platform"` in the audit detail.
+   * then {@link removeIn} with `via: "platform"` in the audit detail (merged over `auditDetail`,
+   * a Platform tool write's `viaAgent`).
    */
   @Transactional()
-  async removeAsPlatform(connectorId: string, actor: WriteActor): Promise<void> {
+  async removeAsPlatform(
+    connectorId: string,
+    actor: WriteActor,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<void> {
     const orgId = await this.liveOrgOf(connectorId);
     await this.orgLock.lock(orgId);
     await this.removeIn(orgId, connectorId, actor.accountId, actor.tokenId, undefined, {
+      ...auditDetail,
       via: "platform",
     });
   }

@@ -436,6 +436,70 @@ describe("Platform operations", () => {
     expect(JSON.parse(JSON.stringify(agent))).toEqual(httpAgent.json());
   });
 
+  it("tool writes are audited with via platform and the tool's run", async () => {
+    const c = ctx();
+    const runIn = (id: string, input: unknown) => {
+      const o = k.app.get(PlatformOperations).get(id);
+      if (o === null) throw new Error(`no operation ${id}`);
+      return o.run(o.input.parse(input), c);
+    };
+    const toolAudit = (operation: string) => ({
+      actor_account_id: rootId,
+      org_id: orgA,
+      detail: {
+        via: "platform",
+        operation,
+        agentConversationId: c.conversationId,
+        agentRunId: c.runId,
+      },
+    });
+
+    const agent = await agentOfA("Tool delete");
+    expect(await runIn("admin.agent-delete", { agentId: agent })).toEqual({
+      id: agent,
+      deleted: true,
+    });
+    expect((await auditOf("agent.deleted", agent))[0]).toMatchObject(
+      toolAudit("admin.agent-delete"),
+    );
+
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgA}/connectors`,
+      payload: {
+        connector: "mem",
+        name: "Tooled",
+        endpoint: { server: "open" },
+        auth: { type: "none" },
+      },
+    });
+    const conn = (res.json() as { connector: { id: string } }).connector.id;
+    const set = (await runIn("admin.connector-set-status", {
+      connectorId: conn,
+      status: "disabled",
+    })) as { connector: { status: string } };
+    expect(set.connector.status).toBe("disabled");
+    expect((await auditOf("connector.updated", conn))[0]).toMatchObject({
+      ...toolAudit("admin.connector-set-status"),
+      detail: { status: { from: "active", to: "disabled" } },
+    });
+    expect(await runIn("admin.connector-delete", { connectorId: conn })).toEqual({
+      id: conn,
+      deleted: true,
+    });
+    expect((await auditOf("connector.deleted", conn))[0]).toMatchObject(
+      toolAudit("admin.connector-delete"),
+    );
+  });
+
+  it("admin.org-members lists the conversation org's members", async () => {
+    const { members } = (await run("admin.org-members", {})) as {
+      members: { account: { id: string }; role: string }[];
+    };
+    expect(members.map((m) => m.account.id)).toContain(memberId);
+    expect(members.find((m) => m.account.id === memberId)?.role).toBe("member");
+  });
+
   it("operations stay in the conversation's org: other orgs' items are refused", async () => {
     const agents = (await run("admin.agents-list", {})) as { agents: { orgId: string }[] };
     expect(agents.agents.length).toBeGreaterThan(0);
