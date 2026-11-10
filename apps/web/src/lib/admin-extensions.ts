@@ -318,8 +318,8 @@ export const clearExtensionConfig = (name: string) =>
 
 /**
  * Whether the replicas agree: at least one reported, and every one has the same version and state
- * with none failed (`consistent`); `inSync` counts the ones that agree (「副本一致 2/2」,
- * 「副本不一致 1/2」); `failed` lists the failed replicas.
+ * with none failed (`consistent`); `inSync` counts the ones that agree (the 副本 column reads
+ * 「一致 2/2」, 「不一致 1/2」); `failed` lists the failed replicas.
  */
 export function replicaSummary(p: Pick<AdminExtension, "replicas">): {
   total: number;

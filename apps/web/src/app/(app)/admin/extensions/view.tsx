@@ -173,6 +173,7 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
     {
       key: "status",
       header: t("columns.status"),
+      fit: true,
       cell: (p) => (
         <Stack direction="row" gap={8} align="center">
           <ExtensionStatusMark status={p.status} orgsNeedingConfig={p.orgsNeedingConfig} />
@@ -213,6 +214,8 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       key: "replicas",
       header: t("columns.replicas"),
       tone: "muted",
+      // "不一致 1/2" whole: the header already says 副本
+      fit: true,
       cell: (p) => {
         const r = replicaSummary(p);
         return r.total > 0

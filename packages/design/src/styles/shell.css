@@ -254,9 +254,11 @@ a.cb-pageheader-path-seg:hover {
   flex: none;
   color: var(--cb-faint);
 }
+/* The actions sit on the title line (spec §4.2 row 2), with or without a description under it:
+   the row aligns to its top and the actions are centred in the h1's line box. */
 .cb-pageheader-row {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: var(--cb-space-3);
   min-width: 0;
 }
@@ -325,6 +327,11 @@ a.cb-pageheader-path-seg:hover {
   flex: none;
   align-items: center;
   gap: var(--cb-space-2);
+  min-height: var(--cb-type-h1-line);
+}
+/* Led by the avatar the row centres everything on the avatar instead (above). */
+.cb-pageheader-row[data-avatar="true"] > .cb-pageheader-actions {
+  min-height: 0;
 }
 /* Before hydration both forms are drawn (m6): the width picks the inline actions or the menu. */
 .cb-pageheader-fold {
@@ -640,7 +647,12 @@ a.cb-stat-card:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The context (`user@org:/chat/<id>`) gives way first: the page status ("第 5 轮 · 已用 18 秒")
+   keeps its words whole and truncates only once the context is down to its ellipsis (spec §4.4). */
 .cb-statusbar-context {
+  flex: 0 1000 auto;
+}
+.cb-statusbar-page {
   flex: 0 1 auto;
 }
 .cb-statusbar-right {

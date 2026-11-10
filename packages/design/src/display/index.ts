@@ -62,6 +62,7 @@ export { ContentSection, type ContentSectionProps } from "./content-section";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
 export { Disclosure, type DisclosureProps } from "./disclosure";
+export { type DurationOptions, formatDuration } from "./duration";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";

@@ -1,5 +1,6 @@
 import { type JSX, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "../controls/button";
+import { formatDuration } from "../display/duration";
 import type { Locale } from "../i18n";
 import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
@@ -154,16 +155,6 @@ export function subagentRowsFromViews(
 
 // ── Copy ────────────────────────────────────────────────────────────────────
 
-/** A sub-agent duration as the reference writes it: "41 秒", "1分12秒" / "41s", "1m 12s". */
-export function subagentDuration(ms: number, locale: Locale): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  const t = messages[locale];
-  if (m === 0) return fillCopy(t["subagent.durationS"], { s });
-  return fillCopy(t["subagent.durationMS"], { m, s: String(s).padStart(2, "0") });
-}
-
 /** What a waiting sub-agent waits for, as its row says it ("等待批准" / "Waiting for approval"). */
 export function subagentWaitingLabel(kind: SubagentWaitKind, locale: Locale): string {
   return messages[locale][`subagent.waiting.${kind}`];
@@ -269,7 +260,7 @@ export function AgentCallBlock({
       state.refusal !== undefined
         ? [state.refusal.split("\n")[0] ?? ""]
         : [
-            ...(state.durationMs !== undefined ? [subagentDuration(state.durationMs, locale)] : []),
+            ...(state.durationMs !== undefined ? [formatDuration(state.durationMs, locale)] : []),
             ...(state.tokens !== undefined ? [agentMapTokens(state.tokens, locale)] : []),
           ];
     text = (
@@ -492,7 +483,7 @@ export function SubagentGroup({
       <span className="cb-faint">
         {` · ${[
           fillCopy(t("subagent.totalCalls"), { n: totalCalls }),
-          ...(span === undefined ? [] : [subagentDuration(span, locale)]),
+          ...(span === undefined ? [] : [formatDuration(span, locale)]),
         ].join(" · ")}`}
       </span>
     </span>
@@ -734,7 +725,9 @@ export function BackgroundTaskRow({
           {t(`subagent.waiting.${item.waiting ?? "approval"}`)}
         </span>
       ) : (
-        <span className="cb-muted">{subagentDuration(end - item.startedAt, locale)}</span>
+        <span className="cb-muted">
+          {formatDuration(end - item.startedAt, locale, { live: running })}
+        </span>
       )}
       {stopping ? (
         <span className="cb-muted" role="status" aria-live="polite">

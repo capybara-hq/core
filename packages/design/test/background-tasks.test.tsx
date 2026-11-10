@@ -49,7 +49,7 @@ describe("BackgroundTasks sub-agent rows", () => {
     );
     expect(container.querySelector('[data-part="spinner"]')).toBeNull();
     expect(screen.getByText("等待回答")).toBeTruthy();
-    expect(screen.queryByText("2分28秒")).toBeNull();
+    expect(screen.queryByText("2 分 28 秒")).toBeNull();
   });
 });
 
@@ -61,7 +61,7 @@ describe("BackgroundTasks task rows", () => {
       <BackgroundTasks items={[task()]} now={NOW} onStop={onStop} onOpen={onOpen} />,
     );
     expect(container.querySelector('[data-part="spinner"]')).not.toBeNull();
-    expect(screen.getByText("2分28秒")).toBeTruthy();
+    expect(screen.getByText("2 分 28 秒")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "pnpm dev" }));
     expect(onOpen).toHaveBeenCalledWith("bgt_1");
     await userEvent.click(screen.getByRole("button", { name: "停止「pnpm dev」" }));
@@ -247,7 +247,7 @@ describe("TaskOutputPanel", () => {
         description="pnpm dev"
         command="pnpm dev --port 3000"
         status="running"
-        elapsed="2分28秒"
+        elapsed="2 分 28 秒"
         text={"ready\nlistening"}
         source="sandbox"
         onStop={onStop}

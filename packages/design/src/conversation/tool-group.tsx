@@ -1,9 +1,10 @@
 import { type JSX, type ReactNode, useId, useState } from "react";
+import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { useDesignLocale } from "../provider";
 import { useClock } from "./clock";
 import { Spinner } from "./prose";
-import { elapsed, summaryParts } from "./tool-copy";
+import { summaryParts } from "./tool-copy";
 import {
   hasDetail,
   isLive,
@@ -77,7 +78,7 @@ export function ToolGroup({
         <ToolLabel row={single} />
         {running && single.startedAt !== undefined ? (
           <span className="cb-faint" aria-hidden="true">
-            {` · ${elapsed(clock - single.startedAt, locale)}`}
+            {` · ${formatDuration(clock - single.startedAt, locale, { live: true })}`}
           </span>
         ) : null}
         <WaitingWord row={single} lead=" · " />

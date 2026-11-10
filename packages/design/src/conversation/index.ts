@@ -129,7 +129,7 @@ export {
   QuickActions,
   type QuickActionsProps,
 } from "./quick-actions";
-export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
+export { RunRow, type RunRowProps, type RunRowStatus } from "./run-row";
 export {
   AgentCallBlock,
   type AgentCallBlockProps,
@@ -151,7 +151,6 @@ export {
   SubagentTask,
   type SubagentViewLike,
   type SubagentWaitKind,
-  subagentDuration,
   subagentRowFromView,
   subagentRowsFromViews,
   subagentStatusOfFinish,
@@ -177,7 +176,6 @@ export {
   type TokenLikeSpan,
 } from "./token-like";
 export {
-  elapsed,
   type SummaryPart,
   type SummaryRow,
   summarizeTools,
