@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   dueTicks,
+  jitterForGap,
   jitterSeconds,
   minGapMinutes,
   nextTick,
@@ -83,21 +84,30 @@ describe("schedule math", () => {
   });
 
   it("jitter is stable per id and <= 300 s and <= 10 % of the interval", () => {
+    // sample each gap once; the per-id properties use jitterForGap (no 50-tick walk per id)
     const daily = cron("0 9 * * *");
-    expect(jitterSeconds("task-a", daily, now)).toBe(jitterSeconds("task-a", daily, now));
+    const dailyGap = minGapMinutes(daily, now);
+    expect(dailyGap).toBe(1440);
+    const every5 = cron("*/5 * * * *");
+    const every5Gap = minGapMinutes(every5, now);
+    expect(every5Gap).toBe(5);
+    // end to end: jitterSeconds is jitterForGap of the sampled gap
+    expect(jitterSeconds("task-a", daily, now)).toBe(jitterForGap("task-a", dailyGap));
+    expect(jitterSeconds("t0", every5, now)).toBe(jitterForGap("t0", every5Gap));
+    expect(jitterForGap("task-a", dailyGap)).toBe(jitterForGap("task-a", dailyGap));
     const seen = new Set<number>();
     for (let i = 0; i < 50; i++) {
-      const j = jitterSeconds(`task-${i}`, daily, now);
+      const j = jitterForGap(`task-${i}`, dailyGap);
       expect(j).toBeGreaterThanOrEqual(0);
       expect(j).toBeLessThan(300);
       seen.add(j);
     }
     expect(seen.size).toBeGreaterThan(1);
-    const every5 = cron("*/5 * * * *");
-    for (let i = 0; i < 50; i++) expect(jitterSeconds(`t${i}`, every5, now)).toBeLessThan(30);
+    for (let i = 0; i < 50; i++) expect(jitterForGap(`t${i}`, every5Gap)).toBeLessThan(30);
     expect(
       jitterSeconds("x", { kind: "once", at: "2026-06-02T09:00:00", timeZone: "UTC" }, now),
     ).toBe(0);
+    expect(jitterForGap("x", null)).toBe(0);
   });
 
   it("dueTicks after a 3 h outage on an hourly task fires the latest and reports 2 missed", () => {
