@@ -5,13 +5,14 @@ import type { ScheduleTrigger } from "./types.js";
 /** Spec §5: how many upcoming fire times the minimum-interval check looks at. */
 const GAP_SAMPLE = 50;
 const JITTER_CAP_SECONDS = 300;
-/** Safety cap on the ticks enumerated for one catch-up (a 5-minute task is ~288 a day). */
-const MAX_TICKS = 5000;
+/** Cap on the ticks enumerated before the catch-up window (a 5-minute task is ~288 a day). */
+const MAX_OLD_TICKS = 5000;
 const LOCAL_AT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 export type TriggerError =
   | "schedule.invalid_cron"
   | "schedule.invalid_time_zone"
+  | "schedule.invalid_once_time"
   | "schedule.once_in_past";
 
 function cronTime(expr: string, timeZone: string): CronTime | null {
@@ -23,41 +24,87 @@ function cronTime(expr: string, timeZone: string): CronTime | null {
   }
 }
 
-/** The UTC instant of a local date-time (no offset) in `timeZone`; null when malformed. */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+/** One formatter per zone (pure, so a module-level cache is safe). */
+function zoneFormat(timeZone: string): Intl.DateTimeFormat {
+  let f = formatters.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+    formatters.set(timeZone, f);
+  }
+  return f;
+}
+
+/** The wall clock of `utc` (epoch ms) in `timeZone`, read as if it were UTC (epoch ms). */
+function wallOf(utc: number, timeZone: string): number {
+  const p: Record<string, string | undefined> = Object.fromEntries(
+    zoneFormat(timeZone)
+      .formatToParts(new Date(utc))
+      .map((x) => [x.type, x.value]),
+  );
+  return Date.UTC(
+    Number(p.year),
+    Number(p.month) - 1,
+    Number(p.day),
+    Number(p.hour),
+    Number(p.minute),
+    Number(p.second),
+  );
+}
+
+/** The zone's UTC offset (ms) at `utc`. */
+function offsetAt(utc: number, timeZone: string): number {
+  return wallOf(Math.floor(utc / 1000) * 1000, timeZone) - Math.floor(utc / 1000) * 1000;
+}
+
+/**
+ * The UTC instant of a local date-time (no offset) in `timeZone`; null when malformed or out of
+ * range. A repeated local time takes its first occurrence; a time inside a DST gap resolves to the
+ * first valid instant after the gap.
+ */
 function onceInstant(at: string, timeZone: string): Date | null {
   const m = LOCAL_AT.exec(at);
   if (!m) return null;
   const n = m.slice(1).map((v) => (v === undefined ? 0 : Number(v)));
-  const wall = Date.UTC(n[0] ?? 0, (n[1] ?? 1) - 1, n[2] ?? 1, n[3] ?? 0, n[4] ?? 0, n[5] ?? 0);
-  if (Number.isNaN(wall)) return null;
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    second: "numeric",
-  });
-  const offsetAt = (utc: number): number => {
-    const p: Record<string, string | undefined> = Object.fromEntries(
-      fmt.formatToParts(new Date(utc)).map((x) => [x.type, x.value]),
-    );
-    const local = Date.UTC(
-      Number(p.year),
-      Number(p.month) - 1,
-      Number(p.day),
-      Number(p.hour),
-      Number(p.minute),
-      Number(p.second),
-    );
-    return local - Math.floor(utc / 1000) * 1000;
-  };
-  // Two passes settle the offset; a time inside a DST gap resolves to just after the gap.
-  let utc = wall - offsetAt(wall);
-  utc = wall - offsetAt(utc);
-  return new Date(utc);
+  const [y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0] = n;
+  const wall = Date.UTC(y, mo - 1, d, h, mi, sec);
+  const check = new Date(wall);
+  if (
+    check.getUTCFullYear() !== y ||
+    check.getUTCMonth() !== mo - 1 ||
+    check.getUTCDate() !== d ||
+    h > 23 ||
+    mi > 59 ||
+    sec > 59
+  ) {
+    return null;
+  }
+  const before = offsetAt(wall - 86400000, timeZone);
+  const after = offsetAt(wall + 86400000, timeZone);
+  const valid = [before, after]
+    .map((o) => wall - o)
+    .filter((u, i) => offsetAt(u, timeZone) === [before, after][i])
+    .sort((x, z) => x - z);
+  if (valid[0] !== undefined) return new Date(valid[0]);
+  // In a gap: find the transition second between the two candidates.
+  let lo = Math.floor((wall - after) / 1000);
+  let hi = Math.floor((wall - before) / 1000);
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (offsetAt(mid * 1000, timeZone) === before) lo = mid + 1;
+    else hi = mid;
+  }
+  return new Date(lo * 1000);
 }
 
 export function validateTrigger(
@@ -71,7 +118,8 @@ export function validateTrigger(
       : { ok: false, code: "schedule.invalid_cron" };
   }
   const at = onceInstant(t.at, t.timeZone);
-  if (!at || at.getTime() <= now.getTime()) return { ok: false, code: "schedule.once_in_past" };
+  if (!at) return { ok: false, code: "schedule.invalid_once_time" };
+  if (at.getTime() <= now.getTime()) return { ok: false, code: "schedule.once_in_past" };
   return { ok: true };
 }
 
@@ -98,26 +146,7 @@ export function nextTick(t: ScheduleTrigger, after: Date): Date | null {
 
 /** The wall clock of `at` in `timeZone`, read as if it were UTC (epoch ms, seconds dropped). */
 function localWallClock(at: Date, timeZone: string): number {
-  const p: Record<string, string | undefined> = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-    })
-      .formatToParts(at)
-      .map((x) => [x.type, x.value]),
-  );
-  return Date.UTC(
-    Number(p.year),
-    Number(p.month) - 1,
-    Number(p.day),
-    Number(p.hour),
-    Number(p.minute),
-  );
+  return Math.floor(wallOf(at.getTime(), timeZone) / 60000) * 60000;
 }
 
 /** The smallest gap, in minutes, among the next 50 fire times after `from`; null for once. */
@@ -153,8 +182,11 @@ export function jitterSeconds(taskId: string, t: ScheduleTrigger, from: Date): n
 }
 
 /**
- * The ticks in (lastTick, now]: the latest inside the catch-up window is `fire`; every other one
- * (older ticks, and the latest too when it fell outside the window) is `missed` (spec §6 step 1).
+ * The ticks in (lastTick, now]. `fire` is the latest one when it lies inside the catch-up window,
+ * else null (spec §6 step 1). `missed` lists the others, oldest first, and is exact unless the
+ * outage is long: at most the first 5000 ticks after `lastTick` are listed, then the ticks inside
+ * the window, so enumeration stays bounded and the in-window tick is never lost. Callers record
+ * `missed` as one skipped run, so a non-empty list is what matters.
  */
 export function dueTicks(
   t: ScheduleTrigger,
@@ -162,16 +194,25 @@ export function dueTicks(
   now: Date,
   catchUpWindowMinutes: number,
 ): { fire: Date | null; missed: Date[] } {
+  const windowStart = now.getTime() - catchUpWindowMinutes * 60000;
   const ticks: Date[] = [];
   let cursor = lastTick;
-  while (ticks.length < MAX_TICKS) {
+  let old = 0;
+  let jumped = false;
+  for (let guard = 0; guard < 2 * MAX_OLD_TICKS + 10000; guard++) {
     const next = nextTick(t, cursor);
     if (!next || next.getTime() > now.getTime()) break;
     ticks.push(next);
     cursor = next;
+    if (!jumped && next.getTime() < windowStart && ++old >= MAX_OLD_TICKS) {
+      jumped = true;
+      // Skip the middle of a very long outage; resume at the window so `fire` is found.
+      if (cursor.getTime() < windowStart - 1) cursor = new Date(windowStart - 1);
+    }
   }
   const latest = ticks.at(-1);
   if (!latest) return { fire: null, missed: [] };
-  const inWindow = now.getTime() - latest.getTime() <= catchUpWindowMinutes * 60000;
-  return inWindow ? { fire: latest, missed: ticks.slice(0, -1) } : { fire: null, missed: ticks };
+  return latest.getTime() >= windowStart
+    ? { fire: latest, missed: ticks.slice(0, -1) }
+    : { fire: null, missed: ticks };
 }

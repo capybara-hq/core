@@ -73,11 +73,13 @@ describe("schedule math", () => {
       100000,
     );
     expect([rep.fire, ...rep.missed].filter(Boolean)).toHaveLength(1);
+    expect(rep.fire?.toISOString()).toBe("2026-11-01T05:30:00.000Z");
   });
 
   it("minGapMinutes of */15 is 15", () => {
     expect(minGapMinutes(cron("*/15 * * * *"), now)).toBe(15);
     expect(minGapMinutes(cron("0 9 * * *"), now)).toBe(1440);
+    expect(minGapMinutes(cron("0,5 9 * * *"), now)).toBe(5);
   });
 
   it("jitter is stable per id and <= 300 s and <= 10 % of the interval", () => {
@@ -121,5 +123,40 @@ describe("schedule math", () => {
     );
     expect(r.fire).toBeNull();
     expect(r.missed.map((d) => d.toISOString())).toEqual(["2026-06-01T01:00:00.000Z"]);
+  });
+
+  it("dueTicks after a 30 day outage on */5 still fires the latest in-window tick", () => {
+    const n = new Date("2026-06-30T12:03:00Z");
+    const r = dueTicks(cron("*/5 * * * *"), new Date("2026-05-31T12:00:00Z"), n, 60);
+    expect(r.fire?.toISOString()).toBe("2026-06-30T12:00:00.000Z");
+    expect(r.missed.length).toBeGreaterThan(0);
+    const fireMs = r.fire?.getTime() ?? 0;
+    expect(r.missed.every((d) => d.getTime() < fireMs)).toBe(true);
+  });
+
+  it("a once time inside a DST gap fires at the first instant after the gap", () => {
+    const once: ScheduleTrigger = {
+      kind: "once",
+      at: "2026-03-08T02:30:00",
+      timeZone: "America/New_York",
+    };
+    expect(nextTick(once, new Date("2026-03-01T00:00:00Z"))?.toISOString()).toBe(
+      "2026-03-08T07:00:00.000Z",
+    );
+    expect(validateTrigger(once, new Date("2026-03-01T00:00:00Z"))).toEqual({ ok: true });
+  });
+
+  it("rejects a malformed once time as invalid_once_time", () => {
+    for (const at of [
+      "2026-13-45T25:61:00",
+      "2026-02-30T10:00:00",
+      "tomorrow",
+      "2026-06-02T09:00:00Z",
+    ]) {
+      expect(validateTrigger({ kind: "once", at, timeZone: "UTC" }, now)).toEqual({
+        ok: false,
+        code: "schedule.invalid_once_time",
+      });
+    }
   });
 });
