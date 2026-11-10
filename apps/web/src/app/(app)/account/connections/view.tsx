@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { connectionAnchor, usePersonalConnections } from "../../../../components/ConnectionActions";
 import { useMemberGuides } from "../../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { useAccountNav } from "../../../../components/settings-nav";
+import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import type { ApiClientError } from "../../../../lib/api";
 import { canManageConnectors, personalConnectors } from "../../../../lib/connectors";
@@ -65,7 +65,7 @@ function Connections({ orgId, admin }: { orgId: string; admin: boolean }) {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const header = {
-    path: [...scope, { label: "account", href: "/account/connections" }, { label: "connections" }],
+    path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "connections" }],
     title: t("nav.connections"),
   };
   // Until the list and every personal connector's detail answered: skeleton cards, one per

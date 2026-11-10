@@ -12,7 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { useAccountNav } from "../../../../components/settings-nav";
+import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { revokeToolGrant, type ToolGrant } from "../../../../lib/approvals";
 import { toolGrantsQuery } from "../../../../lib/query/account";
@@ -99,7 +99,7 @@ function Grants({ orgId }: { orgId: string }) {
   return (
     <SettingsPage
       header={{
-        path: [...scope, { label: "account", href: "/account/connections" }, { label: "grants" }],
+        path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "grants" }],
         title: t("nav.grants"),
       }}
       nav={nav}

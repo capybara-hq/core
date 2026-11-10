@@ -17,7 +17,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
-import { useAccountNav } from "../../../../components/settings-nav";
+import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { ssoStartUrl } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
@@ -136,11 +136,7 @@ function Identities({ accountId }: { accountId: string }) {
   return (
     <SettingsPage
       header={{
-        path: [
-          ...scope,
-          { label: "account", href: "/account/connections" },
-          { label: "identities" },
-        ],
+        path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "identities" }],
         title: t("title"),
       }}
       nav={nav}

@@ -159,6 +159,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("the path's `account` leads to the first personal settings page (preferences)", async () => {
+    await renderRouteWithCache("/account/connections", ROUTES);
+    const link = await screen.findByRole("link", { name: "account" });
+    expect(link.getAttribute("href")).toBe("/account/preferences");
+  });
+
   it("/account/connections: a connector the kernel no longer shows is left out", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/account/connections", {
