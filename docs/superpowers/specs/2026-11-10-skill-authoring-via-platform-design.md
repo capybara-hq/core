@@ -43,6 +43,11 @@ as a builtin skill, `skill-guide`, that every agent can load.
     the org's `platformTool` setting is `off` or `read-only`, and in runs with no person present
     (scheduled runs, eval runs, anonymous channel users). `SkillWrite` was not bound by these; the
     stricter behavior is intended.
+11. Skills enter only as packages (decision 2026-11-10, follow-up). Every text form that builds a
+    `SKILL.md` from fields goes: the web 技能 page's 新建 dialog (`SkillCreateDialog`), the text
+    branch of `POST /orgs/:orgId/skills`, the Platform operation `skills.create`, and any text form
+    of agent registration. The two ways in are: an agent registers its own skill from a zip (and
+    may ask to share it), or a person uploads a zip on the web.
 8. `skill-guide` is **builtin**: on in every org, not switchable off by an org admin.
 9. The skill format is the Agent Skills specification (https://agentskills.io/specification).
 
@@ -67,6 +72,7 @@ Non-goals
   "human only" rule).
 - Editing a skill in place in the web UI.
 - A new skill format or extensions to the Agent Skills frontmatter.
+- Authoring without a sandbox: an agent without sandbox tools cannot author skills (decision 11).
 
 Anti-goals (a failure even if it works)
 
@@ -74,8 +80,6 @@ Anti-goals (a failure even if it works)
 - A shared org skill changing without an org admin having seen that version.
 - A forked copy: the same skill name meaning different content for the original agent and the
   rest of the org.
-- An agent without a sandbox being unable to author anything: it can still create a text-only
-  skill (see §5.1).
 - Compatibility shims for `SkillWrite` or for pending R4 requests (pre-0.1.0: change directly;
   applied migrations stay immutable).
 
@@ -114,8 +118,6 @@ Anti-goals (a failure even if it works)
    (`readSkillPackage`, `SKILL_LIMITS`: 10 MB per file, 50 MB total, 1000 files), validates it,
    stores the version, and appends a `skills_catalog` snapshot to the conversation so the next step
    of the same run can `Skill` it (as `writeIn` does today).
-6. Without a sandbox the agent can still register a text-only skill (name, description, body), the
-   shape `skills.create` already accepts for org skills, targeted at its own skills.
 
 The `SKILL.md` the agent writes is stored as written. The kernel no longer synthesizes it; the
 skill's name is its frontmatter `name` (as for uploads today).
@@ -123,7 +125,7 @@ skill's name is its frontmatter `name` (as for uploads today).
 ### 5.2 The registration route and operation
 
 - New route: register a skill package as an agent's own skill (owner only), e.g.
-  `POST /orgs/:orgId/agents/:agentId/skills` with `uploadId` (zip) or the text form. The web uses it
+  `POST /orgs/:orgId/agents/:agentId/skills` with `uploadId` (zip only). The web uses it
   too: an owner can upload a zip onto their agent from the agent page, so the Platform operation
   mirrors a real route (Platform rule: operations call the controllers' services).
 - New operation, e.g. `agents.register-skill`, mirroring that route. Instead of `uploadId` it takes
@@ -217,6 +219,10 @@ agent skill has become an org skill, the existing chain applies.
 
 ### 5.8 Removals
 
+- Text-form skill creation (decision 11): `SkillCreateDialog` and the 新建 action on the 技能 page
+  (the page keeps 上传技能), the text branch of `POST /orgs/:orgId/skills` (`createFromText`,
+  `checkCreateFromText`, `textSkillFiles`), and the Platform operation `skills.create`; the route,
+  now upload only, becomes an exclusion (`transport`: it consumes an uploaded archive).
 - `SkillWrite`: the tool, `buildSkillWrite`, its entries in `builtin-names.ts`, `legacy-keys.ts`,
   the Claude Code tool map, sub-agent definition handling, device policy, events, docs
   (`docs/guide/skills.md`) and tests. Agent definitions that list it lose it (pre-0.1.0, no shim).

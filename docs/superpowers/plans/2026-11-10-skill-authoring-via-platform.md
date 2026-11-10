@@ -7,7 +7,7 @@ registers the package as the agent's own skill, add org sharing confirmed by org
 builtin `skill-guide` skill.
 
 **Architecture:** One new kernel service (`AgentSkillsService`) owns an agent's own skills:
-register (zip or text), delete, ask to share. `SkillChangesService` keeps only the org-admin decided
+register (zip), delete, ask to share. `SkillChangesService` keeps only the org-admin decided
 requests (`share` and `version` kinds) with their trial overlay. A Platform operation reads the zip
 from the conversation's sandbox and calls the same service as the new web upload route. `skill-guide`
 is a skill-only plugin in `capybara-hq/plugins`, pinned `required: true` in `bootstrap.json`.
@@ -28,6 +28,8 @@ TanStack Query, `@capybara-hq/design`.
   owner (creates a request) = `personal`. Standard `availability()` gates; no exception.
 - Package reader and limits are the web upload's: `readSkillPackage` (`skills/package.ts:154`),
   `SKILL_PACKAGE_MAX_BYTES` (50 MB), `SKILL_LIMITS`. No second reader.
+- Skills enter only as zip packages: no text form anywhere (web 新建 dialog, `POST /skills` text
+  branch, Platform `skills.create`, agent registration).
 - `AGENT_SKILLS_MAX = 50` own skills per agent (pending proposals included).
 - Shared skill = org skill (`scope = 'org'`) with `origin_agent_id` and `maintainer_account_id`;
   no fork; a confirmed version is the same as an org admin uploading one.
@@ -62,7 +64,7 @@ TanStack Query, `@capybara-hq/design`.
 
 | Wave | Tasks | Notes |
 |---|---|---|
-| 1 | 1, 2, 3 | disjoint files; Task 1 (migration) reviewed alone on the most capable model |
+| 1 | 1, 2, 3 | disjoint files (Task 2 touches skills.service / web skills page, Task 4 later rebases on it); Task 1 (migration) reviewed alone on the most capable model |
 | 2 | 4, then 5 and 6 | 4 is the service; 5 (routes) and 6 (op) both consume it |
 | 3 | 7, then 8, then 9 | 7 removes SkillWrite/R4, 8 sharing + proposals (trust boundary: review alone), 9 web |
 | 4 | 10, 11, 12 | docs; plugins repo; bootstrap pin after the plugin is published |
@@ -100,23 +102,29 @@ TanStack Query, `@capybara-hq/design`.
 - [ ] **Step 4:** rerun → PASS; `pnpm typecheck` passes.
 - [ ] **Step 5: Commit** `feat(kernel): add agent skill sharing columns`.
 
-### Task 2: Move the text skill builder out of the tool
+### Task 2: Remove text-form skill creation
 
 **Files:**
-- Create: `packages/kernel/src/skills/text-skill.ts`
-- Modify: `packages/kernel/src/skills/skills.service.ts` (:27, :269, :719), `packages/kernel/src/skills/skills.schemas.ts` (:4, :18)
-- Test: `packages/kernel/test/skills/text-skill.test.ts` (move the `buildSkillWrite` cases from `test/skills/skill-write.test.ts`)
+- Delete: `apps/web/src/components/SkillCreateDialog.tsx`
+- Modify: `apps/web/src/app/(app)/skills/view.tsx` (:24, :191 and the 新建 header action; keep 上传技能),
+  `apps/web/src/lib/skills.ts` (`createSkillFromText`), `apps/web/messages/{en,zh}.json` (the dialog's keys),
+  `packages/kernel/src/skills/skills.service.ts` (`checkCreateFromText` :700, `createFromText` :723, `textSkillFiles` :269),
+  `packages/kernel/src/skills/skills.controller.ts` (`create` :78: `uploadId` only),
+  `packages/kernel/src/skills/skills.schemas.ts` (`SkillCreateBody`: `{ uploadId: string; shareable?: boolean }`),
+  `packages/kernel/src/platform/ops/skills.ops.ts` (delete `skills.create` :64-121),
+  `packages/kernel/src/platform/exclusions.ts` (add `POST /api/v1/orgs/:orgId/skills`, category `transport`,
+  reason "Creates an org skill from an uploaded archive; uploads are multipart bytes")
+- Test: the existing tests of these (web skills page test, `skills.http` tests, `platform/ops-*skills*` tests)
 
 **Interfaces:**
-- Produces: `buildTextSkill(input: TextSkillInput): BuiltSkill | { errors: string[] }`,
-  `TextSkillInput = { name: string; description: string; files: { path: string; content: string }[] }`,
-  `BuiltSkill`, `BuiltSkillFile`, `TEXT_SKILL_MAX_BYTES = 1024 * 1024`, `TEXT_SKILL_MAX_FILES = 200`.
-  Same behavior as today's `buildSkillWrite` (rename only).
+- Produces: `POST /orgs/:orgId/skills` accepts `{ uploadId, shareable? }` only; a body with `name`/`body` → 400 `validation_failed`.
+  No `skills.create` operation. `skill-write.ts` keeps its own `buildSkillWrite` until Task 7 deletes it.
 
-- [ ] **Step 1:** move the pure-function tests into `text-skill.test.ts` importing from `skills/text-skill.js`; run → FAIL (module missing).
-- [ ] **Step 2:** move the code; `skill-write.ts` imports from the new file for now (deleted in Task 7).
-- [ ] **Step 3:** `pnpm exec vitest run packages/kernel/test/skills` → PASS; `pnpm typecheck`.
-- [ ] **Step 4: Commit** `refactor(kernel): move the text skill builder into skills`.
+- [ ] **Step 1:** change tests first: web skills page shows 上传技能 and no 新建 action (admin view);
+  HTTP test: text body → 400; platform test: `skills.create` is not registered; run → FAIL.
+- [ ] **Step 2:** remove the code per the file list.
+- [ ] **Step 3:** tests PASS; `pnpm check:platform-ops`, parity test, `pnpm check:web-ui`, `pnpm check:i18n`, `pnpm typecheck`.
+- [ ] **Step 4: Commit** `refactor!: skills enter only as uploaded packages`.
 
 ### Task 3: Read one file from a conversation's sandbox
 
@@ -159,8 +167,7 @@ TanStack Query, `@capybara-hq/design`.
 - Test: `packages/kernel/test/skills/agent-skills.test.ts`
 
 **Interfaces:**
-- Consumes: `readSkillPackage`, `skillManifest` (`skills/package.ts`), `buildTextSkill` (Task 2),
-  `skillFilesPrefix`, `StorageService`, `EventLog`.
+- Consumes: `readSkillPackage`, `skillManifest` (`skills/package.ts`), `skillFilesPrefix`, `StorageService`, `EventLog`.
 - Produces:
   ```ts
   // conversation-catalog.ts: extracted from changes.service.ts appendCatalog, unchanged behavior
@@ -169,13 +176,12 @@ TanStack Query, `@capybara-hq/design`.
 
   interface AgentSkillActor { orgId: string; agentId: string; accountId: string;
     conversationId?: string; runId?: string | null; actorTokenId?: string; auditDetail?: Record<string, unknown> }
-  type AgentSkillSource = { kind: "zip"; bytes: Uint8Array } | { kind: "text"; name: string; description: string; body: string };
   type RegisterOutcome =
     | { kind: "version"; skillId: string; name: string; version: number; created: boolean; manualOnly: boolean }
     | { kind: "proposed"; requestId: string; skillId: string; name: string; version: number; manualOnly: boolean }; // Task 8
 
   class AgentSkillsService {
-    register(actor: AgentSkillActor, source: AgentSkillSource): Promise<RegisterOutcome>;
+    register(actor: AgentSkillActor, zip: Uint8Array): Promise<RegisterOutcome>;
     deleteAgentSkill(orgId: string, agentId: string, skillId: string, accountId: string,
       actorTokenId?: string, auditDetail?: Record<string, unknown>): Promise<void>;
     assertOwner(orgId: string, agentId: string, accountId: string): Promise<void>; // used by op prechecks
@@ -192,7 +198,6 @@ TanStack Query, `@capybara-hq/design`.
     manifest lacks that file.
   - `parity with web upload`: the same zip (outer folder variant and root variant) gives the same
     manifest as `SkillsService.upload`.
-  - `text source`: `{kind:"text"}` → `SKILL.md` built by `buildTextSkill`.
   - `non-owner is refused`: a member of a shared (`org`) agent → `forbidden`; nothing written to storage.
   - `appends a catalog snapshot in the conversation`: with `conversationId`, the log's last
     `skills_catalog` lists the skill with `source` = the version prefix; without, no event.
@@ -200,8 +205,7 @@ TanStack Query, `@capybara-hq/design`.
   - `cap`: 50 existing → `skill.agent_cap`.
   - `delete`: owner deletes → soft-deleted; non-owner → `forbidden`.
 - [ ] **Step 2:** run → FAIL.
-- [ ] **Step 3:** implement. `register`: read source (zip via `readSkillPackage`, text via
-  `buildTextSkill`; errors → `skill.invalid_package`) → put files under `skillFilesPrefix(randomUUID())`
+- [ ] **Step 3:** implement. `register`: read the zip via `readSkillPackage` (errors → `skill.invalid_package`) → put files under `skillFilesPrefix(randomUUID())`
   → `@Transactional registerIn` with the global lock order (owner check inside, reading the agent row)
   → create version (moved `createVersion`) → audit `skill.created` / `skill.version_created` with
   `detail.via` = `auditDetail` → `appendConversationCatalog` when `conversationId` is set (same derive as
@@ -223,12 +227,12 @@ TanStack Query, `@capybara-hq/design`.
   - `POST /api/v1/orgs/:orgId/agents/:agentId/skills/uploads` body `{ name: string; size: number }` → `CreatedAttachment`
     (purpose `skill-package`, **no** `customSkills` check: add `SkillsService.createAgentUpload(orgId, accountId, agentId, input)`
     that checks ownership then calls `attachments.create`). Exclusion: category `transport`, reason "Uploads a skill archive as multipart bytes".
-  - `POST /api/v1/orgs/:orgId/agents/:agentId/skills` body `AgentSkillRegisterBody = { uploadId: string } | { name; description; body }`
+  - `POST /api/v1/orgs/:orgId/agents/:agentId/skills` body `AgentSkillRegisterBody = { uploadId: string }`
     → `{ skill: RegisterOutcome }`. Schemas exported as `AgentSkillRegisterBody` and added to `SKILL_ROUTES`.
   - existing `GET` / `DELETE :skillId` unchanged in behavior.
 
 - [ ] **Step 1: Failing HTTP tests**: owner uploads (presigned PUT) then registers → 200 version 1;
-  text body → 200; member on a shared agent → 403; `customSkills: deny` still allows the agent upload;
+  member on a shared agent → 403; `customSkills: deny` still allows the agent upload;
   unknown `uploadId` → 404 `attachment.not_found`.
 - [ ] **Step 2:** run → FAIL.
 - [ ] **Step 3:** implement; read the zip with `attachments.readSkillPackage` and consume it in the
@@ -248,7 +252,7 @@ TanStack Query, `@capybara-hq/design`.
 - Produces operation:
   - `id: "agents.register-skill"`, `mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/skills"]`,
     `authz: { orgAction: "agents.create" }`, `omits: ["uploadId"]`, `extras: ["filePath"]`.
-  - input: `{ filePath: string } | { name, description, body }` (text fields from the route schema);
+  - input: `{ filePath: string }`;
     the agent is always `ctx.agentId` (no `agentId` input: only the agent itself registers; declare it
     as the op's way of filling the path param, as other `agents.*` ops do for the current agent, or
     take `agentId` and refuse any value other than `ctx.agentId`; pick whichever the parity test accepts).
@@ -256,7 +260,7 @@ TanStack Query, `@capybara-hq/design`.
     `definition.skills.writePolicy !== "ask"`, else `"org"`.
   - `precheck`: refuse sub-agent (`skill.subagent_register`, next: "Hand the skill files back to your
     parent agent; only the agent the person talks with registers skills."), refuse non-owner (`forbidden`).
-  - `summary`: zh `为智能体登记技能（<file or name>）` / en `Register a skill on this agent from <file or name>`.
+  - `summary`: zh `从 <filePath> 为智能体登记技能` / en `Register a skill on this agent from <filePath>`.
   - `run`: read `filePath` with `maxBytes: SKILL_PACKAGE_MAX_BYTES`, then `register` with
     `conversationId: ctx.conversationId`, `runId: ctx.runId`, `auditDetail: viaAgent("agents.register-skill", ctx)`.
   - Result text (English) states created/updated, version, files count, that it applies to every
