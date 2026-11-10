@@ -12,6 +12,7 @@ import {
 import { IconButton } from "../controls/button";
 import { AgentRowLoading } from "../conversation/agent-row";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
+import { RightFullContext } from "../conversation/right-full";
 import { ThreadHistory, type ThreadHistoryProps } from "../conversation/thread-history";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
@@ -130,6 +131,15 @@ export type ConversationPageProps = {
   right: "none" | "properties" | "panel";
   onCloseRight(): void;
   /**
+   * The open right panel is maximised inside the page (spec §6.16.18): it takes the content area
+   * under the title bar (the thread, the composer and the properties give way; the app sidebar,
+   * the title bar and the status bar stay), in either layout. Its full-screen button then reads
+   * "退出全屏" / "Exit full screen", and Esc asks `onRightFullChange(false)`. Only with
+   * `right="panel"`.
+   */
+  rightFull?: boolean;
+  onRightFullChange?(full: boolean): void;
+  /**
    * The right area as a sheet ("sheet") or beside the thread ("inline"); "auto" (default) follows
    * the window: a sheet below 1280.
    */
@@ -203,7 +213,9 @@ function useInlineFocus(
       opener.current = active;
     }
     const area = root.current?.querySelector<HTMLElement>(
-      shown === "panel" ? '[data-part="panel-slot"] > aside' : '[data-part="properties"]',
+      shown === "panel"
+        ? '[data-part="panel-slot"] > aside, [data-part="panel-full"] > aside'
+        : '[data-part="properties"]',
     );
     if (area && !area.contains(document.activeElement)) area.focus({ preventScroll: true });
   }, [root, shown]);
@@ -222,6 +234,8 @@ export function ConversationPage({
   panel,
   right,
   onCloseRight,
+  rightFull,
+  onRightFullChange,
   layout = "auto",
   loading,
   reference,
@@ -384,7 +398,17 @@ export function ConversationPage({
     loadingRight ||
     (newConversation !== undefined && loading?.agents === true);
   const open = rightNode != null && right !== "none";
-  useInlineFocus(root, sheet ? "sheet" : open ? right : "none");
+  const full = rightFull === true && right === "panel" && open;
+  useInlineFocus(root, full ? "panel" : sheet ? "sheet" : open ? right : "none");
+  useEffect(() => {
+    if (!full || !onRightFullChange) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      // a menu or dialog inside the panel closes first (it handles and prevents its own Esc)
+      if (e.key === "Escape" && !e.defaultPrevented) onRightFullChange(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [full, onRightFullChange]);
 
   return (
     <div
@@ -392,6 +416,7 @@ export function ConversationPage({
       className="cb-template cb-conv-page"
       data-template="ConversationPage"
       data-right={right}
+      data-right-full={full ? "true" : undefined}
       data-layout={layout}
       data-sheet={sheet ? "true" : undefined}
     >
@@ -403,7 +428,13 @@ export function ConversationPage({
             <TitleBar {...titleBar} {...(loading?.title ? { loading: true } : {})} />
           )}
           <div className="cb-conv-cols">
-            {center}
+            {full ? (
+              <div className="cb-conv-panel-full" data-part="panel-full">
+                <RightFullContext.Provider value={true}>{panelNode}</RightFullContext.Provider>
+              </div>
+            ) : (
+              center
+            )}
             {!sheet && right === "properties" ? propertiesNode : null}
           </div>
           <StatusBar
@@ -416,7 +447,7 @@ export function ConversationPage({
             announceFirst={(status.right?.length ?? 0) > 0}
           />
         </div>
-        {!sheet && right === "panel" && open ? (
+        {!full && !sheet && right === "panel" && open ? (
           <div
             className="cb-conv-panel"
             data-part="panel-slot"
@@ -446,7 +477,7 @@ export function ConversationPage({
           // Kept mounted in sheet mode so closing runs Radix's close path (focus goes back to the
           // title-bar icon that opened it).
           <RD.Root
-            open={open}
+            open={open && !full}
             modal={!reference}
             onOpenChange={(o) => {
               if (!o) onCloseRight();

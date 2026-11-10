@@ -419,7 +419,7 @@ describe("the task output panel", () => {
     expect(outputReads(calls)).toBe(settled);
   }, 15_000);
 
-  it("a 409 (sandbox suspended) shows the unavailable note and the finish event's last lines", async () => {
+  it("a 409 (sandbox suspended) shows why and the finish event's last lines", async () => {
     api(
       {
         tasks: [task({ status: "failed", exitCode: 1, finishedAt: "2026-10-26T06:01:16Z" })],
@@ -428,15 +428,167 @@ describe("the task output panel", () => {
       {
         [`GET ${TASKS}/${TASK}/output`]: () =>
           json(409, {
-            error: { code: "background_task.output_unavailable", message: "suspended" },
+            error: {
+              code: "background_task.output_unavailable",
+              message: "suspended",
+              details: [{ reason: "suspended", environment: "cloud" }],
+            },
           }),
       },
     );
     window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
     await renderChatRoute();
     const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
-    expect(await within(panel).findByText("Output unavailable (sandbox suspended)")).toBeTruthy();
+    expect(
+      await within(panel).findByText(
+        "The sandbox is suspended; the full output can't be read. Below are the last lines kept when it finished.",
+      ),
+    ).toBeTruthy();
     expect(within(panel).getByText("port 3000 in use")).toBeTruthy();
+  });
+
+  it("a task on an offline local device names the device, never the sandbox", async () => {
+    api(
+      { tasks: [task({ status: "completed", exitCode: 0, finishedAt: "2026-10-26T06:01:16Z" })] },
+      {
+        [`GET ${TASKS}/${TASK}/output`]: () =>
+          json(409, {
+            error: {
+              code: "background_task.output_unavailable",
+              message: "offline",
+              details: [{ reason: "device_offline", environment: "local" }],
+            },
+          }),
+      },
+    );
+    window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
+    await renderChatRoute();
+    const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
+    const note = await within(panel).findByText(
+      "The device is offline; the full output can't be read.",
+    );
+    expect(note).toBeTruthy();
+    expect(panel.textContent).not.toMatch(/sandbox/i);
+    // no output lines: a muted line, never an empty box
+    expect(panel.querySelector(".cb-code")).toBeNull();
+    expect(within(panel).getByText("No output")).toBeTruthy();
+  });
+
+  it("a task whose launch failed says it did not start, with the reason, and no output box", async () => {
+    api(
+      {
+        tasks: [
+          task({
+            status: "failed",
+            finishedAt: "2026-10-26T06:00:04.200Z",
+            lostReason: "setsid is missing",
+          }),
+        ],
+      },
+      {
+        [`GET ${TASKS}/${TASK}/output`]: () =>
+          json(409, {
+            error: {
+              code: "background_task.output_unavailable",
+              message: "not started",
+              details: [{ reason: "not_started", environment: "local" }],
+            },
+          }),
+      },
+    );
+    window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
+    await renderChatRoute();
+    const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
+    expect(await within(panel).findByText("The task did not start.")).toBeTruthy();
+    expect(within(panel).getByText("setsid is missing")).toBeTruthy();
+    expect(panel.querySelector(".cb-code")).toBeNull();
+  });
+
+  it("an empty live output shows 'No output' instead of an empty box", async () => {
+    api(
+      { tasks: [task({ status: "completed", exitCode: 0, finishedAt: "2026-10-26T06:01:16Z" })] },
+      {
+        [`GET ${TASKS}/${TASK}/output`]: () =>
+          json(200, { text: "", truncated: false, source: "live" }),
+      },
+    );
+    window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
+    await renderChatRoute();
+    const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
+    expect(await within(panel).findByText("No output")).toBeTruthy();
+    expect(panel.querySelector(".cb-code")).toBeNull();
+  });
+});
+
+describe("the finished list", () => {
+  const done = (id: string, description: string, finishedAt: string, status = "completed") =>
+    task({ id, description, status, exitCode: 0, finishedAt });
+
+  it("N completed opens #bg: the finished tasks newest first; a row opens it, Back returns", async () => {
+    api({
+      tasks: [
+        done("bt_older1", "Older task", "2026-10-26T06:01:00Z"),
+        done("bt_newer1", "Newer task", "2026-10-26T06:03:00Z", "failed"),
+        task(),
+      ],
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    const section = await backgroundSection();
+    const user = userEvent.setup();
+    await user.click(await within(section).findByRole("button", { name: /2 completed/ }));
+    expect(window.location.hash).toBe("#bg");
+    const panel = await screen.findByRole("complementary", { name: "Finished background tasks" });
+    const rows = [...panel.querySelectorAll('[data-part="task-row"]')];
+    expect(rows.map((r) => r.querySelector("button")?.textContent)).toEqual([
+      "Newer task",
+      "Older task",
+    ]);
+    expect(rows[0]?.textContent).toContain("Failed");
+    await user.click(within(panel).getByRole("button", { name: "Older task" }));
+    expect(window.location.hash).toBe("#bg-bt_older1");
+    const out = await screen.findByRole("complementary", { name: "Older task" });
+    await user.click(within(out).getByRole("button", { name: "Back" }));
+    expect(window.location.hash).toBe("#bg");
+    expect(
+      await screen.findByRole("complementary", { name: "Finished background tasks" }),
+    ).toBeTruthy();
+  });
+});
+
+describe("the right panel's full screen", () => {
+  it("maximises the panel inside the page, never the browser's full screen; Esc restores", async () => {
+    const request = vi.fn(() => Promise.resolve());
+    Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
+      value: request,
+      configurable: true,
+      writable: true,
+    });
+    api({ tasks: [task()] });
+    window.history.replaceState(null, "", `/chat/c1#bg-${TASK}`);
+    await renderChatRoute();
+    const user = userEvent.setup();
+    const panel = await screen.findByRole("complementary", { name: "Start the dev server" });
+    await user.click(within(panel).getByRole("button", { name: "Full screen" }));
+    const page = document.querySelector('[data-template="ConversationPage"]') as HTMLElement;
+    await vi.waitFor(() => expect(page.getAttribute("data-right-full")).toBe("true"));
+    expect(request).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-part="thread"]')).toBeNull();
+    const full = await screen.findByRole("complementary", { name: "Start the dev server" });
+    await user.click(within(full).getByRole("button", { name: "Exit full screen" }));
+    await vi.waitFor(() => expect(page.getAttribute("data-right-full")).toBeNull());
+    await user.click(
+      within(await screen.findByRole("complementary", { name: "Start the dev server" })).getByRole(
+        "button",
+        { name: "Full screen" },
+      ),
+    );
+    await vi.waitFor(() => expect(page.getAttribute("data-right-full")).toBe("true"));
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(page.getAttribute("data-right-full")).toBeNull());
+    expect(request).not.toHaveBeenCalled();
+    // the panel stays open at its width
+    expect(window.location.hash).toBe(`#bg-${TASK}`);
   });
 });
 

@@ -163,7 +163,7 @@
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
-      "output_unavailable": "现在读不到输出：沙箱没有在运行。沙箱恢复后可再查看。"
+      "output_unavailable": "现在读不到输出。打开任务可查看原因。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",
@@ -4774,6 +4774,7 @@
     "noticeNoCode": "后台任务「{description}」{status}",
     "open": "打开",
     "panelTitle": "后台任务",
+    "finishedTitle": "已完成的后台任务",
     "notFound": "找不到这个后台任务。",
     "status": {
       "completed": "已完成",

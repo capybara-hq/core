@@ -1,6 +1,8 @@
 import { type JSX, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "../controls/button";
+import { DateTime } from "../display/date-time";
 import { formatDuration } from "../display/duration";
+import { EmptyState } from "../display/empty-state";
 import type { Locale } from "../i18n";
 import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
@@ -665,6 +667,8 @@ export type BackgroundTaskRowProps = {
   now: number;
   /** Indented under its sub-agent. */
   nested?: boolean;
+  /** A finished row also shows when it finished (the finished list). */
+  showTime?: boolean;
   onStop(id: string): void;
   onOpen(id: string): void;
 };
@@ -679,6 +683,7 @@ export function BackgroundTaskRow({
   item,
   now,
   nested,
+  showTime,
   onStop,
   onOpen,
 }: BackgroundTaskRowProps): JSX.Element {
@@ -729,6 +734,11 @@ export function BackgroundTaskRow({
           {formatDuration(end - item.startedAt, locale, { live: running })}
         </span>
       )}
+      {showTime === true && !running ? (
+        <span className="cb-faint cb-task-time" data-part="task-time">
+          <DateTime value={new Date(item.finishedAt ?? item.startedAt)} form="compact" />
+        </span>
+      ) : null}
       {stopping ? (
         <span className="cb-muted" role="status" aria-live="polite">
           {t("background.stopping")}
@@ -751,8 +761,10 @@ export type BackgroundTasksProps = {
   /** The clock for running rows (default: the time now, ticking while a row runs). */
   now?: number;
   onStop(id: string): void;
-  /** Opens a row's record on the right (also the newest finished one, from "N completed"). */
+  /** Opens a row's record on the right (without `onOpenCompleted`, also the newest finished one). */
   onOpen(id: string): void;
+  /** "N completed ›" opens the list of finished items ({@link BackgroundFinishedList}). */
+  onOpenCompleted?(): void;
   /** The "N completed ›" wording, given the count (default: the design copy). */
   completedLabel?: (n: number) => string;
 };
@@ -764,13 +776,14 @@ function flatten(items: BackgroundItem[]): BackgroundItem[] {
 /**
  * The "Background tasks" section body (§6.16.17): the running sub-agents and tasks (a sub-agent's
  * own tasks nested under it), then "N completed ›", counting finished tasks and sub-agents
- * together, which opens the newest.
+ * together, which opens their list (`onOpenCompleted`), else the newest.
  */
 export function BackgroundTasks({
   items,
   now,
   onStop,
   onOpen,
+  onOpenCompleted,
   completedLabel,
 }: BackgroundTasksProps): JSX.Element {
   const t = useDesignT();
@@ -815,7 +828,8 @@ export function BackgroundTasks({
           type="button"
           className="cb-property-row cb-property-more"
           onClick={() => {
-            if (newest) onOpen(newest.id);
+            if (onOpenCompleted) onOpenCompleted();
+            else if (newest) onOpen(newest.id);
           }}
         >
           {completedLabel
@@ -825,5 +839,37 @@ export function BackgroundTasks({
         </button>
       ) : null}
     </>
+  );
+}
+
+export type BackgroundFinishedListProps = {
+  /** The section's items (as `BackgroundTasks` takes them); only the finished ones are listed. */
+  items: BackgroundItem[];
+  /** Opens a row's record (a task's output, a sub-agent's panel). */
+  onOpen(id: string): void;
+};
+
+/**
+ * The finished background tasks and sub-agents (§6.16.18, the body of the right panel "N
+ * completed ›" opens), newest first: each row the name (opening it), the status word, the elapsed
+ * time and when it finished. Sub-agents' own tasks are listed as rows of their own.
+ */
+export function BackgroundFinishedList({
+  items,
+  onOpen,
+}: BackgroundFinishedListProps): JSX.Element {
+  const t = useDesignT();
+  const finished = flatten(items)
+    .filter((i) => !itemActive(i))
+    .map((i) => (i.kind === "task" && i.nested ? { ...i, nested: false } : i))
+    .sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+  if (finished.length === 0)
+    return <EmptyState size="panel" text={t("background.finishedEmpty")} />;
+  return (
+    <div className="cb-task-list" data-part="background-finished-list">
+      {finished.map((i) => (
+        <BackgroundTaskRow key={i.id} item={i} now={0} showTime onStop={() => {}} onOpen={onOpen} />
+      ))}
+    </div>
   );
 }

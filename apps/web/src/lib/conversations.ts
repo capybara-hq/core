@@ -560,11 +560,33 @@ export interface BackgroundTaskView {
   stopping: boolean;
 }
 
-/** The end of a task's output (`live`: read from the sandbox; `event`: the finish's last lines). */
+/**
+ * Why a task's output cannot be read live (kernel `OutputUnavailable`): the reason and where the
+ * task ran, a `local` device or a `cloud` sandbox.
+ */
+export interface BackgroundTaskUnavailable {
+  reason:
+    | "starting"
+    | "not_started"
+    | "device_offline"
+    | "suspended"
+    | "rebuilt"
+    | "output_missing"
+    | "no_access"
+    | "unavailable"
+    | "read_failed";
+  environment: "local" | "cloud";
+}
+
+/**
+ * The end of a task's output (`live`: read from the environment; `event`: the finish's last
+ * lines, with why it was not read live).
+ */
 export interface BackgroundTaskOutput {
   text: string;
   truncated: boolean;
   source: "live" | "event";
+  unavailable?: BackgroundTaskUnavailable;
 }
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/conversations`;
@@ -915,7 +937,10 @@ export const stopBackgroundTask = (orgId: string, id: string, taskId: string) =>
     { method: "POST" },
   );
 
-/** The end of a task's output; 409 `background_task.output_unavailable` when nothing is readable. */
+/**
+ * The end of a task's output; 409 `background_task.output_unavailable` when nothing is readable,
+ * its `details[0]` saying why ({@link BackgroundTaskUnavailable}).
+ */
 export const readBackgroundTaskOutput = (orgId: string, id: string, taskId: string) =>
   apiFetch<BackgroundTaskOutput>(
     `${one(orgId, id)}/background-tasks/${encodeURIComponent(taskId)}/output`,

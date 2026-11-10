@@ -252,6 +252,8 @@ const listOf = async (conv: string, as = owner) => {
   return (r.json() as { tasks: View[] }).tasks;
 };
 const code = (r: { json: () => unknown }) => (r.json() as { error: { code: string } }).error.code;
+const details = (r: { json: () => unknown }) =>
+  (r.json() as { error: { details?: unknown[] } }).error.details;
 
 describe("background task routes", { timeout: 90_000 }, () => {
   it("lists the conversation's tasks newest first and its sub-agents' with subagentId", async () => {
@@ -437,12 +439,18 @@ describe("background task routes", { timeout: 90_000 }, () => {
     expect(await sandbox.suspendIdle(new Date(Date.now() + 2 * 86_400_000))).toBeGreaterThan(0);
     const ev = await owner({ method: "GET", url: `${base(c.conversationId)}/${done.id}/output` });
     expect(ev.statusCode, ev.body).toBe(200);
-    expect(ev.json()).toEqual({ text: "finished-line\n", truncated: true, source: "event" });
+    expect(ev.json()).toEqual({
+      text: "finished-line\n",
+      truncated: true,
+      source: "event",
+      unavailable: { reason: "suspended", environment: "cloud" },
+    });
     const no = await owner({
       method: "GET",
       url: `${base(c2.conversationId)}/${running.id}/output`,
     });
     expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
+    expect(details(no)).toEqual([{ reason: "suspended", environment: "cloud" }]);
     // reading never resumed the sandbox
     const row = await db
       .selectFrom("device_instances")
@@ -450,6 +458,59 @@ describe("background task routes", { timeout: 90_000 }, () => {
       .where("device_id", "=", c.deviceId)
       .executeTakeFirstOrThrow();
     expect(row.status).toBe("suspended");
+  });
+
+  it("a task whose launch failed answers 409 not_started, without reading the sandbox", async () => {
+    const c = await conversation();
+    const id = newTaskId();
+    const startedAt = new Date();
+    await store.insert({
+      id,
+      orgId: c.orgId,
+      conversationId: c.conversationId,
+      sandboxConversationId: c.conversationId,
+      deviceId: c.deviceId,
+      runId: "run-x",
+      callId: "call-x",
+      triggerAccountId: c.accountId,
+      description: "Never started",
+      command: "true",
+      sid: null,
+      outputPath: taskOutputPath(id),
+      startedAt,
+      deadlineAt: new Date(startedAt.getTime() + 60_000),
+      sandboxCreatedAt: null,
+    });
+    await sql`UPDATE capybara.background_tasks SET status = 'failed', finished_at = now(),
+      lost_reason = 'setsid is missing' WHERE id = ${id}`.execute(raw);
+    const no = await owner({ method: "GET", url: `${base(c.conversationId)}/${id}/output` });
+    expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
+    expect(details(no)).toEqual([{ reason: "not_started", environment: "cloud" }]);
+  });
+
+  it("a running instance without the task's output file answers 409 output_missing", async () => {
+    const c = await conversation();
+    const t = await launch(c, "sleep 326");
+    await sandbox.withSandbox(
+      {
+        orgId: c.orgId,
+        deviceId: c.deviceId,
+        holderConversationId: c.conversationId,
+        actor: { accountId: c.accountId, conversationId: c.conversationId },
+      },
+      (h, p, _info, sig) =>
+        p.exec(h, {
+          command: `rm -f ${taskOutputPath(t.id)}`,
+          cwd: "/workspace",
+          timeoutMs: 20_000,
+          maxOutputBytes: 4_000,
+          signal: sig,
+        }),
+      AbortSignal.timeout(30_000),
+    );
+    const no = await owner({ method: "GET", url: `${base(c.conversationId)}/${t.id}/output` });
+    expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
+    expect(details(no)).toEqual([{ reason: "output_missing", environment: "cloud" }]);
   });
 
   it("without access to the device any more answers from the finished event or 409, never live", async () => {
@@ -489,12 +550,18 @@ describe("background task routes", { timeout: 90_000 }, () => {
       WHERE id = ${deviceId}`.execute(raw);
     const ev = await owner({ method: "GET", url: `${base(c.conversationId)}/${done.id}/output` });
     expect(ev.statusCode, ev.body).toBe(200);
-    expect(ev.json()).toEqual({ text: "finished-line\n", truncated: true, source: "event" });
+    expect(ev.json()).toEqual({
+      text: "finished-line\n",
+      truncated: true,
+      source: "event",
+      unavailable: { reason: "no_access", environment: "cloud" },
+    });
     const no = await owner({
       method: "GET",
       url: `${base(c2.conversationId)}/${running.id}/output`,
     });
     expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
+    expect(details(no)).toEqual([{ reason: "no_access", environment: "cloud" }]);
     // the instance was running all along: the access check, not the sandbox, refused the live read
     const row = await db
       .selectFrom("device_instances")

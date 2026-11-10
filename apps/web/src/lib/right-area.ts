@@ -1,8 +1,8 @@
 /**
  * What the conversation page's right area shows (spec §5.1: one thing at a time), kept in the URL
  * hash so a reload keeps it: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`,
- * `#file=<fileId>`, `#output=<callId>`, `#subagent=<id>` or `#bg-<taskId>` (a background task's
- * output, background Bash spec §5). The agent map's dialog (agent map spec §9) is kept here too:
+ * `#file=<fileId>`, `#output=<callId>`, `#subagent=<id>`, `#bg-<taskId>` (a background task's
+ * output, background Bash spec §5) or `#bg` (the finished background tasks and sub-agents). The agent map's dialog (agent map spec §9) is kept here too:
  * `#agents` (the tree), `#agents=<id>` (one agent), `#agents=<id>/transcript` (its transcript).
  */
 export type RightTarget =
@@ -12,6 +12,7 @@ export type RightTarget =
   | { kind: "output"; callId: string }
   | { kind: "subagent"; id: string }
   | { kind: "background"; taskId: string }
+  | { kind: "backgroundList" }
   | { kind: "agents"; id?: string; transcript?: boolean };
 
 const dec = (s: string) => {
@@ -27,6 +28,7 @@ export function parseRightHash(hash: string): RightTarget | null {
   const h = hash.startsWith("#") ? hash.slice(1) : hash;
   if (h === "properties") return { kind: "properties" };
   if (h === "agents") return { kind: "agents" };
+  if (h === "bg") return { kind: "backgroundList" };
   if (h.startsWith("bg-")) {
     const id = dec(h.slice(3));
     return id ? { kind: "background", taskId: id } : null;
@@ -74,6 +76,8 @@ export function formatRightHash(t: RightTarget | null): string {
       return `#subagent=${e(t.id)}`;
     case "background":
       return `#bg-${e(t.taskId)}`;
+    case "backgroundList":
+      return "#bg";
     case "agents":
       return t.id === undefined
         ? "#agents"

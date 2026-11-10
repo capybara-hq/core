@@ -921,7 +921,14 @@ describe("the properties panel with sub-agents", () => {
       expect(calls.some((c) => c.method === "POST" && c.url === `${CHILD}/abort`)).toBe(true),
     );
     await user.click(within(section).getByRole("button", { name: /1 completed/ }));
+    // the finished list, whose row opens the finished sub-agent; its Back returns to the list
+    expect(window.location.hash).toBe("#bg");
+    const list = await screen.findByRole("complementary", { name: "Finished background tasks" });
+    const row = list.querySelector('[data-part="task-row"] button') as HTMLElement;
+    await user.click(row);
     expect(window.location.hash).toBe("#subagent=ch1");
+    await user.click(await screen.findByRole("button", { name: "Back" }));
+    expect(window.location.hash).toBe("#bg");
   });
 
   it("the Context section shows the total tokens with sub-agents from GET .../usage", async () => {
