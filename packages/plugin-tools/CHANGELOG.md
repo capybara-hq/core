@@ -1,5 +1,21 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- a98bf9d: `capybara-plugin check`: `plugin-test-imports` lets a plugin's tests import
+  `@capybara-hq/plugin-client` (and `@capybara-hq/plugin-client/testing`) and judges a `#…` subpath
+  import by its targets in the package.json `imports` map (an unmapped one is reported), and
+  `plugin-timer` and `plugin-module-state` skip browser-only client modules (the files
+  `src/client.ts[x]` reaches through relative or `#…` imports that the packer's esbuild build of
+  `src/index.ts` does not bundle); when that build fails, every module is checked.
+  `checkPluginState` is now async.
+- Updated dependencies [bae65fe]
+- Updated dependencies [0be1551]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.12
+  - @capybara-hq/kernel@0.1.0-rc.16
+
 ## 0.1.0-rc.12
 
 ### Minor Changes
