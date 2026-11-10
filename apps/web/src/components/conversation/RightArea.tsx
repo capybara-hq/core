@@ -35,6 +35,7 @@ import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
 import { toolLabelText } from "../../lib/tool-label";
 import { type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 import { ICON_OF } from "../extension-ui/ExtensionBlocks";
 import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { AgentMap } from "./AgentMap";
@@ -290,10 +291,13 @@ export function useRightAreaSlot(p: {
   // A failed read (R5: not read again on mount) shows none: no extension blocks, no files.
   // Sub-agents cannot deliver files (`Deliver` is removed for children), so their lists
   // are not read (Task 22 ruling, final review I5).
-  const { items: panels, pending: contributionsPending } = useSlotContributions(
+  const { items: listedPanels, pending: contributionsPending } = useSlotContributions(
     p.orgId,
     "conversation.panel",
   );
+  // A component panel is offered only while the document's client code delivers it (none in safe
+  // mode or under the kill switch; client extensions spec §10).
+  const panels = useOfferedContributions(listedPanels);
   const filesQ = filesQuery(p.orgId, p.conversationId);
   const filesR = useQuery({ ...filesQ, retryOnMount: retryOnMountOf(filesQ.queryKey) });
   const files = filesR.data ?? NO_FILES;

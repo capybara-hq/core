@@ -32,10 +32,16 @@ export interface ExtensionPermissions {
   /** 访问的域名，只展示不拦截。 */
   network?: string[];
   /**
-   * 界面贡献的 id（与清单 `ui` 一一对应）：`views` 记入快照但不卡加载；
-   * `embeds` 卡加载、需批准，并标为敏感项。
+   * Client code: the package's `client` section (a browser bundle the web app loads for the
+   * extension's orgs). Sensitive and blocking; required when `ui.components` lists anything.
    */
-  ui?: { views?: string[]; embeds?: string[] };
+  client?: boolean;
+  /**
+   * The ids of the `ui` contributions, one list per kind (each id in exactly one list): `views`
+   * are recorded in the snapshot without blocking the load; `embeds` and `components` block the
+   * load until approved and are sensitive. `components` needs `client: true`.
+   */
+  ui?: { views?: string[]; embeds?: string[]; components?: string[] };
   /**
    * Setup check ids registered with `ctx.setup.check` (each matches `SETUP_CHECK_ID_RE`, at most
    * `SETUP_CHECK_LIMITS.idsPerExtension`). Recorded in the snapshot and shown at review as
@@ -88,6 +94,7 @@ const KEYS = new Set([
   "storage",
   "network",
   "ui",
+  "client",
   "setupChecks",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
@@ -119,7 +126,7 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
   for (const k of Object.keys(p)) {
     if (!KEYS.has(k)) errs.push(`unknown permissions key "${k}"`);
   }
-  for (const k of ["secrets", "storage"]) {
+  for (const k of ["secrets", "storage", "client"]) {
     if (p[k] !== undefined && typeof p[k] !== "boolean") {
       errs.push(`permissions.${k} must be a boolean`);
     }
@@ -179,8 +186,11 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
     if (!isObj(p.ui)) errs.push("permissions.ui must be an object");
     else {
       for (const k of Object.keys(p.ui)) {
-        if (k !== "views" && k !== "embeds") errs.push(`unknown permissions.ui key "${k}"`);
+        if (k !== "views" && k !== "embeds" && k !== "components")
+          errs.push(`unknown permissions.ui key "${k}"`);
       }
+      if (p.ui.components !== undefined)
+        strList("permissions.ui.components", p.ui.components, errs);
       const views =
         p.ui.views === undefined ? [] : strList("permissions.ui.views", p.ui.views, errs);
       const embeds =
@@ -239,30 +249,45 @@ const UI_EMBED_PREFIX = "/ui/";
 
 /**
  * Checks the structure of the manifest's `ui` and cross-checks it with the permission manifest;
- * returns the problems (empty = valid). Only structural problems (UI slots spec §3.2): each
- * contribution's id is listed in exactly `permissions.ui.views` (kind view) or
- * `permissions.ui.embeds` (kind embed), and `permissions.ui` lists no id the `ui` lacks; an embed's
- * path starts with `/ui/` and is declared in `permissions.http` as GET; exactly one of `slot` (a
- * well-formed slot reference) and `place` (a known place); for a slot the catalog knows at the
- * version named, a kind it accepts and, unless an alias, the icon it requires. An unknown slot id or version is not a
- * problem here: `resolveUiSlots` drops that contribution and the rest of the extension loads.
+ * returns the problems (empty = valid). Only structural problems (UI slots spec §3.2, client
+ * extensions spec §5.1): each contribution's id is listed in the list of its kind,
+ * `permissions.ui.views` (view), `permissions.ui.embeds` (embed) or `permissions.ui.components`
+ * (component), an id is in at most one of the three, and `permissions.ui` lists no id the `ui`
+ * lacks; `permissions.ui.components` needs `permissions.client: true`; an embed's path starts with
+ * `/ui/` and is declared in `permissions.http` as GET, a view or component has no path; exactly one
+ * of `slot` (a well-formed slot reference) and `place` (a known place); for a slot the catalog
+ * knows at the version named, a kind it accepts and, unless an alias, the icon it requires. An
+ * unknown slot id or version is not a problem here: `resolveUiSlots` drops that contribution and
+ * the rest of the extension loads.
  * Assumes `permissions` passed {@link validatePermissions}.
  */
 export function validateUiContributions(ui: unknown, permissions: unknown): string[] {
   const perms = isObj(permissions) ? permissions : {};
   const pui = isObj(perms.ui) ? perms.ui : {};
-  const listed = (k: "views" | "embeds"): string[] =>
+  const listed = (k: "views" | "embeds" | "components"): string[] =>
     Array.isArray(pui[k])
       ? (pui[k] as unknown[]).filter((x): x is string => typeof x === "string")
       : [];
   const views = listed("views");
   const embeds = listed("embeds");
+  const components = listed("components");
+  // an id in more than one list is reported once, not again as a mismatch of each list
+  const multiListed = new Set<string>();
+  for (const id of new Set([...views, ...embeds, ...components])) {
+    if ([views, embeds, components].filter((l) => l.includes(id)).length > 1) multiListed.add(id);
+  }
   const gets = new Set(
     (Array.isArray(perms.http) ? perms.http : [])
       .filter((r): r is Record<string, unknown> => isObj(r) && r.method === "GET")
       .map((r) => r.path),
   );
   const errs: string[] = [];
+  for (const id of multiListed)
+    errs.push(
+      `ui "${id}" is listed in more than one of permissions.ui.views / embeds / components`,
+    );
+  if (components.length > 0 && perms.client !== true)
+    errs.push("permissions.ui.components needs permissions.client: true");
   const contributions: unknown[] = [];
   if (ui !== undefined) {
     if (!Array.isArray(ui)) errs.push("ui must be an array");
@@ -302,8 +327,8 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     }
     if (c.after !== undefined && typeof c.after !== "string")
       errs.push(`ui "${id}" after must be a string`);
-    if (c.kind !== "view" && c.kind !== "embed") {
-      errs.push(`ui "${id}" kind must be view or embed`);
+    if (c.kind !== "view" && c.kind !== "embed" && c.kind !== "component") {
+      errs.push(`ui "${id}" kind must be view, embed or component`);
       return;
     }
     if (c.icon !== undefined && !(UI_ICONS as readonly unknown[]).includes(c.icon))
@@ -323,11 +348,17 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     seen.set(id, c.kind);
     if (c.kind === "view") {
       if (c.path !== undefined) errs.push(`ui "${id}" path is only allowed for kind embed`);
-      if (!views.includes(id))
+      if (!views.includes(id) && !multiListed.has(id))
         errs.push(`ui "${id}" (view) must be listed in permissions.ui.views`);
       return;
     }
-    if (!embeds.includes(id))
+    if (c.kind === "component") {
+      if (c.path !== undefined) errs.push(`ui "${id}" is a component and cannot have a path`);
+      if (!components.includes(id) && !multiListed.has(id))
+        errs.push(`ui "${id}" is a component; list it in permissions.ui.components`);
+      return;
+    }
+    if (!embeds.includes(id) && !multiListed.has(id))
       errs.push(`ui "${id}" (embed) must be listed in permissions.ui.embeds`);
     if (typeof c.path !== "string" || !c.path.startsWith(UI_EMBED_PREFIX)) {
       errs.push(`ui "${id}" (embed) path must start with "${UI_EMBED_PREFIX}"`);
@@ -350,9 +381,13 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     ["embeds", "embed", embeds],
   ] as const) {
     for (const id of ids) {
-      if (seen.get(id) !== kind)
+      if (seen.get(id) !== kind && !multiListed.has(id))
         errs.push(`permissions.ui.${k} entry "${id}" has no matching ${kind} contribution in ui`);
     }
+  }
+  for (const id of components) {
+    if (seen.get(id) !== "component" && !multiListed.has(id))
+      errs.push(`permissions.ui.components lists "${id}", which is not a component contribution`);
   }
   return errs;
 }

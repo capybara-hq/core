@@ -92,7 +92,7 @@ the "carries nothing" check counts them.
 
 ```jsonc
 {
-  "name": { "en": "Night City", "zh": "夜之城" },
+  "name": { "en": "Neon Grid", "zh": "霓虹网格" },
   "description": { "en": "Neon yellow on deep blue-black." },
   "schemes": {
     "dark": {
@@ -104,7 +104,7 @@ the "carries nothing" check counts them.
   "fonts": [
     { "family": "MiSans", "file": "./fonts/MiSans-Regular.woff2", "weight": 400, "role": "prose" }
   ],
-  "logo": { "mark": "./logo.svg", "wordmark": "NIGHT CITY" }
+  "logo": { "mark": "./logo.svg", "wordmark": "NEON GRID" }
 }
 ```
 
@@ -286,7 +286,9 @@ Three levels, most specific first:
 
 ## 8. Delivering a theme to the web
 
-- **CSS from the kernel**: `GET /api/v1/themes/:id/:version/theme.css` renders, from the stored,
+- **CSS from the kernel**: `GET /api/v1/themes/:id/:version/:revision/theme.css` (`revision` =
+  `r<THEME_CSS_REVISION>`, bumped when the output format changes; only the current one is served)
+  renders, as one `@layer theme { … }` block (client extensions spec §7.2), from the stored,
   parsed theme, the overrides under `:root[data-theme="dark"]` / `:root[data-theme="light"]`, the
   `@font-face` rules and the font stacks. A single-scheme theme writes its one scheme under both
   selectors and pins `color-scheme`, so it needs nothing from the root layout (which owns
@@ -337,13 +339,13 @@ Three levels, most specific first:
 | `PUT /api/v1/admin/settings` | existing (`@SuperAdmin`) | gains `uiTheme` (the platform default) |
 | `PUT /api/v1/me/preferences` | signed in | gains `theme: string \| null`; becomes a partial update: each field is optional and an omitted field keeps its value |
 | `GET /api/v1/platform/theme` | public | the resolved platform default for anonymous pages |
-| `GET /api/v1/themes/:id/:version/theme.css`, `…/assets/:file` | public | delivery |
+| `GET /api/v1/themes/:id/:version/:revision/theme.css`, `…/assets/:file` | public | delivery |
 
 - `ThemeRef` = `{ id, version, name, schemes, singleScheme, logo: { markUrl, wordmark,
   faviconUrl } | null, cssUrl }`; `id` is the `platform_themes` UUID.
 - The settings already have `Platform` operations (`platform.set-preferences`,
   `org-settings.update`, `admin.update-settings`); they gain the fields, so an agent can switch a
-  person's or an org's theme on request ("change my theme to Night City"); the org and platform
+  person's or an org's theme on request ("change my theme to Neon Grid"); the org and platform
   writes stay confirmed and never rememberable. The listing gets a new domain `themes` with
   `themes.list`, which also returns the org's setting. `platform.set-preferences` is partial (at
   least one field).

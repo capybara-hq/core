@@ -50,7 +50,7 @@ export class ThemesService {
       const d = defs.get(c.id);
       if (!d) continue;
       out.push({
-        ...themeRefOf(c.id, d.version, d.definition),
+        ...themeRefOf(c.id, d.version, d.definition, d.plugin),
         swatches: themeSwatches(d.definition),
       });
     }
@@ -74,7 +74,7 @@ export class ThemesService {
     const { id } = await readUiTheme(this.db.db);
     if (id === null || (await eligiblePlatformDefault(this.db.db, id)) === null) return null;
     const d = (await themeDefinitions(this.db.db, [id])).get(id);
-    return d ? themeRefOf(id, d.version, d.definition) : null;
+    return d ? themeRefOf(id, d.version, d.definition, d.plugin) : null;
   }
 
   /**

@@ -17,7 +17,7 @@ describe("plugin-test-imports", () => {
     const flagged = readFileSync(file, "utf8")
       .split("\n")
       .flatMap((l, i) => (l.includes("// FLAG") ? [i + 1] : []));
-    expect(flagged).toHaveLength(11);
+    expect(flagged).toHaveLength(16);
     expect(findings.every((f) => f.file === file && f.rule === "plugin-test-imports")).toBe(true);
     expect(findings.map((f) => f.line).sort((a, b) => a - b)).toEqual(flagged);
   });
@@ -35,6 +35,12 @@ describe("plugin-test-imports", () => {
     expect(at("bare-dotdot")).toContain('".." segments of this join()');
     expect(at("rooted-path")).toContain("is a path into core");
     expect(at("kernel-import")).toContain("@capybara-hq/testing");
+    expect(at("hash-kernel")).toContain("imports #kernel -> @capybara-hq/kernel");
+    expect(at("hash-outside")).toContain(
+      "#core/helpers -> ../../../packages/core/test/helpers.ts leaves the plugin directory",
+    );
+    expect(at("hash-condition")).toContain("imports #cond -> @capybara-hq/kernel");
+    expect(at("hash-unmapped")).toContain("#missing is not mapped by the imports of package.json");
   });
 
   it("the plugins of this repository pass", () => {

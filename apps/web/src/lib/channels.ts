@@ -61,6 +61,19 @@ export interface CreateChannelInput {
   agentId: string;
   config: Record<string, unknown>;
   unboundPolicy?: UnboundPolicy;
+  /** Default `long_connection` (channel inbound mode fields spec §3). */
+  inboundMode?: InboundMode;
+}
+
+/**
+ * Whether a channel plugin's connections can use webhook inbound (channel inbound mode fields spec
+ * §4): the plugin supports it; the kernel accepts it (a usable `channels.webhookBaseUrl`); that
+ * address is public https.
+ */
+export interface ChannelInboundInfo {
+  webhookSupported: boolean;
+  webhookAvailable: boolean;
+  webhookPublic: boolean;
 }
 
 /** `config` 里的密钥字段：缺省 = 保留、`null` = 清除、字符串 = 新值。 */
@@ -83,13 +96,16 @@ export const getChannel = (orgId: string, id: string) =>
   apiFetch<{ channel: ChannelConnection }>(one(orgId, id));
 
 /**
- * 插件的连接配置 JSON Schema（密钥字段带 `x-secret`），and where its setup guide is (`guide`, null
- * or absent without one).
+ * 插件的连接配置 JSON Schema（密钥字段带 `x-secret`），where its setup guide is (`guide`, null or
+ * absent without one), and whether webhook inbound is usable (`inbound`).
  */
 export const getChannelSchema = (orgId: string, plugin: string) =>
-  apiFetch<{ plugin: string; schema: JsonSchema; guide?: SetupGuideRef | null }>(
-    `${base(orgId)}/schema/${encodeURIComponent(plugin)}`,
-  );
+  apiFetch<{
+    plugin: string;
+    schema: JsonSchema;
+    guide?: SetupGuideRef | null;
+    inbound?: ChannelInboundInfo;
+  }>(`${base(orgId)}/schema/${encodeURIComponent(plugin)}`);
 
 export const createChannel = (orgId: string, input: CreateChannelInput) =>
   apiFetch<{ channel: ChannelConnection }>(base(orgId), {

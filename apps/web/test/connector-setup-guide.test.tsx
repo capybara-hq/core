@@ -191,10 +191,9 @@ describe("补充配置: the template's admin guide above its input", () => {
     // the redirect URL as a copyable titled block
     expect(within(section).getByText("Redirect URL")).toBeTruthy();
     expect(within(section).getByRole("button", { name: "Copy" })).toBeTruthy();
-    // no connector yet: the checks wait for the save
-    const row = within(section).getByRole("group", { name: "OAuth client works" });
-    expect(within(row).getByText(G.checkAfterSave)).toBeTruthy();
-    expect(within(row).queryByRole("button")).toBeNull();
+    // no connector yet: the checks wait for the save, as one line instead of rows
+    expect(within(section).queryByRole("group", { name: "OAuth client works" })).toBeNull();
+    expect(within(section).getByText(G.checksAfterSave)).toBeTruthy();
     // above the template's input (the OAuth client fields)
     const clientField = await screen.findByLabelText(/client id/i);
     expect(
@@ -216,8 +215,8 @@ describe("补充配置: the template's admin guide above its input", () => {
     );
     const section = await screen.findByRole("region", { name: zh.setupGuide.title });
     expect(within(section).getByText("Create the Slack OAuth app")).toBeTruthy();
-    const row = within(section).getByRole("group", { name: "OAuth client works" });
-    expect(within(row).getByText(zh.setupGuide.checkAfterSave)).toBeTruthy();
+    expect(within(section).queryByRole("group", { name: "OAuth client works" })).toBeNull();
+    expect(within(section).getByText(zh.setupGuide.checksAfterSave)).toBeTruthy();
     const clientField = await screen.findByLabelText(/client id/i);
     expect(
       section.compareDocumentPosition(clientField) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -276,7 +275,8 @@ describe("connector detail: 接入指南 with the drift notice", () => {
     ).toBe(true);
     // a saved target: live rows, no 保存后检查
     const row = screen.getByRole("group", { name: "OAuth client works" });
-    expect(within(row).queryByText(zh.setupGuide.checkAfterSave)).toBeNull();
+    expect(row).toBeTruthy();
+    expect(screen.queryByText(zh.setupGuide.checksAfterSave)).toBeNull();
     expect(screen.getAllByText(notice)).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "我已更新 Slack 应用" }));
     await vi.waitFor(() =>

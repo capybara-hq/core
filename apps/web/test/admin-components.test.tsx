@@ -825,6 +825,52 @@ describe("admin plugin detail: components and the platform update", () => {
     ).toBe("/admin/agent-templates/a1");
   });
 
+  it("the components table lists the extension's client components, its client code and the themes", async () => {
+    const withClient = (v: string) => {
+      const m = manifest(v);
+      return {
+        ...version(v),
+        manifest: {
+          ...m,
+          extension: {
+            ...m.extension,
+            manifest: {
+              ...m.extension.manifest,
+              permissions: { client: true, ui: { components: ["brand", "hud"] } },
+            },
+            client: {
+              entry: "./dist/client/client.mjs",
+              styles: ["./dist/client/styles/neon.css"],
+              integrity: {},
+              apiVersion: 1,
+            },
+          },
+          themes: [{ path: "./themes/neon.json" }],
+        },
+      };
+    };
+    await open(
+      `/admin/plugins/${ITEM}`,
+      routes({
+        [`GET /api/v1/admin/catalog/items/${ITEM}`]: () =>
+          json(200, { item, versions: [withClient("1.3.0"), withClient("1.2.0")], hasIcon: false }),
+      }),
+    );
+    const table = await screen.findByRole("table", {
+      name: en.catalog.admin.detail.tabs.components,
+    });
+    const kindOf = (name: string) =>
+      (within(table).getByText(name).closest("tr") as HTMLElement).querySelectorAll("td")[1]
+        ?.textContent;
+    const K = en.catalog.admin.detail.kind;
+    expect(kindOf("jina-web")).toBe(K.extension);
+    expect(kindOf("brand")).toBe(K.component);
+    expect(kindOf("hud")).toBe(K.component);
+    expect(kindOf("2 files")).toBe(K.clientCode);
+    expect(kindOf("neon")).toBe(K.theme);
+    expect(within(table).getAllByRole("row")).toHaveLength(1 + 9);
+  });
+
   it("更新到 x previews each component with its marks, the extension and the orgs' connectors, then confirms with diffHash; a stale hash previews again", async () => {
     let previews = 0;
     let puts = 0;

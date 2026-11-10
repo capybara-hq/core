@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  type ChannelInboundMode,
   CONFIG_UI_LIMITS,
   type ConfigUiHints,
   configJsonSchema,
+  inboundModeFields,
   isSecret,
   type JsonSchema,
   type LocalizedName,
+  missingInboundModeFields,
   orgAccess,
   parsePluginManifest,
   type StaticExtensionManifest,
@@ -619,5 +622,61 @@ describe("x-org", () => {
     const schema = z.object({ k: orgAccess(z.string(), "override") });
     expect(lv(schema, "org")).toHaveLength(1);
     expect(lv(schema, "connection")).toHaveLength(1);
+  });
+});
+
+describe("inboundModes (channel inbound mode fields spec §2)", () => {
+  const slack = z.object({
+    appToken: ui(secret(z.string().optional()), {
+      label: T("应用令牌", "App token"),
+      inboundModes: ["long_connection"],
+    }),
+    botToken: secret(z.string()),
+    signingSecret: ui(secret(z.string().optional()), { inboundModes: ["webhook"] }),
+    both: ui(z.string().optional(), { inboundModes: ["webhook", "long_connection"] }),
+  });
+
+  it("is valid on top-level fields (secrets too) at the connection level", () => {
+    expect(problems(slack, "connection")).toEqual([]);
+  });
+
+  it("is refused at the deployment and org levels", () => {
+    expect(paths(slack, "deployment")).toEqual(["appToken", "signingSecret", "both"]);
+    expect(paths(slack, "org")).toEqual(["appToken", "signingSecret", "both"]);
+  });
+
+  it("is refused on a nested field, empty, unknown or duplicated", () => {
+    const s = z.object({
+      o: z.object({ n: ui(z.string().optional(), { inboundModes: ["webhook"] }) }),
+      empty: ui(z.string().optional(), { inboundModes: [] }),
+      bogus: ui(z.string().optional(), {
+        inboundModes: ["polling"] as unknown as ChannelInboundMode[],
+      }),
+      twice: ui(z.string().optional(), { inboundModes: ["webhook", "webhook"] }),
+    });
+    expect(paths(s, "connection")).toEqual(["o.n", "empty", "bogus", "twice"]);
+  });
+
+  it("inboundModeFields lists the hinted fields in schema order", () => {
+    expect(inboundModeFields(configJsonSchema(slack))).toEqual({
+      appToken: ["long_connection"],
+      signingSecret: ["webhook"],
+      both: ["long_connection", "webhook"],
+    });
+  });
+
+  it("missingInboundModeFields names the fields a mode requires without a value", () => {
+    const js = configJsonSchema(slack);
+    expect(missingInboundModeFields(js, "webhook", () => false)).toEqual(["signingSecret", "both"]);
+    expect(missingInboundModeFields(js, "long_connection", (f) => f === "both")).toEqual([
+      "appToken",
+    ]);
+    expect(
+      missingInboundModeFields(
+        configJsonSchema(z.object({ a: z.string() })),
+        "webhook",
+        () => false,
+      ),
+    ).toEqual([]);
   });
 });

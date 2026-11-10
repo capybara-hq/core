@@ -6,6 +6,7 @@ import {
   PlatformOperations,
   ROUTE_SCHEMAS,
 } from "@capybara-hq/kernel";
+import { UI_SINGLE_SLOTS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -188,5 +189,20 @@ describe("the real kernel tree", () => {
     expect(brief(inputParity(op, narrowed))).toEqual([
       { op: "requests.create-import", field: "team" },
     ]);
+  });
+});
+
+describe("operation descriptions", () => {
+  // the check wants literal descriptions, so the single slots they name are compared here
+  it("a description naming a single slot lists every single slot of the SDK catalog", () => {
+    const naming = registeredOperations().filter((op) =>
+      UI_SINGLE_SLOTS.some((slot) => op.description.includes(slot)),
+    );
+    expect(naming.map((op) => op.id).sort()).toEqual([
+      "org-settings.update",
+      "plugins.apply-appearance",
+      "plugins.platform-apply-appearance",
+    ]);
+    for (const op of naming) expect(op.description, op.id).toContain(UI_SINGLE_SLOTS.join(", "));
   });
 });

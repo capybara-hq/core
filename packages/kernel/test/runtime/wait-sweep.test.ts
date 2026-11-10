@@ -116,6 +116,11 @@ beforeAll(async () => {
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
   kA = await boot("A");
   kB = await boot("B");
+  // The tests call sweep() themselves and assert exactly what it repaired and logged. The real
+  // */10 tick on either replica would run the same sweep whenever the wall clock crosses a ten
+  // minute boundary mid-test (likelier the slower the machine), take the repair away from the
+  // test's call and log it on the other replica. Its schedule is asserted on the stopped job below.
+  for (const k of [kA, kB]) k.app.get(SchedulerRegistry).getCronJob(WAIT_SWEEP_JOB).stop();
 }, 120_000);
 
 afterAll(async () => {

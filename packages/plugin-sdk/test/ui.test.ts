@@ -657,3 +657,148 @@ describe("EmbedInitContext narrows on scope", () => {
     init({ scope: "org" });
   });
 });
+
+describe("component contributions (client extensions spec §5.1)", () => {
+  const title = { zh: "徽标", en: "Brand" };
+  const component = (over: Record<string, unknown> = {}) => ({
+    id: "a",
+    title,
+    slot: "org.page",
+    kind: "component",
+    ...over,
+  });
+
+  it("a component must be listed in permissions.ui.components", () => {
+    expect(validateUiContributions([component()], { client: true })).toEqual([
+      'ui "a" is a component; list it in permissions.ui.components',
+    ]);
+  });
+
+  it("permissions.ui.components must name a component contribution", () => {
+    expect(validateUiContributions([], { client: true, ui: { components: ["a"] } })).toEqual([
+      'permissions.ui.components lists "a", which is not a component contribution',
+    ]);
+  });
+
+  it("an id in both views and components is refused", () => {
+    expect(
+      validateUiContributions([component()], {
+        client: true,
+        ui: { views: ["a"], components: ["a"] },
+      }),
+    ).toEqual(['ui "a" is listed in more than one of permissions.ui.views / embeds / components']);
+  });
+
+  it("a component with a path is refused", () => {
+    expect(
+      validateUiContributions([component({ path: "/ui/a" })], {
+        client: true,
+        ui: { components: ["a"] },
+      }),
+    ).toEqual(['ui "a" is a component and cannot have a path']);
+  });
+
+  it("components need permissions.client", () => {
+    expect(validateUiContributions([component()], { ui: { components: ["a"] } })).toEqual([
+      "permissions.ui.components needs permissions.client: true",
+    ]);
+    expect(
+      validateUiContributions([component()], { client: false, ui: { components: ["a"] } }),
+    ).toEqual(["permissions.ui.components needs permissions.client: true"]);
+  });
+
+  it("a component in file.preview is a structural error", () => {
+    expect(
+      validateUiContributions([component({ slot: "file.preview" })], {
+        client: true,
+        ui: { components: ["a"] },
+      }),
+    ).toEqual(['ui "a" slot file.preview does not accept kind component']);
+  });
+
+  it("a component in an unknown slot is not structural", () => {
+    expect(
+      validateUiContributions([component({ slot: "nowhere.at-all" })], {
+        client: true,
+        ui: { components: ["a"] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("validatePermissions accepts client and ui.components and checks their shape", () => {
+    expect(validatePermissions("p", { client: true, ui: { components: ["a"] } })).toEqual([]);
+    expect(validatePermissions("p", { client: "yes" })).toEqual([
+      "permissions.client must be a boolean",
+    ]);
+    expect(validatePermissions("p", { ui: { components: "a" } })).toEqual([
+      "permissions.ui.components must be an array",
+    ]);
+  });
+
+  it("view data is refused for views and accepted for components", () => {
+    const v = { blocks: [], data: { run: "running", steps: [1, 2] } };
+    expect(validateUiView(v)).toEqual(["view data is only allowed for component views"]);
+    expect(validateUiView(v, { component: false })).toEqual([
+      "view data is only allowed for component views",
+    ]);
+    expect(validateUiView(v, { component: true })).toEqual([]);
+    expect(validateUiView({ blocks: [] }, { component: true })).toEqual([]);
+  });
+
+  it("view data over 32768 bytes is refused", () => {
+    expect(UI_LIMITS.componentDataBytes).toBe(32768);
+    // a JSON string adds its two quotes
+    const at = (n: number) => ({ blocks: [], data: "x".repeat(n - 2) });
+    expect(validateUiView(at(32768), { component: true })).toEqual([]);
+    expect(validateUiView(at(32769), { component: true })).toEqual([
+      "view data is 32769 bytes; the limit is 32768",
+    ]);
+  });
+
+  it("the limit counts UTF-8 bytes, not characters", () => {
+    // é is 2 bytes: 16383 of them plus the quotes is exactly 32768 bytes (16385 characters)
+    const e = (n: number) => ({ blocks: [], data: "é".repeat(n) });
+    expect(validateUiView(e(16383), { component: true })).toEqual([]);
+    expect(validateUiView(e(16384), { component: true })).toEqual([
+      "view data is 32770 bytes; the limit is 32768",
+    ]);
+    // a 4-byte character (2 UTF-16 code units)
+    const emoji = { blocks: [], data: { s: "😀".repeat(8191) } };
+    expect(validateUiView(emoji, { component: true })).toEqual([
+      "view data is 32772 bytes; the limit is 32768",
+    ]);
+  });
+
+  it("view data JSON would silently rewrite is refused", () => {
+    const check = (data: unknown) => validateUiView({ blocks: [], data }, { component: true });
+    expect(check({ a: Number.NaN })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.a is NaN",
+    ]);
+    expect(check([1, Number.POSITIVE_INFINITY])).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data[1] is Infinity",
+    ]);
+    expect(check({ f: () => 1 })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.f is a function",
+    ]);
+    expect(check([undefined])).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data[0] is undefined",
+    ]);
+    expect(check({ m: new Map([["k", 1]]) })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.m is a Map",
+    ]);
+    expect(check({ d: new Date(0) })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.d is a Date",
+    ]);
+    expect(check(10n)).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data is a bigint",
+    ]);
+    const loop: Record<string, unknown> = {};
+    loop.self = loop;
+    expect(check(loop)).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.self is a cycle",
+    ]);
+    // an undefined property is dropped as an absent optional field: accepted
+    expect(check({ a: 1, b: undefined, nested: { c: [null, true, "x", -0.5] } })).toEqual([]);
+    expect(check(Object.assign(Object.create(null), { k: 1 }))).toEqual([]);
+  });
+});

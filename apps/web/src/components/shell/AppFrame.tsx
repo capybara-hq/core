@@ -3,9 +3,11 @@
 import {
   AppShell,
   initialOf,
+  Logo,
   type MenuItem,
   OverviewPage,
   SetupPage,
+  type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
   useToast,
@@ -41,8 +43,13 @@ import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
+import { useShellBanner } from "../client-ext/registry";
+import { RunStateProvider, useRunStateValue } from "../client-ext/run-state";
+import { useClientComponent, useSlotHasClientCode } from "../extension-ui/ClientComponentBlock";
+import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
+import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
 import {
   activeAdminOf,
@@ -76,6 +83,42 @@ function timeZoneLabel(): string {
 }
 
 const noSubscribe = () => () => {};
+
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+
+/**
+ * `prefers-reduced-motion` as the shell's `motion=` token: null in the server render and the first
+ * hydration (no token, so hydration matches), the browser's value afterwards.
+ */
+function useMotionToken(): "full" | "reduced" | null {
+  return useSyncExternalStore(
+    (notify) => {
+      if (typeof window.matchMedia !== "function") return () => {};
+      const mql = window.matchMedia(REDUCED_MOTION);
+      mql.addEventListener("change", notify);
+      return () => mql.removeEventListener("change", notify);
+    },
+    () =>
+      typeof window.matchMedia !== "function"
+        ? null
+        : window.matchMedia(REDUCED_MOTION).matches
+          ? "reduced"
+          : "full",
+    () => null,
+  );
+}
+
+/**
+ * The shell's state tokens for plugin CSS (`data-cap-state`, client extensions spec §7.3): the
+ * open conversation's run, the resolved theme and the motion preference (the sidebar's mode is
+ * added by the shell itself).
+ */
+function useCapState(): string {
+  const run = useRunStateValue().state;
+  const theme = useResolvedTheme()?.key ?? "builtin";
+  const motion = useMotionToken();
+  return `run=${run} theme=${theme}${motion === null ? "" : ` motion=${motion}`}`;
+}
 
 /**
  * The browser's time zone: empty in the server render and the first hydration (the server's zone
@@ -111,6 +154,14 @@ const under = (pathname: string, prefix: string) =>
  * the count (web query cache spec §6, "Persistent components").
  */
 export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
+  return (
+    <RunStateProvider>
+      <Frame version={version}>{children}</Frame>
+    </RunStateProvider>
+  );
+}
+
+function Frame({ version, children }: { version: string; children: ReactNode }) {
   const me = useQuery(meQuery()).data;
   // `me` is always prefetched by the layout; without it (never on a document load) nothing is drawn.
   if (me === undefined) return null;
@@ -214,7 +265,16 @@ function ShellFrame({
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
   const toast = useToast();
+  const capState = useCapState();
+  // Safe mode's banner (from the client host): a row of the shell, so nothing is clipped
+  const banner = useShellBanner();
   const orgId = currentOrg?.orgId ?? null;
+  // A brand replacement: client code for the slot, or a winner the layout prefetched that the
+  // document's set delivers (then the server render is already pending, no flash of the logo).
+  const brandCode = useSlotHasClientCode("shell.brand");
+  const brandItems = useSlotContributions(orgId ?? "", "shell.brand", orgId !== null && brandCode);
+  const brandWinner = useClientComponent(brandItems.items.find((c) => c.kind === "component"));
+  const brandReplaced = brandCode || brandWinner.status !== "none";
   const conversations = sections?.conversations ?? noOrgConversations(pathname);
   const pending = sections?.pending ?? NO_PENDING;
   const { primary, more, inbox, adminHref, commands } = useNav(
@@ -483,6 +543,7 @@ function ShellFrame({
                 home ? "/setup" : pathname,
               ),
             }}
+            {...(banner === null ? {} : { banner })}
           >
             {home ? (
               <OverviewPage
@@ -517,6 +578,20 @@ function ShellFrame({
   // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
   // for a super admin: anyone else gets the 403 beside the workspace sidebar.
   const inAdmin = adminContext;
+  // Org client code only on workspace pages (client extensions spec §9.6): the admin console
+  // (anything under /admin) keeps the official brand and draws no overlay. Without a brand
+  // replacement the sidebar draws its own Logo. The sidebar calls `brand` once per drawn panel.
+  const workspaceOrg = under(pathname, "/admin") ? null : orgId;
+  const brand =
+    workspaceOrg === null || !brandReplaced
+      ? undefined
+      : ({ collapsed, panel }: SidebarBrandVariant) => (
+          <ExtensionSlot
+            slot="shell.brand"
+            args={{ orgId: workspaceOrg }}
+            host={{ builtin: <Logo scale={2} wordmark={!collapsed} />, collapsed, panel }}
+          />
+        );
   const context: SidebarContext = inAdmin
     ? {
         kind: "admin",
@@ -547,10 +622,13 @@ function ShellFrame({
         conversations,
         account: { name: me.account.displayName, menu: personalMenu },
         ...schemeToggle,
+        ...(brand === undefined ? {} : { brand }),
       }}
       commands={commands}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
+      capState={capState}
+      {...(banner === null ? {} : { banner })}
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
@@ -558,6 +636,9 @@ function ShellFrame({
         </SetupContext.Provider>
         {dialogs}
       </SessionContext.Provider>
+      {workspaceOrg === null ? null : (
+        <ExtensionSlot slot="shell.overlay" args={{ orgId: workspaceOrg }} />
+      )}
     </AppShell>
   );
 }

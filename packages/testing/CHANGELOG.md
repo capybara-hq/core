@@ -1,5 +1,68 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.14
+
+### Patch Changes
+
+- ac81136: Add the client extension fixtures `fake-client` and `fake-client-broken`.
+- 353bb95: The fake-client fixture tests check every client integrity value against the sha384 of the packed
+  file's bytes.
+- c5e26cd: The `fake-client` fixture's `hud` reads its server view's data from `useView().view` (it read the
+  view state itself and always showed `hud -`), and `fake.css` also decorates the composer's buttons
+  (`[data-cap-part~="composer"] [data-cap-part~="button"]`).
+- Updated dependencies [c4b4f6f]
+- Updated dependencies [571318f]
+- Updated dependencies [f172ba6]
+- Updated dependencies [f2786a6]
+- Updated dependencies [b03397f]
+- Updated dependencies [56fc173]
+- Updated dependencies [ad030b1]
+- Updated dependencies [232191e]
+- Updated dependencies [bb622c4]
+- Updated dependencies [38e9f9b]
+- Updated dependencies [44fe453]
+- Updated dependencies [8a3472b]
+- Updated dependencies [afeb135]
+- Updated dependencies [363a2d3]
+- Updated dependencies [914e022]
+- Updated dependencies [89278e7]
+- Updated dependencies [ef60eb4]
+- Updated dependencies [460567f]
+- Updated dependencies [ec5f411]
+- Updated dependencies [107a004]
+- Updated dependencies [25e6ef3]
+- Updated dependencies [e531e6d]
+- Updated dependencies [810e10a]
+- Updated dependencies [eaa7768]
+- Updated dependencies [5d464ce]
+- Updated dependencies [8c49d09]
+  - @capybara-hq/kernel@0.1.0-rc.15
+  - @capybara-hq/plugin-sdk@0.1.0-rc.11
+  - @capybara-hq/plugin-tools@0.1.0-rc.12
+
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- ba8ebaf: The fake-im fixture's setup guide is a v2 Markdown document (`guides/fake-im-app.md` and its zh
+  translation) instead of the v1 steps and template files.
+- 2f01b01: `fake-im` registers setup checks for the kernel's check runner tests (`pass`, `fail`, `proxy`,
+  `throw`, `hang`, `ignore-signal`, `long`, `echo-secret`, `pad-to-limit`), and
+  `startFakeChannelServer` records the `proxy` check's `POST /checks` calls (`checks`) and can hold
+  their answers (`holdChecks`).
+- Updated dependencies [848fb39]
+- Updated dependencies [2f01b01]
+- Updated dependencies [155c1cf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [6622107]
+- Updated dependencies [ba8ebaf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/kernel@0.1.0-rc.14
+  - @capybara-hq/plugin-tools@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
 ## 0.1.0-rc.12
 
 ### Patch Changes

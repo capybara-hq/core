@@ -103,7 +103,7 @@ export function UserBubble({
     return () => observer.disconnect();
   }, [text, skill, expanded, referenceLong]);
   return (
-    <div className="cb-user-msg">
+    <div className="cb-user-msg" data-cap-part="message.user">
       {sender !== undefined ? (
         <div className="cb-bubble-sender" data-part="bubble-sender">
           {fillCopy(t("bubble.from"), { name: sender })}

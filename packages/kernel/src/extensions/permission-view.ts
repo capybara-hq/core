@@ -3,7 +3,13 @@ import type { LocalizedName, UiDropReason } from "@capybara-hq/plugin-sdk";
 import type { PluginScope } from "../catalog/scope.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
-import { type PermissionSet, permissionKeys, WARNINGS_KEY_PREFIX } from "./permission-set.js";
+import {
+  CLIENT_KEY,
+  type PermissionSet,
+  permissionKeys,
+  UI_COMPONENT_KEY_PREFIX,
+  WARNINGS_KEY_PREFIX,
+} from "./permission-set.js";
 import type { ExtensionSource } from "./sources.js";
 
 /**
@@ -38,11 +44,13 @@ export interface PermissionGroup {
     | "hooks"
     | "models"
     | "network"
-    | "ui";
+    | "ui"
+    | "components"
+    | "client";
   /**
-   * Sensitive category: secrets, public routes, tools, hooks; also the "provides" group when it holds
-   * one of {@link SENSITIVE_EXTENSION_POINTS}, and the "UI" group when it holds an embedded app
-   * (embed: the extension's own page in an iframe).
+   * Sensitive category: secrets, public routes, tools, hooks, client components, client code; also
+   * the "provides" group when it holds one of {@link SENSITIVE_EXTENSION_POINTS}, and the "UI" group
+   * (views and embeds) when it holds an embedded app (embed: the extension's own page in an iframe).
    */
   sensitive: boolean;
   items: string[];
@@ -52,8 +60,10 @@ export interface PermissionGroup {
 
 /**
  * Sensitive reason codes (the UI translates them by code): secrets, public routes, tools, hooks,
- * embedded apps, and sensitive extension points ({@link SENSITIVE_EXTENSION_POINTS}; the code is the
- * extension point name without `@<major>`, with `-` replaced by `_`).
+ * embedded apps, client code and client components (client extensions spec §5.4: code that runs with
+ * full trust in members' browsers), and sensitive extension points
+ * ({@link SENSITIVE_EXTENSION_POINTS}; the code is the extension point name without `@<major>`, with
+ * `-` replaced by `_`).
  */
 export type SensitiveReason =
   | "secrets"
@@ -61,6 +71,8 @@ export type SensitiveReason =
   | "tools"
   | "hooks"
   | "ui_embed"
+  | "client_code"
+  | "ui_component"
   | "channel"
   | "directory"
   | "identity_source"
@@ -92,12 +104,17 @@ export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
 
 type Category = PermissionGroup["category"];
 
+/** The one item of the "client" group (client extensions spec §5.4). */
+const CLIENT_ITEM = "client code";
+
 /** 总是敏感的类别。 */
 const ALWAYS_SENSITIVE: ReadonlySet<Category> = new Set<Category>([
   "secrets",
   "publicRoutes",
   "tools",
   "hooks",
+  "components",
+  "client",
 ]);
 
 const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
@@ -105,12 +122,15 @@ const CATEGORY_REASON: Partial<Record<Category, SensitiveReason>> = {
   publicRoutes: "public_routes",
   tools: "tools",
   hooks: "hooks",
+  components: "ui_component",
+  client: "client_code",
 };
 
 /**
  * Why an item in a category is sensitive (undefined when it is not; shared by the grouped list, the
- * per-item `added` and the CLI markers): secrets, public routes, tools and hooks are always
- * sensitive; {@link SENSITIVE_EXTENSION_POINTS} in "provides"; embedded apps (`embed:<id>`) in "UI".
+ * per-item `added` and the CLI markers): secrets, public routes, tools, hooks and client code are
+ * always sensitive, and so are client components (their own group, items are the component ids);
+ * {@link SENSITIVE_EXTENSION_POINTS} in "provides"; embedded apps (`embed:<id>`) in "UI".
  */
 function itemReason(category: Category, item: string): SensitiveReason | undefined {
   // storage 不算敏感：ctx.storage 的键由内核加前缀 `plugins/<插件>/<orgId>/`，插件只能读写自己的前缀
@@ -119,7 +139,10 @@ function itemReason(category: Category, item: string): SensitiveReason | undefin
       ? ((item.split("@")[0] as string).replaceAll("-", "_") as SensitiveReason)
       : undefined;
   }
-  if (category === "ui") return item.startsWith("embed:") ? "ui_embed" : undefined;
+  if (category === "ui") {
+    if (item.startsWith("embed:")) return "ui_embed";
+    return undefined;
+  }
   return ALWAYS_SENSITIVE.has(category) ? CATEGORY_REASON[category] : undefined;
 }
 
@@ -132,6 +155,7 @@ const itemOf = (category: Category, value: string): PermissionItem => {
 function keyItem(key: string): { category: Category; item: string } | null {
   const after = (prefix: string) => (key.startsWith(prefix) ? key.slice(prefix.length) : null);
   if (key === "permissions.secrets") return { category: "secrets", item: "secret store" };
+  if (key === CLIENT_KEY) return { category: "client", item: CLIENT_ITEM };
   if (/^config\.(deployment|org)\.secret:/.test(key))
     return { category: "secrets", item: key.slice(key.indexOf(":") + 1) };
   const table: [string, Category, string][] = [
@@ -141,6 +165,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
     ["permissions.hooks:", "hooks", ""],
     ["permissions.hooks.policy:", "hooks", "policy:"],
     ["ui.embed:", "ui", "embed:"],
+    [UI_COMPONENT_KEY_PREFIX, "components", ""],
     ["ui.view:", "ui", "view:"],
   ];
   for (const [prefix, category, itemPrefix] of table) {
@@ -177,8 +202,9 @@ export function permissionKeyItems(keys: string[]): PermissionItem[] {
 /** 把权限集合整理成分组清单（固定顺序，空组省略）。纯函数。 */
 export function permissionGroups(set: PermissionSet): PermissionGroup[] {
   const p = set.permissions;
-  // 旧快照没有 ui（按空处理）
-  const ui = p.ui ?? { views: [], embeds: [] };
+  // older snapshots lack `ui`, `ui.components` and `client` (read as empty / false)
+  const ui = p.ui ?? { views: [], embeds: [], components: [] };
+  const components = ui.components ?? [];
   const secretFields = [...set.config.deployment, ...set.config.org]
     .filter((f) => f.secret)
     .map((f) => f.path || "<root>");
@@ -216,6 +242,8 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
       category: "ui",
       items: [...ui.views.map((v) => `view:${v}`), ...ui.embeds.map((e) => `embed:${e}`)],
     },
+    { category: "components", items: components },
+    { category: "client", items: p.client === true ? [CLIENT_ITEM] : [] },
   ];
   return groups
     .filter((g) => g.items.length > 0)
@@ -329,6 +357,28 @@ export interface AdminExtensionView {
    * catalog does not know, or not at that version. `[]` when the extension is not loaded here.
    */
   uiDropped: { id: string; ref: string; reason: UiDropReason }[];
+  /**
+   * The client build that runs (client extensions spec §9.1, §9.3, §10.4): the one a live replica
+   * serves (the install's own package when it runs, else the older one still served beside an
+   * upgrade awaiting approval or failed), or the install record package's build when no replica
+   * serves one; its id (the package sha256), every file with its size, and the client API
+   * version; null when that package has no client code (or the view is degraded).
+   */
+  client: { build: string; files: { path: string; bytes: number }[]; apiVersion: number } | null;
+  /**
+   * Crash and load reports of that build, newest first, at most 50: `orgId` is null for admin
+   * pages and may name an org deleted since (rows stay until the 30-day prune). Empty without a
+   * client build.
+   */
+  clientReports: {
+    orgId: string | null;
+    contribution: string | null;
+    kind: string;
+    count: number;
+    firstAt: string;
+    lastAt: string;
+    lastMessage: string;
+  }[];
   /**
    * Only with status `conflict`: the single-provider extension point and the other extensions that
    * provide it (they keep this one from loading; disabling them loads it, no restart).

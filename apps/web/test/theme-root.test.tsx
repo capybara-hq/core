@@ -8,33 +8,36 @@ import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 const { themeIcons } = await import("../src/lib/server/theme");
 const { ThemeLink } = await import("../src/components/theme-link");
 
-const NIGHT_CITY: ThemeRef = {
+const NEON_GRID: ThemeRef = {
   id: "t-night",
+  key: "neon/neon-grid",
   version: "1.0.0",
-  name: { en: "Night City", zh: "夜之城" },
+  name: { en: "Neon Grid", zh: "霓虹网格" },
   schemes: ["dark"],
   singleScheme: "dark",
   logo: {
     markUrl: "/api/v1/themes/t-night/1.0.0/assets/logo.svg",
-    wordmark: "NIGHT CITY",
+    wordmark: "NEON GRID",
     faviconUrl: null,
   },
-  cssUrl: "/api/v1/themes/t-night/1.0.0/theme.css",
+  cssUrl: themeCssUrl("t-night", "1.0.0"),
 };
 const PAPER: ThemeRef = {
   id: "t-paper",
+  key: "paper/paper",
   version: "2.0.0",
   name: { en: "Paper" },
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
-  cssUrl: "/api/v1/themes/t-paper/2.0.0/theme.css",
+  cssUrl: themeCssUrl("t-paper", "2.0.0"),
 };
 
 const sidebar = () => screen.getByRole("complementary");
@@ -54,7 +57,7 @@ const themeLinks = () =>
 const at = (theme: ThemeRef, version: string): ThemeRef => ({
   ...theme,
   version,
-  cssUrl: `/api/v1/themes/${theme.id}/${version}/theme.css`,
+  cssUrl: themeCssUrl(theme.id, version),
 });
 const linksTo = (href: string) =>
   document.querySelectorAll(`link[rel="stylesheet"][href="${href}"]`).length;
@@ -87,21 +90,25 @@ describe("ThemeRoot in the workspace frame", () => {
   });
 
   it("a single-scheme theme with a logo: its brand in the sidebar, no scheme toggle", () => {
-    renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
-    expect(themeLinks()).toEqual([NIGHT_CITY.cssUrl]);
-    expect(within(brandRow()).getByText("NIGHT CITY")).toBeTruthy();
+    renderFrame(shellOf(ME, { theme: NEON_GRID }));
+    expect(themeLinks()).toEqual([NEON_GRID.cssUrl]);
+    expect(within(brandRow()).getByText("NEON GRID")).toBeTruthy();
     expect(within(brandRow()).queryByText("CAPYBARA")).toBeNull();
     const mark = brandRow().querySelector('[data-part="logo-mark"]');
-    expect(mark?.getAttribute("src")).toBe(NIGHT_CITY.logo?.markUrl);
+    expect(mark?.getAttribute("src")).toBe(NEON_GRID.logo?.markUrl);
     expect(schemeToggle()).toBeNull();
   });
 
   it("a settings change that updates the themes read swaps the stylesheet and the brand", () => {
-    const next = { ...PAPER, version: "2.1.0", cssUrl: "/api/v1/themes/t-paper/2.1.0/theme.css" };
-    const view = renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
+    const next = {
+      ...PAPER,
+      version: "2.1.0",
+      cssUrl: themeCssUrl("t-paper", "2.1.0"),
+    };
+    const view = renderFrame(shellOf(ME, { theme: NEON_GRID }));
     view.update(shellOf(ME, { theme: next }));
     expect(themeLinks()).toEqual([next.cssUrl]);
-    expect(within(brandRow()).queryByText("NIGHT CITY")).toBeNull();
+    expect(within(brandRow()).queryByText("NEON GRID")).toBeNull();
     expect(within(brandRow()).getByText("CAPYBARA")).toBeTruthy();
     expect(schemeToggle()).not.toBeNull();
   });
@@ -119,7 +126,7 @@ describe("switching themes leaves only the current stylesheet enabled", () => {
   });
 
   it("A, then B, then A: only the current theme's stylesheet is enabled each time", () => {
-    const a = at(NIGHT_CITY, "4.0.0");
+    const a = at(NEON_GRID, "4.0.0");
     const b = at(PAPER, "4.0.0");
     const view = renderFrame(shellOf(ME, { theme: a }));
     expect(themeLinks()).toEqual([a.cssUrl]);
@@ -143,8 +150,8 @@ describe("the scheme toggle under a single-scheme theme (usePreferences)", () =>
   });
 
   it("the org chooser has no toggle under a single-scheme platform theme", () => {
-    renderFrame(shellOf(NO_ORG, { theme: NIGHT_CITY }));
-    expect(screen.getAllByText("NIGHT CITY").length).toBeGreaterThan(0);
+    renderFrame(shellOf(NO_ORG, { theme: NEON_GRID }));
+    expect(screen.getAllByText("NEON GRID").length).toBeGreaterThan(0);
     expect(chooserToggle()).toBeNull();
   });
 });
@@ -153,8 +160,8 @@ describe("themeIcons", () => {
   it("a theme's favicon is the page icon; none leaves the app's icon", () => {
     const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
     const logo = { markUrl: null, wordmark: null, faviconUrl: favicon };
-    expect(themeIcons({ ...NIGHT_CITY, logo })).toEqual({ icons: { icon: favicon } });
-    expect(themeIcons(NIGHT_CITY)).toEqual({});
+    expect(themeIcons({ ...NEON_GRID, logo })).toEqual({ icons: { icon: favicon } });
+    expect(themeIcons(NEON_GRID)).toEqual({});
     expect(themeIcons(null)).toEqual({});
   });
 });

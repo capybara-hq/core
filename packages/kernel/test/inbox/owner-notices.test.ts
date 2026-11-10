@@ -82,6 +82,27 @@ async function putScope(itemId: string, body: Record<string, unknown>) {
   expect(r.statusCode, r.body).toBe(200);
 }
 
+/**
+ * Waits until the scope sync has installed the item in every org of `orgs`: an install landing
+ * between a preview and its confirm changes what the preview covers (409 plugin.scope_stale).
+ */
+async function syncedIn(itemId: string, orgs: string[]): Promise<void> {
+  await waitFor(
+    async () => {
+      const rows = await env.db
+        .selectFrom("plugin_installs")
+        .select("org_id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "in", orgs)
+        .where("status", "=", "installed")
+        .execute();
+      return rows.length === orgs.length;
+    },
+    30_000,
+    `the scope sync installs the item in ${orgs.length} org(s)`,
+  );
+}
+
 interface InboxItem {
   type: string;
   id: string;
@@ -102,7 +123,7 @@ describe("owner notices", { timeout: 90_000 }, () => {
     const itemId = await ownedPlugin(true);
     await putScope(itemId, { scope: "named", orgs: [orgA, env.orgId] });
     expect(await sharedOrgs()).toEqual([{ id: env.orgId, name: expect.any(String) }]);
-    // approving orgC's access request
+    // approving orgC's access request (enqueues the scope sync that installs it in C)
     const r = await env.root({
       method: "POST",
       url: `/api/v1/orgs/${orgC}/catalog/${itemId}/requests`,
@@ -118,7 +139,8 @@ describe("owner notices", { timeout: 90_000 }, () => {
     const orgs = (await sharedOrgs()) as { id: string; name: string }[];
     expect(orgs.map((o) => o.id).sort()).toEqual([env.orgId, orgC].sort());
     expect(orgs.find((o) => o.id === orgC)?.name).toBe("C");
-    // widening to optional
+    // widening to optional, once the scope sync has installed it in every listed org
+    await syncedIn(itemId, [orgA, env.orgId, orgC]);
     await putScope(itemId, { scope: "optional" });
     const all = await ownerInbox(orgA, "item_shared");
     expect(all).toHaveLength(3);
@@ -140,18 +162,7 @@ describe("owner notices", { timeout: 90_000 }, () => {
     await setScope(env, itemId, "named", []);
     await putScope(itemId, { scope: "named", orgs: [env.orgId] });
     // the scope sync installs the item in org B and changes what the next preview covers
-    await waitFor(
-      async () =>
-        (await env.db
-          .selectFrom("plugin_installs")
-          .select("id")
-          .where("item_id", "=", itemId)
-          .where("org_id", "=", env.orgId)
-          .where("status", "=", "installed")
-          .executeTakeFirst()) !== undefined,
-      30_000,
-      "the scope sync installs the item in org B",
-    );
+    await syncedIn(itemId, [env.orgId]);
     await putScope(itemId, { scope: "optional" });
     const n = await env.db.selectFrom("org_notices").select("id").execute();
     expect(n).toEqual([]);

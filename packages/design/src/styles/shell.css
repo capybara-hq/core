@@ -55,6 +55,27 @@
 .cb-ref-block .cb-shell {
   height: 100%;
 }
+/* A shell-wide banner (safe mode) is the shell's first row, across both columns; the sidebar and
+   the content column share the second row, so the shell keeps the window height and nothing at its
+   bottom (the status bar, the composer) is clipped. The content column keeps the second column
+   when no sidebar panel is drawn (the drawer below 960). */
+.cb-shell[data-banner="true"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.cb-shell[data-banner="true"] > .cb-shell-banner {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.cb-shell[data-banner="true"] > .cb-sidebar {
+  grid-column: 1;
+  grid-row: 2;
+}
+.cb-shell[data-banner="true"] > .cb-shell-column {
+  grid-column: 2;
+  grid-row: 2;
+}
 .cb-shell-column {
   display: flex;
   flex: 1;
@@ -692,4 +713,43 @@ a.cb-stat-card:focus-visible {
 }
 .cb-shell-main:focus {
   outline: none;
+}
+
+/* Decoration layer (client extensions spec §7.4): over every layer, never takes the pointer. */
+.cb-decoration {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-decoration);
+  pointer-events: none;
+}
+.cb-decoration [data-cap-interactive] {
+  pointer-events: auto;
+}
+
+/* Replaceable frame (spec §6): hidden but laid out while the replacement loads; no box of its own. */
+.cb-replaceable {
+  display: contents;
+}
+.cb-replaceable[data-pending="true"] {
+  visibility: hidden;
+  /* revealed after CLIENT_LIMITS.pendingMs by CSS alone (no scripts needed); a discrete step, so
+     reduced motion reveals the same way, without a transition */
+  animation: cb-replaceable-reveal 0s linear 1500ms forwards;
+}
+@keyframes cb-replaceable-reveal {
+  to {
+    visibility: visible;
+  }
+}
+
+/* Safe mode banner (spec §9.6): one hairline-ruled row, the shell's first (AppShell `banner`). */
+.cb-safe-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
+  border-bottom: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
 }

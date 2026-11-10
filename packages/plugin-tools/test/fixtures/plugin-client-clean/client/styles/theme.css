@@ -1,0 +1,12 @@
+[data-cap-part~="shell"] {
+  --cx-fixture-plugin-client-clean-glow: 1;
+  background: var(--cb-bg);
+}
+
+[data-cap-part~="sidebar"] [data-cap-state~="active"] {
+  color: var(--cb-accent);
+}
+
+.cx-fixture-plugin-client-clean-badge {
+  background-image: url("../assets/click.ogg");
+}

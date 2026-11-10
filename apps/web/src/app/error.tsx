@@ -12,5 +12,5 @@ export default function RootError({
   error: Error & { digest?: string };
   reset(): void;
 }) {
-  return <ErrorFrame reset={reset} />;
+  return <ErrorFrame reset={reset} safeReload />;
 }

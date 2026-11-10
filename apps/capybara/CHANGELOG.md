@@ -1,5 +1,117 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.16
+
+### Patch Changes
+
+- 99a970a: `IconButton` carries the `button` UI part (`button button.primary` for the primary variant) like
+  `Button`, so plugin CSS on `[data-cap-part~="button"]` reaches every button, the composer's send and
+  stop among them.
+- 90e6e18: `AppShell` (and `SetupPage`) take a `banner`: a shell-wide row (safe mode's `SafeModeBanner`) drawn
+  as the shell's first grid row across the sidebar and the content column, which share the rest of
+  the window. In safe mode the web draws its banner there instead of above the 100dvh shell, so the
+  status bar and the bottom of the page are no longer clipped.
+- 56fc173: A plugin whose client code was built for a newer client API than the kernel's `CLIENT_API_VERSION`
+  is refused at import with `client.api_unsupported` (400), and the client shell reads never list a
+  build of a client API version the web host does not run.
+- b270b7e: Client component pages (`org.page`, `platform.page`) and agent sections (`agent.detail.section`)
+  always draw their body with designed states: loading while the module loads, the failure line
+  (retry reloads the page) after a failed load, and "not available" when the code is off (safe mode,
+  the kill switch, a spent crash budget, a withdrawn plugin). Their nav entries (the sidebar's
+  extension pages, the agent page's sections, the admin console's platform pages) are not offered
+  while the code is off.
+- fc0213c: Client components render in the web. In list slots a `component` contribution renders in the same
+  place as a view (its slot's frame, anchors unchanged) once its module is registered, inside the
+  block's error boundary (a crash shows the failure line and is reported once and counted against the
+  plugin's crash budget), with the host context the plugin-client hooks read (`useView` reads the
+  component's server view with the slot's args only when asked). A component's right panel always
+  has its frame (title, close) with a loading or failure state; component panels are not offered in
+  safe mode or under the kill switch. The replaceable slots `shell.brand`, `conversation.empty` and
+  `conversation.composer.frame` render the kernel's winner or the built-in: the built-in in safe
+  mode, under the kill switch, and when the winner fails to load, throws or (composer frame) leaves
+  the composer's textarea out of its slot, also on its own re-render; while the winner loads the
+  built-in stays hidden for at most 1.5 s. A composer frame gets the framed composer as `builtin` and
+  its bare inputs as `children`. When the org's client set has a component for one of these slots,
+  the layout's shell read also prefetches the contributions, so the server renders the slot pending
+  (the frame's CSS reveals the built-in after 1.5 s) and a winner renders without a read.
+  `shell.overlay` renders in the decoration layer once one of its components is ready. The admin
+  console renders neither the overlay nor replacements.
+- 1bac942: Client host fixes: a layout refresh no longer remounts the page after a client navigation from a
+  workspace page without client code into the admin console. A contribution's crash counts
+  once per document toward the crash budget, however many places draw it. A router push or Back
+  across the client-code boundary turns the old scope's plugin code off before the document load. A composer frame must render
+  the composer exactly once (two copies fall back to the built-in). The safe-mode cookie is
+  HttpOnly; the banner's exit loads the page with `?safe-ui=0`, which clears it. The admin extension detail's
+  client reports name the org (a deleted org says so) instead of its id. A focus request the composer
+  cannot take while a composer frame is pending waits for the reveal or the winner's composer. A client event whose seq
+  arrives after a higher one is still delivered once.
+- 4c75f06: The web loads client extensions through a client host: the workspace layout renders an import map
+  (with the request's CSP nonce and each entry's integrity), a preload per entry and the plugin
+  stylesheets; `ClientHost` imports the entries after hydration (10 s each), checks name, API version
+  and component slots, keeps the registry, feeds the plugins' client event listeners, applies the
+  crash budget (three errors switch a build off for the browser session), reports failures once per
+  document and turns client navigations between the workspace and the admin console into document
+  loads. `?safe-ui=1` loads no client code and shows the safe-mode banner; it holds for the browser
+  session (a session cookie, cleared by the banner's exit or `?safe-ui=0`), and any plugin
+  stylesheet a later render adds is disabled. The error pages offer a reload in safe mode. The host
+  shims are generated at dev and build (`gen:client-host`) under `/_capybara/client-host/<webBuild>/`
+  with their sha384 in the import map, which the document CSP allows.
+- 8968c78: After 应用此插件的外观 succeeds for a plugin with client code, the page reloads so its replacements,
+  stylesheets and overlay show at once (the confirm dialog says so). When the live client set adds
+  code the open document lacks (a plugin turned on, a new build, the kill switch lifted), a
+  non-blocking notice offers 重新加载. In an org's apply preview,
+  a current value the org follows from the platform reads 跟随平台：<name>.
+- 8627584: Every page document carries a content security policy with a fresh nonce per request:
+  `script-src <host>/_next/ <host>/api/v1/client/ 'nonce-<n>'; object-src 'none'; base-uri 'none';
+  frame-ancestors 'self'; form-action 'self'` (development adds `'unsafe-eval'`). Scripts never load
+  from the rest of the origin, which also serves user content. Next puts the nonce on its own
+  scripts; `/api/…`, `/plugin-ui/…`, `/_next/…`, the design catalog `/dev/ui`, `/icon.svg` and the
+  object-store proxy keep their own headers, and every other path (dotted ones too) gets the policy.
+  The script sources name the host the browser used: a reverse proxy must forward the original `Host`.
+- 8a6da5f: The admin console and the workspace manage client code. 平台设置 has 插件界面代码: one switch for all
+  plugin interface code and one per plugin with client code (its server side keeps running); a save
+  marks every cached client set stale. The admin extension detail shows 界面代码 (build, client API,
+  files and sizes, the current build's error reports) with 停用界面代码 / 恢复界面代码. 界面位置 lists
+  the replaceable slots with a select 内置 / candidates (an org shows whether it follows the platform
+  and can follow it again; members read the picks). 应用此插件的外观 (the admin plugin detail for the
+  platform, the extension's Sheet on /extensions for org admins) shows the dry run's changes in a
+  confirm dialog, then applies them. Permission reviews show 客户端代码 with the build's files and
+  sizes, and interface components as their own sensitive group. A refused apply says what to do at its level
+  (the orgs where the theme is off, or how to offer it), and the org-upload confirmation and the org
+  Sheet list the client build's files with sizes.
+- 8c49d09: The shell element publishes `run=`, `theme=<plugin>/<file id>`, `motion=` and `sidebar=rail|full` in
+  `data-cap-state`; the open conversation's log is turned into client events on the client (history
+  loaded on open emits nothing). `ThemeRef` gains `key`.
+- Updated dependencies [c4b4f6f]
+- Updated dependencies [571318f]
+- Updated dependencies [f2786a6]
+- Updated dependencies [b03397f]
+- Updated dependencies [56fc173]
+- Updated dependencies [ad030b1]
+- Updated dependencies [232191e]
+- Updated dependencies [bb622c4]
+- Updated dependencies [38e9f9b]
+- Updated dependencies [44fe453]
+- Updated dependencies [8a3472b]
+- Updated dependencies [afeb135]
+- Updated dependencies [363a2d3]
+- Updated dependencies [914e022]
+- Updated dependencies [89278e7]
+- Updated dependencies [5d464ce]
+- Updated dependencies [8c49d09]
+  - @capybara-hq/kernel@0.1.0-rc.15
+
+## 0.1.0-rc.15
+
+### Patch Changes
+
+- Updated dependencies [848fb39]
+- Updated dependencies [2f01b01]
+- Updated dependencies [155c1cf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [6622107]
+  - @capybara-hq/kernel@0.1.0-rc.14
+
 ## 0.1.0-rc.14
 
 ### Patch Changes

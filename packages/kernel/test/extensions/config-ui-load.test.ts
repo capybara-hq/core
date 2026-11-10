@@ -177,6 +177,7 @@ describe("config UI hints: load-time validation, static schemas, issue message k
         plugin: "chan-throwhints",
         schema: { type: "object" },
         guide: null,
+        inbound: { webhookSupported: false, webhookAvailable: false, webhookPublic: false },
       });
     }
     const on = await admin({

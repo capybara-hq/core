@@ -18,36 +18,36 @@ describe("Logo with a theme brand", () => {
 
   it("a brand with markUrl and wordmark draws the image and the brand text", () => {
     const { container } = render(
-      <DesignProvider locale="en" brand={{ markUrl: "/m.svg", wordmark: "NIGHT CITY" }}>
+      <DesignProvider locale="en" brand={{ markUrl: "/m.svg", wordmark: "NEON GRID" }}>
         <Logo wordmark scale={2} />
       </DesignProvider>,
     );
     const img = container.querySelector('img[src="/m.svg"]');
     expect(img).not.toBeNull();
-    expect(img?.getAttribute("alt")).toBe("NIGHT CITY");
+    expect(img?.getAttribute("alt")).toBe("NEON GRID");
     expect(img?.getAttribute("height")).toBe(String(10 * 2));
     expect(container.querySelector("svg")).toBeNull();
-    expect(screen.getByText("NIGHT CITY")).toBeTruthy();
+    expect(screen.getByText("NEON GRID")).toBeTruthy();
     expect(screen.queryByText("CAPYBARA")).toBeNull();
   });
 
   it("the brand's wordmark is drawn only where the wordmark is (the rail has none)", () => {
     render(
-      <DesignProvider locale="en" brand={{ markUrl: null, wordmark: "NIGHT CITY" }}>
+      <DesignProvider locale="en" brand={{ markUrl: null, wordmark: "NEON GRID" }}>
         <Logo />
       </DesignProvider>,
     );
-    expect(screen.queryByText("NIGHT CITY")).toBeNull();
+    expect(screen.queryByText("NEON GRID")).toBeNull();
   });
 
   it("a brand with only a wordmark keeps the pixel capybara; only a mark keeps CAPYBARA", () => {
     const { container, unmount } = render(
-      <DesignProvider locale="en" brand={{ markUrl: null, wordmark: "NIGHT CITY" }}>
+      <DesignProvider locale="en" brand={{ markUrl: null, wordmark: "NEON GRID" }}>
         <Logo wordmark />
       </DesignProvider>,
     );
     expect(container.querySelector("svg path")).not.toBeNull();
-    expect(screen.getByText("NIGHT CITY")).toBeTruthy();
+    expect(screen.getByText("NEON GRID")).toBeTruthy();
     unmount();
     const second = render(
       <DesignProvider locale="en" brand={{ markUrl: "/m.png", wordmark: null }}>

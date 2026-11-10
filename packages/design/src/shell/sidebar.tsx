@@ -109,8 +109,17 @@ export type SidebarContext =
       adminHref?: string;
     };
 
+/** The panel a `brand` is drawn in: the full sidebar, the rail (collapsed) or the drawer. */
+export type SidebarBrandVariant = { collapsed: boolean; panel: "full" | "rail" | "drawer" };
+
 export type SidebarProps = {
   context: SidebarContext;
+  /**
+   * Drawn in the brand row instead of the Logo (a plugin's `shell.brand` contribution), called once
+   * per drawn panel with that panel's variant (`collapsed` in the rail); the row keeps its size and
+   * `data-cap-part="sidebar.brand"`.
+   */
+  brand?: (v: SidebarBrandVariant) => ReactNode;
   /** The "New conversation" item of the work context (label from design i18n). */
   newConversation?: { href: string };
   /**
@@ -153,6 +162,20 @@ const countText = (n: { count?: number; countMore?: boolean }): string =>
 type Variant = "full" | "rail" | "panel";
 
 /**
+ * The sidebar's breakpoints (spec §6.13): the rail below 1280, the drawer below 960. The one place
+ * the sidebar and the App Shell read them from (sidebar.css uses the same widths).
+ */
+export const SIDEBAR_RAIL_QUERY = "(max-width: 1279px)";
+export const SIDEBAR_DRAWER_QUERY = "(max-width: 959px)";
+
+/** The sidebar mode the window width gives: `full` before hydration (both panels drawn then). */
+export function useSidebarWidthMode(): "full" | "rail" | "drawer" {
+  const rail = useMediaQuery(SIDEBAR_RAIL_QUERY);
+  const narrow = useMediaQuery(SIDEBAR_DRAWER_QUERY);
+  return narrow ? "drawer" : rail ? "rail" : "full";
+}
+
+/**
  * The left sidebar (spec §6.13): the brand, the context (the org switcher or the admin block),
  * navigation, the conversations grouped by agent (work context), the admin entry and the account.
  *
@@ -162,10 +185,9 @@ type Variant = "full" | "rail" | "panel";
  */
 export function Sidebar(p: SidebarProps) {
   const hydrated = useHydrated();
-  const rail = useMediaQuery("(max-width: 1279px)");
-  const narrow = useMediaQuery("(max-width: 959px)");
+  const widthMode = useSidebarWidthMode();
   const responsive = p.mode === undefined && !hydrated;
-  const mode = p.mode ?? (narrow ? "drawer" : rail ? "rail" : "full");
+  const mode = p.mode ?? widthMode;
   const [ownOpen, setOwnOpen] = useState(false);
   const open = p.drawer?.open ?? ownOpen;
   const setOpen = (o: boolean) => {
@@ -295,12 +317,20 @@ function SidebarPanel({
     <aside
       className="cb-sidebar"
       data-part="sidebar"
+      data-cap-part="sidebar"
       data-mode={rail ? "rail" : "full"}
       data-context={ctx.kind}
       data-responsive={responsive ? "true" : undefined}
     >
-      <div className="cb-sidebar-top" data-part="brand-row">
-        <Logo scale={2} wordmark={!rail} />
+      <div className="cb-sidebar-top" data-part="brand-row" data-cap-part="sidebar.brand">
+        {p.brand ? (
+          p.brand({
+            collapsed: rail,
+            panel: rail ? "rail" : variant === "panel" ? "drawer" : "full",
+          })
+        ) : (
+          <Logo scale={2} wordmark={!rail} />
+        )}
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
@@ -606,6 +636,7 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
         href={n.href}
         className="cb-sidebar-item"
         data-part={part}
+        data-cap-part="sidebar.item"
         data-depth={depth}
         data-rove={key}
         tabIndex={roving.tabIndexOf(key, keys)}
@@ -840,6 +871,7 @@ function SetupNav({
       href={ctx.home.href}
       className="cb-sidebar-item"
       data-part="nav-item"
+      data-cap-part="sidebar.item"
       data-rove="home"
       tabIndex={roving.tabIndexOf("home", keys)}
       {...(p.activeNav === "home" ? { "aria-current": "page" as const } : {})}

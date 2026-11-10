@@ -102,7 +102,8 @@ export { deploymentConfigHash };
 
 /**
  * One item of {@link ExtensionHost.uiContributions}: a UI contribution from the manifest whose slot
- * resolved at load (dropped ones never appear), with its registered view / action (embeds have none).
+ * resolved at load (dropped ones never appear), with its registered view / action (a view's or a
+ * component's; embeds have none).
  */
 export interface LoadedUiContribution {
   plugin: string;
@@ -1520,16 +1521,25 @@ export class ExtensionHost {
   /**
    * 写本副本的加载状态；失败只记 warn（状态是给后台看的，不影响加载）。这一行的版本没加载成（failed / pending）
    * 而本副本仍有别的版本在跑时，记下那个版本（`servingVersion`，后台同时显示「新版失败、旧版仍在服务」）。
+   * `servingSha256` is the package this replica actually serves for the plugin (client code follows
+   * it, client extensions spec §9.3): the row's own package when loaded; for a failed / pending row
+   * the package of the instance still running here (an older one, or the row's own package when it
+   * stays loaded, e.g. beside a provider conflict), else null.
    */
   private async writeStatus(s: ExtensionLoadStatus): Promise<void> {
-    if (s.servingVersion === undefined && (s.state === "failed" || s.state === "pending")) {
-      const cur = this.registry.current(s.plugin);
-      s = {
-        ...s,
-        servingVersion:
-          cur && (cur.sha256 !== s.sha256 || cur.version !== s.version) ? cur.version : null,
-      };
-    }
+    const waiting = s.state === "failed" || s.state === "pending";
+    const cur = waiting ? this.registry.current(s.plugin) : undefined;
+    const other = cur && (cur.sha256 !== s.sha256 || cur.version !== s.version) ? cur : null;
+    s = {
+      ...s,
+      ...(waiting && s.servingVersion === undefined && { servingVersion: other?.version ?? null }),
+      servingSha256:
+        s.servingSha256 !== undefined
+          ? s.servingSha256
+          : s.state === "loaded"
+            ? s.sha256
+            : (cur?.sha256 ?? null),
+    };
     if (s.source === "install") {
       if (s.state === "unloaded") this.installRows.delete(s.plugin);
       else this.installRows.set(s.plugin, { version: s.version, sha256: s.sha256 as string });
@@ -2511,8 +2521,10 @@ export class ExtensionHost {
   uiContributions(): LoadedUiContribution[] {
     return this.registry.all().flatMap((i) =>
       i.ui.map(({ contribution: c, slot, after }) => {
-        const render = c.kind === "view" ? i.uiViews.get(c.id) : undefined;
-        const action = c.kind === "view" ? i.uiActions.get(c.id) : undefined;
+        // a view's, or a component's server view (client extensions spec §5.2); embeds have none
+        const served = c.kind === "view" || c.kind === "component";
+        const render = served ? i.uiViews.get(c.id) : undefined;
+        const action = served ? i.uiActions.get(c.id) : undefined;
         return {
           plugin: i.name,
           contribution: c,

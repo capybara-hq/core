@@ -46,9 +46,11 @@ interface Channel {
 A channel plugin may ship one `channel-connection` guide (writing-plugins: `setupGuides`,
 `guides/<id>.md`): modes `long_connection` / `webhook` (`::: mode` sections), audience admin only
 (`channels.manage`), variables `webhookUrl`, `signInCallbackUrl`, `connectionName` plus the common
-ones (§6.3). 新建渠道 renders it with the name typed so far and no target (check rows say "checked
-after saving"); the channel detail renders it for the connection in its stored `inbound_mode`, with
-live check rows. `GET channels/schema/:plugin` carries `guide: { itemId, guideId } | null`; the
+ones (§6.3). 新建渠道 renders it with the name typed so far and no target (the check rows are one
+line "each check can run once you save", and everything after the document's last top-level `---`
+is reference material shown only once saved); its mode switch is the connection's inbound mode,
+sent as `inboundMode` on create. The channel detail renders it for the connection in its stored
+`inbound_mode`, with live check rows. `GET channels/schema/:plugin` carries `guide: { itemId, guideId } | null`; the
 connection views carry `setupGuide` and `guideDrift` (`PluginGuides.connectionStates`).
 
 - **Checks** (§10): the plugin's own (`ctx.setup.check`, `place: "channel-connection"`; the target
@@ -91,6 +93,17 @@ connection views carry `setupGuide` and `guideDrift` (`PluginGuides.connectionSt
 - `connect` returns only when `signal` aborts. If it throws or returns early, the kernel records the connection's `last_error`, backs off exponentially (doubling from `channels.retryBaseMs`, capped at 5 minutes), and any replica retries.
 
 ### Webhook inbound (optional, `Channel.webhook`)
+
+**Fields per inbound mode** (spec `2026-11-09-channel-inbound-mode-fields-design.md`): a top-level
+connection field with the hint `ui(…, { inboundModes: ["webhook"] })` belongs to those modes. Forms
+draw it only there and require it there; `ChannelConnections` refuses a create, a config change or a
+mode switch that leaves a field of the effective mode empty (400 `extension.config_invalid`, one
+issue per field, stored secrets count), on top of the zod parse (`assertModeFields`, using the SDK's
+`missingInboundModeFields` on the form JSON Schema). A rename or status change does not re-check.
+`POST /channels` takes `inboundMode` (webhook: 409 `channel.webhook_unavailable` as a switch), and
+`GET channels/schema/:plugin` answers `inbound: { webhookSupported, webhookAvailable, webhookPublic }`
+(`isPublicHttpsUrl` on `channels.webhookBaseUrl`; 新建渠道 defaults to long connection when it is
+not public). `fake-im`'s `webhookToken` carries the hint. Tests: `webhook.test.ts`.
 
 Inbound is a **long connection by default** (M4 shipped long connection only; since M7 a channel extension may also implement `webhook`). A connection is switched to webhook mode by an org admin (`PATCH /api/v1/orgs/:orgId/channels/:connectionId` with `{"inboundMode": "webhook"}`); this works only when the extension implements `Channel.webhook` and `channels.webhookBaseUrl` is set. The platform then calls `POST <channels.webhookBaseUrl>/channels/webhook/<connectionId>` on a **gateway** replica, and the connection gets no `connect` call.
 

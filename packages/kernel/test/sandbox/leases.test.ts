@@ -8,6 +8,7 @@ import {
   SandboxLockLostError,
   SandboxPathBusyError,
 } from "../../src/sandbox/leases.js";
+import { LOCK_FAKE_CLOCK, renewalPeriods } from "../helpers/lock-clock.js";
 import { sandboxLeasesFor } from "../helpers/sandbox.js";
 
 /**
@@ -227,14 +228,30 @@ describe("SandboxLeases", () => {
   });
 
   it("renewal keeps a lease past its TTL", async () => {
-    const a = leasesA({ ttlMs: 1500 });
-    const s = await a.acquireShared("c1", 4, never(), 1000);
-    const e = leasesB({ ttlMs: 1500 });
-    await sleep(2500);
-    expect(s.signal.aborted).toBe(false);
-    expect(await a.sharedCount("c1")).toBe(1);
-    expect(await e.tryExclusive("c1")).toBeNull();
-    await s.release();
+    // The watchdog runs on a fake clock against real Redis (as in lock.test.ts): with a real-time
+    // TTL any stall longer than TTL/3 loses the lease by design, so the test would only prove the
+    // machine never stalls. The TTL is long in real time, so Redis cannot expire the key between
+    // two renewals however slow the machine is.
+    const ttlMs = 30_000;
+    const evals = vi.spyOn(redisA, "eval");
+    vi.useFakeTimers(LOCK_FAKE_CLOCK);
+    try {
+      const a = leasesA({ ttlMs });
+      const s = await a.acquireShared("c1", 4, never(), 1000);
+      // 8 renewal periods = 2.67 TTLs: without renewals moving the deadline, the lease is lost at
+      // 2/3 TTL
+      const answers = await renewalPeriods(evals, ttlMs / 3, 8);
+      expect(answers.map(Number)).toEqual(Array(8).fill(1)); // each renewal applied to our lease
+      expect(Date.now()).toBeGreaterThan(ttlMs * 2.5);
+      expect(s.signal.aborted).toBe(false);
+      expect(await a.sharedCount("c1")).toBe(1);
+      expect(await leasesB({ ttlMs }).tryExclusive("c1")).toBeNull();
+      await s.release();
+    } finally {
+      vi.useRealTimers();
+      evals.mockRestore();
+    }
+    expect(await leasesA().sharedCount("c1")).toBe(0);
   });
 
   it("an exclusive token on the capk:sandbox key blocks shared; a shared value blocks SET NX", async () => {

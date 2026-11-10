@@ -27,7 +27,7 @@ const FONT = enc("wOF2");
 
 const themeJson = () =>
   JSON.stringify({
-    name: { en: "Night City", zh: "夜之城" },
+    name: { en: "Neon Grid", zh: "霓虹网格" },
     schemes: {
       dark: {
         color: { bg: "#05070D", panel: "#0A0E18", accent: "#FCE300", "on-accent": "#141200" },
@@ -46,7 +46,7 @@ const themePlugin = (
     manifest: { name, ...(o.version !== undefined && { version: o.version }) },
     files: {
       ...(o.noTheme !== true && {
-        [`themes/${o.themeId ?? "night-city"}.json`]: themeJson(),
+        [`themes/${o.themeId ?? "neon-grid"}.json`]: themeJson(),
         "fonts/Fixture-Regular.woff2": FONT,
       }),
       ...(o.skill !== undefined && { [`skills/${o.skill}/SKILL.md`]: SKILL_MD(o.skill) }),
@@ -154,7 +154,7 @@ describe("themes: scope, switches, previews and the platform default", () => {
       expect.objectContaining({
         kind: "theme",
         id: t.id,
-        name: "night-city",
+        name: "neon-grid",
         plugin: "neon",
         itemId,
         scopeMode: "follow",
@@ -214,7 +214,7 @@ describe("themes: scope, switches, previews and the platform default", () => {
       expect(r.statusCode, r.body).toBe(409);
       expect(r.json().error.code).toBe("theme.id_taken");
       expect(r.json().error.details).toEqual([
-        { theme: "night-city", orgId: env.orgId, themes: [a.theme.id], plugins: ["neon"] },
+        { theme: "neon-grid", orgId: env.orgId, themes: [a.theme.id], plugins: ["neon"] },
       ]);
     });
 
@@ -226,7 +226,7 @@ describe("themes: scope, switches, previews and the platform default", () => {
       expect(p.conflicts).toEqual([
         expect.objectContaining({
           orgId: env.orgId,
-          name: "night-city",
+          name: "neon-grid",
           skills: [],
           themes: [a.theme.id],
         }),
@@ -662,7 +662,7 @@ describe("conflictsError", () => {
   const theme = {
     orgId: "o1",
     orgName: "One",
-    name: "night-city",
+    name: "neon-grid",
     skills: [],
     themes: ["t1"],
     plugins: ["neon"],
@@ -673,7 +673,7 @@ describe("conflictsError", () => {
     const e = conflictsError([theme]);
     expect(e.code).toBe("theme.id_taken");
     expect(e.details).toEqual([
-      { theme: "night-city", orgId: "o1", themes: ["t1"], plugins: ["neon"] },
+      { theme: "neon-grid", orgId: "o1", themes: ["t1"], plugins: ["neon"] },
     ]);
   });
 
@@ -682,9 +682,9 @@ describe("conflictsError", () => {
     expect(e.code).toBe("plugin.skill_conflict");
     expect(e.details).toEqual([
       expect.objectContaining({ skill: "notes", orgId: "o1", skills: ["s1"] }),
-      { theme: "night-city", orgId: "o1", themes: ["t1"], plugins: ["neon"] },
+      { theme: "neon-grid", orgId: "o1", themes: ["t1"], plugins: ["neon"] },
     ]);
     expect(e.message).toContain("notes");
-    expect(e.message).toContain("night-city");
+    expect(e.message).toContain("neon-grid");
   });
 });

@@ -1,5 +1,6 @@
 import { apiFetch } from "./api";
-import type { LocalizedName, PluginScope, SwitchPreview } from "./catalog";
+import type { SuggestedAppearance } from "./appearance";
+import type { ClientBuildSummary, LocalizedName, PluginScope, SwitchPreview } from "./catalog";
 import type { ConfigIssue, JsonSchema } from "./json-schema";
 
 /**
@@ -12,6 +13,8 @@ export type SensitiveReason =
   | "tools"
   | "hooks"
   | "ui_embed"
+  | "client_code"
+  | "ui_component"
   | "channel"
   | "directory"
   | "identity_source"
@@ -62,6 +65,16 @@ export interface OrgExtension {
   secrets: { path: string; set: boolean }[];
   permissions: PermissionGroup[];
   orgConfigSchema: JsonSchema | null;
+  /**
+   * Org admins only: the plugin's suggested appearance (client extensions spec §6.5), null without
+   * one; members never get it (they cannot apply it).
+   */
+  suggestedAppearance?: SuggestedAppearance | null;
+  /**
+   * Org admins only: the running package's client build (null without one), for the permission
+   * review's 客户端代码 group.
+   */
+  client?: ClientBuildSummary | null;
   /** false：此插件在部署上当前不可用（如被停用；组织页显示「不可用」，启用设置保留、不能修改）。 */
   available?: boolean;
   /**

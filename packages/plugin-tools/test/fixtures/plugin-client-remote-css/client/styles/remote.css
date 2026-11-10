@@ -1,0 +1,5 @@
+@import url(https://example.com/fonts.css);
+
+[data-cap-part~="shell"] {
+  color: red;
+}

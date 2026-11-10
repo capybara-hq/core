@@ -116,6 +116,29 @@ describe("ctx.ui 注册", () => {
     await ctx.close();
   });
 
+  it("an undeclared component's view or action is refused naming permissions.ui.components", async () => {
+    const base = mf();
+    // the manifest lists a component the permissions do not declare (defineExtension would refuse
+    // it; the registration must still name the right permission)
+    const m = {
+      ...base,
+      ui: [
+        ...(base.ui ?? []),
+        {
+          id: "hud",
+          title: { zh: "面板", en: "HUD" },
+          slot: "conversation.properties.section",
+          kind: "component" as const,
+        },
+      ],
+    } as ExtensionManifest;
+    const ctx = createExtensionContext(deps, m, {});
+    expect(() => ctx.ui.view("hud", view)).toThrow(/permissions\.ui\.components hud/);
+    expect(() => ctx.ui.action("hud", action)).toThrow(/permissions\.ui\.components hud/);
+    expect(() => ctx.ui.view("nope", view)).toThrow(/permissions\.ui\.views nope/);
+    await ctx.close();
+  });
+
   it("setup 结束后（sealTools）再注册抛错", async () => {
     const ctx = createExtensionContext(deps, mf(), {});
     ctx.sealTools();

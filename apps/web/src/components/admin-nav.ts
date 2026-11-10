@@ -2,6 +2,7 @@
 
 import { useLocale, useTranslations } from "next-intl";
 import { type UiContributionItem, uiLocale } from "../lib/ui";
+import { useOfferedPlatformPages } from "./extension-ui/ClientComponentBlock";
 import { usePlatformPages } from "./extension-ui/ExtensionSlot";
 
 /** 后台各页的 id 与路由（只列已存在的页面）。 */
@@ -47,12 +48,13 @@ export function adminExtensionItems(
 
 /**
  * The admin console's extension pages (the extensions' `platform.page` contributions, read while
- * `enabled`); empty while loading, without pages or on a failed read.
+ * `enabled`; a client component's page only while its code may run); empty while loading, without
+ * pages or on a failed read.
  */
 export function useAdminExtensionPages(enabled = true): AdminExtensionPage[] {
   const locale = useLocale();
   const { items } = usePlatformPages(enabled);
-  return adminExtensionItems(items, locale);
+  return adminExtensionItems(useOfferedPlatformPages(items), locale);
 }
 
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];

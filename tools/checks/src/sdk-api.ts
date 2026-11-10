@@ -29,9 +29,13 @@ const TSC = fileURLToPath(new URL("../../../node_modules/.bin/tsc", import.meta.
  * directory. The report drops implementation details and doc comments, and `normalizeReport`
  * drops the `(undocumented)` markers, so comment-only edits don't change it.
  */
-export async function checkSdkApi(opts: { update: boolean; sdkDir?: string }): Promise<Finding[]> {
+export async function checkSdkApi(opts: {
+  update: boolean;
+  sdkDir?: string;
+  reportFile?: string;
+}): Promise<Finding[]> {
   const sdkDir = opts.sdkDir ?? DEFAULT_SDK_DIR;
-  const reportFile = join(sdkDir, SDK_API_REPORT_FILE);
+  const reportFile = join(sdkDir, opts.reportFile ?? SDK_API_REPORT_FILE);
   // Inside the SDK directory so api-extractor finds the SDK's package.json and node_modules.
   const tmp = await mkdtemp(join(sdkDir, ".sdk-api-tmp-"));
   try {

@@ -22,6 +22,7 @@ export function Input({
     <div
       className="cb-input"
       data-part="input"
+      data-cap-part="input"
       data-density={step}
       data-state={
         rest.disabled ? "disabled" : invalid || rest["aria-invalid"] ? "error" : undefined
@@ -50,6 +51,7 @@ export function Textarea({
     <div
       className="cb-textarea"
       data-part="textarea"
+      data-cap-part="input"
       data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
     >
       <textarea {...rest} data-code={code ? "true" : undefined} />

@@ -57,7 +57,8 @@ const { default: AppLayout } = await import("../src/app/(app)/layout");
 
 const O = "/api/v1/orgs/o1";
 const THEMES = { themes: [], resolved: null, org: { id: null, personal: "allowed" } };
-function shellRoutes(readiness: typeof READY) {
+const NO_CLIENT = { enabled: true, apiVersion: 1, items: [] };
+function shellRoutes(readiness: typeof READY, extra: Parameters<typeof serverRoutes>[0] = {}) {
   return serverRoutes({
     "GET /api/v1/me": () => json(200, ME),
     [`GET ${O}/readiness`]: () => json(200, readiness),
@@ -66,6 +67,7 @@ function shellRoutes(readiness: typeof READY) {
       json(200, { groups: [], next: null, archivedCount: 0 }),
     [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
     [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+    [`GET ${O}/ui/client`]: () => json(200, NO_CLIENT),
     // what the setup step /agents/new prefetches (the agent form's reads)
     [`GET ${O}/models`]: () => json(200, { providers: [] }),
     [`GET ${O}/models/catalog`]: () => json(200, { providers: [] }),
@@ -81,6 +83,7 @@ function shellRoutes(readiness: typeof READY) {
     [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
     // and the admin console's /admin/extensions (the deployment's extensions)
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+    ...extra,
   });
 }
 const layoutAt = (path: string) => {
@@ -149,11 +152,12 @@ describe("the (app) layout's first-load prefetch", () => {
       [`GET ${O}/conversations/groups`]: g.later(200, { groups: [], next: null, archivedCount: 0 }),
       [`GET ${O}/inbox`]: g.later(200, { items: [{}], truncated: false }),
       [`GET ${O}/ui/contributions`]: g.later(200, { items: [] }),
+      [`GET ${O}/ui/client`]: g.later(200, NO_CLIENT),
       [`GET ${O}/agents`]: g.later(200, { agents: [] }),
     });
     const done = layoutAt("/agents");
     // everything after `/me` starts before any of it answers
-    await vi.waitFor(() => expect(calls).toHaveLength(7));
+    await vi.waitFor(() => expect(calls).toHaveLength(8));
     expect(pathOf(calls[0] as Call)).toBe("/api/v1/me");
     expect(calls.slice(1).map(pathOf).sort()).toEqual(
       [
@@ -162,6 +166,7 @@ describe("the (app) layout's first-load prefetch", () => {
         `${O}/conversations/groups`,
         `${O}/inbox`,
         `${O}/ui/contributions`,
+        `${O}/ui/client`,
         `${O}/agents`,
       ].sort(),
     );
@@ -175,10 +180,11 @@ describe("the (app) layout's first-load prefetch", () => {
         ["org", "o1", "conversationGroups", "default"],
         ["org", "o1", "inboxCount"],
         ["org", "o1", "extensionPages"],
+        ["org", "o1", "clientExtensions"],
         ["org", "o1", "agents"],
       ]),
     );
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(8);
   });
 
   it("a signed-out read during prefetch redirects to login with the path", async () => {
@@ -190,6 +196,7 @@ describe("the (app) layout's first-load prefetch", () => {
         json(200, { groups: [], next: null, archivedCount: 0 }),
       [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
       [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${O}/ui/client`]: () => json(200, NO_CLIENT),
       [`GET ${O}/agents`]: () =>
         json(401, { error: { code: "auth.expired", message: "signed out" } }),
     });
@@ -205,6 +212,7 @@ describe("the (app) layout's first-load prefetch", () => {
         json(500, { error: { code: "internal", message: "boom" } }),
       [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
       [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
+      [`GET ${O}/ui/client`]: () => json(200, NO_CLIENT),
       [`GET ${O}/agents`]: () => json(404, { error: { code: "x.not_found", message: "gone" } }),
     });
     const state = stateOf(await layoutAt("/agents"));
@@ -255,5 +263,111 @@ describe("the route test helpers", () => {
     expect(await findAllByText("Helper agent")).not.toHaveLength(0);
     expect(calls.map(pathOf)).toContain(`${O}/agents`);
     expect(client.getQueryData(["org", "o1", "agents"])).toEqual({ agents: [agent] });
+  });
+});
+
+describe("the (app) layout's client code (client extensions spec §9.6, §10.1, §11)", () => {
+  const BUILD = "d".repeat(64);
+  const SET = {
+    enabled: true,
+    apiVersion: 1,
+    items: [
+      {
+        plugin: "fake-client",
+        build: BUILD,
+        entry: { url: `/api/v1/client/fake-client/${BUILD}/client.mjs`, integrity: "sha384-e" },
+        styles: [
+          { url: `/api/v1/client/fake-client/${BUILD}/styles/a.css`, integrity: "sha384-s" },
+        ],
+        components: [{ id: "page", slot: "platform.page" }],
+      },
+    ],
+  };
+  type Found = { type: unknown; props: Record<string, unknown> };
+  /** The first element of the tree whose component is named `name`. */
+  const find = (node: unknown, name: string): Found | null => {
+    if (Array.isArray(node)) {
+      for (const n of node) {
+        const f = find(n, name);
+        if (f) return f;
+      }
+      return null;
+    }
+    if (typeof node !== "object" || node === null || !("props" in node)) return null;
+    const el = node as Found;
+    if ((el.type as { name?: string })?.name === name) return el;
+    return find(el.props.children, name);
+  };
+  const shellRoutesWith = (extra: Parameters<typeof serverRoutes>[0]) => shellRoutes(READY, extra);
+
+  it("a workspace page reads the org set and hands it to the head (with the nonce) and the host", async () => {
+    const routes = shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
+    req.headers = new Headers({ "x-cap-path": "/agents", "x-nonce": "n0nce" });
+    const element = await AppLayout({ children: <p>page body</p> });
+    expect(routes.map(pathOf)).toContain(`${O}/ui/client`);
+    const head = find(element, "ClientExtensionsHead");
+    expect(head?.props).toMatchObject({ set: SET, nonce: "n0nce", safe: false, scope: "org" });
+    expect(find(element, "ClientHostRoot")?.props).toMatchObject({
+      source: { kind: "org", orgId: "o1" },
+      safe: false,
+    });
+  });
+
+  it("safe mode renders no client code but still knows the set (the banner)", async () => {
+    shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
+    req.headers = new Headers({ "x-cap-path": "/agents?safe-ui=1", "x-nonce": "n" });
+    const element = await AppLayout({ children: <p>page body</p> });
+    const head = find(element, "ClientExtensionsHead");
+    expect(head?.props).toMatchObject({ safe: true });
+    const { renderToString } = await import("react-dom/server");
+    const { ClientExtensionsHead } = await import(
+      "../src/components/client-ext/ClientExtensionsHead"
+    );
+    expect(
+      renderToString(
+        <ClientExtensionsHead {...(head?.props as Parameters<typeof ClientExtensionsHead>[0])} />,
+      ),
+    ).toBe("");
+    expect(find(element, "ClientHostRoot")?.props).toMatchObject({ safe: true });
+  });
+
+  it("the safe-mode cookie keeps a later render (a refresh without the parameter) safe", async () => {
+    shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
+    req.headers = new Headers({ "x-cap-path": "/skills", cookie: "cap_at=a; cap_safe_ui=1" });
+    const element = await AppLayout({ children: <p>page body</p> });
+    expect(find(element, "ClientExtensionsHead")?.props).toMatchObject({ safe: true });
+    expect(find(element, "ClientHostRoot")?.props).toMatchObject({ safe: true });
+    // ?safe-ui=0 ends it on the request that still carries the cookie
+    shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
+    req.headers = new Headers({
+      "x-cap-path": "/skills?safe-ui=0",
+      cookie: "cap_at=a; cap_safe_ui=1",
+    });
+    const off = await AppLayout({ children: <p>page body</p> });
+    expect(find(off, "ClientExtensionsHead")?.props).toMatchObject({ safe: false });
+  });
+
+  it("the admin console reads no client set; a platform page reads only its plugin's", async () => {
+    const admin = shellRoutesWith({
+      "GET /api/v1/admin/ui/client": () => json(200, SET),
+      "GET /api/v1/admin/ui/contributions": () => json(200, { items: [] }),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
+    });
+    const consolePage = await layoutAt("/admin/extensions");
+    expect(admin.map(pathOf)).not.toContain(`${O}/ui/client`);
+    expect(admin.map(pathOf)).not.toContain("/api/v1/admin/ui/client");
+    expect(find(consolePage, "ClientHostRoot")?.props).toMatchObject({ source: { kind: "none" } });
+    const page = shellRoutesWith({
+      "GET /api/v1/admin/ui/client": () => json(200, SET),
+      "GET /api/v1/admin/ui/contributions": () => json(200, { items: [] }),
+      "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
+    });
+    const element = await layoutAt("/admin/p/fake-client/page");
+    expect(page.map((c) => c.url)).toContain("/api/v1/admin/ui/client?plugin=fake-client");
+    expect(page.map(pathOf)).not.toContain(`${O}/ui/client`);
+    expect(find(element, "ClientExtensionsHead")?.props).toMatchObject({ scope: "admin" });
+    expect(find(element, "ClientHostRoot")?.props).toMatchObject({
+      source: { kind: "admin", plugin: "fake-client" },
+    });
   });
 });

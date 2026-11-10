@@ -130,6 +130,26 @@ export interface CatalogListing {
   displayName: LocalizedName | null;
 }
 
+/**
+ * A stored manifest with `suggestedAppearance.replacements` back in plugin.json order: `order` is
+ * the version's `appearance_order` (the jsonb column does not keep key order); keys it does not
+ * name follow in stored order. Anything else is returned as is.
+ */
+export function inAuthorOrder(manifest: unknown, order: readonly string[] | null): unknown {
+  const m = manifest as { suggestedAppearance?: { replacements?: unknown } } | null;
+  const r = m?.suggestedAppearance?.replacements;
+  if (order === null || r === null || typeof r !== "object" || Array.isArray(r)) return manifest;
+  const map = r as Record<string, unknown>;
+  const keys = new Set([...order.filter((k) => Object.hasOwn(map, k)), ...Object.keys(map)]);
+  return {
+    ...m,
+    suggestedAppearance: {
+      ...m?.suggestedAppearance,
+      replacements: Object.fromEntries([...keys].map((k) => [k, map[k]])),
+    },
+  };
+}
+
 /** Input of {@link writeCatalogVersion}. */
 export interface CatalogVersionWrite {
   /**
@@ -153,6 +173,11 @@ export interface CatalogVersionWrite {
   contentDigest: string;
   /** The normalized plugin.json. */
   manifest: PluginManifest;
+  /**
+   * The keys of `manifest.suggestedAppearance.replacements` in plugin.json order (the manifest may
+   * have passed through jsonb, which does not keep key order); null without replacements.
+   */
+  appearanceOrder: string[] | null;
   listing: CatalogListing;
   /** The id of the item to create when there is none yet (the one the storage prefix used). */
   newItemId: string;
@@ -433,6 +458,7 @@ export async function writeCatalogVersion(
       item_id: id,
       version,
       manifest: JSON.stringify(w.manifest),
+      appearance_order: w.appearanceOrder,
       source: w.source.source,
       source_ref: w.source.ref,
       integrity: w.source.integrity ?? null,

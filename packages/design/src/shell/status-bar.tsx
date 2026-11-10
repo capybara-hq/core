@@ -43,7 +43,7 @@ export function StatusBar({
     ...(systemTone !== undefined && first(i) ? { "data-tone": systemTone } : {}),
   });
   return (
-    <footer className="cb-statusbar" data-part="status-bar">
+    <footer className="cb-statusbar" data-part="status-bar" data-cap-part="status-bar">
       <span className="cb-statusbar-left">
         {context !== "" ? (
           <span className="cb-statusbar-context" data-part="status-bar-context" title={context}>

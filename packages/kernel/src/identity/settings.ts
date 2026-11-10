@@ -1,3 +1,4 @@
+import { EXTENSION_NAME_RE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -83,6 +84,55 @@ export const UI_THEME_SETTING = "uiTheme";
 export const UiThemeSetting = z.object({ id: z.string().min(1).max(200).nullable() });
 export type UiTheme = z.infer<typeof UiThemeSetting>;
 
+/** The deployment setting key of the client code kill switch (client extensions spec §10.2). */
+export const CLIENT_EXTENSIONS_SETTING = "clientExtensions";
+
+/** The plugins listed in `clientExtensions.disabled`: at most this many. */
+export const CLIENT_DISABLED_MAX = 200;
+
+const ClientDisabledList = z
+  .array(z.string().regex(EXTENSION_NAME_RE, "must be an extension name"))
+  .max(CLIENT_DISABLED_MAX);
+
+/**
+ * The client code kill switch (client extensions spec §10.2): `enabled: false` stops every plugin's
+ * client code (the shell reads list nothing, delivery is 404); `disabled` names the plugins whose
+ * client code alone is stopped while their server side keeps running. Every reader goes through
+ * {@link readClientExtensions} or {@link SettingsService.get}.
+ */
+export const ClientExtensionsSetting = z.object({
+  enabled: z.boolean(),
+  disabled: ClientDisabledList,
+});
+export type ClientExtensionsKillSwitch = z.infer<typeof ClientExtensionsSetting>;
+
+/** The kill switch's default (and what a missing or invalid stored value reads as): everything on. */
+export const clientExtensionsDefault = (): ClientExtensionsKillSwitch => ({
+  enabled: true,
+  disabled: [],
+});
+
+/**
+ * Parses a stored `clientExtensions` value (the `deployment_settings` row's `value`, undefined when
+ * the row is missing): the default when missing; when invalid the default too, with a warning naming
+ * the key (a kill switch that fails open is worth a log line, as {@link SettingsService.get} logs
+ * every other invalid key). The one parser of the setting: the settings service and every access
+ * check read through it.
+ */
+export function parseClientExtensions(
+  value: unknown,
+  log?: Pick<KernelLogger, "warn">,
+): ClientExtensionsKillSwitch {
+  if (value === undefined) return clientExtensionsDefault();
+  const parsed = ClientExtensionsSetting.safeParse(value);
+  if (parsed.success) return parsed.data;
+  log?.warn("invalid deployment setting; using default", {
+    key: CLIENT_EXTENSIONS_SETTING,
+    issues: parsed.error.issues.map((i) => i.message),
+  });
+  return clientExtensionsDefault();
+}
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "super_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
@@ -110,8 +160,13 @@ export const DEPLOYMENT_SETTINGS = z.object({
   orgMarketplaceBrowse: z.boolean().default(true),
   /** The platform default theme (themes spec §7); `{ id: null }`: the built-in theme. */
   uiTheme: UiThemeSetting.default({ id: null }),
-  /** The platform default arrangement of UI slots (UI slots spec §5); orgs override per slot. */
+  /**
+   * The platform default arrangement of UI slots (UI slots spec §5): `{ hidden, order }` per list
+   * slot, `{ use }` per single slot (client extensions spec §6.3); orgs override per slot.
+   */
   uiArrangement: UiArrangementSchema.default({}),
+  /** The client code kill switch (client extensions spec §10.2). */
+  clientExtensions: ClientExtensionsSetting.default(clientExtensionsDefault),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -146,8 +201,22 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * disabled (else 400 `theme.not_available`), or `{ id: null }` for the built-in theme.
      */
     uiTheme: UiThemeSetting.strict().optional(),
-    /** Per slot, the entry to hide / order contributions with; null removes a slot's entry. */
+    /**
+     * Per slot, the entry to hide / order contributions with (`{ use }` on a single slot); null
+     * removes a slot's entry.
+     */
     uiArrangement: UiArrangementPatchSchema.optional(),
+    /**
+     * The client code kill switch: each given field replaces the stored one (`disabled` is the
+     * whole list, stored sorted without duplicates); at least one field.
+     */
+    clientExtensions: z
+      .object({ enabled: z.boolean().optional(), disabled: ClientDisabledList.optional() })
+      .strict()
+      .refine((o) => o.enabled !== undefined || o.disabled !== undefined, {
+        message: "give enabled, disabled or both",
+      })
+      .optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -289,6 +358,23 @@ export async function readUiArrangement(db: KernelSchemaDb): Promise<UiArrangeme
   return parsed.success ? parsed.data : {};
 }
 
+/**
+ * The client code kill switch, read live from PG on every request (in the caller's transaction when
+ * there is one; never cached: every replica sees a change at once), through
+ * {@link parseClientExtensions} (missing or invalid -> everything on; invalid also warns on `log`).
+ */
+export async function readClientExtensions(
+  db: KernelSchemaDb,
+  log?: Pick<KernelLogger, "warn">,
+): Promise<ClientExtensionsKillSwitch> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", CLIENT_EXTENSIONS_SETTING)
+    .executeTakeFirst();
+  return parseClientExtensions(row?.value, log);
+}
+
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
 function mergeByOrg<T>(
   current: Record<string, T>,
@@ -394,14 +480,25 @@ export class SettingsService {
       sandboxLimitOverrides: sandboxPatch,
       subagentLimitOverrides: subagentPatch,
       uiArrangement: arrangementPatch,
+      clientExtensions: clientPatch,
     } = patch;
     if (
       runPatch !== undefined ||
       sandboxPatch !== undefined ||
       subagentPatch !== undefined ||
-      arrangementPatch !== undefined
+      arrangementPatch !== undefined ||
+      clientPatch !== undefined
     ) {
       const current = await this.get();
+      if (clientPatch !== undefined) {
+        next.clientExtensions = {
+          enabled: clientPatch.enabled ?? current.clientExtensions.enabled,
+          disabled:
+            clientPatch.disabled === undefined
+              ? current.clientExtensions.disabled
+              : [...new Set(clientPatch.disabled)].sort(),
+        };
+      }
       if (arrangementPatch !== undefined) {
         next.uiArrangement = mergeArrangement(current.uiArrangement, arrangementPatch);
       }

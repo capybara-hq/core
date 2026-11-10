@@ -112,6 +112,9 @@ export interface AgentTemplateSubagents {
 export type AgentTemplateTier = "inherit" | "fast" | "standard" | "capable";
 
 // @public
+export function appearanceIssues(manifest: PluginManifest, themeIds: readonly string[]): string[];
+
+// @public
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void;
 
 // @public
@@ -235,6 +238,9 @@ export interface Channel {
 export const CHANNEL_EXTENSION_POINT = "channel@1";
 
 // @public
+export const CHANNEL_INBOUND_MODES: readonly ChannelInboundMode[];
+
+// @public
 export type ChannelCard = {
     kind: "approval";
     id: string;
@@ -273,6 +279,9 @@ export interface ChannelConnectArgs {
     onEvent(e: InboundEvent): Promise<void>;
     signal: AbortSignal;
 }
+
+// @public
+export type ChannelInboundMode = "long_connection" | "webhook";
 
 // @public
 export interface ChannelSendArgs {
@@ -364,6 +373,31 @@ export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme
 export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
+export const CLIENT_API_VERSION = 1;
+
+// @public
+export const CLIENT_ASSET_TYPES: Readonly<Record<string, string>>;
+
+// @public
+export const CLIENT_ENTRY_PATH = "./dist/client/client.mjs";
+
+// @public
+export const CLIENT_LIMITS: {
+    readonly entryBytes: 1048576;
+    readonly styleFiles: 8;
+    readonly styleBytes: 262144;
+    readonly assetFiles: 64;
+    readonly assetBytes: 2097152;
+    readonly totalBytes: 8388608;
+    readonly loadTimeoutMs: 10000;
+    readonly pendingMs: 1500;
+    readonly crashBudget: 3;
+};
+
+// @public
+export function clientCssProblem(css: string, assets: ReadonlySet<string>): string | undefined;
+
+// @public
 export function clipMediaName(name: string, max?: number): string;
 
 // @public
@@ -388,6 +422,7 @@ export function configJsonSchema(schema: z.ZodTypeAny): JsonSchema;
 export interface ConfigUiHints {
     advanced?: boolean;
     help?: LocalizedName;
+    inboundModes?: ChannelInboundMode[];
     item?: {
         title?: string;
         subtitle?: string;
@@ -1147,6 +1182,7 @@ export class ExtensionPermissionError extends Error {
 
 // @public
 export interface ExtensionPermissions {
+    client?: boolean;
     hooks?: HookMountPoint[];
     http?: {
         method: "GET" | "POST" | "PUT" | "DELETE";
@@ -1170,6 +1206,7 @@ export interface ExtensionPermissions {
     ui?: {
         views?: string[];
         embeds?: string[];
+        components?: string[];
     };
 }
 
@@ -1458,6 +1495,9 @@ export type InboundEvent = {
 };
 
 // @public
+export function inboundModeFields(schema: JsonSchema): Record<string, ChannelInboundMode[]>;
+
+// @public
 export interface InboundSender {
     avatarUrl?: string;
     displayName?: string;
@@ -1527,6 +1567,11 @@ export function isThemeFontFamily(v: unknown): v is string;
 
 // @public
 export type JsonSchema = Record<string, unknown>;
+
+// @public
+export type JsonValue = string | number | boolean | null | JsonValue[] | {
+    [key: string]: JsonValue;
+};
 
 // @public
 export interface KernelCancel {
@@ -1701,6 +1746,9 @@ export type MergedScheme = {
 
 // @public
 export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
+
+// @public
+export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
 
 // @public
 export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
@@ -2135,6 +2183,7 @@ export const PLUGIN_MANIFEST_LIMITS: {
     readonly publisherChars: 100;
     readonly displayNameChars: 100;
     readonly pathChars: 512;
+    readonly appearanceReplacements: 8;
 };
 
 // @public
@@ -2143,6 +2192,15 @@ export const PLUGIN_MANIFEST_SCHEMA_VERSION = 1;
 // @public
 export interface PluginAgentRef {
     path: string;
+}
+
+// @public
+export interface PluginClientSection {
+    apiVersion: number;
+    assets?: string[];
+    entry?: string;
+    integrity: Record<string, string>;
+    styles?: string[];
 }
 
 // @public
@@ -2170,6 +2228,7 @@ export function pluginDescription(d: PluginDescription): {
 
 // @public
 export interface PluginExtensionSection {
+    client?: PluginClientSection;
     configSchemas?: {
         deployment?: JsonSchema;
         org?: JsonSchema;
@@ -2197,6 +2256,7 @@ export interface PluginManifest {
     schemaVersion: 1;
     setupGuides?: PluginSetupGuide[];
     skills?: PluginSkillRef[];
+    suggestedAppearance?: SuggestedAppearance;
     themes?: PluginThemeRef[];
     version: string;
 }
@@ -2470,7 +2530,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.9";
+export const SDK_VERSION = "0.1.0-rc.11";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -2735,6 +2795,12 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest;
 
 // @public
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
+
+// @public
+export interface SuggestedAppearance {
+    replacements?: Record<string, string>;
+    theme?: string;
+}
 
 // @public
 export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];
@@ -3196,6 +3262,9 @@ export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;
 export const UI_ARRANGEABLE_SLOTS: readonly UiSlotId[];
 
 // @public
+export const UI_COMPONENT_SLOTS: readonly UiSlotId[];
+
+// @public
 export const UI_CONTRIBUTION_KEY_RE: RegExp;
 
 // @public
@@ -3208,10 +3277,20 @@ export const UI_LIMITS: {
     readonly checklistItems: 100;
     readonly textChars: 20000;
     readonly payloadBytes: 2000;
+    readonly componentDataBytes: 32768;
 };
 
 // @public
-export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properties.section", "conversation.tool-result.card", "org.page", "file.preview", "agent.detail.section", "org.settings.section", "platform.page"];
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog"];
+
+// @public
+export const UI_PARTS: readonly UiPartSpec[];
+
+// @public
+export const UI_SINGLE_SLOTS: readonly UiSlotId[];
+
+// @public
+export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properties.section", "conversation.tool-result.card", "org.page", "file.preview", "agent.detail.section", "org.settings.section", "platform.page", "shell.brand", "shell.overlay", "conversation.empty", "conversation.composer.frame"];
 
 // @public
 export const UI_SLOTS: readonly UiSlotSpec[];
@@ -3324,7 +3403,7 @@ export type UiDropReason = "unknown-slot" | "unsupported-version";
 export type UiIcon = (typeof UI_ICONS)[number];
 
 // @public
-export type UiKind = "view" | "embed";
+export type UiKind = "view" | "embed" | "component";
 
 // @public
 export interface UiOpen {
@@ -3349,6 +3428,27 @@ export interface UiOrgRenderArgs extends UiRenderArgsBase {
     role: UiRole;
     scope: Exclude<UiSlotScope, "platform">;
 }
+
+// @public
+export function uiPart(name: string): UiPartSpec | undefined;
+
+// @public
+export type UiPartName = (typeof UI_PART_NAMES)[number];
+
+// @public
+export interface UiPartSpec {
+    description: {
+        en: string;
+        zh: string;
+    };
+    name: UiPartName;
+    owner: readonly string[];
+    states: readonly UiPartState[];
+    version: number;
+}
+
+// @public
+export type UiPartState = "aria-current" | "aria-selected" | "aria-expanded" | "aria-busy" | "disabled";
 
 // @public
 export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
@@ -3400,7 +3500,11 @@ export interface UiSlotSpec {
     accepts: readonly UiKind[];
     anchors?: readonly string[];
     args: readonly string[];
-    cardinality: "list";
+    builtin?: {
+        en: string;
+        zh: string;
+    };
+    cardinality: "list" | "single";
     density: "dense" | "regular";
     description: {
         en: string;
@@ -3413,6 +3517,7 @@ export interface UiSlotSpec {
     };
     minRole: UiSlotRole;
     owner: string;
+    replaceable?: true;
     scope: UiSlotScope;
     version: number;
 }
@@ -3421,6 +3526,7 @@ export interface UiSlotSpec {
 export interface UiView {
     badge?: string;
     blocks: UiBlock[];
+    data?: JsonValue;
     open?: UiOpen;
 }
 
@@ -3453,6 +3559,9 @@ export function validateAnswer(form: InputForm, answer: FormAnswer): string[];
 
 // @public
 export function validateChannelCard(card: unknown): string[];
+
+// @public
+export function validateClientSection(s: unknown): string[];
 
 // @public
 export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org" | "connection"): ConfigUiProblem[];
@@ -3535,7 +3644,9 @@ export function validateToolSpec(spec: ToolSpec): string[];
 export function validateUiContributions(ui: unknown, permissions: unknown): string[];
 
 // @public
-export function validateUiView(v: unknown): string[];
+export function validateUiView(v: unknown, opts?: {
+    component?: boolean;
+}): string[];
 
 // @public
 export const WEB_FETCH_EXTENSION_POINT = "web-fetch@1";
@@ -3596,6 +3707,9 @@ export interface WebSearchResult {
     title: string;
     url: string;
 }
+
+// @public
+export function wrapClientCss(css: string): string;
 
 // (No @packageDocumentation comment for this package)
 

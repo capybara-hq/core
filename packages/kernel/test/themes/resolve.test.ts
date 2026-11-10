@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { THEME_CSS_REVISION } from "../../src/themes/theme-state.js";
 import { ThemesService } from "../../src/themes/themes.service.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
 import {
@@ -35,7 +36,7 @@ describe("theme resolution", () => {
   beforeEach(async () => {
     await resetOrgCatalog(env);
     await clearThemeLevels(env);
-    a = (await importTheme(env, "neon", "night-city")).id;
+    a = (await importTheme(env, "neon", "neon-grid")).id;
     b = (await importTheme(env, "paper", "paper", "both")).id;
     c = (await importTheme(env, "dusk", "dusk", "both")).id;
     for (const id of [a, b, c]) await setThemeScope(env, id, "all");
@@ -50,16 +51,17 @@ describe("theme resolution", () => {
     const r = await themes.resolve(env.orgId, env.memId);
     expect(r).toEqual({
       id: a,
+      key: "neon/neon-grid",
       version: "1",
-      name: { en: "night-city en", zh: "night-city zh" },
+      name: { en: "neon-grid en", zh: "neon-grid zh" },
       schemes: ["dark"],
       singleScheme: "dark",
       logo: {
         markUrl: `/api/v1/themes/${a}/1/assets/brand%2Flogo.svg`,
-        wordmark: "NIGHT CITY",
+        wordmark: "NEON GRID",
         faviconUrl: null,
       },
-      cssUrl: `/api/v1/themes/${a}/1/theme.css`,
+      cssUrl: `/api/v1/themes/${a}/1/r${THEME_CSS_REVISION}/theme.css`,
     });
   });
 
@@ -111,7 +113,10 @@ describe("theme resolution", () => {
       dark: { bg: "#05070D", panel: "#0A0E18", ink: expect.any(String), accent: "#FCE300" },
     });
     expect(Object.keys(body.themes[1]?.swatches ?? {}).sort()).toEqual(["dark", "light"]);
-    expect(body.resolved).toMatchObject({ id: b, cssUrl: `/api/v1/themes/${b}/1/theme.css` });
+    expect(body.resolved).toMatchObject({
+      id: b,
+      cssUrl: `/api/v1/themes/${b}/1/r${THEME_CSS_REVISION}/theme.css`,
+    });
     expect(body.resolved).not.toHaveProperty("swatches");
     expect(body.org).toEqual({ id: a, personal: "allowed" });
     // another member with no pick gets the org's default; the org with no setting reads as allowed

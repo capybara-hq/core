@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ClientModule } from "../client/client.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
@@ -26,6 +27,8 @@ import { PluginImport } from "./plugin-import.js";
     // an org upload re-checks the owner org's admin (`PluginImport`, ruling P3-7)
     OrgLockModule,
     StorageModule,
+    // the client build prefix goes with an expired org upload's package (`PluginImport`)
+    ClientModule,
     // a failed post-import platform sync enqueues the migration job (`PluginImport.syncPlatform`)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],

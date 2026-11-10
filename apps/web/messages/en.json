@@ -398,6 +398,13 @@
       "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
       "not_found": "This theme version or file does not exist. Reload the page to load the current theme."
     },
+    "client": {
+      "undeclared": "This plugin ships client code that its extension does not declare (permissions.client). Repack it with capybara-plugin pack and import it again.",
+      "integrity_mismatch": "A client file of this plugin does not match the integrity recorded in its manifest. The package may be damaged or altered; get a fresh copy and import it again.",
+      "invalid": "The client code of this plugin is invalid: a file is missing, unlisted, too large, or a stylesheet is not allowed. Repack it with capybara-plugin pack and import it again.",
+      "api_unsupported": "This plugin's client code was built for a newer client API than this deployment supports. Upgrade Capybara, or rebuild the plugin for this version.",
+      "not_found": "This plugin's interface code is not available: the plugin may have been switched off or upgraded, or its interface code stopped. Reload the page."
+    },
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",
@@ -2350,7 +2357,10 @@
       "openExtensions": "Open extensions",
       "nameLabel": "Name",
       "configSection": "Bot credentials",
-      "configHint": "Fields come from the extension. The credentials are verified with the platform when you save.",
+      "configHint": "The credentials are verified with the platform when you save.",
+      "webhookDefaultLong": "Webhook needs a public HTTPS address for the platform, which this deployment does not have yet, so long connection is the default.",
+      "webhookNotPublic": "This deployment's webhook address is not a public HTTPS address; the platform may not reach it.",
+      "webhookUnavailable": "Webhook cannot be used: the deployment has no public HTTPS callback address (channels.webhookBaseUrl). Use long connection, or ask your super admin to set it.",
       "pickPluginFirst": "Choose an extension first.",
       "agentSection": "Agent",
       "agentSectionHint": "The agent that answers messages sent to this bot.",
@@ -2407,6 +2417,7 @@
       "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
       "saveInbound": "Save inbound mode",
       "inboundSaved": "Inbound mode saved.",
+      "inboundFieldsHint": "{mode} also needs the fields below; they are saved with the inbound mode.",
       "webhookNoUrlWarning": "This channel is in webhook mode, but the deployment has no webhook address (channels.webhookBaseUrl), so the platform cannot reach the bot. Configure the address or switch back to long connection."
     },
     "inboundMode": {
@@ -2430,11 +2441,12 @@
       "long_connection": "Long connection",
       "webhook": "Webhook"
     },
-    "checkAfterSave": "Checked after saving",
+    "checksAfterSave": "Each check can run once you save.",
     "checksRateLimited": "Too many checks in a short time. Try again in a minute; the rows show the last results.",
     "checksUnavailable": "Check results cannot be read right now. Reload the page later.",
     "unresolved": {
       "not_saved": "{names} appear once saved and are shown as written for now.",
+      "no_name": "{names} appear once you type a name and are shown as written for now.",
       "public_url": "{names} are shown as written: a super admin needs to set http.publicUrl (the platform's public address).",
       "webhook_base": "{names} are shown as written: a super admin needs to set channels.webhookBaseUrl (the webhook address).",
       "no_connector": "{names} appear once the connector is created and are shown as written for now.",
@@ -2510,7 +2522,9 @@
       "hooks": "Hooks",
       "models": "Models",
       "network": "Network access",
-      "ui": "Interface (views / embeds)"
+      "ui": "Interface (views / embeds)",
+      "client": "Client code",
+      "components": "Interface components"
     },
     "configTitle": "Organization config",
     "save": "Save config",
@@ -2525,6 +2539,7 @@
     "syncStarted": "Directory sync started.",
     "review": {
       "network": "Declared only; the platform does not enforce it",
+      "clientItem": "Runs plugin code in the browser",
       "added": "Added permissions",
       "removed": "Removed permissions",
       "none": "No permissions declared.",
@@ -2534,6 +2549,8 @@
         "tools": "agents in organizations can call these tools",
         "hooks": "can hook into kernel flows",
         "ui_embed": "embeds the extension's own pages in the web app",
+        "client_code": "runs its own code in members' browsers, with full access to the web app",
+        "ui_component": "renders its own code inside the web app's pages",
         "channel": "receives the organization's IM conversations",
         "directory": "can add people to organizations and create their accounts",
         "identity_source": "decides who can sign in as which account",
@@ -2548,7 +2565,8 @@
         "dynamic_sql": "DO block (contents not checked)",
         "foreign_schema": "Statement outside the extension's own schema (kernel tables, grants / roles, functions / triggers or transaction control)"
       },
-      "at": "{file} line {line}"
+      "at": "{file} line {line}",
+      "clientTotal": "{files, plural, one {# file} other {# files}}, {size} in total"
     },
     "pointDefaults": {
       "title": "Default providers",
@@ -2649,7 +2667,8 @@
       "saveInvalid": "The config is invalid. Check the marked fields.",
       "loadFailed": "The configuration cannot be loaded.",
       "retry": "Retry"
-    }
+    },
+    "appearanceTitle": "Appearance"
   },
   "identities": {
     "title": "IM identities",
@@ -3563,6 +3582,17 @@
         "description": "Whether organizations may create or import skills themselves, outside the catalog.",
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
+      },
+      "clientCode": {
+        "title": "Plugin interface code",
+        "description": "Plugins may run their own interface code in members' browsers: components, styles and decoration. When something breaks, stop all of it here, or only one plugin's; the plugins' server side keeps running.",
+        "all": "Run plugin interface code",
+        "allOnHint": "Pages load the interface code of the plugins below.",
+        "allOffHint": "Stopped: no page loads any plugin interface code.",
+        "pluginLabel": "Run the interface code of {name}",
+        "pluginOnHint": "Running",
+        "pluginAllOffHint": "Stopped: the switch above turns off all plugin interface code.",
+        "pluginOffHint": "Stopped: only its interface code; its server side keeps running."
       }
     },
     "extensions": {
@@ -3784,6 +3814,43 @@
         "unset": "{path} not configured",
         "loadFailed": "The orgs' configuration cannot be loaded.",
         "retry": "Retry"
+      },
+      "clientCode": {
+        "title": "Interface code",
+        "running": "Running in members' browsers.",
+        "stoppedState": "Stopped: this plugin's interface code does not load; its server side keeps running.",
+        "allStopped": "Stopped: all plugin interface code is off in the deployment settings.",
+        "build": "Build",
+        "apiVersion": "Client API",
+        "total": "Size",
+        "totalValue": "{files, plural, one {# file} other {# files}} · {size}",
+        "stop": "Stop interface code",
+        "resume": "Resume interface code",
+        "stopHint": "Stopping affects only this plugin's interface code (components, styles, decoration); its tools and other server features keep working. Open pages drop it at their next refresh.",
+        "stopped": "Stopped the interface code of {name}",
+        "resumed": "Resumed the interface code of {name}",
+        "filesTitle": "Files",
+        "reportsTitle": "Error reports",
+        "noReports": "No error reports for this build.",
+        "adminPages": "Admin pages",
+        "deletedOrg": "Deleted organization",
+        "columns": {
+          "path": "File",
+          "size": "Size",
+          "kind": "Kind",
+          "contribution": "Component",
+          "where": "Org",
+          "count": "Count",
+          "last": "Last seen",
+          "message": "Message"
+        },
+        "kind": {
+          "load": "Load",
+          "render": "Render",
+          "event": "Event",
+          "api": "Unsupported API",
+          "budget": "Turned off"
+        }
       }
     }
   },
@@ -3992,7 +4059,8 @@
           "update": "Update to {version}",
           "disable": "Disable",
           "enable": "Enable",
-          "import": "Import {version}"
+          "import": "Import {version}",
+          "applyAppearance": "Apply this plugin's appearance"
         },
         "componentColumns": {
           "name": "Component",
@@ -4004,8 +4072,12 @@
           "extension": "Extension",
           "skill": "Skill",
           "connectorTemplate": "Connector template",
-          "agentTemplate": "Agent template"
+          "agentTemplate": "Agent template",
+          "component": "Interface component",
+          "clientCode": "Client code",
+          "theme": "Theme"
         },
+        "clientFiles": "{files, plural, one {# file} other {# files}}",
         "componentsEmpty": "This version has no components.",
         "orgsHint": {
           "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",
@@ -4642,7 +4714,11 @@
       "title": "Title",
       "extension": "Extension",
       "hidden": "Hidden",
-      "move": "Order"
+      "move": "Order",
+      "slot": "Place",
+      "use": "Uses",
+      "source": "From",
+      "reset": "Follow"
     },
     "slots": {
       "conversationPanel": "Conversation panels",
@@ -4652,8 +4728,18 @@
       "filePreview": "File previews",
       "agentSection": "Agent page sections",
       "orgSettingsSection": "Org settings sections",
-      "platformPage": "Platform pages"
-    }
+      "platformPage": "Platform pages",
+      "shellBrand": "Sidebar brand",
+      "shellOverlay": "Full-screen overlays",
+      "conversationEmpty": "New-conversation hero",
+      "composerFrame": "Composer frame"
+    },
+    "replaceTitle": "Replacements",
+    "replaceDescription": "Places a plugin's component may take over. Built-in keeps the app's own; a plugin's component shows only where that plugin is on.",
+    "builtin": "Built-in",
+    "unavailableUse": "{key} (not available)",
+    "useLabel": "Use for {slot}",
+    "orgOwn": "This org"
   },
   "filePreviewers": {
     "title": "File previewers",
@@ -5173,6 +5259,45 @@
       "description": "The platform default theme: organizations without a default theme use it, and so do the sign-in pages. Only platform-owned themes whose scope is all organizations and that are not disabled can be chosen.",
       "label": "Platform default theme",
       "notAvailable": "This theme is not on in every organization, so it cannot be the platform default. Organizations where it is off: {orgs}."
+    }
+  },
+  "clientExtensions": {
+    "budget": "The interface code of “{plugin}” failed and is off for this session.",
+    "safeReload": "Reload in safe mode",
+    "changed": "New plugin interface code is ready. Reload the page to use it.",
+    "reload": "Reload",
+    "componentFailed": "Its interface code did not load or failed. Reload the page to try again; if it keeps failing, reload in safe mode.",
+    "componentOff": "This plugin interface is not available right now.",
+    "componentOffHint": "Plugin interface code is off: in safe mode, when the super admin turns it off, or after it failed in this browser session."
+  },
+  "applyAppearance": {
+    "action": "Apply this plugin's appearance",
+    "actionLabel": "Apply the appearance of {name}",
+    "actionHintPlatform": "Sets the theme and replacements this plugin suggests as the platform defaults.",
+    "actionHintOrg": "Sets the theme and replacements this plugin suggests as this org's defaults.",
+    "title": "Apply the appearance of {name}?",
+    "platformHint": "These become the platform defaults: every org that has not picked its own sees them.",
+    "orgHint": "These become this org's defaults: members who have not picked their own theme see them.",
+    "unchanged": "The appearance already matches what this plugin suggests. Nothing to change.",
+    "changes": "Changes",
+    "theme": "Default theme",
+    "change": "{from} → {to}",
+    "builtinTheme": "Built-in theme",
+    "followsPlatform": "Follows the platform: {name}",
+    "builtin": "Built-in",
+    "skipped": "Skipped: {what}",
+    "reason": {
+      "unknownSlot": "This version of the web app has no such place.",
+      "notAvailable": "The plugin's component is not available here.",
+      "notEligible": "This place cannot be replaced by it."
+    },
+    "apply": "Apply",
+    "ok": "Got it",
+    "applied": "Applied the appearance of {name}",
+    "reloadHint": "This plugin has interface code: the page reloads after the apply so its interface shows at once.",
+    "errors": {
+      "orgTheme": "This plugin's theme is not on in this org. Turn it on in the Appearance settings (or ask the super admin to offer it to this org), then apply again.",
+      "platformTheme": "This plugin's theme cannot be the platform default: it must be offered to all organizations and on. Set the plugin's scope to all organizations, then apply again."
     }
   }
 }

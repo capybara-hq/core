@@ -15,12 +15,14 @@ export type SetupGuidePlace = "channel-connection" | "connector-template";
 export type SetupGuideAudience = "admin" | "member";
 
 /**
- * Why a known variable has no value here (spec §6.3): the connection is not saved yet, the
+ * Why a known variable has no value here (spec §6.3): the connection is not saved yet, no name is
+ * typed yet on 新建渠道 (`no_name`), the
  * deployment has no `http.publicUrl` or no `channels.webhookBaseUrl`, the org has no connector made
  * from the template yet, or the guide is rendered for the platform (no org).
  */
 export type UnresolvedReason =
   | "not_saved"
+  | "no_name"
   | "public_url"
   | "webhook_base"
   | "no_connector"
@@ -165,3 +167,34 @@ export const runSetupCheck = (
       body: JSON.stringify({ ...selectionOf(s), ...(s.force && { force: true }) }),
     },
   );
+
+/** A top-level thematic break line of serialized Markdown (the kernel writes `***`). */
+const BREAK_LINE = /^ {0,3}([*_-])(?:[ \t]*\1){2,}[ \t]*$/;
+
+/**
+ * The blocks before the guide's last top-level thematic break (channel inbound mode fields spec §5):
+ * what follows it is reference material for a saved target (Slack: Sign in with Slack, manifest
+ * updates), not shown on 新建渠道. A guide without a break is returned whole. Prose blocks hold no
+ * fenced code (the kernel splits code out), so a line of only `***` is a break.
+ */
+export function beforeReference(blocks: readonly SetupGuideBlock[]): SetupGuideBlock[] {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b?.kind !== "markdown") continue;
+    const lines = b.text.split("\n");
+    let at = -1;
+    for (let j = lines.length - 1; j >= 0; j--) {
+      if (BREAK_LINE.test(lines[j] ?? "")) {
+        at = j;
+        break;
+      }
+    }
+    if (at === -1) continue;
+    const head = lines.slice(0, at).join("\n").trim();
+    return [
+      ...blocks.slice(0, i),
+      ...(head === "" ? [] : [{ kind: "markdown" as const, text: head }]),
+    ];
+  }
+  return [...blocks];
+}

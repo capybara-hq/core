@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
+import type { PluginClientSection } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { type ClientBuildRow, ClientBuilds } from "../client/client-builds.service.js";
+import { CLIENT_DIR } from "../client/client-files.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { unpackPackageTgz } from "../packages/tgz.js";
 import { StorageService } from "../storage/storage.service.js";
 import type { ExtensionPackage } from "./package.js";
 
@@ -14,6 +18,13 @@ import type { ExtensionPackage } from "./package.js";
  *   extension, F-Q): PG `extension_blobs` (`blob_store = pg`, also limited by `packages.maxBytes`).
  * Each package's location is recorded in `extension_packages.blob_store`; reads follow the record and
  * check the sha256.
+ *
+ * A package with an `extension.client` section also stores its client build (`ClientBuilds`,
+ * client extensions spec §9.1): the client files are read again from the bytes being stored,
+ * checked against the section and written to object storage before the package row's transaction,
+ * and the build row is inserted in that transaction, all under the build's lock. Without object
+ * storage (`ClientBuilds`' own, which the CLI points at its store) such a package is refused
+ * (`storage.unavailable`), so a stored build always has its files.
  */
 
 /** 取到的包与 sha256 不符（存储里的字节被篡改或损坏）。 */
@@ -57,6 +68,7 @@ export class ExtensionBlobs {
     /** Without an object-store extension (the CLI) packages go to PG. */
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
   ) {}
 
   /** `packages.maxBytes` (read at every call). */
@@ -92,16 +104,47 @@ export class ExtensionBlobs {
     if (createHash("sha256").update(bytes).digest("hex") !== p.sha256) {
       throw new ExtensionBlobIntegrityError(p.sha256);
     }
+    const client = p.section.client;
+    if (client === undefined) {
+      await this.store(p, bytes, src, undefined);
+      return;
+    }
+    // client code is delivered from object storage: refused before anything is written without it
+    this.clientBuilds.assertAvailable();
+    const files = await this.clientFiles(bytes);
+    // one store or delete of this package's client build at a time (ClientBuilds header)
+    await this.clientBuilds.locked(p.sha256, () =>
+      this.store(p, bytes, src, { section: client, files }),
+    );
+  }
+
+  /** {@link put} after its checks; `client` for a package with client code (under its lock). */
+  private async store(
+    p: ExtensionPackage,
+    bytes: Uint8Array,
+    src: ExtensionBlobSource,
+    client: { section: PluginClientSection; files: Map<string, Uint8Array> } | undefined,
+  ): Promise<void> {
+    const plugin = p.section.manifest.name;
     const existing = await this.db
       .selectFrom("extension_packages")
       .select("blob_store")
       .where("sha256", "=", p.sha256)
       .executeTakeFirst();
     if (existing) {
-      // 记录已在：字节若丢了（对象被删、库被清）就按原存放位置补上
+      // The row is there: bytes that went missing (an object deleted, a database cleared) are
+      // restored where the row says, and so are the client build's files and row
       await this.repair(p.sha256, existing.blob_store, bytes);
+      if (client !== undefined) {
+        await this.clientBuilds.extract(p.sha256, plugin, client.files, client.section);
+      }
       return;
     }
+    // checked and written before the transaction (no object storage call inside one)
+    const build =
+      client !== undefined
+        ? await this.clientBuilds.writeFiles(p.sha256, plugin, client.files, client.section)
+        : undefined;
     const store = src.store ?? (this.storage.available ? "object" : "pg");
     if (store === "object") {
       if (!this.storage.available) throw new Error("object storage is not available");
@@ -112,7 +155,13 @@ export class ExtensionBlobs {
     }
     // the row stores the plugin's extension section as reviewed (without the name / version copy)
     const { name: _name, version: _version, ...section } = p.section;
-    await this.record(p, section, bytes, src, store);
+    await this.record(p, section, bytes, src, store, build);
+  }
+
+  /** The files under `dist/client/` of a package's bytes (sha256 already checked by the caller). */
+  private async clientFiles(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+    const files = await unpackPackageTgz(bytes, { maxBytes: this.maxBytes() });
+    return new Map(files.filter((f) => f.path.startsWith(CLIENT_DIR)).map((f) => [f.path, f.data]));
   }
 
   @Transactional()
@@ -122,6 +171,7 @@ export class ExtensionBlobs {
     bytes: Uint8Array,
     src: ExtensionBlobSource,
     store: "object" | "pg",
+    build: ClientBuildRow | undefined,
   ): Promise<void> {
     const m = p.section.manifest;
     const inserted = await this.db
@@ -149,6 +199,8 @@ export class ExtensionBlobs {
         .onConflict((oc) => oc.column("sha256").doNothing())
         .execute();
     }
+    // the build row commits with the package row it references (or after another replica's)
+    if (build !== undefined) await this.clientBuilds.insert(build);
   }
 
   /** 已有记录的包：按记录的存放位置检查字节在不在，不在就写回（调用方已校验 sha256）。 */

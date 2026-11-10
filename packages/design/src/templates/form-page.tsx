@@ -144,6 +144,7 @@ export function FormSection({
       id={id}
       className="cb-form-section"
       data-part="form-section"
+      data-cap-part="section"
       data-layout={layout === "stacked" ? "stacked" : undefined}
       aria-label={title}
       aria-busy={loading && announces ? "true" : undefined}
@@ -201,6 +202,7 @@ export function LoadingFormSection({
     <section
       className="cb-form-section"
       data-part="form-section"
+      data-cap-part="section"
       data-layout={layout === "stacked" ? "stacked" : undefined}
       aria-busy={announces ? "true" : undefined}
     >

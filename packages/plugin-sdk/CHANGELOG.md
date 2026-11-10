@@ -1,5 +1,86 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.11
+
+### Minor Changes
+
+- f172ba6: Built-in elements carry the public `data-cap-part` hooks of the `UI_PARTS` catalog (`owner` is now a
+  list of files, since one part can be drawn by several components); the design package adds
+  `DecorationLayer`, `ReplaceableFrame` and `SafeModeBanner`, the `decoration` layering token,
+  `Sidebar` `brand` and `AppShell` `capState` (`data-cap-state`). `check:ui-parts` enforces the hooks.
+- 460567f: The `client` section of the plugin extension (`PluginClientSection`, `validateClientSection`,
+  `CLIENT_LIMITS`, `CLIENT_ASSET_TYPES`, `CLIENT_API_VERSION`) and `suggestedAppearance` in
+  `plugin.json` (`SuggestedAppearance`, `appearanceIssues`). `extension.client` needs
+  `permissions.client: true` and the reverse.
+- 107a004: Component contributions: `kind: "component"` in the manifest `ui`, listed in the new
+  `permissions.ui.components`, which needs the new `permissions.client: true`.
+  `validateUiContributions` checks both directions, refuses an id in more than one of
+  `views` / `embeds` / `components` and a component with a `path`. `UiView` gains `data` (a
+  `JsonValue`), accepted only by `validateUiView(view, { component: true })`, at most
+  `UI_LIMITS.componentDataBytes` (32768) bytes of JSON.
+- 25e6ef3: The UI slot catalog gains the `component` kind, single (replaceable) slots with `cardinality`,
+  `replaceable` and `builtin`, and the slots `shell.brand`, `shell.overlay`, `conversation.empty`
+  and `conversation.composer.frame`.
+- e531e6d: The SDK exports `UI_PARTS`, the catalog of built-in elements (`data-cap-part`) plugin CSS may
+  select; `capybara-plugin check` reports `ui-part-unknown` against it.
+- 5d464ce: The client stylesheet rule is one function in the SDK: `clientCssProblem` (with `wrapClientCss`, the
+  `@layer extensions` wrap the packer stores). `capybara-plugin pack` runs it on the file as it stores
+  it and the kernel's import runs it on the stored bytes, so a plugin that packs cleanly imports
+  cleanly: a broken `url(` fragment, a bad url token or a brace that would end the
+  `@layer extensions` block early is refused at pack time (`client-css-remote`), not only at import.
+  The packer no longer loads the kernel for this.
+
+### Patch Changes
+
+- c4b4f6f: Applying a suggested appearance at org level reports `from` as the value in effect (the org's own
+  entry, else the platform's) with `followsPlatform`, and pins nothing when the org follows a
+  platform that already uses the suggestion. Replacements are listed and applied in plugin.json
+  order (recorded at import in `catalog_item_versions.appearance_order`, since the jsonb manifest
+  does not keep key order; the item detail and the org extension list show them in that order). A
+  second ref to one slot is skipped as `not-eligible`, and `parsePluginManifest` refuses it
+  (`shell.brand` and `shell.brand@1` in one `suggestedAppearance.replacements`).
+- f2786a6: At org level, applying a suggested appearance judges the followed platform default theme by its
+  eligibility: a stored default that is no longer eligible renders the built-in, so applying the
+  plugin's theme is reported as a change. `permissions.client: true` without a client section is
+  reported as "permissions.client is true but extension.client is missing".
+- ec5f411: `validateClientSection` refuses an asset path with a segment outside `[A-Za-z0-9._-]` (such as a
+  literal `%2e%2e`, which the kernel's exact-key delivery never serves) and an asset without a file
+  name before its extension (`.png`). `validateUiView` refuses component view `data` that JSON would
+  silently drop or rewrite (functions, NaN or Infinity, `undefined` in an array, Maps, Dates, cycles);
+  an `undefined` object property is still accepted. A `permissions.client` without a client section
+  is reported with the same plain text as the forward case.
+
+## 0.1.0-rc.10
+
+### Minor Changes
+
+- aa81e5a: Setup checks contract: an extension registers the live rows of its setup guides with
+  `ctx.setup.check(id, { place, run })` during `setup`, each id listed in the new
+  `permissions.setupChecks` (`SETUP_CHECK_ID_RE`, at most 32; ids with `:` stay the kernel's).
+  `run` gets the org, the extension's effective config, the locale, the mode, an abort signal and the
+  target: a channel connection with its config, or a connector with its ids and OAuth client id
+  (never the client secret or a member's token). Results are `ok` / `failing` / `unknown` with plain
+  text `reason` and `fix` (en required, zh optional, 300 / 500 characters) and no details field;
+  `validateSetupCheckResult` returns a fresh copy or why it is invalid. `SETUP_CHECK_LIMITS` holds
+  the run limits. A check never writes, passes `signal` on, does not retry and never puts a secret
+  in its result.
+- 2219734: Setup guides v2: a guide is a Markdown document `guides/<id>.md` (optional `guides/<id>.zh.md`)
+  declared in `plugin.json` `setupGuides` as `{ id, place, template? }`. The SDK adds the place
+  registry (`channel-connection`, `connector-template`; modes, audiences, typed variables), the
+  parser (`parseSetupGuide`: title, `::: mode` / `::: audience` sections, `::check` lines, titled
+  code fences), the validator (`validateSetupGuide`, including zh parity), the renderer
+  (`renderSetupGuide`: substitution into the parsed tree, link policy, raw HTML as text, blocks) and
+  the drift hash (`setupGuideHash`, code blocks and check lines only). The v1 steps-and-files format
+  and its helpers are removed.
+
+### Patch Changes
+
+- 70a50f5: Add the `setup` agent docs topic: how an agent helps a person through a plugin's setup guide with
+  the `setup` operations, and what stays with the person (secrets, OAuth consent, the guide ack).
+  
+  The `plugin-format` and `extensions` topics describe v2 setup guides (Markdown documents, places,
+  sections, check lines) and setup checks (`ctx.setup.check`, `permissions.setupChecks`).
+
 ## 0.1.0-rc.9
 
 ### Minor Changes

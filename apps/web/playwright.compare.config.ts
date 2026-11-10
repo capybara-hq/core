@@ -17,7 +17,7 @@ export default defineConfig({
   reporter: "list",
   use: { baseURL: `http://localhost:${PORT}`, locale: "zh-CN" },
   webServer: {
-    command: `next build && next start -p ${PORT}`,
+    command: `node scripts/gen-client-host.mjs && next build && next start -p ${PORT}`,
     url: `http://localhost:${PORT}/dev/ui`,
     env: { CAPYBARA_DEV_UI: "1" },
     reuseExistingServer: !process.env.CI,

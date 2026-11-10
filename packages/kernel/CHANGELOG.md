@@ -1,5 +1,194 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.15
+
+### Minor Changes
+
+- ad030b1: Client builds are stored per package: migration `0107_extension_client_builds.sql` adds
+  `extension_client_builds` and `extension_client_reports`. When a package with an `extension.client`
+  section is stored, its client files are read again from the stored bytes, checked against the
+  section (every key exact, listed = present, size limits, sha384 recomputed, each stylesheet one
+  `@layer extensions` block with no `@import` and every `url()` an asset of the plugin, `data:` or a
+  `#fragment`, no non-ASCII whitespace, zero-width character or U+FEFF, no `image-set()`,
+  `cross-fade()`, `element()`, `paint()`, `src()` or `image()`; key segments of `[A-Za-z0-9._-]` only) and written under
+  `deployment/platform/client/<plugin>/<sha256>/`; the build row's integrity is what was recomputed.
+  New error codes `client.undeclared`, `client.integrity_mismatch` and `client.invalid` (400); a
+  package with client code is refused with `storage.unavailable` without object storage. The import
+  review re-checks the client files, checks `suggestedAppearance.theme` against the scanned themes
+  (`appearanceIssues`) and lists the client files with their sizes (`extension.client`). An expired
+  org upload's package takes its client files with it. The CLI's `capybara plugins import` stores client
+  files in its own object store (`loadCliObjectStore`).
+- 232191e: The kernel delivers plugin client code. `GET /api/v1/client/<plugin>/<build>/<path>` serves the
+  entry, stylesheets and assets of a client build (`build` is the package sha256) to a signed-in
+  member, any role, of a live org where the extension is enabled, or to a super admin when the build
+  has a `platform.page` component; only while a live replica serves the build's package for an
+  enabled install (client code follows the server code that runs: during an upgrade awaiting
+  approval or after a failed one the old build stays served; replica status rows gain
+  `serving_sha256`) and the permission snapshot approves `permissions.client` and every
+  `ui.component:<id>`.
+  Files are looked up by their exact manifest key (no decoding, no normalising, never a redirect);
+  anything else is 404 `client.not_found`. Responses are `private, max-age=31536000, immutable` with
+  `nosniff` and `Cross-Origin-Resource-Policy: same-origin`; SVG assets carry
+  `default-src 'none'; sandbox`. `GET /api/v1/orgs/:orgId/ui/client` (guest and up) lists the org's
+  client extensions with file URLs, integrity and the components the viewer's role may use;
+  `GET /api/v1/admin/ui/client?plugin=` (super admin) lists only `platform.page` components and no
+  stylesheets. Both are `no-store`. The deployment setting `clientExtensions: { enabled, disabled }`
+  (default `{ enabled: true, disabled: [] }`, written by `PUT /api/v1/admin/settings` and the
+  Platform operation `admin.update-settings`) stops all client code or that of the listed plugins.
+- bb622c4: The permission review covers client code: `permissions.client` and `ui.component:<id>` are new
+  permission keys (`PermissionSet.permissions.client`, `permissions.ui.components`), both sensitive
+  (reasons `client_code` and `ui_component`, a new `client` group) and blocking until the super admin
+  approves; `capybara extensions review` / `approve` mark them `(sensitive)`. Only `ui.view:*` stays
+  non-blocking. An upgrade that changes only the client bundle adds no key; older snapshots without
+  the fields read as no client code.
+- 44fe453: The kernel collects crash and load reports of client code. `POST /api/v1/orgs/:orgId/ui/client/
+  reports` (guest and up) and `POST /api/v1/admin/ui/client/reports` (super admin) take `{ plugin,
+  build, contribution, kind, message }` (`kind`: `load`, `render`, `event`, `api` or `budget`;
+  `message` at most 500 characters) and answer 204; one row per (plugin, build, org, contribution,
+  kind) is upserted with a count. A report is accepted only for a build the reporter could fetch
+  (and, in an org, an extension enabled there), else 404 `client.not_found`; 20 reports a minute per
+  account (429). A daily `@LockedCron` on the worker role deletes reports not seen for 30 days. The
+  admin extension view gains `client` (the install package's client build: files with sizes and the
+  API version) and `clientReports` (that build's newest 50).
+- 8a3472b: The permission reviews carry the client build (client extensions spec §5.4). `GET
+  /api/v1/admin/catalog/items/:id` gives each version `client`: its extension package's build (files
+  by manifest key with their sizes in load order, `totalBytes`, `apiVersion`; null without one), so
+  the confirmation of an org's upload shows the pending package's files and sizes. The org extension
+  list and `PUT …/extensions/:extension` give org admins `client`, the running package's build, for
+  the Sheet's 客户端代码 group; members never get it.
+- afeb135: The kernel applies a plugin's suggested appearance in one step (应用此插件的外观).
+  `POST /api/v1/admin/catalog/items/:id/appearance` (super admin) sets the plugin's theme as the
+  platform default theme and each suggested replacement as the platform arrangement's `use`;
+  `POST /api/v1/orgs/:orgId/extensions/:extension/appearance` (`org.update`, the extension on in the
+  org) does the same for the org, keeping `personal`. Body `{ dryRun? }`; the answer lists `theme`
+  (`{ from, to }` or null), `replacements` (`{ slot, from, to }`) and `skipped` (`unknown-slot`,
+  `not-available`, `not-eligible`). Both writes go through the settings writers in one transaction:
+  a theme that cannot be set there refuses the whole call with `theme.not_available`; a replacement
+  that is not available is skipped. The admin item detail and the org extension list (admins) gain
+  `suggestedAppearance`. Platform operations `plugins.platform-apply-appearance` and
+  `plugins.apply-appearance` mirror the routes (confirmed every time, never remembered; the dry run
+  is their card and precheck).
+- 363a2d3: A theme's stylesheet is one `@layer theme { … }` block, in the layer order the design stylesheet
+  declares (design, theme, extensions). Its URL carries a render revision,
+  `/api/v1/themes/<id>/<version>/r<n>/theme.css` (`THEME_CSS_REVISION`, now 2, bumped whenever the
+  output format changes): only the current revision is served (404 `theme.not_found` otherwise) and
+  the old URL without a revision is gone, so no browser keeps an older format cached as immutable.
+- 89278e7: The UI routes serve component contributions: the contributions list carries `kind: "component"`
+  (listed with or without a server view), `ctx.ui.view` / `ctx.ui.action` accept ids in
+  `permissions.ui.components` and such a view is served like a view of its slot (the slot's role and
+  scope rule decide access). Only a component's view may carry `data` (a plain view's or action's
+  `data` is 502 `ui.invalid_view`). A tool's `ToolResult.card` may name a component card. The UI
+  arrangement gains `{ use }` for single slots (`shell.brand`, `conversation.empty`,
+  `conversation.composer.frame`): the org's entry, else the platform's, picks the winner; `use: null`,
+  no entry or a `use` naming a contribution not available in the org is the built-in. The
+  contributions list shows at most the winner of a single slot, and `GET …/ui/arrangement` lists a
+  single slot as `{ slot, candidates, use, followsPlatform }`. `use` on a list slot and `hidden` /
+  `order` on a single slot are 400 `validation_failed`. `capybara-plugin check` (`perm-ui`) accepts
+  component ids for `ctx.ui.view` / `ctx.ui.action`.
+
+### Patch Changes
+
+- c4b4f6f: Applying a suggested appearance at org level reports `from` as the value in effect (the org's own
+  entry, else the platform's) with `followsPlatform`, and pins nothing when the org follows a
+  platform that already uses the suggestion. Replacements are listed and applied in plugin.json
+  order (recorded at import in `catalog_item_versions.appearance_order`, since the jsonb manifest
+  does not keep key order; the item detail and the org extension list show them in that order). A
+  second ref to one slot is skipped as `not-eligible`, and `parsePluginManifest` refuses it
+  (`shell.brand` and `shell.brand@1` in one `suggestedAppearance.replacements`).
+- 571318f: A super admin confirming an org upload while the org is deleted, the plugin removed or a
+  replacement version uploaded no longer fails with 500: every path takes the catalog item row
+  before the per-name install lock (the extension install, the import confirm, the plugin delete),
+  so none of them can deadlock. A confirmation whose item was removed under it answers 409
+  `catalog.item_removed` (refused before installing anything, and also when the removal's cleanup
+  took the extension out between its steps, for a first or a new version) instead of 404
+  `extension.not_found`.
+- f2786a6: At org level, applying a suggested appearance judges the followed platform default theme by its
+  eligibility: a stored default that is no longer eligible renders the built-in, so applying the
+  plugin's theme is reported as a change. `permissions.client: true` without a client section is
+  reported as "permissions.client is true but extension.client is missing".
+- b03397f: A bootstrap import of a plugin with client code (`extension.client`) is refused with
+  `client.invalid`, naming the plugin and saying to take it out of `bootstrap.json`: client files are
+  kept in object storage, which a bootstrap run may not have.
+- 56fc173: A plugin whose client code was built for a newer client API than the kernel's `CLIENT_API_VERSION`
+  is refused at import with `client.api_unsupported` (400), and the client shell reads never list a
+  build of a client API version the web host does not run.
+- 38e9f9b: Client reports are bounded: a report's `contribution` must be null or a component id of that
+  build's manifest (another id is 404 `client.not_found`, a string outside the component id grammar
+  400), and the admin extension views read at most the newest 50 reports per extension in SQL. The
+  admin view's client build is the one a live replica serves (the old build beside an upgrade
+  awaiting approval or failed), not the install record's package. The delivery route refuses builds
+  of a client API version the kernel does not support, as the shell reads already omit them. A
+  replica whose running instance's own package goes pending or failed still reports serving it, so
+  its client code stays.
+- 914e022: `ctx.ui.view` / `ctx.ui.action` on an undeclared component name `permissions.ui.components` in the
+  refusal. A UI arrangement entry of the wrong kind is refused with a message naming the slot and what
+  it takes (`{ hidden, order }` on a list slot, `{ use }` with a contribution key or null on a single
+  slot).
+- 5d464ce: The client stylesheet rule is one function in the SDK: `clientCssProblem` (with `wrapClientCss`, the
+  `@layer extensions` wrap the packer stores). `capybara-plugin pack` runs it on the file as it stores
+  it and the kernel's import runs it on the stored bytes, so a plugin that packs cleanly imports
+  cleanly: a broken `url(` fragment, a bad url token or a brace that would end the
+  `@layer extensions` block early is refused at pack time (`client-css-remote`), not only at import.
+  The packer no longer loads the kernel for this.
+- 8c49d09: The shell element publishes `run=`, `theme=<plugin>/<file id>`, `motion=` and `sidebar=rail|full` in
+  `data-cap-state`; the open conversation's log is turned into client events on the client (history
+  loaded on open emits nothing). `ThemeRef` gains `key`.
+- Updated dependencies [c4b4f6f]
+- Updated dependencies [f172ba6]
+- Updated dependencies [f2786a6]
+- Updated dependencies [460567f]
+- Updated dependencies [ec5f411]
+- Updated dependencies [107a004]
+- Updated dependencies [25e6ef3]
+- Updated dependencies [e531e6d]
+- Updated dependencies [5d464ce]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.11
+
+## 0.1.0-rc.14
+
+### Patch Changes
+
+- 848fb39: Setup guides v2 kernel checks: `capybara:public-url`, `capybara:webhook-public`,
+  `capybara:webhook-received` (the gateway marks an accepted webhook in Redis, at most once a minute
+  per connection, kept 7 days), `capybara:connection-active`, `capybara:oauth-client`,
+  `capybara:connector-tools`, `capybara:connector-connected` and `capybara:oauth-token-endpoint`, which
+  probes the token endpoint with the stored client and a fixed invalid code (through the kernel's
+  network rules, no redirects, nothing logged or stored). The guide route returns the guide's
+  `template`; check runs need the connector's live platform template, read the cache again after
+  taking the run lock, and redact the sent forms of a connector's credentials too.
+- 2f01b01: Setup guides v2 checks: extensions register setup checks with `ctx.setup.check` (only during
+  setup, ids from `permissions.setupChecks`, recorded in the permission snapshot without blocking
+  loading). `GET …/catalog/:itemId/guides/:guideId/checks` reads the cached state of a guide's checks
+  and `POST …/checks/:checkId/run` runs one (30 a minute per account): results cached in Redis per
+  target, mode and (for member checks) account, single flight across replicas, a 10 s force cooldown,
+  8 concurrent runs per org, a 10 s time limit, and every result validated, redacted by the target's
+  and the extension's secrets and validated again. The `Platform` tool gains `setup.status` and
+  `setup.check`. Guide acks of channel connections and connectors follow the guide read's catalog
+  visibility.
+- 155c1cf: Setup guides v2 for connector templates: the guide route renders a template's guide for the org's
+  connector made from it (`connectorId`, `connectorName`), connectors created from a template record
+  the guide they were set up with (`connectors.guide_ack`, migration 0106, which also clears the v1
+  acks of channel connections), connector views carry `setupGuide` and `guideDrift`, and
+  `POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack` confirms an updated app (409
+  `connector.guide_changed`; a human-only Platform exclusion). Catalog template entries and the
+  connector template list carry `guide`; the platform update preview lists `guideChanges` with org
+  counts.
+- 70a50f5: Complete the `Platform` tool's `setup` domain: `setup.guides` lists the setup guides a person may
+  help with (targets, drift, cached check counts, web pages) and mirrors the new
+  `GET /api/v1/orgs/:orgId/setup-guides` route; `setup.read` returns a guide rendered as Markdown
+  (checks as `- [check <id>]` lines) and mirrors the org guide route, which is no longer excluded.
+  Every setup operation is read class; secrets, OAuth consent and the guide ack stay human-only.
+- 6622107: Setup guides v2: the kernel validates `guides/<id>.md` (and `.zh.md`) at import with the SDK
+  validator, stores both documents as display files, and renders a guide per org, place, mode,
+  audience, locale and target (`GET …/catalog/:itemId/guides/:guideId` now returns blocks, checks,
+  unresolved variables with reasons and the v2 drift hash). Channel connection acks use the v2 hash;
+  a version imported with a v1 `setupGuides` entry shows no guide. The super admin previews a guide
+  with `GET /api/v1/admin/catalog/:itemId/guides/:guideId` (a Platform exclusion).
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
 ## 0.1.0-rc.13
 
 ### Minor Changes

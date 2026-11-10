@@ -391,8 +391,8 @@ describe("places without live rows", () => {
       "slack",
       userEvent.setup(),
     );
-    const r = await screen.findByRole("group", { name: "应用令牌有效" });
-    expect(within(r).getByText(zh.setupGuide.checkAfterSave)).toBeTruthy();
+    expect(await screen.findByText(zh.setupGuide.checksAfterSave)).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "应用令牌有效" })).toBeNull();
     await settle();
     expect(calls.some((c) => c.url.startsWith(CHECKS_URL))).toBe(false);
   });

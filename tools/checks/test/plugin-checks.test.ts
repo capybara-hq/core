@@ -51,18 +51,20 @@ describe("dependency boundary on core", () => {
 });
 
 describe("extension state on core", () => {
-  it("good-counter / whoami -> no findings", () => {
-    expect(checkPluginState([testing("good-counter"), testing("whoami")])).toEqual([]);
+  it("good-counter / whoami -> no findings", async () => {
+    expect(await checkPluginState([testing("good-counter"), testing("whoami")])).toEqual([]);
   });
 
-  it("leaky-counter / leaky-sibling pass with their exemption markers", () => {
-    expect(checkPluginState([testing("leaky-counter"), testing("leaky-sibling")])).toEqual([]);
+  it("leaky-counter / leaky-sibling pass with their exemption markers", async () => {
+    expect(await checkPluginState([testing("leaky-counter"), testing("leaky-sibling")])).toEqual(
+      [],
+    );
   });
 
-  it("without the markers leaky-counter and leaky-sibling (sibling store.ts) are reported", () => {
-    const a = checkPluginState([unmarked(testing("leaky-counter"))]);
+  it("without the markers leaky-counter and leaky-sibling (sibling store.ts) are reported", async () => {
+    const a = await checkPluginState([unmarked(testing("leaky-counter"))]);
     expect(a.map((x) => x.rule)).toEqual(["plugin-module-state"]);
-    const b = checkPluginState([unmarked(testing("leaky-sibling"))]);
+    const b = await checkPluginState([unmarked(testing("leaky-sibling"))]);
     expect(b.map((x) => x.rule)).toEqual(["plugin-module-state"]);
     expect(b[0]?.file).toContain("store.ts");
   });

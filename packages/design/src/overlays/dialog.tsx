@@ -51,6 +51,7 @@ export function Dialog({
         <RD.Overlay className="cb-scrim" />
         <RD.Content
           className="cb-dialog"
+          data-cap-part="dialog"
           data-size={size}
           data-danger={danger ? "true" : undefined}
           aria-describedby={describedBy}

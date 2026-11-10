@@ -6,6 +6,7 @@ import {
   type ChannelWebhook,
   type InboundEvent,
   secret,
+  ui,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
@@ -26,8 +27,9 @@ export const FakeImConnection = z.object({
   /**
    * Optional secret (also tests PATCH secret semantics); the webhook signing secret: webhook
    * requests are signed `x-fake-signature: sha256=<hex HMAC-SHA256(webhookToken, raw body)>`.
+   * Drawn and required in webhook mode only (`inboundModes`, channel inbound mode fields spec §2).
    */
-  webhookToken: secret(z.string().min(1).optional()),
+  webhookToken: ui(secret(z.string().min(1).optional()), { inboundModes: ["webhook"] }),
   /** 被中止后拖这么久才返回（模拟不及时退出的插件）。 */
   lingerMs: z.number().int().nonnegative().default(0),
 });

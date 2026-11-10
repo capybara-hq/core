@@ -56,6 +56,10 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * | `POST /api/v1/invitations/:token/accept` | `invitation`, `invitation-ip` |
  * | `GET /api/v1/device/pending/:userCode`, `POST /api/v1/device/confirm`, `POST /api/v1/device/deny` | `device-code-account` |
  *
+ * `POST /api/v1/orgs/:orgId/ui/client/reports` and `POST /api/v1/admin/ui/client/reports` opt in to
+ * `client-reports` with `@Throttled` (20 per minute per account: a crash loop in a browser must
+ * not flood the table).
+ *
  * `POST /api/v1/device/authorize` and `POST /api/v1/device/token` opt in to `device-authorize-ip`
  * and `device-token-ip` with `@Throttled` (every request counts; neither checks a guessable
  * credential: the device code is 32 random bytes). `POST …/guides/:guideId/checks/:checkId/run`
@@ -177,6 +181,16 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     limit: 10,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many device code attempts; try again later",
+    getTracker: (req) => sha256(principalAccountId(req)),
+  },
+  // client code crash reports per signed-in account (counted before the handler): 20 / minute
+  {
+    name: "client-reports",
+    group: "client-reports",
+    onSuccess: "clear",
+    limit: 20,
+    ttl: 60_000,
+    message: "Too many client reports; try again later",
     getTracker: (req) => sha256(principalAccountId(req)),
   },
   // setup check runs per signed-in person (setup guides v2 §10.5): 30 a minute, every request

@@ -7,6 +7,7 @@ import {
   type ObjectStore,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import { ClientBuilds } from "../client/client-builds.service.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import { planApprovals, snapshotCovers } from "../extensions/approvals.js";
@@ -246,6 +247,8 @@ export async function openCatalogCli(
     // inspection (the registry), marketplace imports are not offered by the CLI.
     const imports = cli.app.get(PluginImport);
     imports.useCliStorage(storage);
+    // and so do the client files of a package with client code (stored with the package)
+    cli.app.get(ClientBuilds).useCliStorage(storage);
     const catalog = cli.app.get(CatalogService);
     const db = cli.app.get(KernelDb);
     const redis = cli.app.get<Redis>(REDIS);

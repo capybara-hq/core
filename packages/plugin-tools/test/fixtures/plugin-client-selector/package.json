@@ -1,0 +1,8 @@
+{
+  "name": "@capybara-hq/plugin-fixture-plugin-client-selector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fixture: plugin-client-selector",
+  "license": "Apache-2.0",
+  "type": "module"
+}

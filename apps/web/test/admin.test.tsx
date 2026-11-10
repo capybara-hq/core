@@ -287,6 +287,8 @@ describe("/admin/orgs（ListPage）", () => {
   it("says in one paragraph that defaults apply and org settings need an org admin", async () => {
     stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
+      // 插件界面代码 lists the extensions with client code
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     });
@@ -301,6 +303,8 @@ describe("/admin/orgs（ListPage）", () => {
     const o = msgs[locale].admin.orgs;
     const calls = stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
+      // 插件界面代码 lists the extensions with client code
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
@@ -357,6 +361,8 @@ describe("/admin/orgs（ListPage）", () => {
   it("清空覆盖 → 发 null；cpu 越界在界面拦下、不发请求", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
+      // 插件界面代码 lists the extensions with client code
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
@@ -395,6 +401,8 @@ describe("/admin/orgs（ListPage）", () => {
       const o = msgs[locale].admin.orgs;
       const calls = stubApi({
         "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
+        // 插件界面代码 lists the extensions with client code
+        "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
         "GET /api/v1/admin/settings": () =>
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxDispatchesPerRun: 9 } } }),
         "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
@@ -455,6 +463,8 @@ describe("/admin/orgs（ListPage）", () => {
               subagents: { ...LIMIT_DEFAULTS.subagents, maxDispatchesPerRun: 0 },
             },
           }),
+        // 插件界面代码 lists the extensions with client code
+        "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
         "GET /api/v1/admin/settings": () =>
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxTokensPerRun: 0 } } }),
         "PUT /api/v1/admin/settings": () =>
@@ -506,6 +516,8 @@ describe("/admin/orgs（ListPage）", () => {
   it("内核 400（validation_failed）：在对话框里显示，对话框不关", async () => {
     stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
+      // 插件界面代码 lists the extensions with client code
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
@@ -539,6 +551,8 @@ describe("/admin/settings（FormPage）", () => {
       const m = msgs[locale];
       const s = m.admin.settings;
       const calls = stubApi({
+        // 插件界面代码 lists the extensions with client code
+        "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
         "GET /api/v1/admin/settings": () => json(200, SETTINGS),
         "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
         ...THEME_ROUTES,
@@ -572,6 +586,8 @@ describe("/admin/settings（FormPage）", () => {
 
   it("warns super admins with the operator details only on an insecure origin", async () => {
     stubApi({
+      // 插件界面代码 lists the extensions with client code
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,
@@ -590,6 +606,8 @@ describe("/admin/settings（FormPage）", () => {
 
   it("币种不合法时不能保存", async () => {
     const calls = stubApi({
+      // 插件界面代码 lists the extensions with client code
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,

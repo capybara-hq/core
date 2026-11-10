@@ -3,7 +3,9 @@ import {
   PLACE_SLOTS,
   parseSlotRef,
   UI_ARRANGEABLE_SLOTS,
+  UI_COMPONENT_SLOTS,
   UI_CONTRIBUTION_KEY_RE,
+  UI_SINGLE_SLOTS,
   UI_SLOT_IDS,
   UI_SLOTS,
   uiContributionKey,
@@ -93,6 +95,10 @@ describe("ui slot catalog", () => {
       "agent.detail.section",
       "org.settings.section",
       "platform.page",
+      "shell.brand",
+      "shell.overlay",
+      "conversation.empty",
+      "conversation.composer.frame",
     ]);
   });
 
@@ -118,5 +124,75 @@ describe("ui slot catalog", () => {
 
   it("builds contribution keys", () => {
     expect(uiContributionKey("todo", "board")).toBe("todo/board");
+  });
+});
+
+describe("component kind and single slots", () => {
+  const NEW = ["shell.brand", "shell.overlay", "conversation.empty", "conversation.composer.frame"];
+
+  it("single slots are replaceable, name their builtin and accept only component", () => {
+    const singles = UI_SLOTS.filter((s) => s.cardinality === "single");
+    expect(singles.map((s) => s.id)).toEqual([...UI_SINGLE_SLOTS]);
+    expect(singles.length).toBe(3);
+    for (const s of singles) {
+      expect(s.replaceable).toBe(true);
+      expect(s.builtin?.en.length).toBeGreaterThan(0);
+      expect(s.builtin?.zh.length).toBeGreaterThan(0);
+      expect([...s.accepts]).toEqual(["component"]);
+      expect(s.anchors).toBeUndefined();
+      expect(s.limits).toBeUndefined();
+    }
+  });
+
+  it("list slots carry no replaceable or builtin", () => {
+    for (const s of UI_SLOTS.filter((x) => x.cardinality === "list")) {
+      expect(s.replaceable).toBeUndefined();
+      expect(s.builtin).toBeUndefined();
+    }
+  });
+
+  it("the four new slots have the spec's owners and scope", () => {
+    expect(UI_SLOT_IDS.slice(-4)).toEqual(NEW);
+    const owners: Record<string, string> = {
+      "shell.brand": "components/shell/AppFrame.tsx",
+      "shell.overlay": "components/shell/AppFrame.tsx",
+      "conversation.empty": "components/conversation/NewConversation.tsx",
+      "conversation.composer.frame": "components/conversation/ComposerBar.tsx",
+    };
+    for (const id of NEW) {
+      const s = uiSlot(id);
+      expect(s?.owner).toBe(owners[id]);
+      expect(s?.scope).toBe("org");
+      expect(s?.minRole).toBe("guest");
+      expect([...(s?.accepts ?? [])]).toEqual(["component"]);
+    }
+    expect(uiSlot("shell.overlay")?.cardinality).toBe("list");
+    expect(uiSlot("shell.overlay")?.limits?.maxShown).toBe(4);
+  });
+
+  it("file.preview does not accept component", () => {
+    expect([...(uiSlot("file.preview")?.accepts ?? [])]).toEqual(["embed"]);
+  });
+
+  it("the seven L1 slots accept component", () => {
+    const l1 = [
+      "conversation.panel",
+      "conversation.properties.section",
+      "conversation.tool-result.card",
+      "org.page",
+      "agent.detail.section",
+      "org.settings.section",
+      "platform.page",
+    ];
+    for (const id of l1) expect(uiSlot(id)?.accepts).toContain("component");
+    expect([...UI_COMPONENT_SLOTS]).toEqual([...l1, ...NEW]);
+  });
+
+  it("zh descriptions of the new rows avoid 企业 and the word agent", () => {
+    for (const id of NEW) {
+      const s = uiSlot(id);
+      const text = [s?.description.zh, s?.builtin?.zh].join(" ");
+      expect(text).not.toMatch(/企业|agent/i);
+    }
   });
 });

@@ -106,3 +106,41 @@ describe("绕过形态", () => {
     expect(s.map((x) => [x.rule, x.line])).toEqual([["sdk-imports-internal", 2]]);
   });
 });
+
+describe("checkDeps and @capybara-hq/plugin-client", () => {
+  it("plugin-client passes in package.json and source; kernel and other packages still fail", async () => {
+    const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "deps-client-"));
+    try {
+      await mkdir(join(dir, "src"));
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "x",
+          dependencies: {
+            "@capybara-hq/plugin-client": "^0.1.0",
+            "@capybara-hq/plugin-sdk": "^0.1.0",
+            "@capybara-hq/kernel": "^0.1.0",
+          },
+        }),
+      );
+      await writeFile(
+        join(dir, "src/client.tsx"),
+        'import { useAccess } from "@capybara-hq/plugin-client";\nimport { k } from "@capybara-hq/kernel";\nimport { d } from "@capybara-hq/design";\nexport default [useAccess, k, d];\n',
+      );
+      const f = checkDeps([dir]);
+      expect(f.map((x) => `${x.rule}|${x.file.split("/").pop()}|${x.line}`).sort()).toEqual(
+        [
+          "plugin-imports-kernel|client.tsx|2",
+          "plugin-imports-kernel|client.tsx|3",
+          "plugin-imports-kernel|package.json|1",
+        ].sort(),
+      );
+      expect(f.some((x) => x.message.includes("plugin-client in"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

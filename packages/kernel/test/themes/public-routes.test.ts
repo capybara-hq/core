@@ -1,9 +1,13 @@
 import { sanitizeThemeSvg, THEME_TOKENS } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { THEME_CSS_REVISION } from "../../src/themes/theme-state.js";
 import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { clearThemeLevels, setThemeScope, writeUiTheme } from "./theme-env.js";
+
+/** The render revision segment of a theme stylesheet URL. */
+const REV = `r${THEME_CSS_REVISION}`;
 
 /**
  * Themes spec §8-§9 (plan Task 9): a theme version's stylesheet and assets, and the platform
@@ -52,15 +56,15 @@ describe("theme delivery routes", () => {
     const bytes = await pluginTgz({
       manifest: { name: "neon" },
       files: {
-        "themes/night-city.json": JSON.stringify({
-          name: { en: "Night City", zh: "夜之城" },
+        "themes/neon-grid.json": JSON.stringify({
+          name: { en: "Neon Grid", zh: "霓虹网格" },
           schemes: {
             dark: {
               color: { bg: "#05070D", panel: "#0A0E18", accent: "#FCE300", "on-accent": "#141200" },
             },
           },
           fonts: [{ family: "MiSans", file: "./fonts/MiSans.woff2", weight: 400, role: "prose" }],
-          logo: { mark: "./brand/logo.svg", wordmark: "NIGHT CITY", favicon: "./brand/icon.png" },
+          logo: { mark: "./brand/logo.svg", wordmark: "NEON GRID", favicon: "./brand/icon.png" },
         }),
         "fonts/MiSans.woff2": FONT,
         "brand/logo.svg": LOGO,
@@ -78,7 +82,7 @@ describe("theme delivery routes", () => {
   });
 
   it("GET theme.css: the stylesheet without a session, immutable", async () => {
-    const r = await anon(`/api/v1/themes/${id}/1/theme.css`);
+    const r = await anon(`/api/v1/themes/${id}/1/${REV}/theme.css`);
     expect(r.statusCode, r.body).toBe(200);
     expect(r.headers["content-type"]).toBe("text/css; charset=utf-8");
     expect(r.headers["cache-control"]).toBe(IMMUTABLE);
@@ -90,11 +94,29 @@ describe("theme delivery routes", () => {
     expect(r.body).toContain('--cb-font-prose: "MiSans", ');
   });
 
+  it("the stylesheet URL carries the render revision; the URL without one is not served", async () => {
+    // THEME_CSS_REVISION 2: the stylesheet became one `@layer theme` block (client extensions
+    // spec §7.2). A browser holding the revision-less URL cached (immutable) has the unlayered
+    // format; the layered output never answers that URL, least of all with an immutable cache.
+    await setThemeScope(env, id, "all");
+    await writeUiTheme(env, id);
+    const ref = (await anon("/api/v1/platform/theme")).json() as { cssUrl: string };
+    expect(ref.cssUrl).toBe(`/api/v1/themes/${id}/1/r${THEME_CSS_REVISION}/theme.css`);
+    const current = await anon(ref.cssUrl);
+    expect(current.statusCode).toBe(200);
+    expect(current.headers["cache-control"]).toBe(IMMUTABLE);
+    expect(current.body.startsWith("@layer theme {")).toBe(true);
+    const old = await anon(`/api/v1/themes/${id}/1/theme.css`);
+    expect(old.statusCode).toBe(404);
+    expect(old.headers["cache-control"]).not.toBe(IMMUTABLE);
+    expect(old.body).not.toContain("@layer theme");
+  });
+
   it("a database row changed after import renders without the tampered value", async () => {
     await sql`UPDATE capybara.platform_theme_versions
       SET definition = jsonb_set(definition, '{schemes,dark,color,bg}', '"#000;}x{"')
       WHERE theme_id = ${id}`.execute(env.db);
-    const r = await anon(`/api/v1/themes/${id}/1/theme.css`);
+    const r = await anon(`/api/v1/themes/${id}/1/${REV}/theme.css`);
     expect(r.statusCode).toBe(200);
     expect(r.body).not.toContain("x{");
     expect(r.body).toContain(`--cb-bg: ${THEME_TOKENS.color.bg.dark};`);
@@ -132,13 +154,18 @@ describe("theme delivery routes", () => {
 
   it("unknown theme, version or file -> 404 theme.not_found", async () => {
     for (const url of [
-      `/api/v1/themes/00000000-0000-0000-0000-000000000000/1/theme.css`,
-      `/api/v1/themes/not-a-uuid/1/theme.css`,
-      `/api/v1/themes/${id}/2/theme.css`,
-      `/api/v1/themes/${id}/abc/theme.css`,
-      `/api/v1/themes/${id}/99999999999999999999/theme.css`,
+      `/api/v1/themes/00000000-0000-0000-0000-000000000000/1/${REV}/theme.css`,
+      `/api/v1/themes/not-a-uuid/1/${REV}/theme.css`,
+      `/api/v1/themes/${id}/2/${REV}/theme.css`,
+      `/api/v1/themes/${id}/abc/${REV}/theme.css`,
+      `/api/v1/themes/${id}/99999999999999999999/${REV}/theme.css`,
+      // Only the current render revision is served: an older one promised another format, a
+      // later one is a newer replica's URL
+      `/api/v1/themes/${id}/1/r${THEME_CSS_REVISION - 1}/theme.css`,
+      `/api/v1/themes/${id}/1/r${THEME_CSS_REVISION + 1}/theme.css`,
+      `/api/v1/themes/${id}/1/2/theme.css`,
       `/api/v1/themes/${id}/1/assets/fonts%2FOther.woff2`,
-      `/api/v1/themes/${id}/1/assets/themes%2Fnight-city.json`,
+      `/api/v1/themes/${id}/1/assets/themes%2Fneon-grid.json`,
       `/api/v1/themes/${id}/1/assets/..%2F..%2Fsecret.png`,
       `/api/v1/themes/${id}/2/assets/fonts%2FMiSans.woff2`,
     ]) {
@@ -154,7 +181,7 @@ describe("theme delivery routes", () => {
       .set({ deleted_at: new Date() })
       .where("id", "=", id)
       .execute();
-    expect((await anon(`/api/v1/themes/${id}/1/theme.css`)).statusCode).toBe(200);
+    expect((await anon(`/api/v1/themes/${id}/1/${REV}/theme.css`)).statusCode).toBe(200);
     expect((await anon(`/api/v1/themes/${id}/1/assets/fonts%2FMiSans.woff2`)).statusCode).toBe(200);
   });
 
@@ -173,10 +200,10 @@ describe("theme delivery routes", () => {
       id,
       version: "1",
       singleScheme: "dark",
-      cssUrl: `/api/v1/themes/${id}/1/theme.css`,
+      cssUrl: `/api/v1/themes/${id}/1/${REV}/theme.css`,
       logo: {
         markUrl: `/api/v1/themes/${id}/1/assets/brand%2Flogo.svg`,
-        wordmark: "NIGHT CITY",
+        wordmark: "NEON GRID",
         faviconUrl: `/api/v1/themes/${id}/1/assets/brand%2Ficon.png`,
       },
     });

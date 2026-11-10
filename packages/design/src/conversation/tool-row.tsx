@@ -388,6 +388,7 @@ export function ToolRow({
         <div
           className="cb-tool-row"
           data-part="tool-row"
+          data-cap-part="tool-row"
           data-status={row.status}
           data-waiting={waiting ? row.waiting : undefined}
           data-linked="true"
@@ -418,6 +419,7 @@ export function ToolRow({
           type="button"
           className="cb-tool-row"
           data-part="tool-row"
+          data-cap-part="tool-row"
           data-status={row.status}
           data-waiting={waiting ? row.waiting : undefined}
           aria-expanded={isOpen}
@@ -430,6 +432,7 @@ export function ToolRow({
         <div
           className="cb-tool-row"
           data-part="tool-row"
+          data-cap-part="tool-row"
           data-status={row.status}
           data-waiting={waiting ? row.waiting : undefined}
         >

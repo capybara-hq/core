@@ -1,0 +1,8 @@
+{
+  "name": "@capybara-hq/plugin-fixture-bootstrap-client-code",
+  "version": "1.2.3",
+  "private": true,
+  "description": "Fixture: a plugin with client code that a bootstrap entry must not pin",
+  "license": "Apache-2.0",
+  "type": "module"
+}

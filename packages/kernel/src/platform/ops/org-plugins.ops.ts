@@ -1,8 +1,10 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { AppearanceService } from "../../catalog/appearance.service.js";
 import { CatalogScopeService } from "../../catalog/catalog-scope.service.js";
 import { PluginInstallPathParams } from "../../catalog/org-catalog.schemas.js";
 import { OrgCatalogService } from "../../catalog/org-catalog.service.js";
+import { OrgExtensionParams } from "../../catalog/org-extension.schemas.js";
 import { OrgPluginUploads } from "../../catalog/org-plugin-uploads.js";
 import {
   OrgOwnedDeleteBody,
@@ -13,12 +15,13 @@ import {
 import { OwnedItems } from "../../catalog/owned-items.js";
 import { PluginInstaller, type PluginInstallView } from "../../catalog/plugin-install.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { reviewBrief } from "./catalog-admin.ops.js";
+import { appearanceSummary, reviewBrief } from "./catalog-admin.ops.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-import { named } from "./summary.js";
+import { localized, named, orElse } from "./summary.js";
 
 const InstallId = PluginInstallPathParams.shape.installId.max(100);
 /** An org-owned plugin's catalog item id (`:id` of the owned-plugins routes). */
@@ -52,7 +55,25 @@ export class OrgPluginsOperations implements OnModuleInit {
     @Inject(OwnedItems) private readonly owned: OwnedItems,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(AppearanceService) private readonly appearance: AppearanceService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
+
+  /** The display name of the live plugin of `extension`, or the name when it cannot be read. */
+  private pluginNames(extension: string): Promise<{ zh: string; en: string }> {
+    return orElse(
+      async () => {
+        const row = await this.kdb.db
+          .selectFrom("catalog_items")
+          .select("display_name")
+          .where("name", "=", extension)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        return localized(row?.display_name, extension);
+      },
+      { zh: named(extension), en: named(extension) },
+    );
+  }
 
   /** The org's own live plugin `id`, or null (another org's, a platform one, deleted, unknown). */
   private async ownedItem(orgId: string, id: string) {
@@ -330,6 +351,66 @@ export class OrgPluginsOperations implements OnModuleInit {
           });
           return { withdrawn: input.itemId };
         },
+      }),
+      defineOperation({
+        id: "plugins.apply-appearance",
+        description:
+          "Apply a plugin's suggested appearance in this org (org admins; the 扩展 page's 应用此插件的外观), for a plugin whose extension is on here: in one step, its theme becomes the org's default theme (whether members may pick their own stays as it is) and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the org's arrangement. The card shows exactly what changes; a theme that is not on in the org refuses the whole call, a component that is not available is skipped. Asked every time, never remembered.",
+        input: z.object({ extension: OrgExtensionParams.shape.extension }).strict(),
+        example: { extension: "theme-cyberpunk" },
+        authz: { orgAction: "org.update" },
+        mirrors: ["POST /api/v1/orgs/:orgId/extensions/:extension/appearance"],
+        // the route's dry run is this operation's card and precheck, never a confirmed call
+        omits: ["dryRun"],
+        confirm: "org",
+        rememberable: false,
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension with extensions.list: it must be on in this org and its plugin must suggest an appearance.",
+          },
+          {
+            code: "theme.not_available",
+            next: {
+              orgAdmin:
+                "The plugin's theme is not on in this org: switch it on in the org's appearance settings on the web, or ask the super admin to offer it to this org, then apply again.",
+              member: "Ask an org admin to switch the plugin's theme on in this org first.",
+            },
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.appearance.apply(
+              { orgId: ctx.orgId },
+              i.extension,
+              { accountId: ctx.actorAccountId },
+              true,
+            ),
+          ),
+        summary: async (i, ctx) => {
+          const [n, r] = await Promise.all([
+            this.pluginNames(i.extension),
+            this.appearance.apply(
+              { orgId: ctx.orgId },
+              i.extension,
+              { accountId: ctx.actorAccountId },
+              true,
+            ),
+          ]);
+          const theme =
+            r.theme && localized(await this.themes.nameIn(ctx.orgId, r.theme.to), r.theme.to);
+          return appearanceSummary("org", n, r, theme);
+        },
+        run: async (input, ctx) =>
+          this.appearance.apply(
+            { orgId: ctx.orgId },
+            input.extension,
+            {
+              accountId: ctx.actorAccountId,
+              auditDetail: viaAgent("plugins.apply-appearance", ctx),
+            },
+            false,
+          ),
       }),
     ]);
   }
