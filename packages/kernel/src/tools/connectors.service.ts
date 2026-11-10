@@ -23,6 +23,7 @@ import {
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
+import type { WriteActor } from "../identity/write-actor.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -357,7 +358,7 @@ export class ConnectorsService {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ToolDrift) private readonly drift: ToolDrift,
     /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
-    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lock" | "lockAndAuthorize">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Setup guides of connector templates (spec 2026-11-09-setup-guides-v2-design.md §11). */
     @Inject(PluginGuides)
@@ -1453,6 +1454,66 @@ export class ConnectorsService {
       },
     });
     return this.detail(t, orgId, connectorId, actorAccountId);
+  }
+
+  /**
+   * The org id of a live connector of a live org (the platform paths address a connector by its
+   * global id); else `connector.not_found`.
+   */
+  private async liveOrgOf(connectorId: string): Promise<string> {
+    const r = await this.db
+      .selectFrom("connectors as c")
+      .innerJoin("orgs as o", "o.id", "c.org_id")
+      .select("c.org_id")
+      .where("c.id", "=", connectorId)
+      .where("c.deleted_at", "is", null)
+      .where("o.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!r) throw notFound();
+    return r.org_id;
+  }
+
+  /**
+   * Disables or enables a connector on the platform's behalf (a super admin who need not be a
+   * member of the org; the caller checks the super admin): org row lock, the status update, audit
+   * `connector.updated` with `via: "platform"`.
+   */
+  @Transactional()
+  async setStatusAsPlatform(
+    connectorId: string,
+    status: "active" | "disabled",
+    actor: WriteActor,
+  ): Promise<void> {
+    const t = this.db;
+    const orgId = await this.liveOrgOf(connectorId);
+    await this.orgLock.lock(orgId);
+    const app = await this.row(t, orgId, connectorId, true);
+    await t
+      .updateTable("connectors")
+      .set({ status, updated_at: sql`now()` })
+      .where("id", "=", connectorId)
+      .execute();
+    await audit(t, {
+      actorAccountId: actor.accountId,
+      ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
+      orgId,
+      action: "connector.updated",
+      target: connectorId,
+      detail: { status: { from: app.status, to: status }, via: "platform" },
+    });
+  }
+
+  /**
+   * Deletes a connector on the platform's behalf (see {@link setStatusAsPlatform}): org row lock,
+   * then {@link removeIn} with `via: "platform"` in the audit detail.
+   */
+  @Transactional()
+  async removeAsPlatform(connectorId: string, actor: WriteActor): Promise<void> {
+    const orgId = await this.liveOrgOf(connectorId);
+    await this.orgLock.lock(orgId);
+    await this.removeIn(orgId, connectorId, actor.accountId, actor.tokenId, undefined, {
+      via: "platform",
+    });
   }
 
   /** 软删除，并删除该连接器的全部凭据（`connectors.manage`）。 */
