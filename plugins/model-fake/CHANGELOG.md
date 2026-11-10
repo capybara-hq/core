@@ -1,5 +1,14 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- fa555e9: New script directive `slowtool:<ms>:<name>:<json>`: waits, then calls the tool (a message can arrive
+  while the step streams).
+- Updated dependencies [7423fa7]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.13
+
 ## 0.1.0-rc.12
 
 ### Patch Changes

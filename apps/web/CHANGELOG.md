@@ -1,5 +1,15 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.18
+
+### Patch Changes
+
+- d7476f2: While a run waits on your question, the composer says a message skips it (else that the message
+  waits for the item above); a question skipped by a message reads 已跳过：直接回复了消息, a cancelled one
+  已取消 (no longer 已跳过), and the trajectory viewer shows a skipped question with its message's seq.
+- Updated dependencies [d7476f2]
+  - @capybara-hq/design@0.2.0-rc.4
+
 ## 0.1.0-rc.17
 
 ### Patch Changes
