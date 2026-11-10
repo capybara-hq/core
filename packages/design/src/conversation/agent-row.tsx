@@ -138,6 +138,7 @@ export function AgentRow({
       type="button"
       className="cb-agent-chip"
       data-part="agent-chip"
+      data-cap-part="agent-chip"
       data-agent={a.id}
       aria-pressed={a.id === selected}
       title={a.description || undefined}

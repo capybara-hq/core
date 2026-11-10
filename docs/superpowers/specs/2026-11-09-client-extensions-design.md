@@ -607,8 +607,9 @@ interface SuggestedAppearance {
 | `title-bar` | the conversation title bar | design `conversation/` (title bar) | — |
 | `page-header` | a page's header | design `shell/page-header.tsx` | — |
 | `thread` | the conversation stream | design `conversation/` (thread) | `aria-busy` |
-| `message.user` | a person's message | design `conversation/bubble.tsx` | — |
-| `message.assistant` | an assistant turn | design `conversation/` | — |
+| `message.user` | a person's message (the full-width row) | design `conversation/bubble.tsx` | — |
+| `message.user.bubble` | the bubble of a person's message, inside the `message.user` row | design `conversation/bubble.tsx` | — |
+| `message.assistant` | an assistant turn | web `conversation/Thread.tsx` | `aria-busy` while its text streams |
 | `tool-row` | a tool call line | design `conversation/` | `aria-expanded` |
 | `composer` | the composer box | design `conversation/composer.tsx` | `aria-busy` |
 | `properties-panel` | the conversation properties panel | design `conversation/` | — |
@@ -620,6 +621,17 @@ interface SuggestedAppearance {
 | `card` | `Card`, `InlineCard`, `ObjectCard` | design `layout/`, `display/` | — |
 | `input` | text inputs, textareas, selects | design `controls/inputs.tsx` | `disabled` |
 | `dialog` | `Dialog`, `Sheet` | design `overlays/` | — |
+| `code-block` | a `CodeBlock` (Markdown code, setup guides, diffs) | design `display/chat.tsx` | — |
+| `menu` | a `Menu`, submenu, `Popover`, the composer's menus | design `overlays/menus.tsx`, `conversation/menu.tsx` | — |
+| `segmented` | a `Segmented` control (its segments are radios, `aria-checked`) | design `display/tabs.tsx` | — |
+| `stat-card` | one card of `StatCards` | design `display/stat-cards.tsx` | — |
+| `switch` | a `Switch` | design `controls/toggles.tsx` | `aria-checked`, `disabled` |
+| `switch.knob` | the knob inside a `switch` | design `controls/toggles.tsx` | — (follow the switch's state) |
+| `org-avatar` | the org's initial block in the org switcher | design `shell/sidebar.tsx` | — |
+| `agent-chip` | an agent chip of the new conversation's agents row | design `conversation/agent-row.tsx` | `aria-pressed` |
+
+  Added after the theme plugin round (2026-11-10): themes style only what carries a part, so
+  these were added on their owning elements; no existing part was renamed.
 
   A part attribute may hold several names separated by spaces; plugin CSS selects with
   `[data-cap-part~="button.primary"]`. The builder fixes the exact owner file of each row while

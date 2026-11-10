@@ -9,6 +9,7 @@ export type UiPartName =
   | "page-header"
   | "thread"
   | "message.user"
+  | "message.user.bubble"
   | "message.assistant"
   | "tool-row"
   | "composer"
@@ -20,7 +21,15 @@ export type UiPartName =
   | "button.primary"
   | "card"
   | "input"
-  | "dialog";
+  | "dialog"
+  | "code-block"
+  | "menu"
+  | "segmented"
+  | "stat-card"
+  | "switch"
+  | "switch.knob"
+  | "org-avatar"
+  | "agent-chip";
 
 /** Every part name plugin CSS and components may rely on. */
 export const UI_PART_NAMES: readonly UiPartName[] = [
@@ -32,6 +41,7 @@ export const UI_PART_NAMES: readonly UiPartName[] = [
   "page-header",
   "thread",
   "message.user",
+  "message.user.bubble",
   "message.assistant",
   "tool-row",
   "composer",
@@ -44,4 +54,12 @@ export const UI_PART_NAMES: readonly UiPartName[] = [
   "card",
   "input",
   "dialog",
+  "code-block",
+  "menu",
+  "segmented",
+  "stat-card",
+  "switch",
+  "switch.knob",
+  "org-avatar",
+  "agent-chip",
 ];

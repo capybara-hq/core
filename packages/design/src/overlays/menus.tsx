@@ -78,6 +78,7 @@ export function Popover({
       <RP.Portal>
         <RP.Content
           className="cb-popover"
+          data-cap-part="menu"
           sideOffset={4}
           align="start"
           collisionPadding={COLLISION_PADDING}
@@ -125,6 +126,7 @@ export function Menu({
       <RM.Portal>
         <RM.Content
           className="cb-menu"
+          data-cap-part="menu"
           sideOffset={sideOffset}
           align="start"
           collisionPadding={COLLISION_PADDING}
@@ -183,6 +185,7 @@ function MenuItems({ items }: { items: MenuItem[] }) {
           <RM.Portal>
             <RM.SubContent
               className="cb-menu"
+              data-cap-part="menu"
               sideOffset={4}
               alignOffset={-5}
               collisionPadding={COLLISION_PADDING}

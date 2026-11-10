@@ -248,6 +248,7 @@ export function Segmented({
       {...a11y}
       className="cb-segmented"
       data-part="segmented"
+      data-cap-part="segmented"
       data-density={step}
       data-fill={fill ? "true" : undefined}
       role="radiogroup"

@@ -294,6 +294,7 @@ export function ConvMenu({
   ) : (
     <RM.Content
       className="cb-cmenu"
+      data-cap-part="menu"
       data-size={size === "default" ? undefined : size}
       side={side}
       avoidCollisions={!inline}
@@ -500,6 +501,7 @@ function AnchoredContent({
     <RM.Content
       ref={ref}
       className="cb-cmenu"
+      data-cap-part="menu"
       data-anchored="true"
       {...(inline ? { "data-inline": "true" } : {})}
       side={side}

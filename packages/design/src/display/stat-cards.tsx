@@ -47,13 +47,19 @@ function StatCard({ metric: m }: { metric: MetricProps }) {
   );
   if (m.href === undefined) {
     return (
-      <div className="cb-stat-card" data-part="stat-card">
+      <div className="cb-stat-card" data-part="stat-card" data-cap-part="stat-card">
         {body}
       </div>
     );
   }
   return (
-    <Link href={m.href} className="cb-stat-card" data-part="stat-card" data-link="true">
+    <Link
+      href={m.href}
+      className="cb-stat-card"
+      data-part="stat-card"
+      data-cap-part="stat-card"
+      data-link="true"
+    >
       {body}
       <LinkPendingMark />
     </Link>
