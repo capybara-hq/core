@@ -934,7 +934,9 @@ interface ClientExtensionsResponse {
   exception is platform-scope client code: `platform.page` components, loaded only on their own
   page `/admin/p/<plugin>/<id>` (the admin set of §9.2 is read by that page alone). The admin
   console stays the official UI, so a broken decoration can never stop the super admin from
-  switching it off.
+  switching it off. It therefore has the platform look by design: the L0 theme's tokens and logo,
+  never a plugin's brand styling (a stylized wordmark, HUD parts) or its overlay, even while the
+  workspace beside it wears them (browser review F07, 2026-11-10: decided, no change).
 - **Crossing the boundary**: modules cannot be unloaded, so the loaded set is fixed for a
   document. A client navigation to a page whose client set differs (workspace ↔ admin, into or out
   of a `/admin/p/<plugin>/<id>` page with client code, or to another org), while a client extension
