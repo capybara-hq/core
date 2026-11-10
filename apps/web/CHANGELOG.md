@@ -1,5 +1,38 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.20
+
+### Patch Changes
+
+- 6ca55be: Browser review polish: plain links in tables draw in ink instead of the browser's link colour;
+  a disabled ghost or icon button no longer gains a border; page header actions sit on the title
+  line on every page; the status bar keeps 「第 N 轮 · 已用 …」 whole and shrinks the prompt first;
+  the thread fades at its scroll edges; context lines never break inside a word; tab rows that do
+  not fit fade where tabs are hidden; Markdown code blocks get a copy button and Markdown tables row
+  lines and room; the extension tables' state, switch and 副本 columns fit their content (the 副本
+  cells drop the repeated word). One localized duration format, `formatDuration` (replacing
+  `runDuration`, `subagentDuration` and `elapsed`), so the status bar and the run row agree.
+- b4816fc: Component lists and details carry `descriptionZh` (a theme's or skill's `description.zh`), and the
+  web shows a theme's, skill's or agent template's description in the UI language (the org 外观
+  page, the admin component cards and details).
+- 6a4ffff: New UI parts for theme plugins: `message.user.bubble`, `code-block`, `menu`, `segmented`,
+  `stat-card`, `switch` (`aria-checked`) with `switch.knob`, `org-avatar` and `agent-chip`
+  (`aria-pressed`); `message.assistant` promises `aria-busy` while its text streams, and the web sets
+  it on the live reply. `UiPartState` gains `aria-checked` and `aria-pressed`.
+- Updated dependencies [6ca55be]
+- Updated dependencies [6a4ffff]
+  - @capybara-hq/design@0.2.0-rc.5
+
+## 0.1.0-rc.19
+
+### Minor Changes
+
+- a49c72e: Client code can do something once per sign-in: `useSignIn()` and `ClientApi.signIn` carry an
+  opaque id that stays the same for one sign-in and changes on the next one (a different string per
+  plugin, not a secret between plugins).
+  The kernel's client shell reads return it per item (`signInId`, a keyed hash of the session, never
+  the session id) and the web host hands it to plugins; the fake host takes `signInId`.
+
 ## 0.1.0-rc.18
 
 ### Patch Changes

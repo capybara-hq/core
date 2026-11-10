@@ -333,7 +333,12 @@ function block(
       );
     case "code":
       return withTail(
-        <CodeBlock key={key} text={node.value} {...(node.lang ? { language: node.lang } : {})} />,
+        <CodeBlock
+          key={key}
+          text={node.value}
+          copyable
+          {...(node.lang ? { language: node.lang } : {})}
+        />,
         tail,
         key,
       );

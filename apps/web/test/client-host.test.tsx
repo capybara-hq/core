@@ -39,6 +39,7 @@ const item = (over: Partial<ClientExtensionItem> = {}): ClientExtensionItem => (
   entry: { url: `/api/v1/client/fake-client/${BUILD}/client.mjs`, integrity: "sha384-e" },
   styles: [],
   components: [{ id: "hud", slot: "conversation.properties.section" }],
+  signInId: "sign-in-1",
   ...over,
 });
 const setOf = (...items: ClientExtensionItem[]): ClientExtensionsResponse => ({
@@ -625,8 +626,10 @@ describe("ClientHost", () => {
     ClientHost.load = vi.fn(async () =>
       ext({
         events: {
-          "run.started": (e: CapybaraEvent, api: { assetUrl(p: string): string; locale: string }) =>
-            seen.push([e.type, api.locale, api.assetUrl("sfx/boot.ogg")]),
+          "run.started": (
+            e: CapybaraEvent,
+            api: { assetUrl(p: string): string; locale: string; signIn: { id: string } },
+          ) => seen.push([e.type, api.locale, api.assetUrl("sfx/boot.ogg"), api.signIn.id]),
           "run.failed": () => {
             throw new Error("listener broke");
           },
@@ -642,7 +645,7 @@ describe("ClientHost", () => {
     });
     await flush();
     expect(seen).toEqual([
-      ["run.started", "en", `/api/v1/client/fake-client/${BUILD}/assets/sfx/boot.ogg`],
+      ["run.started", "en", `/api/v1/client/fake-client/${BUILD}/assets/sfx/boot.ogg`, "sign-in-1"],
     ]);
     expect(reports()).toEqual([
       expect.objectContaining({ kind: "event", message: "listener broke" }),
@@ -657,7 +660,7 @@ describe("ClientHost", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("a component's host api follows the run state and client events; the hooks read it", async () => {
+  it("a component's host api follows the run state, the sign-in and client events; the hooks read it", async () => {
     ClientHost.load = vi.fn(async () => ext());
     const events: string[] = [];
     let api: ReturnType<typeof useHostServices> | null = null;
@@ -685,10 +688,11 @@ describe("ClientHost", () => {
       const h = PLUGIN_CLIENT as Record<string, (...a: unknown[]) => unknown>;
       const run = h.useRunState?.() as { state: string; conversationId: string | null };
       const access = h.useAccess?.() as { role: string; atLeast(r: string): boolean };
+      const signIn = h.useSignIn?.() as { id: string };
       h.useCapybaraEvents?.((e: CapybaraEvent) => events.push(e.type), ["tool.started"]);
       useContext(HostContext);
       return (
-        <output data-testid="hooks">{`${run.state}:${run.conversationId} ${access.role} ${access.atLeast("admin")}`}</output>
+        <output data-testid="hooks">{`${run.state}:${run.conversationId} ${access.role} ${access.atLeast("admin")} ${signIn.id}`}</output>
       );
     }
     function Publisher({ state }: { state: "running" | "idle" }) {
@@ -708,9 +712,9 @@ describe("ClientHost", () => {
     client.setQueryData(meQuery().queryKey, ME);
     const view = renderPage(tree("idle"), { client });
     await flush();
-    expect(screen.getByTestId("hooks").textContent).toBe("idle:c9 owner true");
+    expect(screen.getByTestId("hooks").textContent).toBe("idle:c9 owner true sign-in-1");
     view.rerender(pageElement(tree("running")));
-    expect(screen.getByTestId("hooks").textContent).toBe("running:c9 owner true");
+    expect(screen.getByTestId("hooks").textContent).toBe("running:c9 owner true sign-in-1");
     expect(api).not.toBeNull();
     const base = { conversationId: "c9", seq: 2, at: "2026-11-09T00:00:00Z" };
     await act(async () => {
@@ -719,6 +723,45 @@ describe("ClientHost", () => {
     });
     await flush();
     expect(events).toEqual(["tool.started"]);
+  });
+
+  it("each plugin gets its own sign-in id, in its components and its listeners", async () => {
+    const heard: string[] = [];
+    ClientHost.load = vi.fn(async (url: string) => {
+      const plugin = url.includes("/alpha/") ? "alpha" : "beta";
+      return ext({
+        name: plugin,
+        components: {},
+        events: {
+          "run.started": (_e: CapybaraEvent, api: { signIn: { id: string } }) =>
+            heard.push(`${plugin}:${api.signIn.id}`),
+        },
+      });
+    });
+    function Ids() {
+      const a = useHostServices("alpha", null).signIn.id;
+      const b = useHostServices("beta", null).signIn.id;
+      return <output data-testid="ids">{`${a} ${b}`}</output>;
+    }
+    const entry = (plugin: string) => ({
+      url: `/api/v1/client/${plugin}/${BUILD}/client.mjs`,
+      integrity: "sha384-e",
+    });
+    const a = item({ plugin: "alpha", entry: entry("alpha"), components: [], signInId: "id-a" });
+    const b = item({ plugin: "beta", entry: entry("beta"), components: [], signInId: "id-b" });
+    renderPage(host(setOf(a, b), { children: <Ids /> }));
+    await flush();
+    expect(screen.getByTestId("ids").textContent).toBe("id-a id-b");
+    await act(async () => {
+      emitClientEvent({
+        type: "run.started",
+        conversationId: "c1",
+        seq: 1,
+        at: "2026-11-10T00:00:00Z",
+      });
+    });
+    await flush();
+    expect(heard.sort()).toEqual(["alpha:id-a", "beta:id-b"]);
   });
 
   it("the hooks throw outside a host-rendered component", () => {

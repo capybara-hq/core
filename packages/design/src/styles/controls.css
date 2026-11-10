@@ -335,11 +335,15 @@
   color: var(--cb-on-accent);
 }
 
+/* Disabled never adds a border (spec §6.1): a ghost or icon button stays borderless, default and
+   danger keep their line; only secondary's accent border drops to line. */
 .cb-btn:disabled {
   color: var(--cb-disabled);
-  border-color: var(--cb-line);
   background: transparent;
   cursor: not-allowed;
+}
+.cb-btn[data-variant="secondary"]:disabled {
+  border-color: var(--cb-line);
 }
 /* An icon button's icon is already muted: disabled, it drops to faint so it reads as off (spec §6.1). */
 .cb-icon-btn:disabled {

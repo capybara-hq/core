@@ -60,12 +60,24 @@ export type CapybaraEvent =
 
 export type CapybaraEventOf<K extends CapybaraEventType> = Extract<CapybaraEvent, { type: K }>;
 
+/**
+ * The viewer's sign-in as this plugin sees it. `id` is opaque: the same for one sign-in (every
+ * page and tab of it, across token refreshes) and new after the next sign-in, so client code can
+ * do something once per sign-in (store the last id it acted on). It is never empty, is no
+ * credential and reveals nothing else about the session. It is a different string per plugin, but
+ * that is no isolation boundary: client code runs with full trust and can read other plugins' ids.
+ */
+export interface SignIn {
+  id: string;
+}
+
 /** What `events` listeners get (no React context there). */
 export interface ClientApi {
   locale: "zh" | "en";
   reducedMotion: boolean;
   storage: ClientStorage;
   assetUrl(path: string): string;
+  signIn: SignIn;
 }
 
 /** Props every component receives, plus its slot's own. */

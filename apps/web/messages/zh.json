@@ -3629,9 +3629,9 @@
         "runningOrgsConfigure": "运行中 · 组织需各自配置（{count}）"
       },
       "replicas": {
-        "consistent": "副本一致 {ok}/{n}",
-        "diverged": "副本不一致 {ok}/{n}",
-        "none": "无副本上报"
+        "consistent": "一致 {ok}/{n}",
+        "diverged": "不一致 {ok}/{n}",
+        "none": "未上报"
       },
       "uiDropped": {
         "title": "未生效的界面",

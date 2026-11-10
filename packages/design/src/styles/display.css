@@ -13,6 +13,32 @@
 .cb-tabs::-webkit-scrollbar {
   display: none;
 }
+/* The scroll hint (spec §6.4): an edge with tabs scrolled out of view fades over space.6, so a
+   row that does not fit (a phone) shows there is more to swipe to. */
+.cb-tabs[data-fade-end="true"] {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - var(--cb-space-6)), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - var(--cb-space-6)), transparent);
+}
+.cb-tabs[data-fade-start="true"] {
+  -webkit-mask-image: linear-gradient(to left, black calc(100% - var(--cb-space-6)), transparent);
+  mask-image: linear-gradient(to left, black calc(100% - var(--cb-space-6)), transparent);
+}
+.cb-tabs[data-fade-start="true"][data-fade-end="true"] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--cb-space-6),
+    black calc(100% - var(--cb-space-6)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--cb-space-6),
+    black calc(100% - var(--cb-space-6)),
+    transparent
+  );
+}
 .cb-tab {
   display: inline-flex;
   flex: none;

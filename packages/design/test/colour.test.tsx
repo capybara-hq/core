@@ -187,11 +187,13 @@ describe("dark theme legibility", () => {
     }
   });
 
-  it("disabled controls use the disabled token with a visible line border", () => {
+  it("disabled controls use the disabled token; a bordered one keeps its line border", () => {
     const css = style("controls.css");
     const btn = rule(css, ".cb-btn:disabled");
     expect(btn).toContain("color: var(--cb-disabled)");
-    expect(btn).toContain("border-color: var(--cb-line)");
+    // disabled never adds a border (F12): a default button keeps its own line, a ghost stays bare
+    expect(btn).not.toContain("border-color");
+    expect(rule(css, ".cb-btn")).toContain("border: 1px solid var(--cb-line)");
     const field = rule(
       css,
       '.cb-input[data-state="disabled"],\n.cb-select[data-state="disabled"],\n.cb-textarea[data-state="disabled"]',

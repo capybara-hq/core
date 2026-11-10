@@ -2539,7 +2539,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.13";
+export const SDK_VERSION = "0.1.0-rc.14";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3290,7 +3290,7 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog"];
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip"];
 
 // @public
 export const UI_PARTS: readonly UiPartSpec[];
@@ -3457,7 +3457,7 @@ export interface UiPartSpec {
 }
 
 // @public
-export type UiPartState = "aria-current" | "aria-selected" | "aria-expanded" | "aria-busy" | "disabled";
+export type UiPartState = "aria-current" | "aria-selected" | "aria-expanded" | "aria-busy" | "aria-checked" | "aria-pressed" | "disabled";
 
 // @public
 export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";

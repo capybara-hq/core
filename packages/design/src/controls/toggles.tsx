@@ -119,10 +119,16 @@ export function Switch({
       aria-label={label}
       className="cb-switch"
       data-part="switch"
+      data-cap-part="switch"
       data-state={checked ? "checked" : "unchecked"}
       onClick={() => onChange(!checked)}
     >
-      <span className="cb-switch-thumb" data-part="switch-knob" aria-hidden="true" />
+      <span
+        className="cb-switch-thumb"
+        data-part="switch-knob"
+        data-cap-part="switch.knob"
+        aria-hidden="true"
+      />
     </button>
   );
 }

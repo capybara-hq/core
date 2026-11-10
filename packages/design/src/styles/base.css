@@ -97,6 +97,19 @@ body {
 }
 /* biome-ignore-end lint/complexity/noImportantStyles: must beat the components' field sizes */
 
+/* A plain link (spec §6.5): a page's raw anchor in a design component (a DataTable cell, a
+   description) draws as a TextLink, never in the browser's link colours. Zero specificity: every
+   component's own link styles win. */
+:where(a:any-link) {
+  color: var(--cb-ink);
+  text-decoration-color: var(--cb-line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--cb-motion-hover);
+}
+:where(a:any-link:hover) {
+  text-decoration-color: var(--cb-ink);
+}
+
 /* A design link's pending navigation (spec §6.13, LinkPendingMark): a 2px accent underline along
    the link's bottom while the router's navigation to it is pending; it sweeps, and stays still
    under reduced motion. The link is positioned only while pending. */

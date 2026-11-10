@@ -3641,9 +3641,9 @@
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
       "replicas": {
-        "consistent": "Replicas in sync {ok}/{n}",
-        "diverged": "Replicas out of sync {ok}/{n}",
-        "none": "No replica reported"
+        "consistent": "In sync {ok}/{n}",
+        "diverged": "Out of sync {ok}/{n}",
+        "none": "None reported"
       },
       "uiDropped": {
         "title": "Interfaces not in effect",

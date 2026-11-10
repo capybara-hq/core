@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { Button, IconButton } from "../controls/button";
+import { formatDuration } from "../display/duration";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
@@ -17,7 +18,7 @@ import { useDesignLocale, useDesignT } from "../provider";
 import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
 import { useClock } from "./clock";
 import { Prose } from "./prose";
-import { type BackgroundTaskItem, type BackgroundTaskStatus, subagentDuration } from "./subagents";
+import type { BackgroundTaskItem, BackgroundTaskStatus } from "./subagents";
 import { fillCopy } from "./tool-copy";
 
 // The agent map (spec §6.16.28, agent map spec §9): a dialog over the conversation page whose
@@ -250,9 +251,10 @@ function TaskRows({ tasks, now }: { tasks: AgentMapBackground[]; now: number }):
           </span>
           <span className="cb-amap-task-name">{b.description}</span>
           <span className="cb-amap-task-time" data-part="agent-task-time">
-            {subagentDuration(
+            {formatDuration(
               (b.status === "running" ? now : (b.finishedAt ?? now)) - b.startedAt,
               locale,
+              { live: b.status === "running" },
             )}
           </span>
         </li>
@@ -310,7 +312,7 @@ export function AgentMapTree({
   const node = (n: AgentMapNode, depth: number): JSX.Element => {
     const meta = [
       n.model,
-      subagentDuration(n.durationMs, locale),
+      formatDuration(n.durationMs, locale),
       agentMapTokens(n.tokens, locale),
     ].join(" · ");
     const body = (
@@ -486,7 +488,7 @@ function useMeta(
     ]
       .filter((s) => s !== "")
       .join(" · "),
-    cost: [subagentDuration(node.durationMs, locale), agentMapTokens(node.tokens, locale)].join(
+    cost: [formatDuration(node.durationMs, locale), agentMapTokens(node.tokens, locale)].join(
       " · ",
     ),
   };
@@ -699,7 +701,7 @@ export function AgentDetail({
                     data-part="agent-call-clock"
                     aria-hidden="true"
                   >
-                    {subagentDuration(clock - c.startedAt, locale)}
+                    {formatDuration(clock - c.startedAt, locale, { live: true })}
                   </span>
                 ) : null}
               </li>

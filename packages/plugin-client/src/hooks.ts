@@ -6,7 +6,7 @@ import {
   PluginClientContextError,
   type ViewState,
 } from "./context.js";
-import type { CapybaraEvent, CapybaraEventType, ClientStorage, RunState } from "./types.js";
+import type { CapybaraEvent, CapybaraEventType, ClientStorage, RunState, SignIn } from "./types.js";
 
 function useHost(hook: string): HostContextValue {
   const host = useContext(HostContext);
@@ -81,4 +81,12 @@ export function useClientStorage(): ClientStorage {
 /** URL of a file under dist/client/assets/ of this plugin's build. */
 export function useAssetUrl(): (path: string) => string {
   return useHost("useAssetUrl").api.assetUrl;
+}
+
+/**
+ * The viewer's sign-in for this plugin: `id` stays the same for one sign-in and changes on the
+ * next one (once per sign-in: compare it with the id stored when the thing last ran).
+ */
+export function useSignIn(): SignIn {
+  return useHost("useSignIn").api.signIn;
 }
