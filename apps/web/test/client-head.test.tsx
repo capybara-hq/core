@@ -18,6 +18,7 @@ const SET: ClientExtensionsResponse = {
       entry: { url: `${BASE}/client.mjs`, integrity: "sha384-entry" },
       styles: [{ url: `${BASE}/styles/hud.css`, integrity: "sha384-style" }],
       components: [{ id: "hud", slot: "conversation.properties.section" }],
+      signInId: "s1",
     },
   ],
 };

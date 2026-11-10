@@ -23,6 +23,7 @@ const SET: ClientExtensionsResponse = {
       entry: { url: `/api/v1/client/fake-client/${BUILD}/client.mjs`, integrity: "sha384-e" },
       styles: [],
       components: [],
+      signInId: "s1",
     },
   ],
 };
