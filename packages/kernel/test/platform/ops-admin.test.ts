@@ -163,6 +163,7 @@ describe("registration and who may call", () => {
       "admin.agent-delete",
       "admin.agent-get",
       "admin.agents-list",
+      "admin.audit",
       "admin.connector-delete",
       "admin.connector-get",
       "admin.connector-set-status",
@@ -386,6 +387,29 @@ describe("admin and models", () => {
       via: "agent",
     });
     await run("admin.update-settings", { orgCreation: "anyone" });
+  });
+
+  it("admin.audit pages the platform-level audit log like GET /admin/audit, without detail", async () => {
+    const o = op("admin.audit");
+    expect(o.confirm).toBe("read");
+    expect(o.description).toContain("pass the returned next as params.after");
+    expect(availability(o, facts("owner")).ok).toBe(false);
+    const all = (await run("admin.audit", { limit: 100 })) as {
+      events: { id: string; action: string; viaAgent: boolean }[];
+      next: string | null;
+    };
+    // the deployment settings change through admin.update-settings above, by the agent
+    expect(all.events).toContainEqual(
+      expect.objectContaining({ action: "deployment.settings.updated", viaAgent: true }),
+    );
+    expect(JSON.stringify(all)).not.toContain('"detail"');
+    const one = (await run("admin.audit", { limit: 1 })) as typeof all;
+    expect(one.events).toEqual([all.events[0]]);
+    const after = (await run("admin.audit", { limit: 1, after: one.next })) as typeof all;
+    expect(after.events).toEqual([all.events[1]]);
+    // the same rows as the route
+    const http = await root({ method: "GET", url: "/api/v1/admin/audit?limit=100" });
+    expect(http.json()).toEqual(all);
   });
 
   it("admin.update-settings: theme.not_available says the default must be on in every org", () => {

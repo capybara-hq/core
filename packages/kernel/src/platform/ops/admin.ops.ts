@@ -1,6 +1,8 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { DeploymentSettingsBody, PurposeParams } from "../../admin/admin.schemas.js";
+import { AuditListQuery } from "../../admin/audit.schemas.js";
+import { PlatformAuditService } from "../../admin/platform-audit.service.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
@@ -67,6 +69,7 @@ export class AdminOperations implements OnModuleInit {
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
     @Inject(ThemesService) private readonly themes: ThemesService,
+    @Inject(PlatformAuditService) private readonly audit: PlatformAuditService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -100,6 +103,17 @@ export class AdminOperations implements OnModuleInit {
             accounts,
           };
         },
+      }),
+      defineOperation({
+        id: "admin.audit",
+        description:
+          "The platform-level audit log (super admin), newest first: deployment settings, accounts, marketplaces, catalog imports and scope, extensions, model prices and purposes, setup. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details, and never an org's own events. limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
+        input: AuditListQuery.strict(),
+        example: { limit: 20 },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/audit"],
+        confirm: "read",
+        run: (input) => this.audit.list(input),
       }),
       defineOperation({
         id: "admin.settings",
