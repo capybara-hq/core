@@ -42,7 +42,6 @@ export type AgentToolPolicy = "allow" | TightenedPolicy;
 export const BUILTIN_TOOLS = [
   "AskUserQuestion",
   "ReadToolOutput",
-  "SkillWrite",
   "Bash",
   "Read",
   "Write",

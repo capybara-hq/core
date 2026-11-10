@@ -73,7 +73,7 @@ const notFound = () => new ApiError("skill_change.not_found", "Skill change not 
  * Skill change requests of shared agents: reading, deciding and cancelling them. Skills are
  * registered through `AgentSkillsService` (the Platform operation `agents.register-skill`), not
  * written by a tool any more.
- * - `decide` (HTTP, the agent's current owner; Task 8 moves it to org admins): approve makes the version
+ * - `decide` (HTTP, the agent's current owner; decisions move to org admins): approve makes the version
  *   effective for every conversation (each writes a new snapshot when its next run starts); reject
  *   deletes the draft objects and the requesting conversation's catalog goes back to the current version.
  * State is in PG (the agent row lock serializes decisions of one agent), files in object storage
@@ -134,7 +134,7 @@ export class SkillChangesService {
     actorTokenId: string | undefined,
     agentId: string,
   ): Promise<{ updated: Selectable<SkillChangeRequestsTable>; revertSeq: number | null }> {
-    // 加锁顺序：：组织行（KEY SHARE）→ agent 行 → 申请行 → 会话行
+    // Lock order: org row (KEY SHARE) -> agent row -> request row -> conversation row
     await keyShareOrg(this.db, orgId);
     const agent = await this.db
       .selectFrom("agents")

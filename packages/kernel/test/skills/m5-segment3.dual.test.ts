@@ -235,7 +235,7 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
     return JSON.stringify(rebuilt.request.messages);
   }
 
-  it("共享 agent 写技能 → 负责人跨副本批准 → 另一对话下次运行生效；技能脚本复制进沙箱并执行", async () => {
+  it("the owner registers skill packages through the routes on alternating replicas, they take effect at once across replicas, and skill scripts are copied into the sandbox and run", async () => {
     const ag = await at("owner", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Fruit",

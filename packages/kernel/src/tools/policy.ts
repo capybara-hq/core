@@ -1,5 +1,4 @@
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -197,7 +196,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
           .onRef("agent_versions.agent_id", "=", "agents.id")
           .onRef("agent_versions.version", "=", "agents.current_version"),
       )
-      .select(["agent_versions.definition", "agents.visibility"])
+      .select(["agent_versions.definition"])
       .where("agents.id", "=", ctx.agentId)
       .executeTakeFirst();
     // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)

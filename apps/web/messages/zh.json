@@ -515,7 +515,6 @@
       "builtin": {
         "AskUserQuestion": "向用户提问",
         "ReadToolOutput": "读取存档的工具结果",
-        "SkillWrite": "编写技能",
         "Bash": "运行命令",
         "Read": "读取文件",
         "Write": "写入文件",

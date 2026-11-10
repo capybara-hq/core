@@ -371,14 +371,14 @@ describe("the agent page's sections with their own saves (agent profile design Â
     });
 
     await view.navigate("/agents/ag1?s=tools");
-    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.Deliver }));
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(2));
     expect(patches(calls)[1]).toEqual({
       definition: {
         ...base,
         // unticking a builtin that is on writes it off
-        disabledTools: [...saved.definition.disabledTools, { kind: "builtin", name: "SkillWrite" }],
+        disabledTools: [...saved.definition.disabledTools, { kind: "builtin", name: "Deliver" }],
       },
       expectedVersion: 1,
     });
@@ -412,7 +412,7 @@ describe("the agent page's sections with their own saves (agent profile design Â
     const calls = stubApi(routes());
     await renderEditAgent({ section: "tools" });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.Deliver }));
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
     const body = patches(calls)[0] as { definition: Record<string, unknown> };
@@ -523,7 +523,7 @@ describe("the agent page's sections with their own saves (agent profile design Â
     );
     await renderEditAgent({ section: "tools" });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.Deliver }));
     await user.click(save());
     await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
     expect(hint()).toBeNull();

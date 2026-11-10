@@ -211,13 +211,13 @@ describe("agent page Tools section: everything on by default, groups in a Sheet"
     ).toHaveProperty("disabled", true);
     const user = userEvent.setup();
     await pickOption(
-      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.SkillWrite}` }),
+      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.Deliver}` }),
       m.policy.deny,
       user,
     );
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.toolPolicies).toEqual({ SkillWrite: "deny" });
+    expect(patchBody(calls).definition.toolPolicies).toEqual({ Deliver: "deny" });
     expect(patchBody(calls).definition.disabledTools).toEqual([ASK_OFF]);
   });
 

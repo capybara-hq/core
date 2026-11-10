@@ -515,7 +515,6 @@
       "builtin": {
         "AskUserQuestion": "Ask the user",
         "ReadToolOutput": "Read archived tool output",
-        "SkillWrite": "Write skills",
         "Bash": "Run commands",
         "Read": "Read files",
         "Write": "Write files",
