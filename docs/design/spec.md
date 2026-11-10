@@ -2594,7 +2594,7 @@ States: `warn`, `info`, `in-box`
 
 ### 6.21 DangerZone
 
-`DangerZone({ title, children })` with `DangerZoneItem({ title, description, action })` (role pass): the irreversible actions at the bottom of a settings section (organization deletion). A `region` named by its title, `space.8` above, a 1px border of `fail` at 45 %, radius `md`; the title (`body`, 500, `fail`) in a head row split from the items by `fail` at 25 %. Each item: the title (500, `ink`) over the description (`small`, `muted`), and one dense `danger` button at the right that opens a confirmation (`DangerConfirm`, §6.7), never acts at once; items are split by `line-soft`. After `FormSection`s (a settings page) it sits in their field column (indented by the 240 title column and its gap, the section cards' left edge), full width below 960.
+`DangerZone({ title, children })` with `DangerZoneItem({ title, description, action })` (role pass): the irreversible actions at the bottom of a settings section (organization deletion). A `region` named by its title, `space.8` above, a 1px border of `fail` at 45 %, radius `md`; the title (`body`, 500, `fail`) in a head row split from the items by `fail` at 25 %. Each item: the title (500, `ink`) over the description (`small`, `muted`), and one dense `danger` button at the right that opens a confirmation (`DangerConfirm`, §6.7), never acts at once; items are split by `line-soft`. After side-by-side `FormSection`s it sits in their field column (indented by the 240 title column and its gap, the section cards' left edge); after stacked sections (every SettingsPage section, `layout="stacked"`) and below 960 it spans the full width, like the section cards.
 
 <!-- states: danger-zone -->
 States: `default`, `two-items`
