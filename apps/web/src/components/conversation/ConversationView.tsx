@@ -44,6 +44,7 @@ import {
   awaitedMessage,
   awaitingRun,
   buildEventTimeline,
+  composerWait,
   type FailedRun,
   latestModel,
   latestUsage,
@@ -270,6 +271,12 @@ export function useConversationPage(
   const active = busy || conv.waiting;
   // the window's runs after those started above it (history paging spec §5)
   const windowStats = useMemo(() => runStats(conv.events), [conv.events]);
+  // what a message does while the run waits for a person: skips the viewer's question, or waits
+  const viewerId = session.me.account.id;
+  const waitHint = useMemo(
+    () => (conv.waiting ? composerWait(conv.events, viewerId) : null),
+    [conv.waiting, conv.events, viewerId],
+  );
   const stats = useMemo(
     () =>
       windowStats.turns > 0 || conv.turnsBefore > 0
@@ -462,6 +469,7 @@ export function useConversationPage(
               : conversationId
           }
           running={active}
+          waiting={waitHint}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
           // no agent here: the title bar's path names it (issue U)

@@ -665,6 +665,12 @@ function questionBlocks(): ReactNode {
           state={{ kind: "skipped", who: H.decided.who }}
         />
       </Block>
+      <Block id="question-block-cancelled">
+        <QuestionBlock title={Q.question} fields={[field]} state={{ kind: "cancelled" }} />
+      </Block>
+      <Block id="question-block-expired">
+        <QuestionBlock title={Q.question} fields={[field]} state={{ kind: "expired" }} />
+      </Block>
     </>
   );
 }

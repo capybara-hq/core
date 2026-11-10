@@ -366,14 +366,35 @@ describe("QuestionBlock (§6.16.12)", () => {
     expect(two.container.textContent).toContain("数量：3");
   });
 
-  it("skipped and expired", () => {
+  it("skipped (a message was sent instead), cancelled and expired", () => {
     const { container } = wrap(
       <QuestionBlock title="q" fields={[]} state={{ kind: "skipped", who: "grant" }} />,
     );
-    expect(container.textContent).toContain("已跳过 · grant");
+    expect(container.textContent).toContain("已跳过：直接回复了消息 · grant");
+    expect(container.querySelector('[data-part="question-done"]')?.getAttribute("data-state")).toBe(
+      "skipped",
+    );
+    cleanup();
+    const c = wrap(<QuestionBlock title="q" fields={[]} state={{ kind: "cancelled" }} />);
+    expect(c.container.textContent).toContain("已取消");
+    expect(c.container.textContent).not.toContain("已跳过");
+    expect(
+      c.container.querySelector('[data-part="question-done"]')?.getAttribute("data-state"),
+    ).toBe("cancelled");
     cleanup();
     const e = wrap(<QuestionBlock title="q" fields={[]} state={{ kind: "expired" }} />);
     expect(e.container.textContent).toContain("已过期");
+  });
+
+  it("skipped and cancelled in English", () => {
+    const s = wrap(
+      <QuestionBlock title="q" fields={[]} state={{ kind: "skipped", who: "You" }} />,
+      "en",
+    );
+    expect(s.container.textContent).toContain("Skipped: replied with a message · You");
+    cleanup();
+    const c = wrap(<QuestionBlock title="q" fields={[]} state={{ kind: "cancelled" }} />, "en");
+    expect(c.container.textContent).toContain("Cancelled");
   });
 });
 

@@ -353,6 +353,10 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
               rows={[
                 { k: t("asked"), v: <DateTime value={q.askedAt} /> },
                 { k: t("questionOutcome"), v: t(`questionOutcomes.${q.outcome ?? "pending"}`) },
+                // the message that skipped it, by its seq (the trajectory lists no messages)
+                ...(q.skippedBySeq !== undefined
+                  ? [{ k: t("skippedBy"), v: `#${q.skippedBySeq}` }]
+                  : []),
                 ...(q.byAccountId !== null ? [{ k: t("by"), v: q.byAccountId }] : []),
               ]}
             />

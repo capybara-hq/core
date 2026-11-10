@@ -63,8 +63,11 @@ export interface TrajectoryToolCall {
   question: {
     questionId: string;
     askedAt: string;
-    outcome: "answered" | "expired" | "cancelled" | null;
+    /** `skipped`: the run's starter sent a message instead of answering. */
+    outcome: "answered" | "skipped" | "expired" | "cancelled" | null;
     byAccountId: string | null;
+    /** `skipped` only: the seq of the user message that skipped it. */
+    skippedBySeq?: number;
   } | null;
   /** A `tool.preExecute` policy hook denied the call. */
   hookDenied?: TrajectoryHookDenial;
@@ -354,7 +357,7 @@ export function indexTrajectory(
                     ? ended
                       ? "error"
                       : "pending"
-                    : q.outcome === "answered"
+                    : q.outcome === "answered" || q.outcome === "skipped"
                       ? "ok"
                       : "error",
               },

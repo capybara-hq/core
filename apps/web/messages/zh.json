@@ -200,7 +200,7 @@
     },
     "question": {
       "not_found": "该问题不存在，或你无权回答。",
-      "already_answered": "该问题已被回答或已过期。"
+      "already_answered": "该问题已被回答、已跳过或已过期。"
     },
     "credential": {
       "missing": "使用该连接器需要凭据。"
@@ -1346,6 +1346,8 @@
     "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。",
     "newPlaceholder": "想让 {agent} 做什么？",
     "runningHint": "运行中发送的消息会在下一步交给智能体",
+    "waitingSkipHint": "也可以直接回复：发送消息会跳过上面的提问",
+    "waitingHint": "处理完上面的事项后，智能体才会读到新消息",
     "sendAfterCreate": "会话创建后即可继续发送",
     "rename": "重命名",
     "copyLink": "复制链接",
@@ -2836,10 +2838,12 @@
         "questionOutcome": "回答",
         "questionOutcomes": {
           "answered": "已回答",
+          "skipped": "已跳过（用户发了消息）",
           "expired": "已过期",
           "cancelled": "已取消",
           "pending": "待回答"
         },
+        "skippedBy": "跳过它的消息",
         "subagent": "子智能体",
         "subagentTrajectory": "轨迹"
       },
