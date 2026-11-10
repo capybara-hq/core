@@ -20,7 +20,7 @@ export interface AdminAgentRow {
   ownerName: string;
   needsReassignment: boolean;
   visibility: AgentVisibility;
-  createdFrom: { templateId: string; name: string } | null;
+  createdFrom: { templateId: string; name: string | null } | null;
   updatedAt: Date;
 }
 
@@ -228,7 +228,7 @@ function toRow(r: {
     createdFrom:
       r.created_from_template_id === null
         ? null
-        : { templateId: r.created_from_template_id, name: r.created_from_template_name ?? "" },
+        : { templateId: r.created_from_template_id, name: r.created_from_template_name ?? null },
     updatedAt: r.updated_at,
   };
 }

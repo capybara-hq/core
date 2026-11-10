@@ -30,7 +30,7 @@ export interface AdminAgentRow {
   ownerName: string;
   needsReassignment: boolean;
   visibility: AgentVisibility;
-  createdFrom: { templateId: string; name: string } | null;
+  createdFrom: { templateId: string; name: string | null } | null;
   updatedAt: string;
 }
 
@@ -69,6 +69,8 @@ export interface AdminConnectorRow {
   connector: string;
   status: "active" | "disabled";
   platformTemplateId: string | null;
+  /** The platform connector template's name; null when it is gone. */
+  templateName: string | null;
   catalogItemId: string | null;
   toolCount: number;
   toolsSyncedAt: string | null;

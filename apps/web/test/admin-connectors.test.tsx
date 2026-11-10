@@ -52,6 +52,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   connector: "mcp",
   status: "active",
   platformTemplateId: "ct1",
+  templateName: "jira-kit",
   catalogItemId: null,
   toolCount: 4,
   toolsSyncedAt: T,
@@ -72,6 +73,7 @@ const ROWS = [
     connector: "openapi",
     status: "disabled",
     platformTemplateId: null,
+    templateName: null,
     toolCount: 0,
     toolsSyncedAt: null,
     createdByName: "Lin",
@@ -135,7 +137,7 @@ describe("/admin/connectors", () => {
     const first = within(table).getByText("Jira").closest("tr") as HTMLElement;
     expect(within(first).getByText("Acme")).toBeTruthy();
     expect(within(first).getByText("mcp")).toBeTruthy();
-    expect(within(first).getByText(C.fromPlatform)).toBeTruthy();
+    expect(within(first).getByText("jira-kit")).toBeTruthy();
     expect(within(first).getByText(C.status.active)).toBeTruthy();
     expect(within(first).getByText("4")).toBeTruthy();
     expect(first.querySelector("time")).not.toBeNull();
@@ -333,9 +335,10 @@ describe("/admin/connectors/[id]", () => {
     expect(patch?.url).toBe(`${LIST}/c1`);
     expect(bodyOf(patch)).toEqual({ status: "disabled" });
     // the detail was invalidated and read again
+    const patchAt = calls.findIndex((c) => c.method === "PATCH");
     expect(
-      calls.filter((c) => c.method === "GET" && c.url === `${LIST}/c1`).length,
-    ).toBeGreaterThan(0);
+      calls.slice(patchAt + 1).filter((c) => c.method === "GET" && c.url === `${LIST}/c1`).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("启用 patches { status: active }", async () => {

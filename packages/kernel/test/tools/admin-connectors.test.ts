@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -186,6 +187,7 @@ describe("AdminConnectors", () => {
       connector: "mem",
       status: "active",
       platformTemplateId: null,
+      templateName: null,
       catalogItemId: null,
       toolCount: 2,
       createdBy: owner.id,
@@ -193,6 +195,40 @@ describe("AdminConnectors", () => {
     });
     expect(byId[fx.docs]?.toolsSyncedAt).toBeInstanceOf(Date);
     expect(byId[fx.open]).toMatchObject({ orgId: fx.beta, orgName: "Beta", toolCount: 1 });
+
+    // a connector made from a platform template names it
+    const itemId = randomUUID();
+    const templateId = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: `item-${itemId}`,
+        package_name: `@acme/plugin-${itemId}`,
+        publisher: "Acme",
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+      })
+      .execute();
+    await db
+      .insertInto("platform_connector_templates")
+      .values({
+        id: templateId,
+        catalog_item_id: itemId,
+        template_id: "docs-kit",
+        current_version: "1.0.0",
+        file: JSON.stringify({ template: { plugin: "mem" } }),
+      })
+      .execute();
+    await sql`UPDATE capybara.connectors SET platform_template_id = ${templateId}
+      WHERE id = ${fx.docs}`.execute(raw);
+    const made = await admin().list({ limit: 50 });
+    expect(made.connectors.find((c) => c.id === fx.docs)).toMatchObject({
+      platformTemplateId: templateId,
+      templateName: "docs-kit",
+    });
+    expect((await admin().get(fx.docs)).templateName).toBe("docs-kit");
 
     // connectors of a soft-deleted org are not listed
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${fx.beta}`.execute(raw);

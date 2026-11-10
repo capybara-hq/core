@@ -479,9 +479,10 @@ describe("Platform operations", () => {
       status: "disabled",
     })) as { connector: { status: string } };
     expect(set.connector.status).toBe("disabled");
+    const setAudit = toolAudit("admin.connector-set-status");
     expect((await auditOf("connector.updated", conn))[0]).toMatchObject({
-      ...toolAudit("admin.connector-set-status"),
-      detail: { status: { from: "active", to: "disabled" } },
+      ...setAudit,
+      detail: { ...setAudit.detail, status: { from: "active", to: "disabled" } },
     });
     expect(await runIn("admin.connector-delete", { connectorId: conn })).toEqual({
       id: conn,

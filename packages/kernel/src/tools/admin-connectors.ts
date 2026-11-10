@@ -17,7 +17,10 @@ export interface AdminConnectorRow {
   connector: string;
   status: "active" | "disabled";
   platformTemplateId: string | null;
+  /** The platform connector template's name (its template id in the plugin), when it exists. */
+  templateName: string | null;
   catalogItemId: string | null;
+  /** Counts every tool row of the connector, pending and missing ones included. */
   toolCount: number;
   toolsSyncedAt: Date | null;
   createdBy: string;
@@ -72,6 +75,7 @@ export class AdminConnectors {
       .selectFrom("connectors as c")
       .innerJoin("orgs as o", "o.id", "c.org_id")
       .innerJoin("accounts as a", "a.id", "c.created_by")
+      .leftJoin("platform_connector_templates as pt", "pt.id", "c.platform_template_id")
       .select([
         "c.id",
         "c.org_id",
@@ -81,6 +85,7 @@ export class AdminConnectors {
         "c.connector",
         "c.status",
         "c.platform_template_id",
+        "pt.template_id as template_name",
         "c.catalog_item_id",
         "c.tools_synced_at",
         "c.created_by",
@@ -158,6 +163,7 @@ function toRow(r: {
   connector: string;
   status: "active" | "disabled";
   platform_template_id: string | null;
+  template_name: string | null;
   catalog_item_id: string | null;
   tools_synced_at: Date | null;
   created_by: string;
@@ -175,6 +181,7 @@ function toRow(r: {
     connector: r.connector,
     status: r.status,
     platformTemplateId: r.platform_template_id ?? null,
+    templateName: r.template_name ?? null,
     catalogItemId: r.catalog_item_id ?? null,
     toolCount: r.tool_count,
     toolsSyncedAt: r.tools_synced_at,

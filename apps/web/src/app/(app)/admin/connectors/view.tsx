@@ -78,7 +78,7 @@ const connectorColumns = (t: T): Column<AdminConnectorRow>[] => [
     tone: "muted",
     cell: (c) =>
       c.platformTemplateId !== null
-        ? t("fromPlatform")
+        ? (c.templateName ?? t("fromPlatform"))
         : c.catalogItemId !== null
           ? t("fromCatalog")
           : "—",
