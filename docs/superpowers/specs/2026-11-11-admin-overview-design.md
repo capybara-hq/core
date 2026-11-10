@@ -1,15 +1,16 @@
 # Admin console overview: what waits, how the platform runs, what it uses, what changed
 
 - Date: 2026-11-11, written against `main` at `78a2249dd` (latest kernel migration 0108).
-- Status: draft for maintainer review. Plan: `docs/superpowers/plans/2026-11-11-admin-overview.md`.
+- Status: approved 2026-11-11 (every open question answered "as recommended", §13). Plan:
+  `docs/superpowers/plans/2026-11-11-admin-overview.md`.
 - Related: the platform inbox (plugin component management spec
   `2026-11-05-plugin-component-management-design.md` §5.1 rule 5, §13.5), the `Platform` tool
   (`2026-11-07-platform-tool-design.md`, `check:platform-ops`), the web query cache
   (`writing-web-ui` skill), design spec `docs/design/spec.md` §5.6 (Overview), §6.8 (Charts),
   §6.14 (StatCards), environments (`2026-11-07-environments-design.md`), model prices (C2).
 - Markers: **(decided, 2026-11-11)** is the maintainer's approved direction; **(designer's call)**
-  is decided here and may be overturned in review; **(open)** is a question in §13. Items without
-  a marker restate current code (each verified by reading it; file paths given).
+  is decided here and may be overturned in review; **(D1)**–**(D6)** are the decisions in §13.
+  Items without a marker restate current code (each verified by reading it; file paths given).
 
 ## 1. Why
 
@@ -103,7 +104,7 @@ log, embeddings in `model_usage`. Both are summed.
 call sites. **No route reads it**, and there is no audit page in apps/web. Index: only
 `(org_id, at DESC)`.
 
-"Platform-level" = `org_id IS NULL` **(designer's call; see Q3)**: deployment settings, accounts,
+"Platform-level" = `org_id IS NULL` **(D3)**: deployment settings, accounts,
 marketplaces, catalog imports and scope, extensions and their deployment config, model prices and
 purposes, bootstrap, setup. Org events (members, agents, tool calls, trajectory views) carry an
 `org_id` and stay out.
@@ -145,7 +146,7 @@ up **(designer's call)**.
 ### 5.2 Routes
 
 All under `/api/v1/admin/*` on controllers with `@SuperAdmin()` (service tokens always 403). All
-reads, no writes, no audit (reads of aggregates are not audited; see Q5). Schemas in
+reads, no writes, no audit (reads of aggregates are not audited; D5). Schemas in
 `admin/overview.schemas.ts`, listed in `OVERVIEW_ROUTES`, registered in `ROUTE_SCHEMAS`.
 
 | Route | Phase | Answer | Cost and freshness |
@@ -169,8 +170,7 @@ Provider `problem`: `list_failed` (status `error`; the kernel's own English mess
 raw, mapped to a zh/en sentence) or `no_chat_model`.
 
 What runs count: every run (sub-agent and eval runs included); tokens: every `usage` event
-(compaction, titles, web fetch) plus embeddings. That is what the deployment pays for
-**(designer's call)**.
+(compaction, titles, web fetch) plus embeddings. That is what the deployment pays for **(D6)**.
 
 ### 5.3 Platform tool operations (parity rule)
 
@@ -186,7 +186,7 @@ What runs count: every run (sub-agent and eval runs included); tokens: every `us
 All four are aggregates or platform records a super admin's own private agent may read (the
 operations run only for super admins, through their own agent; Platform tool spec §6.1). None
 touches a secret or another org's item beyond its name, which the admin console already shows. No
-exclusion is needed **(designer's call; Q4 if the maintainer wants usage kept off agents)**.
+exclusion is needed **(D4)**.
 
 ### 5.4 Migrations (expand-only, next free numbers)
 
@@ -271,7 +271,7 @@ One Card titled 用量 · 近 7 天, head action: a muted 「费用为估算」 
 - `TrendChart` (§10) with two aligned panels sharing the x-axis (the 7 dates): **运行** (count) and
   **Token** (sum of the five token kinds); today is the current point (accent). The tooltip / focus
   line reads `11-09 · 运行 128 · Token 3.4M · 估算 ¥12.30`. One measure per panel, never two
-  y-scales (Q1).
+  y-scales (D1).
 - Under it, a line 「7 天合计：运行 812 · Token 21.7M · 估算费用 ¥78.40」; with `costPartial`
   「（部分模型未设置价格，未计入）」 linking `/admin/models`.
 - **组织排行**: unframed `DataTable` (组织, 运行, Token, 估算费用), top 10 by tokens, then a 其他 n 个组织
@@ -287,7 +287,7 @@ meta), 操作 (a localized label per action, §8.4), 对象 (`target`, mono). Em
 「还没有平台操作记录。」.
 
 **`/admin/audit`** (phase 1, minimal): `ListPage` (records) + the same `DataTable`, 加载更多 by
-cursor, no filters (Q2). It lists only platform-level events (§4.4).
+cursor, no filters (D2). It lists only platform-level events (§4.4).
 
 ## 7. Web
 
@@ -399,7 +399,7 @@ TrendChart({
 ```
 
 - **Form**: small multiples: one panel per measure, stacked, sharing the x-axis and its labels
-  under the last panel. Never a second y-scale (Q1).
+  under the last panel. Never a second y-scale (D1).
 - **Marks** in the E terminal style: a 2 px stepless polyline in `muted`, square 6 px point
   markers (`shape-rendering: crispEdges`), the `current` point and its segment in `accent`; a 0
   baseline in `line`; the y-axis shows only the panel's max (formatted) at the top-left in
@@ -500,27 +500,24 @@ Each phase is one PR, shippable alone, with its changeset (`@capybara-hq/kernel`
 Phase 2 depends on nothing in phase 1 but the page frame; phase 3 likewise. Before phase 1 merges,
 the page keeps working at every step (the old overview shape changes in the same PR as the view).
 
-## 13. Open questions (the maintainer decides)
+## 13. Decisions (maintainer, 2026-11-11)
 
-1. **One chart with two y-axes, or two aligned panels?** Runs (hundreds) and tokens (millions)
-   share no scale; one line chart would need two y-axes, which misleads (the eye compares slopes
-   that the scales made up). *Recommendation:* the `TrendChart` with two stacked panels sharing
-   the x-axis and one crosshair: it reads as one chart and keeps one scale per measure.
-2. **Full audit log page now, or later?** *Recommendation:* ship the minimal `/admin/audit`
-   (platform events, paging, no filters) in phase 1: the route is needed for the overview anyway and
-   the page is a ListPage with one table. Filters (action, actor, time) and org-level events wait
-   for a request.
-3. **Which audit events are "platform-level"?** `org_id IS NULL` misses a super admin acting inside
-   an org (admin agents / connectors spec records those with the org's id so the org's log shows
-   them). *Recommendation:* `org_id IS NULL` for v1; it is exact, indexable and needs no role
-   history. Revisit with org audit pages.
-4. **Platform tool operations for health and usage?** *Recommendation:* mirror all four as `read`
-   operations for the super admin's own agent (it can then answer "why are runs not starting"); the
-   alternative is `internal` exclusions with the reason "the console's dashboard".
-5. **Audit the reading of usage?** `trajectory.viewed` is audited because it opens content; usage
-   is aggregate. *Recommendation:* no audit event for overview reads.
-6. **Eval runs in the usage numbers?** They cost real tokens. *Recommendation:* include them (the
-   page answers "what does the platform use"); a later filter can split them.
+The six open questions of the draft were answered "as recommended" on 2026-11-11:
+
+1. **D1 – usage chart:** one `TrendChart` component drawing two stacked panels (运行, Token) that
+   share the x-axis and one crosshair; never one chart with two y-axes (the eye would compare
+   slopes the scales made up).
+2. **D2 – audit log page:** a minimal `/admin/audit` ships in phase 1: platform events, keyset
+   paging, no filters. Filters (action, actor, time) and org-level events wait for a request.
+3. **D3 – platform-level events:** `org_id IS NULL` for v1 (exact, indexable, no role history). A
+   super admin acting inside an org is recorded with that org's id and stays out; revisit with
+   org audit pages.
+4. **D4 – Platform operations:** health and usage (and attention, audit) are mirrored as read-only
+   `read` Platform operations for the super admin's own agent; no exclusion.
+5. **D5 – auditing reads:** viewing the overview, health or usage writes no audit event (aggregates,
+   no content; unlike `trajectory.viewed`).
+6. **D6 – eval runs:** usage includes eval runs (they cost real tokens); a later filter may split
+   them.
 
 ## 14. Rejected alternatives
 

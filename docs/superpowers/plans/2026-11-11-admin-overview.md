@@ -15,8 +15,14 @@ query; usage is drawn by a new design `TrendChart` (two aligned panels, one x-ax
 Query (apps/web), `@capybara-hq/design`, vitest.
 
 **Spec:** `docs/superpowers/specs/2026-11-11-admin-overview-design.md` (section numbers below are
-its sections). Open questions §13 must be answered before the tasks they touch: Q1 → Task 3.2,
-Q2 → Task 1.6 / 1.9, Q3 → Task 1.3, Q4 → Tasks 1.4 / 2.3 / 3.3, Q6 → Task 3.1.
+its sections). The maintainer answered the open questions on 2026-11-11 (spec §13, D1–D6, all as
+recommended): D1 → Task 3.2 (two stacked panels), D2 → Tasks 1.3 / 1.8 (minimal `/admin/audit` in
+phase 1), D3 → Task 1.1 (`org_id IS NULL`), D4 → Tasks 1.4 / 2.3 / 3.3 (read operations), D5 → no
+audit on reads, D6 → Task 3.1 (eval runs counted).
+
+**Branches:** one stacked PR per phase: `feat/admin-overview-p1` from `feat/admin-overview`,
+`-p2` from p1, `-p3` from p2 (each PR's base is the previous branch). Migration numbers 0109 and
+0110 were checked free against `main` (latest 0108) on 2026-11-11.
 
 ## Global Constraints
 
