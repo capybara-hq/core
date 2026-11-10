@@ -1,4 +1,5 @@
 ---
+"@capybara-hq/capybara": minor
 "@capybara-hq/kernel": minor
 "@capybara-hq/web": minor
 ---
