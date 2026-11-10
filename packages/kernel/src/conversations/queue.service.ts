@@ -9,6 +9,7 @@ import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
 import type { QuestionRecord } from "../tools/questions.service.js";
 import {
   ConversationsService,
+  type InternalMessageOptions,
   type ResolvedExtra,
   type RunControl,
 } from "./conversations.service.js";
@@ -24,6 +25,7 @@ import {
   noNul,
   QUEUE_MAX_ITEMS,
   type QueuedFile,
+  type QueuedSchedule,
   type QueuedSkill,
   type QueueInput,
   type QueueItem,
@@ -105,13 +107,16 @@ export class ConversationQueue {
    * item, and uploaded files are bound to the conversation now, so sending later needs nobody's
    * credentials. The same `clientMessageId` again returns the queued item (`created: false`), or,
    * when it was already sent, the sent `user_message` with `item: null`. Then `ensureRun`: on an
-   * idle conversation the item goes out at once.
+   * idle conversation the item goes out at once. `internal` (kernel callers only, never HTTP): a
+   * scheduled task's marker and zone, stored with the item and written with its `user_message`
+   * (scheduled tasks spec §6).
    */
   async add(
     orgId: string,
     conversationId: string,
     accountId: string,
     input: QueueInput,
+    internal: InternalMessageOptions = {},
   ): Promise<{ item: QueueItem | null; event?: ConversationEvent; created: boolean }> {
     const conv = await this.conversations.writable(orgId, conversationId, accountId);
     const files = input.files ?? [];
@@ -134,7 +139,16 @@ export class ConversationQueue {
       invoked === undefined || input.skill === undefined
         ? undefined
         : storedSkill(input.skill.name, invoked);
-    const out = await this.addIn(orgId, conversationId, accountId, input, files, skill, extra);
+    const out = await this.addIn(
+      orgId,
+      conversationId,
+      accountId,
+      input,
+      files,
+      skill,
+      extra,
+      internal,
+    );
     if (out === null) {
       return (
         (await this.prior(conversationId, input.clientMessageId)) ?? { item: null, created: false }
@@ -157,6 +171,7 @@ export class ConversationQueue {
     files: readonly string[],
     skill: ReturnType<typeof storedSkill> | undefined,
     extra: ResolvedExtra,
+    internal: InternalMessageOptions,
   ): Promise<{ row: QueueRow; created: boolean } | null> {
     const t = this.db.db;
     await t
@@ -207,6 +222,15 @@ export class ConversationQueue {
         model: input.model === undefined ? null : JSON.stringify(input.model),
         effort: input.effort ?? null,
         skill: skill?.skill ?? null,
+        schedule:
+          internal.schedule === undefined
+            ? null
+            : JSON.stringify({
+                ...internal.schedule,
+                ...(internal.timeZoneOverride !== undefined && {
+                  timeZone: internal.timeZoneOverride,
+                }),
+              } satisfies QueuedSchedule),
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();

@@ -2,6 +2,7 @@ import { sql } from "kysely";
 import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ScheduleMarker } from "../schedules/types.js";
 import {
   type InvocationRecord,
   type RenderedInvocation,
@@ -39,6 +40,13 @@ export interface QueuedSkill {
   invokedAs: string;
   record: InvocationRecord;
 }
+
+/**
+ * A scheduled task's queued message (scheduled tasks spec §6), stored in
+ * `conversation_queue.schedule`: the marker the `user_message` carries and the task's zone, which
+ * becomes the message's `timeZone` (the top-priority override of `readMessageContext`).
+ */
+export type QueuedSchedule = ScheduleMarker & { timeZone?: string };
 
 /** The caller's transaction handle (the module helpers below run inside it). */
 type KernelTrx = KernelSchemaDb;
@@ -98,6 +106,7 @@ export interface QueueRow {
   model: unknown;
   effort: string | null;
   skill: unknown;
+  schedule: unknown;
   created_at: Date;
 }
 
@@ -114,6 +123,7 @@ export const COLUMNS = [
   "model",
   "effort",
   "skill",
+  "schedule",
   "created_at",
 ] as const;
 
@@ -173,10 +183,14 @@ export function storedSkill(
   return { skill: payloadJson(skill), first: { type: "text", text: invoked.text } };
 }
 
-/** The `user_message` a queued item becomes, as `postUserMessage` would have written it. */
+/**
+ * The `user_message` a queued item becomes, as `postUserMessage` would have written it; a scheduled
+ * task's item carries its marker (without the stored zone, which is in `context`).
+ */
 export function queuedUserMessage(r: QueueRow, context: MessageContext = {}): AppendEvent {
   const attachments = r.attachments as ResolvedExtra["attachments"];
   const skill = r.skill as QueuedSkill | null;
+  const marker = queuedMarker(r);
   return {
     type: "user_message",
     idemKey: userMessageIdemKey(r.client_message_id),
@@ -191,8 +205,17 @@ export function queuedUserMessage(r: QueueRow, context: MessageContext = {}): Ap
       ...context,
       clientMessageId: r.client_message_id,
       ...(skill !== null && { skill: skill.record }),
+      ...(marker !== undefined && { schedule: marker }),
     },
   };
+}
+
+/** A queued item's schedule marker as the log stores it (the six marker fields), or undefined. */
+function queuedMarker(r: Pick<QueueRow, "schedule">): ScheduleMarker | undefined {
+  const s = r.schedule as QueuedSchedule | null;
+  if (s === null || s === undefined) return undefined;
+  const { taskId, taskRunId, scheduledFor, trial, taskName, localTime } = s;
+  return { taskId, taskRunId, scheduledFor, trial, taskName, localTime };
 }
 
 /**
@@ -229,13 +252,18 @@ export async function appendQueuedIn(
       payload: { ...next, byAccountId: r.account_id, reason: "user" },
     });
   }
-  // run context spec §3.4: no browser values were stored with a leftover row
+  // run context spec §3.4: no browser values were stored with a leftover row; a scheduled task's
+  // item stored its task's zone, which wins (scheduled tasks spec §6)
   const org = await t
     .selectFrom("conversations")
     .select("org_id")
     .where("id", "=", conversationId)
     .executeTakeFirstOrThrow();
-  const context = await readMessageContext(t, { orgId: org.org_id, accountId: r.account_id });
+  const context = await readMessageContext(t, {
+    orgId: org.org_id,
+    accountId: r.account_id,
+    timeZoneOverride: (r.schedule as QueuedSchedule | null)?.timeZone,
+  });
   events.push(queuedUserMessage(r, context));
   const written = await eventLog.appendIn(conversationId, events);
   if (next !== null) {

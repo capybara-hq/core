@@ -21,6 +21,7 @@ import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
@@ -276,6 +277,16 @@ export interface UserMessageInput {
   im?: ImSenderContext;
 }
 
+/**
+ * Message options only kernel callers pass (a scheduled task's fire, scheduled tasks spec §6), never
+ * an HTTP body: the schedule marker the `user_message` carries and a zone that beats every other
+ * source of the message's `timeZone` (`readMessageContext`).
+ */
+export interface InternalMessageOptions {
+  schedule?: ScheduleMarker;
+  timeZoneOverride?: string;
+}
+
 interface UsageRow {
   input_tokens: string;
   output_tokens: string;
@@ -386,6 +397,8 @@ export class ConversationsService {
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
+   * `internal` (kernel callers only): a scheduled task's marker, which also sets
+   * `conversations.scheduled_task_id`, and its zone override.
    */
   async createWithMessage(
     orgId: string,
@@ -393,6 +406,7 @@ export class ConversationsService {
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
     pick: NewConversationDevice = {},
+    internal: InternalMessageOptions = {},
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -413,6 +427,7 @@ export class ConversationsService {
       next,
       extra,
       invoked,
+      internal,
     );
     const written = all?.at(-1);
     if (!all || !written) {
@@ -440,6 +455,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
+    internal: InternalMessageOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
     const row = await this.db
@@ -451,6 +467,7 @@ export class ConversationsService {
         account_id: accountId,
         device_id: conv.deviceId,
         create_request_id: input.clientMessageId,
+        scheduled_task_id: internal.schedule?.taskId ?? null,
       })
       .onConflict((oc) =>
         oc
@@ -464,8 +481,9 @@ export class ConversationsService {
     if (!row) return undefined;
     const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
     // a new conversation has no run yet, so nothing to skip
-    return (await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked))
-      .events;
+    return (
+      await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked, internal)
+    ).events;
   }
 
   /**
@@ -1241,6 +1259,7 @@ export class ConversationsService {
     extra: ResolvedExtra,
     blocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
+    internal: InternalMessageOptions = {},
   ): Promise<{
     events: ConversationEvent[];
     skipped: QuestionRecord[];
@@ -1262,8 +1281,11 @@ export class ConversationsService {
       senderName: input.senderName,
       browser: { timeZone: input.timeZone, locale: input.locale },
       im: input.im,
+      timeZoneOverride: internal.timeZoneOverride,
     });
-    events.push(this.userMessage(accountId, input, extra, blocks, invoked, context));
+    events.push(
+      this.userMessage(accountId, input, extra, blocks, invoked, context, internal.schedule),
+    );
     const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
     const message = written.at(-1) as ConversationEvent;
     const skips =
@@ -1354,6 +1376,7 @@ export class ConversationsService {
     fileBlocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
     context: MessageContext,
+    schedule?: ScheduleMarker,
   ): AppendEvent {
     // a skill invocation's rendered text replaces the typed arguments as content[0]
     const text = invoked?.text ?? input.text;
@@ -1375,6 +1398,7 @@ export class ConversationsService {
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
         ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
         ...(invoked !== undefined && { skill: invoked.skill }),
+        ...(schedule !== undefined && { schedule }),
       },
     };
   }

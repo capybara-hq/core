@@ -339,8 +339,15 @@ export interface ConversationQueueTable {
   effort: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0062: the `user_message.skill` record of a queued skill invocation, or null. */
   skill: ColumnType<unknown, string | null | undefined, string | null>;
-  /** 0109: the schedule marker of a scheduled task's message; null for a person's message. */
-  schedule: ColumnType<ScheduleMarker | null, string | null | undefined, string | null>;
+  /**
+   * 0109: the schedule marker of a scheduled task's message, plus the task's zone (`timeZone`, the
+   * message's zone override; not copied into the logged marker); null for a person's message.
+   */
+  schedule: ColumnType<
+    (ScheduleMarker & { timeZone?: string }) | null,
+    string | null | undefined,
+    string | null
+  >;
   created_at: Ts;
   updated_at: Ts;
 }

@@ -26,6 +26,7 @@ import {
   runContextEvents,
   runContextFullText,
   runContextText,
+  scheduleHeader,
   senderLines,
 } from "./run-context.js";
 import {
@@ -680,14 +681,19 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const senders = senderLines(events, after);
   /**
    * A user message's blocks: its sender line first when the sender changed (a separate block, so
-   * `content[0]` stays the typed text), then its own blocks, then its fork report when it has one.
+   * `content[0]` stays the typed text), then a scheduled task's header (scheduled tasks spec §12,
+   * from the marker in the log), then its own blocks, then its fork report when it has one.
    */
   const userBlocks = (u: ConversationEvent & { type: "user_message" }): ContentBlock[] => {
     const report = forkReports.get(u.seq);
     const line = senders.get(u.seq);
+    const schedule = u.payload.schedule;
     const blocks = blocksOf(u.payload.content);
     return [
       ...(line === undefined ? [] : [{ type: "text" as const, text: line }]),
+      ...(schedule === undefined
+        ? []
+        : [{ type: "text" as const, text: scheduleHeader(schedule) }]),
       ...blocks,
       ...(report === undefined ? [] : [{ type: "text" as const, text: report }]),
     ];

@@ -114,9 +114,10 @@ export type MessageContext = Pick<EventPayload<"user_message">, "sender" | "time
  * - `sender`: the account's display name and org role at send time; the org's anonymous guest
  *   account (`org_anonymous_accounts`) is `{ name: <senderName, else "Anonymous guest">, role:
  *   "guest", anonymous: true }`. Names are sanitised; an empty one leaves `sender` out.
- * - `timeZone`: what the IM platform gave for the sender (`im`, when valid), else the account's
- *   setting, else the browser's (when valid), else the org default, else UTC. The anonymous guest
- *   account has no setting of its own, so it gets the IM value or the org default.
+ * - `timeZone`: the override (`timeZoneOverride`, when valid: a scheduled task's zone, scheduled
+ *   tasks spec §6), else what the IM platform gave for the sender (`im`, when valid), else the
+ *   account's setting, else the browser's (when valid), else the org default, else UTC. The
+ *   anonymous guest account has no setting of its own, so it gets the IM value or the org default.
  * - `locale`: the IM platform's value, else the browser's UI language, else the UI language of the
  *   person's most recent web message in the org ({@link latestWebLocale}; not for the shared
  *   anonymous guest account), else the org's `locale`.
@@ -133,6 +134,8 @@ export async function readMessageContext(
     browser?: BrowserContext | undefined;
     /** An IM message: what the platform gave for the sender (maintainer decision 2026-11-08). */
     im?: ImSenderContext | undefined;
+    /** A zone that beats every other source (a scheduled task's zone); internal callers only. */
+    timeZoneOverride?: string | undefined;
   },
 ): Promise<MessageContext> {
   const row = await t
@@ -169,14 +172,17 @@ export async function readMessageContext(
   const im = input.im?.timeZone;
   const own = row?.time_zone ?? null;
   const browser = input.browser?.timeZone;
+  const override = input.timeZoneOverride;
   const timeZone =
-    im !== undefined && isTimeZone(im)
-      ? im
-      : own !== null && isTimeZone(own)
-        ? own
-        : browser !== undefined && isTimeZone(browser)
-          ? browser
-          : (org.timeZone ?? "UTC");
+    override !== undefined && isTimeZone(override)
+      ? override
+      : im !== undefined && isTimeZone(im)
+        ? im
+        : own !== null && isTimeZone(own)
+          ? own
+          : browser !== undefined && isTimeZone(browser)
+            ? browser
+            : (org.timeZone ?? "UTC");
   const locale =
     input.im?.locale ??
     input.browser?.locale ??
