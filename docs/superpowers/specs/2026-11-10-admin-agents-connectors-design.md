@@ -1,7 +1,15 @@
 # Admin 智能体 and 连接器: the super admin manages every org's agents and connectors
 
 - Date: 2026-11-10, written against `main` at `eaa0d51c1` (latest kernel migration 0108).
-- Status: design, approved by the maintainer (2026-11-10).
+- Status: implemented on `feat/admin-agents-connectors`
+  - As built, deviations:
+    - zh copy says 转移所有者 / 所有者 (maintainer decision V forbids 负责人 in zh).
+    - Platform operations act only on the conversation's own org (Platform tool spec §6.1); the
+      transfer route is excluded human-only; tool writes audit `via: "platform"` plus operation /
+      agentConversationId / agentRunId.
+    - Agent detail connectors: the org's live connectors minus those whose every tool the agent
+      switches off; skills: selected org skills plus the agent's own.
+    - Ids are length-bounded text (400 / 414 / 404), not uuids.
 - Related: plugin component management (`2026-11-05-plugin-component-management-design.md`: §9
   pages, §14 share gate and promotion, §15 agent templates), connector cards and member policies
   (`2026-11-09-connector-cards-and-member-policies-design.md`), the `Platform` tool
@@ -105,7 +113,7 @@ labels **(designer's call)**.
 
 Actions (header):
 
-- **转移负责人**: pick a member of the agent's org (not an anonymous guest); same result as the org
+- **转移所有者** (zh): pick a member of the agent's org (not an anonymous guest); same result as the org
   route (`agent.owner_changed`, clears `needs_reassignment`, retargets setup requests).
 - **删除**: confirm dialog naming the org and owner; same effect as the org delete.
 
