@@ -4639,7 +4639,8 @@
       "kind": {
         "skill": "Skill",
         "connector_template": "Connector template",
-        "agent_template": "Agent template"
+        "agent_template": "Agent template",
+        "theme": "Theme"
       },
       "change": {
         "added": "Added",

@@ -4627,7 +4627,8 @@
       "kind": {
         "skill": "技能",
         "connector_template": "连接器模板",
-        "agent_template": "智能体模板"
+        "agent_template": "智能体模板",
+        "theme": "主题"
       },
       "change": {
         "added": "新增",
