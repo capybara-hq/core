@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
+import type { OwnerVersion } from "../catalog/platform-components.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { SkillChangeRequestsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -19,7 +20,6 @@ import {
   cancelRequestIn,
   revertTrialCatalog,
 } from "./conversation-catalog.js";
-import type { OwnerVersion } from "../catalog/platform-components.js";
 import type { SkillPackageInput } from "./package.js";
 import { SkillsService } from "./skills.service.js";
 
@@ -365,7 +365,11 @@ export class SkillChangesService {
       }
       drafts.prefixes.push(req.object_prefix);
     }
-    return { updated, drafts, usedOwner: approved && req.kind === "version" && owner !== undefined };
+    return {
+      updated,
+      drafts,
+      usedOwner: approved && req.kind === "version" && owner !== undefined,
+    };
   }
 
   private reread(id: string): Promise<Selectable<SkillChangeRequestsTable>> {

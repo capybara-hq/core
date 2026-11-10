@@ -603,8 +603,9 @@ export class AgentSkillsService {
    * owner (agent row lock) and that the actor still maintains the org skill of that name with no
    * own skill of it (skill row lock); cancels the skill's pending version proposals (an older one
    * must not overwrite this version later: reverting snapshots, drafts deleted after the commit)
-   * and runs `inTransaction` (consuming the upload). Returns null, consuming nothing, when the
-   * skill no longer qualifies (the caller registers it the ordinary way).
+   * and runs `inTransaction` (consuming the upload). Returns null, cancelling and consuming
+   * nothing, when the skill no longer qualifies or a proposal appeared in a conversation that was
+   * not locked first (the caller registers it the ordinary way).
    * Lock order org -> agent -> the proposals' conversations -> skill row -> request rows.
    */
   @Transactional()
@@ -652,8 +653,19 @@ export class AgentSkillsService {
       .executeTakeFirst();
     const shared = own ? undefined : await this.maintainedSkill(actor, name, true);
     if (shared === undefined) return null;
+    const pending = await proposals(shared.id).orderBy("created_at").forUpdate().execute();
+    // A proposal committed after the conversations were locked: its revert would lock a
+    // conversation after the skill row (reverse order). Back off to the ordinary register path
+    const locked = new Set(convs);
+    if (
+      pending.some(
+        (r) => r.requested_in_conversation !== null && !locked.has(r.requested_in_conversation),
+      )
+    ) {
+      return null;
+    }
     const out: CancelledDrafts = { prefixes: [], seqs: [] };
-    for (const r of await proposals(shared.id).orderBy("created_at").forUpdate().execute()) {
+    for (const r of pending) {
       await cancelRequestIn(this.catalogDeps, r, out, {
         actorAccountId: actor.accountId,
         ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),

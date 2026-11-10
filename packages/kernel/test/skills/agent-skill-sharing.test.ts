@@ -510,12 +510,17 @@ describe("version proposals on a shared skill", () => {
   });
 
   it("a non-maintainer: refused for an org skill the agent uses, an own skill otherwise", async () => {
-    const { skillId } = await sharedByMember();
+    const { agentId: origin, skillId } = await sharedByMember();
     const user = await createAgent(env.boss, [skillId]);
     expect(await codeOf(svc.register(actor(user, env.bossId), zipOf("notes", "Mine.")))).toBe(
       "skill.name_exists",
     );
-    // the origin agent after a transfer: the new owner is not the maintainer either
+    // the origin agent after a transfer: it still uses the skill, the new owner does not maintain it
+    await env.k.app.get(AgentsService).reassignOwner(env.orgId, origin, env.bossId, env.bossId);
+    expect(await codeOf(svc.register(actor(origin, env.bossId), zipOf("notes", "Mine.")))).toBe(
+      "skill.name_exists",
+    );
+    // an agent that does not use the org skill gets an own skill of the name
     const agentId = await createAgent(env.boss);
     const out = await svc.register(actor(agentId, env.bossId), zipOf("notes", "Mine."));
     expect(out.kind).toBe("version");
@@ -585,6 +590,91 @@ describe("version proposals on a shared skill", () => {
     await env.k.app.get(AgentsService).softDelete(env.orgId, agentId, env.memId);
     expect((await requestRow(out.requestId)).status).toBe("cancelled");
     expect(await keysUnder(prefix)).toEqual([]);
+  });
+});
+
+describe("version proposals on a promoted shared skill", () => {
+  /** The member's shared "notes", made shareable and shown to other orgs (promoted). */
+  async function promotedShared() {
+    const shared = await sharedByMember();
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/skills/${shared.skillId}/shareable`,
+      payload: { shareable: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    const shown = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/components/skill/${shared.skillId}/shown`,
+      payload: { shownToOthers: true },
+    });
+    expect(shown.statusCode, shown.body).toBe(200);
+    const platformId = (await skillRow(shared.skillId)).platform_skill_id;
+    if (platformId === null) throw new Error("expected a promoted skill");
+    return { ...shared, platformId };
+  }
+  const platformPrefixes = async (platformId: string) => {
+    const listed = await env.k.app
+      .get(StorageService)
+      .deployment()
+      .list(`platform/skills/${platformId}/`);
+    return [...new Set(listed.items.map((o) => o.key.split("/").slice(0, 4).join("/")))].sort();
+  };
+  const platformVersion = (platformId: string) =>
+    env.db
+      .selectFrom("platform_skills as p")
+      .innerJoin("platform_skill_versions as v", (j) =>
+        j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+      )
+      .select(["p.current_version", "v.object_prefix", "v.manifest"])
+      .where("p.id", "=", platformId)
+      .executeTakeFirstOrThrow();
+
+  it("approve writes the version on the platform row; the draft goes", async () => {
+    const { agentId, skillId, platformId } = await promotedShared();
+    const before = await platformVersion(platformId);
+    const conv = await createConv(env.mem, agentId);
+    const out = await svc.register(actor(agentId, env.memId, conv), zipOf("notes", "V2."));
+    if (out.kind !== "proposed") throw new Error("expected a proposal");
+    const draft = (await requestRow(out.requestId)).object_prefix;
+    const res = await decideHttp(env.boss, out.requestId, "approve");
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await platformVersion(platformId);
+    expect(after.current_version).toBe(before.current_version + 1);
+    expect(after.object_prefix).not.toBe(draft);
+    const store = env.k.app.get(StorageService).deployment();
+    for (const f of after.manifest.files) {
+      expect(await store.get(`${after.object_prefix}${f.path}`)).not.toBeNull();
+    }
+    expect(await keysUnder(draft)).toEqual([]);
+    // the org row stays linked: the skill keeps its id for every agent
+    expect((await skillRow(skillId)).platform_skill_id).toBe(platformId);
+  });
+
+  it("a stale approval discards the prepared platform copy; committed files stay", async () => {
+    const { agentId, platformId } = await promotedShared();
+    const before = await platformVersion(platformId);
+    const prefixes = await platformPrefixes(platformId);
+    const conv = await createConv(env.mem, agentId);
+    const out = await svc.register(actor(agentId, env.memId, conv), zipOf("notes", "V2."));
+    if (out.kind !== "proposed") throw new Error("expected a proposal");
+    // the agent is gone behind the request's back (no eager cancel): stale in the transaction
+    await env.db
+      .updateTable("agents")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", agentId)
+      .execute();
+    const res = await decideHttp(env.boss, out.requestId, "approve");
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { skillChange: { status: string } }).skillChange.status).toBe(
+      "cancelled",
+    );
+    expect(await platformVersion(platformId)).toEqual(before);
+    expect(await platformPrefixes(platformId)).toEqual(prefixes);
+    const store = env.k.app.get(StorageService).deployment();
+    for (const f of before.manifest.files) {
+      expect(await store.get(`${before.object_prefix}${f.path}`)).not.toBeNull();
+    }
   });
 });
 
