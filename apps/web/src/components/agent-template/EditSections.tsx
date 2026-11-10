@@ -50,7 +50,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { modelsQuery } from "../../lib/query/conversation";
 import { skillsQuery } from "../../lib/query/skills";
-import { extensionToolKey, parseToolKey } from "../../lib/tool-key";
+import { extensionToolKey, parseToolKey, toolDisplayName, toolTooltip } from "../../lib/tool-key";
 import { sameJson } from "../agent/definition-parts";
 import { useSectionActionRow } from "../agent/definition-save";
 import { useInstructionFilesEditor } from "../agent/InstructionFilesEditor";
@@ -439,7 +439,8 @@ export function ToolsEdit() {
     name: e.displayName[lang],
     tools: e.tools.map((x) => ({
       key: extensionToolKey(e.plugin, x.name),
-      label: x.title ?? x.name,
+      label: toolDisplayName(x),
+      tooltip: toolTooltip(x),
       switchedOff: x.switchedOff === true,
     })),
   }));
@@ -471,11 +472,13 @@ export function ToolsEdit() {
     { value: "ask", label: tf("policy.ask") },
     { value: "deny", label: tf("policy.deny") },
   ];
-  const row = (key: string, label: string, note?: string): ToolPolicyRow => {
+  /** A row: its display name, the key (and description) as the hover text of a non-builtin. */
+  const row = (key: string, label: string, note?: string, tooltip?: string): ToolPolicyRow => {
     const checked = !d.off.includes(key);
     return {
       id: key,
       label,
+      ...(tooltip !== undefined ? { tooltip } : {}),
       checked,
       policy: checked ? (d.policies[key] ?? "") : "",
       ...(note !== undefined && checked ? { note: { text: note, tone: "warn" as const } } : {}),
@@ -548,7 +551,12 @@ export function ToolsEdit() {
               {list(
                 g.name,
                 g.tools.map((x) =>
-                  row(x.key, x.label, x.switchedOff ? tf("extensionToolOffInOrg") : undefined),
+                  row(
+                    x.key,
+                    x.label,
+                    x.switchedOff ? tf("extensionToolOffInOrg") : undefined,
+                    x.tooltip,
+                  ),
                 ),
               )}
             </Stack>
@@ -559,12 +567,14 @@ export function ToolsEdit() {
             {list(
               t("tools.others"),
               others.map((key) =>
-                row(
-                  key,
-                  parseToolKey(key)?.kind === "builtin"
-                    ? toolName(key)
-                    : t("tools.unavailable", { tool: toolName(key) }),
-                ),
+                parseToolKey(key)?.kind === "builtin"
+                  ? row(key, toolName(key))
+                  : row(
+                      key,
+                      t("tools.unavailable", { tool: toolName(key) }),
+                      undefined,
+                      toolTooltip({ key }),
+                    ),
               ),
             )}
             <Text variant="small" tone="faint">

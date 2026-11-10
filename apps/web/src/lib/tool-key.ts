@@ -40,3 +40,14 @@ export function connectorToolKey(slug: string, tool: string): string {
 export function extensionToolKey(plugin: string, tool: string): string {
   return `plugin${SEP}${plugin}${SEP}${tool}`;
 }
+
+/**
+ * How a tool reads to people: its declared title (an MCP `title`), else its own name without the
+ * `mcp__<slug>__` / `plugin__<plugin>__` prefix. Display only; keys and payloads keep the key.
+ */
+export const toolDisplayName = (x: { title?: string | null; name: string }): string =>
+  x.title ?? x.name;
+
+/** A tool row's hover text: the model-facing key (for debugging), then the description. */
+export const toolTooltip = (x: { key: string; description?: string | null }): string =>
+  [x.key, x.description ?? ""].filter((s) => s.trim() !== "").join("\n");

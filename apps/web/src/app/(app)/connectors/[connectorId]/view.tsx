@@ -4,23 +4,25 @@ import {
   Button,
   Callout,
   Card,
-  type Column,
   CodeBlock as CopyBlock,
   DangerConfirm,
-  DataTable,
   DetailPage,
   EmptyState,
   Field,
   Grid,
+  Icon,
   Input,
   KeyValue,
   ObjectMark,
   Select,
   Stack,
   StatusMark,
+  Subsection,
   Switch,
   Text,
   Textarea,
+  ToolPolicyList,
+  type ToolPolicyRow,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
@@ -64,6 +66,7 @@ import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { setupGuideQuery } from "../../../../lib/query/setup";
 import { useWorkspace } from "../../../../lib/query/workspace";
+import { toolDisplayName, toolTooltip } from "../../../../lib/tool-key";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
@@ -170,24 +173,12 @@ function Connector({
           onChange: (id) => setTab(id as Tab),
         }}
         // The facts (connector, endpoint, auth, credential; ownership comes with the data), then
-        // the tools tab (its table, the refresh button for those who manage connectors)
+        // the tools tab's card
         loading={{
           facts: { rows: 4, keyWidth: "10ch" },
           content: [
-            {
-              kind: "table",
-              label: t("detail.tabs.tools"),
-              columns: toolColumns(t),
-              ...(manage
-                ? {
-                    toolbar: (
-                      <Button density="dense" disabled>
-                        {t("detail.refresh")}
-                      </Button>
-                    ),
-                  }
-                : {}),
-            },
+            // the tools card: its title (and, for a manager, the refresh button) over the rows
+            { kind: "card", card: { lines: 6, actions: manage ? 1 : 0 } },
           ],
         }}
       />
@@ -245,6 +236,7 @@ function Connector({
           manage={manage}
           update={update}
           refresh={{ onRefresh: () => void onRefresh(), refreshing: refresh.isPending }}
+          onOpenReview={() => setTab("review")}
         />
       ) : tab === "review" ? (
         <ReviewTab orgId={orgId} app={app} manage={manage} onSaved={saved} />
@@ -395,33 +387,34 @@ function ConnectorFacts({ app }: { app: ConnectorDetail }) {
   );
 }
 
-/** The tools table's column heads, shared by the loaded table and its loading header. */
-const toolHeads = (t: ReturnType<typeof useTranslations<"connectors">>) => ({
-  name: { key: "name", header: t("tools.columns.name") },
-  policy: { key: "policy", header: t("tools.columns.policy"), width: 160 },
-  status: { key: "status", header: t("tools.columns.status"), width: 120 },
-});
+/** How many tools make the tab draw its filter field (as ToolPolicyList's own, spec §6.36). */
+const SEARCH_FROM = 9;
 
-/** The tools table's header while the connector loads (the cells need the connector). */
-const toolColumns = (t: ReturnType<typeof useTranslations<"connectors">>): Column<never>[] =>
-  Object.values(toolHeads(t)).map((h) => ({ ...h, cell: () => null }));
-
-/** 工具页签；「刷新工具」放在表格工具栏（PageHeader 的按钮没有加载态），刷新期间为加载中且不可再点。 */
+/**
+ * 工具页签（spec §6.36）：一张卡片，工具按声明分成「只读」与「可能写入」两组（与成员的权限 Sheet 同组），每组一个
+ * `ToolPolicyList`（`control: "switch"`）：每行是工具的显示名（声明的标题，否则不带 `mcp__<slug>__` 前缀的名字；
+ * 完整的键与说明在悬停提示里）、默认策略和启用开关。待复核等不能启用的工具开关锁定，注释说明原因并链到复核页签。
+ * 工具多时上方有一个跨两组的搜索框。成员只读：策略是文字，停用的工具在注释里写明。「刷新工具」在卡片头部，刷新期间
+ * 为加载中且不可再点。
+ */
 function ToolsTab({
   app,
   manage,
   update,
   refresh,
+  onOpenReview,
 }: {
   app: ConnectorDetail;
   manage: boolean;
   update: Update;
   refresh: { onRefresh(): void; refreshing: boolean };
+  onOpenReview(): void;
 }) {
   const t = useTranslations("connectors");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState<string>();
+  const [query, setQuery] = useState("");
 
   async function patch(
     tool: ConnectorTool,
@@ -437,89 +430,128 @@ function ToolsTab({
     }
   }
 
-  const heads = toolHeads(t);
-  const columns: Column<ConnectorTool>[] = [
-    {
-      ...heads.name,
-      cell: (x) => (
-        <Stack gap={0}>
-          <Text>{x.key}</Text>
-          {x.missing ? (
-            <Text variant="small" tone="warn">
-              {t("tools.missing")}
-            </Text>
-          ) : neverReviewedDisabled(x) ? (
-            <Text variant="small" tone="warn">
-              {t("tools.neverReviewed")}
-            </Text>
-          ) : (
-            <Text variant="small" tone="muted" truncate>
-              {x.issue ?? x.description}
-            </Text>
-          )}
-        </Stack>
-      ),
-    },
-    {
-      ...heads.policy,
-      cell: (x) =>
-        manage ? (
-          <Select
-            aria-label={t("tools.policyLabel", { tool: x.key })}
-            value={x.defaultPolicy}
-            disabled={busy !== undefined}
-            onChange={(e) => void patch(x, { defaultPolicy: e.target.value as ToolPolicy })}
-            options={POLICIES.map((p) => ({ value: p, label: t(`policy.${p}`) }))}
-          />
-        ) : (
-          t(`policy.${x.defaultPolicy}`)
-        ),
-    },
-    {
-      ...heads.status,
-      cell: (x) =>
-        x.status === "pending_review" ? (
-          <StatusMark status="waiting" label={t("tools.pendingReview")} />
-        ) : manage ? (
-          <Switch
-            label={t("tools.enabledLabel", { tool: x.key })}
-            checked={x.status === "enabled"}
-            disabled={
-              busy !== undefined ||
-              (x.status === "disabled" &&
-                (x.issue !== null ||
-                  x.missing === true ||
-                  x.reviewedAt === null ||
-                  (x.pending ?? null) !== null))
-            }
-            onChange={(on) => void patch(x, { status: on ? "enabled" : "disabled" })}
-          />
-        ) : x.status === "enabled" ? (
-          <StatusMark status="success" label={t("tools.enabled")} />
-        ) : (
-          <StatusMark status="cancelled" label={t("tools.disabled")} />
-        ),
-    },
-  ];
+  const byName = new Map(app.tools.map((x) => [x.name, x]));
+  /** Why a tool cannot be switched on now, with the way to the 复核 tab when it is resolved there. */
+  const noteOf = (x: ConnectorTool): ToolPolicyRow["note"] => {
+    const review = reviewable(x)
+      ? {
+          action: {
+            label: t("tools.openReview"),
+            ariaLabel: t("tools.openReviewLabel", { tool: toolDisplayName(x) }),
+            onClick: onOpenReview,
+          },
+        }
+      : {};
+    if (x.missing === true) return { text: t("tools.missing"), tone: "warn" };
+    if (x.issue !== null) return { text: x.issue, tone: "warn", ...review };
+    if (x.status === "pending_review")
+      return { text: t("tools.pendingReview"), tone: "warn", ...review };
+    if (neverReviewedDisabled(x))
+      return { text: t("tools.neverReviewed"), tone: "warn", ...review };
+    if ((x.pending ?? null) !== null)
+      return { text: t("tools.pendingReview"), tone: "warn", ...review };
+    if (!manage && x.status === "disabled") return { text: t("tools.disabled") };
+    return undefined;
+  };
+  const rowOf = (x: ConnectorTool): ToolPolicyRow => {
+    const note = noteOf(x);
+    return {
+      id: x.name,
+      label: toolDisplayName(x),
+      tooltip: toolTooltip(x),
+      checked: x.status === "enabled",
+      // a disabled tool switches on only once nothing stands in its way (reviewed, valid, offered)
+      checkLocked:
+        x.status === "pending_review" ||
+        (x.status === "disabled" &&
+          (x.issue !== null ||
+            x.missing === true ||
+            x.reviewedAt === null ||
+            (x.pending ?? null) !== null)),
+      policy: x.defaultPolicy,
+      ...(note !== undefined ? { note } : {}),
+    };
+  };
+  const q = query.trim().toLowerCase();
+  const shown =
+    q === ""
+      ? app.tools
+      : app.tools.filter(
+          (x) => toolDisplayName(x).toLowerCase().includes(q) || x.name.toLowerCase().includes(q),
+        );
+  // grouped by what a tool declares, as the member's 权限 sheet groups them
+  const groups = (["read", "write"] as const).map((g) => ({
+    id: g,
+    tools: shown.filter((x) => (x.annotations?.readOnlyHint === true) === (g === "read")),
+  }));
+  const policyOptions = POLICIES.map((p) => ({ value: p, label: t(`policy.${p}`) }));
 
   return (
-    <DataTable<ConnectorTool>
-      label={t("detail.tabs.tools")}
+    <Card
+      title={t("tools.title")}
       {...(manage
         ? {
-            toolbar: (
+            actions: (
               <Button density="dense" loading={refresh.refreshing} onClick={refresh.onRefresh}>
                 {t("detail.refresh")}
               </Button>
             ),
           }
         : {})}
-      columns={columns}
-      rows={app.tools}
-      rowKey={(x) => x.name}
-      rowLabel={(x) => x.key}
-      empty={{ title: t("tools.empty") }}
-    />
+    >
+      {app.tools.length === 0 ? (
+        <EmptyState size="panel" text={t("tools.empty")} />
+      ) : (
+        <Stack gap={12}>
+          <Text variant="prose" tone="muted">
+            {manage ? t("tools.hintManage") : t("tools.hintRead")}
+          </Text>
+          {app.tools.length >= SEARCH_FROM ? (
+            <Input
+              type="search"
+              density="dense"
+              prefix={<Icon name="search" size={14} />}
+              placeholder={t("tools.search")}
+              aria-label={t("tools.search")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          ) : null}
+          {shown.length === 0 ? (
+            <EmptyState size="panel" text={t("tools.noMatch")} />
+          ) : (
+            groups.map((g) =>
+              g.tools.length === 0 ? null : (
+                <Subsection
+                  key={g.id}
+                  variant="divided"
+                  title={t(`tools.groups.${g.id}`)}
+                  count={g.tools.length}
+                  description={t(`tools.groups.${g.id}Hint`)}
+                >
+                  <ToolPolicyList
+                    label={t(`tools.groups.${g.id}`)}
+                    rows={g.tools.map(rowOf)}
+                    policyOptions={policyOptions}
+                    control="switch"
+                    readOnly={!manage}
+                    disabled={busy !== undefined}
+                    onCheck={(name, on) => {
+                      const x = byName.get(name);
+                      if (x) void patch(x, { status: on ? "enabled" : "disabled" });
+                    }}
+                    onPolicy={(name, v) => {
+                      const x = byName.get(name);
+                      if (x) void patch(x, { defaultPolicy: v as ToolPolicy });
+                    }}
+                  />
+                </Subsection>
+              ),
+            )
+          )}
+        </Stack>
+      )}
+    </Card>
   );
 }
 
@@ -923,7 +955,9 @@ function ReviewTab({
       const { connector: next } = await review.mutateAsync({ tool: tool.name, action });
       onSaved(next);
       toast.success(
-        t(action === "approve" ? "review.approved" : "review.rejected", { tool: tool.key }),
+        t(action === "approve" ? "review.approved" : "review.rejected", {
+          tool: toolDisplayName(tool),
+        }),
       );
     } catch (e) {
       toast.error(errorMessage(e));
@@ -949,10 +983,12 @@ function ReviewTab({
         const next: ToolDefinition = tool.pending ?? tool;
         const before: ToolDefinition | undefined = !fresh && tool.pending ? tool : undefined;
         const rejectedNew = neverReviewedDisabled(tool) && (tool.pending ?? null) === null;
+        const name = toolDisplayName(tool);
         return (
-          <section key={tool.name} aria-label={tool.key}>
+          <section key={tool.name} aria-label={name}>
             <Card
-              title={tool.key}
+              // the display name; the key and the description in its hover text
+              title={<Text title={toolTooltip(tool)}>{name}</Text>}
               actions={
                 <StatusMark
                   status={rejectedNew ? "cancelled" : "waiting"}
@@ -999,7 +1035,7 @@ function ReviewTab({
                     <Button
                       loading={busy === tool.name}
                       disabled={busy !== undefined || tool.issue !== null}
-                      aria-label={t("review.approveLabel", { tool: tool.key })}
+                      aria-label={t("review.approveLabel", { tool: name })}
                       onClick={() => void decide(tool, "approve")}
                     >
                       {t("review.approve")}
@@ -1008,7 +1044,7 @@ function ReviewTab({
                       <Button
                         variant="danger"
                         disabled={busy !== undefined}
-                        aria-label={t("review.rejectLabel", { tool: tool.key })}
+                        aria-label={t("review.rejectLabel", { tool: name })}
                         onClick={() => void decide(tool, "reject")}
                       >
                         {t("review.reject")}
@@ -1028,8 +1064,8 @@ function ReviewTab({
               {t("review.missingHint")}
             </Text>
             {missing.map((x) => (
-              <Text key={x.name} tone="warn" icon="circle-alert">
-                {x.key}
+              <Text key={x.name} tone="warn" icon="circle-alert" title={toolTooltip(x)}>
+                {toolDisplayName(x)}
               </Text>
             ))}
           </Stack>

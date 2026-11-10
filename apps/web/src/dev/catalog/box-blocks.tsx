@@ -310,6 +310,31 @@ function LiveToolPolicyList({
   );
 }
 
+const CONNECTOR_POLICIES = [
+  { value: "allow", label: "允许" },
+  { value: "ask", label: "询问" },
+  { value: "deny", label: "禁止" },
+];
+
+/** A connector's 工具 tab: the switch after the select (control: switch), clickable. */
+function LiveSwitchPolicyList({ rows: initial }: { rows: ToolPolicyRow[] }) {
+  const [rows, setRows] = useState(initial);
+  return (
+    <ToolPolicyList
+      label="工具"
+      control="switch"
+      rows={rows}
+      policyOptions={CONNECTOR_POLICIES}
+      onCheck={(id, next) =>
+        setRows((cur) => cur.map((r) => (r.id === id ? { ...r, checked: next } : r)))
+      }
+      onPolicy={(id, v) =>
+        setRows((cur) => cur.map((r) => (r.id === id ? { ...r, policy: v } : r)))
+      }
+    />
+  );
+}
+
 /** Tools with their policy next to them (spec §6.36), as the agent page's 工具 section draws them. */
 function toolPolicyListBlocks(): ReactNode {
   return (
@@ -344,6 +369,47 @@ function toolPolicyListBlocks(): ReactNode {
               { id: "create", label: "Create document", checked: true, policy: "ask" },
               { id: "delete", label: "Delete document", checked: false, policy: "" },
               { id: "list", label: "List folders", checked: false, policy: "" },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="tool-policy-list-switch" width={640} pad>
+        <Card title="工具">
+          <LiveSwitchPolicyList
+            rows={[
+              { id: "send", label: "Send message", checked: true, policy: "ask" },
+              { id: "schedule", label: "slack_schedule_message", checked: true, policy: "ask" },
+              {
+                id: "canvas",
+                label: "slack_create_canvas",
+                checked: false,
+                checkLocked: true,
+                policy: "ask",
+                note: { text: "待复核", tone: "warn", action: { label: "去复核", onClick: noop } },
+              },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="tool-policy-list-read-only" width={640} pad>
+        <Card title="工具">
+          <ToolPolicyList
+            label="工具"
+            readOnly
+            control="switch"
+            policyOptions={CONNECTOR_POLICIES}
+            onCheck={noop}
+            onPolicy={noop}
+            rows={[
+              { id: "read", label: "Read channel", checked: true, policy: "allow" },
+              { id: "search", label: "Search messages", checked: true, policy: "allow" },
+              {
+                id: "canvas",
+                label: "slack_read_canvas",
+                checked: false,
+                policy: "allow",
+                note: { text: "已停用" },
+              },
             ]}
           />
         </Card>

@@ -1931,14 +1931,19 @@
       "credential": "Status"
     },
     "tools": {
-      "columns": {
-        "name": "Tool",
-        "policy": "Default policy",
-        "status": "Enabled"
+      "title": "Tools",
+      "hintManage": "Each tool shows its default policy and its switch on the right. Hover a tool's name to see its full name and description.",
+      "hintRead": "Each tool shows its default policy on the right. Hover a tool's name to see its full name and description.",
+      "search": "Search tools",
+      "noMatch": "No matching tools",
+      "groups": {
+        "read": "Read-only",
+        "readHint": "The tool declares that it only reads data.",
+        "write": "May write",
+        "writeHint": "May change data, or does not declare whether it is read-only."
       },
-      "policyLabel": "Default policy of {tool}",
-      "enabledLabel": "Enable {tool}",
-      "enabled": "Enabled",
+      "openReview": "Review",
+      "openReviewLabel": "Review {tool}",
       "disabled": "Disabled",
       "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",

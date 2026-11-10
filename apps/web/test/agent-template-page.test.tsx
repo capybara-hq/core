@@ -516,6 +516,7 @@ describe("/agents/templates/[id]: a platform template offered but off in the org
 
 describe("/agents/templates/[id]: the editor's sections save their part (ruling P4-12)", () => {
   const TF = en.agents.form;
+  const T = en.agents.templatePage;
   const SA = en.agents.form.subagents;
   type Put = { definition: Record<string, unknown>; expectedVersion: number };
   /** Routes whose GET serves `current`, which a PUT replaces (`answer` shapes the new one). */
@@ -554,7 +555,11 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
       json(
         200,
         detail({
-          definition: { ...DEFINITION, tools: ["AskUserQuestion", "plugin__todo__write"] },
+          definition: {
+            ...DEFINITION,
+            tools: ["AskUserQuestion", "plugin__todo__write"],
+            disallowedTools: ["mcp__docs__drop"],
+          },
         }),
       );
     r[`GET ${ORG}/tools/extensions`] = () =>
@@ -581,6 +586,15 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     await renderRouteWithCache("/agents/templates/t9?s=tools", r);
     const group = await screen.findByRole("list", { name: "Todo" });
     expect(within(group).getByText(TF.extensionToolOffInOrg)).toBeTruthy();
+    // a tool reads by its title; the key is its hover text, never a visible line
+    expect(within(group).getByText("Write the list").getAttribute("title")).toBe(
+      "plugin__todo__write",
+    );
+    // a connector key this org does not list reads as `<slug> · <tool>`, the key as hover text
+    const others = screen.getByRole("list", { name: T.tools.others });
+    const drop = within(others).getByText(T.tools.unavailable.replace("{tool}", "docs · drop"));
+    expect(drop.getAttribute("title")).toBe("mcp__docs__drop");
+    expect(screen.queryByText(/mcp__docs__drop/)).toBeNull();
   });
 
   it("连接器: a connector template on in the org is added, policies are set per listed tool, and both round-trip", async () => {

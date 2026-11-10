@@ -1038,9 +1038,45 @@
 .cb-tool-policy-note[data-tone="warn"] {
   color: var(--cb-warn);
 }
+.cb-tool-policy-note-text {
+  min-width: 0;
+}
+/* The note's way to where it is resolved (去复核): a text button drawn as the in-site link (§6.5). */
+.cb-tool-policy-note-action {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cb-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--cb-line-strong);
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: text-decoration-color var(--cb-motion-hover);
+}
+.cb-tool-policy-note-action:hover {
+  text-decoration-color: var(--cb-ink);
+}
+.cb-tool-policy-note-action:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+  border-radius: var(--cb-radius-sm);
+}
 .cb-tool-policy-select {
   flex: none;
   width: var(--cb-layout-policy-select);
+}
+/* Read-only: the policy as text where the select would be. */
+.cb-tool-policy-value {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+/* The switch (control: switch) after the select, at the row's end. */
+.cb-tool-policy-switch {
+  display: inline-flex;
+  flex: none;
 }
 /* A search matching nothing holds the panel EmptyState (§6.18), which pads itself. */
 .cb-tool-policy-empty {

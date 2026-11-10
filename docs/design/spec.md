@@ -3047,18 +3047,23 @@ States: `default`, `empty`
 
 ### 6.36 ToolPolicyList
 
-`ToolPolicyList({ label, rows, policyOptions, onCheck?, onPolicy, onCheckAll?, search?, disabled?, inset?: "card" | "flush" })` with `ToolPolicyRow { id, label, tooltip?, note?: { text, tone?: "muted" | "warn" }, checked, policy, locked? }`: the tools an agent may call, each with its policy next to it (the agent page's 工具 section, its 内置工具 rows in the form card and an extension's or connector's tools in the 配置 Sheet). It replaces a checkbox list followed by a second list of policy selects that the reader had to match up.
+`ToolPolicyList({ label, rows, policyOptions, onCheck?, onPolicy, onCheckAll?, search?, disabled?, inset?: "card" | "flush", control?: "checkbox" | "switch", readOnly? })` with `ToolPolicyRow { id, label, tooltip?, note?: { text, tone?: "muted" | "warn", action?: { label, onClick, ariaLabel? } }, checked, checkLocked?, policy, locked? }`: the tools an agent may call, each with its policy next to it (the agent page's 工具 section, its 内置工具 rows in the form card and an extension's or connector's tools in the 配置 Sheet; a connector's 工具 tab). It replaces a checkbox list followed by a second list of policy selects that the reader had to match up.
+
+- **Labels**: `label` is the tool's display title (its declared title, e.g. the MCP `title`, else its bare name without the `mcp__<slug>__` / `plugin__<plugin>__` prefix); the model-facing key and the description go to `tooltip` (the key first), never to a second visible line.
 
 - **Rows**: a `ul` named by `label`; one row per tool, at least `row.default` high, `space.1` above and below, gap `space.3`, split by `line-soft` hairlines (never cards, §1). On the left the Checkbox (§6.3) named by the tool's display title (`ink`, one line with an ellipsis; `tooltip` is its hover text, for a human description; a key or the model-facing English description is never drawn). Under the title an optional `note` line (`small`, `muted`; `warn` with the 12 px `circle-alert`: why a selected tool cannot be used now), indented to the title. On the right the policy `Select` (§6.2) at `dense`, `layout.policy-select` (160) wide, named 「<title> 的策略」; it is disabled while the tool is unchecked (the caller passes the default option's value then: a policy only applies to a tool the agent uses). The options are the caller's (默认 / 需审批 / 禁止: a policy can only tighten).
 - **Select all** (`onCheckAll`): a head row of the same height under a `line-soft` hairline: the 「全选」 Checkbox (mixed while some rows are checked) and the checked count `n/m` (`small`, `muted`) at the right; it acts on the rows the filter shows.
 - **Filter** (`search`, for a group with many tools, about eight or more): a `dense` search Input with the `search` icon above the rows (「搜索工具」), `space.2` above the select-all row; it narrows the rows by title, and with no match shows 「没有匹配的工具」 as the panel EmptyState (§6.18) in the rows' place.
 - **Inset**: `card` (default) in a padded box (a form card, a Sheet): the rows reach its padding; `flush` alone in a flush card: rows padded `space.4` at the sides, so the hairlines run to the card's edges (as ItemList, §6.33).
-- `disabled` turns every checkbox and select off (while a save runs); a row's `locked` turns its select off (a policy fixed by someone else, the reason in its `note`).
+- `disabled` turns every checkbox, switch and select off (while a save runs); a row's `locked` turns its select off (a policy fixed by someone else, the reason in its `note`), its `checkLocked` its checkbox or switch (a tool that cannot be switched now, the reason in its `note`).
+- **Note action** (`note.action`): a text button after the note's text, drawn as the in-site link (§6.5: `ink`, `line-strong` underline), that leads to where the note is resolved (待复核 → 去复核, which opens the 复核 tab).
+- **Switch** (`control: "switch"`, with `onCheck`): the use control is a Switch (§6.3) at the row's end after the select, named 「启用 <title>」, and the select stays on while the tool is off (a connector's 工具 tab: the default policy is set before a tool is switched on); no select-all row. A connector's tools are grouped by what they declare, one `ToolPolicyList` per group (只读 / 可能写入, each a `Subsection` with its count) in the tab's one card, a filter over both groups above them when there are many.
+- **Read-only** (`readOnly`, someone who may not change the tools): each row's policy is its option's label (`body`, `muted`) in the select's column and no checkbox or switch is drawn; what is off is said in the row's `note`.
 - **Without checkboxes** (no `onCheck`; `onCheckAll` is then ignored): each row is the title (`body`, `ink`) and its select, the note not indented: a list of policies for tools that are all in use, e.g. a member's own policies on the connector card's 权限 Sheet, one `ToolPolicyList` per group (只读 / 可能写入, each a `Subsection` with its count), the default option marked 「允许（默认）」.
 - Groups of tools (an extension, a connector) are not nested lists: in the form card each group is one `ItemList` row (§6.33: its name, the 扩展 / 连接器 tag, a summary meta line 「已启用 12/30 个工具 · 2 个需审批」 and a 「配置」 button) that opens a Sheet (§6.7) holding the group's `ToolPolicyList` with `onCheckAll`.
 
 <!-- states: tool-policy-list -->
-States: `default`, `select-all`
+States: `default`, `select-all`, `switch`, `read-only`
 
 <!-- size-table: tool-policy-list -->
 | Part | State | Property | Value |
@@ -3076,6 +3081,11 @@ States: `default`, `select-all`
 | tool-policy-count | select-all | font-size | type.small |
 | tool-policy-count | select-all | color | color.muted |
 | tool-policy-search input | select-all | height | control.dense |
+| tool-policy-switch | switch | width | space.7 |
+| tool-policy-note-action | switch | font-size | type.small |
+| tool-policy-note-action | switch | color | color.ink |
+| tool-policy-value | read-only | font-size | type.body |
+| tool-policy-value | read-only | color | color.muted |
 
 ### 6.37 ThemeSwatch
 

@@ -190,3 +190,120 @@ describe("ToolPolicyList without onCheck", () => {
     expect(onPolicy).toHaveBeenCalledWith("read", "ask");
   });
 });
+
+describe("ToolPolicyList with control: switch", () => {
+  const POLICY = [
+    { value: "allow", label: "允许" },
+    { value: "ask", label: "询问" },
+    { value: "deny", label: "禁止" },
+  ];
+  const SWITCH_ROWS: ToolPolicyRow[] = [
+    {
+      id: "send",
+      label: "Send message",
+      tooltip: "mcp__slack__send_message\nSend a message",
+      checked: true,
+      policy: "ask",
+    },
+    {
+      id: "draft",
+      label: "draft_message",
+      checked: false,
+      policy: "ask",
+      checkLocked: true,
+      note: { text: "待复核", tone: "warn", action: { label: "去复核", onClick: () => {} } },
+    },
+  ];
+
+  it("draws a switch after the select; the select stays on while the tool is off", async () => {
+    const onCheck = vi.fn();
+    const onPolicy = vi.fn();
+    render(
+      <DesignProvider locale="zh">
+        <ToolPolicyList
+          label="Slack 的工具"
+          rows={SWITCH_ROWS}
+          policyOptions={POLICY}
+          control="switch"
+          onCheck={onCheck}
+          onCheckAll={() => {}}
+          onPolicy={onPolicy}
+        />
+      </DesignProvider>,
+    );
+    // no checkbox and no select-all: the use control is the switch
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    const send = screen.getByRole("switch", { name: "启用 Send message" });
+    expect(send.getAttribute("aria-checked")).toBe("true");
+    const row = send.closest("li") as HTMLElement;
+    // the switch is the row's last control, after the select
+    const select = within(row).getByRole("combobox", { name: "Send message 的策略" });
+    expect(select.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // the title carries the tooltip (key and description), never a second visible line
+    expect(within(row).getByText("Send message").getAttribute("title")).toBe(
+      "mcp__slack__send_message\nSend a message",
+    );
+    expect(within(row).queryByText(/mcp__slack__send_message/)).toBeNull();
+    await userEvent.click(send);
+    expect(onCheck).toHaveBeenCalledWith("send", false);
+    // an off, locked row: the switch is off, its select is not
+    expect(screen.getByRole("switch", { name: "启用 draft_message" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.getByRole("combobox", { name: "draft_message 的策略" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("a note's action is a button after its text", async () => {
+    const onClick = vi.fn();
+    render(
+      <DesignProvider locale="zh">
+        <ToolPolicyList
+          label="Slack 的工具"
+          rows={[
+            {
+              id: "draft",
+              label: "draft_message",
+              checked: false,
+              policy: "ask",
+              note: {
+                text: "待复核",
+                tone: "warn",
+                action: { label: "去复核", ariaLabel: "复核 draft_message", onClick },
+              },
+            },
+          ]}
+          policyOptions={POLICY}
+          control="switch"
+          onCheck={() => {}}
+          onPolicy={() => {}}
+        />
+      </DesignProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "复核 draft_message" }));
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(css).toMatch(/\.cb-tool-policy-note-action \{[^}]*text-decoration: underline;/);
+  });
+
+  it("readOnly: the policy is text, no switch, no select", () => {
+    render(
+      <DesignProvider locale="zh">
+        <ToolPolicyList
+          label="Slack 的工具"
+          rows={SWITCH_ROWS}
+          policyOptions={POLICY}
+          control="switch"
+          readOnly
+          onCheck={() => {}}
+          onPolicy={() => {}}
+        />
+      </DesignProvider>,
+    );
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+    expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+    expect(screen.getAllByText("询问")).toHaveLength(2);
+  });
+});

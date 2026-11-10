@@ -64,7 +64,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   await expect(page).toHaveURL(/\/connectors\/install$/);
   await installMcp(page, "Fixture", "fixture", mcpUrl as string);
   const policy = page.getByRole("combobox", {
-    name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
+    name: designZh("toolPolicy.policyOf").replace("{tool}", "delete_item"),
   });
   await expect(policy).toHaveAttribute("value", "ask");
 

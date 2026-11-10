@@ -1919,14 +1919,19 @@
       "credential": "凭据状态"
     },
     "tools": {
-      "columns": {
-        "name": "工具",
-        "policy": "默认策略",
-        "status": "启用"
+      "title": "工具",
+      "hintManage": "每个工具右侧是它的默认策略和启用开关。将指针停在工具名上可查看完整名称和说明。",
+      "hintRead": "每个工具右侧是它的默认策略。将指针停在工具名上可查看完整名称和说明。",
+      "search": "搜索工具",
+      "noMatch": "没有匹配的工具",
+      "groups": {
+        "read": "只读",
+        "readHint": "工具声明只读取数据。",
+        "write": "可能写入",
+        "writeHint": "可能修改数据，或没有声明是否只读。"
       },
-      "policyLabel": "{tool} 的默认策略",
-      "enabledLabel": "启用 {tool}",
-      "enabled": "启用",
+      "openReview": "去复核",
+      "openReviewLabel": "复核 {tool}",
       "disabled": "已停用",
       "empty": "该连接器没有工具。",
       "missing": "服务已不再提供此工具",

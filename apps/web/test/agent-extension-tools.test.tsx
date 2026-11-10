@@ -398,6 +398,25 @@ describe("agent page Tools section: connectors", () => {
     expect(within(sheet).getByText(m.connectorPolicyHint)).toBeTruthy();
   });
 
+  it("a connector tool's row is its title or bare name; the key and description are its hover text", async () => {
+    stubApi(
+      routes(
+        [],
+        {},
+        { ...DOCS, tools: [tool("search", "Search documents"), tool("create", null)] },
+      ),
+    );
+    await renderEditAgent({ section: "tools" });
+    const sheet = await openGroup("Docs");
+    const titled = await within(sheet).findByText("Search documents");
+    expect(titled.getAttribute("title")).toBe("mcp__docs__search\nsearch.");
+    expect(within(sheet).getByText("create").getAttribute("title")).toBe(
+      "mcp__docs__create\ncreate.",
+    );
+    expect(within(sheet).queryByText(/mcp__docs__/)).toBeNull();
+    expect(within(sheet).queryByText("search.")).toBeNull();
+  });
+
   it("an org connector is on for the agent: its enabled tools all ticked; unticking one turns it off", async () => {
     const m = en.agents.form;
     const calls = stubApi(routes([], { mcp__docs__create: "ask" }));

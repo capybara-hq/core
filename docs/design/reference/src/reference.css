@@ -5334,6 +5334,29 @@ textarea {
   flex: none;
   width: var(--cb-layout-policy-select);
 }
+.r-tool-policy-text[data-check="none"] > .r-tool-policy-note {
+  padding-left: 0;
+}
+.r-tool-policy-note-action {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cb-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--cb-line-strong);
+  text-underline-offset: 3px;
+}
+.r-tool-policy-value {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-tool-policy-switch {
+  display: inline-flex;
+  flex: none;
+}
 
 /* ThemeSwatch (spec §6.37) */
 .r-theme-swatch {

@@ -18,7 +18,8 @@ export function useTemplateSource(): (t: AgentTemplateDetail, orgId: string) => 
 
 /**
  * How a tool key reads: a builtin by its label (`AskUserQuestion` -> 向用户提问), an extension
- * tool as `<plugin> · <tool>`, anything else as the key.
+ * tool as `<plugin> · <tool>`, a connector tool as `<slug> · <tool>` (never the raw
+ * `mcp__<slug>__` key), anything else as the key.
  */
 export function useToolName(): (key: string) => string {
   const t = useTranslations("agents.form.builtin");
@@ -26,6 +27,7 @@ export function useToolName(): (key: string) => string {
     const p = parseToolKey(key);
     if (p?.kind === "builtin") return t.has(p.name) ? t(p.name) : p.name;
     if (p?.kind === "extension") return `${p.plugin} · ${p.tool}`;
+    if (p?.kind === "connector") return `${p.slug} · ${p.tool}`;
     return key;
   };
 }
