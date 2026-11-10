@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { activeNavOf } from "../src/components/shell/nav";
+import { Catalog } from "../src/dev/catalog";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
-import { ME } from "./support/render";
+import { ME, renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -324,6 +325,17 @@ describe("/admin 概览（OverviewPage）", () => {
     await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
     const empty = await screen.findByText(zh.admin.audit.empty);
     expect(section(zh.admin.overview.audit.title).contains(empty)).toBe(true);
+  });
+
+  it("the /dev/ui page the visual spec shoots draws the overview from its seeded cache, no box in a box", async () => {
+    const calls = stubApi({});
+    renderPage(<Catalog route="pages/admin-overview" />, { locale: "zh" });
+    const o = zh.admin.overview;
+    expect(await screen.findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    expect(section(o.audit.title).getAttribute("data-state")).toBe("ready");
+    expect(screen.getByText(o.footnote)).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    expect(calls).toEqual([]);
   });
 
   it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {

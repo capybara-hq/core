@@ -27,6 +27,13 @@ export const OVERLAY_ROUTES = [
   "overlays/toast",
 ] as const;
 
+/**
+ * Real app pages drawn from a seeded query cache in the admin console's shell (`pages.tsx`): no
+ * kernel behind them. Screenshotted by their own visual spec (`visual/admin-overview.spec.ts`), so
+ * they are not catalog routes.
+ */
+export const PAGE_ROUTES = ["pages/admin-overview"] as const;
+
 export const CATALOG_ROUTES = [
   "components",
   "table",
@@ -142,6 +149,11 @@ export const REFERENCE_ROUTES = REFERENCE_COMPONENTS.map((c) => `reference/${c}`
 export type CatalogRoute = (typeof CATALOG_ROUTES)[number];
 export type TemplateRoute = (typeof TEMPLATE_ROUTES)[number];
 export type OverlayRoute = (typeof OVERLAY_ROUTES)[number];
+export type PageRoute = (typeof PAGE_ROUTES)[number];
+
+export function isPageRoute(r: string): r is PageRoute {
+  return (PAGE_ROUTES as readonly string[]).includes(r);
+}
 
 export function isCatalogRoute(r: string): r is CatalogRoute {
   return (CATALOG_ROUTES as readonly string[]).includes(r);
