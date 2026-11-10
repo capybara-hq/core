@@ -262,6 +262,12 @@ describe("themes as platform components", () => {
       owner_org_id: null,
       deleted_at: null,
     });
+    // Both texts reach the admin list, so the web picks one by UI language (browser review F08).
+    const list = await env.root({ method: "GET", url: "/api/v1/admin/components?kind=theme" });
+    expect(list.statusCode, list.body).toBe(200);
+    expect(
+      (list.json() as { components: { id: string }[] }).components.find((c) => c.id === row.id),
+    ).toMatchObject({ description: "Neon on black.", descriptionZh: "黑底霓虹。" });
     const v = await versionRow(row.id, 1);
     expect(v.catalog_version).toBe("1.0.0");
     expect(v.object_prefix).toBe(`platform/themes/${row.id}/1-1.0.0/`);
