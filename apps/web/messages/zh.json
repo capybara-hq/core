@@ -1267,22 +1267,7 @@
       "previewFailed": "读不到删除的影响，确认前请重试。",
       "previewRetry": "重试"
     },
-    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。",
-    "create": {
-      "open": "新建",
-      "title": "新建技能",
-      "name": "名称",
-      "nameHelp": "小写字母、数字和单个连字符，最多 64 个字符。同一组织里技能名称不能重复。",
-      "nameInvalid": "名称只能包含小写字母、数字和单个连字符。",
-      "description": "描述",
-      "descriptionHelp": "写清这个技能做什么、什么时候用，智能体据此决定何时加载它。",
-      "body": "内容",
-      "bodyHelp": "SKILL.md 的正文。SKILL.md 由名称和描述生成：正文开头的 --- frontmatter 会被去掉，只保留调用相关的键（例如 disable-model-invocation、context）。",
-      "shareable": "可共享",
-      "submit": "创建",
-      "cancel": "取消",
-      "created": "已创建技能「{name}」。"
-    }
+    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。"
   },
   "chat": {
     "waitingFor": {

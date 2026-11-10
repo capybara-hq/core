@@ -8,10 +8,12 @@ import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { type OrgEnv, resetOrgCatalog, setDeployment, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { PW } from "../helpers/runs.js";
+import { SKILL_MD } from "../skills/zip.js";
 
 /**
  * Task 5 of the Platform tool: the skills, agents and agent-template operations against PG with
@@ -145,7 +147,6 @@ describe("registration", () => {
       "platform.preferences",
       "platform.set-preferences",
       "skills.available",
-      "skills.create",
       "skills.delete",
       "skills.delete-preview",
       "skills.disable-preview",
@@ -161,11 +162,12 @@ describe("registration", () => {
 describe("skills", () => {
   it("a member lists the org skills", async () => {
     const c = ctxOf(env.bossId, randomUUID());
-    await run(
-      "skills.create",
-      { name: "report", description: "Write reports.", body: "# Steps" },
-      c,
-    );
+    const md = new TextEncoder().encode(SKILL_MD("report", "Write reports."));
+    await env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
+      name: "report",
+      description: "Write reports.",
+      files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
+    });
     const out = (await run("skills.list", {}, ctxOf(env.memId, randomUUID()))) as {
       skills: { name: string }[];
     };
@@ -173,68 +175,8 @@ describe("skills", () => {
     expect(availability(op("skills.list"), facts("member"))).toEqual({ ok: true });
   });
 
-  it("a member cannot create a skill: the reason names an org admin", () => {
-    const a = availability(op("skills.create"), facts("member"));
-    expect(a.ok).toBe(false);
-    expect(a.ok ? "" : a.reason).toContain("an org admin");
-  });
-
-  it("an admin creates a skill and the audit row says it came through the agent", async () => {
-    const c = ctxOf(env.bossId, randomUUID());
-    expect(availability(op("skills.create"), facts("admin"))).toEqual({ ok: true });
-    const out = (await run(
-      "skills.create",
-      { name: "triage", description: "Triage requests.", body: "# Steps" },
-      c,
-    )) as { skill: { id: string; name: string } };
-    expect(out.skill.name).toBe("triage");
-    const [row] = await audits("skill.created");
-    expect(row?.detail).toMatchObject({
-      name: "triage",
-      via: "agent",
-      agentConversationId: c.conversationId,
-      agentRunId: c.runId,
-      operation: "skills.create",
-    });
-    const got = (await run("skills.get", { skillId: out.skill.id }, c)) as { body: string };
-    expect(got.body).toContain("# Steps");
-  });
-
-  it("the skills.create summary says when the skill is shareable with other orgs", async () => {
-    const c = ctxOf(env.bossId, randomUUID());
-    const base = { name: "report", description: "Write reports.", body: "# Steps" };
-    expect(await summarize("skills.create", base, c)).toEqual({
-      zh: "新建组织技能「report」",
-      en: 'Create org skill "report"',
-    });
-    expect(await summarize("skills.create", { ...base, shareable: true }, c)).toEqual({
-      zh: "新建组织技能「report」（可共享给其他组织）",
-      en: 'Create org skill "report" (shared with other orgs)',
-    });
-  });
-
-  it("a taken name answers a ToolError naming the code", async () => {
-    const c = ctxOf(env.bossId, randomUUID());
-    const input = { name: "dup", description: "Dup.", body: "# x" };
-    expect(await precheck("skills.create", input, c)).toEqual({ ok: true });
-    await run("skills.create", input, c);
-    await expect(run("skills.create", input, c)).rejects.toThrow(/skill\.name_exists/);
-    // the precheck knows it before the card
-    expect(await precheck("skills.create", input, c)).toEqual({
-      ok: false,
-      code: "skill.name_exists",
-      message: 'A skill named "dup" already exists in this organization. Choose another name.',
-    });
-  });
-
-  it("the precheck refuses custom skills the platform turned off, with the role's next step", async () => {
-    await setDeployment(env, { customSkills: "deny" });
-    const c = ctxOf(env.bossId, randomUUID());
-    const r = await precheck("skills.create", { name: "x", description: "X.", body: "# x" }, c);
-    expect(r).toMatchObject({ ok: false, code: "catalog.custom_disabled" });
-    const errors = op("skills.create").errors;
-    expect(nextStepFor(errors, "catalog.custom_disabled", "superAdmin")).toContain("admin console");
-    expect(nextStepFor(errors, "catalog.custom_disabled", "member")).not.toContain("admin console");
+  it("there is no skills.create operation: skills enter only as uploaded packages", () => {
+    expect(ops.get("skills.create")).toBeNull();
   });
 });
 

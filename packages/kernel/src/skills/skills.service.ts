@@ -24,7 +24,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
-import { buildSkillWrite } from "../tools/builtins/skill-write.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import {
   checkBuiltSkillFiles,
@@ -263,23 +262,6 @@ const nameExists = (name: string) =>
     "skill.name_exists",
     `A skill named "${name}" already exists in this organization. Choose another name.`,
   );
-
-/** The checked files of a skill written as text (a built `SKILL.md`); `validation_failed` if not. */
-function textSkillFiles(input: { name: string; description: string; body: string }) {
-  const built = buildSkillWrite({
-    name: input.name,
-    description: input.description,
-    files: [{ path: SKILL_ENTRY_FILE, content: input.body }],
-  });
-  if ("errors" in built) {
-    throw new ApiError(
-      "validation_failed",
-      `Invalid skill: ${built.errors[0] ?? "unknown problem"}`,
-      built.errors.map((message) => ({ path: "body", message })),
-    );
-  }
-  return checkBuiltSkillFiles(built.files);
-}
 
 /**
  * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
@@ -689,61 +671,6 @@ export class SkillsService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       ...(shareable !== undefined && { shareable }),
       ...(owner !== undefined && { owner }),
-    });
-  }
-
-  /**
-   * The read-only checks of {@link createFromText}, for the `Platform` tool's precheck (before the
-   * card): custom skills allowed, a valid `SKILL.md`, and no live org skill of the name. Throws the
-   * same `ApiError` the create would; the create checks the name again under its lock.
-   */
-  async checkCreateFromText(
-    orgId: string,
-    input: { name: string; description: string; body: string },
-  ): Promise<void> {
-    await assertCustomAllowed(this.db.db, "customSkills");
-    const pkg = textSkillFiles(input);
-    const existing = await this.db
-      .selectFrom("skills")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("scope", "=", "org")
-      .where("name", "=", pkg.name)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    if (existing) throw nameExists(pkg.name);
-  }
-
-  /**
-   * Creates an org skill from text (spec §14, P3-24): `SKILL.md` is built from the name,
-   * description and body ({@link buildSkillWrite}, the description a YAML string) and checked like
-   * an uploaded package. The same policy and name rules as an upload, except that a live org skill
-   * of that name is `skill.name_exists` (409) instead of a new version.
-   */
-  async createFromText(
-    orgId: string,
-    actorAccountId: string,
-    input: {
-      name: string;
-      description: string;
-      body: string;
-      shareable?: boolean;
-      actorTokenId?: string;
-      /** Merged into the audit event's detail (the `Platform` tool's `via: "agent"`). */
-      auditDetail?: Record<string, unknown>;
-    },
-  ): Promise<UploadedSkill> {
-    this.storage.assertAvailable();
-    await assertCustomAllowed(this.db.db, "customSkills");
-    const pkg = textSkillFiles(input);
-    const prefix = skillFilesPrefix(randomUUID());
-    await this.putFiles(orgId, prefix, pkg.files);
-    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
-      prefix,
-      failIfExists: true,
-      ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
-      ...(input.auditDetail !== undefined && { auditDetail: input.auditDetail }),
-      ...(input.shareable !== undefined && { shareable: input.shareable }),
     });
   }
 

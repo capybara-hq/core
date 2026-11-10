@@ -1267,22 +1267,7 @@
       "previewFailed": "What deleting it does could not be read; retry before confirming.",
       "previewRetry": "Retry"
     },
-    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
-    "create": {
-      "open": "New",
-      "title": "New skill",
-      "name": "Name",
-      "nameHelp": "Lowercase letters, digits and single hyphens, up to 64 characters. Skill names are unique in an organization.",
-      "nameInvalid": "Use only lowercase letters, digits and single hyphens.",
-      "description": "Description",
-      "descriptionHelp": "Say what the skill does and when to use it: agents decide when to load it from this.",
-      "body": "Content",
-      "bodyHelp": "The body of SKILL.md. SKILL.md is generated from the name and the description: a leading --- frontmatter in the body is dropped, except the invocation keys (such as disable-model-invocation and context).",
-      "shareable": "Shareable",
-      "submit": "Create",
-      "cancel": "Cancel",
-      "created": "Skill \"{name}\" created."
-    }
+    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off."
   },
   "chat": {
     "waitingFor": {

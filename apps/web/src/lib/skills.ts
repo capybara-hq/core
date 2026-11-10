@@ -184,27 +184,6 @@ export const getSkill = (orgId: string, id: string) =>
 export const deleteSkill = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/skills/${enc(id)}`, { method: "DELETE" });
 
-/** Skill name rule (SDK `isSkillName`): 1-64 lowercase letters, digits and single hyphens. */
-export const isSkillName = (s: string): boolean =>
-  s.length <= 64 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(s);
-
-/** Description limit of a skill (SDK `SKILL_LIMITS.descriptionMaxChars`). */
-export const SKILL_DESCRIPTION_MAX_CHARS = 1024;
-
-/**
- * 新建技能 from text (`POST /skills { name, description, body, shareable? }`, plugin scope phase 3):
- * the kernel writes SKILL.md from them; a leading `---` frontmatter in `body` is dropped except the
- * invocation keys. A live org skill of that name -> 409 `skill.name_exists`.
- */
-export const createSkillFromText = (
-  orgId: string,
-  input: { name: string; description: string; body: string; shareable?: boolean },
-) =>
-  apiFetch<UploadedSkill>(`${org(orgId)}/skills`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-
 /**
  * Sets 可共享 on the org's own skill (`PUT /skills/:id/shareable`; others -> 409
  * `catalog.not_owned`).

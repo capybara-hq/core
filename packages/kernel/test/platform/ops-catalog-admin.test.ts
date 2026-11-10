@@ -9,6 +9,7 @@ import type { OperationContext } from "../../src/platform/operation.js";
 import { ORG_OWNED } from "../../src/platform/ops/catalog-admin.ops.js";
 import { OTHER_ORG } from "../../src/platform/ops/other-orgs.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import {
   importDeployedPlugin,
   importSkill,
@@ -19,6 +20,7 @@ import {
 } from "../catalog/org-env.js";
 import { skillPlugin } from "../catalog/packages.js";
 import { createOrg, enableExtensions, waitFor } from "../helpers/runs.js";
+import { SKILL_MD } from "../skills/zip.js";
 
 /**
  * Task 8 of Platform phase 2: the admin catalog, platform extensions, marketplaces, the org's
@@ -278,12 +280,12 @@ describe("the platform catalog (super admin)", () => {
     const item = await importSkill(env);
     // offered only to this org first, so org2 can have its own skill of that name
     await setScope(env, item, "named", [env.orgId]);
-    const made = await env.root({
-      method: "POST",
-      url: `/api/v1/orgs/${org2}/skills`,
-      payload: { name: "pdf-tools", description: "Their own", body: "# Theirs" },
+    const md = new TextEncoder().encode(SKILL_MD("pdf-tools", "Their own"));
+    await env.k.app.get(SkillsService).createVersionFromFiles(org2, env.rootId, {
+      name: "pdf-tools",
+      description: "Their own",
+      files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
     });
-    expect(made.statusCode, made.body).toBe(201);
     const c = ctxOf(env.rootId);
     const p = (await run(
       "plugins.scope-preview",

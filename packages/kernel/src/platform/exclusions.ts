@@ -575,6 +575,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Uploads a skill archive as multipart bytes",
   },
+  {
+    route: "POST /api/v1/orgs/:orgId/skills",
+    category: "transport",
+    reason: "Creates an org skill from an uploaded archive; uploads are multipart bytes",
+  },
   // approvals
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:id/decision",

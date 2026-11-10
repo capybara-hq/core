@@ -18,6 +18,7 @@ import {
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { createOrg, enableExtensions } from "../helpers/runs.js";
+import { SKILL_MD } from "../skills/zip.js";
 
 /**
  * Task 6 of phase 2 of the Platform tool: the skill and component operations against PG with the
@@ -25,6 +26,16 @@ import { createOrg, enableExtensions } from "../helpers/runs.js";
  * `op.run(input, ctx)`, refusals by `availability()`. Super-admin results name the orgs of platform
  * components (admin data in full) but never another org's own items: asserted on the JSON string.
  */
+
+/** An org skill of `name` written through the service (skills enter only as packages). */
+const ownSkill = (orgId: string, actorId: string, name: string) => {
+  const md = new TextEncoder().encode(SKILL_MD(name, "Use when testing."));
+  return env.k.app.get(SkillsService).createVersionFromFiles(orgId, actorId, {
+    name,
+    description: "Use when testing.",
+    files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
+  });
+};
 
 let env: OrgEnv;
 let ops: PlatformOperations;
@@ -262,12 +273,7 @@ describe("skills.set-enabled", () => {
 });
 
 describe("skills.set-shareable and skills.delete", () => {
-  const create = (name: string) =>
-    run(
-      "skills.create",
-      { name, description: "Use when testing.", body: "# Steps\n\n1. Test." },
-      ctxOf(env.bossId),
-    ) as Promise<{ skill: { id: string } }>;
+  const create = (name: string) => ownSkill(env.orgId, env.bossId, name);
 
   it("shares an org skill and deletes it, auditing both as the agent's", async () => {
     const skill = (await create("temp-skill")).skill;
@@ -437,11 +443,7 @@ describe("platform component writes", () => {
     await setScope(env, item, "named", [env.orgId]);
     const id = await skillComponent("pdf-tools");
     // the org's own skill is not offered the platform skill yet
-    const own = await env.k.app.get(SkillsService).createFromText(org2, env.rootId, {
-      name: "pdf-tools",
-      description: "Use when testing.",
-      body: "# Steps\n\n1. Test.",
-    });
+    const own = await ownSkill(org2, env.rootId, "pdf-tools");
 
     const target = { kind: "skill", componentId: id, scope: "optional" as const };
     const p = (await run("plugins.component-scope-preview", target, ctxOf(env.rootId))) as {
