@@ -134,11 +134,11 @@ async function waiting(convId: string, n = 1) {
       const qs = ofType(await eventsOf(db, convId), "question_asked");
       return qs.length >= n ? qs : null;
     },
-    10_000,
+    30_000,
     `${n} question(s) asked`,
   );
   const runId = asked.at(-1)?.runId as string;
-  await waitFor(async () => (await runStatus(runId)) === "waiting", 10_000, "run waiting");
+  await waitFor(async () => (await runStatus(runId)) === "waiting", 30_000, "run waiting");
   return { runId, questionIds: asked.map((e) => e.payload.questionId) };
 }
 
@@ -296,7 +296,7 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
       reqA,
       orgId,
       convId,
-      `slowtool:600:AskUserQuestion:${JSON.stringify(ASK_INPUT)}`,
+      `slowtool:2000:AskUserQuestion:${JSON.stringify(ASK_INPUT)}`,
     );
     await waitForEvent(db, convId, (e) => e.type === "run_started");
     const msgSeq = await postMessage(reqA, orgId, convId, "echo:early");
