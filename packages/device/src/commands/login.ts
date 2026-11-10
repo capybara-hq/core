@@ -123,6 +123,9 @@ export async function login(
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
+        out(
+          "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
+        );
         return 0;
       } catch (e) {
         if (!(e instanceof ApiError)) throw e;

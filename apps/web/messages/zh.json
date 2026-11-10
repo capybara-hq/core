@@ -1526,9 +1526,10 @@
       "loginStep": "2. 登录并在打开的网页上确认",
       "copy": "复制",
       "copied": "已复制。",
-      "waiting": "正在等待机器连接…确认后它会出现在设备列表里。",
+      "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
-      "close": "关闭"
+      "close": "关闭",
+      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
     },
     "detail": {
       "tabsLabel": "设备分区",

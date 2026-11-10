@@ -15,7 +15,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
-import { DEVICE_INSTALL_COMMAND, deviceLoginCommand } from "../lib/device-sign-in";
+import {
+  DEVICE_INSTALL_COMMAND,
+  DEVICE_START_COMMAND,
+  deviceLoginCommand,
+} from "../lib/device-sign-in";
 import { createDevice, type Device, isDeviceName } from "../lib/devices";
 import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
@@ -36,7 +40,7 @@ type Kind = "cloud" | "local";
  *   device is ready at once (its files and instance are made on first use): the dialog
  *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,
  *   no provider) keeps the dialog open with its copy.
- * - 本地设备: the two commands to run on the machine (install, then `capybara-device login` with
+ * - 本地设备: the commands to run on the machine (install, `capybara-device login` with
  *   this deployment's address), each with a copy button; the dialog then reads the devices
  *   until a local device it had not seen appears, and opens its page.
  */
@@ -183,6 +187,7 @@ function LocalSteps({ orgId, onConnected }: { orgId: string; onConnected(e: Devi
         label={t("loginStep")}
         command={origin === "" ? "" : deviceLoginCommand(origin)}
       />
+      <CommandStep label={t("startStep")} command={DEVICE_START_COMMAND} />
       <Text variant="prose" tone="muted" icon="spinner">
         {t("waiting")}
       </Text>

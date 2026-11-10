@@ -1538,9 +1538,10 @@
       "loginStep": "2. Sign in and confirm on the page it opens",
       "copy": "Copy",
       "copied": "Copied.",
-      "waiting": "Waiting for the machine to connect… Once confirmed it shows up in your devices.",
+      "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
       "connected": "{name} connected.",
-      "close": "Close"
+      "close": "Close",
+      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
     },
     "detail": {
       "tabsLabel": "Device sections",

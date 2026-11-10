@@ -13,7 +13,7 @@ import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
 export const OUTDATED_MESSAGE =
-  "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device";
+  "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device@next";
 export const DISCONNECTED_MESSAGE =
   "This machine was disconnected from the deployment. Run capybara-device logout, then capybara-device login.";
 export const REPLACED_MESSAGE =
