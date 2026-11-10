@@ -19,6 +19,7 @@ import {
   cancelRequestIn,
   revertTrialCatalog,
 } from "./conversation-catalog.js";
+import type { OwnerVersion } from "../catalog/platform-components.js";
 import type { SkillPackageInput } from "./package.js";
 import { SkillsService } from "./skills.service.js";
 
@@ -115,9 +116,10 @@ export class SkillChangesService {
 
   /**
    * An org admin decides a request (see the class comment): not an org admin -> 403 `forbidden`;
-   * already decided -> 409 `skill_change.already_decided`; not in this org -> 404. Approving a
-   * share re-checks `customSkills` (403 `catalog.custom_disabled`) and the name (409
-   * `skill.name_exists`; the request stays pending). Audit `skill.change_decided` (and
+   * already decided -> 409 `skill_change.already_decided`; not in this org -> 404. Approving
+   * re-checks `customSkills` (403 `catalog.custom_disabled`) and, for a share, the name (409
+   * `skill.name_exists`; the request stays pending). A share whose skill has a newer version than
+   * the one reviewed is cancelled, never shared. Audit `skill.change_decided` (and
    * `skill.shared`). Of concurrent decisions one wins, the others get `already_decided`.
    */
   async decide(
@@ -136,12 +138,24 @@ export class SkillChangesService {
     if (!head) throw notFound();
     // Refused before any file is read; re-checked under the org row lock
     if (!(await isOrgAdmin(this.db.db, orgId, accountId))) throw forbidden();
-    // An approved version needs its files as a package (read before the transaction)
-    const pkg =
-      body.decision === "approve" && head.kind === "version" && head.status === "pending"
-        ? await this.readDraft(orgId, head)
-        : undefined;
-    const done = await this.decideIn(orgId, id, accountId, body, actorTokenId, head, pkg);
+    // An approved version needs its files as a package (read before the transaction) and, for a
+    // skill the org promoted, written as the platform row's next version: no storage writes run
+    // inside the transaction
+    let pkg: SkillPackageInput | undefined;
+    let owner: OwnerVersion | undefined;
+    if (body.decision === "approve" && head.kind === "version" && head.status === "pending") {
+      await assertCustomAllowed(this.db.db, "customSkills");
+      pkg = await this.readDraft(orgId, head);
+      owner = await this.skills.prepareStoredVersion(orgId, pkg);
+    }
+    let done: Awaited<ReturnType<SkillChangesService["decideIn"]>>;
+    try {
+      done = await this.decideIn(orgId, id, accountId, body, actorTokenId, head, pkg, owner);
+    } catch (e) {
+      if (owner !== undefined) await this.skills.discardStoredVersion(owner);
+      throw e;
+    }
+    if (owner !== undefined && !done.usedOwner) await this.skills.discardStoredVersion(owner);
     for (const [conv, seq] of done.drafts.seqs) await this.eventLog.notify(conv, seq);
     for (const p of done.drafts.prefixes) await this.deletePrefix(orgId, p);
     const [view] = await this.views([done.updated]);
@@ -177,7 +191,7 @@ export class SkillChangesService {
   }
 
   /**
-   * The transaction of {@link decide}. Lock order: org row (FOR UPDATE, role re-checked) -> agent
+   * The transaction of {@link decide}. Lock order: org row (FOR NO KEY UPDATE, role re-checked) -> agent
    * row -> the proposing conversation (a version's revert appends there) -> skill row -> request
    * row, the order registration and sharing use.
    */
@@ -190,7 +204,13 @@ export class SkillChangesService {
     actorTokenId: string | undefined,
     head: Selectable<SkillChangeRequestsTable>,
     pkg: SkillPackageInput | undefined,
-  ): Promise<{ updated: Selectable<SkillChangeRequestsTable>; drafts: CancelledDrafts }> {
+    owner: OwnerVersion | undefined,
+  ): Promise<{
+    updated: Selectable<SkillChangeRequestsTable>;
+    drafts: CancelledDrafts;
+    /** Whether the prepared platform version became the skill's version. */
+    usedOwner: boolean;
+  }> {
     await this.orgLock.lockAndAuthorize(orgId, accountId, "skills.manage");
     const agent = await this.db
       .selectFrom("agents")
@@ -211,7 +231,7 @@ export class SkillChangesService {
         ? undefined
         : await this.db
             .selectFrom("skills")
-            .select(["id", "scope", "agent_id", "name", "deleted_at"])
+            .select(["id", "scope", "agent_id", "name", "deleted_at", "current_version"])
             .where("id", "=", head.skill_id)
             .forUpdate()
             .executeTakeFirst();
@@ -230,6 +250,8 @@ export class SkillChangesService {
       );
     }
     const drafts: CancelledDrafts = { prefixes: [], seqs: [] };
+    // A share applies only to the version the admin reviewed; a version proposal only to the skill
+    // of its name
     const applies =
       agent !== undefined &&
       agent.deleted_at === null &&
@@ -238,15 +260,16 @@ export class SkillChangesService {
       (req.kind === "share"
         ? skill.scope === "agent" &&
           skill.agent_id === req.agent_id &&
+          skill.current_version === req.proposed_version.version &&
           agent.owner_account_id === req.requested_by_account
-        : skill.scope === "org");
+        : skill.scope === "org" && skill.name === req.proposed_version.manifest.name);
     if (!applies) {
       await cancelRequestIn(this.catalogDeps, req, drafts, {
         actorAccountId: accountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
         reason: "stale",
       });
-      return { updated: await this.reread(id), drafts };
+      return { updated: await this.reread(id), drafts, usedOwner: false };
     }
     const p = req.proposed_version;
     const approved = body.decision === "approve";
@@ -274,11 +297,12 @@ export class SkillChangesService {
       });
     } else if (approved) {
       if (pkg === undefined) throw new Error("an approved version needs its files");
-      // Joins this transaction: the version is the org skill's next one, the draft prefix its
-      // files (the same bytes are put again under it); a skill the org promoted gets it on the
-      // platform row instead
+      await assertCustomAllowed(this.db.db, "customSkills");
+      // Joins this transaction without storage I/O: the version is the org skill's next one, the
+      // draft prefix its files; a skill the org promoted gets the platform version prepared before
       const out = await this.skills.createVersionFromFiles(orgId, accountId, pkg, {
         prefix: req.object_prefix,
+        stored: owner !== undefined ? { owner } : {},
         ...(actorTokenId !== undefined && { actorTokenId }),
         auditDetail: {
           requestId: id,
@@ -341,7 +365,7 @@ export class SkillChangesService {
       }
       drafts.prefixes.push(req.object_prefix);
     }
-    return { updated, drafts };
+    return { updated, drafts, usedOwner: approved && req.kind === "version" && owner !== undefined };
   }
 
   private reread(id: string): Promise<Selectable<SkillChangeRequestsTable>> {

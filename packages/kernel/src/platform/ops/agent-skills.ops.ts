@@ -372,6 +372,14 @@ export class AgentSkillsOperations implements OnModuleInit {
             next: "Register a new version of an existing skill (same name) instead, or ask the agent's owner to delete one of its skills (agents.skills lists them).",
           },
           {
+            code: "skill.name_exists",
+            next: "This agent uses an org skill with this name that only its maintainer can update; change the name in SKILL.md, rebuild the zip and register again, or ask the skill's maintainer.",
+          },
+          {
+            code: "catalog.custom_disabled",
+            next: "This deployment does not allow custom org skills, so this version of a shared skill cannot be registered; tell the person.",
+          },
+          {
             code: "skill.proposal_pending_elsewhere",
             next: "Another conversation has a proposed version of this skill waiting for an org admin; wait for that decision, or continue in that conversation.",
           },

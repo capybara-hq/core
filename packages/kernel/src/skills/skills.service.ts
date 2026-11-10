@@ -698,10 +698,23 @@ export class SkillsService {
         /** The plugin manifest suggests pinning this skill (spec §9.1). */
         suggestPinned?: boolean;
       };
+      /**
+       * The files are already stored (no storage I/O here, so it may join a transaction): at
+       * `prefix` in `kernel/<orgId>/`, or, for a skill the org promoted, the platform version
+       * {@link prepareStoredVersion} wrote. The caller discards that one when this fails.
+       */
+      stored?: { owner?: OwnerVersion };
     } = {},
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
+    if (opts.stored !== undefined) {
+      const { stored, ...rest } = opts;
+      return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
+        ...rest,
+        ...(stored.owner !== undefined && { owner: stored.owner }),
+      });
+    }
     const owner = await this.putVersionFiles(orgId, pkg, prefix, opts.catalog !== undefined);
     try {
       return await this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
@@ -713,6 +726,27 @@ export class SkillsService {
       if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
       throw e;
     }
+  }
+
+  /**
+   * For a new version whose files are already in `kernel/<orgId>/` (a proposed version's draft):
+   * when the org skill of that name is one the org promoted, writes the files as the platform
+   * row's next version (never inside a transaction) and returns it for
+   * `createVersionFromFiles({ stored: { owner } })`; else nothing is written.
+   */
+  async prepareStoredVersion(
+    orgId: string,
+    pkg: SkillPackageInput,
+  ): Promise<OwnerVersion | undefined> {
+    const promoted = await promotedSkillNamed(this.db.db, orgId, pkg.name);
+    return promoted === undefined
+      ? undefined
+      : this.platform.prepareOwnerVersion(promoted, pkg.files);
+  }
+
+  /** Deletes a platform version {@link prepareStoredVersion} wrote that was not used. */
+  async discardStoredVersion(owner: OwnerVersion): Promise<void> {
+    await this.platform.discardPrefix(owner.prefix);
   }
 
   /** Writes a skill package's files to `kernel/<orgId>/<prefix>` (a few at a time). */

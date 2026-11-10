@@ -383,7 +383,10 @@ export class AgentSkillsService {
    *
    * A version proposal refuses with 409 `skill.proposal_pending_elsewhere` while another
    * conversation (or another agent of the maintainer) has a pending proposal of that skill; one
-   * pending from the same conversation is superseded (cancelled, its draft deleted).
+   * pending from the same conversation is superseded (cancelled, its draft deleted). Versions of a
+   * shared skill (proposed or applied) are refused while `customSkills` is denied. A new own skill
+   * named like an org skill the agent uses (not maintained by the actor) -> 409
+   * `skill.name_exists`. A new version of an own skill cancels its pending share request.
    */
   async register(
     actor: AgentSkillActor,
@@ -395,7 +398,15 @@ export class AgentSkillsService {
     await this.assertOwner(actor.orgId, actor.agentId, actor.accountId);
     this.storage.assertAvailable();
     if (await this.appliesToOrgSkill(actor, pkg.name)) {
-      return this.applyOrgVersion(actor, pkg, opts.inTransaction);
+      // A shared skill is an org skill: refused while custom org skills are denied
+      await assertCustomAllowed(this.db.db, "customSkills");
+      const claimed = await this.claimIn(actor, pkg.name, opts.inTransaction);
+      if (claimed !== null) {
+        for (const [conv, seq] of claimed.seqs) await this.eventLog.notify(conv, seq);
+        for (const p of claimed.prefixes) await this.deletePrefix(actor.orgId, p);
+        return this.applyOrgVersion(actor, pkg);
+      }
+      // no longer the maintainer's (or the agent got an own skill of the name): register below
     }
     const prefix = skillFilesPrefix(randomUUID());
     let committed: { outcome: RegisterOutcome; toSeq: number | null; superseded: string[] };
@@ -558,14 +569,12 @@ export class AgentSkillsService {
    * An org admin maintainer's new version of a shared skill: written as an org skill version
    * (`SkillsService.createVersionFromFiles`, which re-checks `skills.manage` under the org row
    * lock and handles a skill the org promoted), then the registering conversation's catalog gets
-   * it at once. The upload (web) is consumed first in its own transaction.
+   * it at once. {@link claimIn} ran first.
    */
   private async applyOrgVersion(
     actor: AgentSkillActor,
     pkg: SkillPackageInput,
-    inTransaction: (() => Promise<void>) | undefined,
   ): Promise<RegisterOutcome> {
-    if (inTransaction !== undefined) await this.claimIn(actor, inTransaction);
     const out = await this.skills.createVersionFromFiles(actor.orgId, actor.accountId, pkg, {
       ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
       auditDetail: {
@@ -590,14 +599,69 @@ export class AgentSkillsService {
   }
 
   /**
-   * Before {@link applyOrgVersion} writes the version: re-checks the owner under the agent row
-   * lock and runs `inTransaction` (consuming the upload) in a transaction of its own.
+   * Before {@link applyOrgVersion} writes the version, in a transaction of its own: re-checks the
+   * owner (agent row lock) and that the actor still maintains the org skill of that name with no
+   * own skill of it (skill row lock); cancels the skill's pending version proposals (an older one
+   * must not overwrite this version later: reverting snapshots, drafts deleted after the commit)
+   * and runs `inTransaction` (consuming the upload). Returns null, consuming nothing, when the
+   * skill no longer qualifies (the caller registers it the ordinary way).
+   * Lock order org -> agent -> the proposals' conversations -> skill row -> request rows.
    */
   @Transactional()
-  private async claimIn(actor: AgentSkillActor, inTransaction: () => Promise<void>): Promise<void> {
+  private async claimIn(
+    actor: AgentSkillActor,
+    name: string,
+    inTransaction: (() => Promise<void>) | undefined,
+  ): Promise<CancelledDrafts | null> {
     await keyShareOrg(this.db, actor.orgId);
     await this.checkOwner(actor.orgId, actor.agentId, actor.accountId, true);
-    await inTransaction();
+    const seen = await this.maintainedSkill(actor, name, false);
+    if (seen === undefined) return null;
+    const proposals = (skillId: string) =>
+      this.db
+        .selectFrom("skill_change_requests")
+        .selectAll()
+        .where("skill_id", "=", skillId)
+        .where("kind", "=", "version")
+        .where("status", "=", "pending");
+    const convs = [
+      ...new Set(
+        (await proposals(seen.id).execute()).flatMap((r) =>
+          r.requested_in_conversation === null ? [] : [r.requested_in_conversation],
+        ),
+      ),
+    ].sort();
+    if (convs.length > 0) {
+      await this.db
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "in", convs)
+        .orderBy("id")
+        .forUpdate()
+        .execute();
+    }
+    const own = await this.db
+      .selectFrom("skills")
+      .select("id")
+      .where("org_id", "=", actor.orgId)
+      .where("scope", "=", "agent")
+      .where("agent_id", "=", actor.agentId)
+      .where("name", "=", name)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    const shared = own ? undefined : await this.maintainedSkill(actor, name, true);
+    if (shared === undefined) return null;
+    const out: CancelledDrafts = { prefixes: [], seqs: [] };
+    for (const r of await proposals(shared.id).orderBy("created_at").forUpdate().execute()) {
+      await cancelRequestIn(this.catalogDeps, r, out, {
+        actorAccountId: actor.accountId,
+        ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
+        reason: "superseded",
+      });
+    }
+    if (inTransaction !== undefined) await inTransaction();
+    return out;
   }
 
   /**
@@ -683,10 +747,30 @@ export class AgentSkillsService {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
+    const superseded: CancelledDrafts = { prefixes: [], seqs: [] };
     if (!existing) {
       const shared = await this.maintainedSkill(actor, pkg.name, true);
       if (shared) return this.proposeIn(actor, pkg, manifest, prefix, shared);
+      await this.assertNoUsedOrgSkillNamed(actor, pkg.name);
       await assertBelowAgentSkillCap(this.db, actor.agentId);
+    } else {
+      // A pending share was for the version the admins review: a new version supersedes it (the
+      // share's files are that version's own and stay)
+      const shares = await this.db
+        .selectFrom("skill_change_requests")
+        .selectAll()
+        .where("skill_id", "=", existing.id)
+        .where("kind", "=", "share")
+        .where("status", "=", "pending")
+        .forUpdate()
+        .execute();
+      for (const r of shares) {
+        await cancelRequestIn(this.catalogDeps, r, superseded, {
+          actorAccountId: actor.accountId,
+          ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
+          reason: "superseded_by_new_version",
+        });
+      }
     }
     const version = (existing?.current_version ?? 0) + 1;
     const skillId = existing?.id ?? randomUUID();
@@ -748,8 +832,51 @@ export class AgentSkillsService {
         manualOnly: !forModel,
       },
       toSeq,
-      superseded: [],
+      superseded: superseded.prefixes,
     };
+  }
+
+  /**
+   * Spec §5.2: an agent's own skill may not take the name of an org skill the agent uses (selected
+   * in its current definition, or one it shared) unless the actor maintains it (then the
+   * registration is a version of it): 409 `skill.name_exists`.
+   */
+  private async assertNoUsedOrgSkillNamed(actor: AgentSkillActor, name: string): Promise<void> {
+    const def = await this.db
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select("agent_versions.definition")
+      .where("agents.id", "=", actor.agentId)
+      .executeTakeFirst();
+    const selected = (def?.definition as { skills?: { orgSkills?: unknown } } | undefined)?.skills
+      ?.orgSkills;
+    const ids = Array.isArray(selected)
+      ? selected.filter((x): x is string => typeof x === "string")
+      : [];
+    const used = await this.db
+      .selectFrom("skills")
+      .select("id")
+      .where("org_id", "=", actor.orgId)
+      .where("scope", "=", "org")
+      .where("name", "=", name)
+      .where("deleted_at", "is", null)
+      .where((eb) =>
+        eb.or([
+          eb("origin_agent_id", "=", actor.agentId),
+          ...(ids.length > 0 ? [eb("id", "in", ids)] : []),
+        ]),
+      )
+      .executeTakeFirst();
+    if (used) {
+      throw new ApiError(
+        "skill.name_exists",
+        `This agent uses the org skill "${name}", which only its maintainer can update; register the package under another name, or ask the skill's maintainer.`,
+      );
+    }
   }
 
   /**
@@ -766,6 +893,8 @@ export class AgentSkillsService {
     prefix: string,
     shared: { id: string; current_version: number },
   ): Promise<{ outcome: RegisterOutcome; toSeq: number | null; superseded: string[] }> {
+    // A shared skill is an org skill: refused while custom org skills are denied
+    await assertCustomAllowed(this.db.db, "customSkills");
     const here = actor.conversationId ?? null;
     const pending = await this.db
       .selectFrom("skill_change_requests")

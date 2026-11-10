@@ -311,6 +311,48 @@ describe("sharing an agent skill", () => {
     expect(await keysUnder(v1.object_prefix)).toHaveLength(1);
   });
 
+  it("a new version of the skill cancels its pending share", async () => {
+    const agentId = await createAgent(env.mem);
+    const own = await svc.register(actor(agentId, env.memId), zipOf("notes"));
+    const v1 = await versionOf(own.skillId, 1);
+    const out = await svc.share(actor(agentId, env.memId), own.skillId);
+    if (out.kind !== "requested") throw new Error("expected a request");
+    const v2 = await svc.register(actor(agentId, env.memId), zipOf("notes", "V2."));
+    expect(v2).toMatchObject({ kind: "version", skillId: own.skillId, version: 2 });
+    expect((await requestRow(out.requestId)).status).toBe("cancelled");
+    expect(await keysUnder(v1.object_prefix)).toHaveLength(1);
+  });
+
+  it("approve never shares a version the admin did not review", async () => {
+    const agentId = await createAgent(env.mem);
+    const own = await svc.register(actor(agentId, env.memId), zipOf("notes"));
+    const v1 = await versionOf(own.skillId, 1);
+    const out = await svc.share(actor(agentId, env.memId), own.skillId);
+    if (out.kind !== "requested") throw new Error("expected a request");
+    // the versions diverge behind the request's back
+    await env.db
+      .insertInto("skill_versions")
+      .values({
+        skill_id: own.skillId,
+        version: 2,
+        manifest: JSON.stringify(v1.manifest),
+        object_prefix: v1.object_prefix,
+        created_by: env.memId,
+      })
+      .execute();
+    await env.db
+      .updateTable("skills")
+      .set({ current_version: 2 })
+      .where("id", "=", own.skillId)
+      .execute();
+    const res = await decideHttp(env.boss, out.requestId, "approve");
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { skillChange: { status: string } }).skillChange.status).toBe(
+      "cancelled",
+    );
+    expect((await skillRow(own.skillId)).scope).toBe("agent");
+  });
+
   it("agent deleted while a share is pending: cancelled, files kept", async () => {
     const agentId = await createAgent(env.mem);
     const own = await svc.register(actor(agentId, env.memId), zipOf("notes"));
@@ -467,13 +509,71 @@ describe("version proposals on a shared skill", () => {
     expect(consumed).toBe(1);
   });
 
-  it("someone who is not the maintainer registers an own skill of the name", async () => {
+  it("a non-maintainer: refused for an org skill the agent uses, an own skill otherwise", async () => {
     const { skillId } = await sharedByMember();
+    const user = await createAgent(env.boss, [skillId]);
+    expect(await codeOf(svc.register(actor(user, env.bossId), zipOf("notes", "Mine.")))).toBe(
+      "skill.name_exists",
+    );
+    // the origin agent after a transfer: the new owner is not the maintainer either
     const agentId = await createAgent(env.boss);
     const out = await svc.register(actor(agentId, env.bossId), zipOf("notes", "Mine."));
     expect(out.kind).toBe("version");
     expect(out.skillId).not.toBe(skillId);
     expect((await skillRow(out.skillId)).scope).toBe("agent");
+  });
+
+  it("customSkills deny refuses proposals, their approval and an admin's direct version", async () => {
+    const { agentId } = await sharedByMember();
+    const conv = await createConv(env.mem, agentId);
+    const out = await svc.register(actor(agentId, env.memId, conv), zipOf("notes", "V2."));
+    if (out.kind !== "proposed") throw new Error("expected a proposal");
+    await setDeployment(env, { customSkills: "deny" });
+    expect(
+      await codeOf(svc.register(actor(agentId, env.memId, conv), zipOf("notes", "V2b."))),
+    ).toBe("catalog.custom_disabled");
+    expect(
+      await codeOf(changes.decide(env.orgId, out.requestId, env.bossId, { decision: "approve" })),
+    ).toBe("catalog.custom_disabled");
+    expect((await requestRow(out.requestId)).status).toBe("pending");
+
+    await setDeployment(env, { customSkills: "allow" });
+    const bossAgent = await createAgent(env.boss);
+    const own = await svc.register(actor(bossAgent, env.bossId), zipOf("mine"));
+    await svc.share(actor(bossAgent, env.bossId), own.skillId);
+    await setDeployment(env, { customSkills: "deny" });
+    expect(await codeOf(svc.register(actor(bossAgent, env.bossId), zipOf("mine", "V2.")))).toBe(
+      "catalog.custom_disabled",
+    );
+  });
+
+  it("an admin's direct version supersedes a pending proposal of the skill", async () => {
+    const agentId = await createAgent(env.boss);
+    const own = await svc.register(actor(agentId, env.bossId), zipOf("notes"));
+    await svc.share(actor(agentId, env.bossId), own.skillId);
+    const conv = await createConv(env.boss, agentId);
+    const role = (r: "admin" | "member") =>
+      env.db
+        .updateTable("memberships")
+        .set({ role: r })
+        .where("org_id", "=", env.orgId)
+        .where("account_id", "=", env.bossId)
+        .execute();
+    await role("member");
+    let proposed: Awaited<ReturnType<typeof svc.register>>;
+    try {
+      proposed = await svc.register(actor(agentId, env.bossId, conv), zipOf("notes", "Old."));
+    } finally {
+      await role("admin");
+    }
+    if (proposed.kind !== "proposed") throw new Error("expected a proposal");
+    const draft = (await requestRow(proposed.requestId)).object_prefix;
+    const out = await svc.register(actor(agentId, env.bossId), zipOf("notes", "New."));
+    expect(out).toMatchObject({ kind: "version", version: 2 });
+    expect((await requestRow(proposed.requestId)).status).toBe("cancelled");
+    expect(await keysUnder(draft)).toEqual([]);
+    // the trial in the proposing conversation went back to a real version
+    expect((await lastCatalog(conv))?.skills.map((x) => x.source)).not.toContain(draft);
   });
 
   it("agent deleted while a proposal is pending: cancelled, draft deleted", async () => {
