@@ -150,6 +150,22 @@ export class ScheduledTaskStore {
     return row ? toTask(row) : null;
   }
 
+  /**
+   * {@link getTask} under `FOR UPDATE` (call it inside a transaction): a person's write holds the
+   * row, so the scanner's `lockDue` skips it until the write commits.
+   */
+  async lockTask(t: KernelSchemaDb, orgId: string, id: string): Promise<ScheduledTask | null> {
+    const row = await t
+      .selectFrom("scheduled_tasks")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("id", "=", id)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    return row ? toTask(row) : null;
+  }
+
   /** Patches a live task; null when it is missing or deleted. */
   async updateTask(
     t: KernelSchemaDb,

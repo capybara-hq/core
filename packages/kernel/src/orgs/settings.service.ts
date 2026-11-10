@@ -87,7 +87,14 @@ export const DEFAULT_ORG_THEME: OrgThemeSetting = { id: null, personal: "allowed
 const posInt = (max: number, def: number) =>
   z.number().int().min(1).max(max).default(def).catch(def);
 
-/** Org settings of scheduled tasks (spec §9); every field reads leniently (invalid = default). */
+/** A stored `forbiddenTools` entry worth keeping: a tool key of the length the PATCH accepts. */
+const isForbiddenToolEntry = (v: unknown): v is string =>
+  typeof v === "string" && v.length >= 1 && v.length <= 200;
+
+/**
+ * Org settings of scheduled tasks (spec §9); every field reads leniently (invalid = default,
+ * except `forbiddenTools`, which keeps its valid entries).
+ */
 export const ScheduledTasksSettingsSchema = z.object({
   enabled: z.boolean().default(true).catch(true),
   minIntervalMinutes: posInt(1_000_000, 60),
@@ -98,12 +105,21 @@ export const ScheduledTasksSettingsSchema = z.object({
   catchUpWindowMinutes: posInt(1_000_000, 60),
   unattendedAsk: z.enum(["fail", "wait"]).default("fail").catch("fail"),
   pauseAfterFailures: posInt(1000, 5),
-  forbiddenTools: z.array(z.string().min(1).max(200)).max(500).default([]).catch([]),
+  // fail-safe: an invalid entry is dropped, the valid ones stay forbidden (never reset to [])
+  forbiddenTools: z
+    .preprocess(
+      (v) => (Array.isArray(v) ? v.filter(isForbiddenToolEntry) : v),
+      z.array(z.string()).default([]),
+    )
+    .catch([]),
 });
 
 export type ScheduledTasksSettings = z.infer<typeof ScheduledTasksSettingsSchema>;
 
-/** The PATCH form: a full replacement of the group (the UI form sends every field). */
+/**
+ * The PATCH form: a partial merge into the group (fields left out keep their stored value; see
+ * `OrgSettingsService.update`). A field given replaces that field whole, `forbiddenTools` too.
+ */
 export const ScheduledTasksPatchSchema = z
   .object({
     enabled: z.boolean(),

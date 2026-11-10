@@ -125,23 +125,41 @@ export function validateTrigger(
 
 /** The first tick strictly after `after` (before jitter); null for a past once task. */
 export function nextTick(t: ScheduleTrigger, after: Date): Date | null {
+  return ticker(t)(after);
+}
+
+/** How far back a DST transition can move a tick: longer than any gap (spec §5). */
+const TRANSITION_LOOKBACK_MS = 6 * 3600_000;
+
+/**
+ * {@link nextTick} for one trigger, with its `CronTime`s built once: callers that walk many ticks
+ * (the gap sample, the catch-up enumeration) reuse one ticker instead of rebuilding per tick.
+ */
+function ticker(t: ScheduleTrigger): (after: Date) => Date | null {
   if (t.kind === "once") {
     const at = onceInstant(t.at, t.timeZone);
-    return at && at.getTime() > after.getTime() ? at : null;
+    return (after) => (at && at.getTime() > after.getTime() ? at : null);
   }
   const time = cronTime(t.expr, t.timeZone);
   const wallTime = cronTime(t.expr, "UTC");
-  if (!time || !wallTime) return null;
-  let cursor = after;
-  for (let i = 0; i < 10; i++) {
-    const tick = new Date(time.getNextDateFrom(cursor, t.timeZone).toMillis());
-    // CronTime moves a tick that falls in a DST gap to the next valid instant; the spec says a
-    // skipped local time does not fire, so keep only ticks whose wall clock the expression names.
-    const wall = localWallClock(tick, t.timeZone);
-    if (wallTime.getNextDateFrom(new Date(wall - 1000), "UTC").toMillis() === wall) return tick;
-    cursor = tick;
-  }
-  return null;
+  if (!time || !wallTime) return () => null;
+  return (after) => {
+    let cursor = after;
+    for (let i = 0; i < 10; i++) {
+      const tick = new Date(time.getNextDateFrom(cursor, t.timeZone).toMillis());
+      const ms = tick.getTime();
+      // CronTime moves a tick that falls in a DST gap to the next valid instant; the spec says a
+      // skipped local time does not fire, so keep only ticks whose wall clock the expression
+      // names. A moved tick lies just after a transition, so only then is the check needed.
+      if (offsetAt(ms, t.timeZone) === offsetAt(ms - TRANSITION_LOOKBACK_MS, t.timeZone)) {
+        return tick;
+      }
+      const wall = localWallClock(tick, t.timeZone);
+      if (wallTime.getNextDateFrom(new Date(wall - 1000), "UTC").toMillis() === wall) return tick;
+      cursor = tick;
+    }
+    return null;
+  };
 }
 
 /** The wall clock of `at` in `timeZone`, read as if it were UTC (epoch ms, seconds dropped). */
@@ -152,13 +170,36 @@ function localWallClock(at: Date, timeZone: string): number {
 /** The smallest gap, in minutes, among the next 50 fire times after `from`; null for once. */
 export function minGapMinutes(t: ScheduleTrigger, from: Date): number | null {
   if (t.kind === "once") return null;
-  let prev = nextTick(t, from);
+  const key = `${t.expr}\u0000${t.timeZone}\u0000${from.getTime()}`;
+  if (gapMemo.has(key)) return gapMemo.get(key) ?? null;
+  const gap = sampleGap(t, from);
+  if (gapMemo.size >= GAP_MEMO_SIZE) {
+    const oldest = gapMemo.keys().next().value;
+    if (oldest !== undefined) gapMemo.delete(oldest);
+  }
+  gapMemo.set(key, gap);
+  return gap;
+}
+
+/** Bound of {@link gapMemo}. */
+const GAP_MEMO_SIZE = 256;
+
+/**
+ * Recent {@link minGapMinutes} results by (expression, zone, from): a create validates the gap and
+ * then derives the jitter from the same sample, and each sample walks 50 ticks of `CronTime`
+ * (about 0.2 ms each). The function is pure, so a bounded per-process cache is safe.
+ */
+const gapMemo = new Map<string, number | null>();
+
+function sampleGap(t: ScheduleTrigger & { kind: "cron" }, from: Date): number | null {
+  const next = ticker(t);
+  let prev = next(from);
   let min = Number.POSITIVE_INFINITY;
   for (let i = 1; prev && i < GAP_SAMPLE; i++) {
-    const next = nextTick(t, prev);
-    if (!next) break;
-    min = Math.min(min, (next.getTime() - prev.getTime()) / 60000);
-    prev = next;
+    const tick = next(prev);
+    if (!tick) break;
+    min = Math.min(min, (tick.getTime() - prev.getTime()) / 60000);
+    prev = tick;
   }
   return Number.isFinite(min) ? min : null;
 }
@@ -199,8 +240,9 @@ export function dueTicks(
   let cursor = lastTick;
   let old = 0;
   let jumped = false;
+  const tickAfter = ticker(t);
   for (let guard = 0; guard < 2 * MAX_OLD_TICKS + 10000; guard++) {
-    const next = nextTick(t, cursor);
+    const next = tickAfter(cursor);
     if (!next || next.getTime() > now.getTime()) break;
     ticks.push(next);
     cursor = next;

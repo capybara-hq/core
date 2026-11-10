@@ -352,6 +352,28 @@ export const ERROR_CODES = {
   "device_sign_in.unavailable": 503,
   /** The machine credential is unknown or revoked. */
   "device.credential_invalid": 401,
+  /** The scheduled task is missing, deleted, in another org or not the caller's to see. */
+  "schedule.not_found": 404,
+  /** Not a 5-field cron expression (no seconds field). */
+  "schedule.invalid_cron": 400,
+  /** Not an IANA time zone. */
+  "schedule.invalid_time_zone": 400,
+  /** A `once` time that is not a local date-time `YYYY-MM-DDTHH:mm[:ss]`. */
+  "schedule.invalid_once_time": 400,
+  /** A `once` time that is not in the future. */
+  "schedule.once_in_past": 400,
+  /** Two fire times closer than the org's `minIntervalMinutes`. */
+  "schedule.interval_too_short": 400,
+  /** The creator or the org has as many active and paused tasks as the org allows. */
+  "schedule.limit_reached": 409,
+  /** The org turned scheduled tasks off. */
+  "schedule.disabled": 409,
+  /** Where the task runs is inconsistent or not the creator's to use (conversation, chat, device). */
+  "schedule.target_invalid": 400,
+  /** A tool the creator cannot pre-approve for the task (spec §7). */
+  "schedule.grant_not_allowed": 400,
+  /** An org admin may pause, resume and delete another person's task, never edit it. */
+  "schedule.forbidden": 403,
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,

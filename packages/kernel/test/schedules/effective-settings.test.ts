@@ -64,4 +64,11 @@ describe("scheduled task settings", () => {
     });
     expect(parseOrgSettings({ scheduledTasks: "junk" }).scheduledTasks.minIntervalMinutes).toBe(60);
   });
+
+  it("an invalid forbiddenTools entry is dropped, the valid ones stay (fail-safe)", () => {
+    const org = parseOrgSettings({
+      scheduledTasks: { forbiddenTools: ["Bash", 7, "", "x".repeat(201), null, "WebFetch"] },
+    }).scheduledTasks;
+    expect(org.forbiddenTools).toEqual(["Bash", "WebFetch"]);
+  });
 });
