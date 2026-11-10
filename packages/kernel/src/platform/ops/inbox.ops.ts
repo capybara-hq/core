@@ -320,7 +320,7 @@ export class InboxOperations implements OnModuleInit {
       defineOperation({
         id: "inbox.platform-list",
         description:
-          "List the platform inbox (super admin), newest first, one compact row each (type, what, state, summary, next step): orgs' requests to the platform, plugins waiting for a permission confirmation, this org's uploads waiting for you, failed scope syncs, a failed or stuck components migration and ownership notices. Only the newest 100 items are read (truncated: more wait); listed is how many of them are shown, otherOrgItems how many are items of plugins other orgs own (only counted). total counts everything waiting on the platform, other orgs' items included, as the admin console does. Nothing is decided here: requests and confirmations are done in the admin console. Pages by 50: pass the returned next as params.cursor.",
+          "List the platform inbox (super admin), newest first, one compact row each (type, what, state, summary, next step): orgs' requests to the platform, plugins waiting for a permission confirmation, this org's uploads waiting for you, failed scope syncs, a failed or stuck components migration and ownership notices. Only the newest 100 items are read (truncated: more wait); listed is how many of them are shown, otherOrgItems how many are items of plugins other orgs own (only counted). total counts everything waiting on the platform, other orgs' items included, as the admin console does; byType splits total by type (everything waiting, not the listed page). Nothing is decided here: requests and confirmations are done in the admin console. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -356,6 +356,7 @@ export class InboxOperations implements OnModuleInit {
           return {
             ...page,
             total: view.total,
+            byType: view.byType,
             listed: shown.length,
             truncated: view.truncated,
             otherOrgItems: view.items.length - shown.length,
