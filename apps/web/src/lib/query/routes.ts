@@ -1,5 +1,6 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
 import type { AdminExtension } from "../admin-extensions";
+import { connectorStatusOf } from "../admin-items";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { OrgCatalogDetail } from "../catalog";
@@ -39,7 +40,12 @@ import {
   pendingPluginsQuery,
   stagedImportQuery,
 } from "./admin";
-import { adminAgentQuery, adminAgentsQuery } from "./admin-items";
+import {
+  adminAgentQuery,
+  adminAgentsQuery,
+  adminConnectorQuery,
+  adminConnectorsQuery,
+} from "./admin-items";
 import {
   agentConnectorQueries,
   agentFormQueries,
@@ -341,6 +347,29 @@ export const ROUTES: readonly RouteEntry[] = [
             q(deploymentSettingsQuery()),
           ]
         : [],
+  },
+  {
+    pattern: "/admin/connectors",
+    // Super admins: the first page of every org's connectors under the address's
+    // `?orgId=&status=&q=`, and the orgs (the org filter).
+    queries: ({ me, search }) =>
+      superAdmin(me)
+        ? [
+            q(
+              adminConnectorsQuery({
+                orgId: search.get("orgId") ?? "",
+                status: connectorStatusOf(search.get("status") ?? ""),
+                q: search.get("q") ?? "",
+              }),
+            ),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/connectors/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined ? [q(adminConnectorQuery(params.id))] : [],
   },
   {
     pattern: "/admin/connectors/templates",

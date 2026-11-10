@@ -65,6 +65,8 @@ export const APP_PAGES: readonly string[] = [
   "/admin/agents/[id]",
   "/admin/agents/templates",
   "/admin/agents/templates/[id]",
+  "/admin/connectors",
+  "/admin/connectors/[id]",
   "/admin/connectors/templates",
   "/admin/connectors/templates/[id]",
   "/admin/extensions",

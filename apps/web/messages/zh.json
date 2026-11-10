@@ -5001,6 +5001,98 @@
       "connectors": "连接器",
       "templates": "模板"
     },
+    "connectors": {
+      "title": "连接器",
+      "description": "所有组织的连接器及其模板：查看配置，停用、启用或删除。",
+      "listLabel": "所有组织的连接器",
+      "columns": {
+        "name": "名称",
+        "org": "组织",
+        "kind": "类型",
+        "from": "来自模板",
+        "status": "状态",
+        "tools": "工具数",
+        "synced": "上次同步",
+        "createdBy": "创建者"
+      },
+      "status": {
+        "active": "启用",
+        "disabled": "停用"
+      },
+      "filters": {
+        "org": "组织",
+        "allOrgs": "全部组织",
+        "status": "状态",
+        "allStatuses": "全部状态"
+      },
+      "search": "搜索名称",
+      "loadMore": "加载更多",
+      "empty": "还没有组织添加连接器",
+      "emptyHint": "组织添加或安装的连接器会列在这里。",
+      "noMatch": "没有符合条件的连接器",
+      "never": "从未",
+      "fromPlatform": "平台模板",
+      "fromCatalog": "插件目录",
+      "detail": {
+        "facts": {
+          "org": "组织",
+          "kind": "类型",
+          "slug": "标识",
+          "status": "状态",
+          "from": "来自模板",
+          "auth": "认证方式",
+          "ownership": "归属",
+          "createdBy": "创建者",
+          "synced": "上次同步",
+          "updated": "更新于",
+          "created": "创建于"
+        },
+        "auth": {
+          "none": "无需认证",
+          "bearer": "Bearer 令牌",
+          "api_key": "API Key",
+          "basic": "用户名与密码",
+          "headers": "自定义请求头",
+          "oauth_code": "OAuth 授权码",
+          "oauth_client": "OAuth 客户端凭据"
+        },
+        "ownership": {
+          "org": "组织共用",
+          "personal": "每人各自"
+        },
+        "sections": {
+          "endpoint": "服务端点",
+          "tools": "工具"
+        },
+        "endpointEmpty": "没有服务端点",
+        "toolsNone": "该连接器没有工具",
+        "toolStatus": {
+          "enabled": "启用",
+          "disabled": "停用",
+          "pending_review": "待复核"
+        },
+        "policy": {
+          "allow": "允许",
+          "ask": "需审批",
+          "deny": "禁止"
+        }
+      },
+      "actions": {
+        "disable": "停用",
+        "enable": "启用",
+        "delete": "删除"
+      },
+      "toggle": {
+        "disabled": "已停用「{name}」",
+        "enabled": "已启用「{name}」"
+      },
+      "delete": {
+        "title": "删除连接器「{name}」？",
+        "hint": "它属于组织「{org}」。删除后它的智能体将无法再使用它，凭据也会一并清除；组织的审计日志会记下这次操作。",
+        "confirm": "删除",
+        "done": "已删除「{name}」"
+      }
+    },
     "agents": {
       "title": "智能体",
       "description": "所有组织的智能体及其模板：查看配置，转移所有者或删除。",

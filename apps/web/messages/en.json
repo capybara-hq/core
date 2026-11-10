@@ -5013,6 +5013,98 @@
       "connectors": "Connectors",
       "templates": "Templates"
     },
+    "connectors": {
+      "title": "Connectors",
+      "description": "Every organization's connectors and their templates: read the setup, disable, enable or delete.",
+      "listLabel": "Every organization's connectors",
+      "columns": {
+        "name": "Name",
+        "org": "Organization",
+        "kind": "Kind",
+        "from": "From template",
+        "status": "Status",
+        "tools": "Tools",
+        "synced": "Last sync",
+        "createdBy": "Created by"
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "filters": {
+        "org": "Organization",
+        "allOrgs": "All organizations",
+        "status": "Status",
+        "allStatuses": "All statuses"
+      },
+      "search": "Search by name",
+      "loadMore": "Load more",
+      "empty": "No organization has added a connector yet",
+      "emptyHint": "Connectors that organizations add or install are listed here.",
+      "noMatch": "No connectors match",
+      "never": "Never",
+      "fromPlatform": "Platform template",
+      "fromCatalog": "Plugin catalog",
+      "detail": {
+        "facts": {
+          "org": "Organization",
+          "kind": "Kind",
+          "slug": "Slug",
+          "status": "Status",
+          "from": "From template",
+          "auth": "Authentication",
+          "ownership": "Ownership",
+          "createdBy": "Created by",
+          "synced": "Last sync",
+          "updated": "Updated",
+          "created": "Created"
+        },
+        "auth": {
+          "none": "None",
+          "bearer": "Bearer token",
+          "api_key": "API key",
+          "basic": "Username and password",
+          "headers": "Custom headers",
+          "oauth_code": "OAuth authorization code",
+          "oauth_client": "OAuth client credentials"
+        },
+        "ownership": {
+          "org": "Shared by the organization",
+          "personal": "Each user's own"
+        },
+        "sections": {
+          "endpoint": "Endpoint",
+          "tools": "Tools"
+        },
+        "endpointEmpty": "No endpoint",
+        "toolsNone": "This connector lists no tools",
+        "toolStatus": {
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "pending_review": "Pending review"
+        },
+        "policy": {
+          "allow": "Allow",
+          "ask": "Ask for approval",
+          "deny": "Deny"
+        }
+      },
+      "actions": {
+        "disable": "Disable",
+        "enable": "Enable",
+        "delete": "Delete"
+      },
+      "toggle": {
+        "disabled": "\"{name}\" disabled",
+        "enabled": "\"{name}\" enabled"
+      },
+      "delete": {
+        "title": "Delete the connector \"{name}\"?",
+        "hint": "It belongs to the organization \"{org}\". Once deleted, its agents can no longer use it and its credentials are removed; the organization's audit log records the deletion.",
+        "confirm": "Delete",
+        "done": "\"{name}\" deleted"
+      }
+    },
     "agents": {
       "title": "Agents",
       "description": "Every organization's agents and their templates: read the setup, transfer the owner or delete.",

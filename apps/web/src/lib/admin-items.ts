@@ -112,6 +112,10 @@ export interface AdminConnectorFilter {
   q?: string;
 }
 
+/** The status filter an address names (anything but a known status is no filter). */
+export const connectorStatusOf = (v: string): "active" | "disabled" | "" =>
+  v === "active" || v === "disabled" ? v : "";
+
 /** `?a=b&…` of the set (non-empty) values, or `""`. */
 function queryOf(params: Record<string, string | undefined>): string {
   const q = new URLSearchParams();
