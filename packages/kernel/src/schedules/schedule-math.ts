@@ -170,28 +170,6 @@ function localWallClock(at: Date, timeZone: string): number {
 /** The smallest gap, in minutes, among the next 50 fire times after `from`; null for once. */
 export function minGapMinutes(t: ScheduleTrigger, from: Date): number | null {
   if (t.kind === "once") return null;
-  const key = `${t.expr}\u0000${t.timeZone}\u0000${from.getTime()}`;
-  if (gapMemo.has(key)) return gapMemo.get(key) ?? null;
-  const gap = sampleGap(t, from);
-  if (gapMemo.size >= GAP_MEMO_SIZE) {
-    const oldest = gapMemo.keys().next().value;
-    if (oldest !== undefined) gapMemo.delete(oldest);
-  }
-  gapMemo.set(key, gap);
-  return gap;
-}
-
-/** Bound of {@link gapMemo}. */
-const GAP_MEMO_SIZE = 256;
-
-/**
- * Recent {@link minGapMinutes} results by (expression, zone, from): a create validates the gap and
- * then derives the jitter from the same sample, and each sample walks 50 ticks of `CronTime`
- * (about 0.2 ms each). The function is pure, so a bounded per-process cache is safe.
- */
-const gapMemo = new Map<string, number | null>();
-
-function sampleGap(t: ScheduleTrigger & { kind: "cron" }, from: Date): number | null {
   const next = ticker(t);
   let prev = next(from);
   let min = Number.POSITIVE_INFINITY;
@@ -216,7 +194,14 @@ function fnv1a32(s: string): number {
 
 /** A fixed per-task offset: `fnv1a32(id) mod min(floor(10 % of the interval), 300 s)`; once is 0. */
 export function jitterSeconds(taskId: string, t: ScheduleTrigger, from: Date): number {
-  const gap = minGapMinutes(t, from);
+  return jitterForGap(taskId, minGapMinutes(t, from));
+}
+
+/**
+ * {@link jitterSeconds} from a gap already sampled ({@link minGapMinutes} of the same trigger and
+ * time), so a caller that checked the interval does not walk the 50 ticks again; null gap is 0.
+ */
+export function jitterForGap(taskId: string, gap: number | null): number {
   if (gap === null) return 0;
   const range = Math.min(Math.floor(0.1 * gap * 60), JITTER_CAP_SECONDS);
   return range > 0 ? fnv1a32(taskId) % range : 0;

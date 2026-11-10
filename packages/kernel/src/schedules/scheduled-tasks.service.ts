@@ -27,7 +27,7 @@ import {
   scheduleNotFound,
   targetInvalid,
 } from "./errors.js";
-import { jitterSeconds, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
+import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
 import type {
   ScheduleChat,
@@ -64,7 +64,10 @@ export interface CreateTaskInput {
   model?: string;
   effort?: string;
   deviceId?: string;
-  /** Ignored for a cron task when the org sets `defaultExpiryDays`. */
+  /**
+   * When the task ends; it must lie in the future. Absent or null: for a cron task, now + the
+   * org's `defaultExpiryDays` when set; otherwise never.
+   */
   expiresAt?: Date | null;
   grants?: GrantInput[];
 }
@@ -97,6 +100,9 @@ export interface ScheduleActor {
 const RUNS_DEFAULT = 50;
 const RUNS_MAX = 200;
 const DAY_MS = 86_400_000;
+/** Longest task name and prompt, in characters. */
+const NAME_MAX = 200;
+const PROMPT_MAX = 20_000;
 
 /** A DM thread's key on `channel_threads` (`channels/threads.ts` `threadKeyOf`). */
 const DM_THREAD_PREFIX = "dm:";
@@ -180,8 +186,8 @@ export class ScheduledTasksService {
         `This organization already has ${settings.maxTasksPerOrg} scheduled tasks; delete one to create another`,
       );
     }
-    const name = requiredText(input.name, "name");
-    const prompt = requiredText(input.prompt, "prompt");
+    const name = requiredText(input.name, "name", NAME_MAX);
+    const prompt = requiredText(input.prompt, "prompt", PROMPT_MAX);
     const agent = await this.agents.get(orgId, input.agentId, accountId);
     const timeZone =
       input.timeZone ??
@@ -195,7 +201,7 @@ export class ScheduledTasksService {
       "UTC";
     const now = new Date();
     const trigger = withZone(input.trigger, timeZone);
-    checkTrigger(trigger, now, settings);
+    const gap = checkTrigger(trigger, now, settings);
     const target = {
       mode: input.mode,
       conversationId: input.conversationId ?? null,
@@ -204,12 +210,14 @@ export class ScheduledTasksService {
     await this.checkTarget(orgId, accountId, agent.id, target);
     if (input.deviceId !== undefined) await this.checkDevice(orgId, accountId, input.deviceId);
     const expiresAt =
-      trigger.kind === "cron" && settings.defaultExpiryDays !== null
-        ? new Date(now.getTime() + settings.defaultExpiryDays * DAY_MS)
-        : checkExpiry(input.expiresAt ?? null, now);
+      input.expiresAt != null
+        ? checkExpiry(input.expiresAt, now)
+        : trigger.kind === "cron" && settings.defaultExpiryDays !== null
+          ? new Date(now.getTime() + settings.defaultExpiryDays * DAY_MS)
+          : null;
     const grants = await this.resolveGrants(orgId, role, agent, settings, input.grants ?? []);
     const id = randomUUID();
-    const jitter = jitterSeconds(id, trigger, now);
+    const jitter = jitterForGap(id, gap);
     const task = await this.store.insertTask(t, {
       id,
       orgId,
@@ -258,12 +266,29 @@ export class ScheduledTasksService {
     const settings = await readScheduleSettings(t, this.config, orgId);
     const now = new Date();
     const changes: ScheduledTaskPatch = {};
-    if (patch.name !== undefined) changes.name = requiredText(patch.name, "name");
-    if (patch.prompt !== undefined) changes.prompt = requiredText(patch.prompt, "prompt");
+    if (patch.name !== undefined) changes.name = requiredText(patch.name, "name", NAME_MAX);
+    if (patch.prompt !== undefined) {
+      changes.prompt = requiredText(patch.prompt, "prompt", PROMPT_MAX);
+    }
 
     const agentId = patch.agentId ?? task.agentId;
     if (patch.agentId !== undefined && patch.agentId !== task.agentId) {
-      changes.agentId = (await this.agents.get(orgId, patch.agentId, accountId)).id;
+      const agent = await this.agents.get(orgId, patch.agentId, accountId);
+      changes.agentId = agent.id;
+      // the grants were approved for the old agent's tools: each must hold for the new agent
+      // too (refused, so the creator sees which), and takes the new agent's definition
+      const held = await this.store.listGrants(t, task.id);
+      const regranted = await this.resolveGrants(
+        orgId,
+        role,
+        agent,
+        settings,
+        held.map((g) => ({
+          toolKey: g.toolKey,
+          ...(g.connectorId !== null && { connectorId: g.connectorId }),
+        })),
+      );
+      for (const g of regranted) await this.store.addGrant(t, task.id, g);
     }
     const target = {
       mode: patch.mode ?? task.mode,
@@ -289,9 +314,9 @@ export class ScheduledTasksService {
           ? { kind: "cron", expr: task.trigger.expr }
           : { kind: "once", at: task.trigger.at });
       const trigger = withZone(base, zone);
-      checkTrigger(trigger, now, settings);
+      const gap = checkTrigger(trigger, now, settings);
       changes.trigger = trigger;
-      changes.jitterSeconds = jitterSeconds(task.id, trigger, now);
+      changes.jitterSeconds = jitterForGap(task.id, gap);
       if (task.status === "active") {
         changes.nextRunAt = fireAt(trigger, now, changes.jitterSeconds);
       }
@@ -689,10 +714,13 @@ export class ScheduledTasksService {
   }
 }
 
-/** A required text field, trimmed; empty → `validation_failed`. */
-function requiredText(v: string, field: string): string {
+/** A required text field, trimmed; empty or longer than `max` → `validation_failed`. */
+function requiredText(v: string, field: string, max: number): string {
   const s = v.trim();
   if (s === "") throw new ApiError("validation_failed", `The task's ${field} is empty`);
+  if (s.length > max) {
+    throw new ApiError("validation_failed", `The task's ${field} is longer than ${max} characters`);
+  }
   return s;
 }
 
@@ -702,8 +730,15 @@ function withZone(t: TriggerInput, timeZone: string): ScheduleTrigger {
     : { kind: "once", at: t.at, timeZone };
 }
 
-/** The trigger is valid (spec §5) and its fire times are at least the org's interval apart. */
-function checkTrigger(t: ScheduleTrigger, now: Date, settings: EffectiveScheduleSettings): void {
+/**
+ * The trigger is valid (spec §5) and its fire times are at least the org's interval apart; returns
+ * the sampled gap (null for once), from which the jitter is derived.
+ */
+function checkTrigger(
+  t: ScheduleTrigger,
+  now: Date,
+  settings: EffectiveScheduleSettings,
+): number | null {
   if (!isTimeZone(t.timeZone)) {
     throw new ApiError("schedule.invalid_time_zone", `${t.timeZone} is not an IANA time zone`);
   }
@@ -728,7 +763,9 @@ function checkTrigger(t: ScheduleTrigger, now: Date, settings: EffectiveSchedule
         `The schedule fires every ${gap} minutes; this organization allows at least ${settings.minIntervalMinutes}`,
       );
     }
+    return gap;
   }
+  return null;
 }
 
 /** The next fire time after `now`, jitter included; null when there is none (a past once). */

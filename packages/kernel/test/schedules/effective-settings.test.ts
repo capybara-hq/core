@@ -71,4 +71,10 @@ describe("scheduled task settings", () => {
     }).scheduledTasks;
     expect(org.forbiddenTools).toEqual(["Bash", "WebFetch"]);
   });
+
+  it("a stored forbiddenTools list past 500 is truncated, not reset", () => {
+    const keys = Array.from({ length: 600 }, (_, i) => `Tool${i}`);
+    const org = parseOrgSettings({ scheduledTasks: { forbiddenTools: keys } }).scheduledTasks;
+    expect(org.forbiddenTools).toEqual(keys.slice(0, 500));
+  });
 });

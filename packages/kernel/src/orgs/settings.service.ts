@@ -105,11 +105,12 @@ export const ScheduledTasksSettingsSchema = z.object({
   catchUpWindowMinutes: posInt(1_000_000, 60),
   unattendedAsk: z.enum(["fail", "wait"]).default("fail").catch("fail"),
   pauseAfterFailures: posInt(1000, 5),
-  // fail-safe: an invalid entry is dropped, the valid ones stay forbidden (never reset to [])
+  // fail-safe: an invalid entry is dropped, the valid ones stay forbidden (never reset to []);
+  // past the PATCH's 500 the list is truncated
   forbiddenTools: z
     .preprocess(
-      (v) => (Array.isArray(v) ? v.filter(isForbiddenToolEntry) : v),
-      z.array(z.string()).default([]),
+      (v) => (Array.isArray(v) ? v.filter(isForbiddenToolEntry).slice(0, 500) : v),
+      z.array(z.string()).max(500).default([]),
     )
     .catch([]),
 });

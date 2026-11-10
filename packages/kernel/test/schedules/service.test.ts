@@ -439,24 +439,88 @@ describe("ScheduledTasksService", () => {
     expect(t.nextRunAt?.toISOString()).toBe("2030-01-01T09:00:00.000Z");
   });
 
-  it("expires_at: the org default for a cron task, else the input's", async () => {
+  it("expires_at: the creator's value wins, else the org default for a cron task", async () => {
     const until = new Date(Date.now() + 3 * 86_400_000);
     expect((await svc.create(orgId, aliceId, daily({ expiresAt: until }))).expiresAt).toEqual(
       until,
     );
     expect((await svc.create(orgId, aliceId, daily())).expiresAt).toBeNull();
+    expect(
+      await codeOf(svc.create(orgId, aliceId, daily({ expiresAt: new Date(Date.now() - 1000) }))),
+    ).toBe("validation_failed");
     await setSchedules({ defaultExpiryDays: 7 });
-    const before = Date.now();
-    const t = await svc.create(orgId, aliceId, daily({ expiresAt: until }));
-    const ms = (t.expiresAt?.getTime() ?? 0) - before;
-    expect(ms).toBeGreaterThanOrEqual(7 * 86_400_000 - 1000);
-    expect(ms).toBeLessThan(7 * 86_400_000 + 60_000);
+    // an explicit expiry beats the org default
+    expect((await svc.create(orgId, aliceId, daily({ expiresAt: until }))).expiresAt).toEqual(
+      until,
+    );
+    // absent or null: the org default
+    for (const over of [{}, { expiresAt: null }]) {
+      const before = Date.now();
+      const t = await svc.create(orgId, aliceId, daily(over));
+      const ms = (t.expiresAt?.getTime() ?? 0) - before;
+      expect(ms).toBeGreaterThanOrEqual(7 * 86_400_000 - 1000);
+      expect(ms).toBeLessThan(7 * 86_400_000 + 60_000);
+    }
+    // the default applies to recurring tasks only
     const once = await svc.create(
       orgId,
       aliceId,
-      daily({ trigger: { kind: "once", at: "2030-01-01T09:00" }, expiresAt: until }),
+      daily({ trigger: { kind: "once", at: "2030-01-01T09:00" } }),
     );
-    expect(once.expiresAt).toEqual(until);
+    expect(once.expiresAt).toBeNull();
+  });
+
+  it("caps the name and prompt lengths", async () => {
+    expect(await codeOf(svc.create(orgId, aliceId, daily({ name: "n".repeat(201) })))).toBe(
+      "validation_failed",
+    );
+    expect(await codeOf(svc.create(orgId, aliceId, daily({ prompt: "p".repeat(20_001) })))).toBe(
+      "validation_failed",
+    );
+    const t = await svc.create(
+      orgId,
+      aliceId,
+      daily({ name: "n".repeat(200), prompt: "p".repeat(20_000) }),
+    );
+    expect(await codeOf(svc.update(orgId, aliceId, t.id, { name: "  " }))).toBe(
+      "validation_failed",
+    );
+    expect(await codeOf(svc.update(orgId, aliceId, t.id, { prompt: "p".repeat(20_001) }))).toBe(
+      "validation_failed",
+    );
+  });
+
+  it("changing the agent re-checks the task's grants", async () => {
+    const t = await svc.create(orgId, aliceId, daily({ grants: [{ toolKey: "AskUserQuestion" }] }));
+    const mkAgent = async (keep: string[]) => {
+      const res = await alice({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/agents`,
+        payload: {
+          definition: {
+            name: "Other",
+            instructions: "x",
+            model: { provider: "model-fake", model: "fake-1" },
+            disabledTools: builtinsOff(...keep),
+          },
+          visibility: "org",
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return (res.json() as { agent: { id: string } }).agent.id;
+    };
+    // the new agent lacks the granted tool: refused, nothing changes
+    const bare = await mkAgent([]);
+    expect(await codeOf(svc.update(orgId, aliceId, t.id, { agentId: bare }))).toBe(
+      "schedule.grant_not_allowed",
+    );
+    expect((await svc.get(orgId, me(aliceId), t.id)).agentId).toBe(agentId);
+    // the new agent has it: the grant carries over
+    const asks = await mkAgent(["AskUserQuestion"]);
+    expect((await svc.update(orgId, aliceId, t.id, { agentId: asks })).agentId).toBe(asks);
+    expect((await svc.grants(orgId, me(aliceId), t.id)).map((g) => g.toolKey)).toEqual([
+      "AskUserQuestion",
+    ]);
   });
 
   it("resume recomputes next_run_at from now", async () => {
