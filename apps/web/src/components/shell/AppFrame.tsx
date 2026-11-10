@@ -15,8 +15,10 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
+  createContext,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -108,16 +110,28 @@ function useMotionToken(): "full" | "reduced" | null {
   );
 }
 
+/** Whether the document is the first workspace document of the sign-in (the layout's flag). */
+const NewSignInContext = createContext(false);
+
 /**
  * The shell's state tokens for plugin CSS (`data-cap-state`, client extensions spec §7.3): the
- * open conversation's run, the resolved theme and the motion preference (the sidebar's mode is
- * added by the shell itself).
+ * open conversation's run, the resolved theme, `sign-in=new` for the whole first workspace
+ * document of a sign-in, and the motion preference (the sidebar's mode is added by the shell
+ * itself).
  */
 function useCapState(): string {
   const run = useRunStateValue().state;
   const theme = useResolvedTheme()?.key ?? "builtin";
+  const newSignIn = useContext(NewSignInContext);
   const motion = useMotionToken();
-  return `run=${run} theme=${theme}${motion === null ? "" : ` motion=${motion}`}`;
+  return [
+    `run=${run}`,
+    `theme=${theme}`,
+    newSignIn ? "sign-in=new" : null,
+    motion === null ? null : `motion=${motion}`,
+  ]
+    .filter((t) => t !== null)
+    .join(" ");
 }
 
 /**
@@ -153,11 +167,22 @@ const under = (pathname: string, prefix: string) =>
  * mounted across navigations, so on each path change it refetches the stale ones of the list and
  * the count (web query cache spec §6, "Persistent components").
  */
-export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
+export function AppFrame({
+  version,
+  newSignIn = false,
+  children,
+}: {
+  version: string;
+  /** The first workspace document of the sign-in (`sign-in=new`, client extensions spec §7.3). */
+  newSignIn?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <RunStateProvider>
-      <Frame version={version}>{children}</Frame>
-    </RunStateProvider>
+    <NewSignInContext.Provider value={newSignIn}>
+      <RunStateProvider>
+        <Frame version={version}>{children}</Frame>
+      </RunStateProvider>
+    </NewSignInContext.Provider>
   );
 }
 
