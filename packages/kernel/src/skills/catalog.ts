@@ -409,7 +409,7 @@ export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:$
 /**
  * 在调用方事务里锁会话行（与 `EventLog.append` 同一把锁）并读最新一份技能目录快照（没有为 undefined）。
  * `db` is the caller's transaction handle (`KernelDb.db` inside `@Transactional`).
- * 「读最新 → 推出下一份 → 追加」都在这把锁内，别的写快照的事务（运行开始、SkillWrite、拒绝时的回退）插不进来。
+ * 「读最新 → 推出下一份 → 追加」都在这把锁内，别的写快照的事务（运行开始、技能注册、拒绝时的回退）插不进来。
  */
 export async function lockLatestCatalog(
   db: KernelSchemaDb,

@@ -1,14 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
-import { skillFilesPrefix } from "../conversations/attachments.service.js";
 import { EventLog } from "../conversations/event-log.js";
-import type {
-  ProposedSkillVersion,
-  SkillChangeRequestsTable,
-  SkillManifest,
-} from "../db/kernel-schema.js";
+import type { SkillChangeRequestsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -17,23 +10,9 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { StorageService } from "../storage/storage.service.js";
-import { BUILTIN } from "../tools/builtin-names.js";
-import {
-  AGENT_SKILLS_MAX,
-  assertBelowAgentSkillCap,
-  createAgentSkillVersion,
-  keyShareOrg,
-  skillMdBody,
-} from "./agent-skills.service.js";
-import { invocationOf } from "./catalog.js";
-import {
-  appendConversationCatalog,
-  type ConversationCatalogDeps,
-  revertTrialCatalog,
-} from "./conversation-catalog.js";
+import { createAgentSkillVersion, keyShareOrg } from "./agent-skills.service.js";
+import { type ConversationCatalogDeps, revertTrialCatalog } from "./conversation-catalog.js";
 
-/** 写技能文件时的并发数。 */
-const PUT_CONCURRENCY = 4;
 /** 详情里读取文件内容的上限（草稿 ≤ 1MB，留余量）。 */
 const DETAIL_MAX_BYTES = 2 * 1024 * 1024;
 /** 收件箱一次最多返回的技能变更数。 */
@@ -81,59 +60,24 @@ export interface SkillChangeDetail extends Omit<SkillChangeView, "files"> {
   current: { version: number; files: SkillChangeFile[] } | null;
 }
 
-/** {@link SkillChangesService.write} 的调用上下文（来自工具调用）。 */
-export interface SkillWriteContext {
-  orgId: string;
-  agentId: string;
-  /** 触发本次运行的人。 */
-  accountId: string;
-  conversationId: string;
-  runId?: string;
-}
-
-/** 已合成、已校验的技能（见 tools/builtins/skill-write.ts 的 `buildSkillWrite`）。 */
-export interface SkillWritePackage {
-  name: string;
-  description: string;
-  files: { path: string; data: Uint8Array; size: number }[];
-  manifest: SkillManifest;
-}
-
-/** 写技能的结果：私有 agent 直接生成版本，共享 agent 生成变更申请。 */
-export type SkillWriteOutcome =
-  | { kind: "version"; skillId: string; version: number; created: boolean }
-  | { kind: "requested"; requestId: string; skillId: string; version: number };
-
 /** 被取消的草稿：提交后要删的对象前缀与要发布的（对话, seq）。 */
 export interface CancelledDrafts {
   prefixes: string[];
   seqs: [string, number][];
 }
 
-// ---- 模型可见文案（英文） ----
-
-const STORAGE_UNAVAILABLE_TEXT =
-  "File storage is temporarily unavailable, so the skill could not be saved; retry later.";
-const pendingElsewhereText = (name: string) =>
-  `Skill "${name}" already has a change awaiting the owner's approval (requested in another conversation), so it cannot be changed now; ask the user to have the owner decide that change first, or use a different skill name.`;
-const capText = () =>
-  `This agent already has ${AGENT_SKILLS_MAX} skills (including changes awaiting approval), the maximum; update an existing skill instead, or ask the agent's owner to delete one of this agent's skills.`;
-const AGENT_GONE_TEXT =
-  "This agent no longer exists, so the skill cannot be saved; ask the user to start a conversation with another agent.";
-
 const iso = (v: Date | string): string => new Date(v).toISOString();
 const notFound = () => new ApiError("skill_change.not_found", "Skill change not found");
 
 /**
- * agent 自写技能与共享 agent 的技能变更审批（M5 T15，R4）：
- * - `write`（工具 `SkillWrite` 调用）：私有 agent 直接生成新版本；共享 agent 生成一条待负责人批准的申请，
- *   期间只有发起对话试用（`resolveEffectiveSkills` 按对话合并）；两种情况都在同一事务里往发起对话追加一份
- *   技能目录快照（Ruling M17：日志是唯一事实源），同一运行的下一步即可 `Skill`；
- * - `decide`（HTTP，只有该 agent 当前的负责人）：批准 → 版本对所有对话生效（各对话下一次运行开始时写新快照）；
- *   拒绝 → 删除草稿对象，发起对话下一次运行开始时目录回到当前版本；
- * - 同一 agent 的同名技能最多一条待处理申请：同一对话再写取代旧的（旧的 cancelled、草稿删除、技能 id 不变），
- *   别的对话再写被拒绝（英文说明）。
- * 状态都在 PG（agent 行锁串行化同一 agent 的写与决定），文件在对象存储 `kernel/<orgId>/skills/<id>/`；无进程内状态。
+ * Skill change requests of shared agents: reading, deciding and cancelling them. Skills are
+ * registered through `AgentSkillsService` (the Platform operation `agents.register-skill`), not
+ * written by a tool any more.
+ * - `decide` (HTTP, the agent's current owner; Task 8 moves it to org admins): approve makes the version
+ *   effective for every conversation (each writes a new snapshot when its next run starts); reject
+ *   deletes the draft objects and the requesting conversation's catalog goes back to the current version.
+ * State is in PG (the agent row lock serializes decisions of one agent), files in object storage
+ * `kernel/<orgId>/skills/<id>/`; no in-process state.
  */
 @Injectable()
 export class SkillChangesService {
@@ -147,37 +91,6 @@ export class SkillChangesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {
     this.catalogDeps = { db, log, eventLog };
-  }
-
-  /** 写技能（见类注释）。模型可见的失败抛 `ToolError`。 */
-  async write(ctx: SkillWriteContext, pkg: SkillWritePackage): Promise<SkillWriteOutcome> {
-    let store: ReturnType<StorageService["kernel"]>;
-    try {
-      this.storage.assertAvailable();
-      store = this.storage.kernel(ctx.orgId);
-    } catch (e) {
-      throw storageError(e);
-    }
-    const id = randomUUID();
-    const prefix = skillFilesPrefix(id);
-    try {
-      await putAll(store, prefix, pkg.files);
-    } catch (e) {
-      await this.deletePrefix(ctx.orgId, prefix);
-      throw storageError(e);
-    }
-    let committed: { outcome: SkillWriteOutcome; drop: string[]; toSeq: number | null };
-    try {
-      committed = await this.writeIn(ctx, pkg, id, prefix);
-    } catch (e) {
-      await this.deletePrefix(ctx.orgId, prefix);
-      throw e;
-    }
-    if (committed.toSeq !== null) {
-      await this.eventLog.notify(ctx.conversationId, committed.toSeq);
-    }
-    for (const p of committed.drop) await this.deletePrefix(ctx.orgId, p);
-    return committed.outcome;
   }
 
   /**
@@ -211,188 +124,6 @@ export class SkillChangesService {
     return view;
   }
 
-  /** The transaction of {@link write}. */
-  @Transactional()
-  private async writeIn(
-    ctx: SkillWriteContext,
-    pkg: SkillWritePackage,
-    id: string,
-    prefix: string,
-  ): Promise<{ outcome: SkillWriteOutcome; drop: string[]; toSeq: number | null }> {
-    await keyShareOrg(this.db, ctx.orgId);
-    // NO KEY UPDATE, not UPDATE (here, in decide and in AgentSkillsService): it still serializes
-    // the writes and decisions of one agent, but not the foreign key check (FOR KEY SHARE) of a
-    // transaction that already holds the conversation row this one locks last, e.g. an event
-    // log append updating that row a second time (the title job): FOR UPDATE made that 40P01
-    const agent = await this.db
-      .selectFrom("agents")
-      .select(["visibility", "deleted_at"])
-      .where("id", "=", ctx.agentId)
-      .where("org_id", "=", ctx.orgId)
-      .forNoKeyUpdate()
-      .executeTakeFirst();
-    if (!agent || agent.deleted_at !== null) throw new ToolError(AGENT_GONE_TEXT);
-    // Then the conversation row (appendConversationCatalog's lock, still after the agent row like decide),
-    // before the change request insert: its foreign key check takes FOR KEY SHARE on that row,
-    // and upgrading to FOR UPDATE afterwards deadlocked with another writer doing the same
-    await this.db
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", ctx.conversationId)
-      .forUpdate()
-      .execute();
-    const existing = await this.db
-      .selectFrom("skills")
-      .select(["id", "current_version"])
-      .where("org_id", "=", ctx.orgId)
-      .where("scope", "=", "agent")
-      .where("agent_id", "=", ctx.agentId)
-      .where("name", "=", pkg.name)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    const pend = await this.db
-      .selectFrom("skill_change_requests")
-      .selectAll()
-      .where("agent_id", "=", ctx.agentId)
-      .where("status", "=", "pending")
-      .where(sql<string>`proposed_version -> 'manifest' ->> 'name'`, "=", pkg.name)
-      .forUpdate()
-      .executeTakeFirst();
-    const drop: string[] = [];
-    if (pend) {
-      if (pend.requested_in_conversation !== ctx.conversationId) {
-        throw new ToolError(pendingElsewhereText(pkg.name));
-      }
-      // 同一对话再写：取代旧申请
-      await this.db
-        .updateTable("skill_change_requests")
-        .set({ status: "cancelled", decided_at: sql<Date>`now()` })
-        .where("id", "=", pend.id)
-        .execute();
-      drop.push(pend.object_prefix);
-      await audit(this.db.db, {
-        actorAccountId: ctx.accountId,
-        orgId: ctx.orgId,
-        action: "skill.change_decided",
-        target: pend.id,
-        detail: {
-          decision: "cancelled",
-          reason: "superseded",
-          supersededBy: id,
-          agentId: ctx.agentId,
-          name: pkg.name,
-        },
-      });
-    }
-    if (!existing) {
-      try {
-        await assertBelowAgentSkillCap(this.db, ctx.agentId, pend?.id);
-      } catch (e) {
-        if (e instanceof ApiError && e.code === "skill.agent_cap") throw new ToolError(capText());
-        throw e;
-      }
-    }
-    const version = (existing?.current_version ?? 0) + 1;
-    const skillId = existing?.id ?? pend?.proposed_version.skillId ?? randomUUID();
-    let outcome: SkillWriteOutcome;
-    if (agent.visibility === "private") {
-      await createAgentSkillVersion(this.db, {
-        orgId: ctx.orgId,
-        agentId: ctx.agentId,
-        skillId,
-        exists: existing !== undefined,
-        version,
-        manifest: pkg.manifest,
-        prefix,
-        createdBy: ctx.accountId,
-      });
-      await audit(this.db.db, {
-        actorAccountId: ctx.accountId,
-        orgId: ctx.orgId,
-        action: existing ? "skill.version_created" : "skill.created",
-        target: skillId,
-        detail: {
-          name: pkg.name,
-          version,
-          files: pkg.manifest.files.length,
-          agentId: ctx.agentId,
-          conversationId: ctx.conversationId,
-          via: BUILTIN.SkillWrite,
-        },
-      });
-      outcome = { kind: "version", skillId, version, created: !existing };
-    } else {
-      const proposed: ProposedSkillVersion = { skillId, version, manifest: pkg.manifest };
-      await this.db
-        .insertInto("skill_change_requests")
-        .values({
-          id,
-          org_id: ctx.orgId,
-          agent_id: ctx.agentId,
-          skill_id: existing?.id ?? null,
-          proposed_version: JSON.stringify(proposed),
-          object_prefix: prefix,
-          requested_by_account: ctx.accountId,
-          requested_in_conversation: ctx.conversationId,
-          decided_by: null,
-        })
-        .execute();
-      await audit(this.db.db, {
-        actorAccountId: ctx.accountId,
-        orgId: ctx.orgId,
-        action: "skill.change_requested",
-        target: id,
-        detail: {
-          agentId: ctx.agentId,
-          skillId: existing?.id ?? null,
-          name: pkg.name,
-          version,
-          files: pkg.manifest.files.length,
-          conversationId: ctx.conversationId,
-        },
-      });
-      outcome = { kind: "requested", requestId: id, skillId, version };
-    }
-    // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志；来源 = 本次的对象前缀）
-    // A pinned entry of this skill gets the version, source and body just written (phase B)
-    // A manual-only version (phase D) is never in the model's catalog: it removes the skill from
-    // the snapshot instead, and appendConversationCatalog drops its pinned entry with it (no longer live)
-    const forModel = invocationOf(pkg.manifest).model;
-    const pinnedBody = skillMdBody(pkg.files);
-    const toSeq = await appendConversationCatalog(
-      this.catalogDeps,
-      ctx.conversationId,
-      (base) => ({
-        ...base,
-        skills: [
-          ...base.skills.filter((s) => s.name !== pkg.name),
-          ...(forModel
-            ? [
-                {
-                  id: skillId,
-                  name: pkg.name,
-                  description: pkg.description,
-                  version,
-                  source: prefix,
-                },
-              ]
-            : []),
-        ],
-        ...(base.pinned && {
-          pinned: base.pinned.map((p) =>
-            p.id === skillId && pinnedBody !== null
-              ? { id: skillId, version, name: pkg.name, source: prefix, body: pinnedBody }
-              : p,
-          ),
-        }),
-      }),
-      `skills_catalog:write:${id}`,
-      ctx.runId,
-    );
-    return { outcome, drop, toSeq };
-  }
-
   /** The transaction of {@link decide}. */
   @Transactional()
   private async decideIn(
@@ -403,7 +134,7 @@ export class SkillChangesService {
     actorTokenId: string | undefined,
     agentId: string,
   ): Promise<{ updated: Selectable<SkillChangeRequestsTable>; revertSeq: number | null }> {
-    // 加锁顺序与 write 一致：组织行（KEY SHARE）→ agent 行 → 申请行 → 会话行
+    // 加锁顺序：：组织行（KEY SHARE）→ agent 行 → 申请行 → 会话行
     await keyShareOrg(this.db, orgId);
     const agent = await this.db
       .selectFrom("agents")
@@ -701,31 +432,4 @@ async function readTexts(
     out.push({ path: f.path, size: f.size, content });
   }
   return out;
-}
-
-/** 并发写入全部文件。 */
-async function putAll(
-  store: ReturnType<StorageService["kernel"]>,
-  prefix: string,
-  files: SkillWritePackage["files"],
-): Promise<void> {
-  const queue = [...files];
-  await Promise.all(
-    Array.from({ length: Math.min(PUT_CONCURRENCY, queue.length) }, async () => {
-      for (let f = queue.shift(); f; f = queue.shift()) {
-        await store.put(`${prefix}${f.path}`, f.data, {
-          contentType: "application/octet-stream",
-          size: f.size,
-        });
-      }
-    }),
-  );
-}
-
-/** 存储错误 → 给模型的说明（存储不可用可重试）；其余原样抛出。 */
-function storageError(e: unknown): unknown {
-  if (e instanceof ApiError && e.code === "storage.unavailable") {
-    return new ToolError(STORAGE_UNAVAILABLE_TEXT);
-  }
-  return e;
 }

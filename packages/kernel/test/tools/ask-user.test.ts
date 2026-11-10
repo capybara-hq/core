@@ -340,7 +340,6 @@ describe("AskUserQuestion 端到端", () => {
       "Platform",
       "ReadToolOutput",
       "SendMessage",
-      "SkillWrite",
     ]);
     expect(
       ofType(evs, "reminder").filter((e) => e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX)),

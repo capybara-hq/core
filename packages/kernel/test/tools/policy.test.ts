@@ -18,7 +18,6 @@ import {
   decide,
   isFixedAsk,
   type PolicyInput,
-  R3_FIXED_ASK_TOOL_KEYS,
 } from "../../src/tools/policy.js";
 import { type CallPolicy, type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -85,39 +84,23 @@ describe("decide", () => {
     expect(decide({ ...base, connectorDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
-  it("R3 固定询问清单：M5 起含 SkillWrite（改共享技能），只对共享 agent 生效", () => {
-    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["SkillWrite"]);
-    const tool = (key: string) =>
+  it("a fixed ask is a spec that requires user interaction; no builtin is on a list", () => {
+    const tool = (annotations?: { requiresUserInteraction?: boolean }) =>
       ({
-        key,
-        source: { kind: "builtin", name: key },
-        spec: { name: key, description: "d", inputSchema: { type: "object" } },
+        key: "plugin__probe__t",
+        source: { kind: "builtin", name: "t" },
+        spec: {
+          name: "t",
+          description: "d",
+          inputSchema: { type: "object" },
+          ...(annotations && { annotations }),
+        },
         specHash: "h",
         defaultPolicy: "allow",
       }) as ResolvedTool;
-    expect(isFixedAsk(tool("SkillWrite"), "org")).toBe(true);
-    expect(isFixedAsk(tool("SkillWrite"), "members")).toBe(true);
-    expect(isFixedAsk(tool("SkillWrite"), "private")).toBe(false);
-    // 不知道可见性时按共享处理（更严）
-    expect(isFixedAsk(tool("SkillWrite"), undefined)).toBe(true);
-    expect(isFixedAsk(tool("Skill"), "org")).toBe(false);
-  });
-
-  it("SkillWrite 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {
-    const t = {
-      key: "SkillWrite",
-      source: { kind: "builtin", name: "SkillWrite" },
-      spec: { name: "SkillWrite", description: "d", inputSchema: { type: "object" } },
-      specHash: "h",
-      defaultPolicy: "allow",
-    } as ResolvedTool;
-    expect(isFixedAsk(t, "private")).toBe(false);
-    expect(isFixedAsk(t, "private", undefined)).toBe(false);
-    expect(isFixedAsk(t, "private", "allow")).toBe(false);
-    expect(isFixedAsk(t, "private", "ask")).toBe(true);
-    expect(isFixedAsk(t, "org", "allow")).toBe(true);
-    expect(isFixedAsk(t, "members", "allow")).toBe(true);
-    expect(isFixedAsk(t, undefined, "allow")).toBe(true);
+    expect(isFixedAsk(tool({ requiresUserInteraction: true }))).toBe(true);
+    expect(isFixedAsk(tool({ requiresUserInteraction: false }))).toBe(false);
+    expect(isFixedAsk(tool())).toBe(false);
   });
 });
 
@@ -536,56 +519,6 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await createDecidePolicy(db)(tool, agentDef, ctx)).toMatchObject({
       ask: { toolKey: "plugin__probe__confirm", requestedFor: seed.accountId },
     });
-  });
-
-  it("SkillWrite 私有 agent（D10）：缺省不问；当前版本设为 ask 即时生效且记住的授权无效；共享 agent 设 allow 仍 ask", async () => {
-    const tool: ResolvedTool = {
-      key: "SkillWrite",
-      source: { kind: "builtin", name: "SkillWrite" },
-      spec: { name: "SkillWrite", description: "d", inputSchema: { type: "object" } },
-      specHash: "h-sw",
-      defaultPolicy: "allow",
-    };
-    const policy = createDecidePolicy(db);
-    await sql`UPDATE capybara.agents SET visibility = 'private' WHERE id = ${seed.agentId}`.execute(
-      raw,
-    );
-    // 缺省（定义里没有 skills.writePolicy）
-    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
-      VALUES (${seed.agentId}, 1, ${JSON.stringify(agentDef)}::jsonb, ${seed.accountId})`.execute(
-      raw,
-    );
-    expect(await policy(tool, agentDef, ctx)).toBe("allow");
-    // 运行中负责人把当前版本改为 ask：运行所用版本（agentDef）不变，下一次调用即生效
-    const ver = (n: number, writePolicy: "allow" | "ask") =>
-      sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
-        VALUES (${seed.agentId}, ${n}, ${JSON.stringify({ ...agentDef, skills: { orgSkills: [], writePolicy } })}::jsonb,
-          ${seed.accountId})`.execute(raw);
-    const setCurrent = (n: number) =>
-      sql`UPDATE capybara.agents SET current_version = ${n} WHERE id = ${seed.agentId}`.execute(
-        raw,
-      );
-    await ver(2, "ask");
-    await setCurrent(2);
-    // 记住的授权不放行固定 ask
-    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
-      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'SkillWrite', 'h-sw')`.execute(
-      raw,
-    );
-    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
-      VALUES (${seed.conversationId}, 'SkillWrite', 'h-sw')`.execute(raw);
-    expect(await policy(tool, agentDef, ctx)).toMatchObject({
-      ask: { toolKey: "SkillWrite", requestedFor: seed.accountId },
-    });
-    // 改回 allow 后不再询问
-    await ver(3, "allow");
-    await setCurrent(3);
-    expect(await policy(tool, agentDef, ctx)).toBe("allow");
-    // 共享 agent：writePolicy 为 allow 仍固定 ask，授权无效
-    await sql`UPDATE capybara.agents SET visibility = 'org' WHERE id = ${seed.agentId}`.execute(
-      raw,
-    );
-    expect(await policy(tool, agentDef, ctx)).toMatchObject({ ask: { toolKey: "SkillWrite" } });
   });
 
   it("R1：requiredRole 高于发起人实时角色 → 按角色升级（approverRole = 所需角色，requestedFor = null）", async () => {

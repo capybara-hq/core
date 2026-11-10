@@ -73,8 +73,8 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
  *    approval (moved up) -> install possible only after super admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
- * 5. Private agent with `writePolicy: "ask"`: `SkillWrite` creates an approval that takes effect
- *    once approved;
+ * 5. (removed with the `SkillWrite` tool; registration confirmation is covered by the
+ *    `agents.register-skill` tests);
  * 6. Rename regression: T22's `pre-rename` fixture replays a single step with drift []; a
  *    single-step eval with it as the case shows no drift; an old agent version saved with
  *    `{kind:"app"}` runs on both replicas;
@@ -844,51 +844,6 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     } finally {
       await ok("root", 0, "PUT", "/api/v1/admin/settings", { customConnectors: "allow" });
     }
-  });
-
-  it("5. 私有 agent writePolicy ask：SkillWrite 产生审批，批准后直接生效", async () => {
-    const ag = await ok("boss", 0, "POST", `${base}/agents`, {
-      definition: {
-        name: "Mine",
-        instructions: "Write skills.",
-        model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: onlyBuiltins([{ kind: "builtin", name: "SkillWrite" }]),
-        skills: { writePolicy: "ask" },
-      },
-      visibility: "private",
-    });
-    const privateId = (ag.agent as { id: string }).id;
-    const conv = await newConv("boss", 1, privateId);
-    await send("boss", 0, conv, "SkillWrite", {
-      name: "asked",
-      description: "Use when asked.",
-      files: [{ path: "SKILL.md", content: "# Asked v1" }],
-    });
-    const a = await waitFor(
-      () =>
-        db
-          .selectFrom("approvals")
-          .select(["id", "tool_key"])
-          .where("conversation_id", "=", conv)
-          .where("status", "=", "pending")
-          .executeTakeFirst(),
-      30_000,
-      "SkillWrite approval",
-    );
-    expect(a.tool_key).toBe("SkillWrite");
-    expect(
-      await db.selectFrom("skills").select("id").where("agent_id", "=", privateId).execute(),
-    ).toEqual([]);
-    await ok("boss", 1, "POST", `${base}/approvals/${a.id}/decision`, { decision: "approve" });
-    const r = await finished(conv, 1);
-    expect(r.isError, String(r.content)).toBe(false);
-    const skill = await db
-      .selectFrom("skills")
-      .select(["name", "current_version"])
-      .where("agent_id", "=", privateId)
-      .executeTakeFirstOrThrow();
-    expect(skill).toEqual({ name: "asked", current_version: 1 });
-    expect(await db.selectFrom("skill_change_requests").select("id").execute()).toEqual([]);
   });
 
   it("6. 改名回归：pre-rename 夹具单步还原无 drift、单步评测无 drift 标记、旧形 agent 版本两边都能运行", async () => {

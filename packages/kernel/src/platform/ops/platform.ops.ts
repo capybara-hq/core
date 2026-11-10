@@ -24,7 +24,7 @@ const BUILDS: readonly { action: OrgAction; what: string }[] = [
 
 const FAMILIES = [
   "Platform: this tool, for the org's skills, agents, agent templates, plugins, connectors and requests.",
-  "Skill and SkillWrite: use and write the skills of this agent.",
+  "Skill: use the skills of this agent.",
   "Agent, SendMessage, SubagentHandback: dispatch and talk to sub-agents.",
   "Bash, Read, Write, Edit, Glob, Grep, Deliver: work in the conversation's sandbox.",
   "WebSearch, WebFetch: reach the web through the org's providers.",

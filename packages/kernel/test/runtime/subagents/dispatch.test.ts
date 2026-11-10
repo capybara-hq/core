@@ -323,7 +323,7 @@ describe("dispatch", () => {
       builtinsOff("Agent", "Write", "Read", "Deliver"),
     );
     expect(started.payload.definition.subagentTools).toEqual({
-      deny: ["AskUserQuestion", "Deliver", "SkillWrite"],
+      deny: ["AskUserQuestion", "Deliver"],
     });
     const task = cev[1] as Ev<"user_message">;
     expect(task.payload).toMatchObject({

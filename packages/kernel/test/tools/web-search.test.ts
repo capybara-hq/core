@@ -14,7 +14,6 @@ import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
-import { R3_FIXED_ASK_TOOL_KEYS } from "../../src/tools/builtin-names.js";
 import { webToolError } from "../../src/tools/builtins/web/errors.js";
 import { WEB_SEARCH_SPEC, webSearchTool } from "../../src/tools/builtins/web/search.js";
 import { specHash, ToolRegistry } from "../../src/tools/registry.js";
@@ -191,7 +190,7 @@ describe("WebSearch: spec", () => {
       "query",
     ]);
     expect(schema.required).toEqual(["query"]);
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("WebSearch")).toBe(false);
+    expect(t.spec.annotations?.requiresUserInteraction).not.toBe(true);
   });
 });
 

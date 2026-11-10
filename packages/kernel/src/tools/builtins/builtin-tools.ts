@@ -21,7 +21,6 @@ import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-conte
 import { StepLog } from "../../runtime/step-log.js";
 import { UsageReporter } from "../../runtime/usage-report.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
-import { SkillChangesService } from "../../skills/changes.service.js";
 import { StorageService } from "../../storage/storage.service.js";
 import { ToolOutputs } from "../outputs.js";
 import type { BuiltinTool } from "../registry.js";
@@ -35,7 +34,6 @@ import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillLoadTool } from "./skill-load.js";
-import { skillWriteTool } from "./skill-write.js";
 import { toolSearchTool } from "./tool-search.js";
 import { extractAnswer, WebPages, webTools } from "./web/index.js";
 
@@ -43,7 +41,7 @@ import { extractAnswer, WebPages, webTools } from "./web/index.js";
  * The kernel's builtin tools, built once from the injected services (their specs: names,
  * descriptions and schemas, are the factories' own and unchanged). `ToolSearch` and `Skill`
  * are added to a run by the registry (`forAgent`: organization setting and threshold, a skills
- * catalog snapshot), not by agent definitions; `SkillWrite` only when a definition names it.
+ * catalog snapshot), not by agent definitions.
  */
 @Injectable()
 export class BuiltinTools {
@@ -54,7 +52,6 @@ export class BuiltinTools {
     @Inject(KernelConfigService) config: KernelConfigService,
     @Inject(ToolOutputs) outputs: ToolOutputs,
     @Inject(StorageService) storage: StorageService,
-    @Inject(SkillChangesService) skillChanges: SkillChangesService,
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
@@ -111,8 +108,6 @@ export class BuiltinTools {
           return db.db;
         },
       }),
-      // 自写技能：agent 定义显式引用才可用
-      skillWriteTool({ changes: skillChanges }),
       // web search / fetch through the org's default provider (web tools spec §3); WebFetch answers
       // from the page with one call on the `web_fetch` purpose (§5), never returning the page
       ...webTools({

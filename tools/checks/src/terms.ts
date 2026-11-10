@@ -150,7 +150,7 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     // only in the frozen map, the legacy-text rewriter, applied migrations, recordings and the tests
     // of that compatibility. `agent` is an ordinary word and is never matched alone.
     re: /\b(?:sandbox_(?:bash|read|write|edit|glob|grep|deliver)|skill_load|skill_write|ask_user|read_tool_output|tool_search)\b/,
-    what: "an old builtin tool key (now Bash / Read / Write / Edit / Glob / Grep / Deliver / Skill / SkillWrite / AskUserQuestion / ReadToolOutput / ToolSearch)",
+    what: "an old builtin tool key (now Bash / Read / Write / Edit / Glob / Grep / Deliver / Skill / AskUserQuestion / ReadToolOutput / ToolSearch)",
     allowedIn: [
       {
         path: /^packages\/kernel\/src\/tools\/legacy-keys\.ts$/,

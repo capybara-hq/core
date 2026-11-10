@@ -26,6 +26,7 @@ import {
   BUILTIN,
   BUILTIN_TOOL_KINDS,
   BUILTIN_TOOL_NAMES,
+  CHILD_REMOVED_TOOLS,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
   WEB_TOOL_NAMES,
@@ -98,6 +99,12 @@ const OLD_NAMES: readonly RegExp[] = [
 ];
 
 describe("builtin names", () => {
+  it("there is no SkillWrite builtin: agents register skills with the Platform tool", () => {
+    expect(BUILTIN_TOOL_NAMES).not.toContain("SkillWrite");
+    expect(Object.keys(BUILTIN)).not.toContain("SkillWrite");
+    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver"]);
+  });
+
   it("every BUILTIN value matches the builtin grammar and equals its key", () => {
     for (const [k, v] of Object.entries(BUILTIN)) {
       expect(v).toBe(k);
@@ -176,8 +183,8 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the legacy map covers the 13 old names, one per new name (the task, web, message, Platform and CurrentTime tools never had one)", () => {
-    expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
+  it("the legacy map covers the 12 old names, one per new name (the task, web, message, Platform and CurrentTime tools never had one)", () => {
+    expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(12);
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
       BUILTIN.TaskStop,
