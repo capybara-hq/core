@@ -25,7 +25,8 @@ export interface ClientExtensionItem {
   components: { id: string; slot: UiSlotId }[];
   /**
    * The viewer's sign-in id for this plugin (`ClientApi.signIn.id`, spec §4.2): opaque, the same
-   * for every read of one sign-in and different after the next one and per plugin.
+   * for every read of one sign-in and different after the next one; a different string per plugin,
+   * not a secret between plugins (client code is full trust and reads the whole set).
    */
   signInId: string;
 }

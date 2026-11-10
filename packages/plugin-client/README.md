@@ -20,8 +20,9 @@ reducedMotion?, signInId? })`, which renders a component inside a fake host (jsd
 
 `useSignIn().id` (and `api.signIn.id` in `events` listeners) is an opaque id that stays the same
 for one sign-in and changes on the next one: to do something once per sign-in, store the id you
-acted on with `useClientStorage` and act again when it differs. It differs per plugin and is no
-credential.
+acted on with `useClientStorage` and act again when it differs. It is no credential. It is a
+different string per plugin, but not a secret between plugins: client code runs with full trust in
+the page.
 
 `CLIENT_API_VERSION` (1) is bumped only when a name is removed or its props change; the host
 accepts a bundle built against its own version.

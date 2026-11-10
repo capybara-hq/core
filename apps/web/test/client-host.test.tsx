@@ -725,6 +725,45 @@ describe("ClientHost", () => {
     expect(events).toEqual(["tool.started"]);
   });
 
+  it("each plugin gets its own sign-in id, in its components and its listeners", async () => {
+    const heard: string[] = [];
+    ClientHost.load = vi.fn(async (url: string) => {
+      const plugin = url.includes("/alpha/") ? "alpha" : "beta";
+      return ext({
+        name: plugin,
+        components: {},
+        events: {
+          "run.started": (_e: CapybaraEvent, api: { signIn: { id: string } }) =>
+            heard.push(`${plugin}:${api.signIn.id}`),
+        },
+      });
+    });
+    function Ids() {
+      const a = useHostServices("alpha", null).signIn.id;
+      const b = useHostServices("beta", null).signIn.id;
+      return <output data-testid="ids">{`${a} ${b}`}</output>;
+    }
+    const entry = (plugin: string) => ({
+      url: `/api/v1/client/${plugin}/${BUILD}/client.mjs`,
+      integrity: "sha384-e",
+    });
+    const a = item({ plugin: "alpha", entry: entry("alpha"), components: [], signInId: "id-a" });
+    const b = item({ plugin: "beta", entry: entry("beta"), components: [], signInId: "id-b" });
+    renderPage(host(setOf(a, b), { children: <Ids /> }));
+    await flush();
+    expect(screen.getByTestId("ids").textContent).toBe("id-a id-b");
+    await act(async () => {
+      emitClientEvent({
+        type: "run.started",
+        conversationId: "c1",
+        seq: 1,
+        at: "2026-11-10T00:00:00Z",
+      });
+    });
+    await flush();
+    expect(heard.sort()).toEqual(["alpha:id-a", "beta:id-b"]);
+  });
+
   it("the hooks throw outside a host-rendered component", () => {
     const h = PLUGIN_CLIENT as Record<string, () => unknown>;
     function Outside() {

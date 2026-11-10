@@ -170,7 +170,7 @@ describe("client shell reads", { timeout: 120_000 }, () => {
     expect((await orgRead(env.mem)).items.map((i) => i.plugin)).toEqual([PAGE, PLAIN]);
   });
 
-  it("the sign-in id is stable for one sign-in, new after the next, and per plugin", async () => {
+  it("the sign-in id is stable for one sign-in, new after the next, and differs by plugin", async () => {
     const person = await signIn(env, "mem");
     const first = signInIds(await orgRead(person.req));
     expect(Object.keys(first).sort()).toEqual([PAGE, PLAIN].sort());
@@ -179,7 +179,7 @@ describe("client shell reads", { timeout: 120_000 }, () => {
     const refreshed = await person.req({ method: "POST", url: "/api/v1/auth/refresh" });
     expect(refreshed.statusCode, refreshed.body).toBe(200);
     expect(signInIds(await orgRead(person.req))).toEqual(first);
-    // per plugin: two plugins cannot correlate their ids
+    // a different string per plugin (not an isolation boundary: client code can read the whole set)
     expect(first[PAGE]).not.toBe(first[PLAIN]);
     // the next sign-in of the same account gets new ids
     const next = signInIds(await orgRead((await signIn(env, "mem")).req));
@@ -187,6 +187,30 @@ describe("client shell reads", { timeout: 120_000 }, () => {
     expect(next[PLAIN]).not.toBe(first[PLAIN]);
     // the admin read gives the same id for the same sign-in and plugin
     expect(signInIds(await adminRead())[PAGE]).toBe(signInIds(await orgRead(env.root))[PAGE]);
+  });
+
+  it("a personal token is its own sign-in: stable across its requests, unlike a session's", async () => {
+    const person = await signIn(env, "mem");
+    const made = await person.req({
+      method: "POST",
+      url: "/api/v1/me/tokens",
+      payload: { name: "cli" },
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const token = (made.json() as { token: string }).token;
+    const patRead = async () => {
+      const r = await env.k.http.inject({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/ui/client`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return signInIds(r.json() as Shell);
+    };
+    const first = await patRead();
+    expect(first[PAGE]).toEqual(SIGN_IN_ID);
+    expect(await patRead()).toEqual(first);
+    expect(first[PAGE]).not.toBe(signInIds(await orgRead(person.req))[PAGE]);
   });
 
   it("components are filtered by the viewer's role", async () => {

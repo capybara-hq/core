@@ -15,10 +15,13 @@ const SIGN_IN_ID_BYTES = 16;
  * id per plugin that stays the same for one sign-in (one web session, across token refreshes and
  * every tab of it) and changes on the next sign-in, so client code can do something once per
  * sign-in. It is `HMAC-SHA256(key, "<sign-in>\0<plugin>")` truncated to 128 bits, the key derived
- * from the master keyring: not a credential, not reversible to the session id, and different per
- * plugin, so two plugins cannot correlate their ids. Derived per request from the principal, no
- * state. A personal token (no session) is its own sign-in. Rotating the master key changes every
- * id once (client code then treats the session as a new sign-in).
+ * from the master keyring: not a credential and not reversible to the session id. The plugin name
+ * is an input only so that the id is not the same string in every plugin; that is no isolation
+ * boundary: client code runs with full trust in the page (spec D2) and can read the whole shell
+ * read (or the query cache), which lists every plugin's id. Derived per request from the
+ * principal, no state. A personal token (no session) is its own sign-in. Rotating the master key
+ * changes every id once (client code then treats the session as a new sign-in); during a rolling
+ * restart old and new replicas answer different ids, so it may look like more than one.
  */
 @Injectable()
 export class ClientSignIn {

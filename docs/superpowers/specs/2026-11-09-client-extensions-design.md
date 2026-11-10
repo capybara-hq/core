@@ -242,7 +242,9 @@ export function defineClientExtension(def: ClientExtensionDefinition): ClientExt
 /** The viewer's sign-in as this plugin sees it (§9.2 `signInId`). */
 export interface SignIn {
   /** Opaque: the same for one sign-in (every page and tab, across token refreshes), new after
-   *  the next sign-in, different per plugin; no credential, reveals nothing about the session. */
+   *  the next sign-in; no credential, reveals nothing else about the session. Derived per
+   *  plugin, but no isolation boundary: client code is full trust (D2) and can read every
+   *  plugin's id from the shell read. */
   id: string;
 }
 
@@ -1340,11 +1342,15 @@ Added after the fix wave (2026-11-10):
   (forever) can express. Each shell-read item carries `signInId` (§9.2): HMAC-SHA256, with a key
   derived from the master keyring (`client-sign-in/v1`), of the session id (a personal token: its
   token id) and the plugin name, truncated to 128 bits, base64url. It is stable across token
-  refreshes, tabs and the org and admin reads of one sign-in, new after the next, different per
-  plugin (plugins cannot correlate), never a credential; derived per request from the principal,
-  so no state and every replica answers the same. Riding on the shell read costs no request; the
-  web host takes it from the document's set (a sign-in always starts a new document). A master key
-  rotation changes every id once, which client code sees as one more sign-in. Additive:
+  refreshes, tabs and the org and admin reads of one sign-in, new after the next, never a
+  credential; derived per request from the principal, so no state and every replica answers the
+  same. The plugin name is an input only so that the id is not the same string in every plugin:
+  that is **not an isolation boundary**, because client code runs with full trust in the page (D2)
+  and any plugin can read the whole shell read or the query cache, which lists every plugin's id.
+  Riding on the shell read costs no request; the web host takes it from the document's set (a
+  sign-in always starts a new document), and the id is never empty. A master key rotation changes
+  every id once, which client code sees as one more sign-in (during a rolling restart old and new
+  replicas answer different ids until all restarted, so possibly a few more). Additive:
   `CLIENT_API_VERSION` stays 1.
 
 No open questions remain.

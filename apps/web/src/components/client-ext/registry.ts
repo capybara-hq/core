@@ -22,7 +22,7 @@ export interface ClientApi {
     set(key: string, value: string | null, scope?: "local" | "session"): void;
   };
   assetUrl(path: string): string;
-  /** Opaque: the same for one sign-in, new after the next, per plugin. */
+  /** Opaque: the same for one sign-in, new after the next; a different string per plugin. */
   signIn: { id: string };
 }
 

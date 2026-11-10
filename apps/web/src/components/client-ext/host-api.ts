@@ -179,6 +179,13 @@ function subscribeScheme(notify: () => void): () => void {
 const schemeNow = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
 
+let fallbackId: string | null = null;
+/** A random id fixed for this document: the sign-in id of a plugin missing from the set. */
+function documentFallbackId(): string {
+  fallbackId ??= `doc-${crypto.randomUUID()}`;
+  return fallbackId;
+}
+
 /** The listener api of a plugin's `events` (no React context there). */
 export function clientApiFor(
   item: Pick<ClientExtensionItem, "plugin" | "build" | "signInId">,
@@ -213,7 +220,9 @@ export function useHostServices(plugin: string, contribution: string | null): Ho
   const role: ClientRole = scope === "admin" ? "superAdmin" : isOrgRole(member) ? member : "guest";
   const item = controls.item(plugin);
   const build = item?.build ?? "";
-  const signInId = item?.signInId ?? "";
+  // Components render only for items of the document's set, so `item` is there; if it ever is
+  // not, a per-document id errs towards "a new sign-in" rather than a constant that never changes.
+  const signInId = item?.signInId ?? documentFallbackId();
   const storage = useMemo(() => createPrefixedStorage(plugin), [plugin]);
   const assetUrl = useMemo(
     () => (path: string) => assetUrlOf({ plugin, build }, path),
