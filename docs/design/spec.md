@@ -843,6 +843,10 @@ States: `default`, `selected`, `focus`
 ### 6.4 Tabs / Segmented / Pagination
 - Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `disabled`. In the page head's tab row the underline sits on the row's bottom border (§4.2). Tabs stay on one line at every width (a tab never wraps its label); a row of tabs that does not fit scrolls sideways without a drawn scrollbar, and since the row clips, a tab's focus ring is drawn inside it.
 - Segmented in a form field takes the field's width with equal segments (`fill`).
+- A Segmented either hugs its segments or is `fill` with equal segments: never a frame stretched
+  wider than its segments with them bunched at the start (a stretching parent such as a column
+  flex or a grid cell does not widen a hugging one: `max-width: max-content`). It holds 2–5 short
+  options; more options take a Select (or Tabs when they navigate). It never wraps or scrolls.
   - Count `count`: a small `muted` number after the name.
   - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`, radius `sm`; when selected `ink` text.
   - Alert `alert` (such as "Runs" having something to approve): a small accent dot after the name, with screen-reader text "needs attention", so it doesn't rely on color alone.

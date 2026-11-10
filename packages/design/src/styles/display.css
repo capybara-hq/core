@@ -87,9 +87,14 @@
   background: var(--cb-accent);
 }
 
-/* Segmented (spec §6.4): one border around the group, the selected segment on the selected ground. */
+/*
+ * Segmented (spec §6.4): one border around the group, the selected segment on the selected ground.
+ * It hugs its segments: a stretching parent (a column flex, a grid cell) never widens the frame
+ * past them; `fill` takes the width with equal segments instead.
+ */
 .cb-segmented {
   display: inline-flex;
+  max-width: max-content;
   align-items: stretch;
   height: var(--cb-control-default);
   padding: 2px;
@@ -130,6 +135,7 @@
 }
 .cb-segmented[data-fill="true"] {
   display: flex;
+  max-width: none;
   width: 100%;
   box-sizing: border-box;
 }

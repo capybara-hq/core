@@ -369,7 +369,7 @@ describe("setup guides v2: rendering", { timeout: 60_000 }, () => {
     expect(noBase.unresolved).toEqual([{ name: "webhookUrl", reason: "webhook_base" }]);
     // nothing typed on 新建渠道: the connection name waits for the form
     const unnamed = await render(itemId, "?name=%20");
-    expect(unnamed.unresolved).toEqual([{ name: "connectionName", reason: "not_saved" }]);
+    expect(unnamed.unresolved).toEqual([{ name: "connectionName", reason: "no_name" }]);
 
     await withConfig(
       (c) =>

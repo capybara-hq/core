@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import {
   CHANNEL_EXTENSION_POINT,
   type Channel,
   type ChannelTarget,
   type ExtensionContext,
+  missingInboundModeFields,
   type OutboundMessage,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
@@ -33,6 +35,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import { createRedactor, type KernelLogger } from "../log.js";
+import { isForbiddenAddress, isLoopbackHost, normalizeHost } from "../net/public-address.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -40,6 +43,25 @@ import { adaptToFeatures } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
 import type { ChannelLocale } from "./phrases.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
+
+/**
+ * A public https address: https, and the host is not loopback, a private / link-local / reserved
+ * IP, `localhost`, `*.localhost`, `*.local`, `*.internal` or a single label (no DNS lookup).
+ */
+export function isPublicHttpsUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") return false;
+  const host = normalizeHost(u.hostname);
+  if (isLoopbackHost(host)) return false;
+  if (isIP(host) !== 0) return !isForbiddenAddress(host);
+  if (!host.includes(".")) return false;
+  return ![".localhost", ".local", ".internal"].some((s) => host.endsWith(s));
+}
 
 /** 内核 secrets 命名空间（插件名不能取 `kernel`）。 */
 const SECRETS_NAMESPACE = "kernel";
@@ -116,6 +138,19 @@ export interface CreateChannelInput {
   agentId: string;
   config: Record<string, unknown>;
   unboundPolicy?: UnboundPolicy | undefined;
+  /** Default `long_connection`; `webhook` needs plugin support and `channels.webhookBaseUrl`. */
+  inboundMode?: InboundMode | undefined;
+}
+
+/**
+ * Whether a channel plugin's connections can use webhook inbound (channel inbound mode fields spec
+ * §4): the plugin implements `Channel.webhook`; the kernel accepts webhook mode (a usable
+ * `channels.webhookBaseUrl`); and that base URL is a public https address.
+ */
+export interface ChannelInboundInfo {
+  webhookSupported: boolean;
+  webhookAvailable: boolean;
+  webhookPublic: boolean;
 }
 
 /** `config` 里的密钥字段：缺省 = 保留原值、`null` = 清除、其他值 = 新值（同组织插件配置）。 */
@@ -444,6 +479,42 @@ export class ChannelConnections implements OnApplicationShutdown {
     }
   }
 
+  /**
+   * The fields the inbound mode requires (`x-ui.inboundModes`, channel inbound mode fields spec
+   * §3) must have a value in `full` (the parsed config, stored secrets included): 400
+   * `extension.config_invalid` with one issue per missing field otherwise. A plugin without the
+   * hint passes.
+   */
+  private assertModeFields(plugin: string, schema: z.ZodTypeAny, mode: InboundMode, full: Obj) {
+    const js = this.formSchema(plugin, this.versionOf(plugin), schema)?.schema;
+    if (js === undefined) return;
+    const missing = missingInboundModeFields(js, mode, (field) => {
+      const v = getPath(full, field);
+      return v !== undefined && v !== null && v !== "";
+    });
+    if (missing.length === 0) return;
+    throw new ApiError(
+      "extension.config_invalid",
+      `Invalid channel connection config for extension ${plugin}`,
+      missing.map((field) => ({
+        path: field,
+        segments: [field],
+        message: `required in ${mode} mode`,
+      })),
+    );
+  }
+
+  /** Whether the plugin's connections can use webhook inbound (spec §4); `extension.not_found`. */
+  inboundInfo(plugin: string): ChannelInboundInfo {
+    const webhookSupported = this.channel(plugin).webhook !== undefined;
+    const base = this.webhookBase();
+    return {
+      webhookSupported,
+      webhookAvailable: webhookSupported && base !== undefined,
+      webhookPublic: webhookSupported && base !== undefined && isPublicHttpsUrl(base),
+    };
+  }
+
   private async viewOf(row: Parameters<ChannelConnections["view"]>[0]) {
     return this.view(row, new Set(Object.keys(await this.readSecrets(row.org_id, row.id))));
   }
@@ -478,14 +549,15 @@ export class ChannelConnections implements OnApplicationShutdown {
     await this.assertEnabled(orgId, input.plugin);
     const schema = channel.connectionSchema;
     const full = this.parse(input.plugin, schema, input.config);
+    const mode = input.inboundMode ?? "long_connection";
+    if (mode === "webhook") this.assertWebhookAvailable(input.plugin);
+    this.assertModeFields(input.plugin, schema, mode, full);
     await this.assertAgent(orgId, input.agentId);
     const verified = await this.verify(channel, full);
     const id = randomUUID();
     const { plain, secrets } = split(schema, full);
-    // the guide the 新建渠道 page showed: the plugin's current one, for the default mode
-    const guideAck = await this.guides.currentAck(input.plugin, "channel-connection", {
-      mode: "long_connection",
-    });
+    // the guide the 新建渠道 page showed: the plugin's current one, for the mode picked there
+    const guideAck = await this.guides.currentAck(input.plugin, "channel-connection", { mode });
     const row = await this.insertIn({
       orgId,
       id,
@@ -535,6 +607,7 @@ export class ChannelConnections implements OnApplicationShutdown {
         agent_id: input.agentId,
         config: JSON.stringify(a.plain),
         unbound_policy: input.unboundPolicy ?? "bind",
+        inbound_mode: input.inboundMode ?? "long_connection",
         bot_user_id: a.verified.botUserId,
         tenant_id: a.verified.tenantId,
         guide_ack: a.guideAck === null ? null : JSON.stringify(a.guideAck),
@@ -548,7 +621,11 @@ export class ChannelConnections implements OnApplicationShutdown {
       orgId,
       action: "channel.created",
       target: id,
-      detail: { plugin: input.plugin, agentId: input.agentId },
+      detail: {
+        plugin: input.plugin,
+        agentId: input.agentId,
+        inboundMode: input.inboundMode ?? "long_connection",
+      },
     });
     return inserted;
   }
@@ -601,6 +678,20 @@ export class ChannelConnections implements OnApplicationShutdown {
     const modeChanged =
       patch.inboundMode !== undefined && patch.inboundMode !== current.inbound_mode;
     if (modeChanged && patch.inboundMode === "webhook") this.assertWebhookAvailable(current.plugin);
+    if (rotated || modeChanged) {
+      // the fields the effective mode requires (spec §3): the new config, else the stored one
+      const schema = this.channel(current.plugin).connectionSchema;
+      const full = rotated?.full ?? {
+        ...(current.config ?? {}),
+        ...(await this.readSecrets(orgId, id)),
+      };
+      this.assertModeFields(
+        current.plugin,
+        schema,
+        patch.inboundMode ?? current.inbound_mode,
+        full,
+      );
+    }
     if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
     // A mode switch sets the platform app up for the new mode: the guide of that mode is the one
     // on the page. Only an ack without drift moves on: a drifted one stays until the person

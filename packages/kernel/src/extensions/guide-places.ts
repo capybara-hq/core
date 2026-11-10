@@ -19,8 +19,10 @@ import { OAUTH_CALLBACK_PATH } from "../tools/oauth/flow-paths.js";
 
 /** Why a known variable has no value: what the web and the `Platform` tool tell the reader. */
 export type UnresolvedReason =
-  /** The target is not saved yet (the webhook URL, a connection name nobody typed). */
+  /** The target is not saved yet (the webhook URL). */
   | "not_saved"
+  /** No name typed yet on the new target's form (a connection name on 新建渠道). */
+  | "no_name"
   /** `http.publicUrl` is not set (the URLs built from it). */
   | "public_url"
   /** `channels.webhookBaseUrl` is not set or unusable. */
@@ -128,7 +130,7 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
     const typed = ctx.query.name?.trim();
     values.connectionName =
       connection?.name ?? (typed === undefined || typed === "" ? null : typed);
-    reasons.connectionName = "not_saved";
+    reasons.connectionName = "no_name";
     if (connection !== undefined) {
       target = { kind: "channel-connection", id: connection.id };
       storedMode = connection.inbound_mode;

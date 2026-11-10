@@ -75,6 +75,7 @@ export const keys = {
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
       /** Where a channel plugin's setup guide is. */
       channelGuideRef: (plugin: string): readonly unknown[] => [...all, "channelGuideRef", plugin],
+      channelInbound: (plugin: string): readonly unknown[] => [...all, "channelInbound", plugin],
       /** Every rendered setup guide (an invalidation prefix). */
       setupGuidesAll: (): readonly unknown[] => [...all, "setupGuide"],
       /**

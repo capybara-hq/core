@@ -2345,7 +2345,10 @@
       "openExtensions": "Open extensions",
       "nameLabel": "Name",
       "configSection": "Bot credentials",
-      "configHint": "Fields come from the extension. The credentials are verified with the platform when you save.",
+      "configHint": "The credentials are verified with the platform when you save.",
+      "webhookDefaultLong": "Webhook needs a public HTTPS address for the platform, which this deployment does not have yet, so long connection is the default.",
+      "webhookNotPublic": "This deployment's webhook address is not a public HTTPS address; the platform may not reach it.",
+      "webhookUnavailable": "Webhook cannot be used: the deployment has no public HTTPS callback address (channels.webhookBaseUrl). Use long connection, or ask your super admin to set it.",
       "pickPluginFirst": "Choose an extension first.",
       "agentSection": "Agent",
       "agentSectionHint": "The agent that answers messages sent to this bot.",
@@ -2402,6 +2405,7 @@
       "callbackUrlHint": "Register this address as the event / request URL in the platform's app settings.",
       "saveInbound": "Save inbound mode",
       "inboundSaved": "Inbound mode saved.",
+      "inboundFieldsHint": "{mode} also needs the fields below; they are saved with the inbound mode.",
       "webhookNoUrlWarning": "This channel is in webhook mode, but the deployment has no webhook address (channels.webhookBaseUrl), so the platform cannot reach the bot. Configure the address or switch back to long connection."
     },
     "inboundMode": {
@@ -2425,11 +2429,12 @@
       "long_connection": "Long connection",
       "webhook": "Webhook"
     },
-    "checkAfterSave": "Checked after saving",
+    "checksAfterSave": "Each check can run once you save.",
     "checksRateLimited": "Too many checks in a short time. Try again in a minute; the rows show the last results.",
     "checksUnavailable": "Check results cannot be read right now. Reload the page later.",
     "unresolved": {
       "not_saved": "{names} appear once saved and are shown as written for now.",
+      "no_name": "{names} appear once you type a name and are shown as written for now.",
       "public_url": "{names} are shown as written: a super admin needs to set http.publicUrl (the platform's public address).",
       "webhook_base": "{names} are shown as written: a super admin needs to set channels.webhookBaseUrl (the webhook address).",
       "no_connector": "{names} appear once the connector is created and are shown as written for now.",
