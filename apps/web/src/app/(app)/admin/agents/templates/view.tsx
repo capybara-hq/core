@@ -32,7 +32,7 @@ function AdminAgentTemplates({ orgId }: { orgId: string | null }) {
   const list = usePageQuery(adminComponentsQuery("agent_template"));
   const owner = useOwnerFilter(list.kind === "ready" ? list.data.components : null);
   const header = {
-    path: [...scope, { label: "agents" }, { label: "templates" }],
+    path: [...scope, { label: "agents", href: "/admin/agents" }, { label: "templates" }],
     title: t("titles.agent_template"),
     description: t("descriptions.agent_template"),
     ...adminItemTabs("agents", "templates", { items: ti("agents"), templates: ti("templates") }),

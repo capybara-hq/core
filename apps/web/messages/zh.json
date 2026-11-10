@@ -5000,6 +5000,89 @@
       "agents": "智能体",
       "connectors": "连接器",
       "templates": "模板"
+    },
+    "agents": {
+      "title": "智能体",
+      "description": "所有组织的智能体及其模板：查看配置，转移所有者或删除。",
+      "listLabel": "所有组织的智能体",
+      "columns": {
+        "name": "名称",
+        "org": "组织",
+        "owner": "所有者",
+        "visibility": "可见范围",
+        "from": "来自模板",
+        "updated": "更新于"
+      },
+      "needsReassignment": "待重新指派",
+      "visibility": {
+        "private": "私有",
+        "org": "组织",
+        "members": "指定成员"
+      },
+      "filters": {
+        "org": "组织",
+        "allOrgs": "全部组织"
+      },
+      "search": "搜索名称",
+      "loadMore": "加载更多",
+      "empty": "还没有组织创建智能体",
+      "emptyHint": "组织成员创建的智能体会列在这里。",
+      "noMatch": "没有符合条件的智能体",
+      "detail": {
+        "facts": {
+          "org": "组织",
+          "owner": "所有者",
+          "visibility": "可见范围",
+          "members": "成员",
+          "model": "模型",
+          "fallback": "兜底模型",
+          "effort": "推理强度",
+          "from": "来自模板",
+          "versions": "版本数",
+          "updated": "更新于",
+          "created": "创建于"
+        },
+        "membersCount": "{count} 人",
+        "none": "无",
+        "sections": {
+          "instructions": "指令",
+          "quickActions": "快捷操作",
+          "skills": "技能",
+          "connectors": "待绑定的连接器",
+          "subagents": "子智能体"
+        },
+        "instructionsEmpty": "没有指令",
+        "quickActionsEmpty": "没有快捷操作",
+        "skillsCount": "选用 {count} 个组织技能",
+        "skillsNone": "没有选用组织技能",
+        "subagents": {
+          "general": "通用子智能体",
+          "templates": "模板",
+          "inline": "自定义",
+          "agents": "其他智能体",
+          "on": "开启",
+          "off": "关闭"
+        },
+        "subagentsNone": "没有子智能体"
+      },
+      "actions": {
+        "transfer": "转移所有者",
+        "delete": "删除"
+      },
+      "transfer": {
+        "title": "转移所有者",
+        "owner": "新所有者",
+        "help": "从「{org}」的成员中选择；所有者可以修改和删除这个智能体。",
+        "submit": "转移",
+        "done": "所有者已转移",
+        "none": "这个组织没有可选的成员"
+      },
+      "delete": {
+        "title": "删除智能体「{name}」？",
+        "hint": "它属于组织「{org}」，所有者是 {owner}。删除后组织里的人都无法再使用它，组织的审计日志会记下这次操作。",
+        "confirm": "删除",
+        "done": "已删除「{name}」"
+      }
     }
   },
   "adminComponents": {

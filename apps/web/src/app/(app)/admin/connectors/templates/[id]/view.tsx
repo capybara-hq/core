@@ -60,7 +60,7 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
         header={{
           path: [
             ...scope,
-            { label: "connectors" },
+            { label: "connectors", href: "/admin/connectors" },
             { label: "templates", href: "/admin/connectors/templates" },
             { label: id },
           ],
@@ -108,7 +108,7 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
         header={{
           path: [
             ...scope,
-            { label: "connectors" },
+            { label: "connectors", href: "/admin/connectors" },
             { label: "templates", href: "/admin/connectors/templates" },
             { label: c.name },
           ],

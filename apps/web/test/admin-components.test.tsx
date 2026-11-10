@@ -2,6 +2,8 @@
 // 连接器模板 / 智能体模板 lists and details (scope with its impact preview, 跟随插件, disable,
 // versions, a new version uploaded on its own), the plugin detail's scope column and the platform
 // plugin update preview (spec §7.1), and the plugin scope preview's replaced and conflicting items.
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -353,11 +355,22 @@ describe("admin component lists", () => {
   });
 
   it("no source file links to the old template routes", () => {
-    const { execSync } = require("node:child_process");
-    const out = execSync("grep -rnE '/admin/(agent|connector)-templates' src || true", {
-      cwd: `${__dirname}/..`,
-    }).toString();
-    expect(out).toBe("");
+    const root = join(__dirname, "../src");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.isFile()) files.push(p);
+      }
+    };
+    walk(root);
+    // the walk itself reached the sources (an empty walk would pass silently)
+    expect(files.some((f) => f.endsWith("admin-item-tabs.ts"))).toBe(true);
+    const hits = files.filter((f) =>
+      /\/admin\/(agent|connector)-templates/.test(readFileSync(f, "utf8")),
+    );
+    expect(hits.map((f) => relative(root, f))).toEqual([]);
   });
 
   it("/admin/agents/templates: skeleton cards while loading, then the cards", async () => {

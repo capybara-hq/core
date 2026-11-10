@@ -55,7 +55,7 @@ function AdminAgentTemplateRead({ id, orgId }: { id: string; orgId: string | nul
         header={{
           path: [
             ...scope,
-            { label: "agents" },
+            { label: "agents", href: "/admin/agents" },
             { label: "templates", href: "/admin/agents/templates" },
             { label: id },
           ],
@@ -90,7 +90,7 @@ function AdminAgentTemplate({ c, orgId }: { c: PlatformComponent; orgId: string 
         header={{
           path: [
             ...scope,
-            { label: "agents" },
+            { label: "agents", href: "/admin/agents" },
             { label: "templates", href: "/admin/agents/templates" },
             { label: c.name },
           ],

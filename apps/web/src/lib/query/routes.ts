@@ -39,6 +39,7 @@ import {
   pendingPluginsQuery,
   stagedImportQuery,
 } from "./admin";
+import { adminAgentQuery, adminAgentsQuery } from "./admin-items";
 import {
   agentConnectorQueries,
   agentFormQueries,
@@ -367,6 +368,23 @@ export const ROUTES: readonly RouteEntry[] = [
       if (itemId == null) return;
       await qc.prefetchQuery({ ...catalogItemQuery(itemId), retry: false });
     },
+  },
+  {
+    pattern: "/admin/agents",
+    // Super admins: the first page of every org's agents under the address's `?orgId=&q=`, and the
+    // orgs (the org filter).
+    queries: ({ me, search }) =>
+      superAdmin(me)
+        ? [
+            q(adminAgentsQuery({ orgId: search.get("orgId") ?? "", q: search.get("q") ?? "" })),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/agents/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined ? [q(adminAgentQuery(params.id))] : [],
   },
   {
     pattern: "/admin/agents/templates",

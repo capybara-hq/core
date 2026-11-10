@@ -434,6 +434,35 @@ export const keys = {
       adminAccounts: (after = ""): readonly unknown[] => [...all, "adminAccounts", after],
       /** The deployment's orgs. */
       adminOrgs: (): readonly unknown[] => [...all, "adminOrgs"],
+      /** The members of one org (the admin agent owner transfer). */
+      adminOrgMembers: (orgId: string): readonly unknown[] => [...all, "adminOrgMembers", orgId],
+      /** Every page of every org's agents under every filter (an invalidation prefix). */
+      adminAgentsAll: (): readonly unknown[] => [...all, "adminAgents"],
+      /** A page of every org's agents: org (`""`: all), search (`""`: none), cursor (`""`: first). */
+      adminAgents: (orgId: string, q: string, after = ""): readonly unknown[] => [
+        ...all,
+        "adminAgents",
+        orgId,
+        q,
+        after,
+      ],
+      /** One agent of any org (the super admin's read-only detail). */
+      adminAgent: (agentId: string): readonly unknown[] => [...all, "adminAgent", agentId],
+      /** Every page of every org's connectors under every filter (an invalidation prefix). */
+      adminConnectorsAll: (): readonly unknown[] => [...all, "adminConnectors"],
+      /** A page of every org's connectors: org, status, search (`""`: any), cursor (`""`: first). */
+      adminConnectors: (
+        orgId: string,
+        status: string,
+        q: string,
+        after = "",
+      ): readonly unknown[] => [...all, "adminConnectors", orgId, status, q, after],
+      /** One connector of any org (the super admin's read-only detail). */
+      adminConnector: (connectorId: string): readonly unknown[] => [
+        ...all,
+        "adminConnector",
+        connectorId,
+      ],
       /** The deployment settings. */
       settings: (): readonly unknown[] => [...all, "settings"],
       /** The platform default theme (public: the pages before sign-in). */

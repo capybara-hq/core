@@ -31,7 +31,7 @@ function AdminConnectorTemplates() {
   const list = usePageQuery(adminComponentsQuery("connector_template"));
   const owner = useOwnerFilter(list.kind === "ready" ? list.data.components : null);
   const header = {
-    path: [...scope, { label: "connectors" }, { label: "templates" }],
+    path: [...scope, { label: "connectors", href: "/admin/connectors" }, { label: "templates" }],
     title: t("titles.connector_template"),
     description: t("descriptions.connector_template"),
     ...adminItemTabs("connectors", "templates", {
