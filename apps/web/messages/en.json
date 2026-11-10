@@ -3348,7 +3348,7 @@
         "orgs": "Organizations",
         "accounts": "Accounts"
       },
-      "footnote": "Super admins cannot read conversations; usage above is aggregate numbers only.",
+      "footnote": "Super admins cannot read conversations.",
       "attention": {
         "title": "Needs attention",
         "empty": "Nothing needs attention.",
@@ -3383,13 +3383,15 @@
         "problems": {
           "list_failed": "Model list failed",
           "no_chat_model": "No usable chat model"
-        }
+        },
+        "retry": "Retry"
       },
       "audit": {
         "title": "Recent platform activity",
         "viewAll": "View all",
         "failed": "Could not load platform activity."
-      }
+      },
+      "partial": "The number needing attention leaves out sources that could not be read."
     },
     "inbox": {
       "title": "Inbox",
@@ -3501,6 +3503,7 @@
         "identityUnlinked": "Unlinked an external identity",
         "deploymentSettingsUpdated": "Changed the deployment settings",
         "bootstrapCompleted": "Set up the bootstrap plugins",
+        "deploymentSetupCompleted": "Completed the deployment setup",
         "marketplaceAdded": "Added a marketplace",
         "marketplaceUpdated": "Updated a marketplace",
         "marketplaceRemoved": "Removed a marketplace",

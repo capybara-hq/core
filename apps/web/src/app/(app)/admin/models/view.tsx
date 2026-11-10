@@ -65,7 +65,7 @@ function usePutPrice() {
   const qc = useQueryClient();
   return useAppMutation({
     fn: putModelPrice,
-    invalidates: () => [],
+    invalidates: () => [keys.deployment().platformAuditAll()],
     onSuccess: (r) =>
       qc.setQueryData<AdminModels>(adminModelsQuery().queryKey, (d) =>
         d === undefined ? d : { ...d, ...r },
@@ -210,8 +210,11 @@ function ModelsBody({
   const disabling = useModelDisabling({
     scope: "platform",
     purposes: data.purposes,
+    // the overview (a provider without a usable chat model) and the audit log change too
     invalidates: () => [
       keys.deployment().adminModels(),
+      keys.deployment().adminOverview(),
+      keys.deployment().platformAuditAll(),
       ...(orgId === null ? [] : [keys.org(orgId).models(), keys.org(orgId).modelsCatalog()]),
     ],
   });
@@ -221,7 +224,10 @@ function ModelsBody({
   const put = useAppMutation({
     fn: (v: { purpose: string; target: PurposeTarget | null }) =>
       putAdminPurpose(v.purpose, v.target),
-    invalidates: () => (orgId === null ? [] : [keys.org(orgId).orgPurposes()]),
+    invalidates: () => [
+      keys.deployment().platformAuditAll(),
+      ...(orgId === null ? [] : [keys.org(orgId).orgPurposes()]),
+    ],
   });
   const replacePurpose = (v: PurposeView) =>
     qc.setQueryData<{ purposes: PurposeView[] }>(adminPurposesQuery().queryKey, (d) =>

@@ -176,7 +176,7 @@ describe("/admin 概览（OverviewPage）", () => {
     await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
     const box = await vi.waitFor(() => {
       const s = section(o.title);
-      if (s.getAttribute("data-state") !== "ready") throw new Error("not ready");
+      if (s.hasAttribute("data-state")) throw new Error("not ready");
       return within(s);
     });
     // the inbox: one row per type with items, its count and where it is handled
@@ -261,36 +261,124 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(within(section(o.title)).queryByRole("list")).toBeNull();
   });
 
-  it("待处理读取失败：只有这个区块出错，重试只重读它；数字与平台操作照常", async () => {
+  const boom = () => json(500, { error: { code: "internal", message: "boom" } });
+  const pathsAfter = (calls: { url: string }[], from: number) =>
+    calls.slice(from).map((c) => new URL(c.url, "http://x").pathname);
+
+  it("待处理的扩展等列表读取失败：这三组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
     const o = zh.admin.overview;
     let failing = true;
     const calls = stubApi(
       overviewRoutes({
-        "GET /api/v1/admin/overview/attention": () =>
-          failing
-            ? json(500, { error: { code: "internal", message: "boom" } })
-            : json(200, ATTENTION),
+        "GET /api/v1/admin/overview/attention": () => (failing ? boom() : json(200, ATTENTION)),
       }),
     );
     const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
       locale: "zh",
     });
-    const alert = await vi.waitFor(() => within(section(o.attention.title)).getByRole("alert"), {
-      timeout: 3000,
-    });
-    expect(within(alert).getByText(o.attention.failed)).toBeTruthy();
-    // the numbers and the audit section are there
+    const box = await vi.waitFor(
+      () => {
+        const s = section(o.attention.title);
+        if (s.hasAttribute("data-state")) throw new Error("not ready");
+        return within(s);
+      },
+      { timeout: 3000 },
+    );
+    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(3);
+    expect(box.getByRole("list", { name: o.attention.groups.inbox })).toBeTruthy();
+    expect(box.queryByRole("alert")).toBeNull();
     const metrics = await metricsOf(container);
     expect(within(metrics).getByText("12")).toBeTruthy();
     expect(within(section(o.audit.title)).getByText("Grant")).toBeTruthy();
-    const before = calls.map((c) => c.url);
+    const from = calls.length;
     failing = false;
-    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    await userEvent
+      .setup()
+      .click(box.getAllByRole("button", { name: o.attention.retry })[0] as HTMLElement);
     await vi.waitFor(() =>
       expect(within(section(o.attention.title)).getByText("v1.2.0 → v1.3.0")).toBeTruthy(),
     );
-    const after = calls.slice(before.length).map((c) => new URL(c.url, "http://x").pathname);
-    expect(after).toEqual(["/api/v1/admin/overview/attention"]);
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/overview/attention"]);
+  });
+
+  it("待处理里收件箱读取失败：只有收件箱组显示「暂时无法读取」，重试只重读收件箱", async () => {
+    const o = zh.admin.overview.attention;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({ "GET /api/v1/admin/inbox": () => (failing ? boom() : json(200, OV_INBOX)) }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await vi.waitFor(() => {
+      const s = section(o.title);
+      if (s.hasAttribute("data-state")) throw new Error("not ready");
+      return within(s);
+    });
+    expect(box.getAllByText(o.unavailable)).toHaveLength(1);
+    expect(box.queryByRole("list", { name: o.groups.inbox })).toBeNull();
+    expect(box.getByRole("list", { name: o.groups.extensions })).toBeTruthy();
+    expect(box.getByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(box.getByRole("button", { name: o.retry }));
+    expect(await box.findByRole("list", { name: o.groups.inbox })).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/inbox"]);
+  });
+
+  it("待处理的两个读取都失败：区块出错，重试重读两者", async () => {
+    const o = zh.admin.overview.attention;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/inbox": () => (failing ? boom() : json(200, OV_INBOX)),
+        "GET /api/v1/admin/overview/attention": () => (failing ? boom() : json(200, ATTENTION)),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const alert = await vi.waitFor(() => within(section(o.title)).getByRole("alert"), {
+      timeout: 3000,
+    });
+    expect(within(alert).getByText(o.failed)).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    await vi.waitFor(() =>
+      expect(within(section(o.title)).getByText("v1.2.0 → v1.3.0")).toBeTruthy(),
+    );
+    expect(new Set(pathsAfter(calls, from))).toEqual(
+      new Set(["/api/v1/admin/overview/attention", "/api/v1/admin/inbox"]),
+    );
+  });
+
+  it("最近的平台操作读取失败：只有这个区块出错，重试只重读它；数字与待处理照常", async () => {
+    const o = zh.admin.overview;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({ "GET /api/v1/admin/audit": () => (failing ? boom() : json(200, AUDIT)) }),
+    );
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const alert = within(section(o.audit.title)).getByRole("alert");
+    expect(within(alert).getByText(o.audit.failed)).toBeTruthy();
+    expect(within(await metricsOf(container)).getByText("12")).toBeTruthy();
+    expect(await within(section(o.attention.title)).findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    expect(await within(section(o.audit.title)).findByText("Grant")).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/audit"]);
+  });
+
+  it("有来源读不到时（partial），数字下方说明待处理的数字不完整", async () => {
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview": () =>
+          json(200, { orgs: 2, accounts: 7, attentionTotal: 6, partial: true }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const note = screen.getByText(zh.admin.overview.partial);
+    expect(note.getAttribute("data-tone")).toBe("muted");
   });
 
   it.each(LOCALES)(
@@ -335,7 +423,7 @@ describe("/admin 概览（OverviewPage）", () => {
     renderPage(<Catalog route="pages/admin-overview" />, { locale: "zh" });
     const o = zh.admin.overview;
     expect(await screen.findByText("v1.2.0 → v1.3.0")).toBeTruthy();
-    expect(section(o.audit.title).getAttribute("data-state")).toBe("ready");
+    expect(section(o.audit.title).hasAttribute("data-state")).toBe(false);
     expect(screen.getByText(o.footnote)).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(calls).toEqual([]);

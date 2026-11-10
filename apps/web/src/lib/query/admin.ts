@@ -47,7 +47,12 @@ export const adminAttentionQuery = () =>
     freshness: "deployment",
   });
 
-/** A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. */
+/**
+ * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. Its
+ * class is `deployment`; the platform writes the console makes (settings, accounts, marketplaces,
+ * plugins and components, extensions, models) list `keys.deployment().platformAuditAll()` in
+ * their invalidations, so the log shows the action at once; writes made elsewhere show within 30 s.
+ */
 export const platformAuditQuery = (after?: string) =>
   defineQuery({
     key: d().platformAudit(after),
@@ -105,6 +110,7 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
   ]);
   return [
     keys.deployment().adminModels(),
+    keys.deployment().platformAuditAll(),
     ...(patch.orgCreation !== undefined ? [keys.account("self").me()] : []),
     // the platform default theme: the themes list marks it (every org's reads: `invalidatePlatformTheme`)
     ...(patch.uiTheme !== undefined ? [keys.deployment().components("theme")] : []),
@@ -177,6 +183,7 @@ export const extensionChangeKeys = (orgId: string | null): (readonly unknown[])[
   keys.deployment().adminOverview(),
   keys.deployment().adminInbox(),
   keys.deployment().adminInboxCount(),
+  keys.deployment().platformAuditAll(),
   ...(orgId === null ? [] : [keys.org(orgId).orgExtensions(), ...orgExtensionChangeKeys(orgId)]),
 ];
 

@@ -4,6 +4,7 @@ import { AppShell } from "@capybara-hq/design";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import AdminOverviewView from "../../app/(app)/admin/view";
+import { ADMIN_PAGES } from "../../components/admin-nav";
 import type { AdminAttention, AdminOverview, PlatformAuditPage } from "../../lib/admin";
 import type { PlatformInboxView } from "../../lib/admin-inbox";
 import {
@@ -148,7 +149,8 @@ export function PageCatalog({ route }: { route: PageRoute }) {
   const [client] = useState(seeded);
   const { onOpenCommands: _, ...sidebar } = sidebarProps(
     { active: "overview", context: "admin", level: "superAdmin" },
-    (id) => `/dev/ui/pages/${id}`,
+    // the console's real routes (the catalog has no kernel behind them); anything else goes nowhere
+    (id) => ADMIN_PAGES.find((p) => p.id === id)?.href ?? "#",
   );
   return (
     <QueryClientProvider client={client}>
