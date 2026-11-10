@@ -123,6 +123,21 @@ describe("model-fake", () => {
     expect(complete(evs).content).toEqual([{ type: "text", text: "abcdefgh" }]);
   });
 
+  it("slowtool:<ms>:<name>:<json> waits <ms>, then calls the tool", async () => {
+    const waits: number[] = [];
+    const evs = await run(
+      mk(async (ms) => {
+        waits.push(ms);
+      }),
+      req('slowtool:300:Lookup:{"q":"x"}'),
+    );
+    expect(waits).toEqual([300]);
+    expect(complete(evs).stopReason).toBe("tool_use");
+    expect(complete(evs).content).toMatchObject([
+      { type: "tool_call", name: "Lookup", input: { q: "x" } },
+    ]);
+  });
+
   it("slowfail:<ms>:<text> streams the text, then fails without completing (non-retryable)", async () => {
     const waits: number[] = [];
     const seen: string[] = [];

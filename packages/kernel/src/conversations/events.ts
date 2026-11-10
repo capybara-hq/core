@@ -649,7 +649,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       expiresAt: z.string(),
     }),
   ),
-  /** 输入请求已结束：回答 / 超时 / 取消（后两者 `answer` 与 `byAccountId` 为 null）。 */
+  /**
+   * An input request ended: answered, skipped (the run's starter sent a message instead; `answer`
+   * null, `byAccountId` the message's author, `skippedBySeq` that `user_message`'s seq, written in
+   * the same transaction), expired or cancelled (`answer` and `byAccountId` null). Not model-visible.
+   */
   ev(
     "question_answered",
     z.object({
@@ -657,7 +661,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       callId: z.string(),
       answer: FormAnswerSchema.nullable(),
       byAccountId: z.string().nullable(),
-      outcome: z.enum(["answered", "expired", "cancelled"]),
+      outcome: z.enum(["answered", "skipped", "expired", "cancelled"]),
+      skippedBySeq: seqNo.optional(),
     }),
   ),
   /**

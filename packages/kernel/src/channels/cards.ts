@@ -254,9 +254,11 @@ export function answerSummary(answer: FormAnswer | null): string | undefined {
 export function questionCard(
   questionId: string,
   form: InputForm,
-  state: "pending" | "answered" | "expired" | "cancelled",
+  state: Extract<ChannelCard, { kind: "question" }>["state"],
   webUrl: string,
   answer: FormAnswer | null = null,
+  /** A pending card of the delivered conversation's own run: a text reply also works (§10.2). */
+  textReply?: "plain" | "mention",
 ): Extract<ChannelCard, { kind: "question" }> {
   const summary = answerSummary(answer);
   return {
@@ -266,6 +268,7 @@ export function questionCard(
     state,
     ...(summary !== undefined && { answerSummary: summary }),
     webUrl,
+    ...(state === "pending" && textReply !== undefined && { textReply }),
   };
 }
 

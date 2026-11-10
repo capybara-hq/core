@@ -1021,7 +1021,18 @@ class Delivery {
       await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
       return this.advance(seq);
     }
-    const card = questionCard(questionId, form, "pending", this.questionUrl(this.base, child));
+    // the person can skip the conversation's own question by replying; a sub-agent's question
+    // stays answerable on its card only (reply-while-question spec §4.3)
+    const textReply =
+      child === undefined ? (this.target.chatType === "dm" ? "plain" : "mention") : undefined;
+    const card = questionCard(
+      questionId,
+      form,
+      "pending",
+      this.questionUrl(this.base, child),
+      null,
+      textReply,
+    );
     await this.recordCard("question", card.id);
     const { messageId } = await this.send(
       cardMessage(phrase("questionTitle", this.locale), card),

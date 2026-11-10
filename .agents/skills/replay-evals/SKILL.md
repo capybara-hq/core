@@ -47,6 +47,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   transcript. In the log: no `DriftReason`; old logs have none and rebuild byte for byte. Full-run replay:
   `recordedCalls` marks every recorded call from the step where one was logged onward (`devicePaths`), and
   `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
+- **A question skipped by a message** (reply-while-question spec §12): the skipped result is a logged `tool_result`,
+  the message a logged `user_message` taken in at the recorded `absorbedUpToSeq`; `question_answered` (outcome
+  `skipped`, `skippedBySeq`) is not model-visible. No `DriftReason`; full-run replay returns the recorded skipped
+  result and never creates questions. Cases in `reconstruct.test.ts`: a skip, and a message logged while the asking
+  step streamed (model-fake `slowtool:<ms>:<name>:<json>`).
 - **`run_context`** (run context spec `docs/superpowers/specs/2026-11-08-run-context-design.md`): written at run start by
   `RunContextService.record` (after `skills_catalog`, under the conversation row lock, idem `run_context:<runId>`): the
   agent version's name and description, the org, the date (clock seam `RUN_CONTEXT_CLOCK`), the zone and language of the

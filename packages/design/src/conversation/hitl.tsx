@@ -280,7 +280,10 @@ export type QuestionAnswer = Record<string, string | number | boolean | string[]
 export type QuestionState =
   | { kind: "pending"; busy?: boolean }
   | { kind: "answered"; pairs: [string, string][]; who?: string }
+  /** The run's starter sent a message instead of answering. */
   | { kind: "skipped"; who?: string }
+  /** The run ended (stopped, failed) before an answer. */
+  | { kind: "cancelled" }
   | { kind: "expired" };
 
 export type QuestionBlockProps = {
@@ -590,8 +593,8 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
   const s = p.state;
 
   if (s.kind !== "pending") {
-    const who =
-      s.kind !== "expired" && s.who ? <span className="cb-faint">{` · ${s.who}`}</span> : null;
+    const by = s.kind === "answered" || s.kind === "skipped" ? s.who : undefined;
+    const who = by ? <span className="cb-faint">{` · ${by}`}</span> : null;
     let answer: ReactNode;
     if (s.kind === "answered") {
       const single = s.pairs.length === 1;
@@ -612,7 +615,13 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
         <div className="cb-tool-line" data-part="tool-line">
           <Icon name="corner-down-right" size={12} />
           <span className="cb-tool-label">
-            {t(s.kind === "skipped" ? "hitl.skipped" : "hitl.expiredQuestion")}
+            {t(
+              s.kind === "skipped"
+                ? "hitl.skipped"
+                : s.kind === "cancelled"
+                  ? "hitl.cancelledQuestion"
+                  : "hitl.expiredQuestion",
+            )}
             {who}
           </span>
         </div>

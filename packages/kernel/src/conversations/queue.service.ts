@@ -6,6 +6,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
+import type { QuestionRecord } from "../tools/questions.service.js";
 import {
   ConversationsService,
   type ResolvedExtra,
@@ -51,7 +52,14 @@ export class ConversationQueue {
     @Inject(ConversationsService)
     private readonly conversations: Pick<
       ConversationsService,
-      "get" | "writable" | "resolveExtra" | "bindIn" | "checkPick" | "prepareQueuedSkill"
+      | "get"
+      | "writable"
+      | "resolveExtra"
+      | "bindIn"
+      | "checkPick"
+      | "prepareQueuedSkill"
+      | "skipQuestionsIn"
+      | "announceSkipped"
     >,
     /** Starts the conversation's next run (`ensureRun`). */
     @Inject(RunControlService)
@@ -319,8 +327,12 @@ export class ConversationQueue {
     itemId: string,
   ): Promise<ConversationEvent> {
     await this.conversations.writable(orgId, conversationId, accountId);
-    const { event, fresh, switched, unarchived } = await this.sendNowIn(conversationId, itemId);
-    if (fresh) await this.eventLog.notify(conversationId, event.seq);
+    const { event, fresh, switched, unarchived, skipped, toSeq } = await this.sendNowIn(
+      conversationId,
+      itemId,
+    );
+    if (fresh) await this.eventLog.notify(conversationId, toSeq);
+    await this.conversations.announceSkipped(skipped);
     if (switched) await this.eventLog.publishChanged(conversationId, "selection");
     if (unarchived) await this.eventLog.publishChanged(conversationId, "archived");
     await this.eventLog.publishChanged(conversationId, "queue");
@@ -334,7 +346,14 @@ export class ConversationQueue {
   private async sendNowIn(
     conversationId: string,
     itemId: string,
-  ): Promise<{ event: ConversationEvent; switched: boolean; unarchived: boolean; fresh: boolean }> {
+  ): Promise<{
+    event: ConversationEvent;
+    switched: boolean;
+    unarchived: boolean;
+    fresh: boolean;
+    skipped: QuestionRecord[];
+    toSeq: number;
+  }> {
     const t = this.db.db;
     await this.lockConversation(conversationId);
     const head = await t
@@ -361,7 +380,17 @@ export class ConversationQueue {
     const sent = await alreadySent(t, conversationId, row.client_message_id);
     const out = await appendQueuedIn(t, this.eventLog, conversationId, row);
     await unpauseIfEmpty(t, conversationId);
-    return { ...out, fresh: !sent };
+    // sent during the run, the item is the author's message like a direct send: it skips the
+    // pending questions they may answer (reply-while-question spec §4.2)
+    const skips = sent
+      ? { records: [], toSeq: null }
+      : await this.conversations.skipQuestionsIn(conversationId, row.account_id, out.event.seq);
+    return {
+      ...out,
+      fresh: !sent,
+      skipped: skips.records,
+      toSeq: Math.max(out.event.seq, skips.toSeq ?? 0),
+    };
   }
 
   /** "Continue sending": clears the pause and lets `ensureRun` send the head item. */

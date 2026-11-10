@@ -662,6 +662,8 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       state: "pending",
       form: COLOR_FORM,
       webUrl: `https://cap.example/chat/${conv}`,
+      // a DM: any reply reaches the agent (reply-while-question spec §10.2)
+      textReply: "plain",
     });
     const n = sentTo("cli_out", chat).length;
     im.push(
@@ -797,6 +799,127 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       .where("id", "=", approvalId)
       .executeTakeFirstOrThrow();
     expect(a.scope).toBe("once");
+    await settled(await convOf(anonId, chat));
+  });
+
+  it("a DM reply while the question waits skips it: the card turns skipped, the run's reply follows, a late click is already handled", async () => {
+    const chat = "dm-u-owner";
+    const before = sentTo("cli_out", chat).length;
+    im.push(connId, dm("qs1", "u-owner", ASK));
+    const cardMsg = await waitFor(
+      async () =>
+        sentTo("cli_out", chat)
+          .slice(before)
+          .find((s) => cardOf(s)?.kind === "question"),
+      10_000,
+      "question card",
+    );
+    await cardRecorded(db, cardMsg);
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "question" }>;
+    expect(card.textReply).toBe("plain");
+    const n = sentTo("cli_out", chat).length;
+    im.push(connId, dm("qs2", "u-owner", "echo:changed my mind"));
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "skipped",
+        ),
+      20_000,
+      "question card skipped",
+    );
+    const skipped = cardOf(up) as Extract<ChannelCard, { kind: "question" }>;
+    expect(skipped).toMatchObject({ kind: "question", id: card.id, state: "skipped" });
+    expect(skipped.answerSummary).toBeUndefined();
+    expect(skipped.textReply).toBeUndefined();
+    await waitFor(
+      async () =>
+        sentTo("cli_out", chat)
+          .slice(n)
+          .some((s) => finalText(s).includes("changed my mind")),
+      15_000,
+      "reply after the skip",
+    );
+    const m = im.sent.length;
+    im.push(
+      connId,
+      cardAction(
+        "qs3",
+        "u-owner",
+        { cardKind: "question", cardId: card.id, action: "answer", answer: { color: "blue" } },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(
+      async () =>
+        im.sent.slice(m).some((s) => s.message.text === "This request has already been handled."),
+      10_000,
+      "already handled",
+    );
+    await settled(conv);
+  });
+
+  it("in a group thread the card asks for a mention; a reply mentioning the bot skips the question", async () => {
+    const chat = "grp-qskip";
+    im.push(connId, group("gq1", "u-owner", ASK, { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () => sentTo("cli_out", chat).find((s) => cardOf(s)?.kind === "question"),
+      15_000,
+      "group question card",
+    );
+    await cardRecorded(db, cardMsg);
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "question" }>;
+    expect(card.textReply).toBe("mention");
+    im.push(
+      connId,
+      group("gq2", "u-owner", "echo:in the thread", { chatId: chat, threadId: "gq1" }),
+    );
+    await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).some(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "skipped",
+        ),
+      20_000,
+      "group card skipped",
+    );
+    const q = await db
+      .selectFrom("questions")
+      .select("status")
+      .where("id", "=", card.id)
+      .executeTakeFirstOrThrow();
+    expect(q.status).toBe("skipped");
+    await settled(await convOf(connId, chat));
+  });
+
+  it("anonymous guests share the guest account: another guest's reply in the thread skips the question, as they could answer it", async () => {
+    const chat = "grp-anon-q";
+    im.push(anonId, group("ga1", "u-anon-a", ASK, { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () =>
+        im.sent.find(
+          (s) => s.appId === "cli_anon" && chatOf(s) === chat && cardOf(s)?.kind === "question",
+        ),
+      15_000,
+      "guest question card",
+    );
+    await cardRecorded(db, cardMsg);
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "question" }>;
+    expect(card.textReply).toBe("mention");
+    im.push(
+      anonId,
+      group("ga2", "u-anon-b", "echo:guest reply", { chatId: chat, threadId: "ga1" }),
+    );
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("questions")
+            .select("status")
+            .where("id", "=", card.id)
+            .executeTakeFirstOrThrow()
+        ).status === "skipped",
+      20_000,
+      "guest question skipped",
+    );
     await settled(await convOf(anonId, chat));
   });
 });

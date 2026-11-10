@@ -5,6 +5,7 @@ import {
   awaitingRun,
   buildEventTimeline,
   buildTimeline,
+  composerWait,
   latestUsage,
   runStats,
   type TimelineEntry,
@@ -1451,6 +1452,137 @@ describe("Agent call rows across a child's runs (final review)", () => {
     expect(rowOf(buildTimeline(after, [], new Map(), "en"))).toMatchObject({
       status: "completed",
       tokens: 7,
+    });
+  });
+});
+
+describe("a question skipped by a message (reply while a question is pending, spec §11)", () => {
+  const ASK = calls(2, [{ id: "q", name: "AskUserQuestion", input: { questions: [] } }]);
+  const asked = (seq: number, questionId = "qs1", runId = "r1") =>
+    ev(
+      seq,
+      "question_asked",
+      { step: 0, callId: "q", questionId, form: { fields: [] }, expiresAt: "x" },
+      runId,
+    );
+  const skipped = (seq: number, by: number) =>
+    ev(seq, "question_answered", {
+      questionId: "qs1",
+      callId: "q",
+      answer: null,
+      byAccountId: "a1",
+      outcome: "skipped",
+      skippedBySeq: by,
+    });
+  const runStarted = (seq: number, trigger: string | null = "a1", runId = "r1") =>
+    ev(
+      seq,
+      "run_started",
+      {
+        agentVersion: 1,
+        model: { provider: "p", model: "m" },
+        ...(trigger !== null ? { triggerAccountId: trigger } : {}),
+      },
+      runId,
+    );
+
+  it("the card carries the skipped outcome; the message is pending until a model call takes it in, then stands after the card", () => {
+    const base = [
+      user(1, "hi"),
+      runStarted(2),
+      ASK,
+      asked(4),
+      user(5, "use postgres"),
+      skipped(6, 5),
+      result(7, "q", "AskUserQuestion"),
+    ];
+    const before = buildEventTimeline(base, new Map(), "zh").entries;
+    const card = before.find((e) => e.kind === "question");
+    expect(card?.kind === "question" && card.item.answered).toMatchObject({
+      outcome: "skipped",
+      skippedBySeq: 5,
+    });
+    const msg = before.find((e) => e.kind === "user" && e.seq === 5);
+    expect(msg).toMatchObject({ pending: true });
+    expect(before.at(-1)).toBe(msg);
+    const after = buildEventTimeline(
+      [
+        ...base,
+        ev(8, "model_call", {
+          step: 1,
+          provider: "p",
+          model: "m",
+          request: { absorbedUpToSeq: 5 },
+        }),
+      ],
+      new Map(),
+      "zh",
+    ).entries;
+    const at = (pred: (e: TimelineEntry) => boolean) => after.findIndex(pred);
+    const m = at((e) => e.kind === "user" && e.seq === 5);
+    expect(after[m]).not.toMatchObject({ pending: true });
+    expect(m).toBeGreaterThan(at((e) => e.kind === "question"));
+  });
+
+  describe("composerWait: which hint the composer gives while the run waits", () => {
+    const approval = (seq: number) =>
+      ev(seq, "approval_requested", {
+        step: 0,
+        callId: "b",
+        approvalId: "ap1",
+        toolKey: "Bash",
+        expiresAt: "x",
+      });
+
+    it("no run, or a run that is working: null", () => {
+      expect(composerWait([user(1, "hi")], "a1")).toBeNull();
+      expect(composerWait([user(1, "hi"), runStarted(2), ASK], "a1")).toBeNull();
+    });
+
+    it("a pending question of this run and the viewer started it: skip", () => {
+      expect(composerWait([user(1, "hi"), runStarted(2), ASK, asked(4)], "a1")).toBe("skip");
+    });
+
+    it("someone else started the run, or the starter is unknown: hold", () => {
+      expect(composerWait([user(1, "hi"), runStarted(2), ASK, asked(4)], "a2")).toBe("hold");
+      expect(composerWait([user(1, "hi"), runStarted(2, null), ASK, asked(4)], "a1")).toBe("hold");
+    });
+
+    it("waiting on an approval only: hold; with a question too: skip", () => {
+      const onlyApproval = [user(1, "hi"), runStarted(2), ASK, approval(4)];
+      expect(composerWait(onlyApproval, "a1")).toBe("hold");
+      expect(composerWait([...onlyApproval, asked(5)], "a1")).toBe("skip");
+    });
+
+    it("a question already settled leaves only the approval: hold", () => {
+      const events = [user(1, "hi"), runStarted(2), ASK, approval(3), asked(4), user(5, "x")];
+      expect(composerWait([...events, skipped(6, 5)], "a1")).toBe("hold");
+    });
+
+    it("a sub-agent's question surfaced in the root never promises a skip", () => {
+      const events = [
+        user(1, "hi"),
+        runStarted(2),
+        approval(3),
+        ev(4, "subagent_waiting", {
+          subagentId: "s1",
+          childRunId: "cr1",
+          kind: "input",
+          questionId: "cq1",
+          toolKey: "AskUserQuestion",
+        }),
+      ];
+      expect(composerWait(events, "a1")).toBe("hold");
+    });
+
+    it("an ended run waits for nothing", () => {
+      const events = [user(1, "hi"), runStarted(2), ASK, asked(4)];
+      expect(
+        composerWait(
+          [...events, ev(5, "run_aborted", { byAccountId: "a1", reason: "user" })],
+          "a1",
+        ),
+      ).toBeNull();
     });
   });
 });

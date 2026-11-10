@@ -583,6 +583,45 @@ function activeRun(events: readonly ConversationEvent[]): { runId: string; seq: 
 }
 
 /**
+ * The composer's hint while the run in progress waits for a person (reply while a question is
+ * pending, spec §11.1): `"skip"` when a question of this conversation's run is pending and
+ * `viewerId` started the run (`run_started.triggerAccountId`), so a message skips it; `"hold"` when
+ * it waits otherwise (approvals only, or the viewer did not start it), so a message is taken in once
+ * the wait ends; null when no run waits. A sub-agent's question (`subagent_waiting`) is not this
+ * run's: a root message never skips it, so it never makes this `"skip"`.
+ */
+export function composerWait(
+  events: readonly ConversationEvent[],
+  viewerId: string,
+): "skip" | "hold" | null {
+  let run: string | null = null;
+  let starter: string | undefined;
+  const waits = new PersonWaits();
+  const questions = new Set<string>();
+  for (const e of events) {
+    if (e.type === "run_started" && e.runId !== null) {
+      run = e.runId;
+      starter = e.payload.triggerAccountId;
+      waits.clear();
+      questions.clear();
+      continue;
+    }
+    if (run === null || e.runId !== run) continue;
+    if (TERMINAL.has(e.type)) {
+      run = null;
+      waits.clear();
+      questions.clear();
+      continue;
+    }
+    waits.apply(e);
+    if (e.type === "question_asked") questions.add(e.payload.questionId);
+    else if (e.type === "question_answered") questions.delete(e.payload.questionId);
+  }
+  if (run === null || !waits.waiting) return null;
+  return questions.size > 0 && starter !== undefined && starter === viewerId ? "skip" : "hold";
+}
+
+/**
  * Whether the working line shows (conversation send spec §2.2, review fix 1): never while the run
  * waits for a person (the card is the output); else when this view has a pending send, when the
  * run in progress has no output since it started or since its last settled tool result (and no

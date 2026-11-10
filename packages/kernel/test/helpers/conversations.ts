@@ -128,6 +128,9 @@ export function conversationsFor(
     { stopForDeletedConversation: async () => {} },
     // no sandbox provider here: new conversations stay unbound
     { forNew: async () => null },
+    // no runs here: a message skips no question
+    { skipPendingIn: async () => ({ records: [], toSeq: null }) },
+    { emit: async () => {} },
     h.txHost,
   );
 }

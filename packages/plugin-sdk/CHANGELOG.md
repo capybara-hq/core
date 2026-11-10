@@ -1,5 +1,31 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.13
+
+### Minor Changes
+
+- 7423fa7: Question cards can be skipped and say a text reply works. `ChannelCard` kind `question` gains the
+  state `skipped` (the person sent a message instead of answering) and `textReply?: "plain" |
+  "mention"` (pending cards: the person may answer by replying in the DM, or in the group thread
+  mentioning the bot). `questionRenderableInline(form, { textReply })` accepts a field with
+  `allowOther` when the card has `textReply` (draw no Other button: Other is a plain reply), also for
+  multi-select. `renderCardAsText` writes the hint line and the skipped label; channel plugins use
+  `questionTextReplyHint` and `questionStateLabel` for the same copy (an unknown state returns itself).
+
+## 0.1.0-rc.12
+
+### Patch Changes
+
+- bae65fe: Channel connections choose their inbound mode when they are created. The config UI hint
+  `inboundModes` (connection level, top-level fields) ties a field to inbound modes: forms draw it
+  only in those modes and require it there, and the kernel refuses a create, config change or mode
+  switch that leaves a required field empty (`extension.config_invalid`). `inboundModeFields` and
+  `missingInboundModeFields` read the hint. `POST /channels` takes `inboundMode`;
+  `GET /channels/schema/:plugin` says whether webhook inbound is usable (`inbound`). A connection name
+  nobody typed yet is reported unresolved as `no_name`. The fake-im fixture's `webhookToken` is
+  webhook-only. 新建渠道 sends the guide's mode, follows it with the credential fields, and shows
+  less noise before save.
+
 ## 0.1.0-rc.11
 
 ### Minor Changes

@@ -32,10 +32,18 @@ export interface KernelEventMap {
     status: "approved" | "denied";
   };
   /**
-   * A person answered a tool call's input request (after the commit, exactly once). Same
+   * A person answered a tool call's input request, or skipped it with a message (after the commit,
+   * exactly once). Same
    * consumers and the same re-derivation as `approval.decided`.
    */
-  "question.answered": { id: string; orgId: string; conversationId: string; runId: string };
+  "question.answered": {
+    id: string;
+    orgId: string;
+    conversationId: string;
+    runId: string;
+    /** `skipped`: the run's starter sent a message instead (reply-while-question spec §6.3). */
+    outcome: "answered" | "skipped";
+  };
   /**
    * EventAppended: a conversation's event log advanced to `toSeq` (after the commit, from
    * `EventLog.notify`, right after the bus publish). The channel outbound delivery enqueues a job

@@ -259,9 +259,10 @@ export type ChannelCard = {
     kind: "question";
     id: string;
     form: InputForm;
-    state: "pending" | "answered" | "expired" | "cancelled";
+    state: "pending" | "answered" | "skipped" | "expired" | "cancelled";
     answerSummary?: string;
     webUrl: string;
+    textReply?: "plain" | "mention";
 } | {
     kind: "connect";
     appName: string;
@@ -2334,7 +2335,15 @@ export interface ProviderOpaque {
 }
 
 // @public
-export function questionRenderableInline(form: InputForm): boolean;
+export function questionRenderableInline(form: InputForm, opts?: {
+    textReply?: boolean;
+}): boolean;
+
+// @public
+export function questionStateLabel(state: string, locale: Locale): string;
+
+// @public
+export function questionTextReplyHint(mode: "plain" | "mention", locale: Locale): string;
 
 // @public
 export type ReadabilityIssue = {
@@ -2530,7 +2539,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.11";
+export const SDK_VERSION = "0.1.0-rc.13";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

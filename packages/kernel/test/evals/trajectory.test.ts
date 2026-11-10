@@ -449,6 +449,71 @@ describe("buildTrajectory", () => {
     expect(r2?.totals.cost).toBe(0);
   });
 
+  it("a question skipped by a message: outcome skipped, the message's seq, the author", () => {
+    const { events, e } = log();
+    e(0, "r1", {
+      type: "run_started",
+      payload: { agentVersion: 1, model: { provider: "p", model: "m1" }, triggerAccountId: "a" },
+    });
+    e(10, "r1", {
+      type: "model_call",
+      payload: {
+        step: 0,
+        attempt: 0,
+        provider: "p",
+        model: "m1",
+        fallback: false,
+        request: request(),
+      },
+    });
+    e(20, "r1", {
+      type: "assistant_message",
+      payload: {
+        step: 0,
+        content: [{ type: "tool_call", id: "y", name: "AskUserQuestion", input: {} }],
+        stopReason: "tool_use",
+      },
+    });
+    e(30, "r1", {
+      type: "tool_call_started",
+      payload: { step: 0, callId: "y", toolKey: "AskUserQuestion", specHash: "h" },
+    });
+    e(40, "r1", {
+      type: "question_asked",
+      payload: {
+        step: 0,
+        callId: "y",
+        questionId: "qy",
+        form: { title: "?", fields: [] },
+        expiresAt: iso(1),
+      },
+    });
+    e(50, null, {
+      type: "user_message",
+      payload: { content: [{ type: "text", text: "never mind" }], authorAccountId: "a" },
+    });
+    const messageSeq = events.length;
+    e(50, "r1", {
+      type: "question_answered",
+      payload: {
+        questionId: "qy",
+        callId: "y",
+        answer: null,
+        byAccountId: "a",
+        outcome: "skipped",
+        skippedBySeq: messageSeq,
+      },
+    });
+    const [r1] = buildTrajectory(events, table(PRICE_M1));
+    expect(r1?.steps[0]?.toolCalls[0]?.question).toEqual({
+      questionId: "qy",
+      askedAt: iso(40),
+      outcome: "skipped",
+      byAccountId: "a",
+      skippedBySeq: messageSeq,
+    });
+  });
+
   it("中止：被中止的步骤没有 usage，按失败计；end 为 aborted", () => {
     const { events, e } = log();
     e(0, "r1", {

@@ -9,8 +9,9 @@ const SPEC: ToolSpec = {
     "need the user's preference or decision to continue, or when a request is ambiguous; do not use " +
     "it for questions you can answer yourself. Each question has a short header, 2-4 options with a " +
     "label and a description, and can allow selecting several options (multiSelect). The user can " +
-    "always choose Other and type their own answer instead. The run pauses until the user answers; " +
-    "if they do not answer in time, the result says so.",
+    "always choose Other and type their own answer instead. The run pauses until the user answers. " +
+    "The user may instead reply with a message; then the result says so and their message follows. " +
+    "If they do not answer in time, the result says so.",
   inputSchema: {
     type: "object",
     properties: {

@@ -197,6 +197,7 @@ export function ComposerBar({
   skillsHref,
   conversationId,
   running,
+  waiting,
   stop,
   onSend,
   pickers,
@@ -221,6 +222,12 @@ export function ComposerBar({
   conversationId?: string | undefined;
   /** A run is going (or waiting for a person): ↵ interjects, the hint says so, send becomes stop. */
   running: boolean;
+  /**
+   * The run waits for a person (`composerWait`): `"skip"`, a question the viewer can skip by
+   * sending a message; `"hold"`, anything else (a message is taken in once the wait ends). The
+   * hint says which; sending stays possible either way.
+   */
+  waiting?: "skip" | "hold" | null | undefined;
   stop?: { onStop(): void; stopping: boolean };
   onSend(m: ComposerMessage): Promise<SendResult>;
   /** The agent picker is absent on the new conversation page (its agents row picks). */
@@ -628,7 +635,14 @@ export function ComposerBar({
     ),
   ];
 
-  const hint = running ? t("runningHint") : undefined;
+  const hint =
+    waiting === "skip"
+      ? t("waitingSkipHint")
+      : waiting === "hold"
+        ? t("waitingHint")
+        : running
+          ? t("runningHint")
+          : undefined;
   const runState = useRunStateValue().state;
   const textEl = useRef<HTMLTextAreaElement>(null);
   /**
