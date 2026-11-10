@@ -12,7 +12,12 @@ import { setupReady } from "../../lib/agents";
 import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
 import { clientHost } from "../../lib/server/client-host";
-import { currentNonce, currentPath, currentSafeUi } from "../../lib/server/page";
+import {
+  currentNonce,
+  currentPath,
+  currentSafeUi,
+  currentSignInIsNew,
+} from "../../lib/server/page";
 import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server/query";
 import { getShell } from "../../lib/server/session";
 import { workspaceThemeMetadata } from "../../lib/server/theme";
@@ -28,7 +33,8 @@ export const generateMetadata = workspaceThemeMetadata;
  * gives the viewer's theme, linked and branded by `ThemeRoot` before the first paint (themes spec
  * §8). The page's client extensions (client extensions spec §11): unless safe mode
  * (`?safe-ui=1` or its session cookie), their import map, preloads and stylesheets, and
- * `ClientHost` around the frame, which imports them after hydration. Client navigations don't
+ * `ClientHost` around the frame, which imports them after hydration. The first workspace document
+ * of a sign-in tells the frame (`sign-in=new`, spec §7.3). Client navigations don't
  * re-render it. The URL has no `(app)`.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -55,7 +61,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (prefetched.route === "unknown" && matchRoute(pathname) === null) notFound();
   // Safe mode: `?safe-ui=1` or its session cookie, so a refresh after a client navigation (the URL
   // without the parameter) still renders no client code.
-  const [safe, host, nonce] = await Promise.all([currentSafeUi(), clientHost(), currentNonce()]);
+  const [safe, host, nonce, newSignIn] = await Promise.all([
+    currentSafeUi(),
+    clientHost(),
+    currentNonce(),
+    currentSignInIsNew(),
+  ]);
   const source = shell.clientSource;
   return (
     <HydrateCache state={dehydrateFor(qc)}>
@@ -69,7 +80,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           scope={source.kind === "admin" ? "admin" : "org"}
         />
         <ClientHostRoot source={source} safe={safe} hostReady={host !== null}>
-          <AppFrame version={`v${pkg.version}`}>{children}</AppFrame>
+          <AppFrame version={`v${pkg.version}`} newSignIn={newSignIn}>
+            {children}
+          </AppFrame>
         </ClientHostRoot>
       </ThemeRoot>
     </HydrateCache>

@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { isAppLocale, LOCALE_COOKIE } from "./i18n/routing";
 import { loginPathFor } from "./lib/auth-sources";
-import { safeUiCookieFor } from "./lib/client-extensions";
+import { clientScopeOf, safeUiCookieFor } from "./lib/client-extensions";
 import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
 import {
   CSP_HEADER,
@@ -11,11 +11,18 @@ import {
   newNonce,
   PATH_HEADER,
   SESSION_STATE_HEADER,
+  SIGN_IN_HEADER,
 } from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
 import { isPublicPath } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
 import { accessTokenExpiresSoon, renewSession, setCookieValue } from "./lib/session-renewal";
+import {
+  isDocumentRequest,
+  SIGN_IN_SEEN_COOKIE,
+  signInMarker,
+  signInSeenCookie,
+} from "./lib/sign-in-state";
 
 /**
  * A client host shim file (`CLIENT_HOST_PREFIX` of `lib/headers.ts`, written by
@@ -103,6 +110,9 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  *    layouts read `x-nonce`) and on the response. A client-sent nonce or policy never survives.
  * 6. `?safe-ui=1` sets the safe-mode session cookie, `?safe-ui=0` clears it (client extensions spec
  *    §10.1), so safe mode holds through client navigations and refreshes.
+ * 7. the first workspace document of a sign-in carries `x-cap-sign-in: new` (the shell's
+ *    `sign-in=new` token, client extensions spec §7.3), and the response records the session in
+ *    `cap_seen` (`lib/sign-in-state.ts`).
  * The client host shims (`/_capybara/client-host/<build>/<name>.mjs`) get step 5 only.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
@@ -121,6 +131,7 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   }
   const headers = new Headers(req.headers);
   headers.delete(SESSION_STATE_HEADER);
+  headers.delete(SIGN_IN_HEADER);
   headers.set(PATH_HEADER, `${pathname}${search}`);
   const nonce = newNonce();
   const policy = documentPolicy({
@@ -151,6 +162,8 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const hasRetry = pairs.some(([n]) => n === RETRY_COOKIE);
   const accessToken = cookieValue(pairs, ACCESS_COOKIE);
   let signedIn = accessToken !== undefined;
+  // The access token the forwarded request carries (the renewed one after a renewal).
+  let sessionToken = accessToken;
   let unavailable = false;
   const refreshToken = cookieValue(pairs, REFRESH_COOKIE);
   // Renew without cap_at, and also when cap_at outlived its token or is about to expire.
@@ -178,6 +191,7 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
         setCookies.push(...renewal.setCookies);
         if (hasRetry) setCookies.push(RETRY_CLEAR);
         signedIn = true;
+        sessionToken = renewal.accessToken;
         break;
       }
       case "race":
@@ -192,6 +206,7 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
         // the kernel's clears carry its Secure attribute and the legacy-path cap_rt; ours are a fallback
         setCookies.push(...(renewal.setCookies.length > 0 ? renewal.setCookies : SESSION_CLEARS));
         signedIn = false;
+        sessionToken = undefined;
         break;
       }
       case "unavailable":
@@ -209,6 +224,22 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     const to =
       (await serverNeedsSetup()) === true ? "/setup" : loginPathFor(`${pathname}${search}`);
     return withCookies(NextResponse.redirect(new URL(to, req.nextUrl), 307), setCookies);
+  }
+
+  // The first workspace document of this sign-in: only documents of the workspace (the admin
+  // console loads no org client code), so the sign-in stays new until the workspace renders.
+  if (
+    sessionToken !== undefined &&
+    req.method === "GET" &&
+    !isPublicPath(pathname) &&
+    isDocumentRequest(req.headers) &&
+    clientScopeOf(pathname) === "org"
+  ) {
+    const marker = signInMarker(sessionToken);
+    if (marker !== null && cookieValue(pairs, SIGN_IN_SEEN_COOKIE) !== marker) {
+      headers.set(SIGN_IN_HEADER, "new");
+      setCookies.push(signInSeenCookie(marker, req.nextUrl.protocol === "https:"));
+    }
   }
 
   const res = NextResponse.next({ request: { headers } });

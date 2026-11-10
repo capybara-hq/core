@@ -141,10 +141,13 @@ export function frameElement(
   {
     locale = "zh",
     version = "v9.9.9",
+    newSignIn = false,
     wrap = (frame) => frame,
   }: {
     locale?: "zh" | "en";
     version?: string;
+    /** The layout's first-workspace-document flag (`sign-in=new`). */
+    newSignIn?: boolean;
     /** What the layout puts around the frame (the client host), when a test needs it. */
     wrap?: (frame: ReactNode) => ReactNode;
   } = {},
@@ -156,7 +159,11 @@ export function frameElement(
         <DesignProvider locale={locale} link={Link as LinkComponent}>
           <ToastProvider>
             <ThemeRoot orgId={initial.org?.orgId ?? null}>
-              {wrap(<AppFrame version={version}>{children}</AppFrame>)}
+              {wrap(
+                <AppFrame version={version} newSignIn={newSignIn}>
+                  {children}
+                </AppFrame>,
+              )}
             </ThemeRoot>
           </ToastProvider>
         </DesignProvider>
