@@ -45,6 +45,16 @@ import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatc
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
+import {
+  appendMissingGrant,
+  connectionGrantKey,
+  UNATTENDED_CONNECTION_ERROR,
+  UNATTENDED_ELICITATION_NOTE,
+  UNATTENDED_QUESTION_ERROR,
+  type UnattendedRun,
+  unattendedFails,
+  unattendedRunOf,
+} from "../schedules/unattended.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
@@ -60,7 +70,7 @@ import { ElicitationSession } from "./elicitation.js";
 import { type LegacyScope, legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
-import { createDecidePolicy } from "./policy.js";
+import { createDecidePolicy, type GrantKind } from "./policy.js";
 import { type QuestionRecord, QuestionsService } from "./questions.service.js";
 import { redactDeep, redactorFor } from "./redact.js";
 import {
@@ -221,7 +231,12 @@ export type PolicyDecision =
   | { ask: AskRequest }
   | { unavailable: string }
   /** 记住的授权把 `ask` 放行（按 allow 执行，审计记授权种类）。 */
-  | { grant: "session" | "always" };
+  | { grant: GrantKind }
+  /**
+   * Refused without an approval: an unattended run in `fail` mode (scheduled tasks spec §7). The
+   * text is the tool error; `missingGrant` is added to the task run's `missing_grants`.
+   */
+  | { refused: string; missingGrant?: string };
 
 export interface PolicyContext {
   orgId: string;
@@ -251,6 +266,11 @@ export interface PolicyContext {
    * null / unset: policies, grants and approvals use the tool key.
    */
   callPolicy?: CallPolicy | null;
+  /**
+   * The scheduled task run the run serves, unattended or trial (scheduled tasks spec §7); unset or
+   * null: an attended run.
+   */
+  unattended?: UnattendedRun | null;
 }
 
 /** 管线第 3 阶段：策略判定。 */
@@ -356,6 +376,11 @@ export interface ToolStepContext {
    * (spec §10.1, agent map spec §6), and it dispatches sub-agents only below `subagents.maxDepth`.
    */
   parent?: SubagentParent;
+  /**
+   * The scheduled task run this run serves (scheduled tasks spec §7); filled by `runStep` once per
+   * step from PG (`unattendedRunOf`), null when attended. Callers leave it unset.
+   */
+  unattended?: UnattendedRun | null;
 }
 
 /** tools 节点一步的结果：全部调用都有了结果，或某个调用需要等人处理（之后的调用留到续跑）。 */
@@ -373,7 +398,13 @@ export type ExecOutcome =
   /** 执行失败（超时、抛错、熔断、中止等），message 给模型看。 */
   | { kind: "error"; message: string }
   /** 发起人未连接个人凭据：除错误结果外再写 `connection_required`。 */
-  | { kind: "connection_required"; connectorId: string; connectorName: string; message: string };
+  | {
+      kind: "connection_required";
+      connectorId: string;
+      connectorName: string;
+      connectorSlug: string;
+      message: string;
+    };
 
 type ToolCall = { id: string; name: string; input: unknown };
 
@@ -383,7 +414,7 @@ type ToolCall = { id: string; name: string; input: unknown };
  */
 type Authorization =
   | { approvalId: string; approvedByAccountId: string | null; scope: ApprovalScope | null }
-  | { grant: "session" | "always" }
+  | { grant: GrantKind }
   | { policy: "allow" };
 
 /** `tool.called` 审计的附加信息：传入即表示工具确实执行过（durationMs 为 null = 耗时未知）。 */
@@ -552,7 +583,8 @@ export class ToolPipeline {
    * 某个调用需要等人处理（审批 / 用户输入）→ 返回 `suspended`，之后的调用留到续跑时处理；
    * 续跑时重新进入本函数，按 PG 里的审批 / 输入请求结果继续。
    */
-  async runStep(ctx: ToolStepContext): Promise<ToolStepOutcome> {
+  async runStep(given: ToolStepContext): Promise<ToolStepOutcome> {
+    let ctx = given;
     const { eventLog } = this.deps;
     const msg = await eventLog.findByIdem(
       ctx.conversationId,
@@ -562,6 +594,14 @@ export class ToolPipeline {
     const calls = msg.payload.content.flatMap((b) =>
       b.type === "tool_call" ? [{ id: b.id, name: b.name, input: b.input }] : [],
     );
+    // scheduled tasks spec §7: read live for each step (a person's message absorbed since makes the
+    // rest of the run attended)
+    if (calls.length > 0 && ctx.unattended === undefined) {
+      ctx = {
+        ...ctx,
+        unattended: await unattendedRunOf(this.deps.db, this.config, ctx.orgId, ctx.runId),
+      };
+    }
     let resolved: Resolved | undefined;
     const resolve = async (): Promise<Resolved> => {
       // 每步实时解析（连接器 / 插件状态可能在模型调用之后变化）
@@ -771,8 +811,15 @@ export class ToolPipeline {
         ...(ctx.parent.otherAgent !== undefined && { parentAgentDiffers: ctx.parent.otherAgent }),
       }),
       callPolicy,
+      ...(ctx.unattended != null && { unattended: ctx.unattended }),
     });
     if (decision === "deny") return fail(deniedText(tool.key, callPolicy?.key), outKey);
+    if (typeof decision === "object" && "refused" in decision) {
+      if (decision.missingGrant !== undefined && ctx.unattended != null) {
+        await appendMissingGrant(this.deps.db, ctx.unattended.taskRunId, decision.missingGrant);
+      }
+      return fail(decision.refused, outKey);
+    }
     if (typeof decision === "object" && "unavailable" in decision) {
       return fail(unavailableText(tool.key, decision.unavailable), outKey);
     }
@@ -981,6 +1028,19 @@ export class ToolPipeline {
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
 
+    // scheduled tasks spec §7, `fail` mode: no one answers an input request or connects an app
+    if (unattendedFails(ctx.unattended) && ctx.unattended != null) {
+      if (outcome.kind === "input_required") {
+        outcome = { kind: "error", message: UNATTENDED_QUESTION_ERROR };
+      } else if (outcome.kind === "connection_required") {
+        await appendMissingGrant(
+          this.deps.db,
+          ctx.unattended.taskRunId,
+          connectionGrantKey(outcome.connectorSlug),
+        );
+        outcome = { kind: "error", message: UNATTENDED_CONNECTION_ERROR(outcome.connectorName) };
+      }
+    }
     if (outcome.kind === "input_required") {
       const asked = await this.askInput(ctx, call.id, tool.key, attempt, outcome);
       if (typeof asked !== "string") return asked;
@@ -1304,7 +1364,7 @@ export class ToolPipeline {
     const connectorId = source.connectorId;
     const app = await db
       .selectFrom("connectors")
-      .select(["name", "connector", "endpoint", "auth", "status"])
+      .select(["name", "slug", "connector", "endpoint", "auth", "status"])
       .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -1341,10 +1401,13 @@ export class ToolPipeline {
     // 远端在调用途中向用户要输入（MCP elicitation，见 elicitation.ts）：需要问用户时中止本次调用、按 input_required
     // 处理；续跑时用 ctx.resume 的答案答复远端再次发起的同一请求。resources 工具不续跑，一律拒绝。
     const suspend = new AbortController();
+    // an unattended run in `fail` mode declines every elicitation: no one is there to answer
+    const unattended = unattendedFails(ctx.unattended);
     const elicit = new ElicitationSession({
       resume,
       onSuspend: () => suspend.abort(),
-      declineAll: source.resources === true,
+      declineAll: source.resources === true || unattended,
+      ...(unattended && { declineNote: UNATTENDED_ELICITATION_NOTE }),
     });
     // 远端可能把收到的凭据回显在结果 / 错误 / elicitation 表单里：写入事件之前按本次注入的值打码（见 redact.ts）
     const clean = (o: ExecOutcome): ExecOutcome => {
@@ -1380,6 +1443,7 @@ export class ToolPipeline {
             kind: "connection_required",
             connectorId,
             connectorName: app.name,
+            connectorSlug: app.slug,
             message: personalMissingText(app.name),
           }
         : { kind: "error", message: orgMissingText(app.name) };

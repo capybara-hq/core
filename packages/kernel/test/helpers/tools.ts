@@ -12,6 +12,7 @@ import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
+import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { Credentials } from "../../src/tools/credentials.js";
@@ -78,7 +79,14 @@ export function approvalsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): ApprovalsService {
   const h = handlesFor(db);
-  return new ApprovalsService(h.db, configFrom(config), eventLog, events, h.txHost);
+  return new ApprovalsService(
+    h.db,
+    configFrom(config),
+    eventLog,
+    events,
+    h.txHost,
+    new ScheduledTaskStore(),
+  );
 }
 
 /** The questions over a test's Kysely and an event log; `events` gets `question.answered`. */

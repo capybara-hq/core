@@ -14,6 +14,7 @@ import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { ScheduledTaskStoreModule } from "../schedules/store.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { AdminConnectors } from "./admin-connectors.js";
@@ -66,6 +67,8 @@ import { ToolRegistry } from "./registry.js";
     // the `Platform` tool's operations, actor facts and agent docs (imports no domain module)
     PlatformModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+    // a trial run's approvals become its scheduled task's grants (scheduled tasks spec §7)
+    ScheduledTaskStoreModule,
   ],
   providers: [
     Credentials,

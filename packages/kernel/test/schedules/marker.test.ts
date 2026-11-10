@@ -375,6 +375,54 @@ describe("the schedule marker", { timeout: 90_000 }, () => {
     expect(left).toEqual([]);
   });
 
+  /** A conversation whose queue is paused, holding one queued item with a marker. */
+  async function pausedWithMarkedItem() {
+    const conv = await createConv(owner, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ queue_paused: true, queue_pause_reason: "run_ended" })
+      .where("id", "=", conv)
+      .execute();
+    const m = await marker();
+    const out = await k.app
+      .get(ConversationQueue)
+      .add(
+        orgId,
+        conv,
+        ownerId,
+        { text: "queued digest", clientMessageId: `sched-${m.taskRunId}` },
+        { schedule: m, timeZoneOverride: "Asia/Tokyo" },
+      );
+    expect(out.item).not.toBeNull();
+    return { conv, m, itemId: out.item?.id as string };
+  }
+
+  it("editing a queued scheduled item makes it the person's message", async () => {
+    const { conv, itemId } = await pausedWithMarkedItem();
+    await k.app.get(ConversationQueue).edit(orgId, conv, ownerId, itemId, "my own words");
+    const row = await db
+      .selectFrom("conversation_queue")
+      .select("schedule")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(row.schedule).toBeNull();
+    await k.app.get(ConversationQueue).resume(orgId, conv, ownerId);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const msg = (await eventsOf(db, conv)).find((e) => e.type === "user_message");
+    expect(msg?.payload).not.toHaveProperty("schedule");
+    const [run] = await runRows(conv);
+    expect(run?.scheduled_task_run_id).toBeNull();
+  });
+
+  it("sending a queued scheduled item now makes it the person's message", async () => {
+    const { conv, itemId } = await pausedWithMarkedItem();
+    const event = await k.app.get(ConversationQueue).sendNow(orgId, conv, ownerId, itemId);
+    expect(event.payload).not.toHaveProperty("schedule");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const [run] = await runRows(conv);
+    expect(run?.scheduled_task_run_id).toBeNull();
+  });
+
   it("the header renders from the log only", async () => {
     capture.reset();
     const m = await marker();

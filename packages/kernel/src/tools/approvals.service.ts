@@ -12,7 +12,10 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { ScheduledTaskStore } from "../schedules/store.js";
+import { unattendedTaskRunOf } from "../schedules/unattended.js";
 import { pluginDisplayNames } from "./display-names.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
 
@@ -192,6 +195,8 @@ export class ApprovalsService {
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(ScheduledTaskStore)
+    private readonly schedules: Pick<ScheduledTaskStore, "addGrant">,
   ) {}
 
   /**
@@ -460,6 +465,7 @@ export class ApprovalsService {
         )
         .execute();
     }
+    if (approved && scope !== null) await this.keepTrialGrant(before, accountId);
     const written = await this.eventLog.appendIn(before.conversationId, [
       {
         type: "approval_decided",
@@ -494,6 +500,37 @@ export class ApprovalsService {
       },
     });
     return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
+  }
+
+  /**
+   * A trial run of a scheduled task (scheduled tasks spec §7): an approval its creator granted, in
+   * any scope, is also added to the task's grants with the approved definition's hash, so its
+   * unattended runs do not ask again. Not kept: a role-escalated approval (`requestedFor` null, it
+   * stays `once`), one another account decided, one whose scopes never allowed remembering (an org
+   * / platform operation: "once" only), and a tool in the org's `forbiddenTools`. In the decision's
+   * transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async keepTrialGrant(a: ApprovalRecord, decidedBy: string): Promise<void> {
+    if (a.requestedFor === null || a.requestedFor !== decidedBy) return;
+    if (!a.scopes.includes("always")) return;
+    const t = this.db.db;
+    const served = await unattendedTaskRunOf(t, a.runId);
+    if (served === null || !served.trial) return;
+    const task = await t
+      .selectFrom("scheduled_tasks")
+      .select("account_id")
+      .where("id", "=", served.taskId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (task?.account_id !== decidedBy) return;
+    const { forbiddenTools } = (await readOrgSettings(t, a.orgId)).scheduledTasks;
+    if (forbiddenTools.includes(a.toolKey)) return;
+    await this.schedules.addGrant(t, served.taskId, {
+      toolKey: a.toolKey,
+      specHash: a.specHash,
+      connectorId: a.connectorId,
+    });
   }
 
   /**

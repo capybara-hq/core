@@ -393,10 +393,7 @@ export class ScheduledTaskStore {
     return Number(r.numDeletedRows) > 0;
   }
 
-  /**
-   * Whether the task holds a grant for this tool as defined now: same key, same spec hash, same
-   * connector (null for plugin and builtin tools). A grant of an older definition does not count.
-   */
+  /** Whether the task holds a grant for this tool as defined now ({@link findTaskGrant}). */
   async findGrant(
     t: KernelSchemaDb,
     taskId: string,
@@ -404,14 +401,29 @@ export class ScheduledTaskStore {
     specHash: string,
     connectorId: string | null,
   ): Promise<boolean> {
-    const row = await t
-      .selectFrom("scheduled_task_grants")
-      .select("tool_key")
-      .where("task_id", "=", taskId)
-      .where("tool_key", "=", toolKey)
-      .where("spec_hash", "=", specHash)
-      .where(sql<boolean>`connector_id IS NOT DISTINCT FROM ${connectorId}`)
-      .executeTakeFirst();
-    return row !== undefined;
+    return findTaskGrant(t, taskId, toolKey, specHash, connectorId);
   }
+}
+
+/**
+ * Whether the task holds a grant for this tool as defined now: same key, same spec hash, same
+ * connector (null for plugin and builtin tools). A grant of an older definition does not count.
+ * A plain function too, for the tool policy (`createDecidePolicy`), which is not a provider.
+ */
+export async function findTaskGrant(
+  t: KernelSchemaDb,
+  taskId: string,
+  toolKey: string,
+  specHash: string,
+  connectorId: string | null,
+): Promise<boolean> {
+  const row = await t
+    .selectFrom("scheduled_task_grants")
+    .select("tool_key")
+    .where("task_id", "=", taskId)
+    .where("tool_key", "=", toolKey)
+    .where("spec_hash", "=", specHash)
+    .where(sql<boolean>`connector_id IS NOT DISTINCT FROM ${connectorId}`)
+    .executeTakeFirst();
+  return row !== undefined;
 }

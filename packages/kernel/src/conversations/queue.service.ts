@@ -239,7 +239,9 @@ export class ConversationQueue {
 
   /**
    * Changes a queued item's text (its resources and files stay as queued). A skill invocation's
-   * text is its arguments: the skill is rendered again with them now.
+   * text is its arguments: the skill is rendered again with them now. A scheduled task's item
+   * becomes the person's message: its schedule marker (and the task's zone) is dropped, so the run
+   * it triggers is attended (scheduled tasks spec §7).
    */
   async edit(
     orgId: string,
@@ -300,6 +302,8 @@ export class ConversationQueue {
       .updateTable("conversation_queue")
       .set({
         text: noNul(text),
+        // edited by a person: no longer the task's message
+        schedule: null,
         updated_at: sql`now()`,
         ...(stored !== undefined && {
           skill: stored.skill,
@@ -342,7 +346,9 @@ export class ConversationQueue {
   /**
    * Sends a queued item now: it leaves the queue and is posted as a user message in the same
    * transaction (an interjection when a run is active; the items before it keep their place).
-   * Racing the dispatcher, exactly one of them takes the item; the loser sees it gone (404).
+   * Racing the dispatcher, exactly one of them takes the item; the loser sees it gone (404). A
+   * scheduled task's item is sent as the person's message, without its schedule marker
+   * (scheduled tasks spec §7).
    */
   async sendNow(
     orgId: string,
@@ -402,7 +408,8 @@ export class ConversationQueue {
       .executeTakeFirst();
     if (!row) throw itemNotFound();
     const sent = await alreadySent(t, conversationId, row.client_message_id);
-    const out = await appendQueuedIn(t, this.eventLog, conversationId, row);
+    // sent by a person: their message, not the task's
+    const out = await appendQueuedIn(t, this.eventLog, conversationId, { ...row, schedule: null });
     await unpauseIfEmpty(t, conversationId);
     // sent during the run, the item is the author's message like a direct send: it skips the
     // pending questions they may answer (reply-while-question spec §4.2)

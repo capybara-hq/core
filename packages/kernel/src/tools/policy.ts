@@ -3,7 +3,14 @@ import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
+import { findTaskGrant } from "../schedules/store.js";
 import {
+  UNATTENDED_ASK_ERROR,
+  UNATTENDED_QUESTION_ERROR,
+  unattendedRules,
+} from "../schedules/unattended.js";
+import {
+  BUILTIN,
   R3_FIXED_ASK_TOOL_KEYS,
   R3_SHARED_AGENT_ONLY_TOOL_KEYS,
   SANDBOX_ASK_TOOL_NAMES,
@@ -17,6 +24,12 @@ export { R3_FIXED_ASK_TOOL_KEYS, R3_SHARED_AGENT_ONLY_TOOL_KEYS } from "./builti
 
 const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
 
+/**
+ * What allowed an ask without an approval: this conversation's grant, an "always" grant, or a
+ * scheduled task's grant (its unattended runs, scheduled tasks spec §7).
+ */
+export type GrantKind = "session" | "always" | "task";
+
 /** 取更严的策略（`allow < ask < deny`）。 */
 export function stricter(a: ToolPolicy, b: ToolPolicy | undefined): ToolPolicy {
   return b !== undefined && RANK[b] > RANK[a] ? b : a;
@@ -29,8 +42,10 @@ export interface PolicyInput {
   agentOverride?: "ask" | "deny";
   /** R3 清单或 `requiresUserInteraction`。 */
   fixedAsk: boolean;
-  /** 已记住且 specHash 与当前一致的授权。 */
-  grant: "session" | "always" | null;
+  /**
+   * 已记住且 specHash 与当前一致的授权; `task`: a scheduled task's grant in its unattended run.
+   */
+  grant: GrantKind | null;
 }
 
 /**
@@ -137,6 +152,14 @@ export function connectorPolicy(input: {
  *   （`approverRole` = 所需角色、`requestedFor` = null），此时记住的授权不放行。
  *
  * 结果为 `ask` 时返回审批请求，默认指向发起人本人；记住的授权把 `ask` 放行时返回 `{ grant }`（按 allow 执行）。
+ *
+ * An unattended run (`ctx.unattended`, not a trial run; scheduled tasks spec §7):
+ * - a tool in the org's `forbiddenTools` (by tool key or per-call key) is denied;
+ * - `SkillWrite` is an ask no grant covers, even on a private agent where it would run;
+ * - an ask is also allowed by a task grant of the current definition (`{ grant: "task" }`), never
+ *   for a fixed ask, a role escalation or a connector tool whose definition changed;
+ * - in `fail` mode an ask still left is refused (`{ refused, missingGrant }`, no approval), and
+ *   `AskUserQuestion` is refused; in `wait` mode both ask the creator as in an attended run.
  */
 export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
   return async (tool, agentDef, ctx) => {
@@ -188,6 +211,19 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
           .where("tool_name", "=", tool.source.name)
           .executeTakeFirst();
         memberSetting = mine?.policy;
+      }
+    }
+    // scheduled tasks spec §7: what an unattended run may not do at all
+    const unattended = unattendedRules(ctx.unattended) ? ctx.unattended : undefined;
+    if (unattended !== undefined) {
+      const forbidden = unattended.forbiddenTools;
+      if (forbidden.includes(tool.key) || forbidden.includes(policyKey)) return "deny";
+      if (
+        unattended.unattendedAsk === "fail" &&
+        tool.source.kind === "builtin" &&
+        tool.key === BUILTIN.AskUserQuestion
+      ) {
+        return { refused: UNATTENDED_QUESTION_ERROR };
       }
     }
     // 沙箱工具的组织默认（M5 T8）：组织设置 sandboxToolPolicy 为 ask 时，有副作用的沙箱工具至少 ask
@@ -268,7 +304,12 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     const writePolicy = (currentDef as AgentDefinition | undefined)?.skills?.writePolicy;
     // `remember: false` on a call that is not a plain allow (an org / platform operation, or a read
     // an agent tightened to ask): every call asks, grants never apply. A read (`allow`) never asks.
+    // an unattended run never rewrites the agent's skills on its own (spec §7): SkillWrite asks,
+    // outside every grant
+    const unattendedSkillWrite =
+      unattended !== undefined && tool.source.kind === "builtin" && tool.key === BUILTIN.SkillWrite;
     const fixedAsk =
+      unattendedSkillWrite ||
       isFixedAsk(tool, current?.visibility, writePolicy) ||
       (call !== null && !call.remember && (call.policy !== "allow" || agentOverride !== undefined));
     const input: PolicyInput = {
@@ -281,11 +322,23 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     if (pre === "deny") return "deny";
     if (pre === "ask" && !fixedAsk && escalateTo === null && hashCurrent) {
       input.grant = await findGrant(db, tool, policyKey, connectorId, ctx);
+      // an unattended run: the task's grants, like a tool_grants entry (spec §7)
+      if (
+        input.grant === null &&
+        unattended !== undefined &&
+        (await findTaskGrant(db, unattended.taskId, policyKey, tool.specHash, connectorId))
+      ) {
+        input.grant = "task";
+      }
     }
     const result = decide(input);
     if (result === "allow" && escalateTo === null) {
       // 记住的授权把 ask 放行：返回授权种类（审计链记录凭什么放行）
       return pre === "ask" && input.grant !== null ? { grant: input.grant } : "allow";
+    }
+    // an ask outside the grants in an unattended run, `fail` mode: no approval (spec §7)
+    if (unattended?.unattendedAsk === "fail") {
+      return { refused: UNATTENDED_ASK_ERROR(policyKey), missingGrant: policyKey };
     }
     const ask: AskRequest = {
       toolKey: policyKey,
