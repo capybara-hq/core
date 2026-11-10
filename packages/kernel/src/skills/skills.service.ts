@@ -24,7 +24,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
-import { AgentSkillsService, type RegisterOutcome } from "./agent-skills.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import {
   readSkillPackage,
@@ -523,7 +522,6 @@ export class SkillsService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** The owner's new versions of a skill it promoted go to the platform row (ruling P3-4). */
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
-    @Inject(AgentSkillsService) private readonly agentSkills: AgentSkillsService,
   ) {}
 
   /**
@@ -580,48 +578,6 @@ export class SkillsService {
       accountId,
       { name: input.name, contentType: SKILL_PACKAGE_CONTENT_TYPE, size: input.size },
       "skill-package",
-    );
-  }
-
-  /**
-   * Registers a skill package upload onto an agent (presigned, `application/zip`, <= 50 MB): only
-   * the agent's current owner (403 `forbidden`, 404 `agent.not_found` when not visible). Agent
-   * skills are not governed by the deployment's `customSkills` setting, so it is not checked.
-   */
-  async createAgentUpload(
-    orgId: string,
-    accountId: string,
-    agentId: string,
-    input: { name: string; size: number },
-  ): Promise<CreatedAttachment> {
-    await this.agentSkills.assertOwner(orgId, agentId, accountId);
-    return this.attachments.create(
-      orgId,
-      accountId,
-      { name: input.name, contentType: SKILL_PACKAGE_CONTENT_TYPE, size: input.size },
-      "skill-package",
-    );
-  }
-
-  /**
-   * Registers an uploaded package as one of the agent's own skills ({@link AgentSkillsService.register}):
-   * the owner is checked before the upload is read (a non-owner learns nothing about it), the zip
-   * is read from the uploader's own upload (`attachment.not_found` otherwise) and the upload is
-   * consumed in the register transaction (of concurrent requests for it only one registers).
-   */
-  async registerAgentUpload(
-    orgId: string,
-    accountId: string,
-    agentId: string,
-    uploadId: string,
-    actorTokenId?: string,
-  ): Promise<RegisterOutcome> {
-    await this.agentSkills.assertOwner(orgId, agentId, accountId);
-    const zip = await this.attachments.readSkillPackage(orgId, accountId, uploadId);
-    return this.agentSkills.register(
-      { orgId, agentId, accountId, ...(actorTokenId !== undefined && { actorTokenId }) },
-      zip,
-      { inTransaction: () => this.attachments.consumeSkillPackage(orgId, accountId, uploadId) },
     );
   }
 

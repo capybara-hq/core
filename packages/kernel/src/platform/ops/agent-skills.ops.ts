@@ -5,7 +5,12 @@ import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
 import { SandboxFileReader } from "../../sandbox/sandbox-file-reader.js";
-import { AgentSkillsService, type RegisterOutcome } from "../../skills/agent-skills.service.js";
+import {
+  AgentSkillsService,
+  isOrgAdmin,
+  type RegisterOutcome,
+  type ShareOutcome,
+} from "../../skills/agent-skills.service.js";
 import { SkillChangesService } from "../../skills/changes.service.js";
 import { SkillInvoker } from "../../skills/invoke.js";
 import { SKILL_PACKAGE_MAX_BYTES } from "../../skills/package.js";
@@ -42,6 +47,21 @@ const subagentRefusal = () =>
     "skill.subagent_register",
     "A sub-agent cannot register skills on its agent; only the agent the person talks with can.",
   );
+const subagentShareRefusal = () =>
+  new ApiError(
+    "skill.subagent_register",
+    "A sub-agent cannot share skills; only the agent the person talks with can.",
+  );
+
+/** File paths shown on a share card (the rest are counted). */
+const SHARE_FILES_SHOWN = 10;
+
+/** The model-facing result line of `agents.share-skill`. */
+function sharedText(o: ShareOutcome, name: string): string {
+  return o.kind === "shared"
+    ? `Shared skill "${name}" with the organization: it is now an org skill (the person maintains it) that any agent of the org can select; this agent keeps using it.`
+    : `Asked the org admins to share skill "${name}" with the organization; it waits for their decision in the inbox. Until then it stays this agent's own skill.`;
+}
 
 /** The model-facing result line of `agents.register-skill`. */
 function registeredText(o: RegisterOutcome, files: number | null): string {
@@ -66,8 +86,9 @@ const skillRow = (s: SkillSummary) => ({
 
 /**
  * The skills of one agent and the skill change inbox detail (`Platform` tool, spec §14): reads of
- * the agent's own skills and of the invocable ones, detaching a skill, and the detail of a pending
- * skill change as the inbox shows it. Deciding a change stays `human-only`.
+ * the agent's own skills and of the invocable ones, registering, deleting and sharing a skill,
+ * and the detail of a skill change request as the inbox shows it. Deciding a request stays
+ * `human-only` (org admins on the web).
  */
 @Injectable()
 export class AgentSkillsOperations implements OnModuleInit {
@@ -85,14 +106,19 @@ export class AgentSkillsOperations implements OnModuleInit {
   /**
    * Class of registering a skill on the run's agent: `personal` on a private agent the actor owns
    * whose `skills.writePolicy` is not `ask`; otherwise `org` (asked every time, never remembered).
+   * Also `org` when the registration may apply a version to a shared org skill at once (the actor
+   * is an org admin maintaining one; the package name is not known before the card).
    */
   private async registerClass(ctx: OperationContext): Promise<ConfirmClass> {
     const a = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
-    return a.visibility === "private" &&
+    const personal =
+      a.visibility === "private" &&
       a.ownerAccountId === ctx.actorAccountId &&
-      a.definition.skills?.writePolicy !== "ask"
-      ? "personal"
-      : "org";
+      a.definition.skills?.writePolicy !== "ask";
+    if (!personal) return "org";
+    return (await this.agentSkills.mayApplyOrgVersions(ctx.orgId, ctx.actorAccountId))
+      ? "org"
+      : "personal";
   }
 
   /**
@@ -104,6 +130,22 @@ export class AgentSkillsOperations implements OnModuleInit {
       throw subagentRefusal();
     }
     await this.agentSkills.assertOwner(ctx.orgId, ctx.agentId, ctx.actorAccountId);
+  }
+
+  /**
+   * The refusals of sharing read before the card: a sub-agent conversation, an actor who is not
+   * the agent's current owner, a skill that is not one of the agent's own.
+   */
+  private async shareCheck(agentId: string, skillId: string, ctx: OperationContext) {
+    if ((await rootConversationOf(this.db.db, ctx.conversationId)) !== ctx.conversationId) {
+      throw subagentShareRefusal();
+    }
+    await this.agentSkills.assertOwner(ctx.orgId, agentId, ctx.actorAccountId);
+    const skill = (await this.skills.listForAgent(ctx.orgId, agentId)).find(
+      (s) => s.id === skillId,
+    );
+    if (!skill) throw new ApiError("skill.not_found", "Skill not found");
+    return skill;
   }
 
   /** The file count of a registered version (null for a proposal or when the row is gone). */
@@ -282,7 +324,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.register-skill",
         description:
-          "Register a zip package from your sandbox as one of this agent's own skills: a new skill, or the next version of this agent's skill with the same name. Build the package in the sandbox first: a zip with SKILL.md at its root (frontmatter name and description, then the instructions) plus any scripts or references, then pass its absolute path. Only the agent's owner can, and only from the conversation the person talks in (not a sub-agent). The new version applies to every conversation with this agent; in this run, load it with Skill.",
+          "Register a zip package from your sandbox as one of this agent's own skills: a new skill, or the next version of this agent's skill with the same name. Build the package in the sandbox first: a zip with SKILL.md at its root (frontmatter name and description, then the instructions) plus any scripts or references, then pass its absolute path. Only the agent's owner can, and only from the conversation the person talks in (not a sub-agent). The new version applies to every conversation with this agent; in this run, load it with Skill. When the person maintains a shared org skill of the same name (and this agent has no own skill of it), the package is that skill's next version: an org admin applies it at once, anyone else's is proposed to the org admins and only this conversation uses it until approved.",
         input: z.object({ filePath: z.string().min(1).max(FILE_PATH_MAX) }).strict(),
         example: { filePath: "/workspace/out/weekly-report.zip" },
         authz: { orgAction: "agents.create" },
@@ -379,9 +421,105 @@ export class AgentSkillsOperations implements OnModuleInit {
         },
       }),
       defineOperation({
+        id: "agents.share-skill",
+        description:
+          "Share one of an agent's own skills with the organization, so any agent of the org can select it; the agent keeps using it and the person becomes its maintainer (later versions they register on their agents are proposed to the org admins). An org admin shares at once; anyone else's ask waits for an org admin's decision in the inbox. Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills.",
+        input: z.object({ agentId: AgentId, skillId: AgentSkillPathParams.shape.skillId }).strict(),
+        example: {
+          agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",
+          skillId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11",
+        },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId/share"],
+        confirm: "personal",
+        // an org admin's share changes the org's skill library at once: an org write, every time
+        confirmFor: async (_i, ctx) =>
+          (await isOrgAdmin(this.db.db, ctx.orgId, ctx.actorAccountId)) ? "org" : "personal",
+        errors: [
+          {
+            code: "skill.subagent_register",
+            next: "Tell your parent agent which skill to share; only the agent the person talks with shares skills.",
+          },
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list: only agents you can see are readable.",
+          },
+          {
+            code: "forbidden",
+            next: "Only the agent's owner can share its skills; tell the person, and the owner can share it on the agent's page.",
+          },
+          {
+            code: "skill.not_found",
+            next: "Check the skill id with agents.skills: only the agent's own skills can be shared, and a shared one is no longer listed there.",
+          },
+          {
+            code: "skill.name_exists",
+            next: "The organization already has a skill with this name; register the package again under another name, then share that skill.",
+          },
+          {
+            code: "catalog.custom_disabled",
+            next: "This deployment does not allow custom org skills; the skill stays the agent's own. Tell the person.",
+          },
+          {
+            code: "skill.share_pending",
+            next: "Sharing this skill already waits for an org admin; nothing more to do until they decide.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(async () => {
+            await this.shareCheck(i.agentId, i.skillId, ctx);
+          }),
+        summary: async (i, ctx) => {
+          const skill = await orElse(
+            async () => named((await this.shareCheck(i.agentId, i.skillId, ctx)).name),
+            i.skillId,
+          );
+          // the card shows the files, so someone has seen what enters the org's skill library
+          const files = await orElse(async () => {
+            const s = (await this.skills.listForAgent(ctx.orgId, i.agentId)).find(
+              (x) => x.id === i.skillId,
+            );
+            if (!s) return "";
+            const v = await this.db.db
+              .selectFrom("skill_versions")
+              .select("manifest")
+              .where("skill_id", "=", s.id)
+              .where("version", "=", s.currentVersion)
+              .executeTakeFirst();
+            const paths = v?.manifest.files.map((f) => f.path) ?? [];
+            const shown = paths.slice(0, SHARE_FILES_SHOWN).join(", ");
+            const more = paths.length - SHARE_FILES_SHOWN;
+            return more > 0 ? `${shown} (+${more})` : shown;
+          }, "");
+          const tail = files === "" ? "" : `: ${files}`;
+          return {
+            zh: `将技能「${skill}」共享到组织${tail}`,
+            en: `Share skill "${skill}" with the organization${tail}`,
+          };
+        },
+        run: async (input, ctx) => {
+          const skill = await this.shareCheck(input.agentId, input.skillId, ctx);
+          const o = await this.agentSkills.share(
+            {
+              orgId: ctx.orgId,
+              agentId: input.agentId,
+              accountId: ctx.actorAccountId,
+              auditDetail: viaAgent("agents.share-skill", ctx),
+            },
+            input.skillId,
+          );
+          return {
+            share: o,
+            name: skill.name,
+            state: o.kind === "shared" ? "shared" : "pending",
+            message: sharedText(o, skill.name),
+          };
+        },
+      }),
+      defineOperation({
         id: "skills.get-change",
         description:
-          "Read one skill change a shared agent proposed, as the inbox shows it: the agent, the skill name and description, the version it would become, its file paths and sizes, who asked, its state and who decided. Never file contents: review those on the web, where you also decide it (agents never decide skill changes). Only the agent's owner and the person who asked can read it.",
+          "Read one skill change request as the inbox shows it: a share of an agent's skill with the org or a proposed version of a shared skill (kind), the agent, the skill name and description, the version, its file paths and sizes, who asked, its state and who decided. Never file contents: review those on the web, where org admins decide it (agents never decide skill changes). Only org admins and the person who asked can read it.",
         input: z.object({ changeId: SkillChangePathParams.shape.id }).strict(),
         example: { changeId: "6a1d3e5f-2b4c-4d70-8e91-0f2a4c6e8b13" },
         // approvals.decide is stricter than the service (a plain-member requester is refused by
@@ -393,7 +531,7 @@ export class AgentSkillsOperations implements OnModuleInit {
         errors: [
           {
             code: "skill_change.not_found",
-            next: "No change with this id is yours to read; the inbox lists those waiting for you (inbox.list).",
+            next: "No change with this id is yours to read; org admins see the pending ones in the inbox (inbox.list).",
           },
         ],
         run: async (input, ctx) => {
@@ -401,6 +539,7 @@ export class AgentSkillsOperations implements OnModuleInit {
           return {
             skillChange: {
               id: d.id,
+              kind: d.kind,
               name: d.name,
               state: d.status,
               description: d.description,

@@ -11,7 +11,11 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { AgentSkillsService, type RegisterOutcome } from "./agent-skills.service.js";
+import {
+  AgentSkillsService,
+  type RegisterOutcome,
+  type ShareOutcome,
+} from "./agent-skills.service.js";
 import { AgentSkillRegisterBody, AgentSkillUploadBody } from "./skills.schemas.js";
 import { type SkillSummary, SkillsService } from "./skills.service.js";
 
@@ -33,8 +37,11 @@ class AgentSkillRegisterBodyDto extends createZodDto(
  *      deployment's `customSkills` setting;
  *   2. the browser uploads straight to object storage;
  *   3. `POST /` `{ uploadId }` unpacks and checks it, creating the agent's skill or its next
- *      version (200 `{ skill }`; the upload is consumed);
- *   `DELETE /:skillId` soft-deletes one (a pending change of the same name is cancelled with it).
+ *      version, or a version of a shared org skill the actor maintains (applied at once for an
+ *      org admin, else proposed; 200 `{ skill }`; the upload is consumed);
+ *   `DELETE /:skillId` soft-deletes one (a pending request of the same name is cancelled with it);
+ *   `POST /:skillId/share` shares one with the org (200 `{ share }`: shared at once for an org
+ *   admin, else a request the org admins decide).
  */
 @Controller("api/v1/orgs/:orgId/agents/:agentId/skills")
 export class AgentSkillsController {
@@ -68,7 +75,7 @@ export class AgentSkillsController {
     @ZBody(AgentSkillUploadBodyDto) body: z.infer<typeof AgentSkillUploadBody>,
   ): Promise<CreatedAttachment> {
     const p = requireUser(principal);
-    return this.skills.createAgentUpload(org.orgId, p.account.id, agentId, body);
+    return this.agentSkills.createAgentUpload(org.orgId, p.account.id, agentId, body);
   }
 
   @Post()
@@ -82,12 +89,36 @@ export class AgentSkillsController {
   ): Promise<{ skill: RegisterOutcome }> {
     const p = requireUser(principal);
     return {
-      skill: await this.skills.registerAgentUpload(
+      skill: await this.agentSkills.registerAgentUpload(
         org.orgId,
         p.account.id,
         agentId,
         body.uploadId,
         patTokenId(p),
+      ),
+    };
+  }
+
+  @Post(":skillId/share")
+  @HttpCode(200)
+  @OrgAction("agents.create")
+  async share(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("agentId") agentId: string,
+    @Param("skillId") skillId: string,
+  ): Promise<{ share: ShareOutcome }> {
+    const p = requireUser(principal);
+    const actorTokenId = patTokenId(p);
+    return {
+      share: await this.agentSkills.share(
+        {
+          orgId: org.orgId,
+          agentId,
+          accountId: p.account.id,
+          ...(actorTokenId !== undefined && { actorTokenId }),
+        },
+        skillId,
       ),
     };
   }

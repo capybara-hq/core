@@ -51,6 +51,10 @@ export const SKILL_ROUTES: readonly RouteSchemas[] = [
     params: AgentSkillPathParams,
   },
   {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId/share",
+    params: AgentSkillPathParams,
+  },
+  {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills",
     params: AgentSkillsListParams,
     query: InvocableSkillsQuerySchema,

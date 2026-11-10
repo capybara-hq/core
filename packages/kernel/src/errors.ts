@@ -363,8 +363,12 @@ export const ERROR_CODES = {
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,
-  /** An agent already has `AGENT_SKILLS_MAX` own skills (pending new skills included). */
+  /** An agent already has `AGENT_SKILLS_MAX` own skills. */
   "skill.agent_cap": 409,
+  /** Sharing this agent skill with the org is already waiting for an org admin. */
+  "skill.share_pending": 409,
+  /** Another conversation's proposed version of this shared skill is waiting for an org admin. */
+  "skill.proposal_pending_elsewhere": 409,
   /** A sub-agent conversation tried to register a skill on its agent (only the root registers). */
   "skill.subagent_register": 403,
   /**
@@ -375,7 +379,6 @@ export const ERROR_CODES = {
   /** Creating a skill from text (P3-24, F18): an org-level skill with this name already exists in the org. */
   "skill.name_exists": 409,
   "skill_change.not_found": 404,
-  "skill_change.not_owner": 403,
   "skill_change.already_decided": 409,
   "trajectory.not_found": 404,
   "eval.run_not_finished": 409,

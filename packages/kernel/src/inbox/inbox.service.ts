@@ -53,7 +53,8 @@ export const INBOX_MAX_ITEMS = 100;
 /**
  * 收件箱里的一项（按 `type` 区分，形状稳定）：
  * - `tool_approval`：当前用户能处理的待处理工具调用审批（与 `GET /approvals?status=pending` 同一视图）；
- * - `skill_change`：当前用户作为 agent 负责人能决定的待处理技能变更（M5 T15，R4）；
+ * - `skill_change`: pending skill share requests and proposed versions of shared skills, when the
+ *   current user is an org admin (`skillChange.kind`; spec §5.4, §5.5);
  * - `catalog_request`: pending `enable` requests from members and pending `connector_setup`
  *   requests (`request.kind`; `request.agent` and `request.connectors` set, `item` null; ruling
  *   P4-T6-5), when the current user is an org admin (M6 T26, C22; plugin scope spec §5.1);

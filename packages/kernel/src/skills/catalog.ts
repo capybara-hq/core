@@ -163,6 +163,8 @@ export async function resolveSkills(
           .where("agent_id", "=", input.agentId)
           .where("org_id", "=", input.orgId)
           .where("status", "=", "pending")
+          // a share request carries no new files: never a trial
+          .where("kind", "=", "version")
           .execute();
   for (const { proposed_version: p, object_prefix } of trials) {
     effective.set(p.manifest.name, {

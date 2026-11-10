@@ -139,6 +139,7 @@ describe("registration", () => {
       "agents.readiness",
       "agents.register-skill",
       "agents.request-connector-setup",
+      "agents.share-skill",
       "agents.skills",
       "agents.update",
       "agents.update-profile",

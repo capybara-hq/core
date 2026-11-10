@@ -360,7 +360,10 @@ export class AgentsService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AgentLookup) private readonly lookup: AgentLookup,
     @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "checkDisabled">,
-    /** 删除 agent 时取消它待处理的技能改动（T15）。 */
+    /**
+     * Cancels the agent's pending skill requests: all of them when it is deleted, share requests
+     * when its owner changes.
+     */
     @Inject(SkillChangesService)
     private readonly skillChanges: Pick<
       SkillChangesService,
@@ -1100,6 +1103,16 @@ export class AgentsService {
       .execute();
     // the new owner hears about the agent's connector setup request (P4-T6-4)
     await this.setupRequests.retargetIn([agentId], newOwnerId);
+    // the previous owner's asks to share the agent's skills lapse (the new owner did not ask);
+    // a share request has no draft or trial, so nothing is left to clean up after the commit
+    await this.skillChanges.cancelPendingForAgent(
+      orgId,
+      agentId,
+      actor.accountId,
+      "owner_changed",
+      actor.tokenId,
+      ["share"],
+    );
     await audit(t, {
       actorAccountId: actor.accountId,
       ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),

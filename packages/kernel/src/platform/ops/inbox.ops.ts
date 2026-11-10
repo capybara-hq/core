@@ -88,12 +88,15 @@ function orgRow(i: InboxItem) {
     }
     case "skill_change": {
       const c = i.skillChange;
-      const what = c.skillId === null ? "a new skill" : `version ${c.version}`;
+      const by = c.requestedByName || "a deleted account";
       return {
         ...base,
         name: c.name,
         state: c.status,
-        summary: `Skill change for agent ${c.agent.name} by ${c.requestedByName || "a deleted account"}: ${what}, ${c.files.length} file(s).`,
+        summary:
+          c.kind === "share"
+            ? `Request by ${by} to share skill ${c.name} of agent ${c.agent.name} with the organization, ${c.files.length} file(s).`
+            : `Proposed version ${c.version} of the shared skill ${c.name} by ${by} (agent ${c.agent.name}), ${c.files.length} file(s).`,
         next: "Review and decide it on the web, in the inbox; agents never decide skill changes.",
       };
     }
@@ -266,7 +269,7 @@ export class InboxOperations implements OnModuleInit {
       defineOperation({
         id: "inbox.list",
         description:
-          "List your inbox in this org, newest first, one compact row each (type, what it is about, state, the summary the inbox shows, your next step): tool call approvals waiting for you, skill changes you can decide, and for org admins the members' pending requests and the org's notices; your own decided requests too. Never a call's input. Deciding is done by you on the web; notices can be dismissed with inbox.dismiss-notice. Pages by 50: pass the returned next as params.cursor.",
+          "List your inbox in this org, newest first, one compact row each (type, what it is about, state, the summary the inbox shows, your next step): tool call approvals waiting for you, and for org admins the skill share requests and proposed skill versions, the members' pending requests and the org's notices; your own decided requests too. Never a call's input. Deciding is done by you on the web; notices can be dismissed with inbox.dismiss-notice. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "approvals.decide" },

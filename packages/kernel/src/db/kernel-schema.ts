@@ -829,7 +829,8 @@ export interface SkillChangeRequestsTable {
   proposed_version: Json<ProposedSkillVersion>;
   object_prefix: string;
   requested_by_account: string;
-  requested_in_conversation: string;
+  /** 0110: null for a share request and for a version proposal registered on the web. */
+  requested_in_conversation: string | null;
   status: Generated<"pending" | "approved" | "rejected" | "cancelled">;
   /** 0109: a share of an agent skill with the org, or a new version of a shared skill. */
   kind: Dflt<"share" | "version">;

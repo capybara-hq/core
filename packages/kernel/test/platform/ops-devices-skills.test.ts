@@ -417,9 +417,13 @@ describe("agent skills", () => {
 });
 
 describe("skills.get-change", () => {
-  it("shows the summary without file contents, to the agent's owner and the requester only", async () => {
+  it("shows the summary without file contents, to org admins and the requester only", async () => {
     const agentId = await agentOf(ownerId, "org");
-    // a pending change request seeded directly: no tool creates one until org-admin review lands
+    const otherId = (
+      await accountsFor(db).createLocal({ login: "oth", password: PW, displayName: "X" })
+    ).id;
+    await testMembers(db).add(orgId, otherId, "member", ownerId);
+    // a pending version request seeded directly
     const changeId = randomUUID();
     const body = "Steps.";
     await db
@@ -448,6 +452,7 @@ describe("skills.get-change", () => {
     };
     expect(r.skillChange).toMatchObject({
       id: changeId,
+      kind: "version",
       name: "keep",
       state: "pending",
       version: 1,
@@ -455,7 +460,10 @@ describe("skills.get-change", () => {
     });
     expect(JSON.stringify(r)).not.toContain("Steps.");
     expect(String(r.skillChange.next)).toContain("agents never decide");
-    await expect(run("skills.get-change", { changeId }, ctxOf(adminId))).rejects.toThrow(
+    // another org admin and the requester read it; a member who did not ask does not
+    await run("skills.get-change", { changeId }, ctxOf(adminId));
+    await run("skills.get-change", { changeId }, ctxOf(memberId));
+    await expect(run("skills.get-change", { changeId }, ctxOf(otherId))).rejects.toThrow(
       /inbox\.list/,
     );
     expect(op("skills.get-change").confirm).toBe("read");
