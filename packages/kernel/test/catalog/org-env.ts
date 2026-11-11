@@ -14,6 +14,8 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { expect } from "vitest";
 import { putTemplateVersionIn } from "../../src/agents/templates.js";
@@ -23,6 +25,7 @@ import {
   skillOf,
 } from "../../src/catalog/catalog-content.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
+import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -206,6 +209,13 @@ export async function startOrgEnv(
 
 /** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
+  // A scope change of the previous test (a share switch, an update) enqueued a scope sync after
+  // its commit. Left running, it holds catalog_items FOR SHARE and then reads the switches while
+  // the TRUNCATE below holds the switches and waits for catalog_items: a deadlock PostgreSQL only
+  // breaks after deadlock_timeout (1 s), and a sync still queued would run into the next test.
+  const scope = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
+  await scope.drain(true);
+  await waitFor(async () => (await scope.getActiveCount()) === 0, 30_000, "idle scope syncs");
   await truncateTables(
     env.db,
     "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_org_switches, capybara.catalog_item_scope_orgs, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.platform_skill_versions, capybara.platform_skills, capybara.platform_agent_template_versions, capybara.platform_agent_templates, capybara.platform_connector_templates, capybara.platform_theme_versions, capybara.platform_themes, capybara.component_scope_orgs, capybara.component_org_switches, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
