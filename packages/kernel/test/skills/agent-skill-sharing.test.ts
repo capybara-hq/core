@@ -640,6 +640,27 @@ describe("version proposals on a shared skill", () => {
     expect((await requestRow(out.requestId)).status).toBe("cancelled");
     expect(await keysUnder(prefix)).toEqual([]);
   });
+
+  it("the org skill deleted while a proposal is pending: cancelled, trial reverted, draft deleted", async () => {
+    const { agentId, skillId } = await sharedByMember();
+    const v1 = await versionOf(skillId, 1);
+    const conv = await createConv(env.mem, agentId);
+    const out = await svc.register(actor(agentId, env.memId, conv), zipOf("notes", "V2."));
+    if (out.kind !== "proposed") throw new Error("expected a proposal");
+    const prefix = (await requestRow(out.requestId)).object_prefix;
+    expect(await keysUnder(prefix)).toHaveLength(1);
+    const res = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/skills/${skillId}`,
+    });
+    expect(res.statusCode, res.body).toBe(204);
+    expect((await requestRow(out.requestId)).status).toBe("cancelled");
+    // the trial leaves the proposing conversation (the skill is gone, so nothing replaces it)
+    expect((await lastCatalog(conv))?.skills.map((s) => s.source)).toEqual([]);
+    expect(await keysUnder(prefix)).toEqual([]);
+    // the skill's own version files stay (soft delete)
+    expect(await keysUnder(v1.object_prefix)).toHaveLength(1);
+  });
 });
 
 describe("version proposals on a promoted shared skill", () => {

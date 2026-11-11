@@ -13,18 +13,27 @@ import {
   SKILL_PACKAGE_CONTENT_TYPE,
   skillFilesPrefix,
 } from "../conversations/attachments.service.js";
+import { EventLog } from "../conversations/event-log.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { notifySharedUpdate } from "../inbox/org-notices.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
+import {
+  type CancelledDrafts,
+  type ConversationCatalogDeps,
+  cancelRequestIn,
+} from "./conversation-catalog.js";
 import {
   readSkillPackage,
   type SkillPackageFile,
@@ -522,7 +531,13 @@ export class SkillsService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** The owner's new versions of a skill it promoted go to the platform row (ruling P3-4). */
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
-  ) {}
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {
+    this.catalogDeps = { db, log, eventLog };
+  }
+
+  private readonly catalogDeps: ConversationCatalogDeps;
 
   /**
    * Writes a package's files where its version will live: for a new version of a skill the org
@@ -1246,7 +1261,9 @@ export class SkillsService {
   /**
    * In the caller's transaction (`mandatory`: the caller holds the org row lock and checked
    * `skills.manage`), soft-deletes an org-scope skill of the org: what {@link softDelete} writes
-   * (audit `skill.deleted`); missing or deleted -> `skill.not_found`. The owner delete of a
+   * (audit `skill.deleted`); missing or deleted -> `skill.not_found`. Its pending version
+   * proposals are cancelled in the same transaction (trials reverted; drafts deleted and events
+   * published after the commit). The owner delete of a
    * promoted skill (`OwnedItems.deleteSkill`) calls it after its platform row was dealt with.
    */
   @Transactional({ propagation: "mandatory" })
@@ -1267,6 +1284,26 @@ export class SkillsService {
       .returning(["name"])
       .executeTakeFirst();
     if (!r) throw notFound();
+    // its pending version proposals go with it: cancelled, their trials reverted; after the
+    // commit the events are published and the drafts deleted (a share request has no draft)
+    const pending = await this.db
+      .selectFrom("skill_change_requests")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("skill_id", "=", skillId)
+      .where("kind", "=", "version")
+      .where("status", "=", "pending")
+      .orderBy("created_at")
+      .forUpdate()
+      .execute();
+    const cancelled: CancelledDrafts = { prefixes: [], seqs: [] };
+    for (const p of pending) {
+      await cancelRequestIn(this.catalogDeps, p, cancelled, {
+        actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        reason: "skill_deleted",
+      });
+    }
     await audit(this.db.db, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1275,6 +1312,18 @@ export class SkillsService {
       target: skillId,
       detail: { name: r.name, ...auditDetail },
     });
+    if (pending.length > 0) {
+      afterCommit(async () => {
+        for (const [conv, seq] of cancelled.seqs) await this.eventLog.notify(conv, seq);
+        for (const prefix of cancelled.prefixes) {
+          try {
+            await this.storage.kernel(orgId).deletePrefix(prefix);
+          } catch (err) {
+            this.log.warn("skill draft cleanup failed", { orgId, prefix, err });
+          }
+        }
+      });
+    }
   }
 }
 
