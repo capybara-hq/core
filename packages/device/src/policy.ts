@@ -57,7 +57,7 @@ export function implicitWritePaths(home: string = homedir()): string[] {
 }
 
 /** True when the allowlist entry `pattern` admits every host `host` names (`host` may be a wildcard). */
-function covers(pattern: string, host: string): boolean {
+export function covers(pattern: string, host: string): boolean {
   if (pattern === host) return true;
   // `*.x.com` admits `a.x.com` and `*.a.x.com`, never the apex `x.com`.
   return pattern.startsWith("*.") && host.endsWith(pattern.slice(1));

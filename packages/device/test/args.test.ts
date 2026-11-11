@@ -32,6 +32,20 @@ describe("parseCommandLine", () => {
       key: "cpu",
       value: "2",
     });
+    expect(parseCommandLine(["policy", "add", "allowedDomains", "a.com"])).toEqual({
+      command: "policy",
+      action: "add",
+      key: "allowedDomains",
+      value: "a.com",
+    });
+    expect(parseCommandLine(["policy", "remove", "allowedDomains", "a.com"])).toEqual({
+      command: "policy",
+      action: "remove",
+      key: "allowedDomains",
+      value: "a.com",
+    });
+    expect(() => parseCommandLine(["policy", "add", "allowedDomains"])).toThrow(UsageError);
+    expect(() => parseCommandLine(["policy", "remove", "a", "b", "c"])).toThrow(UsageError);
     expect(parseCommandLine(["service", "install"])).toEqual({
       command: "service",
       action: "install",
