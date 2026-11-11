@@ -76,6 +76,19 @@ export type PlatformInboxItem =
       notice: PlatformNoticeView;
     };
 
+/** Every {@link PlatformInboxItem} type, in the order the admin overview lists them. */
+export const PLATFORM_INBOX_TYPES = [
+  "catalog_request",
+  "permission_confirmation",
+  "org_upload_pending",
+  "scope_sync_failed",
+  "platform_migration",
+  "ownership_transferred",
+] as const satisfies readonly PlatformInboxItem["type"][];
+
+/** How many items of each type wait: every type, zeros included. */
+export type PlatformInboxCounts = Record<PlatformInboxItem["type"], number>;
+
 /** An open platform notice (`platform_notices`, kind `ownership_transferred`). */
 export interface PlatformNoticeView {
   id: string;
@@ -86,12 +99,14 @@ export interface PlatformNoticeView {
 
 /**
  * `GET /admin/inbox`: newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}; `truncated`: more;
- * `total`: how many items wait in all (also `GET /admin/inbox/count`).
+ * `total`: how many items wait in all (also `GET /admin/inbox/count`); `byType`: `total` per
+ * type, counted over everything waiting (not the listed window).
  */
 export interface PlatformInboxView {
   items: PlatformInboxItem[];
   truncated: boolean;
   total: number;
+  byType: PlatformInboxCounts;
 }
 
 /**
@@ -180,10 +195,18 @@ export class PlatformInboxService {
             ? 1
             : 0,
     );
-    const total =
-      requestCount + pending.length + failureCount + (run === null ? 0 : 1) + noticeCount;
+    const orgUploads = pending.filter((i) => i.owner.kind === "org").length;
+    const byType: PlatformInboxCounts = {
+      catalog_request: requestCount,
+      permission_confirmation: pending.length - orgUploads,
+      org_upload_pending: orgUploads,
+      scope_sync_failed: failureCount,
+      platform_migration: run === null ? 0 : 1,
+      ownership_transferred: noticeCount,
+    };
+    const total = Object.values(byType).reduce((a, b) => a + b, 0);
     const items = all.slice(0, PLATFORM_INBOX_MAX_ITEMS);
-    return { items, truncated: total > items.length, total };
+    return { items, truncated: total > items.length, total, byType };
   }
 
   /**

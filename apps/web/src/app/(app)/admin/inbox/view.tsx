@@ -9,6 +9,7 @@ import {
   DateTime,
   InboxPage,
   KeyValue,
+  LinkButton,
   Stack,
   StatusMark,
   Text,
@@ -17,7 +18,7 @@ import {
   versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -25,6 +26,7 @@ import { useRouter } from "../../../../i18n/navigation";
 import {
   dismissPlatformNotice,
   type PlatformInboxItem,
+  type PlatformInboxType,
   type PlatformInboxView,
   type PlatformNotice,
   platformInboxHref,
@@ -50,38 +52,46 @@ import NotFound from "../../not-found";
  * failed scope syncs, a platform components migration run that failed plugins or is stuck, org
  * uploads waiting in 待确认 and shared items now owned by the platform (phase 3). Nothing is
  * decided here: the selected item's 前往处理 opens the page where it is acted on; a transfer is a
- * notice, which 知道了 dismisses for every super admin. From
+ * notice, which 知道了 dismisses for every super admin. `type` (the overview's per-type rows,
+ * `?type=`) lists only that type, filtered on the cached list, with a link back to all. From
  * the query cache (the layout prefetched the inbox on a first load).
  */
-export default function AdminInboxView() {
+export default function AdminInboxView({ type = null }: { type?: PlatformInboxType | null }) {
   const gate = useAdmin();
   if (gate.kind === "pending") return null;
   if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
-  return <AdminInboxRead />;
+  return <AdminInboxRead type={type} />;
 }
 
-function AdminInboxRead() {
+function AdminInboxRead({ type }: { type: PlatformInboxType | null }) {
   const read = usePageQuery(adminInboxQuery());
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
-  return <AdminInbox inbox={read.kind === "ready" ? read.data : null} />;
+  return <AdminInbox inbox={read.kind === "ready" ? read.data : null} type={type} />;
 }
 
 type Translate = ReturnType<typeof useTranslations>;
 
 function AdminInbox({
   inbox,
+  type,
 }: {
   /** `null` while it loads. */
   inbox: PlatformInboxView | null;
+  /** Only this type is listed (null: all). */
+  type: PlatformInboxType | null;
 }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.inbox");
+  const tt = useTranslations("admin.overview.attention");
   const locale = useLocale();
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const rows = inbox?.items ?? [];
+  const rows = useMemo(
+    () => (inbox?.items ?? []).filter((i) => type === null || i.type === type),
+    [inbox, type],
+  );
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((i) => i.id === activeId) ?? rows[0];
   // Nothing while the inbox loads (not "0 pending")
@@ -110,10 +120,14 @@ function AdminInbox({
       cell: (item) => <DateTime value={item.createdAt} />,
     },
   ];
-  // Dismissing a platform notice changes only the inbox and its count
+  // Dismissing a platform notice changes the inbox, its count and the overview's total
   const dismiss = useAppMutation({
     fn: (id: string) => dismissPlatformNotice(id),
-    invalidates: () => [keys.deployment().adminInbox(), keys.deployment().adminInboxCount()],
+    invalidates: () => [
+      keys.deployment().adminInbox(),
+      keys.deployment().adminInboxCount(),
+      keys.deployment().adminOverview(),
+    ],
   });
   const open = (item: PlatformInboxItem): ActionRowProps =>
     item.type === "ownership_transferred"
@@ -156,7 +170,8 @@ function AdminInbox({
       header={{
         ...header,
         description: t("description"),
-        count: `${inbox.total}`,
+        // filtered: the shown items (each type's items are all listed unless truncated)
+        count: `${type === null ? inbox.total : (inbox.byType[type] ?? rows.length)}`,
       }}
       {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
       list={
@@ -183,6 +198,16 @@ function AdminInbox({
         : {})}
     >
       <Stack gap={12}>
+        {type !== null && (
+          <Stack direction="row" gap={8} align="center">
+            <Text variant="small" tone="muted">
+              {t("filtered", { type: tt(`inboxTypes.${type}`) })}
+            </Text>
+            <LinkButton href="/admin/inbox" density="dense">
+              {t("clearFilter")}
+            </LinkButton>
+          </Stack>
+        )}
         {inbox.truncated && (
           <Text variant="small" tone="warn">
             {t("truncated")}

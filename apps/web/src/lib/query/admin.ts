@@ -1,9 +1,13 @@
 import {
   type DeploymentSettingsPatch,
+  getAdminAttention,
+  getAdminHealth,
   getAdminOverview,
+  getAdminUsage,
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
+  listPlatformAudit,
 } from "../admin";
 import {
   getAdminExtension,
@@ -30,9 +34,49 @@ import { keys } from "./keys";
 
 const d = () => keys.deployment();
 
-/** The overview's four numbers. */
+/** The overview's numbers (`{ orgs, accounts, attentionTotal }`). */
 export const adminOverviewQuery = () =>
   defineQuery({ key: d().adminOverview(), fn: () => getAdminOverview(), freshness: "deployment" });
+
+/**
+ * The overview's 待处理 lists (extensions, plugin updates, model providers). Not prefetched: it
+ * may wait on a provider's model list, so its section draws its own skeleton.
+ */
+export const adminAttentionQuery = () =>
+  defineQuery({
+    key: d().adminAttention(),
+    fn: () => getAdminAttention(),
+    freshness: "deployment",
+  });
+
+/**
+ * The overview's 运行状况 (replicas by role, queues, connections). Moves on its own, so `live`;
+ * the section polls it every 30 s while the page shows. Not prefetched: its section draws its
+ * own skeleton.
+ */
+export const adminHealthQuery = () =>
+  defineQuery({ key: d().adminHealth(), fn: () => getAdminHealth(), freshness: "live" });
+
+/**
+ * The overview's 用量 (runs, tokens and estimated cost per day, the org ranking) in the reader's
+ * zone `tz`, which the key holds. Not prefetched: the kernel may take seconds on a cold cache, so
+ * its section draws its own skeleton; the header's 近 7 天运行 reads the same query.
+ */
+export const adminUsageQuery = (tz: string) =>
+  defineQuery({ key: d().adminUsage(tz), fn: () => getAdminUsage(tz), freshness: "deployment" });
+
+/**
+ * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. Its
+ * class is `deployment`; the platform writes the console makes (settings, accounts, marketplaces,
+ * plugins and components, extensions, models) list `keys.deployment().platformAuditAll()` in
+ * their invalidations, so the log shows the action at once; writes made elsewhere show within 30 s.
+ */
+export const platformAuditQuery = (after?: string) =>
+  defineQuery({
+    key: d().platformAudit(after),
+    fn: () => listPlatformAudit(after),
+    freshness: "deployment",
+  });
 
 /**
  * The super admin's inbox (`{ items, truncated }`): requests, permission confirmations, failed
@@ -84,6 +128,7 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
   ]);
   return [
     keys.deployment().adminModels(),
+    keys.deployment().platformAuditAll(),
     ...(patch.orgCreation !== undefined ? [keys.account("self").me()] : []),
     // the platform default theme: the themes list marks it (every org's reads: `invalidatePlatformTheme`)
     ...(patch.uiTheme !== undefined ? [keys.deployment().components("theme")] : []),
@@ -156,6 +201,7 @@ export const extensionChangeKeys = (orgId: string | null): (readonly unknown[])[
   keys.deployment().adminOverview(),
   keys.deployment().adminInbox(),
   keys.deployment().adminInboxCount(),
+  keys.deployment().platformAuditAll(),
   ...(orgId === null ? [] : [keys.org(orgId).orgExtensions(), ...orgExtensionChangeKeys(orgId)]),
 ];
 

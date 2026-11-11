@@ -132,6 +132,9 @@
       "already_completed": "Setup has already been completed.",
       "token_invalid": "The setup token is missing or invalid."
     },
+    "admin": {
+      "usage_unavailable": "The usage figures took too long to compute. Try again in a moment."
+    },
     "agent": {
       "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
       "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
@@ -3328,6 +3331,7 @@
       "group": "Admin",
       "overview": "Overview",
       "inbox": "Inbox",
+      "audit": "Audit log",
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
@@ -3342,13 +3346,151 @@
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
-      "noConversations": "Super admins cannot read conversations.",
       "metrics": {
-        "extensions": "Extensions needing action",
-        "catalogRequests": "Pending catalog requests",
+        "attention": "Needs attention",
         "orgs": "Organizations",
-        "accounts": "Accounts"
-      }
+        "accounts": "Accounts",
+        "runs7d": "Runs, last 7 days"
+      },
+      "footnote": "Super admins cannot read conversations; the usage above holds totals only.",
+      "attention": {
+        "title": "Needs attention",
+        "empty": "Nothing needs attention.",
+        "failed": "Could not load what needs attention.",
+        "unavailable": "Unavailable right now",
+        "more": "+{n} more",
+        "viewInbox": "Open inbox",
+        "groups": {
+          "inbox": "Inbox",
+          "extensions": "Extensions",
+          "updates": "Plugin updates",
+          "providers": "Model providers"
+        },
+        "inboxTypes": {
+          "catalog_request": "Catalog requests",
+          "permission_confirmation": "Permission confirmations",
+          "scope_sync_failed": "Scope sync failures",
+          "platform_migration": "Migration needs a look",
+          "ownership_transferred": "Ownership transfers",
+          "org_upload_pending": "Org uploads to confirm"
+        },
+        "reasons": {
+          "missingConfig": "Deployment config missing",
+          "invalidConfig": "Config invalid",
+          "load_failed": "Failed to load",
+          "approval": "Permissions to approve",
+          "dependency": "Dependency missing",
+          "conflict": "Conflict",
+          "converging": "Converging",
+          "legacy_format": "Needs repackaging"
+        },
+        "problems": {
+          "list_failed": "Model list failed",
+          "no_chat_model": "No usable chat model"
+        },
+        "retry": "Retry"
+      },
+      "health": {
+        "title": "Health",
+        "failed": "Could not load health.",
+        "unavailable": "Unavailable right now",
+        "stale": "The last refresh failed; showing the data from <time></time>.",
+        "retry": "Retry",
+        "groups": {
+          "kernel": "Kernel",
+          "queues": "Queues",
+          "connections": "Connections"
+        },
+        "kernel": {
+          "version": "Version",
+          "replicas": "Replicas",
+          "mixedVersions": "Replicas report different versions (rolling upgrade?)",
+          "replicaList": "Replicas ({n})"
+        },
+        "roles": {
+          "api": "api",
+          "worker": "worker",
+          "gateway": "gateway"
+        },
+        "noReplicas": {
+          "api": "No api replica online: the API cannot be reached",
+          "worker": "No worker replica online: runs will not start",
+          "gateway": "No gateway replica online: channel long connections will not be held"
+        },
+        "replicaColumns": {
+          "id": "Replica",
+          "roles": "Roles",
+          "version": "Version",
+          "startedAt": "Started"
+        },
+        "queueColumns": {
+          "name": "Queue",
+          "waiting": "Waiting",
+          "active": "Active",
+          "delayed": "Delayed",
+          "failedLastDay": "Failed in 24 h"
+        },
+        "queues": {
+          "runs": "Runs",
+          "subagentRuns": "Sub-agent runs",
+          "channels": "Channels",
+          "maintenance": "Maintenance",
+          "pluginScope": "Plugin scope sync",
+          "titles": "Titles",
+          "usageReport": "Usage reports",
+          "evals": "Evals"
+        },
+        "connections": {
+          "channels": "Channels",
+          "devices": "Devices",
+          "sandboxes": "Sandboxes",
+          "byProvider": "By provider"
+        },
+        "channelParts": {
+          "online": "Online",
+          "offline": "Offline",
+          "webhook": "Webhook",
+          "disabled": "Disabled",
+          "error": "Error"
+        },
+        "deviceParts": {
+          "online": "Online",
+          "local": "Local"
+        },
+        "sandboxParts": {
+          "running": "Running",
+          "suspended": "Suspended"
+        }
+      },
+      "audit": {
+        "title": "Recent platform activity",
+        "viewAll": "View all",
+        "failed": "Could not load platform activity."
+      },
+      "usage": {
+        "title": "Usage · last 7 days",
+        "estimated": "Costs are estimates",
+        "failed": "Could not load usage.",
+        "chart": "Usage over the last 7 days",
+        "runs": "Runs",
+        "tokens": "Tokens",
+        "estimate": "est. {cost}",
+        "unpriced": "Not priced",
+        "cost": "Est. cost",
+        "empty": "No runs in the last 7 days.",
+        "total": "7-day total: Runs {runs} · Tokens {tokens} · Est. cost {cost}",
+        "totalPartial": "{total} <link></link>",
+        "costPartial": "(some models have no price and are not counted)",
+        "ranking": {
+          "title": "Top organizations",
+          "org": "Organization",
+          "runs": "Runs",
+          "tokens": "Tokens",
+          "cost": "Est. cost",
+          "others": "{n, plural, one {# other organization} other {# other organizations}}"
+        }
+      },
+      "partial": "The number needing attention leaves out sources that could not be read."
     },
     "inbox": {
       "title": "Inbox",
@@ -3360,6 +3502,8 @@
       "pendingCount": "{n} pending",
       "inspectorTitle": "Details",
       "truncated": "Only the newest items are shown. Handle some to see the rest.",
+      "filtered": "Showing only: {type}",
+      "clearFilter": "Show all",
       "columns": {
         "item": "Item",
         "time": "Time"
@@ -3432,6 +3576,67 @@
         "dismiss": "Got it",
         "view": "View",
         "dismissed": "Dismissed."
+      }
+    },
+    "audit": {
+      "title": "Audit log",
+      "description": "Platform-level actions, newest first. Actions inside an org are not listed here.",
+      "listLabel": "Platform actions",
+      "empty": "No platform actions yet.",
+      "loadMore": "Load more",
+      "columns": {
+        "time": "Time",
+        "actor": "Actor",
+        "action": "Action",
+        "target": "Target"
+      },
+      "system": "System",
+      "deletedAccount": "Deleted account",
+      "viaAgent": "Through an agent",
+      "viaToken": "Personal token",
+      "actions": {
+        "accountCreated": "Created an account",
+        "accountUpdated": "Updated an account",
+        "identityLinked": "Linked an external identity",
+        "identityVerified": "Verified an external identity",
+        "identityUnlinked": "Unlinked an external identity",
+        "deploymentSettingsUpdated": "Changed the deployment settings",
+        "bootstrapCompleted": "Set up the bootstrap plugins",
+        "deploymentSetupCompleted": "Completed the deployment setup",
+        "marketplaceAdded": "Added a marketplace",
+        "marketplaceUpdated": "Updated a marketplace",
+        "marketplaceRemoved": "Removed a marketplace",
+        "marketplaceRefreshed": "Refreshed a marketplace",
+        "catalogImported": "Imported a plugin",
+        "catalogPluginStaged": "Staged a plugin package for review",
+        "catalogRemoved": "Removed a plugin",
+        "catalogScopeChanged": "Changed a plugin's scope",
+        "catalogShownChanged": "Changed whether a plugin is shown to orgs",
+        "catalogUploadConfirmed": "Confirmed an org's plugin upload",
+        "catalogUploadRejected": "Rejected an org's plugin upload",
+        "catalogUploadWithdrawn": "Withdrew an org's plugin upload",
+        "catalogOwnershipTransferred": "Moved a shared item to the platform",
+        "pluginPlatformUpdated": "Updated a platform plugin",
+        "pluginPlatformUpdateFailed": "A platform plugin update failed",
+        "componentScopeChanged": "Changed a component's scope",
+        "componentShownChanged": "Changed whether a component is shown to orgs",
+        "componentVersionUploaded": "Uploaded a new component version",
+        "componentRemoved": "Removed a component",
+        "extensionInstalled": "Installed an extension",
+        "extensionUninstalled": "Uninstalled an extension",
+        "extensionEnabled": "Turned on an extension",
+        "extensionDisabled": "Turned off an extension",
+        "extensionInstallSourceChanged": "Changed an extension's install source",
+        "extensionPackageUploaded": "Uploaded an extension package",
+        "extensionPermissionsApproved": "Confirmed an extension's permissions",
+        "extensionPermissionsRestored": "Restored an extension's permissions",
+        "extensionPermissionDenied": "An extension call was denied a permission",
+        "extensionDeploymentConfigUpdated": "Changed an extension's deployment config",
+        "extensionConfigCleared": "Cleared an extension's deployment config",
+        "modelPriceUpdated": "Changed a model price",
+        "modelPriceDeleted": "Deleted a model price",
+        "modelPurposeMapped": "Changed a purpose's default model",
+        "modelDisabledSet": "Changed the models switched off on the platform"
       }
     },
     "accounts": {

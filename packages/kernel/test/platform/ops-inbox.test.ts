@@ -376,6 +376,18 @@ describe("the platform inbox and pending permissions (super admin)", () => {
       }),
     );
     expect(out.total).toBeGreaterThanOrEqual(1);
+    // the console's per-type counts, every type present, summing to total
+    const byType = (out as unknown as { byType: Record<string, number> }).byType;
+    expect(Object.keys(byType).sort()).toEqual([
+      "catalog_request",
+      "org_upload_pending",
+      "ownership_transferred",
+      "permission_confirmation",
+      "platform_migration",
+      "scope_sync_failed",
+    ]);
+    expect(byType.ownership_transferred).toBeGreaterThanOrEqual(1);
+    expect(Object.values(byType).reduce((a, b) => a + b, 0)).toBe(out.total);
     expectNoSecrets(out);
   });
 
@@ -398,9 +410,19 @@ describe("the platform inbox and pending permissions (super admin)", () => {
       },
     });
     const items = Array.from({ length: PLATFORM_INBOX_MAX_ITEMS }, (_, n) => notice(n));
-    const spy = vi
-      .spyOn(env.k.app.get(PlatformInboxService), "list")
-      .mockResolvedValue({ items, truncated: true, total: PLATFORM_INBOX_MAX_ITEMS + 30 });
+    const spy = vi.spyOn(env.k.app.get(PlatformInboxService), "list").mockResolvedValue({
+      items,
+      truncated: true,
+      total: PLATFORM_INBOX_MAX_ITEMS + 30,
+      byType: {
+        catalog_request: 0,
+        permission_confirmation: 0,
+        org_upload_pending: 0,
+        scope_sync_failed: 0,
+        platform_migration: 0,
+        ownership_transferred: PLATFORM_INBOX_MAX_ITEMS + 30,
+      },
+    });
     try {
       const out = (await run("inbox.platform-list", {}, rootId, "superAdmin")) as Rows & {
         truncated: boolean;
@@ -409,6 +431,7 @@ describe("the platform inbox and pending permissions (super admin)", () => {
       };
       expect(out).toMatchObject({
         total: PLATFORM_INBOX_MAX_ITEMS + 30,
+        byType: expect.objectContaining({ ownership_transferred: PLATFORM_INBOX_MAX_ITEMS + 30 }),
         listed: PLATFORM_INBOX_MAX_ITEMS,
         truncated: true,
         otherOrgItems: 0,

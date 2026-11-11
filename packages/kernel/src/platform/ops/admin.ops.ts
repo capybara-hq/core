@@ -1,20 +1,21 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { DeploymentSettingsBody, PurposeParams } from "../../admin/admin.schemas.js";
-import { CatalogRequestsService } from "../../catalog/requests.service.js";
+import { AuditListQuery } from "../../admin/audit.schemas.js";
+import { AdminHealthService } from "../../admin/health.service.js";
+import { UsageQuery } from "../../admin/overview.schemas.js";
+import { type AdminAttention, AdminOverviewService } from "../../admin/overview.service.js";
+import { PlatformAuditService } from "../../admin/platform-audit.service.js";
+import { AdminUsageService } from "../../admin/usage.service.js";
 import { ApiError } from "../../errors.js";
-import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
-import { extensionNeedsAction } from "../../extensions/permission-view.js";
 import { ExtensionRegistry } from "../../extensions/registry.js";
-import { AccountsService } from "../../identity/accounts.js";
 import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/settings.js";
 import { ModelDisabledPatch, ModelProviderParams } from "../../models/enablement.controller.js";
 import { ModelEnablement } from "../../models/enablement.js";
 import { MODEL_PRICE_PUT, PricesService } from "../../models/prices.js";
 import { purposeTargetOf } from "../../models/purposes.controller.js";
 import { ModelPurposesService, PURPOSE_PUT, withDeclaredByNames } from "../../models/purposes.js";
-import { OrgsService } from "../../orgs/orgs.service.js";
 import { ProviderRegistry } from "../../runtime/providers.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation } from "../operation.js";
@@ -45,8 +46,45 @@ const ProviderId = ModelProviderParams.shape.provider.describe(
 const refOf = (t: { model: { provider: string; model: string } } | null) =>
   t === null ? null : `${t.model.provider}/${t.model.model}`;
 
+/** The attention lists as compact rows (`next`: the admin console page that fixes it). */
+function attentionRows(a: AdminAttention) {
+  return {
+    items: [
+      ...a.extensions.map((e) => ({
+        kind: "extension" as const,
+        id: e.name,
+        name: localized(e.displayName, e.name).en,
+        state: e.status,
+        reason: e.reason,
+        next: `Fix it on the extension's page in the admin console (/admin/extensions/${e.name}).`,
+      })),
+      ...a.updates.map((u) => ({
+        kind: "update" as const,
+        id: u.itemId,
+        name: localized(u.displayName, u.name).en,
+        state: "newer_in_marketplace",
+        reason: `${u.version} -> ${u.marketplaceVersion}`,
+        next: `Upgrade it on the plugin's page in the admin console (/admin/plugins/${u.itemId}); a newer version is never imported automatically.`,
+      })),
+      ...a.providers.map((p) => ({
+        kind: "provider" as const,
+        id: p.plugin,
+        name: localized(p.displayName, p.plugin).en,
+        state: p.problem === "list_failed" ? "error" : "ok",
+        reason: p.problem,
+        next:
+          p.problem === "list_failed"
+            ? `Check the provider's deployment config and connection on its extension page (/admin/extensions/${p.plugin}); the models page (/admin/models) shows the list.`
+            : "The provider lists no chat model that is switched on: switch one on in the admin console (/admin/models) or check the provider's config.",
+      })),
+    ],
+    more: a.more,
+    unavailable: a.unavailable,
+  };
+}
+
 /**
- * Admin console operations of the `Platform` tool (spec §14.2): the dashboard totals, the
+ * Admin console operations of the `Platform` tool (spec §14.2): the dashboard numbers and attention lists, the platform audit log, the
  * deployment settings, and the platform's models (the model catalog with the platform's disabled
  * list, the price table, the default model per purpose). Super admin only, through their own
  * private agent. The per-org overrides of models and purposes are the org's own pages.
@@ -55,10 +93,6 @@ const refOf = (t: { model: { provider: string; model: string } } | null) =>
 export class AdminOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
-    @Inject(ExtensionAdmin) private readonly extensions: ExtensionAdmin,
-    @Inject(OrgsService) private readonly orgs: OrgsService,
-    @Inject(AccountsService) private readonly accounts: AccountsService,
-    @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
     @Inject(SettingsService) private readonly settings: SettingsService,
     @Inject(ProviderRegistry) private readonly providers: ProviderRegistry,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
@@ -67,6 +101,10 @@ export class AdminOperations implements OnModuleInit {
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
     @Inject(ThemesService) private readonly themes: ThemesService,
+    @Inject(PlatformAuditService) private readonly audit: PlatformAuditService,
+    @Inject(AdminOverviewService) private readonly overview: AdminOverviewService,
+    @Inject(AdminHealthService) private readonly health: AdminHealthService,
+    @Inject(AdminUsageService) private readonly usage: AdminUsageService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -80,26 +118,63 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.overview",
         description:
-          "The admin console's dashboard totals (super admin): extensions that need the super admin's action, catalog requests waiting for deployment, and the numbers of orgs and accounts.",
+          "The admin console's dashboard numbers (super admin): orgs, accounts and attentionTotal, everything waiting for a super admin (the platform inbox total plus the extensions, plugin updates and model providers admin.attention lists); partial is true when one of those lists could not be read right now (attentionTotal then leaves it out).",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/overview"],
         confirm: "read",
-        run: async () => {
-          const [plugins, orgs, accounts, catalogRequestsPending] = await Promise.all([
-            this.extensions.list(),
-            this.orgs.listAll(),
-            this.accounts.count(),
-            this.catalogRequests.countPendingDeployment(),
-          ]);
-          return {
-            extensionsNeedingAction: plugins.filter((p) => extensionNeedsAction(p.status)).length,
-            catalogRequestsPending,
-            orgs: orgs.length,
-            accounts,
-          };
-        },
+        run: () => this.overview.stats(),
+      }),
+      defineOperation({
+        id: "admin.attention",
+        description:
+          "What needs the super admin besides the platform inbox (super admin), one compact row each (kind, id, name, state, reason, next step): extensions (reason config, load_failed, approval, dependency, conflict, converging or legacy_format), platform plugins with a newer marketplace version (reason names both versions) and model providers (reason list_failed or no_chat_model). Each kind lists at most 20 rows; more counts the rest per kind. unavailable names a kind that could not be read right now (try again later). The platform inbox itself is inbox.platform-list.",
+        input: z.object({}).strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/overview/attention"],
+        confirm: "read",
+        run: async () => attentionRows(await this.overview.attention()),
+      }),
+      defineOperation({
+        id: "admin.health",
+        description:
+          'How the platform runs right now (super admin), to answer "is the worker up, is the run queue backing up": kernel.version; replicas (live kernel processes: id, roles, version, startedAt) and roles (live replicas per role: api serves requests, worker runs conversations and jobs, gateway holds channel and device connections; 0 workers means no run starts); queues (per kernel queue, e.g. cap-kernel-runs: waiting, active, delayed, failed and failedLastDay, counts only); channels (online, offline: active long connections no replica holds, webhook, disabled, error); devices (online / local); sandboxes (running, suspended, running per provider). unavailable names a source that did not answer (redis or database); its numbers are then null. Failure details are in the kernel logs, not here.',
+        input: z.object({}).strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/overview/health"],
+        confirm: "read",
+        run: () => this.health.read(),
+      }),
+      defineOperation({
+        id: "admin.usage",
+        description:
+          "What the platform used over the last 7 days (super admin): today and the 6 days before, as calendar days in tz (an IANA zone such as Asia/Shanghai; use the person's own zone). days has one entry per day, oldest first: runs (every run, sub-agent and eval replay runs included), tokens (input, output, cacheRead, cacheWrite of every model call, and embedding) and cost. cost is an estimate from the model prices the super admin entered (models.prices), in currency; it is null when tokens were used and none of them had a price, and costPartial is true when some tokens had no price (the costs then count only the priced ones). orgs lists the 10 orgs that used the most tokens (runs, tokens, cost each); otherOrgs sums the rest (count, runs, tokens, cost). Totals only: never per account, agent or conversation. The answer may be up to 5 minutes old. admin.usage_unavailable means the database took too long: try again later.",
+        input: UsageQuery.strict(),
+        example: { tz: "Asia/Shanghai" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/overview/usage"],
+        confirm: "read",
+        errors: [
+          {
+            code: "admin.usage_unavailable",
+            next: "The usage numbers took too long to compute; try again in a few minutes.",
+          },
+        ],
+        run: (input) => this.usage.week(input.tz),
+      }),
+      defineOperation({
+        id: "admin.audit",
+        description:
+          "The platform-level audit log (super admin), newest first: deployment settings, accounts, marketplaces, catalog imports and scope, extensions, model prices and purposes, setup. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details, and never an org's own events. limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
+        input: AuditListQuery.strict(),
+        example: { limit: 20 },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/audit"],
+        confirm: "read",
+        run: (input) => this.audit.list(input),
       }),
       defineOperation({
         id: "admin.settings",

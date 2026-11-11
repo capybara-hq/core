@@ -256,7 +256,7 @@ function ConfirmDialog({
   const danger = action === "revoke" || action === "disable";
   const update = useAppMutation({
     fn: (patch: AccountPatch) => updateAdminAccount(account.id, patch),
-    invalidates: () => [],
+    invalidates: () => [keys.deployment().platformAuditAll()],
   });
 
   const confirm = async () => {
@@ -325,10 +325,10 @@ function CreateDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid = login.trim() !== "" && password !== "" && displayName.trim() !== "";
-  // The overview counts the accounts.
+  // The overview counts the accounts; the audit log lists the creation.
   const create = useAppMutation({
     fn: createAdminAccount,
-    invalidates: () => [keys.deployment().adminOverview()],
+    invalidates: () => [keys.deployment().adminOverview(), keys.deployment().platformAuditAll()],
   });
 
   const submit = async () => {

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AdminModule } from "../admin/admin.module.js";
 import { AgentsModule } from "../agents/agents.module.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AppearanceModule } from "../catalog/appearance.service.js";
@@ -107,6 +108,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
 @Module({
   imports: [
     PlatformModule,
+    AdminModule,
     SkillsModule,
     AgentsModule,
     OrgsModule,
