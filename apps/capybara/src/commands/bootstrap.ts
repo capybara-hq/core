@@ -80,7 +80,7 @@ export async function runBootstrap(
     return 1;
   }
   const sha = bootstrapManifestSha256(manifest);
-  const pass = (carry?: BootstrapEntryResult[]) =>
+  const pass = (carry?: BootstrapEntryResult[], packages?: ReadonlyMap<string, Uint8Array>) =>
     withOpened(
       log,
       env,
@@ -94,6 +94,8 @@ export async function runBootstrap(
             dir,
             imports: cli.imports,
             ...(carry !== undefined && { carry }),
+            // What the first pass obtained is not downloaded again
+            ...(packages !== undefined && { packages }),
             // The first pass opens no object store a builtin entry's skills need: the second does
             deferBuiltin: carry === undefined,
           })
@@ -107,12 +109,15 @@ export async function runBootstrap(
     } catch (e) {
       if (!(e instanceof BootstrapFailedError) || e.requiredFailed) throw e;
       if (e.failures.length > 0) {
-        log.warn("bootstrap: optional plugins could not be installed yet; trying once more", {
-          failures: e.failures,
-        });
+        log.warn(
+          "bootstrap: optional or builtin plugins could not be installed yet; trying once more",
+          {
+            failures: e.failures,
+          },
+        );
       }
       try {
-        results = await pass(e.results);
+        results = await pass(e.results, e.packages);
       } catch (e2) {
         if (!(e2 instanceof BootstrapFailedError) || e2.requiredFailed) throw e2;
         for (const r of e2.results) io.stdout.write(entryLine(r));
@@ -120,7 +125,7 @@ export async function runBootstrap(
           io.stderr.write(`capybara: bootstrap: warning: ${f.name}: ${f.message}\n`);
         }
         io.stderr.write(
-          "capybara: bootstrap: warning: optional plugins could not be installed; the required ones are, so the deployment can serve. Nothing is recorded as done: the next bootstrap or start retries them\n",
+          "capybara: bootstrap: warning: optional or builtin plugins could not be installed; the required ones are, so the deployment can serve. Nothing is recorded as done: the next bootstrap or start retries them\n",
         );
         return 0;
       }

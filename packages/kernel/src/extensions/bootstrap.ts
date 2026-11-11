@@ -145,11 +145,14 @@ export class BootstrapFailedError extends Error {
    * the same start, so its record keeps `installed` instead of `kept`).
    * @param deferred the builtin entries a first pass skipped (`deferBuiltin`): not failures, the
    * later pass of the same start imports them.
+   * @param packages the packages this run obtained, by entry name (pass them as `packages` to the
+   * later pass of the same start, so nothing is downloaded twice).
    */
   constructor(
     readonly failures: BootstrapFailure[],
     readonly results: BootstrapEntryResult[] = [],
     readonly deferred: string[] = [],
+    readonly packages: ReadonlyMap<string, Uint8Array> = new Map(),
   ) {
     super(
       failures.length > 0
@@ -196,6 +199,13 @@ export interface BootstrapResolveOptions {
   log?: Pick<Logger, "warn">;
   /** The npm download (default {@link fetchNpmPackage}; tests replace it). */
   fetch?: typeof fetchNpmPackage;
+  /**
+   * Entries whose package failing to be obtained is that entry's failure only: the error goes into
+   * `failed` (by entry name) and the other entries are still obtained. Every other entry's failure
+   * throws, so nothing is written.
+   */
+  soft?: (e: BootstrapEntry) => boolean;
+  failed?: Map<string, ApiError>;
 }
 
 /**
@@ -203,7 +213,8 @@ export interface BootstrapResolveOptions {
  * file there has that sha512, else (a `source: "npm"` entry) downloaded from the npm registry and
  * verified against the pin (the packument's `dist.integrity` is not consulted). Throws an
  * {@link ApiError} naming the plugin for the first entry it cannot obtain
- * (`bootstrap.missing_file`, `bootstrap.download_failed`, `bootstrap.integrity_mismatch`).
+ * (`bootstrap.missing_file`, `bootstrap.download_failed`, `bootstrap.integrity_mismatch`), except
+ * for the `soft` entries (recorded in `failed`, left out of the result).
  */
 export async function resolveBootstrapPackages(
   manifest: BootstrapManifest,
@@ -218,11 +229,18 @@ export async function resolveBootstrapPackages(
   const where = o.dir !== undefined ? o.dir : "the bootstrap directory (config bootstrap.dir)";
   for (const e of manifest.plugins) {
     signal.throwIfAborted();
-    const found = offline.get(e.integrity);
-    if (found !== undefined) {
-      out.set(e.name, found);
-      continue;
+    try {
+      out.set(e.name, await obtain(e));
+    } catch (err) {
+      if (signal.aborted || !(err instanceof ApiError) || o.soft?.(e) !== true) throw err;
+      o.failed?.set(e.name, err);
     }
+  }
+  return out;
+
+  async function obtain(e: BootstrapEntry): Promise<Uint8Array> {
+    const found = offline.get(e.integrity);
+    if (found !== undefined) return found;
     if (e.source === "workspace") {
       throw new ApiError(
         "bootstrap.missing_file",
@@ -239,7 +257,7 @@ export async function resolveBootstrapPackages(
         signal,
         { expectedIntegrity: e.integrity },
       );
-      out.set(e.name, r.bytes);
+      return r.bytes;
     } catch (err) {
       if (signal.aborted) throw err;
       if (err instanceof IntegrityMismatchError) {
@@ -260,7 +278,6 @@ export async function resolveBootstrapPackages(
       );
     }
   }
-  return out;
 }
 
 /** The registry's origin, for messages (never its credentials or path). */
@@ -382,6 +399,11 @@ export class BootstrapService {
      * of being recorded as done.
      */
     deferBuiltin?: boolean;
+    /**
+     * Packages an earlier pass of the same start obtained ({@link BootstrapFailedError.packages});
+     * one whose sha512 still equals its entry's pin is used instead of obtaining it again.
+     */
+    packages?: ReadonlyMap<string, Uint8Array>;
     /** The plugin import a declarative entry (or an entry's catalog version) goes through. */
     imports: BootstrapImports;
   }): Promise<BootstrapResult> {
@@ -401,25 +423,45 @@ export class BootstrapService {
       // Another replica may have finished it while this one waited for the lock
       const done = await recorded();
       if (done) return done;
-      // Every package is obtained and checked before the first write
-      const files = await resolveBootstrapPackages(o.manifest, {
-        ...(o.dir !== undefined && { dir: o.dir }),
-        config: this.config(),
-        signal,
-        log: this.log,
-      });
+      const deferBuiltin = o.deferBuiltin === true;
+      const isDeferred = (e: BootstrapEntry) => deferBuiltin && e.builtin === true;
+      // Every package is obtained and checked before the first write (a deferred entry's by the
+      // later pass). The first pass refuses to write anything when one is missing or tampered;
+      // the later pass only fails that entry unless it is required.
+      const files = new Map<string, Uint8Array>();
+      const fetchFailed = new Map<string, ApiError>();
+      const toObtain: BootstrapEntry[] = [];
+      for (const e of o.manifest.plugins) {
+        if (isDeferred(e)) continue;
+        const kept = o.packages?.get(e.name);
+        if (kept !== undefined && integrityOf(kept) === e.integrity) files.set(e.name, kept);
+        else toObtain.push(e);
+      }
+      const obtained = await resolveBootstrapPackages(
+        { ...o.manifest, plugins: toObtain },
+        {
+          ...(o.dir !== undefined && { dir: o.dir }),
+          config: this.config(),
+          signal,
+          log: this.log,
+          ...(!deferBuiltin && { soft: (e: BootstrapEntry) => !e.required, failed: fetchFailed }),
+        },
+      );
+      for (const [name, bytes] of obtained) files.set(name, bytes);
       const handled = await this.lastRunNames();
       const results: BootstrapEntryResult[] = [];
       const failures: BootstrapFailure[] = [];
       const deferred: string[] = [];
       for (const e of o.manifest.plugins) {
         signal.throwIfAborted();
-        if (o.deferBuiltin === true && e.builtin === true) {
+        if (isDeferred(e)) {
           deferred.push(e.name);
           continue;
         }
         await this.warnIfHeld(e);
         try {
+          const fetchErr = fetchFailed.get(e.name);
+          if (fetchErr !== undefined) throw fetchErr;
           const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports);
           results.push(carried(r, o.carry));
         } catch (err) {
@@ -440,7 +482,7 @@ export class BootstrapService {
       }
       results.push(...(await this.clearRemoved(o.manifest)));
       if (failures.length > 0 || deferred.length > 0) {
-        throw new BootstrapFailedError(failures, results, deferred);
+        throw new BootstrapFailedError(failures, results, deferred, files);
       }
       signal.throwIfAborted();
       await this.recordDone(manifestSha256, results);
@@ -616,12 +658,13 @@ export class BootstrapService {
     return leftDisabled === undefined ? result : { ...result, leftDisabled };
   }
 
-  /** Whether a live (not deleted) catalog item has this name. */
+  /** Whether a live (not deleted) platform catalog item has this name. */
   private async hasLiveItem(name: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("catalog_items")
       .select("id")
       .where("name", "=", name)
+      .where("owner_org_id", "is", null)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     return row !== undefined;
@@ -632,6 +675,8 @@ export class BootstrapService {
    * offered to every org (scope `all`, which an org admin cannot switch off) and not disabled
    * (migration 0075 could leave a required plugin disabled); an entry that stops being required or
    * builtin is no longer builtin and keeps scope `all` (the admin may change it from then on).
+   * Only the platform item: an org-owned item of the same name (the entry then fails with
+   * `plugin.name_taken`) is never touched.
    */
   private async markBuiltin(name: string, builtin: boolean): Promise<void> {
     const touch = { updated_at: sql<Date>`now()` as unknown as Date };
@@ -646,6 +691,7 @@ export class BootstrapService {
           ...touch,
         })
         .where("name", "=", name)
+        .where("owner_org_id", "is", null)
         .where("deleted_at", "is", null)
         .where((eb) =>
           eb.or([eb("builtin", "=", false), eb("scope", "<>", "all"), eb("disabled", "=", true)]),
@@ -657,6 +703,7 @@ export class BootstrapService {
       .updateTable("catalog_items")
       .set({ builtin: false, ...touch })
       .where("name", "=", name)
+      .where("owner_org_id", "is", null)
       .where("deleted_at", "is", null)
       .where("builtin", "=", true)
       .execute();
@@ -757,6 +804,7 @@ export class BootstrapService {
       .selectFrom("catalog_items")
       .select("id")
       .where("name", "=", e.name)
+      .where("owner_org_id", "is", null)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     const installed = await this.ops.install(
@@ -841,6 +889,7 @@ export class BootstrapService {
       .updateTable("catalog_items")
       .set({ builtin: false, updated_at: sql<Date>`now()` as unknown as Date })
       .where("builtin", "=", true)
+      .where("owner_org_id", "is", null)
       .where("deleted_at", "is", null);
     if (names.length > 0) items = items.where("name", "not in", names);
     await items.execute();

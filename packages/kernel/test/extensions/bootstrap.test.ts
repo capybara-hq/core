@@ -785,6 +785,54 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
     ]);
   });
 
+  /** The object store (required) and a builtin skill plugin, as npm entries. */
+  const builtinFixture = async () =>
+    fixture(
+      [
+        { bytes: await packFake("fake-bootstrap-b") },
+        { bytes: await skillPkg("delta"), builtin: true },
+      ],
+      { source: "npm" },
+    );
+
+  it("two passes download each package once; a builtin entry only in the second pass", async () => {
+    const fx = await builtinFixture();
+    await serve(fx.packages);
+    const k = await boot(fx, { ...OBJECT_STORE_CONFIG, packages: { npmRegistry: reg?.url } });
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
+    expect(tarballs()).toEqual([
+      "/@test/plugin-fake-bootstrap-b/-/plugin-fake-bootstrap-b-0.1.0.tgz",
+      "/@test/plugin-delta/-/plugin-delta-1.0.0.tgz",
+    ]);
+  });
+
+  it("a builtin entry whose download fails in the second pass: the start continues, the run stays not done", async () => {
+    const fx = await builtinFixture();
+    // The registry has the object store only
+    await serve(fx.packages.filter((p) => p.name !== "@test/plugin-delta"));
+    const { logger, lines } = recordingLogger();
+    const k = await boot(
+      fx,
+      { ...OBJECT_STORE_CONFIG, packages: { npmRegistry: reg?.url } },
+      logger,
+    );
+    expect(k.port).toBeGreaterThan(0);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    expect((await installs()).map((r) => r.name)).toEqual(["fake-bootstrap-b"]);
+    const final = lines.find((l) => l.msg.includes("retried on the next start"));
+    expect(final?.fields?.failures).toEqual([
+      expect.objectContaining({
+        name: "delta",
+        required: false,
+        code: "bootstrap.download_failed",
+      }),
+    ]);
+  });
+
   it("a file of any name with the pinned sha512 is used; the registry is not asked", async () => {
     const fx = await npmFixture();
     for (const [i, p] of fx.packages.entries()) {
@@ -1045,6 +1093,71 @@ describe("a builtin entry", { timeout: 30_000 }, () => {
     expect(
       lines.some((l) => l.level === "error" && l.msg.includes("retried on the next start")),
     ).toBe(true);
+  });
+
+  it("without a configured object store: skipped by the first pass, failed by the second, the start continues", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    const { logger, lines } = recordingLogger();
+    // No extensionConfig: fake-bootstrap-b waits for its config, so no object store runs
+    const k = await boot(fx, {}, logger);
+    expect(k.port).toBeGreaterThan(0);
+    expect(k.app.get(StorageService).available).toBe(false);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    // Tried once, by the second pass
+    const failed = lines.filter((l) => l.msg.includes("a plugin could not be installed"));
+    expect(failed.map((l) => l.fields?.plugin)).toEqual(["delta"]);
+    expect(
+      lines.find((l) => l.msg.includes("retried on the next start"))?.fields?.failures,
+    ).toEqual([expect.objectContaining({ name: "delta", code: "storage.unavailable" })]);
+  });
+
+  it("an org-owned item named like the entry is never touched; the entry fails with plugin.name_taken", async () => {
+    await reset();
+    await db.insertInto("orgs").values({ id: "org-held", slug: "held", name: "Held" }).execute();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: "00000000-0000-4000-8000-0000000000bb",
+        name: "delta",
+        package_name: "@held/delta",
+        publisher: "Held",
+        description: "delta",
+        latest_version: "1.0.0",
+        created_by: null,
+        owner_org_id: "org-held",
+      })
+      .execute();
+    const before = await db
+      .selectFrom("catalog_items")
+      .select(["builtin", "scope", "disabled", "scope_version", "updated_at"])
+      .where("name", "=", "delta")
+      .executeTakeFirstOrThrow();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    const { logger, lines } = recordingLogger();
+    const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
+    expect(k.port).toBeGreaterThan(0);
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["builtin", "scope", "disabled", "scope_version", "updated_at"])
+        .where("name", "=", "delta")
+        .execute(),
+    ).toEqual([before]);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    expect(
+      lines.find((l) => l.msg.includes("retried on the next start"))?.fields?.failures,
+    ).toEqual([expect.objectContaining({ name: "delta", code: "plugin.name_taken" })]);
   });
 
   it("a builtin entry a super admin removed is imported again by the next run", async () => {

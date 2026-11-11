@@ -113,6 +113,8 @@ export class KernelLifecycle
   private unwatchConfig: (() => void) | undefined;
   /** What the first bootstrap pass did, carried into the second one. */
   private bootstrapCarry: BootstrapEntryResult[] | undefined;
+  /** The packages the first bootstrap pass obtained, so the second downloads nothing again. */
+  private bootstrapPackages: ReadonlyMap<string, Uint8Array> | undefined;
 
   constructor(
     @Inject(AccountsService) private readonly accounts: AccountsService,
@@ -335,12 +337,14 @@ export class KernelLifecycle
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,
         ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),
+        ...(this.bootstrapPackages !== undefined && { packages: this.bootstrapPackages }),
         deferBuiltin: !final,
       });
       return false;
     } catch (e) {
       if (e instanceof BootstrapFailedError && !e.requiredFailed) {
         this.bootstrapCarry = e.results;
+        this.bootstrapPackages = e.packages;
         if (e.failures.length === 0) {
           this.log.info(
             "bootstrap: builtin plugins are installed once the extensions have loaded",
@@ -350,12 +354,12 @@ export class KernelLifecycle
           );
         } else if (final) {
           this.log.error(
-            "bootstrap: optional plugins could not be installed; retried on the next start",
+            "bootstrap: optional or builtin plugins could not be installed; retried on the next start",
             { failures: e.failures },
           );
         } else {
           this.log.warn(
-            "bootstrap: optional plugins could not be installed yet; retried once the extensions have loaded",
+            "bootstrap: optional or builtin plugins could not be installed yet; retried once the extensions have loaded",
             { failures: e.failures },
           );
         }

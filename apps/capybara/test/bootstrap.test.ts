@@ -346,7 +346,7 @@ describe("capybara bootstrap when only an optional entry fails", () => {
     expect(r.stdout).not.toContain("notes 1.2.0");
     expect(r.stdout).not.toContain("Bootstrap done");
     expect(r.stderr).toContain("capybara: bootstrap: warning: notes: ");
-    expect(r.stderr).toContain("optional plugins could not be installed");
+    expect(r.stderr).toContain("optional or builtin plugins could not be installed");
     const raw = createDb(pg3.url, 1);
     try {
       const db = kernelDb(raw);

@@ -91,21 +91,31 @@ pass, before the extensions load. A plugin that must be builtin but ships skills
 skill authoring spec §5.7) cannot be imported in that pass. A manifest entry may therefore carry
 `builtin: true` (never together with `required: true`: a parse error):
 
-- The first pass skips it (`BootstrapService.run({ deferBuiltin: true })`): not a failure, but the
-  run is not recorded as done, so the start (and `capybara bootstrap`) runs the second pass, after
-  the extensions loaded, when the object store runs. That pass imports it.
+- The first pass skips it (`BootstrapService.run({ deferBuiltin: true })`), its package included:
+  not a failure, but the run is not recorded as done, so the start (and `capybara bootstrap`) runs
+  the second pass, after the extensions loaded, when the object store runs. That pass obtains and
+  imports it. The packages the first pass obtained are handed to the second
+  (`BootstrapFailedError.packages` -> `run({ packages })`), so nothing is downloaded twice. In the
+  second pass a package that cannot be obtained fails only its entry unless the entry is required
+  (the first pass still refuses to write anything when any package is missing or tampered).
 - On success its catalog item is builtin, like a required entry's (scope `all`, not disabled, no
   org switch).
 - A failure does not stop the start: logged like an optional entry, the run stays not done and the
   next start retries it (`capybara bootstrap` warns and exits 0).
 - Like a required entry it is always put back when missing: Ruling 5 (an optional plugin a super
   admin uninstalled stays uninstalled) does not apply; a declarative one whose catalog item a super
-  admin deleted is imported again by the next run. The install / upgrade / keep rules are the same
-  as for every entry (never downgraded).
+  admin deleted is imported again. Since this amendment the same holds for a required declarative
+  entry. "Put back" happens on a run that is not done (a changed manifest, or a run still
+  incomplete), not on every start: a done run reads nothing. The install / upgrade / keep rules are
+  the same as for every entry (never downgraded).
+- Only the platform catalog item of that name is marked builtin (or put back); an org-owned item of
+  the same name is never touched, and the entry fails with `plugin.name_taken`.
 - An extension entry's install record is not `required` (the super admin may still disable it on
   the deployment); only the catalog item is builtin.
 
 ## Not changed
 
-Manifest format, `bootstrap_runs`, the per-entry install / upgrade / keep rules, the advisory
-lock, `required` semantics, `check:bootstrap` and its network half, the marketplace pin.
+`bootstrap_runs`, the per-entry install / upgrade / keep rules, the advisory lock,
+`check:bootstrap` and its network half, the marketplace pin. The manifest format gained the
+optional `builtin` field and required declarative entries are now put back when missing (both in
+"Builtin entries" above); otherwise `required` keeps its meaning.
