@@ -592,6 +592,25 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
     expect(body.definition.skills.orgSkills).toEqual(["p1"]);
     expect(body.definition.skills.pinned).toEqual([]);
   });
+
+  it("a builtin plugin's skill shows ticked and disabled with the built-in badge and hint", async () => {
+    stubApi({
+      ...routes(),
+      [`GET ${ORG}/skills`]: () =>
+        json(200, {
+          skills: [
+            { ...orgSkill("g1", "skill-guide"), origin: "platform", builtin: true, plugin: "core" },
+          ],
+        }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const group = await screen.findByRole("region", { name: en.agents.form.orgSkillsLabel });
+    const box = await within(group).findByRole("checkbox", { name: /skill-guide/ });
+    expect(box).toHaveProperty("checked", true);
+    expect(box).toHaveProperty("disabled", true);
+    expect(within(group).getByText(en.agents.form.skillTag.builtin)).toBeTruthy();
+    expect(within(group).getByText(en.agents.form.builtinHint)).toBeTruthy();
+  });
 });
 
 describe("a platform skill switched off in the org (spec §5 rule 8)", () => {

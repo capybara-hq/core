@@ -204,6 +204,16 @@ agent skill has become an org skill, the existing chain applies.
   `packages/kernel/bootstrap.json` with `builtin: true` (startup bootstrap spec, "Builtin entries":
   imported once the extensions loaded, since skills need the object store; a failure does not stop
   the start), so it is a builtin platform skill in every org. Later core skills go into the same plugin.
+- Amended 2026-11-11 (maintainer decision): the skills of builtin catalog items (platform-owned,
+  `catalog_items.builtin`) that are on in the org are in **every agent's** skills catalog without
+  being selected (`skills/usable.ts` `builtinSkillIds`, added in `selectedSkills`, so the run-start
+  snapshot, `Skill`, a person's `/` invocation and the `/` menu agree). Listed only (name and
+  description), never pinned; ranking is unchanged (the agent's own skill of the same name, then
+  an org skill, then the platform skill), a skill also selected is listed once, a manual-only
+  version stays out of the model's catalog, and a skill off in the org (deployment disable, a
+  component switch) is absent. Old conversations keep their recorded snapshots; the next run start
+  records a new one with the usual "skills changed" reminder. The agent page shows these skills
+  ticked and disabled with a "Built-in" tag (the library list's `builtin: true`).
 - Content (English, Agent Skills format, `SKILL.md` under 500 lines / ~5000 tokens, detail in
   `references/`):
   - when to create a skill and when not to;

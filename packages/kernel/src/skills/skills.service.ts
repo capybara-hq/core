@@ -41,6 +41,7 @@ import {
   skillManifest,
 } from "./package.js";
 import {
+  builtinSkillIds,
   PLATFORM_SOURCE,
   platformSkillsOn,
   platformSource,
@@ -233,6 +234,11 @@ export interface SkillSummary {
    * selects this skill.
    */
   linkedIds?: string[];
+  /**
+   * In the library list only: a platform skill of a builtin plugin, in every agent's catalog
+   * without being selected (skill authoring spec §5.7). Absent otherwise.
+   */
+  builtin?: true;
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -1018,7 +1024,8 @@ export class SkillsService {
   /**
    * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
    * to a platform skill without a pin, and the platform skills on in the org (phase 2,
-   * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`).
+   * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`);
+   * a platform skill of a builtin plugin carries `builtin: true` (every agent has it).
    */
   async list(orgId: string): Promise<SkillSummary[]> {
     const usable = await usableSkills(this.db.db, orgId);
@@ -1061,9 +1068,14 @@ export class SkillsService {
       const k = l.platform_skill_id as string;
       linked.set(k, [...(linked.get(k) ?? []), l.id]);
     }
+    const builtin = new Set(await builtinSkillIds(this.db.db, orgId));
     const platform = (
       await platformSummaryQuery(this.db.db).where("p.id", "in", platformIds).execute()
-    ).map((r) => ({ ...platformSummary(r), linkedIds: linked.get(r.id) ?? [] }));
+    ).map((r) => ({
+      ...platformSummary(r),
+      linkedIds: linked.get(r.id) ?? [],
+      ...(builtin.has(r.id) && { builtin: true as const }),
+    }));
     return [...own, ...platform].sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1,
     );

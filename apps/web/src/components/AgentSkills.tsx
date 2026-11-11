@@ -40,7 +40,8 @@ import { FormError } from "./form-error";
  * 「已删除的技能」并保持勾选，取消勾选即从定义里移除（内核修改时只核对新加的引用，保留它不会报错）。
  * A platform skill is selected when the definition names it or one of the org copies linked to it
  * (`linkedIds`, older agents); those copy ids are never shown as deleted. Unticking it removes
- * every alias; ticking it adds the platform skill's own id. A region of the skills card; with no
+ * every alias; ticking it adds the platform skill's own id. A builtin plugin's skill (`builtin`)
+ * shows ticked and disabled: every agent has it without selecting it. A region of the skills card; with no
  * org skills the panel empty state, linking to the skills page when `skillsHref` is given (the
  * viewer can see it).
  */
@@ -93,12 +94,19 @@ export function OrgSkillsPicker({
           <Stack key={s.id} direction="row" gap={8} align="center">
             <Checkbox
               label={`${s.name} · ${s.description}`}
-              checked={skillAliases(s).some((id) => value.includes(id))}
+              // a builtin plugin's skill: every agent has it, nothing to select
+              checked={s.builtin === true || skillAliases(s).some((id) => value.includes(id))}
+              disabled={s.builtin === true}
               onChange={(on) => toggle(s, on)}
             />
             <SkillTags skill={s} />
           </Stack>
         ))}
+        {(skills ?? []).some((s) => s.builtin === true) && (
+          <Text variant="small" tone="faint">
+            {t("builtinHint")}
+          </Text>
+        )}
         {(skills ?? []).some((s) => s.manual === true) && (
           <Text variant="small" tone="faint">
             {t("manualHint")}
@@ -136,14 +144,20 @@ export function OrgSkillsPicker({
 }
 
 /**
- * Tags: "platform" (a platform skill on in the org), and phase D's "manual" (not in the model's
+ * Tags: "platform" (a platform skill on in the org), "built-in" (a builtin plugin's skill, always
+ * included), and phase D's "manual" (not in the model's
  * catalog), "sub-agent" (runs as one when invoked).
  */
-function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork" | "origin"> }) {
+function SkillTags({
+  skill,
+}: {
+  skill: Pick<SkillSummary, "manual" | "fork" | "origin" | "builtin">;
+}) {
   const t = useTranslations("agents.form");
   return (
     <>
       {skill.origin === "platform" && <Badge>{t("skillTag.platform")}</Badge>}
+      {skill.builtin === true && <Badge>{t("skillTag.builtin")}</Badge>}
       {skill.manual === true && <Badge>{t("skillTag.manual")}</Badge>}
       {skill.fork === true && <Badge>{t("skillTag.fork")}</Badge>}
     </>

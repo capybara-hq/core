@@ -46,6 +46,11 @@ export interface SkillSummary {
    */
   linkedIds?: string[];
   /**
+   * In the library list: a builtin plugin's platform skill, in every agent's catalog without being
+   * selected (absent otherwise and from older kernels).
+   */
+  builtin?: boolean;
+  /**
    * Plugin scope phase 3: the org's own org-scope skill is 可共享 (the super admin may show or offer
    * it to other orgs); false for platform skills and agents' skills (absent from older kernels).
    */

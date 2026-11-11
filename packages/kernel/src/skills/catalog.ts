@@ -56,6 +56,8 @@ export interface EffectiveSkillsInput {
  * 此刻对这个对话生效的技能，按名字（码点序）排序：
  * - 运行所用 agent 版本选中的组织技能（`scope='org'`，id 在 `skills.orgSkills` 里）；
  * - 加上这个 agent 自己的技能（`scope='agent'`）；
+ * - plus the skills of builtin plugins on in the org (skill authoring spec §5.7), never selected:
+ *   every agent lists them (not pinned); a selected one is listed once;
  * - 已删除的跳过（保存过的 agent 版本仍可能引用它们）；
  * - 版本取 `current_version`，描述取该版本清单里的描述。
  * 组织技能与 agent 自己的技能同名时只保留 agent 自己的（更具体；`/skills/<name>/` 与按名字加载都不能有两个）。
@@ -123,7 +125,8 @@ export async function resolveSkills(
 ): Promise<ResolvedSkill[]> {
   // Phase 2 (Task 3): `orgSkills` ids may be org skills, org copies linked to a platform skill
   // (served as its current version under the copy's id, ruling B2) or platform skill ids; only
-  // those usable in the org resolve (skills/usable.ts)
+  // those usable in the org resolve (skills/usable.ts); the skills of builtin plugins on in the org
+  // come along unselected
   const rows = await selectedSkills(
     db,
     { orgId: input.orgId, agentId: input.agentId, orgSkills: input.agent.skills?.orgSkills ?? [] },

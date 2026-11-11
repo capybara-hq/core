@@ -252,7 +252,7 @@ the same transaction as the business rows.
 **Skill tools**:
 
 - `Skill {skill, args?}` (`args` renders the skill as a person's `/name args` does) is not in the agent definition and is added automatically by the registry: it appears when the conversation log has a skill catalog snapshot `skills_catalog` (resolved from the
-  agent version at run start, written only when it differs from the previous one, Ruling M17). It resolves the name to a skill id, version and `source` (object prefix) from the **latest snapshot**,
+  agent version at run start, written only when it differs from the previous one, Ruling M17; the agent's own skills, the skills its definition selects and, unselected, the skills of builtin plugins on in the org: `selectedSkills` in `skills/usable.ts`, skill authoring spec §5.7). It resolves the name to a skill id, version and `source` (object prefix) from the **latest snapshot**,
   fetches files strictly by `source`, and checks size and sha256. A `source` of the form `platform:<object prefix>` is a platform skill version (plugin scope
   phase 2, ruling D2) read from the `deployment/` store (`skillFileStore`); any other source is an org prefix under `kernel/<orgId>/`. `findSkillVersion` accepts a
   platform version for the entry's own id or for the platform skill an org copy with that id links to (a linked copy keeps its id), and nothing once either is deleted. A skill with other files is copied into the device at `/skills/<name>@<digest>/` (the first 12 hex digits of the sha256 of the version's file manifest, so versions coexist; marker `/skills/.capybara/<name>@<digest>.json`; read-only, scripts have no executable bit,

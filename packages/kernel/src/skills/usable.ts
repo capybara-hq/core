@@ -387,10 +387,44 @@ async function ownedPlatformIds(
 }
 
 /**
- * The skills an agent selects, sorted by id: its own skills (`scope = 'agent'`), the org skills
- * it shared (`origin_agent_id`: the agent keeps a shared skill without a definition change) and
- * the ids of `orgSkills` that resolve ({@link skillVersionsById}: org skills, linked copies,
- * platform skills on in the org). Not deduplicated by name.
+ * The skill ids every agent of the org has without selecting them (skill authoring spec, decision
+ * 8 and §5.7): the live platform skills of the platform's builtin plugins (`catalog_items.builtin`,
+ * platform-owned), plus the org's pinned copies of them (a pinned copy shadows its platform skill
+ * by name, ruling P2-18). Whether each is on in the org (a component switch, the deployment's
+ * disable) is left to {@link skillVersionsById}, like any selected id.
+ */
+export async function builtinSkillIds(db: KernelSchemaDb, orgId: string): Promise<string[]> {
+  const platform = await db
+    .selectFrom("platform_skills as p")
+    .innerJoin("catalog_items as c", "c.id", "p.catalog_item_id")
+    .select("p.id")
+    .where("c.builtin", "=", true)
+    .where("c.owner_org_id", "is", null)
+    .where("c.deleted_at", "is", null)
+    .where("p.owner_org_id", "is", null)
+    .where("p.deleted_at", "is", null)
+    .where("p.disabled", "=", false)
+    .execute();
+  if (platform.length === 0) return [];
+  const ids = platform.map((r) => r.id);
+  const pinnedCopies = await db
+    .selectFrom("skills")
+    .select("id")
+    .where("org_id", "=", orgId)
+    .where("scope", "=", "org")
+    .where("deleted_at", "is", null)
+    .where("pinned_version", "is not", null)
+    .where("platform_skill_id", "in", ids)
+    .execute();
+  return [...ids, ...pinnedCopies.map((r) => r.id)];
+}
+
+/**
+ * The skills an agent has, sorted by id: its own skills (`scope = 'agent'`), the org skills it
+ * shared (`origin_agent_id`: the agent keeps a shared skill without a definition change), the ids
+ * of `orgSkills` that resolve ({@link skillVersionsById}: org skills, linked copies, platform
+ * skills on in the org) and the skills of builtin plugins on in the org ({@link builtinSkillIds}:
+ * never selected, always there). Not deduplicated by name.
  */
 export async function selectedSkills(
   db: KernelSchemaDb,
@@ -413,7 +447,11 @@ export async function selectedSkills(
     .where("origin_agent_id", "=", a.agentId)
     .where("deleted_at", "is", null)
     .execute();
-  const orgSkills = new Set([...a.orgSkills, ...shared.map((r) => r.id)]);
+  const orgSkills = new Set([
+    ...a.orgSkills,
+    ...shared.map((r) => r.id),
+    ...(await builtinSkillIds(db, a.orgId)),
+  ]);
   const byId = await skillVersionsById(
     db,
     a.orgId,
