@@ -202,6 +202,7 @@ describe("MachinesService", () => {
     expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
       features: ["networkReport", "policyOp"],
       policy,
+      recent: [],
     });
 
     // a malformed summary is none
@@ -223,6 +224,7 @@ describe("MachinesService", () => {
     expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
       features: [],
       policy: null,
+      recent: [],
     });
   });
 

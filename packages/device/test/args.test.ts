@@ -44,6 +44,26 @@ describe("parseCommandLine", () => {
       key: "allowedDomains",
       value: "a.com",
     });
+    expect(parseCommandLine(["policy", "set", "network", "open", "--yes"])).toEqual({
+      command: "policy",
+      action: "set",
+      key: "network",
+      value: "open",
+      yes: true,
+    });
+    expect(parseCommandLine(["policy", "set", "network", "open", "-y"])).toMatchObject({
+      yes: true,
+    });
+    expect(parseCommandLine(["policy", "set", "remoteGrants", "off"])).toEqual({
+      command: "policy",
+      action: "set",
+      key: "remoteGrants",
+      value: "off",
+    });
+    expect(() => parseCommandLine(["policy", "--yes"])).toThrow(UsageError);
+    expect(() => parseCommandLine(["policy", "set", "network", "open", "--force"])).toThrow(
+      UsageError,
+    );
     expect(() => parseCommandLine(["policy", "add", "allowedDomains"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "remove", "a", "b", "c"])).toThrow(UsageError);
     expect(parseCommandLine(["service", "install"])).toEqual({

@@ -15,7 +15,7 @@ import { MembersService } from "./members.service.js";
 import { Offboarding } from "./offboarding.js";
 import { OrgLockModule } from "./org-lock.js";
 import { OrgsService } from "./orgs.service.js";
-import { OrgSettingsService } from "./settings.service.js";
+import { OrgSettingsModule } from "./settings.service.js";
 
 /**
  * Organizations: orgs, org settings, members, invitations, offboarding (with its sweep cron) and
@@ -27,6 +27,7 @@ import { OrgSettingsService } from "./settings.service.js";
     // offboarding publishes the events it cancelled
     EventLogModule,
     OrgLockModule,
+    OrgSettingsModule,
     ExtensionsModule,
     // offboarding clears credentials and cancels approvals and questions
     ToolsModule,
@@ -41,18 +42,11 @@ import { OrgSettingsService } from "./settings.service.js";
     // the producer side of directory-sync jobs (the maintenance processor consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [
-    OrgsService,
-    OrgSettingsService,
-    MembersService,
-    InvitationsService,
-    Offboarding,
-    DirectorySync,
-  ],
+  providers: [OrgsService, MembersService, InvitationsService, Offboarding, DirectorySync],
   exports: [
     OrgLockModule,
+    OrgSettingsModule,
     OrgsService,
-    OrgSettingsService,
     MembersService,
     InvitationsService,
     Offboarding,

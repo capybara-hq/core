@@ -113,7 +113,12 @@ export class SchedulesController {
   ): Promise<{ task: ScheduledTask }> {
     const p = requireUser(principal);
     const { input, browserTimeZone } = createInputOf(body);
-    return { task: await this.tasks.create(org.orgId, p.account.id, input, browserTimeZone) };
+    // network domains only from a person's web session (never a personal access token)
+    return {
+      task: await this.tasks.create(org.orgId, p.account.id, input, browserTimeZone, {
+        fromSession: p.via === "session",
+      }),
+    };
   }
 
   @Get(":id")
@@ -238,7 +243,9 @@ export class SchedulesController {
   ): Promise<{ items: ScheduledTaskGrant[] }> {
     const p = requireUser(principal);
     return {
-      items: await this.tasks.addGrants(org.orgId, p.account.id, params.id, grantsOf(body.grants)),
+      items: await this.tasks.addGrants(org.orgId, p.account.id, params.id, grantsOf(body.grants), {
+        fromSession: p.via === "session",
+      }),
     };
   }
 

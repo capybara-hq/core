@@ -3,6 +3,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { OrgSettingsModule } from "../orgs/settings.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -40,6 +41,8 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     ExtensionsModule,
     SuperAdminLockModule,
     OrgLockModule,
+    // approving a network request writes the org's sandboxEgress
+    OrgSettingsModule,
     StorageModule,
     SkillsModule,
     ToolsModule,

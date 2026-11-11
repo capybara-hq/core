@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Badge,
   Button,
   ContentSection,
   DangerConfirm,
@@ -9,15 +10,20 @@ import {
   Dialog,
   Field,
   formatBytes,
+  formatDateTime,
   Input,
+  ItemList,
   KeyValue,
   Stack,
+  SwitchField,
   Text,
+  useTimeZone,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { ApiErrorDetail } from "../../../../components/ApiErrorDetail";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -27,14 +33,18 @@ import { useRouter } from "../../../../i18n/navigation";
 import { osLabel } from "../../../../lib/device-sign-in";
 import {
   type Device,
+  type DevicePolicyChange,
+  type DevicePolicyPatch,
   deleteDevice,
   deviceState,
   isDeviceName,
   renameDevice,
   resetDeviceFiles,
   revokeDeviceMachine,
+  updateDevicePolicy,
 } from "../../../../lib/devices";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import { allowHostProblem, normalizeHost } from "../../../../lib/network-hosts";
 import { deviceQuery } from "../../../../lib/query/devices";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -229,6 +239,9 @@ function Detail({
             </>
           )}
           {local && <MachineSection device={e} onRevoke={() => setOpen("revoke")} />}
+          {local && e.machine !== null && e.network != null && (
+            <NetworkSection orgId={orgId} device={e} />
+          )}
         </Stack>
       </DetailPage>
       {open === "rename" && (
@@ -453,6 +466,9 @@ function MachineSection({ device: e, onRevoke }: { device: Device; onRevoke(): v
             { k: t("machine.name"), v: m.name },
             { k: t("machine.os"), v: osLabel(m.os) },
             ...(m.mode !== null ? [{ k: t("machine.mode"), v: t(`mode.${m.mode}`) }] : []),
+            ...(e.network?.policy?.network === "open"
+              ? [{ k: t("network.title"), v: <Badge tone="warn">{t("network.open")}</Badge> }]
+              : []),
             ...(m.programVersion !== null
               ? [{ k: t("machine.programVersion"), v: versionLabel(m.programVersion) }]
               : []),
@@ -522,6 +538,249 @@ function RevokeDialog({
         <Text variant="prose">{t("machine.revokeHint")}</Text>
         {error !== undefined && <FormError message={error} />}
       </Stack>
+    </Dialog>
+  );
+}
+
+/**
+ * A local device's network (owner only: the page is the owner's; network ask-to-allow spec §7):
+ * the machine's local allowlist with 移除 each (narrowing, always accepted), an add field that
+ * takes `*.` wildcards, the 「不限网络」 switch (turning it on asks first with the risk text; off
+ * needs no confirmation), whether the machine takes changes from the platform (`remoteGrants`, set
+ * only on the machine: off disables the widening controls with the command to run there) and the
+ * recent changes. A program without the `policyOp` feature must be upgraded first; a Docker-mode
+ * machine can't limit single domains. Each change is sent to the machine, which answers with the
+ * policy as written.
+ */
+function NetworkSection({ orgId, device: e }: { orgId: string; device: Device }) {
+  const t = useTranslations("devices.network");
+  const toast = useToast();
+  const [host, setHost] = useState("");
+  const [hostError, setHostError] = useState<string>();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [failure, setFailure] = useState<unknown>(null);
+  const change = useAppMutation({
+    fn: (patch: DevicePolicyPatch) => updateDevicePolicy(orgId, e.id, patch),
+    invalidates: () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)],
+  });
+  const network = e.network;
+  if (network == null) return null;
+  const policy = network.policy;
+  const canApply = network.features.includes("policyOp");
+  const docker = e.machine?.mode === "docker";
+  const remoteOff = policy?.remoteGrants === "off";
+  // widening (add, 不限网络 on) needs the machine to take it; narrowing is always sent
+  const canWiden = canApply && policy !== null && !remoteOff && !docker;
+  const open = policy?.network === "open";
+  const pending = change.isPending;
+
+  const send = async (patch: DevicePolicyPatch, done: string) => {
+    setFailure(null);
+    try {
+      await change.mutateAsync(patch);
+      toast.success(done);
+      return true;
+    } catch (err) {
+      setFailure(err);
+      return false;
+    }
+  };
+  const add = async () => {
+    const h = normalizeHost(host);
+    const problem = allowHostProblem(h, { wildcard: true });
+    if (problem !== null) {
+      setHostError(t("hostInvalid"));
+      return;
+    }
+    if (policy?.allowedDomains.includes(h)) {
+      setHostError(t("hostPresent"));
+      return;
+    }
+    setHostError(undefined);
+    if (await send({ add: [h] }, t("added", { host: h }))) setHost("");
+  };
+
+  return (
+    <ContentSection title={t("title")} description={t("description")}>
+      <Stack gap={12}>
+        {!canApply && (
+          <Text variant="prose" tone="warn">
+            {t("upgrade")}
+          </Text>
+        )}
+        {docker && (
+          <Text variant="prose" tone="muted">
+            {t("dockerNote")}
+          </Text>
+        )}
+        {policy === null ? (
+          <Text variant="prose" tone="muted">
+            {t("unknown")}
+          </Text>
+        ) : (
+          <>
+            <Stack gap={4}>
+              <SwitchField
+                label={t("open")}
+                checked={open}
+                disabled={pending || !canApply || (!open && !canWiden)}
+                onChange={(next) => {
+                  if (next) setConfirmOpen(true);
+                  else void send({ network: "allowlist" }, t("closed"));
+                }}
+              />
+              <Text variant="small" tone="muted">
+                {t(open ? "openOnHint" : "openOffHint")}
+              </Text>
+            </Stack>
+            <KeyValue
+              keyWidth="14ch"
+              rows={[
+                {
+                  k: t("remoteGrants"),
+                  v: t(remoteOff ? "remoteGrantsOff" : "remoteGrantsOwner"),
+                },
+              ]}
+            />
+            <Text variant="small" tone="muted">
+              {t(remoteOff ? "remoteGrantsOffHint" : "remoteGrantsHint")}
+            </Text>
+            <ItemList
+              label={t("domains")}
+              empty={t("domainsEmpty")}
+              rows={policy.allowedDomains.map((h) => ({
+                id: h,
+                title: h,
+                ...(canApply
+                  ? {
+                      actions: (
+                        <Button
+                          density="dense"
+                          disabled={pending}
+                          aria-label={t("removeLabel", { host: h })}
+                          onClick={() => void send({ remove: [h] }, t("removed", { host: h }))}
+                        >
+                          {t("remove")}
+                        </Button>
+                      ),
+                    }
+                  : {}),
+              }))}
+            />
+            <Stack direction="row" gap={8} align="end">
+              <Field
+                label={t("add")}
+                help={canWiden ? t("addHelp") : t("addDisabled")}
+                {...(hostError !== undefined ? { error: hostError } : {})}
+              >
+                <Input
+                  value={host}
+                  maxLength={253}
+                  placeholder="*.example.com"
+                  disabled={!canWiden || pending}
+                  onChange={(ev) => {
+                    setHost(ev.target.value);
+                    setHostError(undefined);
+                  }}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter") void add();
+                  }}
+                />
+              </Field>
+              <Button
+                disabled={!canWiden || pending || host.trim() === ""}
+                onClick={() => void add()}
+              >
+                {t("addSubmit")}
+              </Button>
+            </Stack>
+          </>
+        )}
+        {failure !== null && <ApiErrorDetail error={failure} open />}
+        <RecentChanges recent={network.recent} />
+      </Stack>
+      {confirmOpen && (
+        <OpenNetworkDialog
+          pending={pending}
+          onClose={() => setConfirmOpen(false)}
+          onConfirm={async () => {
+            await send({ network: "open" }, t("opened"));
+            setConfirmOpen(false);
+          }}
+        />
+      )}
+    </ContentSection>
+  );
+}
+
+/** The device's recent policy changes: what, when, by whom and from where; unconfirmed marked. */
+function RecentChanges({ recent }: { recent: DevicePolicyChange[] }) {
+  const t = useTranslations("devices.network");
+  const zone = useTimeZone();
+  if (recent.length === 0) return null;
+  const what = (c: DevicePolicyChange) =>
+    [
+      ...(c.add.length > 0 ? [t("recent.add", { hosts: c.add.join(", ") })] : []),
+      ...(c.remove.length > 0 ? [t("recent.remove", { hosts: c.remove.join(", ") })] : []),
+      ...(c.network !== null ? [t(`recent.network.${c.network}`)] : []),
+    ].join(" · ");
+  return (
+    <ItemList
+      label={t("recent.title")}
+      rows={recent.map((c, i) => ({
+        id: `${c.at}:${i}`,
+        title: what(c) || t("recent.none"),
+        meta: [
+          formatDateTime(c.at, "full", zone),
+          c.by ?? t("recent.unknownBy"),
+          t(`recent.via.${c.via}`),
+        ].join(" · "),
+        ...(c.confirmed ? {} : { status: { label: t("recent.unconfirmed") } }),
+      }))}
+    />
+  );
+}
+
+/**
+ * Turning 「不限网络」 on: the risk text (spec §7) first, then the change is sent to the machine.
+ * A dangerous dialog that starts on Cancel.
+ */
+function OpenNetworkDialog({
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  pending: boolean;
+  onClose(): void;
+  onConfirm(): Promise<void>;
+}) {
+  const t = useTranslations("devices.network");
+  return (
+    <Dialog
+      open
+      danger
+      initialFocus="cancel"
+      onOpenChange={(o) => {
+        if (!o && !pending) onClose();
+      }}
+      title={t("confirmTitle")}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
+            {t("cancel")}
+          </Button>
+          <Button
+            variant="danger-solid"
+            loading={pending}
+            disabled={pending}
+            onClick={() => void onConfirm()}
+          >
+            {t("confirmSubmit")}
+          </Button>
+        </>
+      }
+    >
+      <Text variant="prose">{t("risk")}</Text>
     </Dialog>
   );
 }

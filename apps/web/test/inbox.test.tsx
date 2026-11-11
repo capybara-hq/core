@@ -1067,3 +1067,130 @@ describe("inbox: my scheduled task needs me", () => {
     expect(screen.getByText("The model is not available")).toBeTruthy();
   });
 });
+
+describe("inbox: network requests (network ask spec §5.3)", () => {
+  const NR = en.inbox.network;
+  const request = (over: Record<string, unknown> = {}) => ({
+    id: "r9",
+    orgId: "o1",
+    orgName: "Acme",
+    kind: "network_allowlist",
+    item: null,
+    entry: null,
+    agent: null,
+    connectors: null,
+    network: { hosts: ["files.slack.com"], conversationId: "c7", agentId: "ag1" },
+    status: "pending",
+    note: "For the weekly export",
+    reason: null,
+    requestedBy: "a3",
+    requestedByName: "Mia",
+    decidedBy: null,
+    decidedAt: null,
+    stagingId: null,
+    createdAt: T,
+    ...over,
+  });
+  const inbox = (type: string, r: ReturnType<typeof request> | null) => ({
+    items: r === null ? [] : [{ type, id: r.id, createdAt: T, request: r }],
+    truncated: false,
+  });
+
+  it("an org admin sees the hosts, who asked, the note and the conversation; approving decides it", async () => {
+    let open: ReturnType<typeof request> | null = request();
+    const { calls } = await renderInbox({
+      [LIST]: () => json(200, inbox("catalog_request", open)),
+      "POST /api/v1/orgs/o1/catalog-requests/r9/decide": () => {
+        const r = request({ status: "approved" });
+        open = null;
+        return json(200, { request: r });
+      },
+      "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0, more: false }),
+    });
+    const table = await screen.findByRole("table", { name: en.inbox.listLabel });
+    expect(within(table).getByText("files.slack.com", { selector: ".cb-cell-title-name" }));
+    expect(within(table).getByText(`${NR.label} · Mia`)).toBeTruthy();
+    expect(await screen.findByText(NR.title.replace("{name}", "Mia"))).toBeTruthy();
+    expect(screen.getByText("For the weekly export")).toBeTruthy();
+    expect(screen.getByRole("link", { name: en.inbox.openConversation }).getAttribute("href")).toBe(
+      "/chat/c7",
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: NR.approve }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/catalog-requests/r9/decide")))).toEqual({
+        approve: true,
+      }),
+    );
+    expect(await screen.findByText(NR.approved)).toBeTruthy();
+  });
+
+  it("the requester's decided notice says the domains are allowed and links the conversation", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(200, inbox("catalog_request_decided", request({ status: "approved", decidedAt: T }))),
+    });
+    expect(
+      await screen.findByText(NR.titleApproved.replace("{hosts}", "files.slack.com")),
+    ).toBeTruthy();
+    expect(screen.getByText(NR.hintApproved)).toBeTruthy();
+    expect(screen.getByRole("link", { name: en.inbox.openConversation }).getAttribute("href")).toBe(
+      "/chat/c7",
+    );
+  });
+});
+
+describe("inbox: a task refused domains", () => {
+  const S = en.inboxSchedule;
+  const attention = (over: Record<string, unknown> = {}) => ({
+    items: [
+      {
+        type: "schedule_attention",
+        id: "s1:grants",
+        createdAt: T,
+        attention: {
+          taskId: "s1",
+          name: "Daily report",
+          reason: "missing_grants",
+          pausedBy: null,
+          missing: ["network:files.slack.com", "network:api.example.com"],
+          needsRole: [],
+          needsAdmin: ["network:api.example.com"],
+          deviceRefuses: false,
+          error: null,
+          ...over,
+        },
+      },
+    ],
+    truncated: false,
+  });
+
+  it("a domain the org allows can be added; one outside it needs an admin", async () => {
+    const { calls } = await renderInbox({
+      [LIST]: () => json(200, attention()),
+      "POST /api/v1/orgs/o1/schedules/s1/grants": () =>
+        json(200, {
+          items: [{ toolKey: "network:files.slack.com", specHash: "network", connectorId: null }],
+        }),
+      "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0, more: false }),
+    });
+    const missing = within(await screen.findByRole("list", { name: S.missing }));
+    expect(missing.getByText("files.slack.com")).toBeTruthy();
+    expect(missing.getByText(S.needsAdmin)).toBeTruthy();
+    const add = missing.getAllByRole("button", { name: S.addDomain });
+    expect(add).toHaveLength(1);
+    await userEvent.setup().click(add[0] as HTMLElement);
+    expect(
+      bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/schedules/s1/grants"))),
+    ).toEqual({ grants: [{ toolKey: "network:files.slack.com" }] });
+  });
+
+  it("a device that refuses network grants says what to do on the machine", async () => {
+    await renderInbox({
+      [LIST]: () => json(200, attention({ needsAdmin: [], deviceRefuses: true })),
+    });
+    expect(await screen.findByText(S.deviceRefuses)).toBeTruthy();
+    const missing = within(screen.getByRole("list", { name: S.missing }));
+    expect(missing.queryByRole("button", { name: S.addDomain })).toBeNull();
+    expect(missing.getAllByText(S.deviceRefusesShort)).toHaveLength(2);
+  });
+});

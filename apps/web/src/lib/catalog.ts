@@ -736,7 +736,23 @@ export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): M
 }
 
 /** What a request asks for (kernel `CatalogRequestKind`). */
-export type CatalogRequestKind = "access" | "import" | "enable" | "connector_setup";
+export type CatalogRequestKind =
+  | "access"
+  | "import"
+  | "enable"
+  | "connector_setup"
+  | "network_allowlist";
+
+/**
+ * What a `network_allowlist` request asks for (kernel `NetworkRequestDetail`, network ask spec
+ * §5.3): the hosts to add to the org's sandbox network, and the conversation and agent of the
+ * blocked command when the member sent them.
+ */
+export interface NetworkRequestDetail {
+  hosts: string[];
+  conversationId: string | null;
+  agentId: string | null;
+}
 
 /**
  * One connector a `connector_setup` request still needs (kernel `SetupRequestConnector`, ruling
@@ -780,8 +796,14 @@ export interface CatalogRequest {
   agent?: { id: string; name: string; deleted: boolean } | null;
   /** A `connector_setup` request's remaining connectors (`[]` once closed; null otherwise). */
   connectors?: SetupRequestConnector[] | null;
+  /** A `network_allowlist` request's hosts, conversation and agent (null otherwise). */
+  network?: NetworkRequestDetail | null;
   createdAt: string;
 }
+
+/** A `network_allowlist` request (network ask spec §5.3): `item` is null, `network` is set. */
+export const isNetworkRequest = (r: Pick<CatalogRequest, "kind">): boolean =>
+  r.kind === "network_allowlist";
 
 /** A `connector_setup` request (ruling P4-7): `item` and `entry` are null, `agent` is set. */
 export const isSetupRequest = (r: Pick<CatalogRequest, "kind">): boolean =>
@@ -1377,6 +1399,16 @@ export const requestCatalogItem = (
     `${org(orgId)}/catalog/${enc(itemId)}/requests`,
     post({ kind, ...(note !== "" && { note }) }),
   );
+
+/**
+ * A member asks the org admins to allow hosts in the org's sandbox network (network ask spec
+ * §5.3): exact hosts, an optional note, the conversation and agent of the blocked command. An
+ * identical pending request of the member comes back as it is.
+ */
+export const requestNetworkHosts = (
+  orgId: string,
+  body: { hosts: string[]; note?: string; conversationId?: string; agentId?: string },
+) => apiFetch<{ request: CatalogRequest }>(`${org(orgId)}/catalog-requests/network`, post(body));
 
 /** An org admin asks for a marketplace entry to be imported (deployment setting `orgMarketplaceBrowse`). */
 export const requestMarketplaceEntry = (

@@ -271,6 +271,33 @@ describe("the policy op", () => {
     expect(page.detail).toBe("policy add *.slack.com by Ada (acc_1) via web");
   });
 
+  it("refuses a page wildcard covering a whole public suffix; removing one is fine", async () => {
+    const page = (args: Record<string, unknown>) =>
+      serveOp(
+        new FakeExecutor(),
+        r("policy", { source: { accountId: "acc_1", accountName: "Ada", via: "web" }, ...args }),
+        never,
+        { policy: store },
+      );
+    for (const pattern of ["*.com", "*.co.uk", "*.github.io", "*.COM.cn"]) {
+      const { res } = await page({ add: [pattern] });
+      expect(res).toMatchObject({
+        ok: false,
+        error: {
+          kind: "policy",
+          message: `Use a narrower domain; ${pattern.toLowerCase()} covers a whole public suffix.`,
+        },
+      });
+    }
+    expect(readPolicy(dir).allowedDomains).toEqual([]);
+    expect((await page({ add: ["*.example.co.uk"] })).res).toMatchObject({ ok: true });
+    seed({ allowedDomains: ["*.co.uk"] });
+    expect((await page({ remove: ["*.co.uk"] })).res).toMatchObject({
+      ok: true,
+      result: { policy: { allowedDomains: [] } },
+    });
+  });
+
   it("refuses a host both added and removed", async () => {
     const { res } = await policyOp({ add: ["a.com"], remove: ["A.com"] });
     expect(res).toMatchObject({ ok: false, error: { kind: "policy" } });

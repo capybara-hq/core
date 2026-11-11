@@ -13,6 +13,7 @@ import {
   draftValid,
   emptyDraft,
   LOADING_SECTIONS,
+  NetworkAccessSection,
   type ScheduleDraft,
   ScheduleFormSections,
   useGrantableTools,
@@ -20,6 +21,8 @@ import {
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent, ProviderModels } from "../../../../lib/agents";
+import { ApiClientError } from "../../../../lib/api";
+import { networkGrantHost } from "../../../../lib/network-hosts";
 import { preferencesQuery } from "../../../../lib/query/account";
 import { agentsQuery } from "../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../lib/query/client";
@@ -88,6 +91,8 @@ function NewScheduleForm({
   const [draft, setDraft] = useState<ScheduleDraft>(() => emptyDraft(list[0]?.id ?? ""));
   const [grants, setGrants] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // a create refused for a network grant: shown in the Network access section with the reason
+  const [networkError, setNetworkError] = useState<unknown>(null);
   // The zone the task takes, as the kernel picks it: my account's, else the browser's (the end
   // date is the end of that day there)
   const prefsQ = preferencesQuery(accountId);
@@ -111,12 +116,19 @@ function NewScheduleForm({
   const submit = async () => {
     if (!valid) return;
     setError(null);
+    setNetworkError(null);
     try {
       const { task } = await create.mutateAsync(undefined);
       toast.success(t("actions.created"));
       router.push(`/schedules/${encodeURIComponent(task.id)}`);
     } catch (e) {
-      setError(errorMessage(e));
+      if (
+        e instanceof ApiClientError &&
+        e.code === "schedule.grant_not_allowed" &&
+        grants.some((k) => networkGrantHost(k) !== null)
+      ) {
+        setNetworkError(e);
+      } else setError(errorMessage(e));
     }
   };
 
@@ -174,6 +186,17 @@ function NewScheduleForm({
             readOnly={off}
             onAdd={(k) => setGrants((g) => (g.includes(k) ? g : [...g, k]))}
             onRemove={(k) => setGrants((g) => g.filter((x) => x !== k))}
+          />
+          <NetworkAccessSection
+            granted={grants}
+            refused={[]}
+            readOnly={off}
+            error={networkError}
+            onAdd={(k) => setGrants((g) => (g.includes(k) ? g : [...g, k]))}
+            onRemove={(k) => {
+              setNetworkError(null);
+              setGrants((g) => g.filter((x) => x !== k));
+            }}
           />
           {error !== null ? <FormError message={error} /> : null}
         </>

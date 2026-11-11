@@ -27,8 +27,14 @@ import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
-import { grantRefusalOf } from "../schedules/grant-rules.js";
+import {
+  grantRefusalOf,
+  NETWORK_GRANT_PREFIX,
+  NETWORK_GRANT_SPEC_HASH,
+  networkGrantRefusal,
+} from "../schedules/grant-rules.js";
 import { ScheduledTaskStore } from "../schedules/store.js";
 import { unattendedTaskRunOf } from "../schedules/unattended.js";
 import { pluginDisplayNames } from "./display-names.js";
@@ -328,9 +334,12 @@ export class ApprovalsService {
     /** A trial approval is kept only for a tool the task may hold as a grant (its agent's tools). */
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "forAgent">,
     /** 「这台设备一直允许」 sends the `policy` op to the device before the decision is recorded. */
-    @Inject(DevicePolicyService) private readonly policies: Pick<DevicePolicyService, "apply">,
+    @Inject(DevicePolicyService)
+    private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
     /** One decision of a network ask at a time, across replicas (the op is sent before the transaction). */
     @Inject(LockService) readonly lockService: LockService,
+    /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
   ) {}
 
   /**
@@ -950,6 +959,11 @@ export class ApprovalsService {
     if (approved && scope !== null && network === undefined) {
       await this.keepTrialGrant(before, accountId);
     }
+    // 「这次允许」 in a trial run (also an 「一直允许」 the device could not take): the task's
+    // grants; one the device took needs none (network ask-to-allow spec §8.1)
+    if (network?.outcome === "once" || network?.outcome === "once_fallback") {
+      await this.keepTrialNetworkGrant(before, accountId, network.granted);
+    }
     const written = await this.eventLog.appendIn(before.conversationId, [
       {
         type: "approval_decided",
@@ -1067,6 +1081,46 @@ export class ApprovalsService {
       specHash: a.specHash,
       connectorId: a.connectorId,
     });
+  }
+
+  /**
+   * A trial run of a scheduled task (network ask-to-allow spec §8.1): the hosts its creator allowed
+   * for this run (「这次允许」) on a network ask about one of their devices become the task's
+   * `network:<host>` grants, each only when `networkGrantRefusal` allows it (exact host, within the
+   * org's effective egress, the device takes remote grants). Never for an ask another account
+   * decided or one asked of someone else. In the decision's transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async keepTrialNetworkGrant(
+    a: ApprovalRecord,
+    decidedBy: string,
+    hosts: readonly string[],
+  ): Promise<void> {
+    if (hosts.length === 0 || a.detail === null) return;
+    if (a.requestedFor === null || a.requestedFor !== decidedBy) return;
+    const t = this.db.db;
+    const served = await unattendedTaskRunOf(t, a.runId);
+    if (served === null || !served.trial) return;
+    const task = await t
+      .selectFrom("scheduled_tasks")
+      .select("account_id")
+      .where("id", "=", served.taskId)
+      .where("org_id", "=", a.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (task?.account_id !== decidedBy) return;
+    const limits = await this.sandbox.orgLimits(a.orgId);
+    const summary = await this.policies.summary(a.detail.deviceId);
+    for (const host of hosts) {
+      if (networkGrantRefusal(host, { limits, deviceSummary: summary?.policy ?? null }) !== null) {
+        continue;
+      }
+      await this.schedules.addGrant(t, served.taskId, {
+        toolKey: `${NETWORK_GRANT_PREFIX}${host}`,
+        specHash: NETWORK_GRANT_SPEC_HASH,
+        connectorId: null,
+      });
+    }
   }
 
   /**

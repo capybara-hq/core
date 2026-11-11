@@ -215,7 +215,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
   ],
   [
     "/settings/sandbox",
-    route("/settings/sandbox", () => SandboxPage()),
+    route("/settings/sandbox", () => SandboxPage({ searchParams: Promise.resolve({}) })),
     "member",
     zh.roles.need.member,
   ],

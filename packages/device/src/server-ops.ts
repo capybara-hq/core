@@ -14,6 +14,7 @@ import type { CommandLogEntry } from "./command-log.js";
 import { DeviceOpError, type Executor } from "./exec/types.js";
 import { grantedHosts } from "./policy.js";
 import type { PolicyStore } from "./policy-store.js";
+import { publicSuffixWildcard } from "./public-suffix.js";
 import type { Policy } from "./state.js";
 
 /** What a request may need beyond the executor. */
@@ -94,6 +95,9 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
     if (typeof raw !== "string")
       throw new DeviceOpError("policy", `${key} must be a list of hosts`);
     const host = raw.toLowerCase();
+    // A device-page wildcard over a whole public suffix is close to an open network, unconfirmed.
+    const tooBroad = key === "add" ? publicSuffixWildcard(host) : null;
+    if (tooBroad !== null) throw new DeviceOpError("policy", tooBroad);
     const errors = validateAllowHost(host);
     if (errors.length > 0) {
       throw new DeviceOpError("policy", `${JSON.stringify(raw)}: ${errors.join("; ")}`);

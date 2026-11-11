@@ -207,7 +207,11 @@ describe("DevicePolicyService.apply", () => {
     ]);
     // the owner's device page shows it
     const view = await devices.get(orgId, d.accountId, d.deviceId);
-    expect(view.network).toEqual({ features: ["networkReport", "policyOp"], policy: want });
+    expect(view.network).toEqual({
+      features: ["networkReport", "policyOp"],
+      policy: want,
+      recent: [expect.objectContaining({ add: ["files.slack.com"], via: "web", confirmed: true })],
+    });
   });
 
   it("a program without policyOp is unsupported and is sent nothing", async () => {

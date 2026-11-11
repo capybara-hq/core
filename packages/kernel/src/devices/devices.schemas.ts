@@ -1,7 +1,14 @@
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { DeviceNameBody, DeviceParams } from "./dto.js";
 
-/** The devices routes the Platform operations mirror (`check:platform-ops` keys). */
+/** The body of the excluded `POST /devices/:id/policy` route (human-only). */
+export { DevicePolicyBody } from "./dto.js";
+
+/**
+ * The devices routes the Platform operations mirror (`check:platform-ops` keys). Changing a
+ * device's network policy (`POST /devices/:id/policy`, body {@link DevicePolicyBody}) is a person's
+ * act on their own machine and stays excluded, so it has no entry here.
+ */
 export const DEVICE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/devices" },
   { route: "POST /api/v1/orgs/:orgId/devices", body: DeviceNameBody },

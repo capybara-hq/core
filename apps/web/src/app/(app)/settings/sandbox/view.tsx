@@ -13,7 +13,7 @@ import {
 } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
@@ -50,14 +50,14 @@ type EgressMode = "default" | SandboxEgressSetting["mode"];
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
-export default function SandboxSettingsView() {
+export default function SandboxSettingsView({ allowHosts = [] }: { allowHosts?: string[] }) {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <SandboxSettings orgId={ws.orgId} />;
+  return <SandboxSettings orgId={ws.orgId} allowHosts={allowHosts} />;
 }
 
-function SandboxSettings({ orgId }: { orgId: string }) {
+function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: string[] }) {
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const ts = useTranslations("sandboxSettings");
@@ -86,6 +86,30 @@ function SandboxSettings({ orgId }: { orgId: string }) {
         ...(res.sandboxLimits !== undefined ? { sandboxLimits: res.sandboxLimits } : {}),
       })),
   });
+  // `?allowHost=`: once the settings are in, an org admin's draft becomes a custom allowlist with
+  // the hosts appended (those not listed yet); nothing is saved until the person saves.
+  const [prefilled, setPrefilled] = useState<string[] | null>(null);
+  const loaded = read.kind === "ready" ? read.data : null;
+  useEffect(() => {
+    if (prefilled !== null || loaded === null || !manage || allowHosts.length === 0) return;
+    const deploymentEgress = loaded.deployment?.sandboxEgress;
+    const own = loaded.settings.sandboxEgress;
+    // no list to add to: the platform has no network, or the org follows an open platform
+    if (deploymentEgress === undefined || deploymentEgress.mode === "none") return;
+    if (own === undefined && deploymentEgress.mode === "open") return;
+    const base = own?.allowHosts ?? deploymentEgress.allowHosts;
+    const added = allowHosts.filter((h) => !base.includes(h));
+    if (added.length === 0) {
+      setPrefilled([]);
+      return;
+    }
+    setPrefilled(added);
+    setDraft((d) => ({
+      ...d,
+      egressMode: "allowlist",
+      hostsText: [...base, ...added].join("\n"),
+    }));
+  }, [loaded, manage, allowHosts, prefilled]);
   const header = {
     path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "sandbox" }],
     title: ts("title"),
@@ -161,6 +185,7 @@ function SandboxSettings({ orgId }: { orgId: string }) {
     try {
       await update.mutateAsync(patch);
       setDraft({});
+      setPrefilled([]);
       toast.success(ts("saved"));
     } catch (e) {
       toast.error(errorMessage(e));
@@ -176,7 +201,13 @@ function SandboxSettings({ orgId }: { orgId: string }) {
         ? {
             actionRow: {
               unsaved,
-              cancel: { label: tc("cancel"), onSelect: () => setDraft({}) },
+              cancel: {
+                label: tc("cancel"),
+                onSelect: () => {
+                  setDraft({});
+                  setPrefilled([]);
+                },
+              },
               primary: { label: t("save"), onSelect: () => void save(), loading: update.isPending },
             },
           }
@@ -253,6 +284,11 @@ function SandboxSettings({ orgId }: { orgId: string }) {
                   onChange={(e) => setDraft((d) => ({ ...d, hostsText: e.target.value }))}
                 />
               </Field>
+            )}
+            {egressMode === "allowlist" && prefilled !== null && prefilled.length > 0 && (
+              <Text variant="small" tone="muted">
+                {t("egress.prefilled", { hosts: prefilled.join(", ") })}
+              </Text>
             )}
             <Text variant="small" tone="muted">
               {t("egress.newOnly")}

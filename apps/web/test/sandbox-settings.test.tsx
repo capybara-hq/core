@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -240,5 +241,74 @@ describe("沙箱设置（SettingsPage）", () => {
     await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
     await screen.findByRole("radio", { name: new RegExp(`^${en.orgSettings.sandbox.allow}`) });
     expect(screen.queryByText(o.title)).toBeNull();
+  });
+
+  describe("?allowHost= (network ask spec §5.3)", () => {
+    const DEPLOYMENT = {
+      sandboxEgress: { mode: "allowlist", allowHosts: ["registry.npmjs.org"] },
+    };
+    const o = en.orgSettings;
+
+    it("prefills a custom allowlist with the host appended; saving sends it", async () => {
+      const calls = stubApi({
+        [`GET ${SETTINGS}`]: () =>
+          json(200, { settings: { toolSearch: "on" }, deployment: DEPLOYMENT }),
+        [`PATCH ${SETTINGS}`]: (c) =>
+          json(200, {
+            settings: { toolSearch: "on", ...(bodyOf(c) as object) },
+            deployment: DEPLOYMENT,
+          }),
+      });
+      await renderRouteWithCache(
+        "/settings/sandbox?allowHost=Files.Slack.com,bad_host",
+        lastStubRoutes(),
+      );
+      const custom = await screen.findByRole("radio", {
+        name: new RegExp(`^${o.egress.allowlist}`),
+      });
+      await vi.waitFor(() => expect(custom).toHaveProperty("checked", true));
+      const hosts = screen.getByRole("textbox", { name: o.egress.hosts }) as HTMLTextAreaElement;
+      expect(hosts.value).toBe("registry.npmjs.org\nfiles.slack.com");
+      expect(
+        screen.getByText(o.egress.prefilled.replace("{hosts}", "files.slack.com")),
+      ).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(
+        within(actionRow("en") as HTMLElement).getByRole("button", { name: o.save }),
+      );
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        sandboxEgress: { mode: "allowlist", allowHosts: ["registry.npmjs.org", "files.slack.com"] },
+      });
+    });
+
+    it("a host already allowed changes nothing", async () => {
+      stubApi({
+        [`GET ${SETTINGS}`]: () =>
+          json(200, { settings: { toolSearch: "on" }, deployment: DEPLOYMENT }),
+      });
+      await renderRouteWithCache(
+        "/settings/sandbox?allowHost=registry.npmjs.org",
+        lastStubRoutes(),
+      );
+      const def = await screen.findByRole("radio", { name: new RegExp(`^${o.egress.default}`) });
+      expect(def).toHaveProperty("checked", true);
+      expect(actionRow("en")).toBeNull();
+    });
+
+    it("a member's page is not prefilled", async () => {
+      stubApi({
+        [`GET ${SETTINGS}`]: () =>
+          json(200, { settings: { toolSearch: "on" }, deployment: DEPLOYMENT }),
+      });
+      await renderRouteWithCache("/settings/sandbox?allowHost=files.slack.com", lastStubRoutes(), {
+        me: {
+          ...ME,
+          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+        },
+      });
+      const def = await screen.findByRole("radio", { name: new RegExp(`^${o.egress.default}`) });
+      expect(def).toHaveProperty("checked", true);
+      expect(actionRow("en")).toBeNull();
+    });
   });
 });

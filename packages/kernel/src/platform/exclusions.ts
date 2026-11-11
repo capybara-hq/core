@@ -166,6 +166,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Body carries connector credentials and client secrets entered by a person",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/catalog-requests/network",
+    category: "human-only",
+    reason:
+      "A member asks org admins to allow a domain from a blocked command's card; agents never file network requests",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/catalog-requests/:id/decide",
     category: "human-only",
     reason: "Decides another person's catalog request",
@@ -298,6 +304,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason:
       "Disconnects a person's own machine (revokes its credential); a trust decision taken on the device's page",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/devices/:id/policy",
+    category: "human-only",
+    reason:
+      "A person changes their own machine's network policy; agents never widen a device's network",
   },
   {
     route: "POST /api/v1/device/authorize",

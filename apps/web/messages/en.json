@@ -335,7 +335,9 @@
       "files_on_device": "A local device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same device.",
       "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
-      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer."
+      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
+      "policy_refused": "This device does not accept this network change from the platform. Change it on the machine.",
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -1638,6 +1640,55 @@
       "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
       "revokeSubmit": "Disconnect",
       "revoked": "{name} disconnected."
+    },
+    "network": {
+      "title": "Network",
+      "description": "Which domains commands on this machine may reach, on top of what the organization allows.",
+      "open": "No network limit",
+      "openOnHint": "Commands reach anything the organization allows. Turning it off goes back to the domains below.",
+      "openOffHint": "Commands reach only the domains below, within what the organization allows.",
+      "remoteGrants": "Changes from the platform",
+      "remoteGrantsOwner": "Accepted from you",
+      "remoteGrantsOff": "Not accepted",
+      "remoteGrantsHint": "Set only on the machine: capybara-device policy set remoteGrants owner|off",
+      "remoteGrantsOffHint": "This machine accepts no widening from the platform, so adding domains and turning the limit off happen on the machine: capybara-device policy add allowedDomains files.example.com, or capybara-device policy set remoteGrants owner to allow changes from here.",
+      "domains": "Allowed domains",
+      "domainsEmpty": "No domains allowed on this machine yet.",
+      "remove": "Remove",
+      "removeLabel": "Remove {host}",
+      "removed": "{host} removed.",
+      "add": "Add a domain",
+      "addHelp": "An exact host (files.example.com) or a wildcard (*.example.com).",
+      "addDisabled": "This machine does not take new domains from the platform.",
+      "addSubmit": "Add",
+      "added": "{host} added.",
+      "hostInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com or *.example.com.",
+      "hostPresent": "This domain is already allowed.",
+      "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
+      "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
+      "unknown": "The machine has not reported its network settings yet.",
+      "opened": "No network limit is on.",
+      "closed": "The network limit is back on.",
+      "confirmTitle": "Turn off the network limit on this device?",
+      "confirmSubmit": "Turn off the limit",
+      "cancel": "Cancel",
+      "risk": "With no network limit, agent commands on this device can reach any address the organization allows (any public address if the organization has no limit), including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
+      "recent": {
+        "title": "Recent changes",
+        "add": "Added {hosts}",
+        "remove": "Removed {hosts}",
+        "network": {
+          "open": "No network limit on",
+          "allowlist": "Network limit back on"
+        },
+        "none": "No change",
+        "unknownBy": "Unknown account",
+        "via": {
+          "web": "web",
+          "im": "IM"
+        },
+        "unconfirmed": "Not confirmed by the machine"
+      }
     }
   },
   "nav": {
@@ -1891,6 +1942,22 @@
       "hintApproved": "An organization admin configured every connector; their tools have joined the agent.",
       "hintRejected": "An organization admin didn't configure these connectors. You can request again on the agent's Tools section.",
       "openAgent": "Open the agent's Tools section"
+    },
+    "network": {
+      "label": "Network request",
+      "decidedLabel": "Network request decided",
+      "title": "{name} asks to allow domains",
+      "hosts": "Domains",
+      "hint": "Approving adds these domains to the organization's sandbox network. If the organization follows the platform's list, it keeps its own copy of that list from now on.",
+      "approve": "Allow",
+      "reasonLabel": "Reason",
+      "reasonHelp": "Sent to the member if you reject the request.",
+      "approved": "Domains allowed",
+      "rejected": "Network request rejected",
+      "titleApproved": "Allowed · {hosts}",
+      "titleRejected": "Not allowed · {hosts}",
+      "hintApproved": "The organization allows these domains now. Run the command again.",
+      "hintRejected": "Your request to allow these domains was not approved."
     }
   },
   "connectors": {
@@ -2299,7 +2366,8 @@
       "noneHint": "Sandboxes can only reach themselves (loopback).",
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
-      "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed."
+      "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed.",
+      "prefilled": "Added {hosts} from a blocked command. Save to allow it."
     },
     "limits": {
       "title": "Sandbox resources",
@@ -5892,7 +5960,18 @@
         "not_available": "Not one of the agent's tools now",
         "needs_role": "Needs a role you don't have",
         "fixed_ask": "Always asks a person"
-      }
+      },
+      "network": "Network access",
+      "networkHint": "Domains the task's runs may reach on its device without asking (within what the organization allows).",
+      "networkLabel": "Allowed domains",
+      "networkEmpty": "No domains pre-approved.",
+      "addDomain": "Add domain",
+      "addDomainHelp": "An exact host, such as files.example.com.",
+      "networkInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com.",
+      "networkWildcard": "Pre-approve an exact host, not a wildcard.",
+      "networkMissing": "Refused in the latest runs",
+      "networkRefused": "This domain can't be pre-approved for the task.",
+      "domain": "Domain"
     },
     "runs": {
       "title": "Run history",
@@ -5954,7 +6033,9 @@
       "resumed": "Task resumed",
       "deleted": "Task deleted",
       "toolAdded": "Tool approved for the task",
-      "toolRemoved": "Tool removed"
+      "toolRemoved": "Tool removed",
+      "domainAdded": "Domain allowed for the task",
+      "domainRemoved": "Domain removed from the task"
     },
     "startedBy": "Started by the scheduled task <link>{name}</link>",
     "turnedOff": "Scheduled tasks are turned off in this organization: no task runs, and none can be created.",
@@ -6022,6 +6103,22 @@
     "open": "Open the task",
     "task": "Task",
     "reasonLabel": "Reason",
-    "added": "Tool approved for the task"
+    "added": "Tool approved for the task",
+    "needsAdmin": "Only an org admin can allow this domain",
+    "deviceRefuses": "The task's device takes no network changes from the platform. Allow the domains on the machine: capybara-device policy add allowedDomains files.example.com.",
+    "deviceRefusesShort": "The device doesn't accept it",
+    "addDomain": "Add to allowed domains"
+  },
+  "networkAsk": {
+    "ask": "Ask an admin to add it",
+    "openSettings": "Add it in organization settings",
+    "platformOff": "The platform turned sandbox network off; only a super admin can turn it on.",
+    "dialogTitle": "Ask an admin to allow a domain",
+    "dialogBody": "Your organization's admins get a request to add {hosts} to the organization's sandbox network. The command stays blocked until they do; run it again after that.",
+    "note": "Note",
+    "noteHelp": "Why the agent needs it, for the admins.",
+    "send": "Send request",
+    "sent": "Request sent to the organization's admins.",
+    "refused": "The request can't be sent."
   }
 }

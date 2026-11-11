@@ -42,6 +42,7 @@ import {
   requesterOf as directoryRequester,
   dismissOrgRequest,
   displayNameOf,
+  isNetworkRequest,
   isSetupRequest,
   requestSubject,
   requestVersion,
@@ -54,6 +55,7 @@ import {
   type OrgNotice,
   type ScheduleAttention,
 } from "../../../lib/inbox";
+import { networkGrantHost } from "../../../lib/network-hosts";
 import { entryOfRequest } from "../../../lib/pending-connectors";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
 import { keys } from "../../../lib/query/keys";
@@ -133,6 +135,7 @@ function Inbox({
   });
   const tdd = useTranslations("inbox.requestDecided");
   const tsa = useTranslations("inboxSchedule");
+  const tnr = useTranslations("inbox.network");
   // Approving a refused tool for my task changes the task's grants and the inbox
   const addGrantMutation = useAppMutation({
     fn: (v: { taskId: string; toolKey: string }) => addScheduleGrants(orgId, v.taskId, [v.toolKey]),
@@ -182,6 +185,8 @@ function Inbox({
     rejected: tdd("rejected"),
     schedule: tsa("label"),
     scheduleReason: (a) => scheduleReason(a, tsa),
+    network: tnr("label"),
+    networkDecided: tnr("decidedLabel"),
   };
   const columns: Column<InboxItem>[] = [
     {
@@ -251,9 +256,11 @@ function Inbox({
         request.id,
         isSetupRequest(request)
           ? ts("rejected")
-          : decision === "approve"
-            ? td("approved")
-            : td("rejected"),
+          : isNetworkRequest(request)
+            ? tnr(decision === "approve" ? "approved" : "rejected")
+            : decision === "approve"
+              ? td("approved")
+              : td("rejected"),
       );
     } catch (e) {
       toast.error(errorMessage(e));
@@ -312,65 +319,85 @@ function Inbox({
               t,
               locale,
             })
-          : active.type === "catalog_request_decided" && isSetupRequest(active.request)
-            ? setupDecidedDetail({
+          : active.type === "catalog_request_decided" && isNetworkRequest(active.request)
+            ? networkDecidedDetail({
                 request: active.request,
                 pending: noticePending,
                 onDismiss: () => void dismissDecided(active.request),
-                ts,
+                tnr,
                 tdd,
                 t,
               })
-            : active.type === "catalog_request" && isSetupRequest(active.request)
-              ? setupRequestDetail({
+            : active.type === "catalog_request" && isNetworkRequest(active.request)
+              ? networkRequestDetail({
                   request: active.request,
                   pending: requestPending,
                   reason: rejectReason,
                   setReason: setRejectReason,
-                  onConfigure: () => setConfiguring(active.request),
-                  onReject: () => void decideRequest(active.request, "reject", rejectReason),
-                  ts,
+                  onDecide: (d) => void decideRequest(active.request, d, rejectReason),
+                  tnr,
                   td,
                   t,
-                  locale,
                 })
-              : active.type === "catalog_request_decided"
-                ? decidedRequestDetail({
+              : active.type === "catalog_request_decided" && isSetupRequest(active.request)
+                ? setupDecidedDetail({
                     request: active.request,
                     pending: noticePending,
                     onDismiss: () => void dismissDecided(active.request),
+                    ts,
                     tdd,
                     t,
-                    locale,
                   })
-                : active.type === "catalog_request"
-                  ? directoryRequestDetail({
+                : active.type === "catalog_request" && isSetupRequest(active.request)
+                  ? setupRequestDetail({
                       request: active.request,
                       pending: requestPending,
-                      onDecide: (d) => void decideRequest(active.request, d),
+                      reason: rejectReason,
+                      setReason: setRejectReason,
+                      onConfigure: () => setConfiguring(active.request),
+                      onReject: () => void decideRequest(active.request, "reject", rejectReason),
+                      ts,
                       td,
                       t,
                       locale,
                     })
-                  : active.type === "tool_approval"
-                    ? toolApprovalDetail({
-                        approval: active.approval,
-                        scope,
-                        setScope,
-                        pending: approvals.pending,
-                        onDecide: (d) => void decideApproval(active.approval, d),
-                        openConversation: () => router.push(active.approval.conversationPath),
+                  : active.type === "catalog_request_decided"
+                    ? decidedRequestDetail({
+                        request: active.request,
+                        pending: noticePending,
+                        onDismiss: () => void dismissDecided(active.request),
+                        tdd,
+                        t,
                         locale,
-                        t,
-                        ta,
                       })
-                    : skillChangeDetail({
-                        orgId,
-                        change: active.skillChange,
-                        pending: changes.pending,
-                        onDecide: (d) => void decideChange(active.skillChange, d),
-                        t,
-                      });
+                    : active.type === "catalog_request"
+                      ? directoryRequestDetail({
+                          request: active.request,
+                          pending: requestPending,
+                          onDecide: (d) => void decideRequest(active.request, d),
+                          td,
+                          t,
+                          locale,
+                        })
+                      : active.type === "tool_approval"
+                        ? toolApprovalDetail({
+                            approval: active.approval,
+                            scope,
+                            setScope,
+                            pending: approvals.pending,
+                            onDecide: (d) => void decideApproval(active.approval, d),
+                            openConversation: () => router.push(active.approval.conversationPath),
+                            locale,
+                            t,
+                            ta,
+                          })
+                        : skillChangeDetail({
+                            orgId,
+                            change: active.skillChange,
+                            pending: changes.pending,
+                            onDecide: (d) => void decideChange(active.skillChange, d),
+                            t,
+                          });
 
   if (inbox === null) {
     return (
@@ -471,6 +498,8 @@ interface Labels {
   rejected: string;
   schedule: string;
   scheduleReason(a: ScheduleAttention): string;
+  network: string;
+  networkDecided: string;
 }
 
 /**
@@ -498,6 +527,23 @@ function rowOf(
       title: c.name,
       trailing: null,
       description: joined(labels.skillChange[c.kind], c.agent.name),
+    };
+  }
+  if (
+    (item.type === "catalog_request" || item.type === "catalog_request_decided") &&
+    isNetworkRequest(item.request)
+  ) {
+    const r = item.request;
+    return {
+      title: (r.network?.hosts ?? []).join(", ") || "—",
+      trailing: null,
+      description:
+        item.type === "catalog_request"
+          ? joined(labels.network, r.requestedByName ?? "")
+          : joined(
+              labels.networkDecided,
+              r.status === "approved" ? labels.approved : labels.rejected,
+            ),
     };
   }
   if (
@@ -610,10 +656,29 @@ function scheduleDetail({
         <Stack gap={12}>
           <Text variant="prose">{reason}</Text>
           {a.error !== null && a.error !== undefined && <Text variant="prose">{a.error}</Text>}
+          {a.deviceRefuses === true && <Text variant="prose">{tsa("deviceRefuses")}</Text>}
           {a.missing.length > 0 && (
             <ItemList
               label={tsa("missing")}
               rows={a.missing.map((k) => {
+                const host = networkGrantHost(k);
+                if (host !== null) {
+                  if ((a.needsAdmin ?? []).includes(k)) {
+                    return { id: k, title: host, status: { label: tsa("needsAdmin") } };
+                  }
+                  if (a.deviceRefuses === true) {
+                    return { id: k, title: host, status: { label: tsa("deviceRefusesShort") } };
+                  }
+                  return {
+                    id: k,
+                    title: host,
+                    actions: (
+                      <Button density="dense" disabled={pending} onClick={() => onAdd(k)}>
+                        {tsa("addDomain")}
+                      </Button>
+                    ),
+                  };
+                }
                 const slug = connectionOf(k);
                 if (slug !== null) {
                   return {
@@ -850,6 +915,169 @@ function directoryRequestDetail({
           {subject.id !== null && (
             <Text>
               <Link href={`/plugins/${subject.id}`}>{td("openItem")}</Link>
+            </Text>
+          )}
+        </Stack>
+      </Card>
+    ),
+  };
+}
+
+/** The conversation a network request came from, when the member sent it. */
+function conversationLinkOf(request: CatalogRequest): string | null {
+  const id = request.network?.conversationId ?? null;
+  return id === null ? null : `/chat/${encodeURIComponent(id)}`;
+}
+
+/**
+ * A member's request to allow hosts in the org's sandbox network (org admins, network ask spec
+ * §5.3): the hosts, who asked and why, the conversation it came from; 批准 adds the hosts to the
+ * org's list (an org following the platform's list keeps its own copy from then on), 驳回 sends
+ * the optional reason typed here.
+ */
+function networkRequestDetail({
+  request,
+  pending,
+  reason,
+  setReason,
+  onDecide,
+  tnr,
+  td,
+  t,
+}: {
+  request: CatalogRequest;
+  pending: "approve" | "reject" | undefined;
+  reason: string;
+  setReason(v: string): void;
+  onDecide(decision: "approve" | "reject"): void;
+  tnr: Translate;
+  td: Translate;
+  t: Translate;
+}): Detail {
+  const hosts = request.network?.hosts ?? [];
+  const chat = conversationLinkOf(request);
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: td("requester"), v: directoryRequester(request) },
+          { k: tnr("hosts"), v: String(hosts.length) },
+          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
+        ]}
+      />
+    ),
+    actionRow: {
+      secondary: {
+        label: td("reject"),
+        onSelect: () => onDecide("reject"),
+        loading: pending === "reject",
+        disabled: pending !== undefined,
+      },
+      primary: {
+        label: tnr("approve"),
+        onSelect: () => onDecide("approve"),
+        loading: pending === "approve",
+        disabled: pending !== undefined,
+      },
+    },
+    content: (
+      <Card
+        title={tnr("title", { name: directoryRequester(request) })}
+        actions={<StatusMark status="waiting" label={tnr("label")} />}
+      >
+        <Stack gap={12}>
+          <ItemList label={tnr("hosts")} rows={hosts.map((h) => ({ id: h, title: h }))} />
+          {request.note !== "" && (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {td("note")}
+              </Text>
+              <Text variant="prose">{request.note}</Text>
+            </Stack>
+          )}
+          <Text variant="prose">{tnr("hint")}</Text>
+          {chat !== null && (
+            <Text>
+              <Link href={chat}>{t("openConversation")}</Link>
+            </Text>
+          )}
+          <Field label={tnr("reasonLabel")} optional help={tnr("reasonHelp")}>
+            <Textarea
+              name="reason"
+              rows={2}
+              maxLength={500}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </Field>
+        </Stack>
+      </Card>
+    ),
+  };
+}
+
+/**
+ * My network request, decided: the hosts are allowed now (run the command again) or the reason
+ * it was rejected; a link to the conversation; dismiss.
+ */
+function networkDecidedDetail({
+  request,
+  pending,
+  onDismiss,
+  tnr,
+  tdd,
+  t,
+}: {
+  request: CatalogRequest;
+  pending: boolean;
+  onDismiss(): void;
+  tnr: Translate;
+  tdd: Translate;
+  t: Translate;
+}): Detail {
+  const approved = request.status === "approved";
+  const hosts = (request.network?.hosts ?? []).join(", ");
+  const chat = conversationLinkOf(request);
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: tdd("status"), v: approved ? tdd("approved") : tdd("rejected") },
+          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
+          ...(request.decidedAt !== null
+            ? [{ k: tdd("decidedAt"), v: <DateTime value={request.decidedAt} /> }]
+            : []),
+        ]}
+      />
+    ),
+    actionRow: {
+      primary: { label: tdd("dismiss"), onSelect: onDismiss, loading: pending, disabled: pending },
+    },
+    content: (
+      <Card
+        title={tnr(approved ? "titleApproved" : "titleRejected", { hosts })}
+        actions={
+          <StatusMark
+            status={approved ? "success" : "failed"}
+            label={approved ? tdd("approved") : tdd("rejected")}
+          />
+        }
+      >
+        <Stack gap={8}>
+          <Text variant="prose">{approved ? tnr("hintApproved") : tnr("hintRejected")}</Text>
+          {!approved && request.reason !== null && request.reason !== "" && (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {tdd("reason")}
+              </Text>
+              <Text variant="prose">{request.reason}</Text>
+            </Stack>
+          )}
+          {chat !== null && (
+            <Text>
+              <Link href={chat}>{t("openConversation")}</Link>
             </Text>
           )}
         </Stack>

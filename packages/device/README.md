@@ -44,7 +44,8 @@ and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
 `status [--json]`, `start`, `stop`, `drain`,
-`policy [show | set <key> <value> | add|remove <key> <value>]` and `service install|uninstall`.
+`policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
+`service install|uninstall`.
 
 State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the
@@ -107,6 +108,16 @@ any public host only while a command started that way is running (the sandbox ru
 site the organization allows, and prompt injection can make an agent do that: turn it on only on
 your own development machine, with agents and material you trust.
 
+```bash
+capybara-device policy set network open --yes   # no network limit on this device
+capybara-device policy set network allowlist     # back to allowedDomains
+```
+
+`set network open` prints the risk and changes nothing without a confirmation: `--yes`, or, on a
+terminal, an answer of `y` at the prompt (without a terminal and without `--yes` it exits with
+status 2). `set network allowlist` is always accepted. The device's owner can also switch it on the
+device page, behind the same risk text, while `remoteGrants` is `owner`.
+
 ### Changes from the deployment
 
 `remoteGrants` in `policy.json` decides whether the deployment may widen this device's network
@@ -123,7 +134,8 @@ the device page):
 
 Narrowing (removing hosts, `network: allowlist`) is always accepted. Every host is validated like
 a local one, the change is written under `policy.json.lock`, and it applies at the next command.
-`remoteGrants` itself is set only locally, in `policy.json`. Each change from the deployment is
+`remoteGrants` itself is set only locally: `capybara-device policy set remoteGrants owner|off`
+(or in `policy.json`). Each change from the deployment is
 recorded in the local command log (`commands.log`, next to `policy.json`) with who decided it,
 and so is a refused attempt and the grants a command was given:
 
