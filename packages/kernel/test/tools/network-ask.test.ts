@@ -26,8 +26,10 @@ import {
   addressLayerNote,
   allowedAlwaysNote,
   allowedOnceNote,
+  alwaysRefusedNote,
   deniedNote,
   expiredNote,
+  localOnlyNote,
   orgLayerNote,
   skippedNote,
   tooManyNote,
@@ -393,17 +395,17 @@ describe("the ask and its outcomes", { timeout: 60_000 }, () => {
     expect(curlExecs()).toHaveLength(1);
   });
 
-  it("「一直允许」 the device refuses: falls back to this time, the once note", async () => {
+  it("「一直允许」 the device refuses: nothing granted, the refused note with the local command", async () => {
     s.dev.refusePolicy = true;
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
     const res = await decide(ask.id, { decision: "approve", scope: "always" });
     expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      detail: { outcome: "once_fallback", fallback: "refused" },
+      detail: { outcome: "refused" },
     });
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${allowedOnceNote(["files.example.com"])}`)).toBe(true);
+    expect(r?.content.endsWith(`\n\n${alwaysRefusedNote(["files.example.com"])}`)).toBe(true);
   });
 
   it("「一直允许」 with the device offline: once fallback, the once note", async () => {
@@ -519,11 +521,23 @@ describe("not asked", { timeout: 60_000 }, () => {
     expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toHaveLength(1);
   });
 
-  it("a device without remote grants is asked 「这次」 only", async () => {
+  it("a device without remote grants is not asked: the allow-it-locally note", async () => {
     s = await setup({ policy: { ...POLICY, remoteGrants: "off" } });
     s.dev.blocking.set("files.example.com", "device");
     await post([curl(["files.example.com"])]);
-    expect((await nextAsk()).scopes).toEqual(["once"]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = await results();
+    expect(r?.content.endsWith(`\n\n${localOnlyNote(["files.example.com"])}`)).toBe(true);
+    expect(await asks()).toEqual([]);
+  });
+
+  it("a Docker-mode machine (policyOp, no networkReport) is not asked", async () => {
+    s = await setup({ features: ["policyOp"] });
+    s.dev.blocking.set("files.example.com", "device");
+    await post([curl(["files.example.com"])]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    expect(await asks()).toEqual([]);
+    expect((await results())[0]?.content).not.toContain("[network]");
   });
 
   it("background Bash is not asked", async () => {

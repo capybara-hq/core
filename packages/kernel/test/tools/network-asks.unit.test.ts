@@ -11,6 +11,7 @@ import {
   allowedOnceNote,
   clipKept,
   deniedNote,
+  localOnlyNote,
   NETWORK_ASK_CLIPPED_NOTE,
   NETWORK_ASK_KEPT_MAX_BYTES,
   planNetworkAsk,
@@ -83,12 +84,32 @@ describe("planNetworkAsk", () => {
     expect(p.missingGrants).toEqual([]);
   });
 
-  it("offers only once when the device takes no remote grants", () => {
-    const p = planNetworkAsk([dev("a.com")], run(), {
+  it("a device that takes no remote grants: no ask, the allow-it-locally note", () => {
+    const p = planNetworkAsk([dev("a.com"), dev("b.com")], run(), {
       device: { ...attended.device, policy: { ...owner.policy, remoteGrants: "off" } },
       unattended: null,
     });
-    expect(p.scopes).toEqual(["once"]);
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      "[network] a.com, b.com were blocked by this device's network policy, and this device does not accept network changes from the conversation. The device owner can allow them locally: capybara-device policy add allowedDomains a.com and capybara-device policy add allowedDomains b.com. Continue without them or tell the user.",
+    ]);
+    expect(localOnlyNote(["a.com"])).toBe(
+      "[network] a.com was blocked by this device's network policy, and this device does not accept network changes from the conversation. The device owner can allow it locally: capybara-device policy add allowedDomains a.com. Continue without it or tell the user.",
+    );
+  });
+
+  it("a host granted in the run tree but still refused is asked again", () => {
+    expect(
+      planNetworkAsk([dev("a.com")], run({ granted: new Set(["a.com"]) }), attended).ask,
+    ).toEqual([{ host: "a.com", port: 443 }]);
+  });
+
+  it("a machine without networkReport (Docker mode) is never asked", () => {
+    const p = planNetworkAsk([dev("a.com")], run(), {
+      device: { features: ["policyOp"], policy: owner.policy },
+      unattended: null,
+    });
+    expect(p).toMatchObject({ ask: [], notes: [] });
   });
 
   it("a program without policyOp: no ask, no note for the device layer", () => {
@@ -188,6 +209,18 @@ describe("settledNetworkNotes", () => {
         24,
       ),
     ).toEqual([allowedOnceNote(["a.com", "b.com"])]);
+    // allowed always, but the device refused the policy op: nothing granted
+    expect(
+      settledNetworkNotes(
+        rec({
+          status: "approved",
+          detail: { ...d, grantedHosts: [], outcome: "refused" as never },
+        }),
+        24,
+      ),
+    ).toEqual([
+      "[network] a.com, b.com were blocked by this device's network policy. The user allowed them on this device, but the device does not accept network changes from the deployment; access stays blocked. The device owner can allow them locally: capybara-device policy add allowedDomains a.com and capybara-device policy add allowedDomains b.com.",
+    ]);
     expect(settledNetworkNotes(rec({ status: "denied", denyReason: "no" }), 24)).toEqual([
       deniedNote(["a.com", "b.com"], "no"),
     ]);

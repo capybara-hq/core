@@ -74,12 +74,23 @@ export const otherAskPendingNote = (hosts: readonly string[]) =>
 export const tooManyNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts)} Too many network requests in this task; ask the user to allow the domains on the device page.`;
 
+/** The local command that allows each host (one `policy add` per host). */
+const localAdd = (hosts: readonly string[]) =>
+  hosts.map((h) => `capybara-device policy add allowedDomains ${h}`).join(" and ");
+
 /**
- * Not asked: the run tree allowed the host, but the device still refused it (it takes no access
- * allowed from the conversation, `remoteGrants: off`).
+ * Not asked: the device takes no network changes from the deployment (`remoteGrants: off`), so
+ * neither a run grant nor 「一直允许」 would reach it; only its owner can allow the host locally.
  */
-export const grantIgnoredNote = (hosts: readonly string[]) =>
-  `${blockedLead(hosts)} The user allowed ${pron(hosts)} for this task, but this device does not accept access allowed from the conversation. Continue without ${pron(hosts)} or ask the user to allow ${pron(hosts)} on the device.`;
+export const localOnlyNote = (hosts: readonly string[]) =>
+  `${blockedLead(hosts).slice(0, -1)}, and this device does not accept network changes from the conversation. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)} or tell the user.`;
+
+/**
+ * Asked and allowed 「一直允许」, but the device refused the policy op (outcome `refused`): nothing
+ * was granted.
+ */
+export const alwaysRefusedNote = (hosts: readonly string[]) =>
+  `${blockedLead(hosts)} The user allowed ${pron(hosts)} on this device, but the device does not accept network changes from the deployment; access stays blocked. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}.`;
 
 /** The org layer (spec §6.6): only an org admin can lift it. */
 export const orgLayerNote = (hosts: readonly string[]) =>
@@ -109,7 +120,7 @@ export interface NetworkPlanContext {
 export interface NetworkPlan {
   /** The device-layer hosts to ask the device owner about (empty: no ask). */
   ask: { host: string; port: number }[];
-  /** The scopes the ask offers: no 「一直允许」 when the device takes no remote grants. */
+  /** The scopes the ask offers (a device without remote grants is never asked). */
   scopes: ("once" | "always")[];
   /** Notes written now, after the command output (one line per outcome). */
   notes: string[];
@@ -158,11 +169,16 @@ export function planNetworkAsk(
   const address: string[] = [];
   const org: string[] = [];
   const refused: string[] = [];
-  const ignored: string[] = [];
+  const localOnly: string[] = [];
   const unattended: string[] = [];
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
-  const canAsk = ctx.device?.features.includes("policyOp") === true;
+  // a machine that reports blocked hosts and takes policy changes (Docker mode has no report)
+  const canAsk =
+    ctx.device?.features.includes("networkReport") === true &&
+    ctx.device.features.includes("policyOp");
+  // no run grant or policy change reaches a device whose owner turned remote grants off
+  const remote = ctx.device?.policy?.remoteGrants !== "off";
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
@@ -174,16 +190,16 @@ export function planNetworkAsk(
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
         address.push(b.host);
       } else if (run?.refused.has(b.host)) refused.push(b.host);
-      else if (run?.granted.has(b.host)) ignored.push(b.host);
       else if (unattendedFails(ctx.unattended)) {
         unattended.push(b.host);
         missingGrants.push(networkGrantKey(b.host));
-      } else candidates.push({ host: b.host, port: b.port });
+      } else if (!remote) localOnly.push(b.host);
+      else candidates.push({ host: b.host, port: b.port });
     }
   }
   const notes: string[] = [];
   if (refused.length > 0) notes.push(deniedNote(refused));
-  if (ignored.length > 0) notes.push(grantIgnoredNote(ignored));
+  if (localOnly.length > 0) notes.push(localOnlyNote(localOnly));
   if (unattended.length > 0) notes.push(unattendedNetworkNote(unattended));
   let ask: { host: string; port: number }[] = [];
   if (candidates.length > 0) {
@@ -194,9 +210,7 @@ export function planNetworkAsk(
   }
   if (org.length > 0) notes.push(orgLayerNote(org));
   if (address.length > 0) notes.push(addressLayerNote(address));
-  const scopes: ("once" | "always")[] =
-    ctx.device?.policy?.remoteGrants === "off" ? ["once"] : ["once", "always"];
-  return { ask, scopes, notes, missingGrants };
+  return { ask, scopes: ["once", "always"], notes, missingGrants };
 }
 
 /**
@@ -208,6 +222,11 @@ export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] 
   const asked = (a.detail?.hosts ?? []).map((h) => h.host);
   switch (a.status) {
     case "approved": {
+      // 「一直允许」 the device refused: nothing took effect (compared as a string: the outcome
+      // may predate this build's type)
+      if ((a.detail?.outcome as string | undefined) === "refused") {
+        return [alwaysRefusedNote(asked)];
+      }
       const granted = a.detail?.grantedHosts ?? asked;
       const rest = asked.filter((h) => !granted.includes(h));
       const notes: string[] = [];

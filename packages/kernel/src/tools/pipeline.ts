@@ -29,7 +29,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
-import { NetworkGrants } from "../local-devices/network-grants.js";
+import { NetworkGrants, type NetworkRunState } from "../local-devices/network-grants.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
@@ -375,7 +375,8 @@ interface PipelineDeps {
    */
   readonly network:
     | {
-        grants: Pick<NetworkGrants, "runState">;
+        /** `deviceId` scopes the run tree's asks to the device (ignored by an older provider). */
+        grants: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
         devices: Pick<DevicePolicyService, "summary">;
       }
     | undefined;
@@ -595,7 +596,9 @@ export class ToolPipeline {
     @Inject(OrgToolSwitches) switches: Pick<OrgToolSwitches, "isToolOff">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Optional() @Inject(TOOL_PIPELINE_HOOKS) hooks?: ToolPipelineHooks,
-    @Optional() @Inject(NetworkGrants) networkGrants?: Pick<NetworkGrants, "runState">,
+    @Optional()
+    @Inject(NetworkGrants)
+    networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> },
     @Optional() @Inject(DevicePolicyService) devicePolicy?: Pick<DevicePolicyService, "summary">,
   ) {
     this.deps = {
@@ -1298,7 +1301,7 @@ export class ToolPipeline {
     if (network === undefined) return { kind: "write", event, notes: [] };
     const device = await network.devices.summary(report.deviceId);
     const run = hosts.some((h) => h.layer === "device")
-      ? await network.grants.runState(ctx.runId)
+      ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
     const plan = planNetworkAsk(hosts, run, { device, unattended: ctx.unattended });
     if (ctx.unattended != null) {
