@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   type Column,
   DataTable,
   DateTime,
@@ -63,16 +64,18 @@ const count = (n: number) => n.toLocaleString("en-US");
  * versions, and the replicas folded in a table. 队列: the kernel queues with readable names and
  * their counts, failures in the last day in fail. 连接: channel, device and sandbox counts. A
  * number the kernel could not read says 暂时无法读取 and the rest renders. Not prefetched: its own
- * skeleton on the first paint, then a read every 30 s while the page is visible.
+ * skeleton on the first paint, then a read every 30 s while the page is visible (`poll`; off
+ * only on the seeded /dev/ui page); when a later read fails the numbers stay, with a warn line
+ * saying when they were read and 重试.
  */
-export function HealthSection() {
+export function HealthSection({ poll = true }: { poll?: boolean }) {
   const t = useTranslations("admin.overview.health");
   const errorMessage = useErrorMessage();
   const q = adminHealthQuery();
   const read = useQuery({
     ...q,
     retryOnMount: retryOnMountOf(q.queryKey),
-    refetchInterval: HEALTH_POLL_MS,
+    refetchInterval: poll ? HEALTH_POLL_MS : false,
     refetchIntervalInBackground: false,
   });
   const queueColumns = useQueueColumns(t);
@@ -100,8 +103,27 @@ export function HealthSection() {
     );
   }
   const health = read.data;
+  // A poll failed after an earlier answer: the numbers stay, saying how old they are.
+  const stale = read.isRefetchError;
   return (
-    <OverviewSection title={t("title")} state="ready">
+    <OverviewSection
+      title={t("title")}
+      state="ready"
+      {...(stale && {
+        actions: (
+          <Button density="dense" onClick={() => void read.refetch()}>
+            {t("retry")}
+          </Button>
+        ),
+      })}
+    >
+      {stale ? (
+        <Text tone="warn" icon="circle-alert">
+          {t.rich("stale", {
+            time: () => <DateTime value={new Date(read.dataUpdatedAt)} />,
+          })}
+        </Text>
+      ) : null}
       <KernelGroup health={health} t={t} />
       <Subsection title={t("groups.queues")} variant="divided">
         {health.queues === null ? (

@@ -3390,6 +3390,8 @@
         "title": "Health",
         "failed": "Could not load health.",
         "unavailable": "Unavailable right now",
+        "stale": "The last refresh failed; showing the data from <time></time>.",
+        "retry": "Retry",
         "groups": {
           "kernel": "Kernel",
           "queues": "Queues",

@@ -681,6 +681,78 @@ describe("/admin 概览（OverviewPage）", () => {
     }
   });
 
+  it("运行状况：页面不可见时不轮询，回到可见后照常", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const visibility = (state: "hidden" | "visible") => {
+      Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+    try {
+      const h = zh.admin.overview.health;
+      const calls = stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+      await healthBox(h.title);
+      const reads = () =>
+        calls.filter((c) => new URL(c.url, "http://x").pathname === "/api/v1/admin/overview/health")
+          .length;
+      expect(reads()).toBe(1);
+      visibility("hidden");
+      await vi.advanceTimersByTimeAsync(95_000);
+      expect(reads()).toBe(1);
+      visibility("visible");
+      await vi.advanceTimersByTimeAsync(31_000);
+      await vi.waitFor(() => expect(reads()).toBeGreaterThan(1));
+    } finally {
+      Reflect.deleteProperty(document, "visibilityState");
+      vi.useRealTimers();
+    }
+  });
+
+  it("运行状况：轮询失败时保留数字，提示数据读取于何时，重试后提示消失", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const h = zh.admin.overview.health;
+      let failing = false;
+      stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/health": () => (failing ? boom() : json(200, HEALTH)),
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+      const box = await healthBox(h.title);
+      const [before, after] = h.stale.split("<time></time>") as [string, string];
+      const staleLine = () =>
+        within(section(h.title)).queryByText((_, el) => {
+          const text = el?.textContent ?? "";
+          return (
+            el?.getAttribute("data-tone") === "warn" &&
+            text.startsWith(before) &&
+            text.endsWith(after)
+          );
+        });
+      expect(staleLine()).toBeNull();
+      failing = true;
+      await vi.advanceTimersByTimeAsync(30_500);
+      // the client retries a failed read once before giving up
+      await vi.advanceTimersByTimeAsync(5_000);
+      const line = await vi.waitFor(() => {
+        const l = staleLine();
+        if (l === null) throw new Error("no stale line yet");
+        return l;
+      });
+      expect(line.querySelector("time")).not.toBeNull();
+      // the numbers stay
+      expect(within(box).getByText("v0.1.0")).toBeTruthy();
+      expect(within(section(h.title)).queryByRole("alert")).toBeNull();
+      failing = false;
+      within(section(h.title)).getByRole("button", { name: h.retry }).click();
+      await vi.waitFor(() => expect(staleLine()).toBeNull());
+      expect(within(section(h.title)).queryByRole("button", { name: h.retry })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("运行状况读取失败：只有这个区块出错，重试只重读它；其余区块照常", async () => {
     const o = zh.admin.overview;
     let failing = true;
@@ -716,6 +788,19 @@ describe("/admin 概览（OverviewPage）", () => {
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
     expect(follows(section(o.attention.title), section(o.health.title))).toBe(true);
     expect(follows(section(o.health.title), section(o.audit.title))).toBe(true);
+  });
+
+  it("the /dev/ui overview does not poll the health (no kernel behind the catalog)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const calls = stubApi({});
+      renderPage(<Catalog route="pages/admin-overview" />, { locale: "zh" });
+      expect(await screen.findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(65_000);
+      expect(calls).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {

@@ -210,7 +210,9 @@ export function PageCatalog({ route }: { route: PageRoute }) {
   return (
     <QueryClientProvider client={client}>
       <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/admin")}>
-        {route === "pages/admin-overview" ? <AdminOverviewView /> : null}
+        {/* no polling: a query's own refetchInterval beats the client's defaults, and with no
+            kernel behind the catalog a poll would only fail and turn the health stale */}
+        {route === "pages/admin-overview" ? <AdminOverviewView pollHealth={false} /> : null}
       </AppShell>
     </QueryClientProvider>
   );

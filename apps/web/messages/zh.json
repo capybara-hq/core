@@ -3378,6 +3378,8 @@
         "title": "运行状况",
         "failed": "无法加载运行状况。",
         "unavailable": "暂时无法读取",
+        "stale": "最近一次刷新失败，显示的是 <time></time> 的数据。",
+        "retry": "重试",
         "groups": {
           "kernel": "内核",
           "queues": "队列",
@@ -3418,7 +3420,7 @@
           "channels": "渠道",
           "maintenance": "维护",
           "pluginScope": "插件范围同步",
-          "titles": "标题",
+          "titles": "会话标题",
           "usageReport": "用量上报",
           "evals": "评测"
         },

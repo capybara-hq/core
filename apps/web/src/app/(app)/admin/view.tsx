@@ -22,14 +22,19 @@ import { HealthSection } from "./overview/HealthSection";
  * the privacy footnote last. From the query cache: the layout prefetched the numbers, the inbox
  * and the audit events on a first load; the attention lists and the health load in their section.
  */
-export default function AdminOverviewView() {
+export default function AdminOverviewView({
+  pollHealth = true,
+}: {
+  /** Whether 运行状况 polls (off on the seeded /dev/ui page, which has no kernel behind it). */
+  pollHealth?: boolean;
+}) {
   const gate = useAdmin();
   if (gate.kind === "pending") return null;
   if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
-  return <AdminOverview />;
+  return <AdminOverview pollHealth={pollHealth} />;
 }
 
-function AdminOverview() {
+function AdminOverview({ pollHealth }: { pollHealth: boolean }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin");
   const read = usePageQuery(adminOverviewQuery());
@@ -46,7 +51,7 @@ function AdminOverview() {
         </Text>
       )}
       <AttentionSection />
-      <HealthSection />
+      <HealthSection poll={pollHealth} />
       <AuditSection />
       <Text variant="prose" tone="muted">
         {t("overview.footnote")}
