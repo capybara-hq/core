@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { LocalizedName, SandboxLimits } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceLocalPolicySummary,
+  LocalizedName,
+  SandboxLimits,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";
@@ -14,6 +18,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
+import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
@@ -56,6 +61,12 @@ export interface DeviceView {
   online: boolean | null;
   /** A local device's connected machine (its unrevoked one); null for cloud or none. */
   machine: DeviceMachineView | null;
+  /**
+   * A local device's network facts as its connected machine last reported them (network
+   * ask-to-allow spec §5.4): the program's features and its local policy summary (null when
+   * unknown). null for a cloud device or a local one without a connected machine.
+   */
+  network: { features: string[]; policy: DeviceLocalPolicySummary | null } | null;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
@@ -764,6 +775,8 @@ export class DevicesService {
         "m.program_version as machine_program_version",
         "m.last_seen_at as machine_last_seen_at",
         "m.session_isolation as machine_session_isolation",
+        "m.features as machine_features",
+        "m.local_policy as machine_local_policy",
         "i.provider as instance_provider",
         "i.fs_status",
         "i.handle",
@@ -853,6 +866,13 @@ export class DevicesService {
                 mode: r.machine_mode,
                 programVersion: r.machine_program_version,
                 lastSeenAt: r.machine_last_seen_at?.toISOString() ?? null,
+              }
+            : null,
+        network:
+          r.source === "local" && r.machine_id !== null
+            ? {
+                features: deviceFeaturesOf(r.machine_features),
+                policy: localPolicyOf(r.machine_local_policy),
               }
             : null,
         // a local device's machine decides it; cloud devices have none in phase 2

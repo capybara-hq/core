@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DeviceHello } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -167,6 +168,62 @@ describe("MachinesService", () => {
     expect(await machines.activeFor(m.deviceId)).toBeNull();
     // idempotent
     await machines.revoke(orgId, a, m.deviceId);
+  });
+
+  it("recordHello keeps the known features and a valid policy summary; a later hello replaces them", async () => {
+    const a = await member();
+    const m = await connected(a);
+    const hello: DeviceHello = {
+      type: "hello",
+      protocol: 1,
+      programVersion: "0.3.0",
+      os: "linux",
+      arch: "x64",
+      mode: "os",
+      roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+      sessionIsolation: false,
+    };
+    const policy = {
+      network: "allowlist" as const,
+      allowedDomains: ["pypi.org"],
+      remoteGrants: "owner" as const,
+    };
+    await machines.recordHello(m.machineId, {
+      ...hello,
+      features: ["policyOp", "teleport", "networkReport"] as unknown as NonNullable<
+        DeviceHello["features"]
+      >,
+      policy,
+    });
+    expect(await machines.activeFor(m.deviceId)).toMatchObject({
+      features: ["networkReport", "policyOp"],
+      localPolicy: policy,
+    });
+    expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
+      features: ["networkReport", "policyOp"],
+      policy,
+    });
+
+    // a malformed summary is none
+    await machines.recordHello(m.machineId, {
+      ...hello,
+      features: ["policyOp"],
+      policy: { ...policy, remoteGrants: "always" } as unknown as NonNullable<
+        DeviceHello["policy"]
+      >,
+    });
+    expect(await machines.activeFor(m.deviceId)).toMatchObject({
+      features: ["policyOp"],
+      localPolicy: null,
+    });
+
+    // an older program reports neither: the kernel stops sending what it cannot do
+    await machines.recordHello(m.machineId, hello);
+    expect(await machines.activeFor(m.deviceId)).toMatchObject({ features: [], localPolicy: null });
+    expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
+      features: [],
+      policy: null,
+    });
   });
 
   it("recordHello stores what the program reported; touch writes at most every 60 s", async () => {
