@@ -4,9 +4,12 @@
  */
 import {
   type ExecResult,
+  type NetworkBlockedHost,
+  type NetworkBlockLayer,
   type SandboxActor,
   type SandboxLimits,
   type SandboxRoots,
+  validateAllowHost,
   validateSandboxPathShape,
 } from "./sandbox.js";
 
@@ -22,7 +25,8 @@ export type DeviceOp =
   | "stat"
   | "killTagged"
   | "killAll"
-  | "stop";
+  | "stop"
+  | "policy";
 
 const DEVICE_OPS: readonly DeviceOp[] = [
   "create",
@@ -33,7 +37,38 @@ const DEVICE_OPS: readonly DeviceOp[] = [
   "killTagged",
   "killAll",
   "stop",
+  "policy",
 ];
+
+/**
+ * Optional capabilities a device announces in its hello. A kernel sends the `policy` op only to a
+ * device with `policyOp`; `networkReport` means exec results may carry `network`.
+ */
+export type DeviceFeature = "networkReport" | "policyOp";
+const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp"];
+
+/**
+ * Whether the device accepts widening its local policy from the kernel (the `policy` op's `add`
+ * and `network: "open"`, run and task grants): `owner` (default, decided by the device owner in a
+ * signed-in session) or `off` (only the machine's user widens it, with the CLI).
+ */
+export type DeviceRemoteGrants = "owner" | "off";
+
+/** The device's local network mode: only the allowed domains (within the org's limits), or open. */
+export type DeviceNetworkMode = "allowlist" | "open";
+
+/** What the kernel knows of a device's local network policy (from the hello or a `policy` op). */
+export interface DeviceLocalPolicySummary {
+  network: DeviceNetworkMode;
+  allowedDomains: string[];
+  remoteGrants: DeviceRemoteGrants;
+}
+
+/** The most blocked hosts an exec result reports; the parser cuts longer lists. */
+export const MAX_NETWORK_BLOCKED_HOSTS = 20;
+
+/** The most hosts a `policy` op's `add` / `remove` or an exec's `grants` may carry. */
+const MAX_POLICY_HOSTS = 100;
 
 /** First frame from the device after the WebSocket opens. */
 export interface DeviceHello {
@@ -45,6 +80,10 @@ export interface DeviceHello {
   mode: "os" | "docker";
   roots: SandboxRoots;
   sessionIsolation: boolean;
+  /** Optional capabilities (absent on older devices; unknown entries are dropped by the parser). */
+  features?: DeviceFeature[];
+  /** The device's local network policy at connect time (absent on older devices). */
+  policy?: DeviceLocalPolicySummary;
 }
 
 /** Error kinds a device reports for a failed request. */
@@ -81,6 +120,17 @@ export interface DeviceExecArgs {
   tag: string;
   actor: SandboxActor;
   limits: SandboxLimits;
+  /**
+   * Hosts the kernel allows for this command beyond the local policy (a run's 「这次允许」 or a
+   * scheduled task's grants). A device applies them only when its `remoteGrants` is `owner` and
+   * only within `limits`; a device without the feature ignores the field.
+   */
+  grants?: DeviceExecGrants;
+}
+/** Extra hosts for one exec and where they come from (logged by the device with the command). */
+export interface DeviceExecGrants {
+  hosts: string[];
+  source: { kind: "run" | "task"; id: string; accountId: string };
 }
 export type DeviceExecResult = ExecResult;
 export interface DeviceReadFileArgs {
@@ -109,6 +159,23 @@ export interface DeviceCreateResult {
 }
 export interface DeviceStopArgs {
   reason: "revoked" | "deleted";
+}
+/**
+ * Edits the device's local network policy. The device refuses widening (`add`,
+ * `network: "open"`) unless its `remoteGrants` is `owner`; narrowing is always accepted.
+ */
+export interface DevicePolicyArgs {
+  /** Hosts to add to `allowedDomains`. */
+  add?: string[];
+  /** Hosts to remove from `allowedDomains`. */
+  remove?: string[];
+  network?: DeviceNetworkMode;
+  /** Who decided, for the device's local audit line. */
+  source: { approvalId?: string; accountId: string; accountName: string; via: "web" | "im" };
+}
+/** The policy as the device wrote it. */
+export interface DevicePolicyResult {
+  policy: DeviceLocalPolicySummary;
 }
 
 /** A frame that is not valid protocol v1 (or came from the wrong side). */
@@ -205,6 +272,72 @@ function parseRoots(v: unknown): SandboxRoots {
   return roots as unknown as SandboxRoots;
 }
 
+function hostArray(o: Record<string, unknown>, k: string): string[] {
+  const v = strArray(o, k);
+  if (v.length > MAX_POLICY_HOSTS) {
+    throw new DeviceProtocolError(`field "${k}" must have at most ${MAX_POLICY_HOSTS} entries`);
+  }
+  return v;
+}
+
+function parseNetworkMode(o: Record<string, unknown>, k: string): DeviceNetworkMode {
+  const v = str(o, k);
+  if (v !== "allowlist" && v !== "open") throw new DeviceProtocolError(`unknown network "${v}"`);
+  return v;
+}
+
+function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
+  const o = obj(v, 'field "policy"');
+  const remoteGrants = str(o, "remoteGrants");
+  if (remoteGrants !== "owner" && remoteGrants !== "off") {
+    throw new DeviceProtocolError(`unknown remoteGrants "${remoteGrants}"`);
+  }
+  return {
+    network: parseNetworkMode(o, "network"),
+    allowedDomains: strArray(o, "allowedDomains"),
+    remoteGrants,
+  };
+}
+
+/** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
+function optionalHelloFields(o: Record<string, unknown>): Pick<DeviceHello, "features" | "policy"> {
+  const out: Pick<DeviceHello, "features" | "policy"> = {};
+  if (Array.isArray(o.features)) {
+    out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
+  }
+  if (o.policy !== undefined) {
+    try {
+      out.policy = parsePolicySummary(o.policy);
+    } catch {
+      // an unreadable summary is the same as none: the kernel learns the policy later
+    }
+  }
+  return out;
+}
+
+const BLOCK_LAYERS: readonly NetworkBlockLayer[] = ["device", "org", "address", "unknown"];
+
+/**
+ * The valid entries of an exec result's `network.blocked`: a host that fails
+ * {@link validateAllowHost} is kept only with layer `address`; anything malformed is dropped;
+ * at most {@link MAX_NETWORK_BLOCKED_HOSTS}. Undefined when the field is not a report at all.
+ */
+function parseNetworkReport(v: unknown): { blocked: NetworkBlockedHost[] } | undefined {
+  if (!isRecord(v) || !Array.isArray(v.blocked)) return undefined;
+  const blocked: NetworkBlockedHost[] = [];
+  for (const e of v.blocked) {
+    if (blocked.length >= MAX_NETWORK_BLOCKED_HOSTS) break;
+    if (!isRecord(e)) continue;
+    const { host, port, layer } = e;
+    if (typeof host !== "string" || host === "" || host.length > 255) continue;
+    if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) continue;
+    if (!BLOCK_LAYERS.includes(layer as NetworkBlockLayer)) continue;
+    if (layer !== "address" && validateAllowHost(host).length > 0) continue;
+    blocked.push({ host, port, layer: layer as NetworkBlockLayer });
+  }
+  return { blocked };
+}
+
 function parseHello(o: Record<string, unknown>): DeviceHello {
   const os = str(o, "os");
   if (os !== "darwin" && os !== "linux") throw new DeviceProtocolError(`unsupported os "${os}"`);
@@ -224,6 +357,7 @@ function parseHello(o: Record<string, unknown>): DeviceHello {
     mode,
     roots: parseRoots(o.roots),
     sessionIsolation: o.sessionIsolation,
+    ...optionalHelloFields(o),
   };
 }
 
@@ -264,7 +398,19 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       const actor = obj(a.actor, 'field "actor"');
       str(actor, "accountId");
       str(actor, "conversationId");
+      if (actor.runId !== undefined) str(actor, "runId");
       parseLimits(a.limits);
+      if (a.grants !== undefined) {
+        const g = obj(a.grants, 'field "grants"');
+        hostArray(g, "hosts");
+        const src = obj(g.source, 'field "grants.source"');
+        const kind = str(src, "kind");
+        if (kind !== "run" && kind !== "task") {
+          throw new DeviceProtocolError(`unknown grant source kind "${kind}"`);
+        }
+        nonEmptyStr(src, "id");
+        nonEmptyStr(src, "accountId");
+      }
       if (a.cwd !== undefined) str(a, "cwd");
       if (a.env !== undefined) {
         const env = obj(a.env, 'field "env"');
@@ -302,6 +448,18 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       }
       return;
     }
+    case "policy": {
+      if (a.add !== undefined) hostArray(a, "add");
+      if (a.remove !== undefined) hostArray(a, "remove");
+      if (a.network !== undefined) parseNetworkMode(a, "network");
+      const src = obj(a.source, 'field "source"');
+      nonEmptyStr(src, "accountId");
+      str(src, "accountName");
+      const via = str(src, "via");
+      if (via !== "web" && via !== "im") throw new DeviceProtocolError(`unknown via "${via}"`);
+      if (src.approvalId !== undefined) str(src, "approvalId");
+      return;
+    }
   }
 }
 
@@ -315,6 +473,7 @@ export interface DeviceOpResults {
   killTagged: null;
   killAll: null;
   stop: null;
+  policy: DevicePolicyResult;
 }
 
 /** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
@@ -327,14 +486,20 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
       if (exitCode !== null && (typeof exitCode !== "number" || !Number.isFinite(exitCode))) {
         throw new DeviceProtocolError('field "exitCode" must be a number or null');
       }
-      return {
+      const out: ExecResult = {
         exitCode: exitCode as number | null,
         stdout: str(r, "stdout"),
         stderr: str(r, "stderr"),
         truncated: bool(r, "truncated"),
         timedOut: bool(r, "timedOut"),
       };
+      // an optional report: a malformed one is dropped, never failing the command's result
+      const network = parseNetworkReport(r.network);
+      if (network) out.network = network;
+      return out;
     }
+    case "policy":
+      return { policy: parsePolicySummary(obj(result, "policy result").policy) };
     case "readFile": {
       if (result === null) return null;
       const r = obj(result, "readFile result");

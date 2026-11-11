@@ -38,6 +38,15 @@ export async function runOp(
   const ok = (result: unknown): DeviceRes => ({ type: "res", id: req.id, ok: true, result });
   try {
     if (req.op === "stop") return ok(null);
+    // TODO(network asks P1.3): apply the policy op; until then the device refuses it
+    if (req.op === "policy") {
+      return {
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { kind: "error", message: "unsupported operation" },
+      };
+    }
     if ((await executor.ensureRoot()) === "gone") {
       return {
         type: "res",
