@@ -25,6 +25,7 @@ import {
   draftOf,
   draftValid,
   LOADING_SECTIONS,
+  NetworkAccessSection,
   patchOf,
   type ScheduleDraft,
   ScheduleFormSections,
@@ -179,6 +180,8 @@ function ScheduleForm({
   const [draft, setDraft] = useState<ScheduleDraft>(saved);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // a refused network grant, shown in its section with the kernel's reason
+  const [networkError, setNetworkError] = useState<unknown>(null);
   const readOnly = !own;
   const touched = [
     keys.org(orgId).schedulesAll(),
@@ -320,6 +323,24 @@ function ScheduleForm({
           pending={addGrant.isPending || removeGrant.isPending}
           onAdd={(k) => void act(addGrant.mutateAsync(k), t("actions.toolAdded"))}
           onRemove={(k) => void act(removeGrant.mutateAsync(k), t("actions.toolRemoved"))}
+        />
+        <NetworkAccessSection
+          granted={granted.map((g) => g.toolKey)}
+          refused={refused}
+          readOnly={readOnly}
+          pending={addGrant.isPending || removeGrant.isPending}
+          error={networkError}
+          onAdd={(k) => {
+            setNetworkError(null);
+            addGrant.mutateAsync(k).then(
+              () => toast.success(t("actions.domainAdded")),
+              (e: unknown) => setNetworkError(e),
+            );
+          }}
+          onRemove={(k) => {
+            setNetworkError(null);
+            void act(removeGrant.mutateAsync(k), t("actions.domainRemoved"));
+          }}
         />
         <RunHistory runs={runs.data?.items ?? null} />
         {error !== null ? <FormError message={error} /> : null}

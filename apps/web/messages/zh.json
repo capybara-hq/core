@@ -1930,6 +1930,22 @@
       "hintApproved": "组织管理员已配置好全部连接器，它们的工具已加入智能体。",
       "hintRejected": "组织管理员没有配置这些连接器。可以在智能体的工具页重新申请。",
       "openAgent": "打开智能体的工具页"
+    },
+    "network": {
+      "label": "网络申请",
+      "decidedLabel": "网络申请已处理",
+      "title": "{name} 申请允许域名",
+      "hosts": "域名",
+      "hint": "批准后，这些域名会加入组织的沙箱网络。如果组织当前跟随平台的清单，此后组织会保留自己的一份清单。",
+      "approve": "允许",
+      "reasonLabel": "原因",
+      "reasonHelp": "驳回时发给申请的成员。",
+      "approved": "已允许这些域名",
+      "rejected": "已驳回网络申请",
+      "titleApproved": "已允许 · {hosts}",
+      "titleRejected": "未允许 · {hosts}",
+      "hintApproved": "组织现在允许这些域名，再运行一次命令即可。",
+      "hintRejected": "你允许这些域名的申请没有通过。"
     }
   },
   "connectors": {
@@ -2338,7 +2354,8 @@
       "noneHint": "沙箱只能访问自身（回环）。",
       "hosts": "允许的主机",
       "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
-      "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。"
+      "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。",
+      "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。"
     },
     "limits": {
       "title": "沙箱资源",
@@ -5931,7 +5948,18 @@
         "not_available": "智能体目前没有这个工具",
         "needs_role": "需要你没有的角色",
         "fixed_ask": "总是需要人确认"
-      }
+      },
+      "network": "网络访问",
+      "networkHint": "任务运行时可以在其设备上直接访问、无需询问的域名（不超出组织允许的范围）。",
+      "networkLabel": "允许的域名",
+      "networkEmpty": "还没有预先允许的域名。",
+      "addDomain": "添加域名",
+      "addDomainHelp": "完整主机名，例如 files.example.com。",
+      "networkInvalid": "请输入小写主机名，不带协议、端口或路径，例如 files.example.com。",
+      "networkWildcard": "请预先允许完整主机名，不能用通配符。",
+      "networkMissing": "最近运行中被拦截",
+      "networkRefused": "这个域名不能预先允许给任务。",
+      "domain": "域名"
     },
     "runs": {
       "title": "运行记录",
@@ -5993,7 +6021,9 @@
       "resumed": "任务已恢复",
       "deleted": "任务已删除",
       "toolAdded": "已为任务批准该工具",
-      "toolRemoved": "已移除工具"
+      "toolRemoved": "已移除工具",
+      "domainAdded": "已为任务允许这个域名",
+      "domainRemoved": "已从任务移除这个域名"
     },
     "startedBy": "由定时任务 <link>{name}</link> 发起",
     "turnedOff": "本组织已关闭定时任务：任务不会运行，也不能新建。",
@@ -6061,6 +6091,22 @@
     "open": "打开任务",
     "task": "任务",
     "reasonLabel": "原因",
-    "added": "已为任务批准该工具"
+    "added": "已为任务批准该工具",
+    "needsAdmin": "只有组织管理员能允许这个域名",
+    "deviceRefuses": "任务所在的设备不接受平台修改网络。请在机器上允许这些域名：capybara-device policy add allowedDomains files.example.com。",
+    "deviceRefusesShort": "设备不接受",
+    "addDomain": "加入允许的域名"
+  },
+  "networkAsk": {
+    "ask": "请管理员添加",
+    "openSettings": "去组织设置添加",
+    "platformOff": "平台关闭了沙箱网络，只有超级管理员能开启",
+    "dialogTitle": "请管理员允许域名",
+    "dialogBody": "组织管理员会收到一个请求，把 {hosts} 加入组织的沙箱网络。在他们添加之前命令仍被拦截，添加后再运行一次。",
+    "note": "说明",
+    "noteHelp": "告诉管理员智能体为什么需要它。",
+    "send": "发送请求",
+    "sent": "已把请求发给组织管理员。",
+    "refused": "无法发送这个请求。"
   }
 }

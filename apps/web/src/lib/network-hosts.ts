@@ -32,3 +32,18 @@ export const NETWORK_GRANT_PREFIX = "network:";
 /** The host of a network grant key, or null for a tool key. */
 export const networkGrantHost = (key: string): string | null =>
   key.startsWith(NETWORK_GRANT_PREFIX) ? key.slice(NETWORK_GRANT_PREFIX.length) : null;
+
+/** The most hosts the org settings' `?allowHost=` prefills. */
+export const MAX_ALLOW_HOST_PARAM = 20;
+
+/**
+ * The hosts of `/settings/sandbox?allowHost=a.com,b.com` (repeated params too): lowercased,
+ * valid allowlist hosts only, unique, at most {@link MAX_ALLOW_HOST_PARAM}; empty when none.
+ */
+export function parseAllowHostParam(v: string | string[] | undefined): string[] {
+  const raw = (Array.isArray(v) ? v : v === undefined ? [] : [v])
+    .flatMap((s) => s.slice(0, 20 * 254).split(","))
+    .map(normalizeHost)
+    .filter((h) => allowHostProblem(h, { wildcard: true }) === null);
+  return [...new Set(raw)].slice(0, MAX_ALLOW_HOST_PARAM);
+}

@@ -21,6 +21,12 @@ import { timeZoneOptions } from "../lib/account-preferences";
 import type { Agent, ProviderModels } from "../lib/agents";
 import { labelLocale } from "../lib/extension-label";
 import { decodeModel, encodeModel, pickerOptions } from "../lib/models";
+import {
+  allowHostProblem,
+  NETWORK_GRANT_PREFIX,
+  networkGrantHost,
+  normalizeHost,
+} from "../lib/network-hosts";
 import { retryOnMountOf } from "../lib/query/client";
 import {
   chatTargetsQuery,
@@ -52,6 +58,7 @@ import {
   switchPreset,
   triggerOf,
 } from "../lib/schedules";
+import { ApiErrorDetail } from "./ApiErrorDetail";
 
 /** The fields the task form edits (the approved tools are their own section). */
 export interface ScheduleDraft {
@@ -569,9 +576,9 @@ export function useGrantableTools(orgId: string, agentId: string): GrantableTool
  * `onAdd` / `onRemove` are the create form's draft or the saved task's grant routes.
  */
 export function ApprovedToolsSection({
-  granted,
+  granted: grantedAll,
   tools,
-  refused,
+  refused: refusedAll,
   readOnly = false,
   pending = false,
   onAdd,
@@ -588,6 +595,9 @@ export function ApprovedToolsSection({
 }) {
   const t = useTranslations("schedules.form");
   const [pick, setPick] = useState("");
+  // domains (`network:<host>`) are the Network access section's
+  const granted = grantedAll.filter((g) => networkGrantHost(g.toolKey) === null);
+  const refused = refusedAll.filter((k) => networkGrantHost(k) === null);
   const keys = granted.map((g) => g.toolKey);
   const byKey = new Map((tools ?? []).map((x) => [x.key, x]));
   const name = (k: string) => byKey.get(k)?.title ?? k;
@@ -668,6 +678,126 @@ export function ApprovedToolsSection({
                     }),
               };
             })}
+          />
+        )}
+      </Stack>
+    </FormSection>
+  );
+}
+
+/**
+ * Network access (network ask spec §8.1): the domains the task's unattended runs may reach on its
+ * device without asking, each a `network:<host>` grant (exact hosts), with 移除; an add field; the
+ * domains the latest runs were refused with 加入. The kernel refuses a domain outside the org's
+ * network (only an admin can add it) or any domain when the task's device takes no network
+ * changes; `error` is that refusal, shown with the kernel's reason.
+ */
+export function NetworkAccessSection({
+  granted,
+  refused,
+  readOnly = false,
+  pending = false,
+  error = null,
+  onAdd,
+  onRemove,
+}: {
+  /** Grant keys; only the `network:<host>` ones are listed. */
+  granted: string[];
+  /** What the latest runs were refused; only the `network:<host>` keys are listed. */
+  refused: string[];
+  readOnly?: boolean;
+  pending?: boolean;
+  error?: unknown;
+  onAdd(key: string): void;
+  onRemove(key: string): void;
+}) {
+  const t = useTranslations("schedules.form");
+  const [host, setHost] = useState("");
+  const [problem, setProblem] = useState<string>();
+  const keys = granted.filter((k) => networkGrantHost(k) !== null);
+  const missing = refused.filter((k) => networkGrantHost(k) !== null && !keys.includes(k));
+  const add = () => {
+    const h = normalizeHost(host);
+    const why = allowHostProblem(h, { wildcard: false });
+    if (why !== null) {
+      setProblem(t(why === "wildcard" ? "networkWildcard" : "networkInvalid"));
+      return;
+    }
+    setProblem(undefined);
+    setHost("");
+    if (!keys.includes(NETWORK_GRANT_PREFIX + h)) onAdd(NETWORK_GRANT_PREFIX + h);
+  };
+  return (
+    <FormSection id="network" title={t("network")} description={t("networkHint")}>
+      <Stack gap={12}>
+        <ItemList
+          label={t("networkLabel")}
+          empty={t("networkEmpty")}
+          rows={keys.map((k) => ({
+            id: k,
+            title: networkGrantHost(k) ?? k,
+            ...(readOnly
+              ? {}
+              : {
+                  actions: (
+                    <Button density="dense" disabled={pending} onClick={() => onRemove(k)}>
+                      {t("remove")}
+                    </Button>
+                  ),
+                }),
+          }))}
+        />
+        {!readOnly && (
+          <Stack direction="row" gap={8} align="end">
+            <Field
+              label={t("domain")}
+              help={t("addDomainHelp")}
+              {...(problem !== undefined ? { error: problem } : {})}
+            >
+              <Input
+                value={host}
+                maxLength={253}
+                placeholder="files.example.com"
+                onChange={(e) => {
+                  setHost(e.target.value);
+                  setProblem(undefined);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    add();
+                  }
+                }}
+              />
+            </Field>
+            <Button disabled={host.trim() === "" || pending} onClick={add}>
+              {t("addDomain")}
+            </Button>
+          </Stack>
+        )}
+        {missing.length > 0 && (
+          <ItemList
+            label={t("networkMissing")}
+            rows={missing.map((k) => ({
+              id: k,
+              title: networkGrantHost(k) ?? k,
+              ...(readOnly
+                ? {}
+                : {
+                    actions: (
+                      <Button density="dense" disabled={pending} onClick={() => onAdd(k)}>
+                        {t("addMissing")}
+                      </Button>
+                    ),
+                  }),
+            }))}
+          />
+        )}
+        {error !== null && error !== undefined && (
+          <ApiErrorDetail
+            error={error}
+            open
+            summaries={{ "schedule.grant_not_allowed": t("networkRefused") }}
           />
         )}
       </Stack>
