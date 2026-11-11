@@ -129,6 +129,9 @@ export interface CatalogDecision {
   reason?: string | undefined;
 }
 
+/** The most pending `network_allowlist` requests one member may have in an org. */
+export const NETWORK_REQUESTS_PENDING_MAX = 10;
+
 /** 申请列表一次最多返回的条数。 */
 export const CATALOG_REQUESTS_LIST_MAX = 200;
 
@@ -319,7 +322,9 @@ export class CatalogRequestsService {
    * A member asks the org admins to allow hosts in the org's sandbox egress (`POST /orgs/:orgId/
    * catalog-requests/network`, `catalog.request`; spec §5.3). The hosts arrive validated (exact,
    * lowercased) and are deduped and sorted here. The deployment egress `none` ->
-   * `catalog.request_invalid` (only a super admin can turn sandbox network on); every host already
+   * `catalog.request_invalid` (only a super admin can turn sandbox network on); the org's own
+   * egress `none` -> `catalog.request_invalid`; {@link NETWORK_REQUESTS_PENDING_MAX} pending
+   * requests of the member already -> `catalog.request_invalid`; every host already
    * allowed by the org's effective egress -> `catalog.request_invalid`; a conversation or agent not
    * in the org -> `catalog.request_invalid`. A pending request of the same requester for the same
    * host set is returned as is (no second request). Audits `catalog.requested`.
@@ -347,6 +352,12 @@ export class CatalogRequestsService {
     const deployment = this.orgSettings.deployment().sandboxEgress;
     if (deployment.mode === "none") throw deploymentEgressNone();
     const settings = await readOrgSettings(t, orgId);
+    if (settings.sandboxEgress?.mode === "none") {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "The organization has sandbox network turned off; ask an admin to turn it on first.",
+      );
+    }
     const effective = effectiveSandboxEgress(
       { egress: deployment.mode, allowHosts: deployment.allowHosts },
       settings.sandboxEgress,
@@ -394,6 +405,20 @@ export class CatalogRequestsService {
       .where(sql<boolean>`detail -> 'hosts' = ${JSON.stringify(hosts)}::jsonb`)
       .executeTakeFirst();
     if (existing) return existing.id;
+    const pending = await t
+      .selectFrom("catalog_requests")
+      .select(sql<string>`count(*)`.as("n"))
+      .where("org_id", "=", orgId)
+      .where("kind", "=", "network_allowlist")
+      .where("requested_by", "=", actor)
+      .where("status", "=", "pending")
+      .executeTakeFirstOrThrow();
+    if (Number(pending.n) >= NETWORK_REQUESTS_PENDING_MAX) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "You have too many pending domain requests; wait for an admin to handle them.",
+      );
+    }
     const detail: NetworkRequestDetail = {
       hosts,
       conversationId: input.conversationId ?? null,

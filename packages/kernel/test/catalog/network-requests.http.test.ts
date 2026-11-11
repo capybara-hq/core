@@ -286,6 +286,28 @@ describe("network requests", () => {
     expect(errCode(again)).toBe("catalog.request_decided");
   });
 
+  it("an org with sandbox network off refuses filing", async () => {
+    await setOrgEgress({ mode: "none" });
+    const res = await file(memberReq, { hosts: ["files.slack.com"] });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("catalog.request_invalid");
+    expect((res.json() as { error: { message: string } }).error.message).toMatch(
+      /ask an admin to turn it on first/,
+    );
+  });
+
+  it("a member has at most 10 pending network requests", async () => {
+    for (let i = 0; i < 10; i++) await fileOk({ hosts: [`h${i}.example.com`] });
+    const res = await file(memberReq, { hosts: ["h10.example.com"] });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("catalog.request_invalid");
+    expect((res.json() as { error: { message: string } }).error.message).toMatch(
+      /too many pending domain requests/,
+    );
+    // an identical pending request is still returned
+    expect((await file(memberReq, { hosts: ["h0.example.com"] })).statusCode).toBe(201);
+  });
+
   it("a member cannot decide; a PAT and a service token cannot file", async () => {
     const r = await fileOk({ hosts: ["files.slack.com"] });
     const res = await decide(memberReq, r.id, { approve: true });
