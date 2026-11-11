@@ -575,6 +575,7 @@
       "shareConfirm": "Share",
       "shareCancel": "Cancel",
       "shareWaiting": "Waiting for an org admin",
+      "sharedWithOrg": "Shared with the org",
       "shareRequested": "Sharing \"{name}\" was requested. An org admin decides it in the inbox.",
       "ownSkillShared": "Skill \"{name}\" is now shared with the org.",
       "deleteOwnSkill": "Delete",

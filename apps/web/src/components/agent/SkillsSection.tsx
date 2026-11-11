@@ -61,6 +61,8 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
   const orgList = { skills: data.orgSkills ?? [], failed: data.orgSkills === null };
   const own = { skills: data.ownSkills ?? [], failed: data.ownSkills === null };
   const allSkills: SkillSummary[] = [...orgList.skills, ...own.skills];
+  /** The org skills this agent shared (they stay in effect for it, listed with its own). */
+  const sharedHere = new Set(own.skills.filter((s) => s.shared === true).map((s) => s.id));
   /** What the pinned picker may judge (stale pins): both lists read, undefined otherwise. */
   const pinnable = orgList.failed || own.failed ? undefined : allSkills;
   const nameOfSkill = (id: string) =>
@@ -160,7 +162,9 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
           description={t("form.skillsSectionHint")}
         >
           <OrgSkillsPicker
-            skills={orgList.skills}
+            // a skill this agent shared is in effect through the agent: listed in its own region
+            skills={orgList.skills.filter((s) => !sharedHere.has(s.id))}
+            alsoKnown={[...sharedHere]}
             offered={data.offered}
             value={d.orgSkills}
             onChange={onOrgSkillsChange}

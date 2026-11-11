@@ -50,10 +50,13 @@ export function OrgSkillsPicker({
   value,
   onChange,
   skillsHref,
+  alsoKnown = [],
 }: {
   skills: SkillSummary[] | undefined;
   /** The platform components offered to the org: an id of one that is off reads as unavailable. */
   offered?: OrgComponent[] | null;
+  /** Ids listed elsewhere on the page (skills the agent shared): never shown as deleted here. */
+  alsoKnown?: readonly string[];
   value: string[];
   onChange(next: string[]): void;
   /** The skills page, for the empty state's action; undefined when the viewer cannot see it. */
@@ -64,7 +67,7 @@ export function OrgSkillsPicker({
     const aliases = skillAliases(s);
     onChange(on ? [...value, s.id] : value.filter((x) => !aliases.includes(x)));
   };
-  const known = new Set((skills ?? []).flatMap(skillAliases));
+  const known = new Set([...(skills ?? []).flatMap(skillAliases), ...alsoKnown]);
   const missing = skills === undefined ? [] : value.filter((id) => !known.has(id));
   // a platform skill off in the org (spec §5 rule 8): unavailable, back when it is on again
   const unavailable = missing.flatMap((id) => {
@@ -326,7 +329,8 @@ export function PinnedSkillsPicker({
 }
 
 /**
- * The agent's own skills (`scope=agent`): name · version and description. Everyone who can open
+ * The agent's own skills (`scope=agent`) and the org skills it shared (marked "shared with the
+ * org", no actions): name · version and description. Everyone who can open
  * the agent reads the list; only the owner (`canManage`) sees the actions: upload a skill package
  * (zip), share one with the org (a confirm dialog; for a non-admin it files a request, shown as
  * "waiting for an org admin" from then on) and delete (typing its name to confirm). `onDeleted`
@@ -361,7 +365,7 @@ export function OwnSkills({
     fn: (skillId: string) => deleteAgentSkill(orgId, agentId, skillId),
     invalidates: () => [keys.org(orgId).agentSkills(agentId)],
   });
-  // A shared skill leaves the agent's list and joins the org's
+  // A shared skill joins the org's list and stays in the agent's, marked shared
   const share = useAppMutation({
     fn: (skillId: string) => shareAgentSkill(orgId, agentId, skillId),
     invalidates: () => [
@@ -393,8 +397,10 @@ export function OwnSkills({
                 title={s.name}
                 code={versionLabel(s.currentVersion)}
                 meta={s.description}
+                marks={s.shared === true ? <Badge>{t("sharedWithOrg")}</Badge> : undefined}
                 actions={
-                  canManage ? (
+                  // a shared skill is the org's now: no share or delete from the agent
+                  canManage && s.shared !== true ? (
                     <Stack direction="row" gap={8} align="center">
                       {s.sharePending === true ? (
                         <Text variant="small" tone="muted">

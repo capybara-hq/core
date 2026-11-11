@@ -465,6 +465,37 @@ describe("编辑 agent（FormPage）", () => {
     expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
   });
 
+  it("a skill the agent shared stays in its own skills, marked shared, in effect and pinnable, with no share or delete", async () => {
+    const f = en.agents.form;
+    const shared = { ...orgSkill("k2", "team-notes"), shared: true };
+    stubApi({
+      ...routes({
+        definition: { ...agent().definition, skills: { orgSkills: ["s1"], pinned: ["k2"] } },
+      }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills: [orgSkill("s1", "pdf-tools"), shared] }),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skills: [{ ...ownSkill, shared: false }, shared] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const own = await screen.findByRole("region", { name: f.ownSkillsLabel });
+    await within(own).findByText("team-notes");
+    expect(within(own).getByText(f.sharedWithOrg)).toBeTruthy();
+    // the owner still shares and deletes the own skill, never the shared one
+    expect(within(own).getAllByRole("button", { name: /notes-style/ })).toHaveLength(2);
+    expect(within(own).queryByRole("button", { name: /team-notes/ })).toBeNull();
+    // not offered unticked in the org picker: it is in effect through the agent
+    const orgPicker = screen.getByRole("region", { name: f.orgSkillsLabel });
+    expect(within(orgPicker).queryByRole("checkbox", { name: /team-notes/ })).toBeNull();
+    // its pin is live, never a deleted skill
+    const pinned = screen.getByRole("region", { name: f.pinnedLabel });
+    const pin = within(pinned).getByRole("checkbox", {
+      name: f.pinSkill.replace("{name}", "team-notes"),
+    });
+    expect((pin as HTMLInputElement).checked).toBe(true);
+    expect(within(pinned).queryByText(f.deletedSkill.replace("{id}", "k2"))).toBeNull();
+    expect(zh.agents.form.sharedWithOrg).toBe("已共享到组织");
+  });
+
   it("an org admin owner: the share answer `shared` toasts at once", async () => {
     stubApi({
       ...routes(),

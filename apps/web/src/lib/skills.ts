@@ -52,6 +52,11 @@ export interface SkillSummary {
   shareable?: boolean;
   /** The agent's own skill list only: a share request of the skill waits for an org admin. */
   sharePending?: boolean;
+  /**
+   * The agent's own skill list only: an org skill this agent shared (same id as before sharing);
+   * it stays in effect for the agent without being selected.
+   */
+  shared?: boolean;
 }
 
 /** The skill's id and the ids of the org copies linked to it (they all select the same skill). */

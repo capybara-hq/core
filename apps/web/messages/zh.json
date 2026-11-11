@@ -575,6 +575,7 @@
       "shareConfirm": "共享",
       "shareCancel": "取消",
       "shareWaiting": "等待组织管理员处理",
+      "sharedWithOrg": "已共享到组织",
       "shareRequested": "已申请共享「{name}」，等待组织管理员在收件箱里决定。",
       "ownSkillShared": "技能「{name}」已共享给组织。",
       "deleteOwnSkill": "删除",
