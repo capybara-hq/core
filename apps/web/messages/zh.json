@@ -198,6 +198,7 @@
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
+      "not_yours": "只有设备所有者能允许这台设备访问网络。",
       "already_decided": "该审批已被处理或已过期。",
       "scope_not_allowed": "此审批只能允许本次。"
     },

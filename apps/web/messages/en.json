@@ -198,6 +198,7 @@
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
+      "not_yours": "Only the device owner can allow network access on this device.",
       "already_decided": "This approval has already been handled or has expired.",
       "scope_not_allowed": "This approval can only be allowed once."
     },

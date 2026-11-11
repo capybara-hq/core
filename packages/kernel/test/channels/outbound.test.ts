@@ -962,6 +962,20 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeou
               .executeTakeFirstOrThrow()
           ).trigger_account_id as string)
         : requestedFor;
+    // a network ask is for the owner of a live device of the org
+    const deviceId = randomUUID();
+    await db
+      .insertInto("devices")
+      .values({
+        id: deviceId,
+        org_id: orgId,
+        owner_kind: "personal",
+        owner_account_id: owner,
+        name: `Laptop ${deviceId.slice(0, 4)}`,
+        source: "local",
+        provider: "local",
+      })
+      .execute();
     const ask = await k.app.get(ApprovalsService).requestNetwork({
       orgId,
       conversationId,
@@ -970,7 +984,7 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeou
       callId: `net-${randomUUID().slice(0, 8)}`,
       requestedFor: owner,
       detail: {
-        deviceId: randomUUID(),
+        deviceId,
         hosts: hosts.map((host) => ({ host, port: 443 })),
         command: "curl -fsSL https://files.slack.com/x -H 'Authorization: app-secret-1234567'",
         description: "Download the file",
