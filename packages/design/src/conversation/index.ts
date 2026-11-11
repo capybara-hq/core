@@ -187,6 +187,7 @@ export {
   type SummaryRow,
   summarizeTools,
   summaryParts,
+  type ToolGuard,
   type ToolKind,
   type ToolVerbGroup,
   type ToolWaiting,

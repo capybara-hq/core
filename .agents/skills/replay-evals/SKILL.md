@@ -31,7 +31,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
-  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
+  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range, `guard` for a read-before-write refusal)
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
   `Bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the

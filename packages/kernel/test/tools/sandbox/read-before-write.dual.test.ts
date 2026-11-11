@@ -105,11 +105,13 @@ describe("read before write (two replicas)", { timeout: 90_000 }, () => {
                 callId,
                 toolKey: name,
                 content: text,
-                isError: false,
+                isError: r.isError === true,
                 ...(r.view !== undefined && { view: r.view }),
               },
             },
           ]);
+          // a read-before-write refusal is a result (with the guard view), not a throw
+          if (r.isError === true) return { error: text as string | null, view: r.view };
         }
         return { error: null as string | null };
       } catch (e) {
@@ -147,6 +149,7 @@ describe("read before write (two replicas)", { timeout: 90_000 }, () => {
       new_string: "three",
     });
     expect(bad.error).toBe(MODIFIED);
+    expect(bad.view).toEqual({ kind: "guard", reason: "modified" });
     expect((await use(b, "Read", { file_path: "/workspace/a.txt" })).error).toBeNull();
     expect(
       (
