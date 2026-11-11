@@ -1,19 +1,12 @@
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import {
-  R3_FIXED_ASK_TOOL_KEYS,
-  R3_SHARED_AGENT_ONLY_TOOL_KEYS,
-  SANDBOX_ASK_TOOL_NAMES,
-} from "./builtin-names.js";
+import { SANDBOX_ASK_TOOL_NAMES } from "./builtin-names.js";
 import { personalAuth } from "./connector-account-policies.js";
 import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
-
-export { R3_FIXED_ASK_TOOL_KEYS, R3_SHARED_AGENT_ONLY_TOOL_KEYS } from "./builtin-names.js";
 
 const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
 
@@ -27,15 +20,15 @@ export interface PolicyInput {
   connectorDefault: ToolPolicy;
   /** agent 负责人的收紧（`definition.toolPolicies[key]`）。 */
   agentOverride?: "ask" | "deny";
-  /** R3 清单或 `requiresUserInteraction`。 */
+  /** `requiresUserInteraction`。 */
   fixedAsk: boolean;
   /** 已记住且 specHash 与当前一致的授权。 */
   grant: "session" | "always" | null;
 }
 
 /**
- * 策略判定（纯函数）：取组织默认、agent 收紧、R3 固定询问三者中最严者；
- * 记住的授权只能把 `ask` 放行为 `allow`，不能越过 `deny`，对 R3 / `requiresUserInteraction` 的工具无效。
+ * 策略判定（纯函数）：取组织默认、agent 收紧、固定询问三者中最严者；
+ * 记住的授权只能把 `ask` 放行为 `allow`，不能越过 `deny`，对 `requiresUserInteraction` 的工具无效。
  */
 export function decide(input: PolicyInput): ToolPolicy {
   let p = stricter(input.connectorDefault, input.agentOverride);
@@ -45,21 +38,11 @@ export function decide(input: PolicyInput): ToolPolicy {
 }
 
 /**
- * 是否属于 R3 固定询问（清单或工具声明需要用户交互）。`visibility` 为 agent 当前的可见性：
- * {@link R3_SHARED_AGENT_ONLY_TOOL_KEYS} 里的内置工具在私有 agent 上不算固定询问，
- * 除非 agent 当前版本的 `skills.writePolicy` 为 `ask`（`skillWritePolicy`）；不知道可见性时按共享处理（更严）。
+ * Whether the tool is a fixed ask: its spec declares `requiresUserInteraction`, so its policy is
+ * at least `ask` and remembered grants never let it through.
  */
-export function isFixedAsk(
-  tool: ResolvedTool,
-  visibility?: "private" | "org" | "members" | undefined,
-  skillWritePolicy?: "allow" | "ask" | undefined,
-): boolean {
-  if (tool.spec.annotations?.requiresUserInteraction === true) return true;
-  if (!R3_FIXED_ASK_TOOL_KEYS.has(tool.key)) return false;
-  const builtinOnly =
-    tool.source.kind === "builtin" && R3_SHARED_AGENT_ONLY_TOOL_KEYS.has(tool.key);
-  // 私有 agent：缺省 / allow 不问（R4），负责人设为 ask（D10）时与共享 agent 一样固定询问
-  return !(builtinOnly && visibility === "private" && skillWritePolicy !== "ask");
+export function isFixedAsk(tool: ResolvedTool): boolean {
+  return tool.spec.annotations?.requiresUserInteraction === true;
 }
 
 const asSetting = (v: unknown): ToolPolicy | undefined =>
@@ -105,7 +88,7 @@ export type ConnectorPolicySource = "org" | "member" | "agent";
  * 4. the member's own `allow` / `ask`;
  * 5. the org's default (`connector_tools.default_policy`, the annotation default unless an org
  *    admin changed it: `readOnlyHint: true` allows, anything else asks).
- * Fixed asks (R3, `requiresUserInteraction`), role escalation and grants apply after this.
+ * Fixed asks (`requiresUserInteraction`), role escalation and grants apply after this.
  */
 export function connectorPolicy(input: {
   orgDefault: ToolPolicy;
@@ -213,7 +196,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
           .onRef("agent_versions.agent_id", "=", "agents.id")
           .onRef("agent_versions.version", "=", "agents.current_version"),
       )
-      .select(["agent_versions.definition", "agents.visibility"])
+      .select(["agent_versions.definition"])
       .where("agents.id", "=", ctx.agentId)
       .executeTakeFirst();
     // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
@@ -263,13 +246,10 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       if (!roleAtLeast(m.role, tool.requiredRole)) escalateTo = tool.requiredRole;
     }
 
-    // 可见性实时读（R5）：共享 agent 的 SkillWrite 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
-    // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
-    const writePolicy = (currentDef as AgentDefinition | undefined)?.skills?.writePolicy;
     // `remember: false` on a call that is not a plain allow (an org / platform operation, or a read
     // an agent tightened to ask): every call asks, grants never apply. A read (`allow`) never asks.
     const fixedAsk =
-      isFixedAsk(tool, current?.visibility, writePolicy) ||
+      isFixedAsk(tool) ||
       (call !== null && !call.remember && (call.policy !== "allow" || agentOverride !== undefined));
     const input: PolicyInput = {
       connectorDefault,
@@ -294,7 +274,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       requestedFor: escalateTo === null ? ctx.accountId : null,
       approverRole: escalateTo,
       // the most specific rule that asked: role escalation, the agent's tightening, the connector,
-      // a fixed ask (R3, requiresUserInteraction), the org's sandboxToolPolicy, else the tool's own
+      // a fixed ask (requiresUserInteraction), the org's sandboxToolPolicy, else the tool's own
       // default
       policy:
         escalateTo !== null

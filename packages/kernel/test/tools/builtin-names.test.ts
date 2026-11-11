@@ -26,6 +26,8 @@ import {
   BUILTIN,
   BUILTIN_TOOL_KINDS,
   BUILTIN_TOOL_NAMES,
+  CHILD_REMOVED_TOOLS,
+  isRemovedBuiltinKey,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
   WEB_TOOL_NAMES,
@@ -98,6 +100,12 @@ const OLD_NAMES: readonly RegExp[] = [
 ];
 
 describe("builtin names", () => {
+  it("there is no SkillWrite builtin: agents register skills with the Platform tool", () => {
+    expect(BUILTIN_TOOL_NAMES).not.toContain("SkillWrite");
+    expect(Object.keys(BUILTIN)).not.toContain("SkillWrite");
+    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver"]);
+  });
+
   it("every BUILTIN value matches the builtin grammar and equals its key", () => {
     for (const [k, v] of Object.entries(BUILTIN)) {
       expect(v).toBe(k);
@@ -176,8 +184,8 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the legacy map covers the 13 old names, one per new name (the task, web, message, Platform and CurrentTime tools never had one)", () => {
-    expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
+  it("the legacy map covers the 12 old names, one per new name (the task, web, message, Platform and CurrentTime tools never had one)", () => {
+    expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(12);
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
       BUILTIN.TaskStop,
@@ -356,5 +364,20 @@ describe("legacy texts are the 02b9634b texts, byte for byte", () => {
     expect(catalogText([t], LEGACY_CATALOG_HEADER)).toBe(
       "More tools are available but not loaded. To use one, first call tool_search with keywords; it returns the full definitions and loads the matching tools for your next step. Calling a tool that is not loaded returns an error. Tool catalog:\n- mcp__docs__search: Search docs.",
     );
+  });
+});
+
+describe("isRemovedBuiltinKey", () => {
+  it("is true only for a bare builtin-shaped key that names no current builtin", () => {
+    expect(isRemovedBuiltinKey("SkillWrite")).toBe(true);
+    for (const name of Object.values(BUILTIN)) expect(isRemovedBuiltinKey(name), name).toBe(false);
+    for (const key of [
+      "mcp__docs__search",
+      "plugin__todo__write",
+      "Platform:skills.share",
+      "sandbox_bash",
+    ]) {
+      expect(isRemovedBuiltinKey(key), key).toBe(false);
+    }
   });
 });

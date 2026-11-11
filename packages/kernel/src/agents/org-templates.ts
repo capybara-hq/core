@@ -23,6 +23,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { skillVersionsById } from "../skills/usable.js";
+import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { AgentLookup, type AgentView } from "./agent-lookup.js";
@@ -317,6 +318,8 @@ export async function templateFromAgent(
     // a template only tightens: an agent's `allow` (a connector tool's, decision 2026-11-09)
     // is not carried into it
     if (v === "allow") continue;
+    // a removed builtin's policy left in a stored definition is not carried
+    if (isRemovedBuiltinKey(k)) continue;
     const parsed = parseToolKey(k);
     if (parsed !== null && parsed.kind !== "connector" && TOOL_KEY_RE.test(k)) {
       toolPolicies[k] = v;

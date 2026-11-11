@@ -24,18 +24,22 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { eventsOf, PW, waitForTerminal } from "../helpers/runs.js";
 import { MODEL } from "../runtime/context/fixtures.js";
+import { makeZip } from "./zip.js";
 
 /**
  * M5 第三段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis，加载 model-fake、
  * fake-object-store（SeaweedFS）与测试用假沙箱插件（两个副本共用一个 root 目录，相当于共用一个提供方），
  * 全部经 HTTP 操作，请求在两个副本之间交替：
  *
- * 1. 共享 agent 的 `SkillWrite`：R3 固定确认（发起人批准）→ 生成变更申请；发起对话可试用草稿，另一对话看不到；
- *    负责人在副本 B 上批准 → 另一对话（副本 A）下一次运行开始时追加目录快照（「新技能」提醒），`Skill` 拿到内容；
- * 2. 第二版同样走一遍：批准前另一对话仍是 v1，批准后它在下一次运行开始时看到「Updated skills」提醒并加载到 v2；
- * 3. 带脚本的技能：`Skill` 把文件复制进沙箱 `/skills/<name>@<digest>/`，`Bash` 用 `sh` 执行脚本。
+ * 1. The owner registers a skill package on a shared agent (upload, then register, on alternating
+ *    replicas): the version is effective at once; another conversation (on the other replica) gets
+ *    a first catalog snapshot at its next run start and `Skill` returns the content;
+ * 2. A second version: the other conversation sees the "Updated skills" reminder at its next run
+ *    start and loads v2;
+ * 3. A skill with a script: `Skill` copies its files into the sandbox `/skills/<name>@<digest>/` and
+ *    `Bash` runs the script with `sh`.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -53,16 +57,18 @@ type ModelCallEvent = Extract<ConversationEvent, { type: "model_call" }>;
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
-const skillInput = (version: string) => ({
-  name: "fruit-sum",
-  description: "Use to sum fruit quantities.",
-  files: [
-    { path: "SKILL.md", content: `# Fruit sum ${version}\nRun \`sh /skills/fruit-sum/run.sh\`.` },
-    { path: "run.sh", content: `echo "fruit-sum ${version} ok"\n` },
-  ],
-});
+const skillZip = (version: string) =>
+  new Uint8Array(
+    makeZip([
+      {
+        name: "SKILL.md",
+        data: `---\nname: fruit-sum\ndescription: Use to sum fruit quantities.\n---\n# Fruit sum ${version}\nRun \`sh /skills/fruit-sum/run.sh\`.\n`,
+      },
+      { name: "run.sh", data: `echo "fruit-sum ${version} ok"\n` },
+    ]),
+  );
 
-describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙箱）", () => {
+describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill scripts in the sandbox)", () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let s3: TestS3;
@@ -176,38 +182,42 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     return { ...t, result: t.result as ToolResult };
   }
 
-  /** 共享 agent 上的 SkillWrite：R3 固定确认 → 发起人在另一个副本上批准 → 等运行结束。 */
-  async function sharedWrite(i: 0 | 1, convId: string, input: unknown, n: number) {
-    await send("member", i, convId, "SkillWrite", input);
-    const a = await waitFor(
-      () =>
-        db
-          .selectFrom("approvals")
-          .select(["id", "tool_key"])
-          .where("conversation_id", "=", convId)
-          .where("status", "=", "pending")
-          .executeTakeFirst(),
-      30_000,
-      "SkillWrite approval",
-    );
-    expect(a.tool_key).toBe("SkillWrite");
-    // 确认之前没有变更申请
-    expect(await pendingChanges()).toHaveLength(0);
-    const other: 0 | 1 = i === 0 ? 1 : 0;
-    const d = await at("member", other, "POST", `${base}/approvals/${a.id}/decision`, {
-      decision: "approve",
+  /** The owner registers a package on the agent through replica `i`: upload, put the bytes, register. */
+  async function registerSkill(i: 0 | 1, agentId: string, zip: Uint8Array) {
+    const up = await at("owner", i, "POST", `${base}/agents/${agentId}/skills/uploads`, {
+      name: "skill.zip",
+      size: zip.byteLength,
     });
-    expect(d.status, JSON.stringify(d.json)).toBe(200);
-    const t = await terminal(convId, n);
-    expect(t.result?.toolKey).toBe("SkillWrite");
-    return t.result as ToolResult;
+    expect(up.status, JSON.stringify(up.json)).toBe(201);
+    const u = up.json as {
+      id: string;
+      upload: {
+        method: "PUT" | "POST";
+        url: string;
+        headers: Record<string, string>;
+        fields?: Record<string, string>;
+      };
+    };
+    let put: Response;
+    if (u.upload.method === "PUT") {
+      put = await fetch(u.upload.url, {
+        method: "PUT",
+        headers: u.upload.headers,
+        body: Buffer.from(zip),
+      });
+    } else {
+      const form = new FormData();
+      for (const [key, v] of Object.entries(u.upload.fields ?? {})) form.append(key, v);
+      form.append("file", new Blob([Buffer.from(zip)], { type: "application/zip" }));
+      put = await fetch(u.upload.url, { method: "POST", headers: u.upload.headers, body: form });
+    }
+    expect(put.status).toBeLessThan(300);
+    const reg = await at("owner", i, "POST", `${base}/agents/${agentId}/skills`, {
+      uploadId: u.id,
+    });
+    expect(reg.status, JSON.stringify(reg.json)).toBe(200);
+    return reg.json.skill as { kind: string; version: number };
   }
-
-  const pendingChanges = () =>
-    db.selectFrom("skill_change_requests").selectAll().where("status", "=", "pending").execute();
-
-  const catalogs = async (convId: string) =>
-    ofType(await eventsOf(db, convId), "skills_catalog") as CatalogEvent[];
 
   /** 由日志还原某次运行第一次模型请求的消息（Ruling M17：目录变化以提醒的形式出现在消息里）。 */
   async function firstRequestText(convId: string, runId: string, def: AgentDefinition) {
@@ -225,16 +235,13 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     return JSON.stringify(rebuilt.request.messages);
   }
 
-  it("共享 agent 写技能 → 负责人跨副本批准 → 另一对话下次运行生效；技能脚本复制进沙箱并执行", async () => {
+  it("the owner registers skill packages through the routes on alternating replicas, they take effect at once across replicas, and skill scripts are copied into the sandbox and run", async () => {
     const ag = await at("owner", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Fruit",
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: onlyBuiltins([
-          { kind: "builtin", name: "SkillWrite" },
-          { kind: "builtin", name: "Bash" },
-        ]),
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
       },
       visibility: "org",
     });
@@ -252,82 +259,45 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
       expect(c.status, JSON.stringify(c.json)).toBe(201);
       return (c.json.conversation as { id: string }).id;
     };
-    const convM = await newConv("member", 0);
     const convX = await newConv("other", 1);
 
-    // ---- 1. 新技能：R3 确认 → 变更申请 → 只在发起对话里试用 ----
-    const w1 = await sharedWrite(0, convM, skillInput("v1"), 1);
-    expect(w1.isError, w1.content).toBe(false);
-    expect(w1.content).toMatch(/owner/i);
-    const [req1] = await pendingChanges();
-    expect(req1).toMatchObject({
-      agent_id: agentId,
-      skill_id: null,
-      requested_in_conversation: convM,
+    // ---- 1. A new skill: registered by the owner, effective at once for every conversation ----
+    expect(await registerSkill(0, agentId, skillZip("v1"))).toMatchObject({
+      kind: "version",
+      version: 1,
     });
-    expect(await db.selectFrom("skills").select("id").execute()).toHaveLength(0);
+    expect(await db.selectFrom("skills").select("id").execute()).toHaveLength(1);
 
-    const mine1 = await call("member", 1, convM, "Skill", { skill: "fruit-sum" }, 2);
-    expect(mine1.result.isError, mine1.result.content).toBe(false);
-    expect(mine1.result.content).toContain("Fruit sum v1");
-    const theirs1 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 1);
-    expect(theirs1.result.isError).toBe(true);
-    expect(theirs1.result.content).not.toContain("Fruit sum v1");
-    expect(await catalogs(convX)).toHaveLength(0);
-
-    // 负责人在副本 B 上批准（收件箱里能看到）
-    const inbox = await at("owner", 1, "GET", `${base}/inbox`);
-    expect(inbox.status).toBe(200);
-    expect((inbox.json.items as { type: string; id: string }[]).map((x) => [x.type, x.id])).toEqual(
-      [["skill_change", req1?.id]],
-    );
-    const ok1 = await at("owner", 1, "POST", `${base}/skill-changes/${req1?.id}/decide`, {
-      decision: "approve",
-    });
-    expect(ok1.status, JSON.stringify(ok1.json)).toBe(200);
-
-    // 另一对话（副本 A）的下一次运行开始时追加快照，「新技能」提醒进消息，加载成功
-    const x2 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 2);
+    // The other conversation (replica A) gets its first catalog snapshot at its next run start and loads it
+    const x2 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 1);
     expect(x2.result.isError, x2.result.content).toBe(false);
     expect(x2.result.content).toContain("Fruit sum v1");
     expect(x2.result.content).toContain("version 1");
-    // agent 有沙箱工具：Skill 把脚本复制进沙箱，这是本对话首次使用沙箱
+    // the agent has sandbox tools: Skill copies the script into the sandbox, the first use here
     expect(x2.result.content).toContain(SANDBOX_STARTED_NOTICE);
     const snapX2 = ofType(x2.evs, "skills_catalog");
     expect(snapX2).toHaveLength(1);
     expect(snapX2[0]?.payload.skills).toMatchObject([{ name: "fruit-sum", version: 1 }]);
-    expect(await firstRequestText(convX, x2.runId, def)).toContain("New skills");
 
-    // ---- 2. 第二版：批准前另一对话仍是 v1；批准后下一次运行看到「Updated skills」并加载到 v2 ----
-    const w2 = await sharedWrite(1, convM, skillInput("v2"), 3);
-    expect(w2.isError, w2.content).toBe(false);
-    const [req2] = await pendingChanges();
-    expect(req2?.skill_id).not.toBeNull();
-    const mine2 = await call("member", 0, convM, "Skill", { skill: "fruit-sum" }, 4);
-    expect(mine2.result.content).toContain("Fruit sum v2");
-    const x3 = await call("other", 1, convX, "Skill", { skill: "fruit-sum" }, 3);
-    expect(x3.result.content).toContain("Fruit sum v1");
-    expect(x3.result.content).not.toContain("Fruit sum v2");
-    expect(ofType(x3.evs, "skills_catalog")).toHaveLength(0);
-
-    const ok2 = await at("owner", 1, "POST", `${base}/skill-changes/${req2?.id}/decide`, {
-      decision: "approve",
+    // ---- 2. The second version: the other conversation sees "Updated skills" at its next run ----
+    expect(await registerSkill(1, agentId, skillZip("v2"))).toMatchObject({
+      kind: "version",
+      version: 2,
     });
-    expect(ok2.status, JSON.stringify(ok2.json)).toBe(200);
-    const x4 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 4);
+    const x4 = await call("other", 0, convX, "Skill", { skill: "fruit-sum" }, 2);
     expect(x4.result.isError, x4.result.content).toBe(false);
     expect(x4.result.content).toContain("Fruit sum v2");
     expect(x4.result.content).toContain("version 2");
     const snapX4 = ofType(x4.evs, "skills_catalog");
     expect(snapX4).toHaveLength(1);
     expect(snapX4[0]?.payload.skills).toMatchObject([{ name: "fruit-sum", version: 2 }]);
-    // 快照在这次运行的第一次模型请求之前
+    // the snapshot is before the first model request of this run
     const firstCall = ofType(x4.evs, "model_call")[0] as ModelCallEvent;
     expect((snapX4[0] as CatalogEvent).seq).toBeLessThan(firstCall.seq);
     expect(await firstRequestText(convX, x4.runId, def)).toContain("Updated skills");
 
-    // ---- 3. 脚本进沙箱：Skill 复制到 /skills/fruit-sum@<digest>/，Bash 用 sh 执行 ----
-    // the previous Skill copied v2 into the same device (beside v1; no new instance)
+    // ---- 3. Script in the sandbox: Skill copies to /skills/fruit-sum@<digest>/, Bash runs it with sh ----
+    // the earlier Skill call (v1) started the device; v2 is copied beside v1 (no new instance)
     expect(x4.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
     const dir = /\/skills\/fruit-sum@[0-9a-f]{12}/.exec(x4.result.content)?.[0] as string;
     expect(dir, x4.result.content).toBeTruthy();
@@ -354,18 +324,17 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
       convX,
       "Bash",
       { description: "Test step", command: `sh ${dir}/run.sh` },
-      5,
+      3,
     );
     expect(run.result.isError, run.result.content).toBe(false);
     expect(run.result.content).toContain("fruit-sum v2 ok");
 
-    // 没有遗留的活动运行，也没有待处理的申请
+    // no run left active
     const active = await db
       .selectFrom("runs")
       .select("id")
       .where("status", "in", ["queued", "running", "waiting"])
       .execute();
     expect(active).toEqual([]);
-    expect(await pendingChanges()).toEqual([]);
   }, 300_000);
 });

@@ -276,19 +276,6 @@ export async function readZipFiles(
   return raw;
 }
 
-/**
- * Checks skill files that are already unpacked (paths relative to the skill root), e.g. the ones
- * built from text, with the rules of {@link readSkillPackage}. Invalid -> `skill.invalid_package`.
- */
-export function checkBuiltSkillFiles(files: SkillPackageFile[]): SkillPackage {
-  try {
-    return { ...checkSkillFiles(files), files };
-  } catch (e) {
-    if (e instanceof SkillArchiveError) throw invalid(e.problems);
-    throw e;
-  }
-}
-
 /** A validated skill package: its name, description, files and invocation. */
 export interface SkillPackageInput {
   name: string;

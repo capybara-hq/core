@@ -727,7 +727,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * Pinned skills (phase B, spec §9.1) in the agent's order: each a skill of `skills` (same
        * id, version and source) with its SKILL.md body as read at run start or written by
-       * SkillWrite. Absent means none (every snapshot before phase B).
+       * a skill registration. Absent means none (every snapshot before phase B).
        */
       pinned: z
         .array(

@@ -13,21 +13,28 @@ import {
   SKILL_PACKAGE_CONTENT_TYPE,
   skillFilesPrefix,
 } from "../conversations/attachments.service.js";
+import { EventLog } from "../conversations/event-log.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { notifySharedUpdate } from "../inbox/org-notices.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
-import { buildSkillWrite } from "../tools/builtins/skill-write.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import {
-  checkBuiltSkillFiles,
+  type CancelledDrafts,
+  type ConversationCatalogDeps,
+  cancelRequestIn,
+} from "./conversation-catalog.js";
+import {
   readSkillPackage,
   type SkillPackageFile,
   type SkillPackageInput,
@@ -258,28 +265,6 @@ export interface UploadedSkill {
 }
 
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
-const nameExists = (name: string) =>
-  new ApiError(
-    "skill.name_exists",
-    `A skill named "${name}" already exists in this organization. Choose another name.`,
-  );
-
-/** The checked files of a skill written as text (a built `SKILL.md`); `validation_failed` if not. */
-function textSkillFiles(input: { name: string; description: string; body: string }) {
-  const built = buildSkillWrite({
-    name: input.name,
-    description: input.description,
-    files: [{ path: SKILL_ENTRY_FILE, content: input.body }],
-  });
-  if ("errors" in built) {
-    throw new ApiError(
-      "validation_failed",
-      `Invalid skill: ${built.errors[0] ?? "unknown problem"}`,
-      built.errors.map((message) => ({ path: "body", message })),
-    );
-  }
-  return checkBuiltSkillFiles(built.files);
-}
 
 /**
  * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
@@ -546,7 +531,13 @@ export class SkillsService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** The owner's new versions of a skill it promoted go to the platform row (ruling P3-4). */
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
-  ) {}
+    @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+  ) {
+    this.catalogDeps = { db, log, eventLog };
+  }
+
+  private readonly catalogDeps: ConversationCatalogDeps;
 
   /**
    * Writes a package's files where its version will live: for a new version of a skill the org
@@ -693,61 +684,6 @@ export class SkillsService {
   }
 
   /**
-   * The read-only checks of {@link createFromText}, for the `Platform` tool's precheck (before the
-   * card): custom skills allowed, a valid `SKILL.md`, and no live org skill of the name. Throws the
-   * same `ApiError` the create would; the create checks the name again under its lock.
-   */
-  async checkCreateFromText(
-    orgId: string,
-    input: { name: string; description: string; body: string },
-  ): Promise<void> {
-    await assertCustomAllowed(this.db.db, "customSkills");
-    const pkg = textSkillFiles(input);
-    const existing = await this.db
-      .selectFrom("skills")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("scope", "=", "org")
-      .where("name", "=", pkg.name)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    if (existing) throw nameExists(pkg.name);
-  }
-
-  /**
-   * Creates an org skill from text (spec §14, P3-24): `SKILL.md` is built from the name,
-   * description and body ({@link buildSkillWrite}, the description a YAML string) and checked like
-   * an uploaded package. The same policy and name rules as an upload, except that a live org skill
-   * of that name is `skill.name_exists` (409) instead of a new version.
-   */
-  async createFromText(
-    orgId: string,
-    actorAccountId: string,
-    input: {
-      name: string;
-      description: string;
-      body: string;
-      shareable?: boolean;
-      actorTokenId?: string;
-      /** Merged into the audit event's detail (the `Platform` tool's `via: "agent"`). */
-      auditDetail?: Record<string, unknown>;
-    },
-  ): Promise<UploadedSkill> {
-    this.storage.assertAvailable();
-    await assertCustomAllowed(this.db.db, "customSkills");
-    const pkg = textSkillFiles(input);
-    const prefix = skillFilesPrefix(randomUUID());
-    await this.putFiles(orgId, prefix, pkg.files);
-    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
-      prefix,
-      failIfExists: true,
-      ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
-      ...(input.auditDetail !== undefined && { auditDetail: input.auditDetail }),
-      ...(input.shareable !== undefined && { shareable: input.shareable }),
-    });
-  }
-
-  /**
    * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与平台目录安装共用）：
    * 1. 把文件写到 `kernel/<orgId>/<prefix>`（缺省 `skills/<新 id>/`）；
    * 2. 一个事务里：锁组织行并复核 `skills.manage`（目录安装：按条目策略复核），
@@ -767,8 +703,6 @@ export class SkillsService {
       auditDetail?: Record<string, unknown>;
       /** The owner shares a new skill with other orgs (default false). */
       shareable?: boolean;
-      /** A live org skill of the name is `skill.name_exists` instead of getting a new version. */
-      failIfExists?: boolean;
       /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
       catalog?: {
         itemId: string;
@@ -779,10 +713,23 @@ export class SkillsService {
         /** The plugin manifest suggests pinning this skill (spec §9.1). */
         suggestPinned?: boolean;
       };
+      /**
+       * The files are already stored (no storage I/O here, so it may join a transaction): at
+       * `prefix` in `kernel/<orgId>/`, or, for a skill the org promoted, the platform version
+       * {@link prepareStoredVersion} wrote. The caller discards that one when this fails.
+       */
+      stored?: { owner?: OwnerVersion };
     } = {},
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
+    if (opts.stored !== undefined) {
+      const { stored, ...rest } = opts;
+      return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
+        ...rest,
+        ...(stored.owner !== undefined && { owner: stored.owner }),
+      });
+    }
     const owner = await this.putVersionFiles(orgId, pkg, prefix, opts.catalog !== undefined);
     try {
       return await this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
@@ -794,6 +741,27 @@ export class SkillsService {
       if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
       throw e;
     }
+  }
+
+  /**
+   * For a new version whose files are already in `kernel/<orgId>/` (a proposed version's draft):
+   * when the org skill of that name is one the org promoted, writes the files as the platform
+   * row's next version (never inside a transaction) and returns it for
+   * `createVersionFromFiles({ stored: { owner } })`; else nothing is written.
+   */
+  async prepareStoredVersion(
+    orgId: string,
+    pkg: SkillPackageInput,
+  ): Promise<OwnerVersion | undefined> {
+    const promoted = await promotedSkillNamed(this.db.db, orgId, pkg.name);
+    return promoted === undefined
+      ? undefined
+      : this.platform.prepareOwnerVersion(promoted, pkg.files);
+  }
+
+  /** Deletes a platform version {@link prepareStoredVersion} wrote that was not used. */
+  async discardStoredVersion(owner: OwnerVersion): Promise<void> {
+    await this.platform.discardPrefix(owner.prefix);
   }
 
   /** Writes a skill package's files to `kernel/<orgId>/<prefix>` (a few at a time). */
@@ -839,7 +807,6 @@ export class SkillsService {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
-    if (existing && opts.failIfExists) throw nameExists(pkg.name);
     // The org's own skill it promoted (ruling P3-3): its new version goes to the platform row and
     // reaches every org using it (ruling P3-4); the files were written there before this
     // transaction, for the platform version current then
@@ -1102,6 +1069,47 @@ export class SkillsService {
     );
   }
 
+  /**
+   * The agent's skills as the agent page lists them, by name: {@link listForAgent} (`shared:
+   * false`) plus `sharePending`, true while a share request of the skill waits for an org admin,
+   * and the org skills the agent shared (`origin_agent_id`; `scope: 'org'`, `shared: true`, same
+   * id as before sharing): the agent keeps them without selecting them.
+   */
+  async listOwnForAgent(
+    orgId: string,
+    agentId: string,
+  ): Promise<(SkillSummary & { sharePending: boolean; shared: boolean })[]> {
+    const [skills, shared] = await Promise.all([
+      this.listForAgent(orgId, agentId),
+      summaryQuery(this.db.db)
+        .where("s.org_id", "=", orgId)
+        .where("s.scope", "=", "org")
+        .where("s.origin_agent_id", "=", agentId)
+        .where("s.deleted_at", "is", null)
+        .execute(),
+    ]);
+    const pending =
+      skills.length === 0
+        ? []
+        : await this.db
+            .selectFrom("skill_change_requests")
+            .select("skill_id")
+            .where("org_id", "=", orgId)
+            .where("kind", "=", "share")
+            .where("status", "=", "pending")
+            .where(
+              "skill_id",
+              "in",
+              skills.map((s) => s.id),
+            )
+            .execute();
+    const ids = new Set(pending.map((r) => r.skill_id));
+    return [
+      ...skills.map((s) => ({ ...s, sharePending: ids.has(s.id), shared: false })),
+      ...shared.map((r) => ({ ...summary(r), sharePending: false, shared: true })),
+    ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
+  }
+
   /** 对该 agent 自动生效的技能（`scope=agent`、未删除），按名字排序。 */
   async listForAgent(orgId: string, agentId: string): Promise<SkillSummary[]> {
     const rows = await summaryQuery(this.db.db)
@@ -1253,7 +1261,9 @@ export class SkillsService {
   /**
    * In the caller's transaction (`mandatory`: the caller holds the org row lock and checked
    * `skills.manage`), soft-deletes an org-scope skill of the org: what {@link softDelete} writes
-   * (audit `skill.deleted`); missing or deleted -> `skill.not_found`. The owner delete of a
+   * (audit `skill.deleted`); missing or deleted -> `skill.not_found`. Its pending version
+   * proposals are cancelled in the same transaction (trials reverted; drafts deleted and events
+   * published after the commit). The owner delete of a
    * promoted skill (`OwnedItems.deleteSkill`) calls it after its platform row was dealt with.
    */
   @Transactional({ propagation: "mandatory" })
@@ -1274,6 +1284,26 @@ export class SkillsService {
       .returning(["name"])
       .executeTakeFirst();
     if (!r) throw notFound();
+    // its pending version proposals go with it: cancelled, their trials reverted; after the
+    // commit the events are published and the drafts deleted (a share request has no draft)
+    const pending = await this.db
+      .selectFrom("skill_change_requests")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("skill_id", "=", skillId)
+      .where("kind", "=", "version")
+      .where("status", "=", "pending")
+      .orderBy("created_at")
+      .forUpdate()
+      .execute();
+    const cancelled: CancelledDrafts = { prefixes: [], seqs: [] };
+    for (const p of pending) {
+      await cancelRequestIn(this.catalogDeps, p, cancelled, {
+        actorAccountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        reason: "skill_deleted",
+      });
+    }
     await audit(this.db.db, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1282,6 +1312,18 @@ export class SkillsService {
       target: skillId,
       detail: { name: r.name, ...auditDetail },
     });
+    if (pending.length > 0) {
+      afterCommit(async () => {
+        for (const [conv, seq] of cancelled.seqs) await this.eventLog.notify(conv, seq);
+        for (const prefix of cancelled.prefixes) {
+          try {
+            await this.storage.kernel(orgId).deletePrefix(prefix);
+          } catch (err) {
+            this.log.warn("skill draft cleanup failed", { orgId, prefix, err });
+          }
+        }
+      });
+    }
   }
 }
 

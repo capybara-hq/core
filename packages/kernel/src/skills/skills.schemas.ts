@@ -1,31 +1,11 @@
-import { isSkillName, SKILL_LIMITS } from "@capybara-hq/plugin-sdk";
+import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { SKILL_PACKAGE_UPLOAD_MAX_BYTES } from "../conversations/attachments.service.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
-import { SKILL_WRITE_MAX_BYTES } from "../tools/builtins/skill-write.js";
-
-/**
- * The fields of `POST /skills` before the either-or refinement: zod 4 cannot `pick` / `omit` a
- * refined object, so operations build from these and the route validates {@link SkillCreateBody}.
- */
-export const SkillCreateFields = z
-  .object({
-    uploadId: z.string().min(1).max(100).optional(),
-    name: z
-      .string()
-      .refine(isSkillName, "name must be 1-64 lowercase letters, digits and single hyphens")
-      .optional(),
-    description: z.string().min(1).max(SKILL_LIMITS.descriptionMaxChars).optional(),
-    body: z.string().max(SKILL_WRITE_MAX_BYTES).optional(),
-    shareable: z.boolean().optional(),
-  })
+/** `POST /skills`: an uploaded skill package (`POST /skills/uploads` gives the id); no text form. */
+export const SkillCreateBody = z
+  .object({ uploadId: z.string().min(1).max(100), shareable: z.boolean().optional() })
   .strict();
-export const SkillCreateBody = SkillCreateFields.refine(
-  (v) =>
-    v.uploadId !== undefined
-      ? v.name === undefined && v.description === undefined && v.body === undefined
-      : v.name !== undefined && v.description !== undefined && v.body !== undefined,
-  "send either { uploadId } or { name, description, body }",
-);
 /** `:id` where the route validates it (`@ZParam`). */
 export const SkillIdParams = z.object({ id: z.string().min(1).max(100) });
 /** `:id` where the route takes it as is (`@Param`). */
@@ -40,6 +20,19 @@ export const AgentSkillsListParams = z.object({ agentId: z.string().min(1).max(1
 export const AgentSkillPathParams = AgentSkillsListParams.extend({
   skillId: z.string().min(1).max(100),
 });
+/** `POST /agents/:agentId/skills/uploads`: a skill package upload onto the agent. */
+export const AgentSkillUploadBody = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(MEDIA_NAME_MAX_CHARS)
+      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
+    size: z.number().int().min(1).max(SKILL_PACKAGE_UPLOAD_MAX_BYTES),
+  })
+  .strict();
+/** `POST /agents/:agentId/skills`: an uploaded package registered as one of the agent's skills. */
+export const AgentSkillRegisterBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
 /** `?conversationId=` of `GET /agents/:agentId/invocable-skills`. */
 export const InvocableSkillsQuerySchema = z
   .object({ conversationId: z.string().min(1).max(100).optional() })
@@ -49,7 +42,16 @@ export const SKILL_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/skill-changes/:id", params: SkillChangePathParams },
   { route: "GET /api/v1/orgs/:orgId/agents/:agentId/skills", params: AgentSkillsListParams },
   {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills",
+    params: AgentSkillsListParams,
+    body: AgentSkillRegisterBody,
+  },
+  {
     route: "DELETE /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId",
+    params: AgentSkillPathParams,
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId/share",
     params: AgentSkillPathParams,
   },
   {

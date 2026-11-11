@@ -5,6 +5,7 @@ import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { AgentSkillsService } from "./agent-skills.service.js";
 import { SkillsCatalogService } from "./catalog.js";
 import { SkillChangesService } from "./changes.service.js";
 import { SkillInvoker } from "./invoke.js";
@@ -24,7 +25,19 @@ import { SkillsService } from "./skills.service.js";
     // the owner's new version of a skill it promoted goes to the platform row (ruling P3-4)
     CatalogImportModule,
   ],
-  providers: [SkillsService, SkillChangesService, SkillsCatalogService, SkillInvoker],
-  exports: [SkillsService, SkillChangesService, SkillsCatalogService, SkillInvoker],
+  providers: [
+    AgentSkillsService,
+    SkillsService,
+    SkillChangesService,
+    SkillsCatalogService,
+    SkillInvoker,
+  ],
+  exports: [
+    AgentSkillsService,
+    SkillsService,
+    SkillChangesService,
+    SkillsCatalogService,
+    SkillInvoker,
+  ],
 })
 export class SkillsModule {}

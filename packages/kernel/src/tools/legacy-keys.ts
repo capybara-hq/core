@@ -35,7 +35,6 @@ export const LEGACY_BUILTINS: Readonly<Record<string, LegacyBuiltin>> = Object.f
   sandbox_grep: { name: BUILTIN.Grep, params: { ignoreCase: "-i" } },
   sandbox_deliver: { name: BUILTIN.Deliver, params: { path: "file_path" } },
   skill_load: { name: BUILTIN.Skill, params: { name: "skill" } },
-  skill_write: { name: BUILTIN.SkillWrite, params: {} },
   ask_user: { name: BUILTIN.AskUserQuestion, params: {} },
   read_tool_output: { name: BUILTIN.ReadToolOutput, params: {} },
   tool_search: { name: BUILTIN.ToolSearch, params: { limit: "max_results" } },

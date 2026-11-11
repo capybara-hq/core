@@ -149,8 +149,9 @@ export const DEPLOYMENT_SETTINGS = z.object({
   /** 组织能否自建连接器（不经平台目录）。 */
   customConnectors: CustomPolicy.default("allow"),
   /**
-   * 组织能否自建技能（不经平台目录）：deny 时组织管理员不能上传技能包。agent 自写技能（`SkillWrite`，私有 agent 的
-   * agent 级技能与共享 agent 经负责人审批的变更）不受此开关约束——那是 agent 定义的一部分，由 R3 / R4 把关。
+   * Whether the org can create its own skills (not through the platform catalog): on deny org admins
+   * cannot upload skill packages. An agent registering its own skill (`agents.register-skill`) is not
+   * governed by it; only sharing a skill to the org is refused.
    */
   customSkills: CustomPolicy.default("allow"),
   /**

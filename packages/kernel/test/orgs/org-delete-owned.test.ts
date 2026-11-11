@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
@@ -7,6 +8,7 @@ import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { PluginInstallLock } from "../../src/extensions/locks.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import {
@@ -21,6 +23,7 @@ import {
 import { skillPlugin } from "../catalog/packages.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
 import { createOrg, enableExtensions, type Req, waitFor } from "../helpers/runs.js";
+import { SKILL_MD } from "../skills/zip.js";
 
 /**
  * Plugin scope phase 3, Task 9 (spec §14, P3-20, P3-21; pre-flight F9, F10, F28): deleting an org
@@ -184,13 +187,20 @@ async function sharedWithB(orgId: string, itemId: string, skill: string): Promis
 
 /** An org skill of `orgId` made shareable and associated with org B (promoted); its platform id. */
 async function promotedSkill(orgId: string, name: string): Promise<string> {
-  const r = await env.root({
-    method: "POST",
-    url: `/api/v1/orgs/${orgId}/skills`,
-    payload: { name, description: `Use for ${name} work.`, body: `# ${name}\n\nDo it.` },
+  const md = new TextEncoder().encode(SKILL_MD(name, `Use for ${name} work.`));
+  const r = await env.k.app.get(SkillsService).createVersionFromFiles(orgId, env.rootId, {
+    name,
+    description: `Use for ${name} work.`,
+    files: [
+      {
+        path: "SKILL.md",
+        size: md.byteLength,
+        sha256: createHash("sha256").update(md).digest("hex"),
+        data: md,
+      },
+    ],
   });
-  expect(r.statusCode, r.body).toBe(201);
-  const id = (r.json() as { skill: { id: string } }).skill.id;
+  const id = r.skill.id;
   const s = await env.root({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/skills/${id}/shareable`,

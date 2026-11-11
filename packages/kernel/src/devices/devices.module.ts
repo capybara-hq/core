@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { SandboxFileReader } from "../sandbox/sandbox-file-reader.js";
 import { DeviceAccess } from "./access.js";
 import { ConversationDevices } from "./conversation-devices.js";
 import { DevicesService } from "./devices.service.js";
@@ -16,7 +17,9 @@ import { DevicesService } from "./devices.service.js";
   // ExtensionsModule: the provider display names of demoted defaults; LocalDevicesModule: deleting
   // a local device revokes its machine
   imports: [SandboxModule, ExtensionsModule, LocalDevicesModule],
-  providers: [DeviceAccess, DevicesService, ConversationDevices],
-  exports: [DeviceAccess, DevicesService, ConversationDevices],
+  // SandboxFileReader lives here, not in SandboxModule: it needs ConversationDevices, and this
+  // module already imports SandboxModule (the other way would be a module cycle)
+  providers: [DeviceAccess, DevicesService, ConversationDevices, SandboxFileReader],
+  exports: [DeviceAccess, DevicesService, ConversationDevices, SandboxFileReader],
 })
 export class DevicesModule {}

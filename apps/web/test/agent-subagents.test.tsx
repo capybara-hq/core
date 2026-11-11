@@ -202,9 +202,7 @@ describe("the agent page's Sub-agents section", () => {
     // a save of another section (a tool switched on) carries no subagents block either
     await renderEditAgent({ section: "tools" });
     const user = userEvent.setup();
-    await user.click(
-      await screen.findByRole("checkbox", { name: en.agents.form.builtin.SkillWrite }),
-    );
+    await user.click(await screen.findByRole("checkbox", { name: en.agents.form.builtin.Deliver }));
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {

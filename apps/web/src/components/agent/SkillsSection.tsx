@@ -10,7 +10,12 @@ import {
   type SkillSummary,
   skillAliases,
 } from "../../lib/skills";
-import { OrgSkillsPicker, OwnSkills, PinnedSkillsPicker, SkillWriteSwitch } from "../AgentSkills";
+import {
+  OrgSkillsPicker,
+  OwnSkills,
+  PinnedSkillsPicker,
+  SkillRegistrationSwitch,
+} from "../AgentSkills";
 import { navLevelOf } from "../shell/nav";
 import { useSession } from "../shell/session";
 import { sameJson, savedDefinition } from "./definition-parts";
@@ -24,17 +29,18 @@ import type { AgentFormData } from "./form-data";
 import { AgentSectionFrame, useAgentPage } from "./frame";
 import { useSectionDraft } from "./useSectionDraft";
 
-type Draft = { orgSkills: string[]; pinned: string[]; confirmSkillWrite: boolean };
+type Draft = { orgSkills: string[]; pinned: string[]; confirmSkillRegister: boolean };
 const draftOf = (a: Agent): Draft => ({
   orgSkills: [...(a.definition.skills?.orgSkills ?? [])],
   pinned: [...(a.definition.skills?.pinned ?? [])],
-  confirmSkillWrite: a.definition.skills?.writePolicy === "ask",
+  confirmSkillRegister: a.definition.skills?.writePolicy === "ask",
 });
 
 /**
  * 技能 Skills (agent profile design §3.2): three titled regions in one card: the org skills, the
- * pinned ones, and the agent's own skills with the `SkillWrite` confirmation. The confirmation (`skills.writePolicy`) applies only
- * to private agents, so it shows when the **saved** visibility is private (Basics' draft never
+ * pinned ones, and the agent's own skills (upload and share for the owner) with the registration
+ * confirmation. The confirmation (`skills.writePolicy`, governs `agents.register-skill`) applies
+ * only to private agents, so it shows when the **saved** visibility is private (Basics' draft never
  * counts). Its save sends the saved definition with only `skills` changed, merged: keys the web
  * does not know stay as saved.
  */
@@ -55,6 +61,8 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
   const orgList = { skills: data.orgSkills ?? [], failed: data.orgSkills === null };
   const own = { skills: data.ownSkills ?? [], failed: data.ownSkills === null };
   const allSkills: SkillSummary[] = [...orgList.skills, ...own.skills];
+  /** The org skills this agent shared (they stay in effect for it, listed with its own). */
+  const sharedHere = new Set(own.skills.filter((s) => s.shared === true).map((s) => s.id));
   /** What the pinned picker may judge (stale pins): both lists read, undefined otherwise. */
   const pinnable = orgList.failed || own.failed ? undefined : allSkills;
   const nameOfSkill = (id: string) =>
@@ -91,7 +99,7 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
     !sameJson(d.orgSkills, saved.orgSkills),
     !sameJson(d.pinned, saved.pinned),
     // the switch shows only on private agents: a hidden change does not count
-    isPrivate && d.confirmSkillWrite !== saved.confirmSkillWrite,
+    isPrivate && d.confirmSkillRegister !== saved.confirmSkillRegister,
   ].filter(Boolean).length;
 
   async function onSave() {
@@ -100,13 +108,13 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
     const before = agent.definition.skills;
     // a definition without skills stays without (no new version); one that had them is saved as
     // it is now (emptied too), merged so unknown keys stay
-    if (d.orgSkills.length > 0 || d.confirmSkillWrite || d.pinned.length > 0 || before) {
+    if (d.orgSkills.length > 0 || d.confirmSkillRegister || d.pinned.length > 0 || before) {
       const skills = { ...(before ?? {}), orgSkills: d.orgSkills };
       // pinned has no default: written only when something is pinned or it was set before
       if (d.pinned.length > 0 || before?.pinned !== undefined) skills.pinned = d.pinned;
       // writePolicy: written only when the switch changed; off = the key removed (allow)
-      if (d.confirmSkillWrite !== saved.confirmSkillWrite) {
-        if (d.confirmSkillWrite) skills.writePolicy = "ask";
+      if (d.confirmSkillRegister !== saved.confirmSkillRegister) {
+        if (d.confirmSkillRegister) skills.writePolicy = "ask";
         else delete skills.writePolicy;
       }
       definition.skills = skills;
@@ -154,7 +162,9 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
           description={t("form.skillsSectionHint")}
         >
           <OrgSkillsPicker
-            skills={orgList.skills}
+            // a skill this agent shared is in effect through the agent: listed in its own region
+            skills={orgList.skills.filter((s) => !sharedHere.has(s.id))}
+            alsoKnown={[...sharedHere]}
             offered={data.offered}
             value={d.orgSkills}
             onChange={onOrgSkillsChange}
@@ -173,7 +183,7 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
             orgId={orgId}
             agentId={agent.id}
             skills={own.skills}
-            canDelete={agent.ownerAccountId === me.account.id}
+            canManage={agent.ownerAccountId === me.account.id}
             onDeleted={(id) => {
               if (d.pinned.includes(id)) {
                 edit((cur) => ({ ...cur, pinned: cur.pinned.filter((x) => x !== id) }));
@@ -181,9 +191,11 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
             }}
           >
             {isPrivate && (
-              <SkillWriteSwitch
-                value={d.confirmSkillWrite}
-                onChange={(confirmSkillWrite) => edit((cur) => ({ ...cur, confirmSkillWrite }))}
+              <SkillRegistrationSwitch
+                value={d.confirmSkillRegister}
+                onChange={(confirmSkillRegister) =>
+                  edit((cur) => ({ ...cur, confirmSkillRegister }))
+                }
               />
             )}
           </OwnSkills>

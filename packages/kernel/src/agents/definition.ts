@@ -1,5 +1,6 @@
 import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import {
   isLegacyBuiltinKey,
   isLegacyPrefixedKey,
@@ -268,8 +269,9 @@ export const AgentDefinitionSchema = z.object({
    * 技能（M5 T13）：`orgSkills` 是引用的组织技能 id（保存时校验属于本组织且未删除，不可重复）。
    * agent 自己的技能（`scope=agent`）自动对它生效，不进定义。可省略（较早保存的定义也没有），按空处理；
    * 不给默认值：没用技能的定义保存前后不变，不会因此多出一个版本。
-   * `writePolicy`（M6 T27，D10）：私有 agent 的 `SkillWrite` 是否固定确认，缺省按 `allow`（不写进定义）；
-   * 共享 agent 不论取值都走 R3 + R4。
+   * `writePolicy`: whether registering a skill on a private agent (`agents.register-skill`) needs
+   * the person's confirmation; absent means `allow` (not stored in the definition). On a shared
+   * agent a registration is always confirmed at the org level.
    */
   skills: z
     .object({
@@ -471,6 +473,42 @@ export function normalizeToolKeys(
     }
   }
   return changed ? next : definition;
+}
+
+/** The fields {@link withoutRemovedBuiltinPolicies} reads. */
+interface AgentDefinitionLike {
+  toolPolicies?: Record<string, string> | undefined;
+  subagents?:
+    | { inline?: readonly { toolPolicies?: Record<string, string> | undefined }[] | undefined }
+    | undefined;
+}
+
+/**
+ * `definition` without the `toolPolicies` keys (its own and its inline sub-agents') of builtins
+ * that no longer exist ({@link isRemovedBuiltinKey}): applied to a definition being saved, so a
+ * key left over from a removed builtin never blocks the save. Returns the same object when
+ * nothing is dropped.
+ */
+export function withoutRemovedBuiltinPolicies<T extends AgentDefinitionLike>(definition: T): T {
+  type Policies = Record<string, string> | undefined;
+  const strip = (p: Policies): Policies => {
+    if (p === undefined || !Object.keys(p).some(isRemovedBuiltinKey)) return p;
+    return Object.fromEntries(Object.entries(p).filter(([k]) => !isRemovedBuiltinKey(k)));
+  };
+  let next: T = definition;
+  const policies = strip(definition.toolPolicies);
+  if (policies !== definition.toolPolicies) next = { ...next, toolPolicies: policies };
+  const inline = definition.subagents?.inline;
+  if (inline !== undefined) {
+    const stripped = inline.map((t) => {
+      const p = strip(t.toolPolicies);
+      return p === t.toolPolicies ? t : { ...t, toolPolicies: p };
+    });
+    if (stripped.some((t, i) => t !== inline[i])) {
+      next = { ...next, subagents: { ...definition.subagents, inline: stripped } };
+    }
+  }
+  return next;
 }
 
 /**

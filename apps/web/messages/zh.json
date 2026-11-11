@@ -318,7 +318,11 @@
     "sandbox": {
       "not_found": "本会话还没有沙箱。",
       "unavailable": "当前部署没有可用的沙箱。",
-      "busy": "沙箱正忙，请稍后再试。"
+      "busy": "沙箱正忙，请稍后再试。",
+      "file_invalid_path": "路径必须是沙箱内的绝对路径。",
+      "file_not_found": "沙箱里没有这个文件。",
+      "file_is_directory": "这个路径是目录，请指定一个文件。",
+      "file_too_large": "文件过大。"
     },
     "device": {
       "not_found": "该设备不存在或已被删除。",
@@ -344,11 +348,14 @@
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
       "not_invocable": "这个智能体不能调用该技能，请从 / 菜单中选择。",
-      "name_exists": "本组织已有同名技能，请换一个名字。"
+      "name_exists": "本组织已有同名技能，请换一个名字。",
+      "agent_cap": "这个智能体的技能数已达上限。请先删除一个，或为已有技能（同名）上传新版本。",
+      "subagent_register": "子智能体不能登记技能，只有与你对话的智能体可以。",
+      "share_pending": "共享这个技能的申请已在等待管理员处理。",
+      "proposal_pending_elsewhere": "另一个对话中提出的该技能新版本正在等待管理员处理。请等待处理结果，或在那个对话中继续。"
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",
-      "not_owner": "只有该智能体的所有者可以批准或拒绝它的技能改动。",
       "already_decided": "该技能改动已被处理。"
     },
     "inbox": {
@@ -512,7 +519,6 @@
       "builtin": {
         "AskUserQuestion": "向用户提问",
         "ReadToolOutput": "读取存档的工具结果",
-        "SkillWrite": "编写技能",
         "Bash": "运行命令",
         "Read": "读取文件",
         "Write": "写入文件",
@@ -544,12 +550,37 @@
       "orgSkillsLabel": "组织技能",
       "goToSkills": "去技能页",
       "noOrgSkills": "组织还没有技能",
-      "confirmSkillWrite": "写入前需要我确认",
-      "confirmSkillWriteHint": "仅私有智能体；共享智能体的每次改动由所有者在收件箱批准",
+      "confirmSkillRegister": "每次登记技能都确认",
+      "confirmSkillRegisterHint": "开启后，智能体每次登记技能都会请你确认，且不会记住授权。",
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
-      "ownSkillsLabel": "智能体自己写的技能",
-      "noOwnSkills": "这个智能体还没有写过技能",
+      "ownSkillsLabel": "智能体自己的技能",
+      "noOwnSkills": "这个智能体还没有自己的技能",
+      "uploadSkill": "上传技能包",
+      "uploadSkillDialog": {
+        "title": "上传技能包",
+        "hint": "上传 .zip 文件，SKILL.md 在根目录，或在唯一的顶层文件夹内。与已有技能同名的包会新增一个版本。限制：zip 文件最大 50 MB，单个文件最大 10 MB，解压后合计最大 50 MB。",
+        "choose": "选择 .zip 文件",
+        "chooseHint": "或把 .zip 文件拖到这里。",
+        "drop": "松开以上传 .zip 文件",
+        "uploading": "正在上传… {percent}%",
+        "created": "已添加技能「{name}」。",
+        "versionCreated": "技能「{name}」已更新到版本 {version}。",
+        "proposed": "已提交「{name}」的新版本，等待组织管理员在收件箱里决定。",
+        "notZip": "请选择 .zip 文件。",
+        "tooLarge": "zip 文件超过 50 MB。",
+        "cancel": "取消"
+      },
+      "shareOwnSkill": "共享给组织",
+      "shareOwnSkillLabel": "把技能 {name} 共享给组织",
+      "shareOwnSkillTitle": "把技能 {name} 共享给组织？",
+      "shareOwnSkillHint": "组织里的所有智能体都能使用这个技能，你仍是它的维护人。如果你不是组织管理员，需要先由管理员决定。",
+      "shareConfirm": "共享",
+      "shareCancel": "取消",
+      "shareWaiting": "等待组织管理员处理",
+      "sharedWithOrg": "已共享到组织",
+      "shareRequested": "已申请共享「{name}」，等待组织管理员在收件箱里决定。",
+      "ownSkillShared": "技能「{name}」已共享给组织。",
       "deleteOwnSkill": "删除",
       "deleteOwnSkillLabel": "删除技能 {name}",
       "deleteOwnSkillTitle": "删除技能 {name}？",
@@ -1266,22 +1297,7 @@
       "previewFailed": "读不到删除的影响，确认前请重试。",
       "previewRetry": "重试"
     },
-    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。",
-    "create": {
-      "open": "新建",
-      "title": "新建技能",
-      "name": "名称",
-      "nameHelp": "小写字母、数字和单个连字符，最多 64 个字符。同一组织里技能名称不能重复。",
-      "nameInvalid": "名称只能包含小写字母、数字和单个连字符。",
-      "description": "描述",
-      "descriptionHelp": "写清这个技能做什么、什么时候用，智能体据此决定何时加载它。",
-      "body": "内容",
-      "bodyHelp": "SKILL.md 的正文。SKILL.md 由名称和描述生成：正文开头的 --- frontmatter 会被去掉，只保留调用相关的键（例如 disable-model-invocation、context）。",
-      "shareable": "可共享",
-      "submit": "创建",
-      "cancel": "取消",
-      "created": "已创建技能「{name}」。"
-    }
+    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。"
   },
   "chat": {
     "waitingFor": {
@@ -1740,8 +1756,11 @@
     },
     "truncated": "只显示最新的事项，处理掉一些后可看到其余的。",
     "skillChange": {
-      "label": "技能变更",
-      "title": "技能变更 · {name}",
+      "kind": {
+        "share": "共享技能",
+        "version": "技能新版本"
+      },
+      "title": "{kind} · {name}",
       "newSkill": "新技能",
       "update": "版本 {from} → {to}",
       "agent": "智能体",
@@ -1755,8 +1774,8 @@
       "unchanged": "未变",
       "contentUnavailable": "无法显示这个文件的内容。",
       "diffLabel": "{path} 的改动",
-      "ownerHint": "批准后，改动对这个智能体的所有会话生效；在此之前只有发起改动的会话能用。",
-      "selfHint": "这项改动是你在自己的会话里发起的。作为共享智能体的所有者，你先在会话里确认工具调用，再在这里批准改动，这是有意的设计。",
+      "shareHint": "批准后，这个技能成为组织技能，组织里的所有智能体都能使用；申请人仍是它的维护人。",
+      "versionHint": "批准后，新版本会在使用这个技能的每个智能体下次运行时生效；在此之前不会有任何变化。",
       "approve": "批准",
       "reject": "拒绝",
       "approved": "已批准技能变更",

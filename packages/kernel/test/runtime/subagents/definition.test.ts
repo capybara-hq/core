@@ -376,16 +376,9 @@ describe("resolveRoster / findType", { timeout: 60_000 }, () => {
 
 describe("effectiveDefinition", { timeout: 60_000 }, () => {
   /** The parent keeps these builtins on and turns the others off. */
-  const parentOff = builtinsOff(
-    "AskUserQuestion",
-    "ReadToolOutput",
-    "SkillWrite",
-    "Deliver",
-    "Bash",
-    "Agent",
-  );
+  const parentOff = builtinsOff("AskUserQuestion", "ReadToolOutput", "Deliver", "Bash", "Agent");
   /** Every child's key filter removes these (sub-agents spec §5.3). */
-  const REMOVED = ["AskUserQuestion", "Deliver", "SkillWrite"];
+  const REMOVED = ["AskUserQuestion", "Deliver"];
 
   it("general-purpose: the parent's definition minus the child-removed tools, nothing pinned", async () => {
     const s = await skill("brainstorming");
@@ -393,7 +386,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       instructions: "Lead instructions.",
       avatarUrl: "https://example.com/a.png",
       disabledTools: parentOff,
-      toolPolicies: { Bash: "ask", SkillWrite: "deny" },
+      toolPolicies: { Bash: "ask", Write: "deny" },
       modelParams: { effort: "low" },
       fallback: FAKE2,
       fallbackParams: { effort: "high" },
@@ -401,7 +394,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       subagents: { inline: [inline("scout")] },
     });
     const r = await eff(parent, "general-purpose");
-    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver", "SkillWrite"]);
+    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver"]);
     expect(r.definition).toEqual({
       name: "Lead › general-purpose",
       avatarUrl: "https://example.com/a.png",
@@ -413,7 +406,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       // the parent's turned-off tools, and the child-removed ones by key (tools default-on §4)
       disabledTools: parentOff,
       subagentTools: { deny: REMOVED },
-      toolPolicies: { Bash: "ask", SkillWrite: "deny" },
+      toolPolicies: { Bash: "ask", Write: "deny" },
       skills: { orgSkills: [s] },
       subagents: { inline: [inline("scout")] },
     });
@@ -783,7 +776,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     it("the agent's own definition with the parent's stricter policies on top", async () => {
       const jira = await connector("jira", ["search", "create"]);
       const ownOff = [
-        ...builtinsOff("AskUserQuestion", "SkillWrite", "Bash"),
+        ...builtinsOff("AskUserQuestion", "Bash"),
         { kind: "connector" as const, connectorId: jira, tools: ["create"] },
       ];
       const s = await skill("analysis");

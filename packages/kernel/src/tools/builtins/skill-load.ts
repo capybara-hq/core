@@ -315,6 +315,7 @@ export async function findSkillVersion(
     .where("org_id", "=", ctx.orgId)
     .where("requested_in_conversation", "=", ctx.conversationId)
     .where("status", "=", "pending")
+    .where("kind", "=", "version")
     .where("object_prefix", "=", entry.source)
     .where(sql<string>`proposed_version ->> 'skillId'`, "=", entry.id)
     .executeTakeFirst();

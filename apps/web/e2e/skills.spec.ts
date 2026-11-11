@@ -189,7 +189,7 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   await expect(tool).toContainText(`加载技能 ${SKILL}（版本 1）`);
 });
 
-test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负责人在收件箱看到差异并批准", async ({
+test("the owner uploads a skill package on the agent page and shares it with the org", async ({
   page,
 }) => {
   await signIn(page);
@@ -199,64 +199,49 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
     headers: CSRF,
     data: {
       definition: {
-        name: "Shared writer",
-        instructions: "Write skills.",
+        name: "Skill owner",
+        instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        // every builtin is on by default (tools default-on), SkillWrite included
       },
       visibility: "org",
     },
   });
   expect(created.status(), await created.text()).toBe(201);
   const agentId = ((await created.json()) as { agent: { id: string } }).agent.id;
-  const conv = await page.request.post(`${base}/conversations`, {
-    headers: CSRF,
-    data: { agentId },
-  });
-  const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/chat/${convId}`);
 
-  // 1. 共享 agent 的 SkillWrite 固定要确认：发起人（也是负责人）在对话里批准工具调用
-  const write = {
-    name: "team-glossary",
-    description: "Use for team terms.",
-    files: [
-      { path: "SKILL.md", content: "# Glossary\n\nSay capybara.\n" },
-      { path: "terms.md", content: "capybara: the platform\n" },
-    ],
-  };
-  const input = composer(page);
-  await input.fill(`tool:SkillWrite:${JSON.stringify(write)}`);
-  await input.press("Enter");
-  const approval = page.locator('[data-role="approval"]');
-  await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
-  await expect(toolGroup(page, "SkillWrite")).toHaveAttribute("data-tool-status", "done");
-
-  // 2. 收件箱：技能变更卡片显示 agent、文件与差异；负责人批准
-  await page.goto("/inbox");
-  const list = page.getByRole("table", { name: zh.inbox.listLabel });
-  // a row names the skill, with the kind and the agent as its meta
-  const item = list.getByRole("row").filter({ hasText: "team-glossary" });
-  await expect(item).toContainText(`${zh.inbox.skillChange.label} · Shared writer`);
-  await item.click();
-  const card = page.locator("[data-skill-change-id]");
-  await expect(card.getByText("Shared writer").first()).toBeVisible();
-  await expect(card.getByText(zh.inbox.skillChange.newSkill)).toBeVisible();
-  await expect(card.getByText(zh.inbox.skillChange.selfHint)).toBeVisible();
-  await expect(card.getByText(`terms.md · ${zh.inbox.skillChange.added}`)).toBeVisible();
-  await expect(
-    card.getByRole("region", { name: fill(zh.inbox.skillChange.diffLabel, { path: "SKILL.md" }) }),
-  ).toContainText("+ Say capybara.");
-  const row = page.getByRole("region", { name: designZh("shell.pending") });
-  await row.getByRole("button", { name: zh.inbox.skillChange.approve }).click();
-  await expect(page.getByText(zh.inbox.skillChange.approved)).toBeVisible();
-  await expect(item).toHaveCount(0);
-
-  // 3. 批准后成为 agent 自己的技能：编辑页的技能分组只读列出
+  // 1. The owner uploads a zip in the agent's own skills region
   await page.goto(`/agents/${agentId}?s=skills`);
   const own = skillsRegion(page, zh.agents.form.ownSkillsLabel);
-  const written = own.getByRole("listitem").filter({ hasText: "team-glossary" });
-  await expect(written).toContainText("v1");
+  await own.getByRole("button", { name: zh.agents.form.uploadSkill }).click();
+  const zip = makeZip({
+    "SKILL.md": "---\nname: team-glossary\ndescription: Use for team terms.\n---\n# Glossary\n",
+    "terms.md": "capybara: the platform\n",
+  });
+  await page
+    .getByRole("dialog")
+    .locator('input[type="file"]')
+    .setInputFiles({ name: "team-glossary.zip", mimeType: "application/zip", buffer: zip });
+  await expect(
+    page.getByText(fill(zh.agents.form.uploadSkillDialog.created, { name: "team-glossary" })),
+  ).toBeVisible();
+  const item = own.getByRole("listitem").filter({ hasText: "team-glossary" });
+  await expect(item).toContainText("v1");
+
+  // 2. Share it: a confirm dialog, then it is an org skill (the owner here is an org admin)
+  await item
+    .getByRole("button", {
+      name: fill(zh.agents.form.shareOwnSkillLabel, { name: "team-glossary" }),
+    })
+    .click();
+  await page.getByRole("dialog").getByRole("button", { name: zh.agents.form.shareConfirm }).click();
+  await expect(
+    page.getByText(fill(zh.agents.form.ownSkillShared, { name: "team-glossary" })),
+  ).toBeVisible();
+  // it stays in the agent's own skills, marked shared, with no share or delete
+  await expect(item).toContainText(zh.agents.form.sharedWithOrg);
+  await expect(item.getByRole("button")).toHaveCount(0);
+  await page.goto("/skills");
+  await expect(page.getByText("team-glossary").first()).toBeVisible();
 });
 
 /** Uploads a one-skill zip through the skill library page; returns the skill's id. */

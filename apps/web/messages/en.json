@@ -318,7 +318,11 @@
     "sandbox": {
       "not_found": "This conversation has no sandbox yet.",
       "unavailable": "No sandbox is available in this deployment.",
-      "busy": "The sandbox is busy; try again shortly."
+      "busy": "The sandbox is busy; try again shortly.",
+      "file_invalid_path": "The path must be absolute and inside the sandbox.",
+      "file_not_found": "No file at this path in the sandbox.",
+      "file_is_directory": "This path is a directory; pass one file.",
+      "file_too_large": "The file is too large."
     },
     "device": {
       "not_found": "The device does not exist or has been deleted.",
@@ -344,11 +348,14 @@
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
       "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu.",
-      "name_exists": "A skill with this name already exists in the organization. Choose another name."
+      "name_exists": "A skill with this name already exists in the organization. Choose another name.",
+      "agent_cap": "This agent already has the maximum number of skills. Delete one, or upload a new version of an existing skill (same name).",
+      "subagent_register": "A sub-agent cannot register skills; only the agent you talk with can.",
+      "share_pending": "Sharing this skill with the organization is already waiting for an admin's decision.",
+      "proposal_pending_elsewhere": "A proposed version of this skill from another conversation is waiting for an admin's decision. Wait for it, or continue in that conversation."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",
-      "not_owner": "Only the agent's owner can approve or reject its skill changes.",
       "already_decided": "This skill change has already been handled."
     },
     "inbox": {
@@ -512,7 +519,6 @@
       "builtin": {
         "AskUserQuestion": "Ask the user",
         "ReadToolOutput": "Read archived tool output",
-        "SkillWrite": "Write skills",
         "Bash": "Run commands",
         "Read": "Read files",
         "Write": "Write files",
@@ -543,13 +549,38 @@
       "skillsSectionHint": "Skills the agent can load when a task needs them.",
       "orgSkillsLabel": "Org skills",
       "goToSkills": "Go to Skills",
-      "confirmSkillWrite": "Ask me before each write",
-      "confirmSkillWriteHint": "Private agents only; on a shared agent the owner approves each change in the inbox",
+      "confirmSkillRegister": "Confirm every skill registration",
+      "confirmSkillRegisterHint": "When on, the agent asks you each time it registers a skill, and the answer is never remembered.",
       "noOrgSkills": "The organization has no skills yet",
       "deletedSkill": "Deleted skill ({id})",
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
-      "ownSkillsLabel": "Skills this agent wrote",
-      "noOwnSkills": "This agent hasn't written any skills yet",
+      "ownSkillsLabel": "Agent's own skills",
+      "noOwnSkills": "This agent has no skills of its own yet",
+      "uploadSkill": "Upload skill package",
+      "uploadSkillDialog": {
+        "title": "Upload skill package",
+        "hint": "Upload a .zip file with SKILL.md at the root, or inside a single top-level folder. A package with the name of an existing skill adds a new version. Limits: the zip file up to 50 MB, each file up to 10 MB, and 50 MB in total after unzipping.",
+        "choose": "Choose a .zip file",
+        "chooseHint": "or drop the .zip file here.",
+        "drop": "Drop the .zip file to upload",
+        "uploading": "Uploading… {percent}%",
+        "created": "Skill \"{name}\" added.",
+        "versionCreated": "Skill \"{name}\" updated to version {version}.",
+        "proposed": "A new version of \"{name}\" was proposed. An org admin decides it in the inbox.",
+        "notZip": "Choose a .zip file.",
+        "tooLarge": "The zip file is larger than 50 MB.",
+        "cancel": "Cancel"
+      },
+      "shareOwnSkill": "Share with org",
+      "shareOwnSkillLabel": "Share skill {name} with the org",
+      "shareOwnSkillTitle": "Share skill {name} with the org?",
+      "shareOwnSkillHint": "Every agent in the org will be able to use this skill, and you stay its maintainer. If you are not an org admin, an admin decides the request first.",
+      "shareConfirm": "Share",
+      "shareCancel": "Cancel",
+      "shareWaiting": "Waiting for an org admin",
+      "sharedWithOrg": "Shared with the org",
+      "shareRequested": "Sharing \"{name}\" was requested. An org admin decides it in the inbox.",
+      "ownSkillShared": "Skill \"{name}\" is now shared with the org.",
       "deleteOwnSkill": "Delete",
       "deleteOwnSkillLabel": "Delete skill {name}",
       "deleteOwnSkillTitle": "Delete skill {name}?",
@@ -1266,22 +1297,7 @@
       "previewFailed": "What deleting it does could not be read; retry before confirming.",
       "previewRetry": "Retry"
     },
-    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
-    "create": {
-      "open": "New",
-      "title": "New skill",
-      "name": "Name",
-      "nameHelp": "Lowercase letters, digits and single hyphens, up to 64 characters. Skill names are unique in an organization.",
-      "nameInvalid": "Use only lowercase letters, digits and single hyphens.",
-      "description": "Description",
-      "descriptionHelp": "Say what the skill does and when to use it: agents decide when to load it from this.",
-      "body": "Content",
-      "bodyHelp": "The body of SKILL.md. SKILL.md is generated from the name and the description: a leading --- frontmatter in the body is dropped, except the invocation keys (such as disable-model-invocation and context).",
-      "shareable": "Shareable",
-      "submit": "Create",
-      "cancel": "Cancel",
-      "created": "Skill \"{name}\" created."
-    }
+    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off."
   },
   "chat": {
     "waitingFor": {
@@ -1752,8 +1768,11 @@
     },
     "truncated": "Only the newest items are shown. Handle some to see the rest.",
     "skillChange": {
-      "label": "Skill change",
-      "title": "Skill change · {name}",
+      "kind": {
+        "share": "Share skill",
+        "version": "New skill version"
+      },
+      "title": "{kind} · {name}",
       "newSkill": "New skill",
       "update": "Version {from} → {to}",
       "agent": "Agent",
@@ -1767,8 +1786,8 @@
       "unchanged": "unchanged",
       "contentUnavailable": "The content of this file cannot be shown.",
       "diffLabel": "Changes in {path}",
-      "ownerHint": "After you approve, the change applies to every conversation with this agent. Until then, only the conversation that requested it can use it.",
-      "selfHint": "You requested this change in your own conversation. As the owner of a shared agent, you confirm the tool call there and then approve the change here. That is by design.",
+      "shareHint": "After you approve, this skill becomes an org skill that every agent in the org can use. The requester stays its maintainer.",
+      "versionHint": "After you approve, the new version applies to every agent that uses this skill, at its next run. Until then, nothing changes.",
       "approve": "Approve",
       "reject": "Reject",
       "approved": "Skill change approved",

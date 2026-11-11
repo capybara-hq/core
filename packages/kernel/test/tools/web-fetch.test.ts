@@ -14,7 +14,6 @@ import { createDb } from "../../src/db/pool.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { R3_FIXED_ASK_TOOL_KEYS } from "../../src/tools/builtin-names.js";
 import {
   WEB_FETCH_SPEC,
   type WebFetchDeps,
@@ -154,7 +153,7 @@ describe("WebFetch: spec", () => {
     };
     expect(Object.keys(schema.properties).sort()).toEqual(["prompt", "url"]);
     expect(schema.required).toEqual(["url", "prompt"]);
-    expect(R3_FIXED_ASK_TOOL_KEYS.has("WebFetch")).toBe(false);
+    expect(t.spec.annotations?.requiresUserInteraction).not.toBe(true);
   });
 });
 

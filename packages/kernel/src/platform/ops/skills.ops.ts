@@ -2,7 +2,6 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { OwnedItems } from "../../catalog/owned-items.js";
 import {
-  SkillCreateFields,
   SkillIdParams,
   SkillPathParams,
   SkillShareableSchema,
@@ -15,7 +14,6 @@ import { named, orElse } from "./summary.js";
 
 const NoInput = z.object({}).strict();
 const SkillId = z.object({ skillId: SkillPathParams.shape.id.max(100) }).strict();
-const Create = SkillCreateFields.shape;
 const OwnedSkillId = z.object({ skillId: SkillIdParams.shape.id }).strict();
 
 /**
@@ -59,67 +57,6 @@ export class SkillsOperations implements OnModuleInit {
         renames: { skillId: "id" },
         confirm: "read",
         run: async (input, ctx) => this.skills.get(ctx.orgId, input.skillId),
-      }),
-      defineOperation({
-        id: "skills.create",
-        description:
-          "Create an org skill from text: a name, a one-line description of when to use it, and the SKILL.md body. A skill of that name must not exist yet. Uploads of packages are done on the web.",
-        // the route's text form, its bounds tightened for the model (a SKILL.md up to 100k chars)
-        input: z
-          .object({
-            name: Create.name.unwrap().max(64),
-            description: Create.description.unwrap(),
-            body: Create.body.unwrap().min(1).max(100_000),
-            shareable: Create.shareable,
-          })
-          .strict(),
-        example: {
-          name: "weekly-report",
-          description: "Use when asked to write the weekly status report.",
-          body: "# Steps\n\n1. Collect this week's updates.\n2. Write the report.",
-        },
-        authz: { orgAction: "skills.manage" },
-        mirrors: ["POST /api/v1/orgs/:orgId/skills"],
-        // packages are uploaded on the web
-        omits: ["uploadId"],
-        confirm: "org",
-        errors: [
-          {
-            code: "skill.name_exists",
-            next: "A skill of that name exists: pick another name, or read the existing one with skills.get.",
-          },
-          {
-            code: "validation_failed",
-            next: "Fix the SKILL.md as the message says (name, description, body), then call again.",
-          },
-          {
-            code: "catalog.custom_disabled",
-            next: {
-              superAdmin:
-                "The platform does not allow custom skills: allow them in the admin console under Settings, then call again.",
-              orgAdmin:
-                "The platform does not allow custom skills; ask the super admin, or use a platform skill from skills.list.",
-              member:
-                "The platform does not allow custom skills; use a platform skill from skills.list, or ask an org admin.",
-            },
-          },
-        ],
-        precheck: (i, ctx) => precheckBy(() => this.skills.checkCreateFromText(ctx.orgId, i)),
-        summary: (i) =>
-          i.shareable === true
-            ? {
-                zh: `新建组织技能「${i.name}」（可共享给其他组织）`,
-                en: `Create org skill "${i.name}" (shared with other orgs)`,
-              }
-            : { zh: `新建组织技能「${i.name}」`, en: `Create org skill "${i.name}"` },
-        run: async (input, ctx) =>
-          this.skills.createFromText(ctx.orgId, ctx.actorAccountId, {
-            name: input.name,
-            description: input.description,
-            body: input.body,
-            ...(input.shareable !== undefined && { shareable: input.shareable }),
-            auditDetail: viaAgent("skills.create", ctx),
-          }),
       }),
       defineOperation({
         id: "skills.set-shareable",
