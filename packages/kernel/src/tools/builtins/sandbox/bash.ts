@@ -68,7 +68,10 @@ const SPEC: ToolSpec = {
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
-    "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.",
+    "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.\n\n" +
+    "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
+    "that ignores them fails with 'Operation not permitted'. A blocked domain is reported after " +
+    "the output.",
   inputSchema: {
     type: "object",
     properties: {
