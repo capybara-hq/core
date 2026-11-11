@@ -819,9 +819,13 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       const parent = def({
         disabledTools: builtinsOff("ReadToolOutput"),
         toolPolicies: { mcp__jira__search: "deny", Bash: "ask", ReadToolOutput: "ask" },
+        // never reaches the org agent child: it keeps its own skills (skills default-on §6.1)
+        disabledSkills: [{ kind: "plugin", plugin: "superpowers", skills: "all" }],
         subagents: { agents: [{ agentId: a, as: "analyst", description: "Data questions." }] },
       });
       const r = await eff(parent, "analyst", "fast");
+      expect(r.definition.disabledSkills).toEqual([{ kind: "skill", skillId: s }]);
+      expect(r.preamble).toBe(SUBAGENT_PREAMBLE);
       expect(r.template).toEqual({ source: "agent", id: a, version: 3 });
       expect(r.definition).toEqual({
         ...agentDef,

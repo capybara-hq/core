@@ -423,7 +423,10 @@ const hasAgent = (d: AgentDefinition): boolean =>
   !(d.subagentTools?.deny ?? []).includes(AGENT_TOOL) &&
   (d.subagentTools?.allow === undefined || d.subagentTools.allow.includes(AGENT_TOOL));
 
-/** The parent's selection a template child depends on: its tools, skills and roster entry. */
+/**
+ * The parent's selection a template child depends on: its turned-off tools and skills (every
+ * `general`, `inline` and `plugin` child starts from them) and its roster entry.
+ */
 const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
   canonicalJson({
     disabledTools: canonicalDisabledTools(d.disabledTools ?? []),
@@ -431,7 +434,9 @@ const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
     listed:
       started.template.source === "general"
         ? d.subagents?.general !== false
-        : (d.subagents?.templates ?? []).includes(started.template.id ?? ""),
+        : started.template.source === "inline"
+          ? (d.subagents?.inline ?? []).some((x) => x.name === started.agentType)
+          : (d.subagents?.templates ?? []).includes(started.template.id ?? ""),
   });
 
 /**
@@ -445,8 +450,8 @@ const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
  * - another version of the case's agent: for an org agent child (`source: "agent"`) that agent's
  *   version, as dispatch would use it (its own tools minus the child-removed ones); otherwise the
  *   parent's version: `general` takes its instructions and tools (its skills follow the parent's,
- *   `parentSide`), `inline` its
- *   template of the same name (gone = changed), and a `plugin` template does not depend on the
+ *   `parentSide`), `inline` its template of the same name and the parent's turned-off tools and
+ *   skills (`parentSide`; the template gone = changed), and a `plugin` template does not depend on the
  *   parent version (its own version is {@link ReconstructOptions.subagentTemplate}). Template
  *   narrowing that needs the database (inline and plugin tool allowlists, a plugin template's
  *   `disallowedSkills` and skill names) is not recomputed: those compare instructions only.
@@ -486,6 +491,13 @@ export function subagentChanged(
     case "inline": {
       const t = candidate.subagents?.inline?.find((x) => x.name === started.agentType);
       if (!t) return true;
+      // the parent's turned-off tools and skills reach the child as they do a general one
+      if (
+        original !== undefined &&
+        parentSide(original, started) !== parentSide(candidate, started)
+      ) {
+        return true;
+      }
       // conservative: any difference of the template between the two versions counts
       const o = original?.subagents?.inline?.find((x) => x.name === started.agentType);
       if (o !== undefined) return canonicalJson(o) !== canonicalJson(t);

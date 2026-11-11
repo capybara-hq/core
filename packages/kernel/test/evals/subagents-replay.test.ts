@@ -764,6 +764,16 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
       }).drift;
     expect(at(v2(tpl))).toEqual([]);
     expect(at(v2({ ...tpl, tools: ["Bash"] }))).toEqual(["subagent_changed"]);
+    // the parent's turned-off skills and tools reach an inline child too
+    const parentOver = (over: object) =>
+      normalizeStoredDefinition({ ...v1, ...over, subagents: { inline: [tpl] } });
+    expect(at(parentOver({ disabledSkills: [{ kind: "skill", skillId: "sk-1" }] }))).toEqual([
+      "subagent_changed",
+    ]);
+    expect(at(parentOver({ disabledTools: builtinsOff("Agent", "Read") }))).toEqual([
+      "subagent_changed",
+    ]);
+    expect(at(parentOver({ name: "Renamed" }))).toEqual([]);
     // an instructions override with another version reaches the child too (batch 14 review m5)
     const logged = s.subagent?.definition as ReturnType<typeof v2>;
     const overridden = reconstructRequest(s, call.seq, {
