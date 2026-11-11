@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { ScheduledTasksSettings } from "./schedules";
 import type { UiArrangementEntry } from "./ui";
 
 /** 组织的沙箱出站（Ruling M19）：`allowHosts` 给出时替换部署的白名单，省略时沿用部署的。 */
@@ -30,6 +31,8 @@ export interface OrgSettings {
    * (themes spec §7); absent: follow the platform, allowed.
    */
   theme?: OrgThemeSetting;
+  /** Scheduled tasks (scheduled tasks spec §9); an older kernel leaves it out (the defaults). */
+  scheduledTasks?: ScheduledTasksSettings;
 }
 
 /** The org level of the themes (`orgs.settings.theme`). */
@@ -58,8 +61,10 @@ export interface OrgSettingsResponse {
 
 /** PATCH 体：`sandboxEgress: null` 恢复跟随部署默认。 */
 export type OrgSettingsPatch = Partial<
-  Omit<OrgSettings, "sandboxEgress" | "timeZone" | "theme">
+  Omit<OrgSettings, "sandboxEgress" | "timeZone" | "theme" | "scheduledTasks">
 > & {
+  /** The scheduled-task fields to change; the rest keep their value. */
+  scheduledTasks?: Partial<ScheduledTasksSettings>;
   /** null clears the theme setting (follow the platform, allowed). */
   theme?: OrgThemeSetting | null;
   sandboxEgress?: SandboxEgressSetting | null;

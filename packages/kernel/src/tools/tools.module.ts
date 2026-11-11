@@ -14,12 +14,14 @@ import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { ScheduledTaskStoreModule } from "../schedules/store.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { AdminConnectors } from "./admin-connectors.js";
 import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
+import { ScheduleToolsPort, ScheduleUpdates } from "./builtins/schedules.js";
 import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
@@ -66,11 +68,17 @@ import { ToolRegistry } from "./registry.js";
     // the `Platform` tool's operations, actor facts and agent docs (imports no domain module)
     PlatformModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+    // a trial run's approvals become its scheduled task's grants (scheduled tasks spec §7)
+    ScheduledTaskStoreModule,
   ],
   providers: [
     Credentials,
     ToolOutputs,
     BuiltinTools,
+    // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
+    ScheduleUpdates,
+    // where `SchedulesModule` binds the task service for the schedule tools (no provider cycle)
+    ScheduleToolsPort,
     WebPages,
     ToolRegistry,
     ApprovalsService,
@@ -88,6 +96,7 @@ import { ToolRegistry } from "./registry.js";
     OrgToolSwitches,
   ],
   exports: [
+    ScheduleToolsPort,
     Credentials,
     ToolOutputs,
     BuiltinTools,

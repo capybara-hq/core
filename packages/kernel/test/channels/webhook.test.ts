@@ -103,7 +103,9 @@ beforeAll(async () => {
         auth: { cookieSecure: false },
         channels: {
           scanIntervalMs: 100,
-          leaseTtlMs: 2000,
+          // one replica, no takeover: a lease long enough that a stalled event loop does not
+          // lose it and drop the long connection (2 s did under load)
+          leaseTtlMs: 10_000,
           retryBaseMs: 200,
           webhookBaseUrl: `${BASE_URL}/`,
         },

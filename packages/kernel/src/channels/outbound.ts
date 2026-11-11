@@ -30,6 +30,7 @@ import {
   type Lease,
 } from "../runtime/conversation-lock.js";
 import type { StreamBus } from "../runtime/stream.js";
+import { ScheduledTasksService } from "../schedules/scheduled-tasks.service.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -52,6 +53,7 @@ import {
   idempotencyKey,
 } from "./jobs.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
+import { insertThread } from "./threads.js";
 
 // The queue, job names, ids and priorities live with the producer (jobs.ts)
 export {
@@ -209,8 +211,11 @@ interface DeliveryDeps {
   questions: Pick<QuestionsService, "forCall">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "error" | "warn" | "info">;
-  /** The conditional `last_seq` advance ({@link ChannelOutbound.advanceIn}). */
-  writes: Pick<ChannelOutbound, "advanceIn">;
+  /**
+   * The conditional `last_seq` advance ({@link ChannelOutbound.advanceIn}) and the binding of a
+   * scheduled group run's thread ({@link ChannelOutbound.bindThreadIn}).
+   */
+  writes: Pick<ChannelOutbound, "advanceIn" | "bindThreadIn">;
 }
 
 /** One `last_seq` advance of a delivery (see {@link ChannelOutbound.advanceIn}). */
@@ -269,6 +274,9 @@ export class ChannelOutbound {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn" | "info">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Pauses the task of a scheduled run whose chat is gone (scheduled tasks spec §8). */
+    @Inject(ScheduledTasksService)
+    private readonly schedules: Pick<ScheduledTasksService, "pauseFor">,
   ) {
     this.lock = lock.scoped(DELIVER_LOCK_PREFIX);
     this.d = {
@@ -412,6 +420,11 @@ export class ChannelOutbound {
         );
     }
     if (outcome.error) await this.recordError(outcome.error.connectionId, outcome.error.message);
+    if (outcome.gone) {
+      await this.pauseScheduledTaskIn(conversationId, outcome.gone.runId).catch((err) =>
+        this.log.warn("cannot pause the scheduled task of a gone chat", { conversationId, err }),
+      );
+    }
     switch (outcome.kind) {
       case "shutdown":
         return this.requeue(job, token, 0);
@@ -509,6 +522,72 @@ export class ChannelOutbound {
     }
     return true;
   }
+
+  /**
+   * Binds a scheduled group run's thread at its first post (scheduled tasks spec §8): the delivery
+   * target gets `threadId` = the posted message's id, and a thread row (key = that id, account =
+   * `pending_thread_account_id`) points at the conversation, so replies in that thread continue it,
+   * as an inbound top-level message's thread would. Conditional on the binding still pending; when
+   * it is not (another attempt bound it), returns the stored target.
+   */
+  @Transactional()
+  async bindThreadIn(conversationId: string, messageId: string): Promise<ChannelTarget> {
+    const row = await this.kdb
+      .selectFrom("channel_deliveries")
+      .select(["connection_id", "target", "pending_thread_account_id"])
+      .where("conversation_id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DeliveryLostError();
+    const stored = row.target as ChannelTarget;
+    if (row.pending_thread_account_id === null) return stored;
+    const target: ChannelTarget = { ...stored, threadId: messageId };
+    await this.kdb
+      .updateTable("channel_deliveries")
+      .set({
+        target: JSON.stringify(target),
+        pending_thread_account_id: null,
+        updated_at: new Date(),
+      })
+      .where("conversation_id", "=", conversationId)
+      .execute();
+    await insertThread(
+      this.kdb.db,
+      {
+        connectionId: row.connection_id,
+        chatId: stored.chatId,
+        threadKey: messageId,
+        accountId: row.pending_thread_account_id,
+      },
+      conversationId,
+    );
+    return target;
+  }
+
+  /**
+   * A delivery failed for good because the chat is gone or the connection's credentials are
+   * (`ChannelSendError` `target_gone` / `auth`): when the run being delivered serves a scheduled
+   * task run (`runs.scheduled_task_run_id`), its task pauses with `target_gone` (spec §8), so later
+   * ticks do not keep running into the same chat. `runId` is the run of the event being delivered;
+   * without one (a streaming draft), the conversation's latest run. A person's run pauses nothing.
+   */
+  @Transactional()
+  async pauseScheduledTaskIn(conversationId: string, runId: string | null): Promise<void> {
+    let q = this.kdb
+      .selectFrom("runs as r")
+      .innerJoin("scheduled_task_runs as tr", "tr.id", "r.scheduled_task_run_id")
+      .select(["tr.task_id", "r.scheduled_task_run_id"])
+      .where("r.conversation_id", "=", conversationId);
+    q = runId !== null ? q.where("r.id", "=", runId) : q.orderBy("r.created_at", "desc").limit(1);
+    const row = await q.executeTakeFirst();
+    if (!row) return;
+    await this.schedules.pauseFor(this.kdb.db, row.task_id, "target_gone", null);
+    this.log.info("scheduled task paused: its chat is gone", {
+      conversationId,
+      taskId: row.task_id,
+      taskRunId: row.scheduled_task_run_id,
+    });
+  }
 }
 
 /**
@@ -525,7 +604,11 @@ type DeliveryOutcome = (
   | { kind: "shutdown" }
   | { kind: "pending" }
   | { kind: "changed" }
-) & { error?: { connectionId: string; message: string } };
+) & {
+  error?: { connectionId: string; message: string };
+  /** The chat is gone (`target_gone` / `auth`): the run whose event failed (scheduled tasks §8). */
+  gone?: { runId: string | null };
+};
 
 /** 一个步骤正在流式输出的文本（只在从头收到时才发草稿）。 */
 interface StreamingText {
@@ -548,6 +631,13 @@ class Delivery {
   private persisted = 0;
   /** 正在投递的事件（不可重试失败按它计数）。 */
   private handling: number | undefined;
+  /** The run of the event being delivered (a gone chat pauses its scheduled task). */
+  private handlingRun: string | null = null;
+  /**
+   * A scheduled group run's thread is still to bind (`pending_thread_account_id` set): the first
+   * successful send binds it ({@link ChannelOutbound.bindThreadIn}).
+   */
+  private threadPending = false;
   /** 当前草稿消息 id（PG 里的 `draft_message_id`）与它所属的步骤（从 PG 读出的草稿不知道步骤）。 */
   private draftId: string | null = null;
   private draftKey: string | undefined;
@@ -583,7 +673,13 @@ class Delivery {
   async run(): Promise<DeliveryOutcome> {
     const row = await this.d.db
       .selectFrom("channel_deliveries")
-      .select(["connection_id", "target", "last_seq", "draft_message_id"])
+      .select([
+        "connection_id",
+        "target",
+        "last_seq",
+        "draft_message_id",
+        "pending_thread_account_id",
+      ])
       .where("conversation_id", "=", this.conversationId)
       .executeTakeFirst();
     if (!row) return { kind: "done" };
@@ -615,6 +711,7 @@ class Delivery {
       if (version === undefined) return { kind: "done" };
       this.version = version;
       this.target = row.target as ChannelTarget;
+      this.threadPending = row.pending_thread_account_id !== null;
       this.seen = Number(row.last_seq);
       this.persisted = this.seen;
       this.draftId = row.draft_message_id;
@@ -631,16 +728,18 @@ class Delivery {
       if (isChannelSendError(err) && !err.retryable) {
         const message = this.redact(errMsg(err));
         // Ruling A22：机器人被移出群 / 会话不存在 → 停止本轮，不计毒事件（不是连接的问题，不记 last_error）
+        // either also pauses the scheduled task of the run being delivered (scheduled tasks §8)
+        const gone = { runId: this.handlingRun };
         if (err.reason === "target_gone") {
           this.d.log.warn("channel delivery target is gone", {
             conversationId: this.conversationId,
             error: message,
           });
-          return { kind: "stopped" };
+          return { kind: "stopped", gone };
         }
         const error = { connectionId: row.connection_id, message };
         // 凭据失效：记 last_error、停止本轮，不计毒事件（换好凭据后之后的事件照常续投）
-        if (err.reason === "auth") return { kind: "stopped", error };
+        if (err.reason === "auth") return { kind: "stopped", error, gone };
         if (this.handling !== undefined && (await this.countFailure(this.handling))) {
           return { kind: "done", seen: this.seen, error };
         }
@@ -808,8 +907,10 @@ class Delivery {
         if (e.seq <= this.seen) continue;
         if (this.lease.lost) throw new DeliveryLostError();
         this.handling = e.seq;
+        this.handlingRun = e.runId;
         await this.handle(e);
         this.handling = undefined;
+        this.handlingRun = null;
         this.seen = e.seq;
       }
       if (evs.length < PAGE) break;
@@ -876,8 +977,24 @@ class Delivery {
       .execute();
   }
 
-  private send(message: OutboundMessage, idempotencyKey: string): Promise<{ messageId: string }> {
-    return this.s.send(this.target, message, idempotencyKey, this.locale);
+  /**
+   * Sends into the delivery target. A scheduled group run's first post is its thread's root: once
+   * the platform has it, the thread is bound to its id and later posts go into that thread. The
+   * bind comes before the lease check: the root is posted, so it is recorded even when the lease
+   * was lost meanwhile (the bind is conditional on still pending, so a holder that bound first
+   * keeps its thread), and a retry never posts a second root.
+   */
+  private async send(
+    message: OutboundMessage,
+    idempotencyKey: string,
+  ): Promise<{ messageId: string }> {
+    const sent = await this.s.send(this.target, message, idempotencyKey, this.locale);
+    if (this.threadPending) {
+      this.target = await this.d.writes.bindThreadIn(this.conversationId, sent.messageId);
+      this.threadPending = false;
+      if (this.lease.lost) throw new DeliveryLostError();
+    }
+    return sent;
   }
 
   private async handle(e: ConversationEvent): Promise<void> {

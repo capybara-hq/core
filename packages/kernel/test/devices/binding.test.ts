@@ -175,7 +175,9 @@ async function call(
 const text = (p: ToolResult["payload"]): string =>
   typeof p.content === "string" ? p.content : JSON.stringify(p.content);
 
-describe("conversations bound to devices", () => {
+// Each test drives one to three agent runs end to end (queue, model, sandbox) and waits for them
+// with 30 s conditions; the 5 s default test timeout cut those waits short on a loaded machine.
+describe("conversations bound to devices", { timeout: 60_000 }, () => {
   it("a new conversation is bound to the owner's default device", async () => {
     const m = await member();
     const conv = await newConversation(m.req);

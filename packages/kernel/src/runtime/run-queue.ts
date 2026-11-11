@@ -21,6 +21,8 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { linkStartedRunIn, unlinkRunIn } from "../schedules/run-tracker.js";
+import { scheduledTaskRunAt } from "../schedules/unattended.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import type { RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -405,6 +407,9 @@ export class RunQueue {
     // agent 已软删除：会话对任何人都不可见，不再为它起运行。
     if (agent.deleted_at !== null) return null;
     const runId = randomUUID();
+    // scheduled tasks spec §4: a task's message makes the run unattended; a wake inherits it
+    // from the run that produced its event; a person's message never does
+    const taskRunId = await scheduledTaskRunAt(t, conversationId, trigger.seq);
     await t
       .insertInto("runs")
       .values({
@@ -417,8 +422,11 @@ export class RunQueue {
         // a chat conversation always has its person-triggered run before any wake (a wake event
         // comes from a run of it or of its tree); null would only make the wake run its own window
         budget_run_id: isWake ? await budgetWindowOf(t, conversationId) : null,
+        scheduled_task_run_id: taskRunId,
       })
       .execute();
+    // the task run its message started follows this run from now on (spec §6)
+    if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
     return { runId, jobId, kind: "chat" };
   }
 
@@ -508,6 +516,8 @@ export class RunQueue {
         trigger_account_id: wake.triggerAccountId,
         trigger_seq: wake.seq,
         budget_run_id: await budgetWindowOf(t, rootId),
+        // a parent's message or a wake: unattended when the run behind it was (scheduled tasks §4)
+        scheduled_task_run_id: await scheduledTaskRunAt(t, conversationId, wake.seq),
       })
       .execute();
     return { runId, jobId, kind: "subagent" };
@@ -792,12 +802,18 @@ export class RunQueue {
       .catch((err) => this.log.warn("checkpoint delete failed", { runId, err }));
   }
 
+  @Transactional()
   private async deleteQueued(runId: string): Promise<void> {
-    await this.db
+    const gone = await this.db
       .deleteFrom("runs")
       .where("id", "=", runId)
       .where("status", "=", "queued")
-      .execute();
+      .returning("scheduled_task_run_id")
+      .executeTakeFirst();
+    // its scheduled task run waits for the message's next run again
+    if (gone?.scheduled_task_run_id != null) {
+      await unlinkRunIn(this.db, gone.scheduled_task_run_id, runId);
+    }
   }
 }
 

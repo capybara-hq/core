@@ -3,7 +3,7 @@ import { secret } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { secretValues } from "../src/config/fields.js";
-import { createLogger } from "../src/log.js";
+import { createLogger, type KernelLogger } from "../src/log.js";
 
 function capture(level: string) {
   const lines: string[] = [];
@@ -166,23 +166,35 @@ describe("createLogger", () => {
     expect(builds).toBe(3);
   });
 
-  it("性能：10000 个已登记密钥，1000 行 × 10 个字段在 500ms 内", () => {
-    const logger = createLogger("info", { write: () => {} });
-    logger.addSecrets(Array.from({ length: 5_000 }, (_, i) => `deploy-secret-${i}-${i * 7919}`));
-    logger.addOrgSecrets(
-      Array.from({ length: 5_000 }, (_, i) => `org-tenant-secret-${i}-${i * 104729}`),
-    );
+  it("redaction cost does not grow with the number of registered secrets (10000 vs 1)", () => {
+    // Compares two loggers in the same process and conditions instead of a wall-clock budget: a
+    // loaded machine slows both alike, while a per-secret scan would make the 10000-secret logger
+    // hundreds of times slower than the one-secret logger. Interleaved rounds, best of each.
     const fields = Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [
         `f${i}`,
         `some ordinary log text value number ${i} deploy-secret-42-332598`,
       ]),
     );
-    logger.info("warmup", fields);
-    const t0 = performance.now();
-    for (let i = 0; i < 1_000; i++) logger.info("line", fields);
-    // CI 机器负载高时放宽；逐个密钥扫描的退化在秒级以上，2000ms 仍能抓到
-    expect(performance.now() - t0).toBeLessThan(process.env.CI ? 2_000 : 500);
+    const many = createLogger("info", { write: () => {} });
+    many.addSecrets(Array.from({ length: 5_000 }, (_, i) => `deploy-secret-${i}-${i * 7919}`));
+    many.addOrgSecrets(
+      Array.from({ length: 5_000 }, (_, i) => `org-tenant-secret-${i}-${i * 104729}`),
+    );
+    const one = createLogger("info", { write: () => {} });
+    one.addSecrets(["deploy-secret-42-332598"]);
+    const time = (logger: KernelLogger) => {
+      const t0 = performance.now();
+      for (let i = 0; i < 1_000; i++) logger.info("line", fields);
+      return performance.now() - t0;
+    };
+    time(many); // warmup and matcher build
+    time(one);
+    let best = { many: Number.POSITIVE_INFINITY, one: Number.POSITIVE_INFINITY };
+    for (let round = 0; round < 5; round++) {
+      best = { many: Math.min(best.many, time(many)), one: Math.min(best.one, time(one)) };
+    }
+    expect(best.many).toBeLessThan(best.one * 20);
   });
 
   it("嵌套的组织配置密钥（secret 对象下的 record / 数组 / 数字）被打码", () => {

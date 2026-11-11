@@ -53,6 +53,10 @@ export const BUILTIN_TOOLS = [
   "WebFetch",
   "Platform",
   "CurrentTime",
+  "ScheduleCreate",
+  "ScheduleUpdate",
+  "ScheduleList",
+  "ScheduleDelete",
 ] as const;
 
 /**

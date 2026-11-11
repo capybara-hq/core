@@ -41,6 +41,11 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "web.fetch.maxAnswerTokens": () => {},
   "web.fetch.cacheSeconds": () => {},
   "web.fetch.timeoutMs": () => {},
+  // Scheduled-task settings are clamped to these bounds on every read.
+  "schedules.minIntervalFloorMinutes": () => {},
+  "schedules.maxTasksPerMemberCap": () => {},
+  "schedules.maxTasksPerOrgCap": () => {},
+  "schedules.maxRunsPerHourCap": () => {},
 };
 
 /**

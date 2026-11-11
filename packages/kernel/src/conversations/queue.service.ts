@@ -5,10 +5,12 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
+import { releaseQueuedTaskRunIn } from "../schedules/run-tracker.js";
 import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
 import type { QuestionRecord } from "../tools/questions.service.js";
 import {
   ConversationsService,
+  type InternalMessageOptions,
   type ResolvedExtra,
   type RunControl,
 } from "./conversations.service.js";
@@ -24,6 +26,7 @@ import {
   noNul,
   QUEUE_MAX_ITEMS,
   type QueuedFile,
+  type QueuedSchedule,
   type QueuedSkill,
   type QueueInput,
   type QueueItem,
@@ -105,13 +108,16 @@ export class ConversationQueue {
    * item, and uploaded files are bound to the conversation now, so sending later needs nobody's
    * credentials. The same `clientMessageId` again returns the queued item (`created: false`), or,
    * when it was already sent, the sent `user_message` with `item: null`. Then `ensureRun`: on an
-   * idle conversation the item goes out at once.
+   * idle conversation the item goes out at once. `internal` (kernel callers only, never HTTP): a
+   * scheduled task's marker and zone, stored with the item and written with its `user_message`
+   * (scheduled tasks spec §6).
    */
   async add(
     orgId: string,
     conversationId: string,
     accountId: string,
     input: QueueInput,
+    internal: InternalMessageOptions = {},
   ): Promise<{ item: QueueItem | null; event?: ConversationEvent; created: boolean }> {
     const conv = await this.conversations.writable(orgId, conversationId, accountId);
     const files = input.files ?? [];
@@ -134,7 +140,16 @@ export class ConversationQueue {
       invoked === undefined || input.skill === undefined
         ? undefined
         : storedSkill(input.skill.name, invoked);
-    const out = await this.addIn(orgId, conversationId, accountId, input, files, skill, extra);
+    const out = await this.addIn(
+      orgId,
+      conversationId,
+      accountId,
+      input,
+      files,
+      skill,
+      extra,
+      internal,
+    );
     if (out === null) {
       return (
         (await this.prior(conversationId, input.clientMessageId)) ?? { item: null, created: false }
@@ -157,6 +172,7 @@ export class ConversationQueue {
     files: readonly string[],
     skill: ReturnType<typeof storedSkill> | undefined,
     extra: ResolvedExtra,
+    internal: InternalMessageOptions,
   ): Promise<{ row: QueueRow; created: boolean } | null> {
     const t = this.db.db;
     await t
@@ -207,6 +223,15 @@ export class ConversationQueue {
         model: input.model === undefined ? null : JSON.stringify(input.model),
         effort: input.effort ?? null,
         skill: skill?.skill ?? null,
+        schedule:
+          internal.schedule === undefined
+            ? null
+            : JSON.stringify({
+                ...internal.schedule,
+                ...(internal.timeZoneOverride !== undefined && {
+                  timeZone: internal.timeZoneOverride,
+                }),
+              } satisfies QueuedSchedule),
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -215,7 +240,9 @@ export class ConversationQueue {
 
   /**
    * Changes a queued item's text (its resources and files stay as queued). A skill invocation's
-   * text is its arguments: the skill is rendered again with them now.
+   * text is its arguments: the skill is rendered again with them now. A scheduled task's item
+   * becomes the person's message: its schedule marker (and the task's zone) is dropped, so the run
+   * it triggers is attended (scheduled tasks spec §7).
    */
   async edit(
     orgId: string,
@@ -256,12 +283,14 @@ export class ConversationQueue {
     const t = this.db.db;
     const cur = await t
       .selectFrom("conversation_queue")
-      .select(["attachments", "files", "content", "skill"])
+      .select(["attachments", "files", "content", "skill", "schedule"])
       .where("id", "=", itemId)
       .where("conversation_id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
     if (!cur) throw itemNotFound();
+    // a person's words now: the task's run for this item will not happen (scheduled tasks §6)
+    await releaseQueuedTaskRunIn(t, cur.schedule);
     const skill = cur.skill as QueuedSkill | null;
     checkText(
       text,
@@ -276,6 +305,8 @@ export class ConversationQueue {
       .updateTable("conversation_queue")
       .set({
         text: noNul(text),
+        // edited by a person: no longer the task's message
+        schedule: null,
         updated_at: sql`now()`,
         ...(stored !== undefined && {
           skill: stored.skill,
@@ -309,16 +340,20 @@ export class ConversationQueue {
       .deleteFrom("conversation_queue")
       .where("id", "=", itemId)
       .where("conversation_id", "=", conversationId)
-      .returning("id")
+      .returning(["id", "schedule"])
       .executeTakeFirst();
     if (!gone) throw itemNotFound();
+    // a task's queued message deleted by a person: its run is skipped (scheduled tasks §6)
+    await releaseQueuedTaskRunIn(t, gone.schedule);
     await unpauseIfEmpty(t, conversationId);
   }
 
   /**
    * Sends a queued item now: it leaves the queue and is posted as a user message in the same
    * transaction (an interjection when a run is active; the items before it keep their place).
-   * Racing the dispatcher, exactly one of them takes the item; the loser sees it gone (404).
+   * Racing the dispatcher, exactly one of them takes the item; the loser sees it gone (404). A
+   * scheduled task's item is sent as the person's message, without its schedule marker
+   * (scheduled tasks spec §7).
    */
   async sendNow(
     orgId: string,
@@ -378,7 +413,9 @@ export class ConversationQueue {
       .executeTakeFirst();
     if (!row) throw itemNotFound();
     const sent = await alreadySent(t, conversationId, row.client_message_id);
-    const out = await appendQueuedIn(t, this.eventLog, conversationId, row);
+    // sent by a person: their message, not the task's, whose run is skipped
+    await releaseQueuedTaskRunIn(t, row.schedule);
+    const out = await appendQueuedIn(t, this.eventLog, conversationId, { ...row, schedule: null });
     await unpauseIfEmpty(t, conversationId);
     // sent during the run, the item is the author's message like a direct send: it skips the
     // pending questions they may answer (reply-while-question spec §4.2)

@@ -171,6 +171,11 @@ describe("tool kinds", () => {
       Platform: "tool",
       // reads the clock: a plain tool row
       CurrentTime: "tool",
+      // the person's scheduled tasks: plain tool rows
+      ScheduleCreate: "tool",
+      ScheduleUpdate: "tool",
+      ScheduleList: "tool",
+      ScheduleDelete: "tool",
     });
   });
 });

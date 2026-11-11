@@ -17,7 +17,8 @@ export function finishRun(
   a: FinishRunArgs,
 ): Promise<number | null> {
   const h = handlesFor(db as never);
-  return new RunFinish(h.db, eventLog, h.txHost).finish(a);
+  // no scheduled task follows these runs: the tracker is a no-op here
+  return new RunFinish(h.db, eventLog, h.txHost, { onRunFinished: async () => {} }).finish(a);
 }
 
 /** A dispatched child run of a parent conversation, oldest first. */

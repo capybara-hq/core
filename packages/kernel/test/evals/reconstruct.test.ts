@@ -39,6 +39,8 @@ import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js"
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
+import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
+import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
@@ -1667,6 +1669,112 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
       }
     }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+describe("reconstructRequest: scheduled tasks", { timeout: 120_000 }, () => {
+  const store = new ScheduledTaskStore();
+  const task = (
+    agentId: string,
+    over: Partial<Parameters<ScheduledTaskStore["insertTask"]>[1]>,
+  ): Parameters<ScheduledTaskStore["insertTask"]>[1] => ({
+    id: randomUUID(),
+    orgId,
+    accountId: ownerId,
+    agentId,
+    name: "Digest",
+    prompt: "echo:the daily digest",
+    trigger: { kind: "cron", expr: "0 9 * * *", timeZone: "UTC" },
+    mode: "new",
+    conversationId: null,
+    chat: null,
+    model: null,
+    effort: null,
+    deviceId: null,
+    status: "active",
+    nextRunAt: new Date(Date.now() + 86_400_000),
+    jitterSeconds: 0,
+    expiresAt: null,
+    ...over,
+  });
+  /** Fires one run of `taskId` as the scan does; returns the task run id. */
+  const fireOnce = async (taskId: string): Promise<string> => {
+    const run = await store.insertRun(db, {
+      id: randomUUID(),
+      taskId,
+      orgId,
+      scheduledFor: new Date(),
+      trial: false,
+    });
+    if (!run) throw new Error("tick taken");
+    await k.app.get(ScheduledTaskFirer).fire(run.id);
+    return run.id;
+  };
+
+  it("a conversation task runs with the conversation's selection, with zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:before the task");
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    // a task posting into this conversation; model and effort are a new-conversation task's only
+    // (the service refuses them here): even a row carrying them fires without a switch
+    const t = await store.insertTask(
+      db,
+      task(agentId, {
+        mode: "conversation",
+        conversationId: conv,
+        model: { provider: "model-fake", model: "fake-v" },
+        effort: "high",
+      }),
+    );
+    const runId = await fireOnce(t.id);
+    await waitForTerminal(db, conv, 2, 30_000);
+    // a person's message after the scheduled run
+    await postMessage(owner, orgId, conv, "echo:after the task");
+    await waitForTerminal(db, conv, 3, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const scheduled = events.find(
+      (e) => e.type === "user_message" && e.payload.schedule !== undefined,
+    );
+    expect(scheduled?.type === "user_message" && scheduled.payload.schedule).toMatchObject({
+      taskId: t.id,
+      taskRunId: runId,
+      trial: false,
+    });
+    // the conversation's selection throughout: the task switches nothing for the person
+    const calls = modelCalls(events);
+    expect(calls.map((c) => c.payload.model)).toEqual(["fake-1", "fake-1", "fake-1"]);
+    expect(events.some((e) => e.type === "model_switched")).toBe(false);
+    // the marker is not model-visible
+    expect(JSON.stringify(sent)).not.toContain(runId);
+    expect(JSON.stringify(sent)).not.toContain(t.id);
+    const runs = await runsOf(db, conv);
+    await expectZeroDrift(conv, await snapshotOf(conv, runs[1]?.id), 2);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a new-conversation task runs with its own model and effort, with zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const t = await store.insertTask(
+      db,
+      task(agentId, { model: { provider: "model-fake", model: "fake-v" }, effort: "high" }),
+    );
+    const runId = await fireOnce(t.id);
+    const row = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("scheduled_task_id", "=", t.id)
+      .where("create_request_id", "=", runId)
+      .executeTakeFirstOrThrow();
+    await waitForTerminal(db, row.id, 1, 30_000);
+    const calls = modelCalls(await eventsOf(db, row.id));
+    expect(calls.map((c) => c.payload.model)).toEqual(["fake-v"]);
+    expect(calls[0]?.payload.request.params).toMatchObject({ effort: "high" });
+    await expectZeroDrift(row.id, await snapshotOf(row.id));
   });
 });
 

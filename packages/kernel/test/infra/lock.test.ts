@@ -158,7 +158,10 @@ describe("LockService", () => {
     const slow = new Redis(rd.url);
     let reject: ((e: Error) => void) | undefined;
     const a = new LockService(slow, lg);
-    const h = await a.acquire(k("renew-late"), { ttlMs: 300 });
+    // TTL 1500: the first renewal comes at 500 ms, and the loss deadline (1000 ms) leaves room for
+    // a stalled event loop; with 300 ms a stall past 200 ms lost the lock before a renewal reached
+    // the mocked eval
+    const h = await a.acquire(k("renew-late"), { ttlMs: 1500 });
     vi.spyOn(slow, "eval").mockImplementation(
       () =>
         new Promise((_, rej) => {

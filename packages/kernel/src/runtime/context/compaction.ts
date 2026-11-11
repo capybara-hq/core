@@ -3,7 +3,7 @@ import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
-import { senderTranscriptLabel } from "./run-context.js";
+import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
 import { toolsChangedText } from "./tool-changes.js";
 
 /** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
@@ -116,8 +116,11 @@ function keepToolPairs(
 function transcriptLine(e: ConversationEvent): string | null {
   switch (e.type) {
     case "user_message": {
-      const text = renderBlocks(e.payload.content);
-      if (!text) return null;
+      const body = renderBlocks(e.payload.content);
+      if (!body) return null;
+      // scheduled tasks spec §12: the header the request shows, so the summary keeps the origin
+      const schedule = e.payload.schedule;
+      const text = schedule === undefined ? body : `${scheduleHeader(schedule)} ${body}`;
       // run context spec §5: the sender as logged (older logs have none: unchanged)
       const sender = e.payload.sender;
       return sender !== undefined

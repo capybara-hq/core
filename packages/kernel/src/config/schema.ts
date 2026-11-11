@@ -1278,6 +1278,58 @@ export const KernelConfigSchema = z.object({
         .prefault({} as never),
     })
     .prefault({} as never),
+  schedules: z
+    .object({
+      minIntervalFloorMinutes: z
+        .number()
+        .int()
+        .positive()
+        .default(5)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Smallest value an organization may set for the minimum gap between two fire times of a scheduled task, in minutes; a lower org value is clamped up to it",
+          }),
+        ),
+      maxTasksPerMemberCap: z
+        .number()
+        .int()
+        .positive()
+        .default(100)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest number of scheduled tasks per member an organization may allow; a higher org value is clamped down to it",
+          }),
+        ),
+      maxTasksPerOrgCap: z
+        .number()
+        .int()
+        .positive()
+        .default(2000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest number of scheduled tasks per organization an organization may allow; a higher org value is clamped down to it",
+          }),
+        ),
+      maxRunsPerHourCap: z
+        .number()
+        .int()
+        .positive()
+        .default(600)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Largest number of scheduled task runs per organization per hour an organization may allow; a higher org value is clamped down to it",
+          }),
+        ),
+    })
+    .prefault({} as never),
   sandbox: z
     .object({
       image: z

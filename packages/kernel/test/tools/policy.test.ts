@@ -18,6 +18,7 @@ import {
   decide,
   isFixedAsk,
   type PolicyInput,
+  R3_FIXED_ASK_TOOL_KEYS,
 } from "../../src/tools/policy.js";
 import { type CallPolicy, type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
@@ -84,10 +85,11 @@ describe("decide", () => {
     expect(decide({ ...base, connectorDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
-  it("a fixed ask is a spec that requires user interaction; no builtin is on a list", () => {
-    const tool = (annotations?: { requiresUserInteraction?: boolean }) =>
+  it("a fixed ask: a spec that requires user interaction, or the R3 list (the schedule writes)", () => {
+    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["ScheduleCreate", "ScheduleUpdate"]);
+    const tool = (annotations?: { requiresUserInteraction?: boolean }, key = "plugin__probe__t") =>
       ({
-        key: "plugin__probe__t",
+        key,
         source: { kind: "builtin", name: "t" },
         spec: {
           name: "t",
@@ -101,6 +103,10 @@ describe("decide", () => {
     expect(isFixedAsk(tool({ requiresUserInteraction: true }))).toBe(true);
     expect(isFixedAsk(tool({ requiresUserInteraction: false }))).toBe(false);
     expect(isFixedAsk(tool())).toBe(false);
+    // a task an agent creates or widens is always approved by a person, private agents included
+    expect(isFixedAsk(tool(undefined, "ScheduleCreate"))).toBe(true);
+    expect(isFixedAsk(tool(undefined, "ScheduleUpdate"))).toBe(true);
+    expect(isFixedAsk(tool(undefined, "ScheduleList"))).toBe(false);
   });
 });
 

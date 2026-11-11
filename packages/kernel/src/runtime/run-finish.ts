@@ -6,6 +6,7 @@ import { pauseQueueIn } from "../conversations/queue.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { ScheduledTaskRunTracker } from "../schedules/run-tracker.js";
 
 /** 运行的终态。 */
 export type TerminalStatus = "completed" | "failed" | "aborted";
@@ -46,6 +47,9 @@ export class RunFinish {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** A scheduled task's run follows its kernel run's end in the same transaction (spec §6). */
+    @Inject(ScheduledTaskRunTracker)
+    private readonly taskRuns: Pick<ScheduledTaskRunTracker, "onRunFinished">,
   ) {}
 
   /**
@@ -93,6 +97,7 @@ export class RunFinish {
       .set({ status: a.status, finished_at: sql`now()` })
       .where("id", "=", a.runId)
       .execute();
+    await this.taskRuns.onRunFinished(a.runId, a.status, failureMessage(a.event));
     // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
     if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
     return (ev as ConversationEvent).seq;
@@ -109,6 +114,13 @@ export class RunFinish {
   private finishOwn(a: FinishRunArgs): Promise<number | null> {
     return this.finishIn(a);
   }
+}
+
+/** The message of a `run_failed` event's error, for the task run (undefined otherwise). */
+function failureMessage(event: FinishRunArgs["event"]): string | undefined {
+  if (event.type !== "run_failed") return undefined;
+  const m = (event.payload as { error?: { message?: unknown } } | undefined)?.error?.message;
+  return typeof m === "string" ? m : undefined;
 }
 
 /**

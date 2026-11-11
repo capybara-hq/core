@@ -42,6 +42,15 @@ beforeEach(async () => {
 });
 
 const PW = "correct horse battery";
+/**
+ * The hash of PW, computed once: for the tests that create many accounts to probe locking, where
+ * scrypt is not under test (the tests at the top create accounts with a real hash each time).
+ */
+let pwHash: Promise<string> | undefined;
+const hashOnce = () => {
+  pwHash ??= svc.hashNewPassword(PW);
+  return pwHash;
+};
 const codeOf = async (p: Promise<unknown>) => {
   try {
     await p;
@@ -190,18 +199,14 @@ describe("最后一个超级管理员", () => {
     try {
       for (let i = 0; i < 10; i++) {
         await truncateTables(raw, "capybara.accounts");
-        const a = await svc.createLocal({
-          login: `root-a${i}`,
-          password: PW,
-          displayName: "A",
-          superAdmin: true,
-        });
-        const b = await svc.createLocal({
-          login: `root-b${i}`,
-          password: PW,
-          displayName: "B",
-          superAdmin: true,
-        });
+        const a = await svc.createLocal(
+          { login: `root-a${i}`, password: PW, displayName: "A", superAdmin: true },
+          await hashOnce(),
+        );
+        const b = await svc.createLocal(
+          { login: `root-b${i}`, password: PW, displayName: "B", superAdmin: true },
+          await hashOnce(),
+        );
         const rs = await Promise.allSettled([
           svc.update(b.id, { status: "disabled" }, a.id),
           svc2.update(a.id, { isSuperAdmin: false }, b.id),
@@ -231,13 +236,11 @@ describe("最后一个超级管理员", () => {
 });
 
 describe("超级管理员写操作执行期复核（R5）", () => {
-  const admin = (name: string) =>
-    svc.createLocal({
-      login: `admin-${name}`,
-      password: PW,
-      displayName: name,
-      superAdmin: true,
-    });
+  const admin = async (name: string) =>
+    svc.createLocal(
+      { login: `admin-${name}`, password: PW, displayName: name, superAdmin: true },
+      await hashOnce(),
+    );
 
   it("A 撤销 B 后，B 已通过鉴权的调用（建管理员 / 改账号 / 改设置）一律 forbidden", async () => {
     const a = await admin("a");

@@ -267,11 +267,16 @@ describe("theme settings", () => {
       ]);
       for (const r of results) expect(r.statusCode, r.body).not.toBe(500);
       const [set, sw] = results;
-      if (set?.statusCode === 200) {
-        expect(sw?.json().error.code).toBe("theme.platform_default");
+      // the setter succeeds either way: the switch-off writes nothing before its confirmation
+      expect(set?.statusCode, set?.body).toBe(200);
+      const body = sw?.json() as { error?: { code: string }; preview?: unknown; confirm?: string };
+      if (body.error !== undefined) {
+        // the setter committed first: the switch-off is refused
+        expect(body.error.code).toBe("theme.platform_default");
       } else {
-        // the switch-off returns its preview first (nothing written), so the setter succeeds
-        expect(set?.statusCode).toBe(200);
+        // the switch-off answered first, with its preview (nothing written)
+        expect(sw?.statusCode, sw?.body).toBe(200);
+        expect(body.confirm).toEqual(expect.any(String));
       }
     });
   });

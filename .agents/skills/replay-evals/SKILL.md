@@ -62,6 +62,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   and role at send time) renders as a separate first text block `From <name> (<role>)` only when the sender changes,
   and again on the first message after a summary (`senderLines`, log only). Both are in the log: no `DriftReason`;
   old logs (no event, no field) rebuild byte for byte. Full-run replay copies the run's `run_context` as recorded.
+- **Scheduled task messages** (scheduled tasks spec §6, §12): a task's `user_message` carries `schedule { taskId,
+  taskRunId, scheduledFor, trial, taskName, localTime }`, fixed at write time; request building renders only the
+  header `[Scheduled task "<name>", run for <local time>]` (`scheduleHeader`, a text block after the sender line),
+  never the task row, so a rename changes no rebuilt request. Its zone is the message's `timeZone` (the
+  `timeZoneOverride` of `readMessageContext`), so `run_context` follows. `run_started.trigger: "schedule"` is
+  display only. In the log: no `DriftReason`.
 
 ## Queued messages (UI refresh B)
 

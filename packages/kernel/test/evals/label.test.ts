@@ -127,7 +127,9 @@ async function label(resultId: string, body: unknown): Promise<EvalResultView> {
   return (res.json() as { result: EvalResultView }).result;
 }
 
-describe("人工标注", () => {
+// Each test drives agent runs and an eval run through the queues (finishedRun waits up to 20 s
+// for the eval run); the 5 s default test timeout cut those waits short on a loaded machine.
+describe("人工标注", { timeout: 60_000 }, () => {
   it("标注写进结果；humanPassRate = 通过 / 已标注；清除后不计", async () => {
     const { runId, results } = await finishedRun(2);
     expect(results).toHaveLength(2);

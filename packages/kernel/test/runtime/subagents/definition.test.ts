@@ -378,7 +378,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
   /** The parent keeps these builtins on and turns the others off. */
   const parentOff = builtinsOff("AskUserQuestion", "ReadToolOutput", "Deliver", "Bash", "Agent");
   /** Every child's key filter removes these (sub-agents spec §5.3). */
-  const REMOVED = ["AskUserQuestion", "Deliver"];
+  const REMOVED = [...CHILD_REMOVED_TOOLS];
 
   it("general-purpose: the parent's definition minus the child-removed tools, nothing pinned", async () => {
     const s = await skill("brainstorming");
@@ -394,7 +394,14 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       subagents: { inline: [inline("scout")] },
     });
     const r = await eff(parent, "general-purpose");
-    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver"]);
+    expect(CHILD_REMOVED_TOOLS).toEqual([
+      "AskUserQuestion",
+      "Deliver",
+      "ScheduleCreate",
+      "ScheduleUpdate",
+      "ScheduleList",
+      "ScheduleDelete",
+    ]);
     expect(r.definition).toEqual({
       name: "Lead › general-purpose",
       avatarUrl: "https://example.com/a.png",

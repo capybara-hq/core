@@ -965,7 +965,7 @@ export class RunWorker {
     // delivery (agent map spec §5.3), not a message
     const boundary = await t
       .selectFrom("conversation_events")
-      .select("type")
+      .select(["type", "payload"])
       .where("conversation_id", "=", conversationId)
       .where("seq", "=", run.trigger_seq)
       .executeTakeFirst();
@@ -986,6 +986,11 @@ export class RunWorker {
             trigger: "subagent" as const,
             triggerSeq: Number(run.trigger_seq),
           }),
+          // a scheduled task's message (scheduled tasks spec §6); display only
+          ...(boundary?.type === "user_message" &&
+            (boundary.payload as { schedule?: unknown }).schedule !== undefined && {
+              trigger: "schedule" as const,
+            }),
         },
       },
     ]);

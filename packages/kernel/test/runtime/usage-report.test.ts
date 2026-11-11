@@ -80,6 +80,10 @@ beforeAll(async () => {
       { roles: ["api", "worker"], extensions: [MODEL_FAKE, fx("hooks-probe"), fx("usage-b")] },
     ),
   );
+  // Every sweep in this file is called explicitly. The kernel's own minute tick would also sweep
+  // the rows a case set up for a standalone reporter (and deliver them first) whenever a minute
+  // boundary falls inside the case.
+  k.app.get(SchedulerRegistry).getCronJob(USAGE_SWEEP_JOB).stop();
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);

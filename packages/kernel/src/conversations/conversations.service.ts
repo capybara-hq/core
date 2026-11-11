@@ -21,6 +21,7 @@ import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
@@ -65,6 +66,8 @@ export interface ConversationView {
    * sub-agent's is null: it works in its root conversation's.
    */
   deviceId: string | null;
+  /** The scheduled task that created it (a `new`-mode task's run); null otherwise (spec §4). */
+  scheduledTaskId: string | null;
   /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
@@ -199,6 +202,7 @@ const COLUMNS = [
   "subagent_type",
   "archived_at",
   "device_id",
+  "scheduled_task_id",
 ] as const;
 
 function toView(r: {
@@ -216,6 +220,7 @@ function toView(r: {
   subagent_type: string | null;
   archived_at: Date | null;
   device_id: string | null;
+  scheduled_task_id: string | null;
   activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
@@ -233,6 +238,7 @@ function toView(r: {
     subagentType: r.subagent_type,
     archivedAt: r.archived_at,
     deviceId: r.device_id,
+    scheduledTaskId: r.scheduled_task_id,
     activity: r.activity ?? null,
   };
 }
@@ -274,6 +280,16 @@ export interface UserMessageInput {
    * account setting and the person's web language (run context spec §3.4).
    */
   im?: ImSenderContext;
+}
+
+/**
+ * Message options only kernel callers pass (a scheduled task's fire, scheduled tasks spec §6), never
+ * an HTTP body: the schedule marker the `user_message` carries and a zone that beats every other
+ * source of the message's `timeZone` (`readMessageContext`).
+ */
+export interface InternalMessageOptions {
+  schedule?: ScheduleMarker;
+  timeZoneOverride?: string;
 }
 
 interface UsageRow {
@@ -386,6 +402,8 @@ export class ConversationsService {
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
+   * `internal` (kernel callers only): a scheduled task's marker, which also sets
+   * `conversations.scheduled_task_id`, and its zone override.
    */
   async createWithMessage(
     orgId: string,
@@ -393,6 +411,7 @@ export class ConversationsService {
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
     pick: NewConversationDevice = {},
+    internal: InternalMessageOptions = {},
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -413,6 +432,7 @@ export class ConversationsService {
       next,
       extra,
       invoked,
+      internal,
     );
     const written = all?.at(-1);
     if (!all || !written) {
@@ -440,6 +460,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
+    internal: InternalMessageOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
     const row = await this.db
@@ -451,6 +472,7 @@ export class ConversationsService {
         account_id: accountId,
         device_id: conv.deviceId,
         create_request_id: input.clientMessageId,
+        scheduled_task_id: internal.schedule?.taskId ?? null,
       })
       .onConflict((oc) =>
         oc
@@ -464,8 +486,9 @@ export class ConversationsService {
     if (!row) return undefined;
     const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
     // a new conversation has no run yet, so nothing to skip
-    return (await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked))
-      .events;
+    return (
+      await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked, internal)
+    ).events;
   }
 
   /**
@@ -775,6 +798,7 @@ export class ConversationsService {
       created_at: Date;
       updated_at: Date;
       parent_conversation_id: string | null;
+      scheduled_task_id: string | null;
       subagent_type: string | null;
       archived_at: Date | null;
       device_id: string | null;
@@ -796,14 +820,14 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.device_id, cs.activity
+        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.device_id, ${activitySql("c")} AS activity
+          c.archived_at, c.device_id, c.scheduled_task_id, ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
@@ -1241,6 +1265,7 @@ export class ConversationsService {
     extra: ResolvedExtra,
     blocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
+    internal: InternalMessageOptions = {},
   ): Promise<{
     events: ConversationEvent[];
     skipped: QuestionRecord[];
@@ -1262,8 +1287,11 @@ export class ConversationsService {
       senderName: input.senderName,
       browser: { timeZone: input.timeZone, locale: input.locale },
       im: input.im,
+      timeZoneOverride: internal.timeZoneOverride,
     });
-    events.push(this.userMessage(accountId, input, extra, blocks, invoked, context));
+    events.push(
+      this.userMessage(accountId, input, extra, blocks, invoked, context, internal.schedule),
+    );
     const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
     const message = written.at(-1) as ConversationEvent;
     const skips =
@@ -1354,6 +1382,7 @@ export class ConversationsService {
     fileBlocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
     context: MessageContext,
+    schedule?: ScheduleMarker,
   ): AppendEvent {
     // a skill invocation's rendered text replaces the typed arguments as content[0]
     const text = invoked?.text ?? input.text;
@@ -1375,6 +1404,7 @@ export class ConversationsService {
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
         ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
         ...(invoked !== undefined && { skill: invoked.skill }),
+        ...(schedule !== undefined && { schedule }),
       },
     };
   }

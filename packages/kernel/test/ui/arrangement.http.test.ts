@@ -243,4 +243,29 @@ describe("arrangement", () => {
       .where("id", "=", orgId)
       .execute();
   });
+  it("a scheduledTasks patch round-trips through the org settings route", async () => {
+    const url = `/api/v1/orgs/${orgId}/settings`;
+    const p = await admin({
+      method: "PATCH",
+      url,
+      payload: { scheduledTasks: { minIntervalMinutes: 15, forbiddenTools: ["Bash"] } },
+    });
+    expect(p.statusCode, p.body).toBe(200);
+    const g = await admin({ method: "GET", url });
+    const st = (g.json() as { settings: { scheduledTasks: Record<string, unknown> } }).settings
+      .scheduledTasks;
+    expect(st).toMatchObject({
+      minIntervalMinutes: 15,
+      forbiddenTools: ["Bash"],
+      maxTasksPerOrg: 200,
+      enabled: true,
+    });
+    const bad = await admin({ method: "PATCH", url, payload: { scheduledTasks: { enabled: 1 } } });
+    expect(bad.statusCode).toBe(400);
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({}) })
+      .where("id", "=", orgId)
+      .execute();
+  });
 });
