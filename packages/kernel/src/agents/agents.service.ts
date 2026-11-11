@@ -34,6 +34,7 @@ import {
   paramIssues,
   SUBAGENT_NAME_RE,
   SUBAGENT_ROSTER_MAX,
+  withoutRemovedBuiltinPolicies,
 } from "./definition.js";
 import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
 import { PendingConnectorRequests } from "./pending-connector-requests.js";
@@ -556,14 +557,16 @@ export class AgentsService {
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
+    // a policy key of a removed builtin (e.g. copied from a template) is dropped, never refused
+    const given = withoutRemovedBuiltinPolicies(request.definition);
     const input = {
       ...request,
       // run context spec §3.5: version 1 carries the description (the profile's when the
       // definition gives none)
       definition: withCanonicalTools(
         withDescription(
-          deriveInstructions(request.definition, null),
-          request.definition.description ?? request.profile?.description,
+          deriveInstructions(given, null),
+          given.description ?? request.profile?.description,
           undefined,
         ),
       ),
@@ -766,7 +769,11 @@ export class AgentsService {
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
-    const patch = request;
+    // a policy key of a removed builtin (stored before it went) is dropped, never refused
+    const patch =
+      request.definition === undefined
+        ? request
+        : { ...request, definition: withoutRemovedBuiltinPolicies(request.definition) };
     const warnings = patch.definition ? await this.checkModels(orgId, patch.definition) : [];
     const toolKeys = patch.definition
       ? await this.checkTools(orgId, patch.definition, await this.keptDisabled(orgId, agentId))

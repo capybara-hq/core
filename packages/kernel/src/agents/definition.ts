@@ -1,5 +1,6 @@
 import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import {
   isLegacyBuiltinKey,
   isLegacyPrefixedKey,
@@ -472,6 +473,42 @@ export function normalizeToolKeys(
     }
   }
   return changed ? next : definition;
+}
+
+/** The fields {@link withoutRemovedBuiltinPolicies} reads. */
+interface AgentDefinitionLike {
+  toolPolicies?: Record<string, string> | undefined;
+  subagents?:
+    | { inline?: readonly { toolPolicies?: Record<string, string> | undefined }[] | undefined }
+    | undefined;
+}
+
+/**
+ * `definition` without the `toolPolicies` keys (its own and its inline sub-agents') of builtins
+ * that no longer exist ({@link isRemovedBuiltinKey}): applied to a definition being saved, so a
+ * key left over from a removed builtin never blocks the save. Returns the same object when
+ * nothing is dropped.
+ */
+export function withoutRemovedBuiltinPolicies<T extends AgentDefinitionLike>(definition: T): T {
+  type Policies = Record<string, string> | undefined;
+  const strip = (p: Policies): Policies => {
+    if (p === undefined || !Object.keys(p).some(isRemovedBuiltinKey)) return p;
+    return Object.fromEntries(Object.entries(p).filter(([k]) => !isRemovedBuiltinKey(k)));
+  };
+  let next: T = definition;
+  const policies = strip(definition.toolPolicies);
+  if (policies !== definition.toolPolicies) next = { ...next, toolPolicies: policies };
+  const inline = definition.subagents?.inline;
+  if (inline !== undefined) {
+    const stripped = inline.map((t) => {
+      const p = strip(t.toolPolicies);
+      return p === t.toolPolicies ? t : { ...t, toolPolicies: p };
+    });
+    if (stripped.some((t, i) => t !== inline[i])) {
+      next = { ...next, subagents: { ...definition.subagents, inline: stripped } };
+    }
+  }
+  return next;
 }
 
 /**

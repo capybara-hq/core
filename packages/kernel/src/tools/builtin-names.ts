@@ -1,3 +1,4 @@
+import { parseToolKey } from "@capybara-hq/plugin-sdk";
 import type { ToolKind } from "./info.js";
 
 /**
@@ -91,6 +92,18 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Platform,
   BUILTIN.CurrentTime,
 ];
+
+const BUILTIN_NAME_SET: ReadonlySet<string> = new Set<string>(Object.values(BUILTIN));
+
+/**
+ * Is `key` a builtin-shaped key (a bare name, no `mcp__` / `plugin__` prefix) that names no
+ * builtin the kernel has now, e.g. the removed `SkillWrite`? Saving an agent or an org template
+ * drops such a `toolPolicies` key instead of refusing the save: a stored definition may still
+ * carry it, and the web sends the whole definition back.
+ */
+export function isRemovedBuiltinKey(key: string): boolean {
+  return parseToolKey(key)?.kind === "builtin" && !BUILTIN_NAME_SET.has(key);
+}
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
 export const SKILL_LOAD = BUILTIN.Skill;
