@@ -49,6 +49,9 @@ export const ACCEPTED: string[] = [
   "tool-row",
   "diff-block",
   "approval-block",
+  // network facts (network ask spec §6.5): blocks and size table in place; the reference PNGs wait
+  // for the reference-update workflow
+  "network-facts",
   "question-block",
   "connect-block",
   "queued-message",

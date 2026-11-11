@@ -2310,6 +2310,67 @@ textarea {
   align-items: center;
   gap: var(--cb-space-2);
 }
+/* The network ask (spec §6.16.11): hints under the allow buttons, the hosts, the command. */
+.r-card-actions[data-hints] {
+  align-items: flex-start;
+}
+.r-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  max-width: 280px;
+}
+.r-net-hosts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+}
+.r-net-host {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  overflow-wrap: anywhere;
+}
+.r-net-host > strong {
+  font-weight: 600;
+}
+.r-net-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.r-net-box {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border: 1px solid var(--cb-accent);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-accent);
+  color: var(--cb-on-accent);
+}
+.r-net-cmd {
+  margin: 0;
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.r-net-fact {
+  display: block;
+  overflow-wrap: anywhere;
+}
 .r-card-note {
   margin-left: auto;
   color: var(--cb-muted);
