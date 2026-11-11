@@ -649,6 +649,43 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     expect((await settled(run?.id as string)).status).toBe("completed");
   });
 
+  it("a database error fails the scan pass and pauses nothing", async () => {
+    const t = await task({ nextRunAt: tickAt(Date.now()) });
+    // a simulated database failure while the scan writes the task's run
+    await sql
+      .raw(`CREATE OR REPLACE FUNCTION capybara.fail_sched_insert() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.task_id = '${t.id}' THEN RAISE EXCEPTION 'simulated database error'; END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_sched_insert BEFORE INSERT ON capybara.scheduled_task_runs
+          FOR EACH ROW EXECUTE FUNCTION capybara.fail_sched_insert();`)
+      .execute(raw);
+    try {
+      // (the worker's own once-a-minute scan may hold the row for a moment: try again)
+      let failed: unknown;
+      for (let i = 0; i < 5 && failed === undefined; i++) {
+        await scanner()
+          .scanAt(new Date())
+          .catch((e: unknown) => {
+            failed = e;
+          });
+      }
+      expect(String(failed)).toMatch(/simulated database error/);
+      expect(await taskOf(t.id)).toMatchObject({ status: "active", pauseReason: null });
+      expect(await store.listRuns(db, t.id, 10)).toEqual([]);
+    } finally {
+      await sql
+        .raw(`DROP TRIGGER IF EXISTS fail_sched_insert ON capybara.scheduled_task_runs;
+          DROP FUNCTION IF EXISTS capybara.fail_sched_insert();`)
+        .execute(raw);
+    }
+    // the next pass fires it
+    await scanner().scanAt(new Date());
+    const [run] = await store.listRuns(db, t.id, 10);
+    expect((await settled(run?.id as string)).status).toBe("completed");
+  });
+
   it("a group chat target is skipped without pausing until group threads land", async () => {
     const t = await task({
       mode: "chat",

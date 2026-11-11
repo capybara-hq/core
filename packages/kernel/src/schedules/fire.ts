@@ -344,6 +344,8 @@ export class ScheduledTaskFirer {
   private async bindChat(plan: Extract<StartPlan, { mode: "chat" }>): Promise<string | null> {
     const { task, run } = plan;
     const t = this.db;
+    // the one lock order: task row, then the task run
+    await lockTaskRow(t, task.id);
     const locked = await t
       .selectFrom("scheduled_task_runs")
       .select("status")
@@ -381,6 +383,8 @@ export class ScheduledTaskFirer {
   /** The start found the target gone: `fired_at` back to null, skipped with `reason`. */
   @Transactional()
   private async unstart(runId: string, taskId: string, reason: TaskRunSkipReason): Promise<void> {
+    // the one lock order: task row (paused for a lasting reason), then the task run
+    await lockTaskRow(this.db, taskId);
     await this.skipIn(this.db, runId, taskId, reason);
   }
 
@@ -494,6 +498,7 @@ export class ScheduledTaskFirer {
       .where("account_id", "=", accountId)
       .where("thread_key", "like", "dm:%")
       .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
       .execute();
     const used = rows.map((r) => r.thread_key);
     if (conn.tenantId !== null) {

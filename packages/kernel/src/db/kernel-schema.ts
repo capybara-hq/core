@@ -1334,6 +1334,8 @@ export interface ScheduledTaskRunsTable {
   >;
   error: NullableText;
   missing_grants: ColumnType<string[], string | undefined, string>;
+  /** When the scanner's repair last found this started run still in flight. */
+  rechecked_at: NullableTs;
 }
 
 /** 0109: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */

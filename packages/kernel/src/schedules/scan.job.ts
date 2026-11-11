@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
+import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -16,7 +17,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
 import { SCHED_SCAN_JOB, schedFireJob } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
-import { ScheduledTaskRunTracker } from "./run-tracker.js";
+import { lockTaskRow, ScheduledTaskRunTracker } from "./run-tracker.js";
 import { dueTicks, nextTick } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
 import type { ScheduledTask } from "./types.js";
@@ -29,7 +30,11 @@ const REPAIR_AFTER_MS = 10 * 60_000;
 const GIVE_UP_AFTER_MS = 60 * 60_000;
 const REPAIR_BATCH = 100;
 
-/** A due task's advance failed (its transaction rolled back); the scan pauses it. */
+/**
+ * The schedule math could not evaluate a due task's stored trigger (its transaction rolled back);
+ * the scan pauses it. Only the math raises it: a database error fails the scan pass instead (the
+ * next minute retries) and never pauses a healthy task.
+ */
 class TaskScanFailed extends Error {
   constructor(
     readonly taskId: string,
@@ -46,8 +51,9 @@ class TaskScanFailed extends Error {
  * (`missed`, at the first missed tick), the latest tick in the window gets its run (the unique
  * `(task_id, scheduled_for)` key makes a second insert a no-op), `next_run_at` moves to the next
  * tick plus the task's jitter (or a `once` task ends, or one past its `expires_at`), and after the
- * commit `sched-fire-<taskRunId>` is enqueued. A task whose advance throws (a stored trigger that
- * cannot be evaluated) is paused (`invalid_schedule`) instead of failing the scan.
+ * commit `sched-fire-<taskRunId>` is enqueued. A task whose stored trigger the schedule math cannot
+ * evaluate is paused (`invalid_schedule`) instead of failing the scan; a database error fails the
+ * pass (the next minute retries) and pauses nothing.
  *
  * Then the repair: a run still `pending` and unfired 10 minutes after its tick has its fire job
  * enqueued again, and is given up (`skipped`, `missed`) after an hour; a run fired an hour ago and
@@ -99,8 +105,8 @@ export class ScheduledTaskScanJob {
   }
 
   /**
-   * One due task in its own transaction (a task whose advance fails rolls back alone, so it
-   * cannot block the others): locked with `SKIP LOCKED`, so replicas take different tasks. False
+   * One due task in its own transaction (a task whose trigger cannot be evaluated rolls back
+   * alone and is paused, so it cannot block the others): locked with `SKIP LOCKED`, so replicas take different tasks. False
    * when no task is due.
    */
   @Transactional()
@@ -111,17 +117,12 @@ export class ScheduledTaskScanJob {
     const t = this.db;
     const [task] = await this.store.lockDue(t, now, 1);
     if (!task) return false;
-    let fired: string | null;
-    try {
-      let s = settings.get(task.orgId);
-      if (s === undefined) {
-        s = await readScheduleSettings(t, this.config, task.orgId);
-        settings.set(task.orgId, s);
-      }
-      fired = await this.advance(t, task, now, s.catchUpWindowMinutes);
-    } catch (err) {
-      throw new TaskScanFailed(task.id, err);
+    let s = settings.get(task.orgId);
+    if (s === undefined) {
+      s = await readScheduleSettings(t, this.config, task.orgId);
+      settings.set(task.orgId, s);
     }
+    const fired = await this.advance(t, task, now, s.catchUpWindowMinutes);
     if (fired !== null) {
       const id = fired;
       afterCommit(() => this.enqueue([id]));
@@ -147,12 +148,15 @@ export class ScheduledTaskScanJob {
     // tick + jitter <= now
     const dueTick = new Date((task.nextRunAt as Date).getTime() - jitterMs);
     const until = new Date(now.getTime() - jitterMs);
-    const ticks = dueTicks(
-      task.trigger,
-      new Date(dueTick.getTime() - 1),
-      until,
-      catchUpWindowMinutes,
-    );
+    // the schedule math alone may mark the task broken; database errors fail this pass only
+    let ticks: ReturnType<typeof dueTicks>;
+    let next: Date | null;
+    try {
+      ticks = dueTicks(task.trigger, new Date(dueTick.getTime() - 1), until, catchUpWindowMinutes);
+      next = nextTick(task.trigger, until);
+    } catch (err) {
+      throw new TaskScanFailed(task.id, err);
+    }
     const expires = task.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
     const fireAt = ticks.fire !== null && ticks.fire.getTime() <= expires ? ticks.fire : null;
     const first = ticks.firstMissed;
@@ -178,7 +182,6 @@ export class ScheduledTaskScanJob {
       });
       fired = run?.id ?? null;
     }
-    const next = nextTick(task.trigger, until);
     const patch: ScheduledTaskPatch =
       next === null
         ? { status: "ended", nextRunAt: null }
@@ -218,32 +221,55 @@ export class ScheduledTaskScanJob {
       const at = r.scheduled_for instanceof Date ? r.scheduled_for : new Date(r.scheduled_for);
       (now.getTime() - at.getTime() > GIVE_UP_AFTER_MS ? lost : retry).push(r.id);
     }
-    if (lost.length > 0) {
-      await this.db
-        .updateTable("scheduled_task_runs")
-        .set({ status: "skipped", skip_reason: "missed", error: "The run could not be started" })
-        .where("id", "in", lost)
-        .where("status", "=", "pending")
-        .where("fired_at", "is", null)
-        .execute();
-    }
+    for (const id of lost) await this.giveUp(id);
     await this.enqueue(retry);
+    // the least recently rechecked first, so runs still in flight do not starve the others
     const started = await this.db
       .selectFrom("scheduled_task_runs")
       .select("id")
       .where("status", "=", "pending")
       .where("fired_at", "<", new Date(now.getTime() - GIVE_UP_AFTER_MS))
+      .orderBy(sql`rechecked_at NULLS FIRST`)
       .orderBy("scheduled_for")
       .limit(REPAIR_BATCH)
       .execute();
     for (const r of started) await this.recheck(r.id, now);
   }
 
-  /** A started run still pending long after: the tracker links, settles or releases it. */
+  /** A run never fired an hour after its tick: given up, task row first (the one lock order). */
+  @Transactional()
+  private async giveUp(taskRunId: string): Promise<void> {
+    const owner = await this.db
+      .selectFrom("scheduled_task_runs")
+      .select("task_id")
+      .where("id", "=", taskRunId)
+      .executeTakeFirst();
+    if (!owner) return;
+    await lockTaskRow(this.db, owner.task_id);
+    await this.db
+      .updateTable("scheduled_task_runs")
+      .set({ status: "skipped", skip_reason: "missed", error: "The run could not be started" })
+      .where("id", "=", taskRunId)
+      .where("status", "=", "pending")
+      .where("fired_at", "is", null)
+      .execute();
+  }
+
+  /**
+   * A started run still pending long after: the tracker links, settles or releases it; one still
+   * in flight is stamped (`rechecked_at`) and goes to the back of the next rechecks.
+   */
   @Transactional()
   private async recheck(taskRunId: string, now: Date): Promise<void> {
     const run = await this.store.updateRun(this.db, taskRunId, {});
+    if (run?.status !== "pending") return;
     // inFlightIn takes the task row before the run (the one lock order)
-    if (run?.status === "pending") await this.tracker.inFlightIn(run, now);
+    if (await this.tracker.inFlightIn(run, now)) {
+      await this.db
+        .updateTable("scheduled_task_runs")
+        .set({ rechecked_at: now })
+        .where("id", "=", taskRunId)
+        .execute();
+    }
   }
 }

@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
     'conversation_gone', 'org_disabled', 'unsupported_target', 'task_deleted')),
   error text,
   -- tool keys refused for lack of a grant (§7)
-  missing_grants jsonb NOT NULL DEFAULT '[]'::jsonb
+  missing_grants jsonb NOT NULL DEFAULT '[]'::jsonb,
+  -- when the scanner's repair last found this started run still in flight (rotates its rechecks)
+  rechecked_at timestamptz
 );
 
 -- the exactly-once guard: one scheduled run per tick (trial runs are free of it)

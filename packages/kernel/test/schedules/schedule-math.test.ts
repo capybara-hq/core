@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { CronTime } from "cron";
+import { describe, expect, it, vi } from "vitest";
 import {
   dueTicks,
   jitterForGap,
@@ -134,10 +135,11 @@ describe("schedule math", () => {
 
   it("dueTicks after a 30 day outage on */5 still fires the latest in-window tick", () => {
     const n = new Date("2026-06-30T12:03:00Z");
-    const started = performance.now();
+    const calls = vi.spyOn(CronTime.prototype, "getNextDateFrom");
     const r = dueTicks(cron("*/5 * * * *"), new Date("2026-05-31T12:00:00Z"), n, 60);
-    // no walk over the ~8600 old ticks
-    expect(performance.now() - started).toBeLessThan(100);
+    // no walk over the ~8600 old ticks: a handful of tick computations
+    expect(calls.mock.calls.length).toBeLessThan(30);
+    calls.mockRestore();
     expect(r.fire?.toISOString()).toBe("2026-06-30T12:00:00.000Z");
     expect(r.firstMissed).toEqual(new Date("2026-05-31T12:05:00.000Z"));
   });
