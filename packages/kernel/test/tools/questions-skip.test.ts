@@ -8,6 +8,7 @@ import { createDb } from "../../src/db/pool.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { INPUT_SKIPPED_TEXT, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -39,6 +40,9 @@ import {
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
 );
+const MODEL_SCRIPT = fileURLToPath(
+  new URL("../fixtures/plugins/model-script/index.ts", import.meta.url),
+);
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -59,7 +63,7 @@ const errCode = (res: { json(): unknown }) =>
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const urls = { pg: pgc.url, redis: rd.url };
-  const plugins = [MODEL_FAKE, MEM_CONNECTOR];
+  const plugins = [MODEL_FAKE, MODEL_SCRIPT, MEM_CONNECTOR];
   ka = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api", "worker"] }));
   kb = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api"] }));
   raw = createDb(pgc.url, 5);
@@ -67,6 +71,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  scriptRules([]);
   await kb?.close();
   await ka?.close();
   await raw?.destroy();
@@ -291,15 +296,29 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
   });
 
   it("a message logged while the asking step streamed does not skip the question asked after it", async () => {
-    const convId = await createConv(reqA, orgId, await createAgent());
-    await postMessage(
-      reqA,
-      orgId,
-      convId,
-      `slowtool:2000:AskUserQuestion:${JSON.stringify(ASK_INPUT)}`,
+    // the asking step's model call is held until the message is logged (no timing window)
+    scriptRules([
+      {
+        when: { lastUserIncludes: "ask while held", assistantTurns: 0 },
+        reply: {
+          toolCalls: [{ name: "AskUserQuestion", input: ASK_INPUT }],
+          barrier: { name: "asking", count: 99, timeoutMs: 60_000 },
+        },
+      },
+    ]);
+    const agentId = await createAgent({ model: { provider: "model-script", model: "script-1" } });
+    const convId = await createConv(reqA, orgId, agentId);
+    await postMessage(reqA, orgId, convId, "ask while held");
+    await waitFor(
+      async () =>
+        ((
+          globalThis as { __modelScript?: { barriers: Map<string, { arrived: number }> } }
+        ).__modelScript?.barriers.get("asking")?.arrived ?? 0) >= 1,
+      30_000,
+      "the asking step streams",
     );
-    await waitForEvent(db, convId, (e) => e.type === "run_started");
     const msgSeq = await postMessage(reqA, orgId, convId, "echo:early");
+    openBarrier("asking");
     const { questionIds } = await waiting(convId);
     const asked = ofType(await eventsOf(db, convId), "question_asked")[0];
     expect(asked?.seq).toBeGreaterThan(msgSeq);
@@ -307,6 +326,7 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
     const ok = await answer(reqA, questionIds[0] as string, { answer: { q0: "Postgres" } });
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, convId, 1);
+    scriptRules([]);
   });
 
   it("two questions in one step: the calls run in order, so a message skips the pending one; the next is asked after it and waits (log order)", async () => {
