@@ -106,6 +106,17 @@ const ctxOf = (accountId: string, agentId: string): OperationContext => ({
   signal: new AbortController().signal,
 });
 
+/** An org skill without a plugin, uploaded by the org admin; returns its id. */
+async function orgSkill(name: string): Promise<string> {
+  const md = new TextEncoder().encode(SKILL_MD(name, `Do ${name}.`));
+  const out = await env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
+    name,
+    description: `Do ${name}.`,
+    files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
+  });
+  return out.skill.id;
+}
+
 const audits = (action: string) =>
   env.db.selectFrom("audit_events").selectAll().where("action", "=", action).execute();
 
@@ -164,13 +175,7 @@ describe("registration", () => {
 
 describe("skills", () => {
   it("a member lists the org skills", async () => {
-    const c = ctxOf(env.bossId, randomUUID());
-    const md = new TextEncoder().encode(SKILL_MD("report", "Write reports."));
-    await env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
-      name: "report",
-      description: "Write reports.",
-      files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
-    });
+    await orgSkill("report");
     const out = (await run("skills.list", {}, ctxOf(env.memId, randomUUID()))) as {
       skills: { name: string }[];
     };
@@ -205,6 +210,44 @@ describe("agents", () => {
     );
     await expect(refused).rejects.toBeInstanceOf(ToolError);
     await expect(refused).rejects.toThrow(/web app/);
+  });
+
+  it("agents.create and agents.update take disabledSkills; agents.get returns it", async () => {
+    const seed = await agentOf(env.memId, "private", "Seed");
+    const c = ctxOf(env.memId, seed);
+    const off = [{ kind: "skill", skillId: await orgSkill("report") }];
+    const created = (await run(
+      "agents.create",
+      { definition: { name: "Narrow", model: MODEL, disabledSkills: off } },
+      c,
+    )) as { agent: { id: string } };
+    const got = (await run("agents.get", { agentId: created.agent.id }, c)) as {
+      agent: { definition: { disabledSkills: unknown } };
+    };
+    expect(got.agent.definition.disabledSkills).toEqual(off);
+    await run("agents.update", { agentId: created.agent.id, version: 1, disabledSkills: [] }, c);
+    const again = (await run("agents.get", { agentId: created.agent.id }, c)) as {
+      agent: { definition: { disabledSkills: unknown } };
+    };
+    expect(again.agent.definition.disabledSkills).toEqual([]);
+    // the selected and pinned skills are gone from the input
+    const create = op("agents.create");
+    expect(
+      create.input.safeParse({
+        definition: { name: "Old", model: MODEL, skills: { orgSkills: [], pinned: [] } },
+      }).success,
+    ).toBe(false);
+    expect(
+      op("agents.update").input.safeParse({ agentId: seed, version: 1, skills: { orgSkills: [] } })
+        .success,
+    ).toBe(false);
+    for (const id of ["agents.create", "agents.update", "agents.get"]) {
+      expect(op(id).description).toContain("disabledSkills");
+      expect(op(id).description).not.toMatch(/pinned|orgSkills/);
+    }
+    expect(create.description).toContain(
+      "an agent has every skill on in the org unless disabledSkills turns it off",
+    );
   });
 
   it("lists and reads the agents the actor can see only", async () => {
@@ -649,6 +692,32 @@ describe("platform", () => {
     });
     const text = JSON.stringify(out);
     expect(text).not.toMatch(/secret|password|token|apiKey/i);
+  });
+
+  it("platform.me lists the skills the agent has now and the ones it turns off", async () => {
+    await orgSkill("report");
+    const draft = await orgSkill("draft");
+    const id = await agentOf(env.memId, "private");
+    const c = ctxOf(env.memId, id);
+    // nothing turned off: every org skill is on (skills default-on spec §11)
+    expect(await run("platform.me", {}, c)).toMatchObject({
+      skills: [
+        { name: "draft", plugin: null },
+        { name: "report", plugin: null },
+      ],
+      disabledSkills: [],
+    });
+    await run(
+      "agents.update",
+      { agentId: id, version: 1, disabledSkills: [{ kind: "skill", skillId: draft }] },
+      c,
+    );
+    const out = (await run("platform.me", {}, c)) as Record<string, unknown>;
+    expect(out).toMatchObject({
+      skills: [{ name: "report", plugin: null }],
+      disabledSkills: [{ kind: "skill", skillId: draft }],
+    });
+    expect(op("platform.me").description).not.toMatch(/pinned/i);
   });
 
   it("platform.me shows the agent's profile: avatar, description and quick actions", async () => {

@@ -37,10 +37,13 @@ export interface AdminAgentDetail extends AdminAgentRow {
   versions: number;
   createdAt: Date;
   /**
-   * The skills it uses by name: the selected org skills that resolve in the org (a deleted one is
-   * left out) and its own skills (`scope: "agent"`). Never a skill body.
+   * The skills it has now by name (skills default-on spec §3): every skill on in the org that its
+   * `disabledSkills` does not turn off, the org skills it shared and its own skills
+   * (`scope: "agent"`). Never a skill body.
    */
   skills: { id: string; name: string; scope: "org" | "agent" }[];
+  /** How many of the skills on in the org it turns off (spec §11), instead of a selection. */
+  skillsOff: number;
   /**
    * The org's live connectors it can use by name (tools default-on): every one but those whose
    * every tool it turns off. Never auth, credentials or a member's state.
@@ -108,19 +111,22 @@ export class AdminAgents {
         .where("agent_id", "=", agentId)
         .executeTakeFirstOrThrow(),
     ]);
-    const [skills, connectors] = await Promise.all([
-      agentSkills(this.db.db, {
-        orgId: row.org_id,
-        agentId,
-        disabledSkills: view.definition.disabledSkills ?? [],
-      }),
+    const disabledSkills = view.definition.disabledSkills ?? [];
+    const [skills, everySkill, connectors] = await Promise.all([
+      agentSkills(this.db.db, { orgId: row.org_id, agentId, disabledSkills }),
+      // nothing turned off: the same as `skills`
+      disabledSkills.length === 0
+        ? null
+        : agentSkills(this.db.db, { orgId: row.org_id, agentId, disabledSkills: [] }),
       this.connectorsOf(row.org_id, view.definition.disabledTools),
     ]);
+    const has = new Set(skills.map((s) => s.id));
     return {
       ...toRow(row),
       skills: skills
         .map((s) => ({ id: s.id, name: s.name, scope: s.scope }))
         .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+      skillsOff: (everySkill ?? []).filter((s) => !has.has(s.id)).length,
       connectors,
       profile: {
         description: view.profile.description === "" ? null : view.profile.description,

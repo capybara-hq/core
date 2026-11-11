@@ -38,7 +38,7 @@ export class SkillsOperations implements OnModuleInit {
       defineOperation({
         id: "skills.list",
         description:
-          "List the skills the org can use, org skills and platform skills switched on in it. Each entry has an id, name, description, current version and where it came from.",
+          "List the skills the org can use, org skills and platform skills switched on in it. Each entry has an id, name, description, current version and where it came from (its plugin); builtin: true marks a skill of a builtin plugin, which every agent has and none can turn off. Every agent has every skill listed here unless its disabledSkills turns it off.",
         input: NoInput,
         example: {},
         authz: { orgAction: "skills.read" },

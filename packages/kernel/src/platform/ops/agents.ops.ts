@@ -211,7 +211,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.get",
         description:
-          "Read one agent you can see with its full definition (description, instructions, model, the tools it turns off (disabledTools: an agent has every tool the org offers except these), tool policies, skills and sub-agents) and its profile (avatar, description, quick actions). Takes the agent id from agents.list.",
+          "Read one agent you can see with its full definition (description, instructions, model, the tools it turns off (disabledTools: an agent has every tool the org offers except these), tool policies, the skills it turns off (disabledSkills: an agent has every skill on in the org except these), skills.writePolicy and sub-agents) and its profile (avatar, description, quick actions). Takes the agent id from agents.list.",
         input: z.object({ agentId: AgentId }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.use" },
@@ -224,7 +224,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.create",
         description:
-          'Create a new private agent owned by you, with a name, a model and optionally instructions, disabledTools, tool policies, skills and sub-agents. An agent has every tool the org offers (all built-in tools, the tools of the extensions on in the org and of the org\'s connectors) unless disabledTools turns it off: { kind: "builtin", name }, { kind: "plugin", plugin, tools: "all" | [names] } or { kind: "connector", connectorId, tools: "all" | [names] }. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.',
+          'Create a new private agent owned by you, with a name, a model and optionally instructions, disabledTools, tool policies, disabledSkills and sub-agents. An agent has every tool the org offers (all built-in tools, the tools of the extensions on in the org and of the org\'s connectors) unless disabledTools turns it off: { kind: "builtin", name }, { kind: "plugin", plugin, tools: "all" | [names] } or { kind: "connector", connectorId, tools: "all" | [names] }. Likewise, an agent has every skill on in the org unless disabledSkills turns it off: { kind: "plugin", plugin, skills: "all" | [names] } for skills of a plugin (skills.list gives the plugin of each), or { kind: "skill", skillId } for a skill without a plugin; the skills of builtin plugins (builtin in skills.list) and the own skills of the agent cannot be turned off. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.',
         input: z
           .object({
             definition: z
@@ -290,7 +290,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update",
         description:
-          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent, or one that sets a tool policy to allow, is confirmed every time.',
+          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). disabledSkills replaces the whole list of turned-off skills (send [] to turn every skill on); an agent has every skill on in the org unless disabledSkills turns it off: { kind: "plugin", plugin, skills: "all" | [names] } for skills of a plugin (skills.list gives the plugin of each), or { kind: "skill", skillId } for a skill without a plugin; the skills of builtin plugins (builtin in skills.list) and the own skills of the agent cannot be turned off. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent, or one that sets a tool policy to allow, is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
@@ -466,7 +466,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.preview-from-template",
         description:
-          "Preview creating an agent from an agent template: what carries over, what is pending (connectors the org has not set up) or unavailable, the model that would be used, and a previewHash. agents.create-from-template needs that hash.",
+          "Preview creating an agent from an agent template: what carries over, what is pending (connectors the org has not set up) or unavailable, the model that would be used, and a previewHash. Each skill the template names is carried when the org has it and unavailable otherwise; the new agent has every skill on in the org except those the template's disallowedSkills turns off. agents.create-from-template needs that hash.",
         input: AgentFromTemplatePreviewBody,
         example: { templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10" },
         authz: { orgAction: "agents.create" },
