@@ -524,8 +524,16 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
       url: `/api/v1/admin/catalog/items/${pluginItem}`,
     });
     expect(del.statusCode, del.body).toBe(204);
+    // the admin enable commits and publishes plugins.changed; this replica loads the extension
+    // when it handles that message, and the org switch needs it loaded
     await env.root({ method: "POST", url: "/api/v1/admin/extensions/dirplug/enable" });
-    expect((await enable(true)).statusCode).toBe(200);
+    await waitFor(
+      async () => env.k.app.get(ExtensionHost).current("dirplug") !== undefined,
+      15_000,
+      "loaded",
+    );
+    const res = await enable(true);
+    expect(res.statusCode, res.body).toBe(200);
   });
 
   it("插件从部署卸载时一并删除来源条目：之后不经目录重装不受旧条目约束（disabled 仍是总开关）", async () => {
