@@ -92,6 +92,7 @@ export interface BootstrapEntry {
   version: string;
   integrity: string;
   required: boolean;
+  builtin?: boolean;
 }
 
 /** The file name of an entry's tgz in the bootstrap directory (SDK `bootstrapFileName`). */

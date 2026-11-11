@@ -944,6 +944,149 @@ describe("a declarative entry", { timeout: 30_000 }, () => {
   });
 });
 
+/** A declarative plugin shipping a skill (its files need the object store). */
+const skillPkg = (name: string, version = "1.0.0") =>
+  pluginTgz({
+    manifest: { name, version },
+    files: {
+      "skills/hello/SKILL.md": "---\nname: hello\ndescription: Says hello.\n---\nSay hello.\n",
+    },
+  });
+
+/** A logger that records error and warn lines and drops the rest. */
+function recordingLogger(): {
+  logger: KernelLogger;
+  lines: { level: string; msg: string; fields?: Record<string, unknown> }[];
+} {
+  const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = [];
+  const base = createLogger("error");
+  const logger = new Proxy(base, {
+    get(t, k, receiver) {
+      if (k === "warn" || k === "error") {
+        return (msg: string, fields?: Record<string, unknown>) => {
+          lines.push({ level: k, msg, ...(fields !== undefined && { fields }) });
+        };
+      }
+      const v = Reflect.get(t, k);
+      return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+    },
+  });
+  return { logger, lines };
+}
+
+const OBJECT_STORE_CONFIG = {
+  extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
+};
+
+describe("a builtin entry", { timeout: 30_000 }, () => {
+  afterAll(stopAll);
+  type Item = { id: string; name: string; builtin: boolean; scope: string; disabled: boolean };
+  const itemNamed = async (name: string) =>
+    (
+      (await admin({ method: "GET", url: "/api/v1/admin/catalog/items" })).json().items as Item[]
+    ).find((i) => i.name === name);
+
+  it("is skipped by the first pass, imported once the object store runs, builtin and locked on in orgs", async () => {
+    await reset();
+    // Listed before the object store: the first pass would fail it with storage.unavailable
+    const fx = await fixture([
+      { bytes: await skillPkg("delta"), builtin: true },
+      { bytes: await packFake("fake-bootstrap-b") },
+    ]);
+    expect(fx.manifest.plugins[0]).toMatchObject({ required: false, builtin: true });
+    const { logger, lines } = recordingLogger();
+    const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
+    // Deferred, not failed: no entry failure and no "could not be installed" line in any pass
+    expect(lines.filter((l) => l.msg.includes("could not be installed"))).toEqual([]);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "delta", action: "imported", version: "1.0.0" },
+        { name: "fake-bootstrap-b", action: "installed", version: "0.1.0" },
+      ],
+    });
+    await loginAdmin(k);
+    expect(await itemNamed("delta")).toMatchObject({
+      builtin: true,
+      scope: "all",
+      disabled: false,
+    });
+    const orgId = await createOrg(admin, "Builtin");
+    const item = (await itemNamed("delta")) as Item;
+    const off = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/catalog/${item.id}/switch`,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode, off.body).toBe(409);
+    expect(off.json().error.code).toBe("plugin.scope_locked");
+  });
+
+  it("a failing builtin entry does not stop the start; the run stays not done", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    // The pinned package holds another plugin than the entry names
+    const wrong = await skillPkg("other");
+    const delta = fx.manifest.plugins[1] as BootstrapManifest["plugins"][number];
+    await writeFile(join(fx.dir, bootstrapFileName(delta)), wrong);
+    delta.integrity = `sha512-${createHash("sha512").update(wrong).digest("base64")}`;
+    const { logger, lines } = recordingLogger();
+    const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
+    expect(k.port).toBeGreaterThan(0);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    expect((await installs()).map((r) => r.name)).toEqual(["fake-bootstrap-b"]);
+    expect(
+      lines.some((l) => l.level === "error" && l.msg.includes("retried on the next start")),
+    ).toBe(true);
+  });
+
+  it("a builtin entry a super admin removed is imported again by the next run", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    const k = await boot(fx, OBJECT_STORE_CONFIG);
+    await loginAdmin(k);
+    const item = (await itemNamed("delta")) as Item;
+    const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalog/items/${item.id}` });
+    expect(del.statusCode, del.body).toBe(204);
+    expect(await itemNamed("delta")).toBeUndefined();
+    await stopAll();
+
+    // A core upgrade: a new manifest (one more entry) runs the step again
+    const extra = await fixture([
+      { bytes: await lifePkg({ name: "epsilon", version: "1.0.0" }), required: false },
+    ]);
+    const epsilon = extra.manifest.plugins[0] as BootstrapManifest["plugins"][number];
+    await writeFile(
+      join(fx.dir, bootstrapFileName(epsilon)),
+      await readFile(join(extra.dir, bootstrapFileName(epsilon))),
+    );
+    fx.manifest.plugins.push(epsilon);
+    const k2 = await boot(fx, OBJECT_STORE_CONFIG);
+    expect(await k2.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
+    admin = await session(k2, "root");
+    expect(await itemNamed("delta")).toMatchObject({ builtin: true, scope: "all" });
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "fake-bootstrap-b", action: "kept" },
+        { name: "delta", action: "imported", version: "1.0.0" },
+        { name: "epsilon", action: "installed", version: "1.0.0" },
+      ],
+    });
+  });
+});
+
 const ICON =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
 

@@ -201,8 +201,9 @@ agent skill has become an org skill, the existing chain applies.
 ### 5.7 `skill-guide`
 
 - A skill-only plugin in `capybara-hq/plugins` (e.g. `skills-core`), pinned in
-  `packages/kernel/bootstrap.json` with `required: true`, so it is a builtin platform skill in every
-  org. Later core skills go into the same plugin.
+  `packages/kernel/bootstrap.json` with `builtin: true` (startup bootstrap spec, "Builtin entries":
+  imported once the extensions loaded, since skills need the object store; a failure does not stop
+  the start), so it is a builtin platform skill in every org. Later core skills go into the same plugin.
 - Content (English, Agent Skills format, `SKILL.md` under 500 lines / ~5000 tokens, detail in
   `references/`):
   - when to create a skill and when not to;

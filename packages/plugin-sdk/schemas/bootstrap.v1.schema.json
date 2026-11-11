@@ -55,6 +55,9 @@
               "required": {
                 "type": "boolean"
               },
+              "builtin": {
+                "type": "boolean"
+              },
               "source": {
                 "type": "string",
                 "const": "npm"
@@ -92,6 +95,9 @@
                 "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
               },
               "required": {
+                "type": "boolean"
+              },
+              "builtin": {
                 "type": "boolean"
               },
               "source": {

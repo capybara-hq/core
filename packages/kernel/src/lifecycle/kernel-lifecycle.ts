@@ -319,7 +319,9 @@ export class KernelLifecycle
    * kernel never serves without a required plugin. A failed optional entry is logged and returns
    * true: the start runs the step once more after the extensions loaded (a declarative entry's
    * catalog files need the object store, which on a fresh deployment is itself a bootstrap plugin),
-   * and the next start tries again while it stays incomplete.
+   * and the next start tries again while it stays incomplete. The first pass skips the `builtin`
+   * entries (they may ship skills and templates, which need the object store) and returns true for
+   * them too; the final pass imports them, and one that fails is logged like an optional entry.
    */
   private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
     const manifest = this.options.bootstrapManifest ?? (await readBootstrapManifest());
@@ -333,12 +335,20 @@ export class KernelLifecycle
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,
         ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),
+        deferBuiltin: !final,
       });
       return false;
     } catch (e) {
       if (e instanceof BootstrapFailedError && !e.requiredFailed) {
         this.bootstrapCarry = e.results;
-        if (final) {
+        if (e.failures.length === 0) {
+          this.log.info(
+            "bootstrap: builtin plugins are installed once the extensions have loaded",
+            {
+              deferred: e.deferred,
+            },
+          );
+        } else if (final) {
           this.log.error(
             "bootstrap: optional plugins could not be installed; retried on the next start",
             { failures: e.failures },

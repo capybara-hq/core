@@ -222,9 +222,12 @@ describe("capybara bootstrap with a declarative entry (second pass)", () => {
     ]);
   });
 
-  it("installs the extensions, then imports the declarative plugin through the installed store", async () => {
+  it("installs the extensions, then imports the declarative and builtin plugins through the installed store", async () => {
     const notes = await skillPlugin("notes", { version: "1.2.0" });
     await writeFile(join(dir2, "notes-1.2.0.tgz"), notes);
+    // A builtin entry is left to the second pass (no failure, no warning) and is builtin there
+    const guide = await skillPlugin("guide", { version: "1.0.0" });
+    await writeFile(join(dir2, "guide-1.0.0.tgz"), guide);
     const manifest = join(dir2, "bootstrap.json");
     await writeFile(
       manifest,
@@ -238,6 +241,15 @@ describe("capybara bootstrap with a declarative entry (second pass)", () => {
             version: "1.2.0",
             integrity: `sha512-${createHash("sha512").update(notes).digest("base64")}`,
             required: false,
+          } satisfies BootstrapEntry,
+          {
+            name: "guide",
+            source: "npm",
+            npm: "@capybara-hq/plugin-guide",
+            version: "1.0.0",
+            integrity: `sha512-${createHash("sha512").update(guide).digest("base64")}`,
+            required: false,
+            builtin: true,
           } satisfies BootstrapEntry,
         ]),
       ),
@@ -260,6 +272,11 @@ describe("capybara bootstrap with a declarative entry (second pass)", () => {
     expect(r.stdout).toContain(`${A} ${A_V}: installed\n`);
     expect(r.stdout).toContain(`${B} ${B_V}: installed\n`);
     expect(r.stdout).toContain("notes 1.2.0: imported into the catalog\n");
+    expect(r.stdout).toContain("guide 1.0.0: imported into the catalog\n");
+    // notes fails the first pass (no object store yet) and is logged; guide is never tried there
+    const out = `${r.stdout}${r.stderr}`;
+    expect(out).toContain('"plugin":"notes"');
+    expect(out).not.toContain('"plugin":"guide"');
     const raw = createDb(pg2.url, 1);
     try {
       const db = kernelDb(raw);
@@ -269,6 +286,13 @@ describe("capybara bootstrap with a declarative entry (second pass)", () => {
       expect(
         await db.selectFrom("catalog_items").select("name").where("name", "=", "notes").execute(),
       ).toHaveLength(1);
+      expect(
+        await db
+          .selectFrom("catalog_items")
+          .select(["builtin", "scope", "disabled"])
+          .where("name", "=", "guide")
+          .execute(),
+      ).toEqual([{ builtin: true, scope: "all", disabled: false }]);
     } finally {
       await raw.destroy();
     }

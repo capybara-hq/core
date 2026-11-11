@@ -53,7 +53,9 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * per manifest). Prints what it did per plugin; a
  * re-run for the same manifest does nothing. When only optional entries failed, it opens the CLI
  * context again and runs once more (a declarative entry's catalog files need the object store,
- * which on a fresh deployment is itself a bootstrap plugin installed by the first pass). Running
+ * which on a fresh deployment is itself a bootstrap plugin installed by the first pass); the
+ * `builtin` entries are left to that second pass, and one that still fails there is a warning like
+ * an optional entry. Running
  * replicas pick the new install records up through `kernel.plugins.changed` (published by the
  * install and enable operations).
  *
@@ -92,6 +94,8 @@ export async function runBootstrap(
             dir,
             imports: cli.imports,
             ...(carry !== undefined && { carry }),
+            // The first pass opens no object store a builtin entry's skills need: the second does
+            deferBuiltin: carry === undefined,
           })
         ).results;
       },
@@ -102,9 +106,11 @@ export async function runBootstrap(
       results = await pass();
     } catch (e) {
       if (!(e instanceof BootstrapFailedError) || e.requiredFailed) throw e;
-      log.warn("bootstrap: optional plugins could not be installed yet; trying once more", {
-        failures: e.failures,
-      });
+      if (e.failures.length > 0) {
+        log.warn("bootstrap: optional plugins could not be installed yet; trying once more", {
+          failures: e.failures,
+        });
+      }
       try {
         results = await pass(e.results);
       } catch (e2) {

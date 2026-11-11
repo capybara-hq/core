@@ -64,9 +64,15 @@ import type { SingleProviderNote } from "./single-provider.js";
  *   until expiry) aborts the run at its next step. "Done" is a `bootstrap_runs` row for the
  *   manifest's sha256 (written with the audit `bootstrap.completed` only when every entry
  *   succeeded; otherwise the next start runs it again, which is idempotent).
+ * - Two passes per start: the first runs before the extensions load (no object store yet), the
+ *   second after them. A `builtin` entry (not required, but builtin in the catalog) is deferred by
+ *   the first pass (`deferBuiltin`: skipped, not a failure; the run is then not recorded and the
+ *   start runs the second pass), so it may ship skills and templates. A required entry is imported
+ *   by the first pass and must succeed; a builtin one that fails is logged like an optional one.
  * - Only entries new to the manifest are installed (Ruling 5): an optional entry that the last
  *   completed run already handled and that is not installed now (a super admin uninstalled
- *   it) stays uninstalled -> `kept`. A required entry is always installed.
+ *   it) stays uninstalled -> `kept`. A required or builtin entry is always installed (a
+ *   declarative one imported again when its catalog item is gone).
  * - Per entry, by the installed state of its extension:
  *   - not installed (and new, or required): imported into the catalog (source `bootstrap`, ref
  *     `bootstrap:<name>@<version>`, like a marketplace import), installed, approved (snapshot
@@ -94,7 +100,8 @@ import type { SingleProviderNote } from "./single-provider.js";
  * never needed again. A plugin's icons and setup guide files are kept in PG too (`catalog_files`),
  * so they never need it either; its skills, connector templates and agent templates do (an entry
  * shipping them fails while no object store runs; an optional one is retried after the extensions
- * loaded).
+ * loaded, and a plugin that must be builtin and ships them is a `builtin` entry, which only the
+ * pass after the extensions load imports).
  */
 
 /** The bootstrap manifest that ships with the kernel package. */
@@ -129,18 +136,25 @@ export interface BootstrapFailure {
   message: string;
 }
 
-/** Some entries failed (the others were done); the run is not recorded as done. */
+/**
+ * Some entries failed or were deferred (the others were done); the run is not recorded as done.
+ */
 export class BootstrapFailedError extends Error {
   /**
    * @param results what the entries that did not fail did (pass them as `carry` to a later run in
    * the same start, so its record keeps `installed` instead of `kept`).
+   * @param deferred the builtin entries a first pass skipped (`deferBuiltin`): not failures, the
+   * later pass of the same start imports them.
    */
   constructor(
     readonly failures: BootstrapFailure[],
     readonly results: BootstrapEntryResult[] = [],
+    readonly deferred: string[] = [],
   ) {
     super(
-      `bootstrap failed for ${failures.map((f) => `${f.name}${f.required ? " (required)" : ""}: ${f.message}`).join("; ")}`,
+      failures.length > 0
+        ? `bootstrap failed for ${failures.map((f) => `${f.name}${f.required ? " (required)" : ""}: ${f.message}`).join("; ")}`
+        : `bootstrap deferred the builtin plugins ${deferred.join(", ")} to the pass after the extensions load`,
     );
     this.name = "BootstrapFailedError";
   }
@@ -362,6 +376,12 @@ export class BootstrapService {
     dir?: string;
     signal?: AbortSignal;
     carry?: readonly BootstrapEntryResult[];
+    /**
+     * The first pass of a start (before the extensions load, so no object store): builtin entries
+     * are skipped, and the run throws {@link BootstrapFailedError} with them as `deferred` instead
+     * of being recorded as done.
+     */
+    deferBuiltin?: boolean;
     /** The plugin import a declarative entry (or an entry's catalog version) goes through. */
     imports: BootstrapImports;
   }): Promise<BootstrapResult> {
@@ -391,8 +411,13 @@ export class BootstrapService {
       const handled = await this.lastRunNames();
       const results: BootstrapEntryResult[] = [];
       const failures: BootstrapFailure[] = [];
+      const deferred: string[] = [];
       for (const e of o.manifest.plugins) {
         signal.throwIfAborted();
+        if (o.deferBuiltin === true && e.builtin === true) {
+          deferred.push(e.name);
+          continue;
+        }
         await this.warnIfHeld(e);
         try {
           const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports);
@@ -402,6 +427,7 @@ export class BootstrapService {
             plugin: e.name,
             version: e.version,
             required: e.required,
+            ...(e.builtin === true && { builtin: true }),
             err,
           });
           failures.push({
@@ -413,7 +439,9 @@ export class BootstrapService {
         }
       }
       results.push(...(await this.clearRemoved(o.manifest)));
-      if (failures.length > 0) throw new BootstrapFailedError(failures, results);
+      if (failures.length > 0 || deferred.length > 0) {
+        throw new BootstrapFailedError(failures, results, deferred);
+      }
       signal.throwIfAborted();
       await this.recordDone(manifestSha256, results);
       this.log.info("bootstrap completed", { manifestSha256, results });
@@ -520,11 +548,15 @@ export class BootstrapService {
     const ref = `bootstrap:${e.name}@${e.version}`;
     // Not new to the manifest: an optional entry left out on purpose stays out (Ruling 5)
     const isNew = handled === undefined || !handled.has(e.name);
+    // Required and builtin entries are builtin in the catalog and put back when missing
+    const builtin = e.required || e.builtin === true;
     if (!pkg.manifest.extension) {
-      await this.markBuiltin(e.name, e.required);
-      if (!isNew) return { name: e.name, action: "kept", version: e.version };
+      await this.markBuiltin(e.name, builtin);
+      if (!isNew && !(builtin && !(await this.hasLiveItem(e.name)))) {
+        return { name: e.name, action: "kept", version: e.version };
+      }
       const imported = await this.importOnly(e, bytes, ref, imports);
-      await this.markBuiltin(e.name, e.required);
+      await this.markBuiltin(e.name, builtin);
       return { name: e.name, action: imported ? "imported" : "kept", version: e.version };
     }
     if (this.registry.declared().has(e.name)) {
@@ -539,7 +571,7 @@ export class BootstrapService {
       .select(["version", "source", "required", "desired_state", "sha256"])
       .where("name", "=", e.name)
       .executeTakeFirst();
-    if (!row && !isNew && !e.required) {
+    if (!row && !isNew && !builtin) {
       this.log.info("bootstrap: an optional plugin that is not installed stays uninstalled", {
         plugin: e.name,
       });
@@ -580,19 +612,30 @@ export class BootstrapService {
     if (e.required && row?.desired_state === "disabled") {
       leftDisabled = await this.enableOrWarn(e);
     }
-    await this.markBuiltin(e.name, e.required);
+    await this.markBuiltin(e.name, builtin);
     return leftDisabled === undefined ? result : { ...result, leftDisabled };
   }
 
+  /** Whether a live (not deleted) catalog item has this name. */
+  private async hasLiveItem(name: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("name", "=", name)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
   /**
-   * The catalog item of a bootstrap entry follows `required`: a required entry is builtin, offered
-   * to every org (scope `all`) and not disabled (migration 0075 could leave a required plugin
-   * disabled); an entry that stops being required is no longer builtin and keeps scope `all` (the
-   * admin may change it from then on).
+   * The catalog item of a bootstrap entry follows `required` / `builtin`: such an entry is builtin,
+   * offered to every org (scope `all`, which an org admin cannot switch off) and not disabled
+   * (migration 0075 could leave a required plugin disabled); an entry that stops being required or
+   * builtin is no longer builtin and keeps scope `all` (the admin may change it from then on).
    */
-  private async markBuiltin(name: string, required: boolean): Promise<void> {
+  private async markBuiltin(name: string, builtin: boolean): Promise<void> {
     const touch = { updated_at: sql<Date>`now()` as unknown as Date };
-    if (required) {
+    if (builtin) {
       await this.db
         .updateTable("catalog_items")
         .set({

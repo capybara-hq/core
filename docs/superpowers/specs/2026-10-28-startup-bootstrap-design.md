@@ -83,6 +83,28 @@ need object storage: an entry shipping them fails the first pass with `storage.u
 the plugin; an optional one is retried after the extensions loaded, a required one stops the start.
 Required bootstrap plugins therefore ship no skills or templates.
 
+## Builtin entries (amendment, 2026-11-11)
+
+`required: true` meant three things at once: the start must succeed, the catalog item is builtin
+(scope `all`, not disabled, not switchable by an org admin), and the entry is imported in the first
+pass, before the extensions load. A plugin that must be builtin but ships skills (`skills-core`,
+skill authoring spec §5.7) cannot be imported in that pass. A manifest entry may therefore carry
+`builtin: true` (never together with `required: true`: a parse error):
+
+- The first pass skips it (`BootstrapService.run({ deferBuiltin: true })`): not a failure, but the
+  run is not recorded as done, so the start (and `capybara bootstrap`) runs the second pass, after
+  the extensions loaded, when the object store runs. That pass imports it.
+- On success its catalog item is builtin, like a required entry's (scope `all`, not disabled, no
+  org switch).
+- A failure does not stop the start: logged like an optional entry, the run stays not done and the
+  next start retries it (`capybara bootstrap` warns and exits 0).
+- Like a required entry it is always put back when missing: Ruling 5 (an optional plugin a super
+  admin uninstalled stays uninstalled) does not apply; a declarative one whose catalog item a super
+  admin deleted is imported again by the next run. The install / upgrade / keep rules are the same
+  as for every entry (never downgraded).
+- An extension entry's install record is not `required` (the super admin may still disable it on
+  the deployment); only the catalog item is builtin.
+
 ## Not changed
 
 Manifest format, `bootstrap_runs`, the per-entry install / upgrade / keep rules, the advisory

@@ -488,6 +488,8 @@ export interface BootstrapFixtureEntry {
   /** A plugin directory in the pack-plugin layout, packed with {@link packPluginDir}. */
   dir?: string;
   required?: boolean;
+  /** A builtin entry (`required` then defaults to false). */
+  builtin?: boolean;
 }
 
 /**
@@ -522,7 +524,8 @@ export async function bootstrapFixture(
       name: manifest.name,
       version: manifest.version,
       integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
-      required: e.required ?? true,
+      required: e.required ?? e.builtin !== true,
+      ...(e.builtin !== undefined && { builtin: e.builtin }),
     };
     const npm = `@test/plugin-${manifest.name}`;
     const entry: BootstrapEntry =
