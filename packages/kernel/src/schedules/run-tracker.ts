@@ -87,7 +87,8 @@ export class ScheduledTaskRunTracker {
    * Whether `prev`, a run of the task still `pending` or `running`, is really in flight (the
    * overlap check, inside the fire's transaction). Settled on the way: a running one whose kernel
    * run already ended takes its outcome; a started one linked to its run now when the run exists;
-   * a started one with no queued item, no message and no run after {@link START_GRACE_MS} (its
+   * a started one whose message another run consumed (`consumed_seq`, no run of its own) ends
+   * `completed`; a started one with no queued item, no message and no run after {@link START_GRACE_MS} (its
    * queued item was removed or the queue cleared without the queue's own hook) becomes `skipped`
    * (`removed`). The marker alone decides what is the task's message, never a client message id.
    */
@@ -119,15 +120,18 @@ export class ScheduledTaskRunTracker {
     }
     // not started yet: its fire job is still to come (the scanner repairs a lost one)
     if (tr.fired_at === null) return true;
-    const queued = await t
-      .selectFrom("conversation_queue")
-      .select("id")
-      .where(sql<string>`schedule ->> 'taskRunId'`, "=", tr.id)
-      .$if(tr.conversation_id !== null, (q) =>
-        q.where("conversation_id", "=", tr.conversation_id as string),
-      )
-      .limit(1)
-      .executeTakeFirst();
+    // only a run with a target conversation is ever queued (`conversation`, `chat`): no scan of
+    // every queue's markers for the others
+    const queued =
+      tr.conversation_id === null
+        ? undefined
+        : await t
+            .selectFrom("conversation_queue")
+            .select("id")
+            .where("conversation_id", "=", tr.conversation_id)
+            .where(sql<string>`schedule ->> 'taskRunId'`, "=", tr.id)
+            .limit(1)
+            .executeTakeFirst();
     if (queued) return true;
     const conv =
       tr.conversation_id ??
@@ -166,8 +170,19 @@ export class ScheduledTaskRunTracker {
         .where(sql<string>`payload -> 'schedule' ->> 'taskRunId'`, "=", tr.id)
         .limit(1)
         .executeTakeFirst();
-      // posted, its run still to be created (`ensureRun`)
-      if (message) return true;
+      if (message) {
+        const c = await t
+          .selectFrom("conversations")
+          .select("consumed_seq")
+          .where("id", "=", conv)
+          .executeTakeFirst();
+        // posted, its run still to be created (`ensureRun`)
+        if (c === undefined || Number(message.seq) > Number(c.consumed_seq)) return true;
+        // taken in by another run (a person's message posted with it): its content was handled
+        // and no run of its own will come, so it ends as completed rather than in flight forever
+        await this.settle(tr, "completed");
+        return false;
+      }
     }
     const firedAt = tr.fired_at instanceof Date ? tr.fired_at : new Date(tr.fired_at);
     if (now.getTime() - firedAt.getTime() < START_GRACE_MS) return true;

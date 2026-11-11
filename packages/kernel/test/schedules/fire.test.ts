@@ -11,6 +11,7 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ConversationQueue } from "../../src/conversations/queue.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -493,6 +494,46 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
       firedAt: null,
     });
     expect((await settled(r.id)).status).toBe("completed");
+  });
+
+  it("a task message a person's run absorbed settles it, and the next tick fires", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const t = await task({ mode: "conversation", conversationId: conv, prompt: "absorbed tick" });
+    const r1 = await pendingRun(t, {
+      scheduledFor: new Date(Date.now() - FIVE_MIN),
+      firedAt: new Date(),
+      conversationId: conv,
+    });
+    // its queued item was dispatched, then a person's run took the message in with theirs: the
+    // message is consumed, and no run carries the task run
+    const [msg] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: "absorbed tick" }],
+          authorAccountId: ownerId,
+          schedule: {
+            taskId: t.id,
+            taskRunId: r1.id,
+            scheduledFor: r1.scheduledFor.toISOString(),
+            trial: false,
+            taskName: t.name,
+            localTime: "2026-11-11 09:00 (UTC)",
+          },
+        },
+      },
+    ]);
+    await db
+      .updateTable("conversations")
+      .set({ consumed_seq: msg?.seq ?? 0 })
+      .where("id", "=", conv)
+      .execute();
+    const r2 = await pendingRun(t);
+    await firer().fire(r2.id);
+    // its content was handled: completed, not in flight forever
+    expect(await runOf(r1.id)).toMatchObject({ status: "completed", runId: null });
+    expect((await runOf(r2.id)).status).not.toBe("skipped");
+    expect((await settled(r2.id)).status).toBe("completed");
   });
 
   it("dm chat reuses the live thread", async () => {
