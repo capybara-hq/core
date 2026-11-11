@@ -55,6 +55,21 @@ export const keys = {
       devices: (): readonly unknown[] => [...all, "devices"],
       /** One of the person's devices. */
       device: (id: string): readonly unknown[] => [...all, "device", id],
+      /** Scheduled task lists (an invalidation prefix: mine and the org's). */
+      schedulesAll: (): readonly unknown[] => [...all, "schedules"],
+      /** My scheduled tasks (`all`: every task of the org, org admins). */
+      schedules: (scope: "mine" | "all"): readonly unknown[] => [...all, "schedules", scope],
+      /** One scheduled task, its runs and grants (under it: invalidating the task refreshes them). */
+      schedule: (id: string): readonly unknown[] => [...all, "schedule", id],
+      scheduleRuns: (id: string): readonly unknown[] => [...all, "schedule", id, "runs"],
+      scheduleGrants: (id: string): readonly unknown[] => [...all, "schedule", id, "grants"],
+      /** My conversations with an agent that a task can post into. */
+      scheduleTargets: (agentId: string): readonly unknown[] => [
+        ...all,
+        "schedules",
+        "targets",
+        agentId,
+      ],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */

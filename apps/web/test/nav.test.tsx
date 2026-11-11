@@ -65,7 +65,8 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
   // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
   const primaryGuest = ["agents", "connectors", "devices"];
-  const primary = ["agents", "skills", "connectors", "devices"];
+  // 定时任务 for members up (guests can't create tasks; scheduled tasks spec §10)
+  const primary = ["agents", "skills", "connectors", "devices", "schedules"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
@@ -99,7 +100,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 设备 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 设备 定时任务 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -125,6 +126,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
         ["设备", "cpu", "/devices"],
+        ["定时任务", "clock", "/schedules"],
       ],
       more: [
         ["插件", "catalog", "/plugins"],
@@ -231,6 +233,7 @@ describe("org settings nav", () => {
       "models",
       "tokens",
       "sandbox",
+      "schedules",
     ]);
     expect(items.some((i) => i.href === "/settings/extensions")).toBe(false);
     expect(items.some((i) => i.href === "/settings/plugins")).toBe(false);
@@ -248,6 +251,8 @@ describe("activeNavOf", () => {
     ["/connectors/c1", "connectors"],
     ["/devices", "devices"],
     ["/devices/e1", "devices"],
+    ["/schedules", "schedules"],
+    ["/schedules/s1", "schedules"],
     ["/plugins", "plugins"],
     ["/plugins/i1/enable", "plugins"],
     ["/extensions", "extensions"],

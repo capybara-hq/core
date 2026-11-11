@@ -7,6 +7,7 @@ import {
   QuickActions,
   RenameDialog,
   Stack,
+  Text,
   type TitleBarMenuItem,
   untitledLabel,
   useNow,
@@ -16,8 +17,9 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
-import type { ModelRef } from "../../lib/conversations";
+import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -31,6 +33,7 @@ import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
+import { startedByTask } from "../../lib/schedules";
 import {
   type AgentsSummary,
   dispatchedAny,
@@ -427,6 +430,7 @@ export function useConversationPage(
     },
     thread: (
       <>
+        <StartedBy events={conv.events} />
         <Thread
           orgId={orgId}
           conversationId={conversationId}
@@ -550,4 +554,25 @@ export function useConversationPage(
     </>
   );
   return { page, dialogs };
+}
+
+/**
+ * A conversation a scheduled task started (its first message carries the task's marker): "Started
+ * by the scheduled task <name>", linking to the task (scheduled tasks spec §10). Nothing while the
+ * log's start is not loaded.
+ */
+function StartedBy({ events }: { events: readonly ConversationEvent[] }) {
+  const t = useTranslations("schedules");
+  const task = startedByTask(events);
+  if (task === null) return null;
+  return (
+    <Text variant="small" tone="muted">
+      {t.rich("startedBy", {
+        name: task.name,
+        link: (chunks) => (
+          <Link href={`/schedules/${encodeURIComponent(task.taskId)}`}>{chunks}</Link>
+        ),
+      })}
+    </Text>
+  );
 }

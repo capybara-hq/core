@@ -1915,3 +1915,44 @@ describe("run rows (spec §6.16.23)", () => {
     expect(within(row()).getByRole("link", { name: en.chat.run.trajectory })).toBeTruthy();
   });
 });
+
+describe("a conversation a scheduled task started", () => {
+  const marker = {
+    taskId: "s1",
+    taskRunId: "tr1",
+    scheduledFor: "2026-11-11T01:00:00.000Z",
+    trial: false,
+    taskName: "Daily report",
+    localTime: "2026-11-11 09:00",
+  };
+
+  it.each(["zh", "en"] as const)(
+    "says which task started it and links to the task (%s)",
+    async (locale) => {
+      api({
+        [`GET ${BASE}/events`]: () =>
+          json(200, { events: [userMsg(1, "Summarize.", { schedule: marker })] }),
+      });
+      await renderChat(locale);
+      const link = await screen.findByRole("link", { name: "Daily report" });
+      expect(link.getAttribute("href")).toBe("/schedules/s1");
+      const words = (locale === "zh" ? zh : en).schedules.startedBy.replace(
+        /<link>\{name\}<\/link>/,
+        "Daily report",
+      );
+      expect(link.closest("span")?.parentElement?.textContent).toContain(words);
+    },
+  );
+
+  it("a person's conversation, or one a task only posts into later, says nothing", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [userMsg(1, "hi"), userMsg(2, "Summarize.", { schedule: marker })],
+        }),
+    });
+    await renderChat("en");
+    await screen.findByText("hi");
+    expect(screen.queryByRole("link", { name: "Daily report" })).toBeNull();
+  });
+});

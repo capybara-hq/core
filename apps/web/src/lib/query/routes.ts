@@ -91,6 +91,13 @@ import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import {
+  scheduleGrantsQuery,
+  scheduleQuery,
+  scheduleRunsQuery,
+  schedulesQuery,
+  scheduleTargetsQuery,
+} from "./schedules";
+import {
   extensionPointDefaultsQuery,
   invitationsQuery,
   modelsCatalogQuery,
@@ -1057,6 +1064,50 @@ export const ROUTES: readonly RouteEntry[] = [
           ],
   },
   {
+    pattern: "/schedules",
+    // Members up (guests get no access): my tasks and the agents that name them (a section).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(schedulesQuery(orgId)), q(agentsQuery(orgId))],
+  },
+  {
+    pattern: "/schedules/new",
+    // Members up: the agents to pick, the models of the model picker and the extension tools of
+    // the approved-tools picker.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(agentsQuery(orgId)), q(modelsQuery(orgId)), q(extensionToolsQuery(orgId))],
+  },
+  {
+    pattern: "/schedules/[id]",
+    // Members up: the task (an org admin may open another member's, read-only), its runs and
+    // approved tools, the agents, the models and the members (the creator's name; sections).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.id === undefined || !atLeast(me, "member")
+        ? []
+        : [
+            q(scheduleQuery(orgId, params.id)),
+            q(scheduleRunsQuery(orgId, params.id)),
+            q(scheduleGrantsQuery(orgId, params.id)),
+            q(agentsQuery(orgId)),
+            q(modelsQuery(orgId)),
+            q(membersQuery(orgId)),
+            q(extensionToolsQuery(orgId)),
+          ],
+    // A conversation task's target picker: my conversations with the task's agent.
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      if (orgId === null || params.id === undefined || !atLeast(me, "member")) return;
+      const task = qc.getQueryData<{ task: { agentId: string; mode: string } }>(
+        scheduleQuery(orgId, params.id).queryKey,
+      )?.task;
+      if (task?.mode !== "conversation") return;
+      await qc.prefetchQuery({ ...scheduleTargetsQuery(orgId, task.agentId), retry: false });
+    },
+  },
+  {
     pattern: "/settings/appearance",
     // Members read it: the org's themes and setting, and the theme components with their switches.
     queries: ({ orgId, me }) =>
@@ -1067,6 +1118,20 @@ export const ROUTES: readonly RouteEntry[] = [
             q(orgComponentsQuery(orgId, { kind: "theme" })),
             // 跟随平台's swatches
             q(platformThemeQuery()),
+          ],
+  },
+  {
+    pattern: "/settings/schedules",
+    // Org admins (schedules.manage): the settings, every task of the org, and the agents and
+    // members that name them (sections).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [
+            q(orgSettingsQuery(orgId)),
+            q(schedulesQuery(orgId, "all")),
+            q(agentsQuery(orgId)),
+            q(membersQuery(orgId)),
           ],
   },
   {

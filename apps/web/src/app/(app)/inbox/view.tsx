@@ -12,6 +12,7 @@ import {
   InboxPage,
   ItemList,
   KeyValue,
+  LinkButton,
   Stack,
   StatusMark,
   Text,
@@ -51,6 +52,7 @@ import {
   type InboxItem,
   isShowable,
   type OrgNotice,
+  type ScheduleAttention,
 } from "../../../lib/inbox";
 import { entryOfRequest } from "../../../lib/pending-connectors";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
@@ -58,6 +60,7 @@ import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
+import { addScheduleGrants, connectionOf } from "../../../lib/schedules";
 import type { SkillChange } from "../../../lib/skills";
 import { approvalToolLabel, toolLabelText } from "../../../lib/tool-label";
 import { useErrorMessage } from "../../../lib/use-error-message";
@@ -129,6 +132,20 @@ function Inbox({
     invalidates: () => inboxChangeKeys(orgId),
   });
   const tdd = useTranslations("inbox.requestDecided");
+  const tsa = useTranslations("inboxSchedule");
+  // Approving a refused tool for my task changes the task's grants and the inbox
+  const addGrantMutation = useAppMutation({
+    fn: (v: { taskId: string; toolKey: string }) => addScheduleGrants(orgId, v.taskId, [v.toolKey]),
+    invalidates: (v) => [keys.org(orgId).scheduleGrants(v.taskId), ...inboxChangeKeys(orgId)],
+  });
+  async function addGrant(taskId: string, toolKey: string) {
+    try {
+      await addGrantMutation.mutateAsync({ taskId, toolKey });
+      toast.success(tsa("added"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
   // A catalog request decision changes the catalog's view of the item and the inbox (a failure
   // reads the inbox again through `handled`).
   const decideRequestMutation = useAppMutation({
@@ -163,6 +180,8 @@ function Inbox({
     decided: tdd("label"),
     approved: tdd("approved"),
     rejected: tdd("rejected"),
+    schedule: tsa("label"),
+    scheduleReason: (a) => scheduleReason(a, tsa),
   };
   const columns: Column<InboxItem>[] = [
     {
@@ -273,75 +292,85 @@ function Inbox({
   const detail: Detail | null =
     active === undefined
       ? null
-      : hasNotice(active)
-        ? noticeDetail({
-            notice: active.notice,
-            pending: noticePending,
-            onDismiss: () => void dismiss(active.notice),
-            tn,
-            tnn,
+      : active.type === "schedule_attention"
+        ? scheduleDetail({
+            attention: active.attention,
+            createdAt: active.createdAt,
+            pending: addGrantMutation.isPending,
+            onAdd: (k) => void addGrant(active.attention.taskId, k),
+            onOpen: () => router.push(`/schedules/${encodeURIComponent(active.attention.taskId)}`),
+            tsa,
             t,
-            locale,
           })
-        : active.type === "catalog_request_decided" && isSetupRequest(active.request)
-          ? setupDecidedDetail({
-              request: active.request,
+        : hasNotice(active)
+          ? noticeDetail({
+              notice: active.notice,
               pending: noticePending,
-              onDismiss: () => void dismissDecided(active.request),
-              ts,
-              tdd,
+              onDismiss: () => void dismiss(active.notice),
+              tn,
+              tnn,
               t,
+              locale,
             })
-          : active.type === "catalog_request" && isSetupRequest(active.request)
-            ? setupRequestDetail({
+          : active.type === "catalog_request_decided" && isSetupRequest(active.request)
+            ? setupDecidedDetail({
                 request: active.request,
-                pending: requestPending,
-                reason: rejectReason,
-                setReason: setRejectReason,
-                onConfigure: () => setConfiguring(active.request),
-                onReject: () => void decideRequest(active.request, "reject", rejectReason),
+                pending: noticePending,
+                onDismiss: () => void dismissDecided(active.request),
                 ts,
-                td,
+                tdd,
                 t,
-                locale,
               })
-            : active.type === "catalog_request_decided"
-              ? decidedRequestDetail({
+            : active.type === "catalog_request" && isSetupRequest(active.request)
+              ? setupRequestDetail({
                   request: active.request,
-                  pending: noticePending,
-                  onDismiss: () => void dismissDecided(active.request),
-                  tdd,
+                  pending: requestPending,
+                  reason: rejectReason,
+                  setReason: setRejectReason,
+                  onConfigure: () => setConfiguring(active.request),
+                  onReject: () => void decideRequest(active.request, "reject", rejectReason),
+                  ts,
+                  td,
                   t,
                   locale,
                 })
-              : active.type === "catalog_request"
-                ? directoryRequestDetail({
+              : active.type === "catalog_request_decided"
+                ? decidedRequestDetail({
                     request: active.request,
-                    pending: requestPending,
-                    onDecide: (d) => void decideRequest(active.request, d),
-                    td,
+                    pending: noticePending,
+                    onDismiss: () => void dismissDecided(active.request),
+                    tdd,
                     t,
                     locale,
                   })
-                : active.type === "tool_approval"
-                  ? toolApprovalDetail({
-                      approval: active.approval,
-                      scope,
-                      setScope,
-                      pending: approvals.pending,
-                      onDecide: (d) => void decideApproval(active.approval, d),
-                      openConversation: () => router.push(active.approval.conversationPath),
+                : active.type === "catalog_request"
+                  ? directoryRequestDetail({
+                      request: active.request,
+                      pending: requestPending,
+                      onDecide: (d) => void decideRequest(active.request, d),
+                      td,
+                      t,
                       locale,
-                      t,
-                      ta,
                     })
-                  : skillChangeDetail({
-                      orgId,
-                      change: active.skillChange,
-                      pending: changes.pending,
-                      onDecide: (d) => void decideChange(active.skillChange, d),
-                      t,
-                    });
+                  : active.type === "tool_approval"
+                    ? toolApprovalDetail({
+                        approval: active.approval,
+                        scope,
+                        setScope,
+                        pending: approvals.pending,
+                        onDecide: (d) => void decideApproval(active.approval, d),
+                        openConversation: () => router.push(active.approval.conversationPath),
+                        locale,
+                        t,
+                        ta,
+                      })
+                    : skillChangeDetail({
+                        orgId,
+                        change: active.skillChange,
+                        pending: changes.pending,
+                        onDecide: (d) => void decideChange(active.skillChange, d),
+                        t,
+                      });
 
   if (inbox === null) {
     return (
@@ -423,9 +452,11 @@ const subjectOf = (i: InboxItem): string =>
     ? i.approval.id
     : i.type === "skill_change"
       ? i.skillChange.id
-      : hasNotice(i)
-        ? i.notice.id
-        : i.request.id;
+      : i.type === "schedule_attention"
+        ? i.id
+        : hasNotice(i)
+          ? i.notice.id
+          : i.request.id;
 
 /** The labels the row titles start with. */
 interface Labels {
@@ -438,6 +469,8 @@ interface Labels {
   decided: string;
   approved: string;
   rejected: string;
+  schedule: string;
+  scheduleReason(a: ScheduleAttention): string;
 }
 
 /**
@@ -451,6 +484,14 @@ function rowOf(
   locale: string,
 ): { title: string; trailing: string | null; description: string } {
   const joined = (...parts: string[]) => parts.filter((p) => p !== "").join(" · ");
+  if (item.type === "schedule_attention") {
+    const a = item.attention;
+    return {
+      title: a.name,
+      trailing: null,
+      description: joined(labels.schedule, labels.scheduleReason(a)),
+    };
+  }
   if (item.type === "skill_change") {
     const c = item.skillChange;
     return { title: c.name, trailing: null, description: joined(labels.skillChange, c.agent.name) };
@@ -512,6 +553,92 @@ function rowOf(
     title: toolLabelText(approvalToolLabel(item.approval, locale)),
     trailing: null,
     description: item.approval.agent.name,
+  };
+}
+
+/** Why a task needs me, in one line. */
+function scheduleReason(a: ScheduleAttention, tsa: Translate): string {
+  if (a.reason === "admin") {
+    return a.pausedBy !== null && a.pausedBy.name !== ""
+      ? tsa("reason.admin", { name: a.pausedBy.name })
+      : tsa("reason.adminUnknown");
+  }
+  return tsa(`reason.${a.reason}`);
+}
+
+/**
+ * My scheduled task that needs me (scheduled tasks spec §8): why, and for refused tools each one
+ * with what to do: 加入预先批准的工具, 需要你没有的角色 (no action), or 连接 <slug> for a personal
+ * connector. The primary opens the task.
+ */
+function scheduleDetail({
+  attention: a,
+  createdAt,
+  pending,
+  onAdd,
+  onOpen,
+  tsa,
+  t,
+}: {
+  attention: ScheduleAttention;
+  createdAt: string;
+  pending: boolean;
+  onAdd(toolKey: string): void;
+  onOpen(): void;
+  tsa: Translate;
+  t: Translate;
+}): Detail {
+  const reason = scheduleReason(a, tsa);
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: tsa("task"), v: a.name },
+          { k: tsa("reasonLabel"), v: reason },
+          { k: t("requested"), v: <DateTime value={createdAt} /> },
+        ]}
+      />
+    ),
+    actionRow: { primary: { label: tsa("open"), onSelect: onOpen } },
+    content: (
+      <Card title={a.name} actions={<StatusMark status="waiting" label={tsa("label")} />}>
+        <Stack gap={12}>
+          <Text variant="prose">{reason}</Text>
+          {a.missing.length > 0 && (
+            <ItemList
+              label={tsa("missing")}
+              rows={a.missing.map((k) => {
+                const slug = connectionOf(k);
+                if (slug !== null) {
+                  return {
+                    id: k,
+                    title: slug,
+                    actions: (
+                      <LinkButton href="/account/connections" density="dense">
+                        {tsa("connect", { slug })}
+                      </LinkButton>
+                    ),
+                  };
+                }
+                if (a.needsRole.includes(k)) {
+                  return { id: k, title: k, status: { label: tsa("needsRole") } };
+                }
+                return {
+                  id: k,
+                  title: k,
+                  actions: (
+                    <Button density="dense" disabled={pending} onClick={() => onAdd(k)}>
+                      {tsa("add")}
+                    </Button>
+                  ),
+                };
+              })}
+            />
+          )}
+        </Stack>
+      </Card>
+    ),
   };
 }
 

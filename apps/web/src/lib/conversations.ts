@@ -119,6 +119,11 @@ type EventBody =
          * they typed (the chip and the arguments).
          */
         skill?: SkillInvocationRecord;
+        /**
+         * A scheduled task's message (kernel `ScheduleMarker`, scheduled tasks spec §6): the task
+         * and its name at fire time; absent on a person's message.
+         */
+        schedule?: { taskId: string; taskName: string; trial: boolean };
       };
     }
   | {
