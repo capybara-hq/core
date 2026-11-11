@@ -24,6 +24,8 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import {
+  builtinSkillIds,
+  builtinSkillPlugins,
   linkedCopyIds,
   skillIdsOf,
   skillVersionsById,
@@ -262,6 +264,11 @@ async function disallowedSkillsOf(
     orgId,
     usable.flatMap((r) => (r.origin === "platform" ? [r.id] : [])),
   );
+  // builtin plugins and skills are always on: never in an off-list (the agent save refuses them)
+  const builtinPlugins = await builtinSkillPlugins(db);
+  const builtinIds = new Set(await builtinSkillIds(db, orgId));
+  const isBuiltin = (s: { id: string; platformSkillId?: string }) =>
+    builtinIds.has(s.id) || (s.platformSkillId !== undefined && builtinIds.has(s.platformSkillId));
   const push = (ref: string, id?: string) => {
     if (out.includes(ref)) return;
     if (out.length >= AGENT_TEMPLATE_LIMITS.disallowedSkills) {
@@ -271,6 +278,7 @@ async function disallowedSkillsOf(
     out.push(ref);
   };
   for (const r of canonicalDisabledSkills(disabled)) {
+    if (r.kind === "plugin" && builtinPlugins.has(r.plugin)) continue;
     if (r.kind === "plugin") {
       if (r.skills === "all") {
         const ref = `${r.plugin}:*`;
@@ -281,15 +289,20 @@ async function disallowedSkillsOf(
       }
       for (const name of r.skills) {
         const ref = `${r.plugin}:${name}`;
-        const ok =
-          isDisallowedSkillRef(ref) && usable.some((s) => s.plugin === r.plugin && s.name === name);
+        const s = usable.find((u) => u.plugin === r.plugin && u.name === name);
+        const ok = isDisallowedSkillRef(ref) && s !== undefined && !isBuiltin(s);
         if (ok) push(ref);
         else omitted.push({ kind: "skill", name: ref, reason: "unavailable" });
       }
       continue;
     }
     const s = usable.find((u) => skillIdsOf(u, linked).includes(r.skillId));
-    const ref = s === undefined ? null : s.plugin === null ? s.name : `${s.plugin}:${s.name}`;
+    const ref =
+      s === undefined || isBuiltin(s) || (s.plugin !== null && builtinPlugins.has(s.plugin))
+        ? null
+        : s.plugin === null
+          ? s.name
+          : `${s.plugin}:${s.name}`;
     if (ref !== null && isDisallowedSkillRef(ref)) push(ref, r.skillId);
     else omitted.push({ kind: "skill", name: r.skillId, id: r.skillId, reason: "unavailable" });
   }

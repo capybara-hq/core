@@ -15,7 +15,12 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { connectorTemplateState } from "../catalog/component-state.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { type SkillVersionRow, usableSkillVersions } from "../skills/usable.js";
+import {
+  builtinSkillIds,
+  builtinSkillPlugins,
+  type SkillVersionRow,
+  usableSkillVersions,
+} from "../skills/usable.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import {
   AGENT_BUILTIN_NAMES,
@@ -227,23 +232,33 @@ function skillByName(
  * A template's `disallowedSkills` entry as an agent's disabled skill entry (skills default-on spec
  * §6.2): `<plugin>:*` the whole plugin (skills it gains later included), `<plugin>:<name>` that
  * plugin's skill, a bare `<name>` the org's usable skill of that name without a plugin. Null when
- * it names nothing the org has (an agent's definition refuses a plugin without skills in the org).
+ * the agent's save check would refuse it: it names nothing the org has, a builtin plugin
+ * (`builtin.plugins`) or a builtin skill (`builtin.ids`, which cannot be turned off).
  */
 function disallowedSkillRef(
   skills: readonly SkillVersionRow[],
   ref: string,
+  builtin: { plugins: ReadonlySet<string>; ids: ReadonlySet<string> },
 ): DisabledSkillRef | null {
+  const isBuiltin = (s: SkillVersionRow) =>
+    builtin.ids.has(s.id) ||
+    (s.platformSkillId !== undefined && builtin.ids.has(s.platformSkillId));
   const i = ref.indexOf(":");
   if (i >= 0) {
     const plugin = ref.slice(0, i);
     const name = ref.slice(i + 1);
-    if (!skills.some((s) => s.plugin === plugin && (name === "*" || s.name === name))) return null;
-    return { kind: "plugin", plugin, skills: name === "*" ? "all" : [name] };
+    if (builtin.plugins.has(plugin)) return null;
+    const ofPlugin = skills.filter((s) => s.plugin === plugin);
+    if (name === "*") {
+      return ofPlugin.length === 0 ? null : { kind: "plugin", plugin, skills: "all" };
+    }
+    const s = ofPlugin.find((x) => x.name === name);
+    return s === undefined || isBuiltin(s) ? null : { kind: "plugin", plugin, skills: [name] };
   }
   const s = skills
     .filter((x) => x.plugin === null && x.name === ref)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-  return s === undefined ? null : { kind: "skill", skillId: s.id };
+  return s === undefined || isBuiltin(s) ? null : { kind: "skill", skillId: s.id };
 }
 
 interface OrgConnector {
@@ -513,10 +528,17 @@ export async function planFromTemplate(
   }
   // `disallowedSkills` turns skills off: `<plugin>:*` the whole plugin, `<plugin>:<name>` a
   // plugin's skill, a bare `<name>` the org's skill without a plugin; an entry that names nothing
-  // the org has is dropped
+  // the org has, or a builtin plugin or skill (always on), is dropped
   const disabledSkills: DisabledSkillRef[] = [];
+  const builtin =
+    (t.disallowedSkills ?? []).length === 0
+      ? { plugins: new Set<string>(), ids: new Set<string>() }
+      : {
+          plugins: await builtinSkillPlugins(db),
+          ids: new Set(await builtinSkillIds(db, orgId)),
+        };
   for (const ref of new Set(t.disallowedSkills ?? [])) {
-    const off = disallowedSkillRef(usable, ref);
+    const off = disallowedSkillRef(usable, ref, builtin);
     if (off === null) {
       dropped.push(`disallowedSkills.${ref}`);
       continue;

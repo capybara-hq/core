@@ -7,7 +7,13 @@ import { PendingConnectorRequests } from "../../src/agents/pending-connector-req
 import { loadTemplates } from "../../src/agents/templates.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
-import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import {
+  importSkill,
+  type OrgEnv,
+  resetOrgCatalog,
+  setBuiltin,
+  startOrgEnv,
+} from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { createOrg, enableExtensions, type Req } from "../helpers/runs.js";
 
@@ -1055,6 +1061,21 @@ describe("creating an agent from a template", () => {
       { kind: "plugin", plugin: "docs", skills: ["notes"] },
       { kind: "skill", skillId: sheets },
     ]);
+  });
+
+  it("drops disallowedSkills entries that name a builtin plugin or skill (always on)", async () => {
+    const core = await importSkill(env, { name: "core-kit", skillName: "guide" });
+    await setBuiltin(env, core);
+    const keep = await orgSkill("keep");
+    const id = await platformTemplate(
+      tpl({ disallowedSkills: ["core-kit:*", "core-kit:guide", "keep"] }),
+    );
+    const { agent, preview: p } = await createOk(env.mem, id);
+    expect(pick(p, "skill")).toEqual([["keep", "carried", "disallowed"]]);
+    expect(p.dropped).toEqual(
+      expect.arrayContaining(["disallowedSkills.core-kit:*", "disallowedSkills.core-kit:guide"]),
+    );
+    expect(agent.definition.disabledSkills).toEqual([{ kind: "skill", skillId: keep }]);
   });
 
   it("404s another org's unshared org template", async () => {
