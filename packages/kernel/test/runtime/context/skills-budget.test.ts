@@ -182,17 +182,23 @@ describe("applyCatalogBudget", () => {
 });
 
 describe("budgetTier", () => {
-  const builtin = { plugins: new Set(["core"]), ids: new Set(["pinned-copy"]) };
+  const builtin = {
+    plugins: new Set(["core"]),
+    ids: new Set(["pinned-copy"]),
+    shared: new Set(["shared-by-agent"]),
+  };
   const r = (
     s: Partial<CatalogSkill>,
     scope: "org" | "agent" = "org",
     origin: "org" | "platform" = "org",
   ) => ({ skill: skill("x", s), scope, origin });
 
-  it("the agent's own, builtin, the org's own, then plugin skills", () => {
+  it("the agent's own (and shared), builtin, the org's own, then plugin skills", () => {
     expect(budgetTier(r({ plugin: "core" }, "agent", "platform"), builtin)).toBe(0);
     expect(budgetTier(r({ plugin: "core" }, "org", "platform"), builtin)).toBe(1);
     expect(budgetTier(r({ id: "pinned-copy", plugin: "core" }), builtin)).toBe(1);
+    // an org skill the agent shared ranks with its own skills
+    expect(budgetTier(r({ id: "shared-by-agent" }), builtin)).toBe(0);
     expect(budgetTier(r({}), builtin)).toBe(2);
     // an org skill whose provenance names the builtin plugin is not the builtin skill
     expect(budgetTier(r({ plugin: "core" }), builtin)).toBe(3);

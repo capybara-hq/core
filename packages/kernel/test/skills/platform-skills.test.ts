@@ -17,7 +17,9 @@ import { agentsUsing, referenceIds } from "../../src/catalog/component-state.js"
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { skillsChangeText } from "../../src/runtime/context/skills.js";
+import { catalogLineChars } from "../../src/skills/catalog.js";
 import { SkillInvoker } from "../../src/skills/invoke.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -885,6 +887,44 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
     expect(r.content).toContain("My own guide.");
     expect((await catalogs(conv)).at(-1)?.payload.skills).toEqual([
       expect.objectContaining({ id: own.id, name: "skill-guide", source: own.prefix }),
+    ]);
+  });
+
+  it("the catalog budget keeps the descriptions of the agent's own, its shared and the builtin skills ahead of the org's and plugin skills", async () => {
+    // names chosen so that name order alone would keep the wrong ones (skills default-on spec §7)
+    await seedBuiltinSkill("zz-guide");
+    const agentId = await agentWith();
+    await seedOrgSkill({ name: "zz-own", body: "O.", agentId });
+    const shared = await seedOrgSkill({ name: "zz-shared", body: "S." });
+    await db
+      .updateTable("skills")
+      .set({ origin_agent_id: agentId })
+      .where("id", "=", shared.id)
+      .execute();
+    await seedOrgSkill({ name: "aa-org", body: "A." });
+    await seedOrgSkill({ name: "aa-plug", body: "P.", plugin: "docs" });
+    const line = (name: string) => catalogLineChars({ name, description: `Use for ${name} work.` });
+    const config = k.app.get(KernelConfigService);
+    const real = config.get();
+    // below the schema's minimum, so set directly: exactly the three top-ranked lines fit
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      skills: { catalogBudgetChars: line("zz-own") + line("zz-shared") + line("zz-guide") },
+    });
+    const conv = await createConv(owner, orgId, agentId);
+    try {
+      await say(conv, 1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      (await catalogs(conv)).at(-1)?.payload.skills.map((s) => [s.name, s.nameOnly === true]),
+    ).toEqual([
+      ["aa-org", true],
+      ["aa-plug", true],
+      ["zz-guide", false],
+      ["zz-own", false],
+      ["zz-shared", false],
     ]);
   });
 

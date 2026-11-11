@@ -1217,7 +1217,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Characters the skills catalog lines with descriptions may take in a conversation's skills snapshot (about 4 characters per token). At run start the skills are ranked (the agent's own, builtin, the organization's own, then plugin skills; by name within each) and keep their descriptions while the running total fits; the rest are listed by name only. Recorded in the snapshot, so a change applies from the next snapshot a run start writes",
+              "Characters the skills catalog lines with descriptions may take in a conversation's skills snapshot (about 4 characters per token). At run start the skills are ranked (the agent's own and the ones it shared, builtin, the organization's own, then plugin skills; by name within each) and keep their descriptions while the running total fits; the rest are listed by name only. Recorded in the snapshot, so a change applies from the next snapshot a run start writes",
           }),
         ),
     })

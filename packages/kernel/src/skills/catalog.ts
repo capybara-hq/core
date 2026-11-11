@@ -19,6 +19,7 @@ import {
   sameSnapshot,
 } from "../runtime/context/skills.js";
 import {
+  agentOwnSkillIds,
   agentSkills,
   builtinSkillIds,
   builtinSkillPlugins,
@@ -195,25 +196,31 @@ export async function resolveSkills(
 }
 
 /**
- * The rank of a skill in the catalog budget (skills default-on spec §7): 0 the agent's own skills,
- * 1 builtin skills, 2 the org's own skills (no plugin), 3 plugin skills.
+ * The rank of a skill in the catalog budget (skills default-on spec §7): 0 the agent's own skills
+ * (and the org skills it shared), 1 builtin skills, 2 the org's own skills (no plugin), 3 plugin
+ * skills.
  */
 export type BudgetTier = 0 | 1 | 2 | 3;
 
 /**
- * The {@link BudgetTier} of a resolved skill: the agent's own (`scope` `agent`), else builtin (a
- * platform skill of a builtin plugin, `builtin.plugins`, or one of `builtin.ids`, as
- * `builtinSkillIds` gives them), else the org's own (no plugin), else a plugin skill.
+ * The {@link BudgetTier} of a resolved skill: the agent's own (`scope` `agent`, or an org skill it
+ * shared, `known.shared`: always on, never turned off, spec §3), else builtin (a platform skill of
+ * a builtin plugin, `known.plugins`, or one of `known.ids`, as `builtinSkillIds` gives them), else
+ * the org's own (no plugin), else a plugin skill.
  */
 export function budgetTier(
   r: Pick<ResolvedSkill, "skill" | "scope" | "origin">,
-  builtin: { plugins: ReadonlySet<string>; ids: ReadonlySet<string> },
+  known: {
+    plugins: ReadonlySet<string>;
+    ids: ReadonlySet<string>;
+    shared: ReadonlySet<string>;
+  },
 ): BudgetTier {
-  if (r.scope === "agent") return 0;
+  if (r.scope === "agent" || known.shared.has(r.skill.id)) return 0;
   const plugin = r.skill.plugin;
   if (
-    (r.origin === "platform" && plugin !== undefined && builtin.plugins.has(plugin)) ||
-    builtin.ids.has(r.skill.id)
+    (r.origin === "platform" && plugin !== undefined && known.plugins.has(plugin)) ||
+    known.ids.has(r.skill.id)
   ) {
     return 1;
   }
@@ -393,9 +400,10 @@ export class SkillsCatalogService {
       async () => {
         const plugins = await builtinSkillPlugins(this.db.db);
         const ids = new Set(await builtinSkillIds(this.db.db, input.orgId));
+        const shared = new Set((await agentOwnSkillIds(this.db.db, input)).shared);
         // names are unique in the catalog
         const tiers = new Map(
-          resolved.map((r) => [r.skill.name, budgetTier(r, { plugins, ids })] as const),
+          resolved.map((r) => [r.skill.name, budgetTier(r, { plugins, ids, shared })] as const),
         );
         return (s) => tiers.get(s.name) ?? 3;
       },

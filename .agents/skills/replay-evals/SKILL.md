@@ -126,6 +126,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `skills.catalogBudgetChars` at that run start), so rendering stays a pure function of the snapshot and needs no `DriftReason`; a
   later budget never changes an old request. A snapshot without `nameOnly` renders byte for byte as before. `sameSkills` compares
   `nameOnly`, so an entry crossing the budget writes a new snapshot and shows in the "Updated skills" notice at the next run start.
+  Ranking: the agent's own and the org skills it shared, builtin, the org's own, then plugin skills. `skills.catalog_over_budget`
+  (info) is logged at every run start while the catalog is over budget, whether or not a new snapshot is written.
   Zero-drift case: "a catalog budget change between runs" in `reconstruct.test.ts`; unit tests in
   `test/runtime/context/skills-budget.test.ts`.
 - **Nothing is pinned any more**: run start reads no bodies and new snapshots carry no `pinned`. The event schema keeps the optional
