@@ -20,6 +20,7 @@ const view = (r: CatalogRequestView) => ({
   item: r.item,
   entry: r.entry,
   agent: r.agent,
+  network: r.network,
   note: r.note,
   reason: r.reason,
   decidedAt: r.decidedAt,
@@ -39,7 +40,7 @@ const platformRow = (r: CatalogRequestView) => ({
 /** A member's pending request as the org admins' list shows it: a compact row (the inbox's). */
 const pendingRow = (r: CatalogRequestView) => ({
   id: r.id,
-  name: r.item?.name ?? r.entry?.name ?? r.agent?.name ?? r.kind,
+  name: r.item?.name ?? r.entry?.name ?? r.agent?.name ?? r.network?.hosts.join(", ") ?? r.kind,
   state: r.status,
   kind: r.kind,
   requestedBy: r.requestedByName,
@@ -173,7 +174,7 @@ export class RequestsOperations implements OnModuleInit {
       defineOperation({
         id: "requests.pending",
         description:
-          "List the requests members sent this org's admins that wait for a decision (org admins), as the inbox shows them, newest first: kind enable (switch a plugin on) or connector_setup (set up an agent's connectors), what it is about (the plugin or the agent), who asked and their note. Deciding them is done on the web. Pages by 50: pass the returned next as params.cursor.",
+          "List the requests members sent this org's admins that wait for a decision (org admins), as the inbox shows them, newest first: kind enable (switch a plugin on), connector_setup (set up an agent's connectors) or network_allowlist (allow hosts in the org's sandbox network), what it is about (the plugin, the agent or the hosts), who asked and their note. Deciding them is done on the web. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "catalog.decide" },

@@ -8,6 +8,7 @@ import {
   type Principal,
   patTokenId,
   requireUser,
+  SessionOnly,
   SuperAdmin,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -28,6 +29,7 @@ import {
   CatalogMarketplaceRequestBody,
   CatalogRequestBody,
   CatalogRequestsListQuery,
+  NetworkRequestBody,
   OrgPluginInstallBody,
   OrgPluginSwitchBody,
 } from "./org-catalog.schemas.js";
@@ -86,6 +88,7 @@ class OrgTemplateConnectorBody extends createZodDto(
   "OrgTemplateConnectorBody",
 ) {}
 class CatalogRequestBodyDto extends createZodDto(CatalogRequestBody, "CatalogRequestBody") {}
+class NetworkRequestBodyDto extends createZodDto(NetworkRequestBody, "NetworkRequestBody") {}
 class CatalogMarketplaceRequestBodyDto extends createZodDto(
   CatalogMarketplaceRequestBody,
   "CatalogMarketplaceRequestBody",
@@ -97,6 +100,8 @@ class CatalogMarketplaceRequestBodyDto extends createZodDto(
  * - `POST catalog/:itemId/requests` (`catalog.request`; `access` needs an org admin): requests
  *   under plugin scope (spec §5.1), `enable` into the org admins' inbox, `access` to the super
  *   admin; `POST marketplace-requests` (org admins): an `import` request for a marketplace entry;
+ * - `POST catalog-requests/network` (`catalog.request`, web sessions only): a member asks the org
+ *   admins to allow hosts in the org's sandbox network (network ask-to-allow spec §5.3);
  * - `PUT catalog/:itemId/switch` (scope phase 1): `{ enabled: true, inputs? }` installs -> 200 `{ item }`;
  *   `{ enabled: false, confirm? }` -> 200 `{ preview, confirm }`, then with the hash 200 `{ item }`;
  * - `POST catalog/:itemId/install` (an alias of switching on, no longer creates requests): the route only requires `catalog.read`; the service re-checks
@@ -109,8 +114,8 @@ class CatalogMarketplaceRequestBodyDto extends createZodDto(
  *   admin (`PUT /admin/catalog/items/:id/update`, ruling F2);
  * - `POST connector-templates/:templateId/connectors` (`connectors.manage`): one more connector
  *   from a platform connector template on in the org (ruling P4-T6-8);
- * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins; `enable` and
- *   `connector_setup` requests, `{ approve, reason? }`; a `connector_setup` request is only
+ * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins; `enable`,
+ *   `network_allowlist` and `connector_setup` requests, `{ approve, reason? }`; a `connector_setup` request is only
  *   rejected here, ruling P4-T6-6), `POST catalog-requests/:id/dismiss` (the requester, a decided
  *   request).
  */
@@ -359,6 +364,24 @@ export class OrgCatalogController {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
     return this.catalog.uninstall(org.orgId, p.account.id, installId, tokenId);
+  }
+
+  /**
+   * A member asks the org admins to allow hosts in the org's sandbox egress (from a blocked
+   * command's card) -> 201 `{ request }` (an identical pending request of the member is returned).
+   * Web sessions only: a personal token, a service token or an agent never files one.
+   */
+  @Post("catalog-requests/network")
+  @HttpCode(201)
+  @SessionOnly()
+  @OrgAction("catalog.request")
+  async networkRequest(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZBody(NetworkRequestBodyDto) body: z.infer<typeof NetworkRequestBody>,
+  ): Promise<{ request: CatalogRequestView }> {
+    const p = requireUser(principal);
+    return { request: await this.requests.requestNetwork(org.orgId, p.account.id, body) };
   }
 
   @Post("catalog-requests/:id/decide")

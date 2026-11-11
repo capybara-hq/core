@@ -166,6 +166,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Body carries connector credentials and client secrets entered by a person",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/catalog-requests/network",
+    category: "human-only",
+    reason:
+      "A member asks org admins to allow a domain from a blocked command's card; agents never file network requests",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/catalog-requests/:id/decide",
     category: "human-only",
     reason: "Decides another person's catalog request",

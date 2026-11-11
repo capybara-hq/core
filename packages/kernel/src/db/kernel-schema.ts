@@ -1945,6 +1945,14 @@ export interface PluginImportStagingTable {
 
 type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
+/** 0077 / 0085 / 0115: the kinds of a catalog request. */
+type CatalogRequestKindCol =
+  | "access"
+  | "import"
+  | "enable"
+  | "connector_setup"
+  | "network_allowlist";
+
 /**
  * 0037, renamed in 0042, kinds since 0077: an org's catalog requests. `stage` (org / deployment) is
  * still written (`enable` -> org, else deployment) but no longer read.
@@ -1956,11 +1964,12 @@ export interface CatalogRequestsTable {
   item_id: NullableCol<string>;
   version: NullableCol<string>;
   /** 0077: what the request asks for (spec §5.1). */
-  kind: ColumnType<
-    "access" | "import" | "enable" | "connector_setup",
-    "access" | "import" | "enable" | "connector_setup" | undefined,
-    "access" | "import" | "enable" | "connector_setup"
-  >;
+  kind: ColumnType<CatalogRequestKindCol, CatalogRequestKindCol | undefined, CatalogRequestKindCol>;
+  /**
+   * 0115: what a `network_allowlist` request asks for (`{ hosts, conversationId, agentId }`); null
+   * for other kinds.
+   */
+  detail: ColumnType<unknown | null, string | null | undefined, string | null>;
   /** 0085: the agent of a `connector_setup` request (cascades with the agent). */
   agent_id: NullableCol<string>;
   /** 0085: the template connector keys a `connector_setup` request still waits for. */
