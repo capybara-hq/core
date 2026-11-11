@@ -7,9 +7,53 @@ export interface PolicyDeps {
   stateDir: string;
   out: (line: string) => void;
   err: (line: string) => void;
+  /**
+   * The person already read {@link OPEN_NETWORK_RISK} and answered `y` at the prompt
+   * ({@link confirmOpenNetwork}); otherwise `set network open` needs `--yes`.
+   */
+  confirmed?: boolean;
 }
 
-const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
+const KEYS = [
+  "allowedDomains",
+  "allowCredentials",
+  "cpu",
+  "memoryMb",
+  "network",
+  "remoteGrants",
+] as const;
+
+/** Shown before `set network open` takes effect (network ask-to-allow spec §7). */
+export const OPEN_NETWORK_RISK =
+  "With no network limit, agent commands on this device can reach any address the organization " +
+  "allows (any public address if the organization has no limit), including uploading files to " +
+  "outside sites. Prompt injection can make an agent do that. Turn it on only on your own " +
+  "development machine, with agents and material you trust.";
+
+/** Refusal of `set network open` without a confirmation. */
+export const OPEN_NETWORK_NEEDS_YES =
+  "Nothing changed. To turn off the network limit, run: capybara-device policy set network open --yes";
+
+/** The prompt of an interactive `set network open`. */
+export const OPEN_NETWORK_PROMPT = "Turn off the network limit on this device? [y/N] ";
+
+/** `policy set network open` without `--yes`: the one change that asks first. */
+export function needsOpenConfirmation(cmd: Extract<Command, { command: "policy" }>): boolean {
+  return cmd.action === "set" && cmd.key === "network" && cmd.value === "open" && cmd.yes !== true;
+}
+
+/**
+ * Asks on a terminal before `set network open`: prints {@link OPEN_NETWORK_RISK} and the prompt;
+ * true only for an answer of `y` or `yes`.
+ */
+export async function confirmOpenNetwork(deps: {
+  out: (line: string) => void;
+  ask: (question: string) => Promise<string>;
+}): Promise<boolean> {
+  deps.out(OPEN_NETWORK_RISK);
+  const answer = (await deps.ask(OPEN_NETWORK_PROMPT)).trim().toLowerCase();
+  return answer === "y" || answer === "yes";
+}
 
 /** What the OS mode does not enforce yet, shown with every `show` and `set`. */
 export const NOT_ENFORCED_NOTE =
@@ -89,7 +133,8 @@ function edit(
 }
 
 /**
- * `policy show` prints the local policy; `policy set <key> <value>` replaces one field;
+ * `policy show` prints the local policy; `policy set <key> <value>` replaces one field
+ * (`set network open` prints the risk and needs `--yes` or a confirmation at the prompt);
  * `policy add|remove <key> <value>` adds or removes entries of a list field. The machine's user
  * edits this file; the deployment changes it only through the `policy` op, on the device owner's
  * decision and only while `remoteGrants` is `owner` (narrowing always). Writes take
@@ -134,6 +179,30 @@ export function policyCommand(
           change = (p) => ({ ...p, [key]: next });
           break;
         }
+        case "network": {
+          if (value !== "allowlist" && value !== "open") {
+            throw new Error(`network must be allowlist or open, got "${value}"`);
+          }
+          if (value === "open") {
+            // Narrowing back to allowlist is always accepted; opening needs a confirmation.
+            if (deps.confirmed !== true) {
+              out(OPEN_NETWORK_RISK);
+              if (cmd.yes !== true) {
+                err(OPEN_NETWORK_NEEDS_YES);
+                return 2;
+              }
+            }
+          }
+          change = (p) => ({ ...p, network: value });
+          break;
+        }
+        case "remoteGrants": {
+          if (value !== "owner" && value !== "off") {
+            throw new Error(`remoteGrants must be owner or off, got "${value}"`);
+          }
+          change = (p) => ({ ...p, remoteGrants: value });
+          break;
+        }
         default:
           throw new Error(`unknown policy key "${key}"; one of ${KEYS.join(", ")}`);
       }
@@ -168,6 +237,20 @@ export function policyCommand(
   if (key === "allowedDomains" && action !== "remove" && dockerMode(stateDir)) {
     if (store.current().allowedDomains.length > 0) out(DOCKER_NETWORK_NOTE);
   }
-  if (key !== "allowedDomains") out(NOT_ENFORCED_NOTE);
+  if (key === "network" && value === "open") {
+    out(
+      "Network is no longer limited by this device: commands reach what the organization allows.",
+    );
+  }
+  if (key === "remoteGrants") {
+    out(
+      value === "owner"
+        ? "The device owner can now widen this device's network from the web or a chat card."
+        : "The deployment can no longer widen this device's network; it can still narrow it.",
+    );
+  }
+  if (key !== "allowedDomains" && key !== "network" && key !== "remoteGrants") {
+    out(NOT_ENFORCED_NOTE);
+  }
   return 0;
 }

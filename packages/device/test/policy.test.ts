@@ -1,9 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { policyCommand } from "../src/commands/policy.js";
+import { runCli } from "../src/cli.js";
+import {
+  OPEN_NETWORK_NEEDS_YES,
+  OPEN_NETWORK_PROMPT,
+  OPEN_NETWORK_RISK,
+  policyCommand,
+} from "../src/commands/policy.js";
 import {
   DENIED_SECRET_PATHS,
   deniedSecretPaths,
@@ -357,5 +363,105 @@ describe("policy command", () => {
     writeFileSync(policyPath(dir), "{nope");
     expect(run({ command: "policy", action: "show" })).toBe(1);
     expect(err.join("\n")).toMatch(/policy\.json/);
+  });
+});
+
+describe("policy set network and remoteGrants", () => {
+  let home: string;
+  let dir: string;
+  let out: string[];
+  let err: string[];
+  let asked: string[];
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "device-policy-cli-"));
+    dir = join(home, "cfg", "capybara-device");
+    mkdirSync(dir, { recursive: true });
+    out = [];
+    err = [];
+    asked = [];
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  const cli = (argv: string[], tty: { isTTY: boolean; answer?: string } = { isTTY: false }) =>
+    runCli(["policy", ...argv], {
+      env: { XDG_CONFIG_HOME: join(home, "cfg") },
+      home,
+      platform: "linux",
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+      stdinIsTTY: tty.isTTY,
+      ask: async (q) => {
+        asked.push(q);
+        return tty.answer ?? "";
+      },
+    });
+
+  it("the risk text is the spec's English text", () => {
+    expect(OPEN_NETWORK_RISK).toBe(
+      "With no network limit, agent commands on this device can reach any address the organization allows (any public address if the organization has no limit), including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
+    );
+  });
+
+  it("open without --yes and no terminal: prints the risk, refuses with exit 2 and a hint", async () => {
+    expect(await cli(["set", "network", "open"])).toBe(2);
+    expect(out).toContain(OPEN_NETWORK_RISK);
+    expect(err.join("\n")).toContain("capybara-device policy set network open --yes");
+    expect(asked).toEqual([]);
+    expect(readPolicy(dir).network).toBe("allowlist");
+  });
+
+  it("open with --yes: prints the risk and opens", async () => {
+    expect(await cli(["set", "network", "open", "--yes"])).toBe(0);
+    expect(out).toContain(OPEN_NETWORK_RISK);
+    expect(readPolicy(dir).network).toBe("open");
+    expect(asked).toEqual([]);
+  });
+
+  it("open on a terminal: asks once; y opens, anything else leaves it alone", async () => {
+    expect(await cli(["set", "network", "open"], { isTTY: true, answer: "n" })).toBe(1);
+    expect(asked).toEqual([OPEN_NETWORK_PROMPT]);
+    expect(out).toEqual([OPEN_NETWORK_RISK]);
+    expect(err).toEqual([OPEN_NETWORK_NEEDS_YES]);
+    expect(readPolicy(dir).network).toBe("allowlist");
+
+    out.length = 0;
+    asked.length = 0;
+    expect(await cli(["set", "network", "open"], { isTTY: true, answer: " Y " })).toBe(0);
+    expect(asked).toEqual([OPEN_NETWORK_PROMPT]);
+    // the risk is shown once
+    expect(out.filter((l) => l === OPEN_NETWORK_RISK)).toHaveLength(1);
+    expect(readPolicy(dir).network).toBe("open");
+  });
+
+  it("allowlist is always accepted, without a question", async () => {
+    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, network: "open" }));
+    expect(await cli(["set", "network", "allowlist"], { isTTY: true })).toBe(0);
+    expect(asked).toEqual([]);
+    expect(out).not.toContain(OPEN_NETWORK_RISK);
+    expect(readPolicy(dir).network).toBe("allowlist");
+  });
+
+  it("network takes allowlist or open only", async () => {
+    expect(await cli(["set", "network", "everything", "--yes"])).toBe(2);
+    expect(err.join("\n")).toMatch(/allowlist or open/);
+    expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
+  });
+
+  it("remoteGrants takes owner or off; other fields are kept", async () => {
+    writeFileSync(
+      policyPath(dir),
+      JSON.stringify({ ...DEFAULT_POLICY, allowedDomains: ["a.com"], network: "open" }),
+    );
+    expect(await cli(["set", "remoteGrants", "off"])).toBe(0);
+    expect(readPolicy(dir)).toMatchObject({
+      remoteGrants: "off",
+      allowedDomains: ["a.com"],
+      network: "open",
+    });
+    expect(out.join("\n")).toMatch(/can no longer widen/);
+    expect(await cli(["set", "remoteGrants", "owner"])).toBe(0);
+    expect(readPolicy(dir).remoteGrants).toBe("owner");
+    expect(await cli(["set", "remoteGrants", "always"])).toBe(2);
+    expect(err.join("\n")).toMatch(/owner or off/);
+    expect(readPolicy(dir).remoteGrants).toBe("owner");
   });
 });

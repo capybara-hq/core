@@ -11,7 +11,14 @@ export type Command =
   | { command: "stop" }
   | { command: "drain" }
   | { command: "policy"; action: "show" }
-  | { command: "policy"; action: "set" | "add" | "remove"; key: string; value: string }
+  | {
+      command: "policy";
+      action: "set" | "add" | "remove";
+      key: string;
+      value: string;
+      /** `--yes`: confirms `set network open` without asking. */
+      yes?: true;
+    }
   | { command: "service"; action: "install" | "uninstall" }
   | { command: "help" };
 
@@ -26,6 +33,10 @@ export const USAGE = `Usage:
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (applies at the next command)
+  capybara-device policy set network allowlist|open [--yes]
+                                  Limit network to allowedDomains, or to what the org allows
+  capybara-device policy set remoteGrants owner|off
+                                  Let the device owner widen the network from the web, or not
   capybara-device policy add|remove allowedDomains <host>
                                   Allow or stop allowing a domain (applies at the next command)
   capybara-device service install|uninstall
@@ -84,9 +95,13 @@ export function parseCommandLine(argv: string[]): Command {
     case "drain":
       return noArgs(name);
     case "policy": {
-      const { positionals } = parse(rest, {});
+      const { values, positionals } = parse(rest, { yes: { type: "boolean", short: "y" } });
+      const yes = values.yes === true;
       const [action, key, value, ...extra] = positionals;
-      if (action === undefined || (action === "show" && key === undefined && extra.length === 0)) {
+      if (
+        !yes &&
+        (action === undefined || (action === "show" && key === undefined && extra.length === 0))
+      ) {
         return { command: "policy", action: "show" };
       }
       if (
@@ -95,9 +110,11 @@ export function parseCommandLine(argv: string[]): Command {
         value !== undefined &&
         extra.length === 0
       ) {
-        return { command: "policy", action, key, value };
+        return { command: "policy", action, key, value, ...(yes && { yes: true as const }) };
       }
-      throw new UsageError("usage: policy [show | set <key> <value> | add|remove <key> <value>]");
+      throw new UsageError(
+        "usage: policy [show | set <key> <value> [--yes] | add|remove <key> <value>]",
+      );
     }
     case "service": {
       const { positionals } = parse(rest, {});
