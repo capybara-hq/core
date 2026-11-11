@@ -28,8 +28,10 @@ import { canonicalJson } from "../tools/canonical-json.js";
 import {
   AgentDefinitionSchema,
   builtinDisabled,
+  canonicalDisabledSkills,
   canonicalDisabledTools,
   connectorToolDisabled,
+  type DisabledSkillRef,
   type DisabledToolRef,
   extensionToolDisabled,
   type InlineAgentTemplate,
@@ -72,8 +74,10 @@ export type PlanItemKind =
  *   describes sub-agents, though its allowlist leaves it out); unavailable `plugin_unavailable`
  *   (its plugin is not enabled in the org or not loaded), `unknown_tool`, `connector_key` (a
  *   connector tool key: connectors carry over only through `connectors` entries);
- * - skill: `pinned`, `not_pinned_manual_only`, `not_pinned_too_large`, `subagent` (named only by an
- *   inline sub-agent); unavailable `not_found`;
+ * - skill (a name of `skills` or an inline sub-agent's `skills`, or a `disallowedSkills` entry): a
+ *   carried name is on for the new agent, `subagent` when only an inline sub-agent names it;
+ *   `disallowed` for a `disallowedSkills` entry turned off; unavailable `not_found` (the org does
+ *   not have it);
  * - connector: `several` (the first of several connectors made from the template was bound);
  *   pending `no_connector`, `tools_missing` (the connector made from the template lacks every
  *   named tool), `needs`; unavailable `template_not_found` (also for a template the org may not
@@ -113,7 +117,8 @@ export interface TemplatePlan {
    * What has no place in the agent or was cut to its limits: `maxSteps`, `effort` when the model
    * does not declare it, `description` / `instructions` / `quickActions.<i>.title|body` /
    * `instructionFiles.<i>.content` / `subagents.inline.<name>.description|instructions` when cut to
-   * the kernel's limits (UTF-16 units), `subagents.inline.<name>.tools.<key>` for a key the agent
+   * the kernel's limits (UTF-16 units), `disallowedSkills.<entry>` for an entry that names no skill
+   * the org has, `subagents.inline.<name>.tools.<key>` for a key the agent
    * does not have, `connectors.<key>.tools.<name>` / `connectors.<key>.policies.<name>` for a tool
    * the bound connector does not offer.
    */
@@ -216,6 +221,29 @@ function skillByName(
   return [...found].sort(
     (a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   )[0];
+}
+
+/**
+ * A template's `disallowedSkills` entry as an agent's disabled skill entry (skills default-on spec
+ * §6.2): `<plugin>:*` the whole plugin (skills it gains later included), `<plugin>:<name>` that
+ * plugin's skill, a bare `<name>` the org's usable skill of that name without a plugin. Null when
+ * it names nothing the org has (an agent's definition refuses a plugin without skills in the org).
+ */
+function disallowedSkillRef(
+  skills: readonly SkillVersionRow[],
+  ref: string,
+): DisabledSkillRef | null {
+  const i = ref.indexOf(":");
+  if (i >= 0) {
+    const plugin = ref.slice(0, i);
+    const name = ref.slice(i + 1);
+    if (!skills.some((s) => s.plugin === plugin && (name === "*" || s.name === name))) return null;
+    return { kind: "plugin", plugin, skills: name === "*" ? "all" : [name] };
+  }
+  const s = skills
+    .filter((x) => x.plugin === null && x.name === ref)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  return s === undefined ? null : { kind: "skill", skillId: s.id };
 }
 
 interface OrgConnector {
@@ -475,18 +503,26 @@ export async function planFromTemplate(
     // a connector key is matched against the bound connectors below
   }
 
-  // skills: by name against the org's usable skills (P4-5); every name gets its item
+  // skills (skills default-on spec §6.2): the new agent has every skill on in the org. Each name
+  // in `skills` (and in an inline sub-agent's, below) is checked against the org's usable skills
+  // and listed `carried` or `unavailable` (`not_found`); it narrows nothing.
   const usable = await usableSkillVersions(db, orgId);
-  // skills default-on (spec §6.2): a skill the org has is on for the new agent; nothing is
-  // selected or pinned (the template report is reworked by Task 3 of the plan)
-  const skillNames = [...new Set([...(t.skills ?? []), ...(t.selectedSkills ?? [])])];
-  for (const name of skillNames) {
-    const s = skillByName(usable, name, row.plugin);
-    if (!s) {
-      item("skill", name, "unavailable", "not_found");
+  for (const name of new Set(t.skills ?? [])) {
+    if (skillByName(usable, name, row.plugin)) item("skill", name, "carried");
+    else item("skill", name, "unavailable", "not_found");
+  }
+  // `disallowedSkills` turns skills off: `<plugin>:*` the whole plugin, `<plugin>:<name>` a
+  // plugin's skill, a bare `<name>` the org's skill without a plugin; an entry that names nothing
+  // the org has is dropped
+  const disabledSkills: DisabledSkillRef[] = [];
+  for (const ref of new Set(t.disallowedSkills ?? [])) {
+    const off = disallowedSkillRef(usable, ref);
+    if (off === null) {
+      dropped.push(`disallowedSkills.${ref}`);
       continue;
     }
-    item("skill", name, "carried");
+    disabledSkills.push(off);
+    item("skill", ref, "carried", "disallowed");
   }
 
   // connectors (P4-5, P4-6)
@@ -736,7 +772,7 @@ export async function planFromTemplate(
     fallbackParams: {},
     disabledTools: canonicalDisabledTools(disabled),
     toolPolicies,
-    disabledSkills: [],
+    disabledSkills: canonicalDisabledSkills(disabledSkills),
     ...(subagents !== undefined && { subagents }),
     ...(pendingConnectors.length > 0 && { pendingConnectors }),
   };

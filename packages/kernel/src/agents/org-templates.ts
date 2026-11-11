@@ -8,6 +8,7 @@ import {
   type AgentTemplateConnector,
   type AgentTemplateInlineSubagent,
   extensionToolKey,
+  isDisallowedSkillRef,
   parseAgentTemplate,
   parseToolKey,
 } from "@capybara-hq/plugin-sdk";
@@ -22,18 +23,28 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { skillVersionsById } from "../skills/usable.js";
+import {
+  linkedCopyIds,
+  skillIdsOf,
+  skillVersionsById,
+  usableSkillVersions,
+} from "../skills/usable.js";
 import { isRemovedBuiltinKey } from "../tools/builtin-names.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { AgentLookup, type AgentView } from "./agent-lookup.js";
-import type { DisabledToolRef } from "./definition.js";
+import {
+  canonicalDisabledSkills,
+  type DisabledSkillRef,
+  type DisabledToolRef,
+} from "./definition.js";
 import {
   type AgentTemplateView,
   loadTemplates,
   type OwnTemplate,
   putTemplateVersionIn,
   readOwnTemplate,
+  storedTemplate,
   type TemplateRow,
   templateTypeOf,
   templateViewOf,
@@ -232,6 +243,60 @@ export function canonicalEndpoints(template: AgentTemplate): AgentTemplate {
 }
 
 /**
+ * An agent's `disabledSkills` as a template's `disallowedSkills` (skills default-on spec §6.2): a
+ * plugin entry of `"all"` as `<plugin>:*` while the org has skills of that plugin, its names as
+ * `<plugin>:<name>` while the org has that skill, a skill entry as the current name of the usable skill it names (`<plugin>:<name>` for a
+ * plugin's skill). What no longer resolves, or is past the template's limit, goes to `omitted`.
+ */
+async function disallowedSkillsOf(
+  db: KernelSchemaDb,
+  orgId: string,
+  disabled: readonly DisabledSkillRef[],
+  omitted: SaveAsOmission[],
+): Promise<string[]> {
+  const out: string[] = [];
+  if (disabled.length === 0) return out;
+  const usable = await usableSkillVersions(db, orgId);
+  const linked = await linkedCopyIds(
+    db,
+    orgId,
+    usable.flatMap((r) => (r.origin === "platform" ? [r.id] : [])),
+  );
+  const push = (ref: string, id?: string) => {
+    if (out.includes(ref)) return;
+    if (out.length >= AGENT_TEMPLATE_LIMITS.disallowedSkills) {
+      omitted.push({ kind: "skill", name: ref, ...(id !== undefined && { id }), reason: "limit" });
+      return;
+    }
+    out.push(ref);
+  };
+  for (const r of canonicalDisabledSkills(disabled)) {
+    if (r.kind === "plugin") {
+      if (r.skills === "all") {
+        const ref = `${r.plugin}:*`;
+        const ok = isDisallowedSkillRef(ref) && usable.some((s) => s.plugin === r.plugin);
+        if (ok) push(ref);
+        else omitted.push({ kind: "skill", name: ref, reason: "unavailable" });
+        continue;
+      }
+      for (const name of r.skills) {
+        const ref = `${r.plugin}:${name}`;
+        const ok =
+          isDisallowedSkillRef(ref) && usable.some((s) => s.plugin === r.plugin && s.name === name);
+        if (ok) push(ref);
+        else omitted.push({ kind: "skill", name: ref, reason: "unavailable" });
+      }
+      continue;
+    }
+    const s = usable.find((u) => skillIdsOf(u, linked).includes(r.skillId));
+    const ref = s === undefined ? null : s.plugin === null ? s.name : `${s.plugin}:${s.name}`;
+    if (ref !== null && isDisallowedSkillRef(ref)) push(ref, r.skillId);
+    else omitted.push({ kind: "skill", name: r.skillId, id: r.skillId, reason: "unavailable" });
+  }
+  return out;
+}
+
+/**
  * The template an agent is saved as (rulings P4-10, P4-11), with what was left out. Pure reads of
  * the org's state through `db`.
  */
@@ -341,53 +406,43 @@ export async function templateFromAgent(
     return { policies: Object.fromEntries(list.map((p) => [p.tool, p.policy] as const)) };
   };
 
-  // Skills: nothing is selected or pinned any more (skills default-on spec §6.2; Task 3 of the
-  // plan writes `disallowedSkills`)
-  const pinned: string[] = [];
-  const selected: string[] = [];
+  // Skills (skills default-on spec §6.2): the agent has every skill on in the org; its
+  // `disabledSkills` become `disallowedSkills` (a whole plugin as `<plugin>:*`, a plugin's skill
+  // as `<plugin>:<name>`, a skill entry by its current name); entries that no longer resolve to a
+  // usable skill are listed. The agent's own skills are not in the org library: listed.
+  const disallowedSkills = await disallowedSkillsOf(db, orgId, def.disabledSkills ?? [], omitted);
   const inlineSkillIds = (def.subagents?.inline ?? []).flatMap((t) => t.skills ?? []);
-  const byId = await skillVersionsById(db, orgId, [...pinned, ...selected, ...inlineSkillIds]);
-  const agentSkillNames = new Map(
-    (
-      await db
-        .selectFrom("skills")
-        .select(["id", "name"])
-        .where("org_id", "=", orgId)
-        .where("scope", "=", "agent")
-        .where("id", "in", ["", ...pinned, ...selected, ...inlineSkillIds])
-        .execute()
-    ).map((r) => [r.id, r.name]),
-  );
+  const byId = await skillVersionsById(db, orgId, inlineSkillIds);
+  const ownSkills = await db
+    .selectFrom("skills")
+    .select(["id", "name", "agent_id", "deleted_at"])
+    .where("org_id", "=", orgId)
+    .where("scope", "=", "agent")
+    .where((eb) => eb.or([eb("agent_id", "=", agent.id), eb("id", "in", ["", ...inlineSkillIds])]))
+    .orderBy("name")
+    .orderBy("id")
+    .execute();
+  const agentSkillNames = new Map(ownSkills.map((r) => [r.id, r.name]));
   const reportedSkills = new Set<string>();
-  const skillName = (id: string, report: boolean): string | null => {
+  const reportSkill = (id: string) => {
+    if (reportedSkills.has(id)) return;
+    reportedSkills.add(id);
+    const own = agentSkillNames.get(id) ?? byId.get(id)?.name;
+    omitted.push(
+      own !== undefined
+        ? { kind: "skill", name: own, id, reason: "agent_skill" }
+        : { kind: "skill", name: id, id, reason: "unavailable" },
+    );
+  };
+  const skillName = (id: string): string | null => {
     const s = byId.get(id);
     if (s && s.scope === "org") return s.name;
-    if (report && !reportedSkills.has(id)) {
-      reportedSkills.add(id);
-      const own = agentSkillNames.get(id) ?? s?.name;
-      omitted.push(
-        own !== undefined
-          ? { kind: "skill", name: own, id, reason: "agent_skill" }
-          : { kind: "skill", name: id, id, reason: "unavailable" },
-      );
-    }
+    reportSkill(id);
     return null;
   };
-  const skills: string[] = [];
-  for (const id of pinned) {
-    const n = skillName(id, true);
-    if (n !== null && !skills.includes(n) && skills.length < L.skills) skills.push(n);
-  }
-  const selectedSkills: string[] = [];
-  for (const id of selected) {
-    if (pinned.includes(id)) continue;
-    const n = skillName(id, true);
-    if (n === null || skills.includes(n) || selectedSkills.includes(n)) continue;
-    if (selectedSkills.length >= L.selectedSkills) {
-      omitted.push({ kind: "skill", name: n, id, reason: "limit" });
-      continue;
-    }
-    selectedSkills.push(n);
+  // the agent's own live skills (on for it whatever `disabledSkills` say)
+  for (const r of ownSkills) {
+    if (r.agent_id === agent.id && r.deleted_at === null) reportSkill(r.id);
   }
 
   // Connectors (P4-11), then the agent's pending connectors as they are
@@ -617,7 +672,7 @@ export async function templateFromAgent(
       }
       const inlineSkills: string[] = [];
       for (const id of t.skills ?? []) {
-        const n = skillName(id, true);
+        const n = skillName(id);
         if (n === null || inlineSkills.includes(n)) continue;
         if (inlineSkills.length >= L.skills) {
           omitted.push({ kind: "skill", name: n, id, reason: "limit" });
@@ -661,8 +716,7 @@ export async function templateFromAgent(
     model: "standard",
     modelRef: `${def.model.provider}/${def.model.model}`,
     ...(effort !== undefined && { effort }),
-    ...(skills.length > 0 && { skills }),
-    ...(selectedSkills.length > 0 && { selectedSkills }),
+    ...(disallowedSkills.length > 0 && { disallowedSkills }),
     ...(connectors.length > 0 && { connectors }),
     ...(subagents !== undefined && { subagents }),
     ...(quickActions.length > 0 && { quickActions }),
@@ -1010,7 +1064,7 @@ export class OrgAgentTemplates {
       name: own.name,
       plugin: null,
       version: row.current_version,
-      template: row.definition as AgentTemplate,
+      template: storedTemplate(row.definition),
       sourceFormat: row.source_format,
       catalogItemId: null,
       catalogVersion: null,

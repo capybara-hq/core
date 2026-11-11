@@ -398,6 +398,11 @@ describe("org agent templates", { timeout: 120_000 }, () => {
               .executeTakeFirstOrThrow()
           ).definition,
           skills: { orgSkills: [s1, s2, s3], pinned: [s1, own] },
+          // the off-list becomes disallowedSkills; a plugin the org has no skills of is listed
+          disabledSkills: [
+            { kind: "skill", skillId: s3 },
+            { kind: "plugin", plugin: "gone", skills: "all" },
+          ],
         }),
       })
       .where("agent_id", "=", agentId)
@@ -431,7 +436,8 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       modelRef: "model-fake/fake-1",
       effort: "high",
       // an agent's selected and pinned skills from before skills were on by default carry
-      // nothing into a template (skills default-on spec §6.2)
+      // nothing into a template; its off-list does (skills default-on spec §6.2)
+      disallowedSkills: ["style"],
       connectors: [
         { template: platformTpl, policies: { search: "ask" } },
         {
@@ -502,9 +508,12 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         { kind: "tool_policy", name: "mcp__inline__op", reason: "connector_tool" },
         { kind: "subagent_inline", name: "helper", field: "tools", reason: "connector_tool" },
         { kind: "subagent_inline", name: "helper", field: "effort", reason: "unsupported_field" },
+        // the agent's own skill is not in the org library
+        { kind: "skill", name: "own-notes", id: own, reason: "agent_skill" },
+        { kind: "skill", name: "gone:*", reason: "unavailable" },
       ]),
     );
-    expect(body.omitted).toHaveLength(6);
+    expect(body.omitted).toHaveLength(8);
     expect(own).toBeTruthy();
 
     // no credential, header or secret query ever enters the stored template
@@ -665,15 +674,27 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       boss({ method: "PUT", url: `/api/v1/orgs/${orgA}/agent-templates/${id}`, payload });
 
     const v2 = await put({
-      definition: { ...definition, description: "Leads better.", selectedSkills: ["report"] },
+      definition: {
+        ...definition,
+        description: "Leads better.",
+        disallowedSkills: ["report", "crm:*", "crm:draft"],
+        // a field the format no longer has: ignored like any unknown key
+        selectedSkills: ["report"],
+      },
       expectedVersion: 1,
     });
     expect(v2.statusCode, v2.body).toBe(200);
     expect(v2.json().template).toMatchObject({
       version: 2,
       description: "Leads better.",
-      definition: expect.objectContaining({ selectedSkills: ["report"] }),
+      definition: expect.objectContaining({ disallowedSkills: ["report", "crm:*", "crm:draft"] }),
     });
+    expect(v2.json().template.definition.selectedSkills).toBeUndefined();
+    expect(
+      errorOf(
+        await put({ definition: { ...definition, disallowedSkills: ["*"] }, expectedVersion: 2 }),
+      ),
+    ).toEqual([400, "validation_failed"]);
     // a stale version
     const stale = await put({ definition, expectedVersion: 1 });
     expect(errorOf(stale)).toEqual([409, "agent_template.version_conflict"]);
@@ -739,6 +760,36 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         }),
       ),
     ).toEqual([409, "catalog.not_owned"]);
+  });
+
+  it("reads a stored version without selectedSkills, a field the format no longer has", async () => {
+    const id = randomUUID();
+    await db
+      .insertInto("agent_templates")
+      .values({ id, org_id: orgA, name: "old", plugin_name: "crm", current_version: 1 })
+      .execute();
+    await db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: id,
+        version: 1,
+        definition: JSON.stringify({
+          name: "old",
+          description: "Old.",
+          instructions: "O.",
+          skills: ["report"],
+          selectedSkills: ["charts"],
+        }),
+      })
+      .execute();
+    const res = await mem({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().template.definition).toEqual({
+      name: "old",
+      description: "Old.",
+      instructions: "O.",
+      skills: ["report"],
+    });
   });
 
   it("an unshared template is removed by its owner", async () => {
@@ -1072,9 +1123,9 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       { kind: "model_param", name: "effort", reason: "model_param" },
       { kind: "model_param", name: "model-fake.style", reason: "model_param" },
       { kind: "fallback_model", name: "model-fake/fake-2", reason: "fallback" },
+      { kind: "skill", name: "own-notes", id: own, reason: "agent_skill" },
       { kind: "subagent_inline", name: "blank", field: "description", reason: "empty_text" },
       { kind: "subagent_inline", name: "hollow", field: "instructions", reason: "empty_text" },
-      { kind: "skill", name: "own-notes", id: own, reason: "agent_skill" },
       { kind: "skill", name: "four", id: d, reason: "limit" },
       { kind: "quick_action", name: " ", reason: "empty_text" },
     ]);
