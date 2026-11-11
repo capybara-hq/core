@@ -517,7 +517,9 @@
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
-  white-space: nowrap;
+  /* it sits on the side with more room (at least half the width), so it never leaves the chart */
+  max-width: calc(50% - var(--cb-space-2));
+  overflow-wrap: anywhere;
   pointer-events: none;
 }
 .cb-trend-tip-current,

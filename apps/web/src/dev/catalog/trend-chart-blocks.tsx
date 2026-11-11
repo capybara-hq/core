@@ -39,7 +39,8 @@ function trendChartBlocks(): ReactNode {
           panels={panels()}
           current={F.current}
           extra={extra}
-          initialActive={F.hover}
+          extraLabel={F.extraLabel}
+          defaultActive={F.hover}
         />
       </RefBlock>
       <RefBlock id="trend-chart-empty" width={W} pad>

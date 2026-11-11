@@ -47,6 +47,13 @@ describe("formatCompact", () => {
     expect(formatCompact(3_400_000, "de")).toBe("3.4M");
   });
 
+  it("decides the sign after rounding: no negative zero", () => {
+    expect(formatCompact(-0.04, "en")).toBe("0");
+    expect(formatCompact(-0.04, "zh")).toBe("0");
+    expect(formatCompact(-0.4, "en")).toBe("-0.4");
+    expect(formatCompact(-999_950, "en")).toBe("-1M");
+  });
+
   it("draws a dash for what is not a finite number", () => {
     expect(formatCompact(Number.NaN, "en")).toBe("—");
     expect(formatCompact(Number.POSITIVE_INFINITY, "zh")).toBe("—");

@@ -179,18 +179,29 @@ describe("TrendChart accessibility", () => {
   });
 
   it("holds every value in a visually hidden table, the current row marked", () => {
-    const { container } = chart({ panels: panels(F.gapRuns, F.tokens.values) });
+    const { container } = chart({
+      panels: panels(F.gapRuns, F.tokens.values),
+      extraLabel: F.extraLabel,
+    });
     const table = container.querySelector("table");
     expect(table?.className).toContain("cb-sr-only");
     const rows = [...(table?.querySelectorAll("tbody tr") ?? [])].map((r) =>
       [...r.children].map((c) => c.textContent),
     );
     expect(rows).toHaveLength(7);
-    expect(rows[0]).toEqual(["11-05", "96", "241万"]);
-    expect(rows[2]).toEqual(["11-07", "—", "287万"]);
-    expect(rows[6]).toEqual(["11-11（当前）", "64", "152万"]);
+    expect(rows[0]).toEqual(["11-05", "96", "241万", "估算 ¥9.80"]);
+    expect(rows[2]).toEqual(["11-07", "—", "287万", "估算 ¥11.40"]);
+    expect(rows[4]).toEqual(["11-09", "128", "340万", "估算 ¥12.30"]);
+    expect(rows[6]).toEqual(["11-11（当前）", "64", "152万", "估算 ¥5.90"]);
     const head = [...(table?.querySelectorAll("thead th") ?? [])].map((c) => c.textContent);
+    expect(head).toEqual(["时间", "运行", "Token", "估算费用"]);
+  });
+
+  it("has no extra column without extra", () => {
+    const { container } = wrap(<TrendChart label={F.label} x={F.x} panels={panels()} />);
+    const head = [...container.querySelectorAll("thead th")].map((c) => c.textContent);
     expect(head).toEqual(["时间", "运行", "Token"]);
+    expect(container.querySelector("tbody tr")?.children).toHaveLength(3);
   });
 });
 
@@ -260,11 +271,44 @@ describe("TrendChart interaction", () => {
     expect(container.querySelector('[data-part="trend-chart-tooltip"]')?.textContent).toContain(
       "11-07",
     );
+    // a pointer's hover is not announced
+    expect(live(container)).toBe("");
     const root = container.querySelector('[data-part="trend-chart"]') as Element;
     act(() => {
       fireEvent.pointerLeave(root, { pointerType: "mouse" });
     });
     expect(crosshairs(container)).toEqual([]);
+  });
+
+  it("hides a clicked column when the mouse leaves, though the click focused the group", () => {
+    const { container } = chart();
+    const hits = [...container.querySelectorAll('[data-part="trend-chart-hit"]')];
+    const root = container.querySelector('[data-part="trend-chart"]') as HTMLElement;
+    act(() => {
+      fireEvent.pointerEnter(hits[3] as Element, { pointerType: "mouse" });
+      fireEvent.pointerDown(hits[3] as Element, { pointerType: "mouse" });
+      root.focus();
+      fireEvent.pointerUp(hits[3] as Element, { pointerType: "mouse" });
+    });
+    expect(document.activeElement).toBe(root);
+    expect(crosshairs(container)[0]).toBeCloseTo((3.5 / 7) * 100, 3);
+    expect(live(container)).toBe("");
+    act(() => {
+      fireEvent.pointerLeave(root, { pointerType: "mouse" });
+    });
+    expect(crosshairs(container)).toEqual([]);
+  });
+
+  it("keeps a point reached by keyboard when the pointer leaves", async () => {
+    const user = userEvent.setup();
+    const { container } = chart();
+    await user.tab();
+    await user.keyboard("{ArrowLeft}");
+    const root = container.querySelector('[data-part="trend-chart"]') as Element;
+    act(() => {
+      fireEvent.pointerLeave(root, { pointerType: "mouse" });
+    });
+    expect(crosshairs(container)[0]).toBeCloseTo((5.5 / 7) * 100, 3);
   });
 
   it("shows a tapped column on touch and keeps it after the finger lifts", () => {
@@ -279,7 +323,7 @@ describe("TrendChart interaction", () => {
   });
 
   it("can open on a given point (the reference set's hover block)", () => {
-    const { container } = chart({ initialActive: F.hover });
+    const { container } = chart({ defaultActive: F.hover });
     expect(crosshairs(container)[0]).toBeCloseTo((4.5 / 7) * 100, 3);
   });
 });
@@ -287,7 +331,7 @@ describe("TrendChart interaction", () => {
 describe("TrendChart props", () => {
   it("has no second y-scale: one format per panel, no axis props", () => {
     expectTypeOf<keyof TrendChartProps>().toEqualTypeOf<
-      "label" | "x" | "panels" | "current" | "extra" | "empty" | "initialActive"
+      "label" | "x" | "panels" | "current" | "extra" | "extraLabel" | "empty" | "defaultActive"
     >();
     expectTypeOf<keyof TrendChartPanel>().toEqualTypeOf<"id" | "label" | "values" | "format">();
     const bad: TrendChartProps = {

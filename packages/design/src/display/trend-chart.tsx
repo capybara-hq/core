@@ -3,6 +3,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  useRef,
   useState,
 } from "react";
 import { useDensity } from "../controls/density";
@@ -28,12 +29,14 @@ export type TrendChartProps = {
   panels: TrendChartPanel[];
   /** The index drawn in `accent` (today), with the segment into it. */
   current?: number;
-  /** More tooltip lines for a position (估算 ¥12.30). */
+  /** More tooltip lines for a position (估算 ¥12.30); also a column of the hidden table. */
   extra?(i: number): ReactNode;
+  /** The hidden table's header of the `extra` column (估算费用). */
+  extraLabel?: string;
   /** The zero state's line, shown when no value of any panel is above zero. */
   empty?: string;
   /** The index shown with the crosshair and tooltip before any pointer or key moves it. */
-  initialActive?: number;
+  defaultActive?: number;
 };
 
 /** Plot heights by density step (spec §2.5: 96 at `default`, 72 at `dense`). */
@@ -74,16 +77,21 @@ export function TrendChart({
   panels,
   current,
   extra,
+  extraLabel,
   empty,
-  initialActive,
+  defaultActive,
 }: TrendChartProps) {
   const t = useDesignT();
   const density = useDensity() === "dense" ? "dense" : "default";
   const h = PLOT_H[density];
   const bottom = h - BOTTOM_GAP;
   const n = x.length;
-  const [active, setActive] = useState<number | null>(initialActive ?? null);
-  const [last, setLast] = useState<number | null>(initialActive ?? null);
+  const [active, setActive] = useState<number | null>(defaultActive ?? null);
+  const [last, setLast] = useState<number | null>(defaultActive ?? null);
+  // whether the shown point was reached by keyboard (focus or keys): only then is it announced
+  // and does it outlive the pointer leaving
+  const [byKey, setByKey] = useState(false);
+  const pointerDown = useRef(false);
 
   const isEmpty = panels.every((p) => p.values.every((v) => v == null || v <= 0));
   const clamp = (i: number) => Math.max(0, Math.min(n - 1, i));
@@ -125,13 +133,15 @@ export function TrendChart({
         return;
     }
     e.preventDefault();
+    setByKey(true);
     show(next);
   };
 
   const onPointerLeave = (e: PointerEvent<HTMLDivElement>) => {
     // a tapped column stays after the finger lifts (pointerleave follows every touch)
     if (e.pointerType === "touch") return;
-    if (e.currentTarget.contains(document.activeElement)) return;
+    // a point reached by keyboard stays; a clicked group's focus does not keep it
+    if (byKey) return;
     setActive(null);
   };
 
@@ -165,13 +175,13 @@ export function TrendChart({
         {more != null && more !== false ? <div className="cb-trend-tip-extra">{more}</div> : null}
       </div>
     );
-    liveText = (
+    liveText = byKey ? (
       <>
         {xLabel(active)}
         {panels.map((p) => ` · ${p.label} ${valueText(p, active)}`).join("")}
         {more != null && more !== false ? <> · {more}</> : null}
       </>
-    );
+    ) : null;
   }
 
   return (
@@ -187,7 +197,16 @@ export function TrendChart({
       data-state={isEmpty ? "empty" : undefined}
       onKeyDown={onKeyDown}
       onFocus={() => {
+        // focus from a pointer press is not keyboard focus: the press shows its own column
+        if (pointerDown.current) return;
+        setByKey(true);
         if (active === null && n > 0) show(last ?? current ?? n - 1);
+      }}
+      onPointerDown={() => {
+        pointerDown.current = true;
+      }}
+      onPointerUp={() => {
+        pointerDown.current = false;
       }}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActive(null);
@@ -314,9 +333,14 @@ export function TrendChart({
               className="cb-trend-hit"
               data-part="trend-chart-hit"
               onPointerEnter={(e) => {
-                if (e.pointerType !== "touch") show(i);
+                if (e.pointerType === "touch") return;
+                setByKey(false);
+                show(i);
               }}
-              onPointerDown={() => show(i)}
+              onPointerDown={() => {
+                setByKey(false);
+                show(i);
+              }}
             />
           ))}
         </div>
@@ -342,6 +366,7 @@ export function TrendChart({
                 {p.label}
               </th>
             ))}
+            {extra ? <th scope="col">{extraLabel ?? ""}</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -351,6 +376,7 @@ export function TrendChart({
               {panels.map((p) => (
                 <td key={p.id}>{valueText(p, i)}</td>
               ))}
+              {extra ? <td>{extra(i)}</td> : null}
             </tr>
           ))}
         </tbody>

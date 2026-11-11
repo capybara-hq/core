@@ -34,22 +34,28 @@ function scaled(abs: number, unit: number): number {
  */
 export function formatCompact(n: number, locale: string): string {
   if (!Number.isFinite(n)) return "—";
-  const units = UNITS[locale === "zh" || locale.startsWith("zh-") ? "zh" : "en"];
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
+  const out = compactAbs(
+    Math.abs(n),
+    UNITS[locale === "zh" || locale.startsWith("zh-") ? "zh" : "en"],
+  );
+  // the sign follows the rounded value: -0.04 is "0", never "-0"
+  return n < 0 && out !== "0" ? `-${out}` : out;
+}
+
+function compactAbs(abs: number, units: [number, string][]): string {
   for (let k = 0; k < units.length; k++) {
     const [unit, suffix] = units[k] as [number, string];
     if (abs < unit) continue;
     const bigger = units[k - 1];
     const v = scaled(abs, unit);
     if (bigger && v * unit >= bigger[0]) {
-      return `${sign}${String(scaled(abs, bigger[0]))}${bigger[1]}`;
+      return `${String(scaled(abs, bigger[0]))}${bigger[1]}`;
     }
-    return `${sign}${String(v)}${suffix}`;
+    return `${String(v)}${suffix}`;
   }
   // below the smallest unit; a value that rounds up to it takes it
   const smallest = units[units.length - 1] as [number, string];
   const rounded = Math.round(abs * 10) / 10;
-  if (rounded >= smallest[0]) return `${sign}1${smallest[1]}`;
-  return `${sign}${GROUPED.format(rounded)}`;
+  if (rounded >= smallest[0]) return `1${smallest[1]}`;
+  return `${GROUPED.format(rounded)}`;
 }

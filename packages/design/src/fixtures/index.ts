@@ -712,6 +712,8 @@ export const TREND_CHART_FIXTURE = {
   )[],
   cost: ["¥9.80", "¥12.10", "¥11.40", "¥7.60", "¥12.30", "¥11.90", "¥5.90"],
   costLabel: "估算",
+  /** The hidden table's header of the cost column. */
+  extraLabel: "估算费用",
   current: 6,
   /** The index the hover block shows (11-09, the highest day). */
   hover: 4,
