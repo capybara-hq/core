@@ -1,5 +1,23 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.22
+
+### Minor Changes
+
+- ac35f95: Bootstrap manifest entries may be `builtin: true`: builtin in the catalog, imported after the
+  extensions load (so they may ship skills), and a failure does not stop the start
+
+### Patch Changes
+
+- c371130: Bootstrap pins the builtin `skills-core` plugin (skill-guide); compose's init waits for the
+  object store, where the bootstrap's second pass stores its skills
+- 6d9e768: Bootstrap pins move to the plugin versions the official marketplace lists at capybara-hq/plugins
+  14c73d5 (openai-compatible rc.7, object-store-s3 rc.6, sandbox-docker rc.10, the rest likewise)
+- Updated dependencies [ac35f95]
+- Updated dependencies [c371130]
+- Updated dependencies [6d9e768]
+  - @capybara-hq/kernel@0.1.0-rc.21
+
 ## 0.1.0-rc.21
 
 ### Minor Changes

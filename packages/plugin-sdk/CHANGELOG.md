@@ -1,5 +1,12 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.15
+
+### Minor Changes
+
+- ac35f95: Bootstrap manifest entries may be `builtin: true`: builtin in the catalog, imported after the
+  extensions load (so they may ship skills), and a failure does not stop the start
+
 ## 0.1.0-rc.14
 
 ### Minor Changes
