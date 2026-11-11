@@ -540,7 +540,33 @@ export class ScheduledTasksService {
         .execute();
       for (const r of rows) names.set(r.id, r.display_name);
     }
+    const ids = tasks.map((t) => t.id);
+    // the latest settled non-trial run of each task, and every grant of these tasks, in one query each
+    const latest = await db
+      .selectFrom("scheduled_task_runs")
+      .select(["task_id", "fired_at", "scheduled_for", "missing_grants"])
+      .distinctOn("task_id")
+      .where("task_id", "in", ids)
+      .where("trial", "=", false)
+      .where("status", "<>", "skipped")
+      .orderBy("task_id")
+      .orderBy("scheduled_for", "desc")
+      .orderBy("id", "desc")
+      .execute();
+    const runs = new Map(latest.map((r) => [r.task_id, r]));
+    const grantRows = await db
+      .selectFrom("scheduled_task_grants")
+      .select(["task_id", "tool_key"])
+      .where("task_id", "in", ids)
+      .execute();
+    const granted = new Map<string, Set<string>>();
+    for (const g of grantRows) {
+      const set = granted.get(g.task_id) ?? new Set<string>();
+      set.add(g.tool_key);
+      granted.set(g.task_id, set);
+    }
     let role: OrgRole | null | undefined;
+    const gated = new Map<string, Promise<Map<string, OrgRole>>>();
     for (const task of tasks) {
       if (task.status === "paused" && task.pauseReason !== null && task.pauseReason !== "creator") {
         out.push({
@@ -556,25 +582,22 @@ export class ScheduledTasksService {
           at: task.updatedAt,
         });
       }
-      const run = await db
-        .selectFrom("scheduled_task_runs")
-        .select(["fired_at", "scheduled_for", "missing_grants"])
-        .where("task_id", "=", task.id)
-        .where("trial", "=", false)
-        .where("status", "<>", "skipped")
-        .orderBy("scheduled_for", "desc")
-        .orderBy("id", "desc")
-        .limit(1)
-        .executeTakeFirst();
-      if (!run || run.missing_grants.length === 0) continue;
-      const granted = new Set((await this.store.listGrants(db, task.id)).map((g) => g.toolKey));
-      const missing = run.missing_grants.filter((k) => !granted.has(k));
+      const run = runs.get(task.id);
+      if (!run) continue;
+      const have = granted.get(task.id);
+      const missing = run.missing_grants.filter((k) => !have?.has(k));
       if (missing.length === 0) continue;
-      const toolKeys = missing.filter((k) => !k.startsWith("connection:"));
       let needsRole: string[] = [];
-      if (toolKeys.length > 0) {
-        role ??= await this.roleOrNull(orgId, accountId);
-        needsRole = await this.rolesTooLow(orgId, accountId, task.agentId, role, toolKeys);
+      if (missing.some((k) => !k.startsWith("connection:"))) {
+        if (role === undefined) role = await this.roleOrNull(orgId, accountId);
+        const lookup =
+          gated.get(task.agentId) ?? this.requiredRoles(orgId, accountId, task.agentId);
+        gated.set(task.agentId, lookup);
+        const required = await lookup;
+        needsRole = missing.filter((k) => {
+          const req = required.get(k);
+          return req !== undefined && (role === null || !roleAtLeast(role, req));
+        });
       }
       out.push({
         taskId: task.id,
@@ -599,29 +622,28 @@ export class ScheduledTasksService {
     return m?.role ?? null;
   }
 
-  /** The keys among `toolKeys` the agent has now with a `requiredRole` above `role`. */
-  private async rolesTooLow(
+  /** The agent's tools that declare a `requiredRole`, by key; none when the agent is gone or hidden. */
+  private async requiredRoles(
     orgId: string,
     accountId: string,
     agentId: string,
-    role: OrgRole | null,
-    toolKeys: string[],
-  ): Promise<string[]> {
+  ): Promise<Map<string, OrgRole>> {
+    let d: AgentView["definition"];
     try {
-      const d = (await this.agents.get(orgId, agentId, accountId)).definition;
-      const { tools } = await this.tools.forAgent(orgId, {
-        disabledTools: d.disabledTools ?? [],
-        subagentTools: d.subagentTools,
-        subagents: d.subagents,
-      });
-      return toolKeys.filter((k) => {
-        const req = tools.find((x) => x.key === k)?.requiredRole;
-        return req !== undefined && (role === null || !roleAtLeast(role, req));
-      });
-    } catch {
-      // the agent is gone or hidden: the task is paused for that reason anyway
-      return [];
+      d = (await this.agents.get(orgId, agentId, accountId)).definition;
+    } catch (e) {
+      // the task is paused for that reason anyway
+      if (e instanceof ApiError && e.code === "agent.not_found") return new Map();
+      throw e;
     }
+    const { tools } = await this.tools.forAgent(orgId, {
+      disabledTools: d.disabledTools ?? [],
+      subagentTools: d.subagentTools,
+      subagents: d.subagents,
+    });
+    const out = new Map<string, OrgRole>();
+    for (const x of tools) if (x.requiredRole !== undefined) out.set(x.key, x.requiredRole);
+    return out;
   }
 
   /**

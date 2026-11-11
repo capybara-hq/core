@@ -5,11 +5,12 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { InboxService } from "../../src/inbox/inbox.service.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -171,14 +172,25 @@ describe("schedule_attention inbox items", () => {
 
   it("a tool above the creator's role is marked needsRole", async () => {
     const task = await mkTask();
-    const tools = await k.app
-      .get((await import("../../src/tools/registry.js")).ToolRegistry)
-      .forAgent(orgId, { disabledTools: [] });
-    const gated = tools.tools.find((x) => x.requiredRole === "admin" || x.requiredRole === "owner");
-    if (!gated) return; // no role-gated tool in this fixture set
-    await seedRun(task.id, [gated.key]);
-    const [item] = await attention(aliceId);
-    expect(item).toMatchObject({ attention: { needsRole: [gated.key] } });
+    const registry = k.app.get(ToolRegistry);
+    const real = await registry.forAgent(orgId, { disabledTools: [] });
+    const stub = vi.spyOn(registry, "forAgent").mockResolvedValue({
+      ...real,
+      tools: [
+        ...real.tools,
+        { key: "Gated", requiredRole: "admin" } as unknown as (typeof real.tools)[number],
+        { key: "Open" } as unknown as (typeof real.tools)[number],
+      ],
+    });
+    try {
+      await seedRun(task.id, ["Gated", "Open", "connection:github"]);
+      const [item] = await attention(aliceId);
+      expect(item).toMatchObject({
+        attention: { missing: ["Gated", "Open", "connection:github"], needsRole: ["Gated"] },
+      });
+    } finally {
+      stub.mockRestore();
+    }
   });
 
   it("resuming clears the item", async () => {

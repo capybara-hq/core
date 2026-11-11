@@ -120,7 +120,7 @@ function orgRow(i: InboxItem) {
       const a = i.attention;
       const summary =
         a.reason === "missing_grants"
-          ? `Scheduled task "${a.name}" ran without: ${a.missing.join(", ")}.`
+          ? `Scheduled task "${a.name}" ran without: ${a.missing.join(", ")}.${a.needsRole.length > 0 ? ` Needing a higher role than the owner has (cannot be pre-approved): ${a.needsRole.join(", ")}.` : ""}`
           : `Scheduled task "${a.name}" is paused (${a.reason}${a.pausedBy ? ` by ${a.pausedBy.name || a.pausedBy.id}` : ""}).`;
       return {
         ...base,
