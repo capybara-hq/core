@@ -90,7 +90,15 @@ export const ScheduleUpdateBody = z
   })
   .strict();
 
-export const ScheduleListQuery = z.object({ all: z.enum(["true", "false"]).optional() }).strict();
+export const ScheduleListQuery = z
+  .object({
+    all: z.enum(["true", "false"]).optional(),
+    /** Only the tasks that post into this conversation (the conversation's side panel). */
+    conversationId: Id.optional(),
+  })
+  .strict();
+export const ScheduleChatTargetsQuery = z.object({}).strict();
+export const ScheduleGrantableQuery = z.object({ agentId: Id }).strict();
 export const ScheduleParams = z.object({ id: Id });
 export const ScheduleRunBody = z.object({ trial: z.boolean().optional() }).strict();
 export const ScheduleRunsQuery = z
@@ -104,6 +112,14 @@ export const ScheduleGrantParams = z.object({ id: Id, toolKey: z.string().min(1)
 export class ScheduleCreateBodyDto extends createZodDto(ScheduleCreateBody, "ScheduleCreateBody") {}
 export class ScheduleUpdateBodyDto extends createZodDto(ScheduleUpdateBody, "ScheduleUpdateBody") {}
 export class ScheduleListQueryDto extends createZodDto(ScheduleListQuery, "ScheduleListQuery") {}
+export class ScheduleChatTargetsQueryDto extends createZodDto(
+  ScheduleChatTargetsQuery,
+  "ScheduleChatTargetsQuery",
+) {}
+export class ScheduleGrantableQueryDto extends createZodDto(
+  ScheduleGrantableQuery,
+  "ScheduleGrantableQuery",
+) {}
 export class ScheduleParamsDto extends createZodDto(ScheduleParams, "ScheduleParams") {}
 export class ScheduleRunBodyDto extends createZodDto(ScheduleRunBody, "ScheduleRunBody") {}
 export class ScheduleRunsQueryDto extends createZodDto(ScheduleRunsQuery, "ScheduleRunsQuery") {}
@@ -116,6 +132,8 @@ export class ScheduleGrantParamsDto extends createZodDto(
 /** The schedule routes the Platform operations mirror (`check:platform-ops` keys). */
 export const SCHEDULE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/schedules", query: ScheduleListQuery },
+  { route: "GET /api/v1/orgs/:orgId/schedules/chat-targets", query: ScheduleChatTargetsQuery },
+  { route: "GET /api/v1/orgs/:orgId/schedules/grantable-tools", query: ScheduleGrantableQuery },
   { route: "POST /api/v1/orgs/:orgId/schedules", body: ScheduleCreateBody },
   { route: "GET /api/v1/orgs/:orgId/schedules/:id", params: ScheduleParams },
   {

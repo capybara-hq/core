@@ -4,12 +4,15 @@ import { KernelDb } from "../../infra/database/kernel-db.js";
 import type { OrgRole } from "../../orgs/roles.js";
 import {
   type ScheduleActor,
+  type ScheduledTaskListItem,
   ScheduledTasksService,
 } from "../../schedules/scheduled-tasks.service.js";
 import {
   createInputOf,
   grantsOf,
+  ScheduleChatTargetsQuery,
   ScheduleCreateBody,
+  ScheduleGrantableQuery,
   ScheduleGrantParams,
   ScheduleGrantsBody,
   ScheduleListQuery,
@@ -38,8 +41,9 @@ const TaskId = z.object({ scheduleId: Id }).strict();
 const EXAMPLE_ID = "7b2d4f60-3a1e-4c85-9e07-5d8f1a2b3c4d";
 
 /** A task as `schedules.list` shows it: the schedule, the state and the next run. */
-function row(t: ScheduledTask) {
+function row(t: ScheduledTask & { lastRun?: ScheduledTaskListItem["lastRun"] }) {
   return {
+    ...(t.lastRun !== undefined && { lastRun: t.lastRun }),
     id: t.id,
     name: t.name,
     agentId: t.agentId,
@@ -99,7 +103,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.list",
         description:
-          "List your scheduled tasks: one compact row each (name, agent, status and why it is paused, schedule with its time zone, where runs post, next run). all=true lists every task of the org and needs the org admin role.",
+          "List your scheduled tasks: one compact row each (name, agent, status and why it is paused, schedule with its time zone, where runs post, next run, last settled run). all=true lists every task of the org and needs the org admin role; conversationId keeps the tasks that post into that conversation.",
         input: ListQuery,
         example: {},
         authz: { orgAction: "schedules.use" },
@@ -114,9 +118,43 @@ export class SchedulesOperations implements OnModuleInit {
         run: async (input, ctx) => {
           const items = await this.tasks.list(ctx.orgId, await this.actor(ctx), {
             all: input.all === "true",
+            ...(input.conversationId !== undefined && { conversationId: input.conversationId }),
           });
           return { items: items.map(row) };
         },
+      }),
+      defineOperation({
+        id: "schedules.chat-targets",
+        description:
+          "The IM chats you can point a chat-mode scheduled task at: your direct chats with each active channel connection's bot (one you have messaged before), and the groups you have talked in when the channel has threads. Each gives { connectionId, chatId, chatType } for schedules.create, and the connection's agentId, which the task must use.",
+        input: ScheduleChatTargetsQuery,
+        example: {},
+        authz: { orgAction: "schedules.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/schedules/chat-targets"],
+        confirm: "read",
+        errors: [],
+        run: async (_input, ctx) => ({
+          items: await this.tasks.chatTargets(ctx.orgId, ctx.actorAccountId),
+        }),
+      }),
+      defineOperation({
+        id: "schedules.grantable-tools",
+        description:
+          "An agent's tools as a scheduled task can approve them in advance: each { key, title, source, connectorId, grantable, reason }; reason says why not (forbidden by the org, not_grantable by design, needs_role, fixed_ask, not_available). Takes the agent id from the agents list.",
+        input: ScheduleGrantableQuery,
+        example: { agentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
+        authz: { orgAction: "schedules.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/schedules/grantable-tools"],
+        confirm: "read",
+        errors: [
+          {
+            code: "agent.not_found",
+            next: "Check the agent id: it must be an agent you can use in this org.",
+          },
+        ],
+        run: async (input, ctx) => ({
+          items: await this.tasks.grantableTools(ctx.orgId, ctx.actorAccountId, input.agentId),
+        }),
       }),
       defineOperation({
         id: "schedules.get",
@@ -379,7 +417,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.grants-list",
         description:
-          "The tools approved in advance for a scheduled task (what an unattended run may call without asking), each as { toolKey, connectorId }. Takes the id from schedules.list.",
+          "The tools approved in advance for a scheduled task (what an unattended run may call without asking), each as { toolKey, connectorId, stale }; a stale approval no longer applies because the tool changed. Takes the id from schedules.list.",
         input: TaskId,
         example: { scheduleId: EXAMPLE_ID },
         authz: { orgAction: "schedules.use" },
@@ -394,7 +432,7 @@ export class SchedulesOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => ({
           items: (await this.tasks.grants(ctx.orgId, await this.actor(ctx), input.scheduleId)).map(
-            (g) => ({ toolKey: g.toolKey, connectorId: g.connectorId }),
+            (g) => ({ toolKey: g.toolKey, connectorId: g.connectorId, stale: g.stale }),
           ),
         }),
       }),

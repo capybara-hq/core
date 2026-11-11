@@ -66,6 +66,8 @@ export interface ConversationView {
    * sub-agent's is null: it works in its root conversation's.
    */
   deviceId: string | null;
+  /** The scheduled task that created it (a `new`-mode task's run); null otherwise (spec §4). */
+  scheduledTaskId: string | null;
   /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
@@ -200,6 +202,7 @@ const COLUMNS = [
   "subagent_type",
   "archived_at",
   "device_id",
+  "scheduled_task_id",
 ] as const;
 
 function toView(r: {
@@ -217,6 +220,7 @@ function toView(r: {
   subagent_type: string | null;
   archived_at: Date | null;
   device_id: string | null;
+  scheduled_task_id: string | null;
   activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
@@ -234,6 +238,7 @@ function toView(r: {
     subagentType: r.subagent_type,
     archivedAt: r.archived_at,
     deviceId: r.device_id,
+    scheduledTaskId: r.scheduled_task_id,
     activity: r.activity ?? null,
   };
 }
@@ -793,6 +798,7 @@ export class ConversationsService {
       created_at: Date;
       updated_at: Date;
       parent_conversation_id: string | null;
+      scheduled_task_id: string | null;
       subagent_type: string | null;
       archived_at: Date | null;
       device_id: string | null;
@@ -814,14 +820,14 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.device_id, cs.activity
+        cs.archived_at, cs.device_id, cs.scheduled_task_id, cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.device_id, ${activitySql("c")} AS activity
+          c.archived_at, c.device_id, c.scheduled_task_id, ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}

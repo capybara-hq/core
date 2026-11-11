@@ -141,27 +141,111 @@ const DM_THREAD_PREFIX = "dm:";
 export function grantRefusal(
   toolKey: string,
   tool: ResolvedTool | undefined,
-  ctx: {
-    role: OrgRole;
-    visibility: AgentView["visibility"];
-    skillWritePolicy?: "allow" | "ask" | undefined;
-    forbiddenTools: readonly string[];
-  },
+  ctx: GrantContext,
 ): string | null {
+  return grantRefusalOf(toolKey, tool, ctx)?.message ?? null;
+}
+
+/** Who asks for a grant and where: the inputs of {@link grantRefusal}. */
+export interface GrantContext {
+  role: OrgRole;
+  visibility: AgentView["visibility"];
+  skillWritePolicy?: "allow" | "ask" | undefined;
+  forbiddenTools: readonly string[];
+}
+
+/**
+ * Why a tool can't be a task's grant, as a code the UI words: `forbidden` (the org's
+ * `forbiddenTools`), `not_grantable` (by design: `SkillWrite`), `not_available` (not one of the
+ * agent's tools now), `needs_role` (a `requiredRole` above the creator's), `fixed_ask` (always
+ * asks a person).
+ */
+export type GrantRefusalCode =
+  | "forbidden"
+  | "not_grantable"
+  | "not_available"
+  | "needs_role"
+  | "fixed_ask";
+
+/** {@link grantRefusal} with its code; null when the tool can be granted. */
+export function grantRefusalOf(
+  toolKey: string,
+  tool: ResolvedTool | undefined,
+  ctx: GrantContext,
+): { code: GrantRefusalCode; message: string } | null {
   if (ctx.forbiddenTools.includes(toolKey)) {
-    return `The organization does not allow ${toolKey} in scheduled runs`;
+    return {
+      code: "forbidden",
+      message: `The organization does not allow ${toolKey} in scheduled runs`,
+    };
   }
   if (toolKey === BUILTIN.SkillWrite) {
-    return `${toolKey} cannot be approved for a scheduled task: an unattended run never changes the agent's skills`;
+    return {
+      code: "not_grantable",
+      message: `${toolKey} cannot be approved for a scheduled task: an unattended run never changes the agent's skills`,
+    };
   }
-  if (!tool) return `${toolKey} is not one of the agent's tools now`;
+  if (!tool) {
+    return { code: "not_available", message: `${toolKey} is not one of the agent's tools now` };
+  }
   if (tool.requiredRole !== undefined && !roleAtLeast(ctx.role, tool.requiredRole)) {
-    return `${toolKey} needs the ${tool.requiredRole} role to approve; you cannot approve it for the task`;
+    return {
+      code: "needs_role",
+      message: `${toolKey} needs the ${tool.requiredRole} role to approve; you cannot approve it for the task`,
+    };
   }
   if (isFixedAsk(tool, ctx.visibility, ctx.skillWritePolicy)) {
-    return `${toolKey} always asks a person and cannot be approved in advance`;
+    return {
+      code: "fixed_ask",
+      message: `${toolKey} always asks a person and cannot be approved in advance`,
+    };
   }
   return null;
+}
+
+/** One of the agent's tools as the task form offers it (`GET …/schedules/grantable-tools`). */
+export interface GrantableTool {
+  key: string;
+  /** The tool's display title, when it declares one. */
+  title: string | null;
+  source: "builtin" | "plugin" | "connector";
+  connectorId: string | null;
+  grantable: boolean;
+  /** Why not, when not grantable. */
+  reason: GrantRefusalCode | null;
+}
+
+/** A grant as the task page shows it: `stale` when the tool's definition changed (spec §7). */
+export interface ScheduledTaskGrantView extends ScheduledTaskGrant {
+  stale: boolean;
+}
+
+/** The latest settled (completed, failed or skipped) non-trial run of a task. */
+export interface TaskLastRun {
+  status: "completed" | "failed" | "skipped";
+  skipReason: TaskRun["skipReason"];
+  /** When it fired; its tick for a skipped one. */
+  at: Date;
+}
+
+/** A task in a list, with its latest settled run. */
+export type ScheduledTaskListItem = ScheduledTask & { lastRun: TaskLastRun | null };
+
+/**
+ * A chat the creator can point a `chat` task at (spec §8): their DM with a connection's bot
+ * (a thread row of theirs, archived included), or a group they have talked in when the channel
+ * has threads.
+ */
+export interface ChatTarget {
+  connectionId: string;
+  connectionName: string;
+  plugin: string;
+  /** The connection's agent: a chat task's agent. */
+  agentId: string;
+  chatId: string;
+  chatType: "dm" | "group";
+  /** A name for people: the connection's name (and the group's chat id). */
+  label: string;
 }
 
 /**
@@ -449,16 +533,172 @@ export class ScheduledTasksService {
   async list(
     orgId: string,
     actor: ScheduleActor,
-    opts: { all?: boolean } = {},
-  ): Promise<ScheduledTask[]> {
+    opts: { all?: boolean; conversationId?: string } = {},
+  ): Promise<ScheduledTaskListItem[]> {
     const role = await this.liveRole(orgId, actor.accountId);
+    let tasks: ScheduledTask[];
     if (opts.all === true) {
       if (!can(role, "schedules.manage")) {
         throw new ApiError("forbidden", "Only org admins can list every scheduled task");
       }
-      return this.store.listForOrg(this.db.db, orgId);
+      tasks = await this.store.listForOrg(this.db.db, orgId);
+    } else {
+      tasks = await this.store.listForAccount(this.db.db, orgId, actor.accountId);
     }
-    return this.store.listForAccount(this.db.db, orgId, actor.accountId);
+    if (opts.conversationId !== undefined) {
+      tasks = await this.postingInto(orgId, tasks, opts.conversationId);
+    }
+    return this.withLastRuns(tasks);
+  }
+
+  /**
+   * The tasks of `tasks` that post into the conversation: a `conversation` task naming it, or a
+   * `chat` task whose chat the conversation is a thread of (spec §10 side panel).
+   */
+  private async postingInto(
+    orgId: string,
+    tasks: ScheduledTask[],
+    conversationId: string,
+  ): Promise<ScheduledTask[]> {
+    const chats = tasks.some((t) => t.mode === "chat")
+      ? await this.db.db
+          .selectFrom("channel_threads")
+          .innerJoin(
+            "channel_connections",
+            "channel_connections.id",
+            "channel_threads.connection_id",
+          )
+          .select(["channel_threads.connection_id", "channel_threads.chat_id"])
+          .where("channel_threads.conversation_id", "=", conversationId)
+          .where("channel_connections.org_id", "=", orgId)
+          .execute()
+      : [];
+    return tasks.filter((t) =>
+      t.mode === "conversation"
+        ? t.conversationId === conversationId
+        : t.mode === "chat" &&
+          t.chat !== null &&
+          chats.some(
+            (c) => c.connection_id === t.chat?.connectionId && c.chat_id === t.chat.chatId,
+          ),
+    );
+  }
+
+  /** Each task with its latest settled non-trial run, in one query. */
+  private async withLastRuns(tasks: ScheduledTask[]): Promise<ScheduledTaskListItem[]> {
+    if (tasks.length === 0) return [];
+    const rows = await this.db.db
+      .selectFrom("scheduled_task_runs")
+      .select(["task_id", "status", "skip_reason", "fired_at", "scheduled_for"])
+      .distinctOn("task_id")
+      .where(
+        "task_id",
+        "in",
+        tasks.map((t) => t.id),
+      )
+      .where("trial", "=", false)
+      .where("status", "in", ["completed", "failed", "skipped"])
+      .orderBy("task_id")
+      .orderBy("scheduled_for", "desc")
+      .orderBy("id", "desc")
+      .execute();
+    const last = new Map(rows.map((r) => [r.task_id, r]));
+    return tasks.map((t) => {
+      const r = last.get(t.id);
+      return {
+        ...t,
+        lastRun:
+          r === undefined
+            ? null
+            : {
+                status: r.status as TaskLastRun["status"],
+                skipReason: r.skip_reason,
+                at: new Date(r.fired_at ?? r.scheduled_for),
+              },
+      };
+    });
+  }
+
+  /**
+   * The chats the caller can point a `chat` task at (spec §8): per active connection of the org,
+   * their DM threads (archived included) and, on a channel with threads, the groups they have a
+   * thread in. Members up (`schedules.use`, the route's).
+   */
+  async chatTargets(orgId: string, accountId: string): Promise<ChatTarget[]> {
+    await this.liveRole(orgId, accountId);
+    const rows = await this.db.db
+      .selectFrom("channel_threads")
+      .innerJoin("channel_connections", "channel_connections.id", "channel_threads.connection_id")
+      .select([
+        "channel_connections.id as connection_id",
+        "channel_connections.name",
+        "channel_connections.plugin",
+        "channel_connections.agent_id",
+        "channel_threads.chat_id",
+        "channel_threads.thread_key",
+      ])
+      .where("channel_connections.org_id", "=", orgId)
+      .where("channel_connections.status", "=", "active")
+      .where("channel_connections.deleted_at", "is", null)
+      .where("channel_threads.account_id", "=", accountId)
+      .orderBy("channel_connections.name")
+      .orderBy("channel_threads.chat_id")
+      .execute();
+    const out = new Map<string, ChatTarget>();
+    for (const r of rows) {
+      const chatType = r.thread_key.startsWith(DM_THREAD_PREFIX) ? "dm" : "group";
+      if (chatType === "group" && this.channelFeatures(r.plugin)?.threads !== true) continue;
+      const key = `${r.connection_id}\u0000${r.chat_id}\u0000${chatType}`;
+      if (out.has(key)) continue;
+      out.set(key, {
+        connectionId: r.connection_id,
+        connectionName: r.name,
+        plugin: r.plugin,
+        agentId: r.agent_id,
+        chatId: r.chat_id,
+        chatType,
+        label: chatType === "dm" ? r.name : `${r.name} · ${r.chat_id}`,
+      });
+    }
+    return [...out.values()];
+  }
+
+  /**
+   * The agent's tools (connector tools included) as a task's grant picker offers them, each
+   * grantable or why not by {@link grantRefusalOf}, the rule {@link addGrants} applies.
+   * `agent.not_found` when the caller can't use the agent.
+   */
+  async grantableTools(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+  ): Promise<GrantableTool[]> {
+    const role = await this.liveRole(orgId, accountId);
+    const agent = await this.agents.get(orgId, agentId, accountId);
+    const settings = await readScheduleSettings(this.db.db, this.config, orgId);
+    const d = agent.definition;
+    const { tools } = await this.tools.forAgent(orgId, {
+      disabledTools: d.disabledTools ?? [],
+      subagentTools: d.subagentTools,
+      subagents: d.subagents,
+    });
+    const ctx: GrantContext = {
+      role,
+      visibility: agent.visibility,
+      skillWritePolicy: d.skills?.writePolicy,
+      forbiddenTools: settings.forbiddenTools,
+    };
+    return tools.map((tool) => {
+      const why = grantRefusalOf(tool.key, tool, ctx);
+      return {
+        key: tool.key,
+        title: tool.spec.title ?? null,
+        source: tool.source.kind,
+        connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
+        grantable: why === null,
+        reason: why?.code ?? null,
+      };
+    });
   }
 
   /** The task's runs, latest first (default 50, at most 200); visible as {@link get}. */
@@ -469,9 +709,24 @@ export class ScheduledTasksService {
   }
 
   /** The task's grants; visible as {@link get}. */
-  async grants(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTaskGrant[]> {
+  async grants(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTaskGrantView[]> {
     const task = await this.get(orgId, actor, id);
-    return this.store.listGrants(this.db.db, task.id);
+    const grants = await this.store.listGrants(this.db.db, task.id);
+    if (grants.length === 0) return [];
+    // the creator's view of the agent's tools: a grant whose tool changed or left is stale
+    let current = new Map<string, string>();
+    try {
+      const d = (await this.agents.get(orgId, task.agentId, task.accountId)).definition;
+      const { tools } = await this.tools.forAgent(orgId, {
+        disabledTools: d.disabledTools ?? [],
+        subagentTools: d.subagentTools,
+        subagents: d.subagents,
+      });
+      current = new Map(tools.map((x) => [x.key, x.specHash]));
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "agent.not_found")) throw e;
+    }
+    return grants.map((g) => ({ ...g, stale: current.get(g.toolKey) !== g.specHash }));
   }
 
   /** Creator only; each grant is checked as at create (spec §7). */

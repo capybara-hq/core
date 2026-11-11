@@ -15,6 +15,7 @@ import { nextTick } from "../../src/schedules/schedule-math.js";
 import {
   type CreateTaskInput,
   grantRefusal,
+  grantRefusalOf,
   ScheduledTasksService,
 } from "../../src/schedules/scheduled-tasks.service.js";
 import type { ScheduleTrigger } from "../../src/schedules/types.js";
@@ -406,6 +407,13 @@ describe("ScheduledTasksService", () => {
     });
     const ctx = { role: "member" as const, visibility: "org" as const, forbiddenTools: [] };
     expect(grantRefusal("Deploy", tool(), ctx)).toBeNull();
+    // the codes the web words (grantable-tools)
+    expect(grantRefusalOf("Deploy", tool({ requiredRole: "admin" }), ctx)?.code).toBe("needs_role");
+    expect(grantRefusalOf("Deploy", tool(), { ...ctx, forbiddenTools: ["Deploy"] })?.code).toBe(
+      "forbidden",
+    );
+    expect(grantRefusalOf("SkillWrite", tool(), ctx)?.code).toBe("not_grantable");
+    expect(grantRefusalOf("Deploy", undefined, ctx)?.code).toBe("not_available");
     expect(grantRefusal("Deploy", tool({ requiredRole: "admin" }), ctx)).toMatch(/admin role/);
     expect(
       grantRefusal("Deploy", tool({ requiredRole: "admin" }), { ...ctx, role: "admin" }),

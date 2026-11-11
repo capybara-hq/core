@@ -205,7 +205,7 @@ describe("schedules operations", () => {
       en: 'Approve tools in advance for scheduled task "Daily digest": AskUserQuestion',
     });
     expect(await run("schedules.grants-list", { scheduleId: t.id }, ctx)).toEqual({
-      items: added.items,
+      items: [{ toolKey: "AskUserQuestion", connectorId: null, stale: false }],
     });
     expect(
       await run("schedules.grants-remove", { scheduleId: t.id, toolKey: "AskUserQuestion" }, ctx),

@@ -3,12 +3,22 @@ import type { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { ScheduledTasksService } from "./scheduled-tasks.service.js";
+import {
+  type ChatTarget,
+  type GrantableTool,
+  type ScheduledTaskGrantView,
+  type ScheduledTaskListItem,
+  ScheduledTasksService,
+} from "./scheduled-tasks.service.js";
 import {
   createInputOf,
   grantsOf,
+  type ScheduleChatTargetsQuery,
+  ScheduleChatTargetsQueryDto,
   type ScheduleCreateBody,
   ScheduleCreateBodyDto,
+  type ScheduleGrantableQuery,
+  ScheduleGrantableQueryDto,
   type ScheduleGrantParams,
   ScheduleGrantParamsDto,
   type ScheduleGrantsBody,
@@ -30,12 +40,15 @@ import type { ScheduledTask, ScheduledTaskGrant, TaskRun } from "./types.js";
 /**
  * Scheduled tasks (`/api/v1/orgs/:orgId/schedules`, spec 2026-11-11-scheduled-tasks §10); human
  * users only (a service token gets 403).
- * - `GET /` → `{ items }`: the caller's own tasks; `?all=true` every task of the org (org admins,
- *   `schedules.manage`, enforced by the service: 403 `forbidden` otherwise);
+ * - `GET /` → `{ items }`: the caller's own tasks, each with its `lastRun`; `?all=true` every task
+ *   of the org (org admins, `schedules.manage`, enforced by the service: 403 `forbidden`
+ *   otherwise); `?conversationId=` only those posting into that conversation;
+ * - `GET /chat-targets` → `{ items }`: the chats the caller can point a `chat` task at;
+ * - `GET /grantable-tools?agentId=` → `{ items }`: the agent's tools, each grantable or why not;
  * - `POST /` → 201 `{ task }` (`timeZone` is the browser zone, a fallback only);
  *   `GET /:id`, `PATCH /:id`, `POST /:id/pause`, `POST /:id/resume` → `{ task }`;
  * - `DELETE /:id` → 204; `POST /:id/run { trial? }` → 202 `{ run }`;
- * - `GET /:id/runs?limit` → `{ items }`; `GET /:id/grants` → `{ items }`;
+ * - `GET /:id/runs?limit` → `{ items }`; `GET /:id/grants` → `{ items }` (each with `stale`);
  *   `POST /:id/grants { grants }` → `{ items }`; `DELETE /:id/grants/:toolKey` → 204.
  *
  * Roles: create, edit, resume, run and the grants need `schedules.use` (member and up; a guest
@@ -54,14 +67,39 @@ export class SchedulesController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZQuery(ScheduleListQueryDto) q: z.infer<typeof ScheduleListQuery>,
-  ): Promise<{ items: ScheduledTask[] }> {
+  ): Promise<{ items: ScheduledTaskListItem[] }> {
     const p = requireUser(principal);
     const items = await this.tasks.list(
       org.orgId,
       { accountId: p.account.id, role: org.role },
-      { all: q.all === "true" },
+      {
+        all: q.all === "true",
+        ...(q.conversationId !== undefined && { conversationId: q.conversationId }),
+      },
     );
     return { items };
+  }
+
+  @Get("chat-targets")
+  @OrgAction("schedules.use")
+  async chatTargets(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZQuery(ScheduleChatTargetsQueryDto) _q: z.infer<typeof ScheduleChatTargetsQuery>,
+  ): Promise<{ items: ChatTarget[] }> {
+    const p = requireUser(principal);
+    return { items: await this.tasks.chatTargets(org.orgId, p.account.id) };
+  }
+
+  @Get("grantable-tools")
+  @OrgAction("schedules.use")
+  async grantableTools(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZQuery(ScheduleGrantableQueryDto) q: z.infer<typeof ScheduleGrantableQuery>,
+  ): Promise<{ items: GrantableTool[] }> {
+    const p = requireUser(principal);
+    return { items: await this.tasks.grantableTools(org.orgId, p.account.id, q.agentId) };
   }
 
   @Post()
@@ -193,7 +231,7 @@ export class SchedulesController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZParam(ScheduleParamsDto) params: z.infer<typeof ScheduleParams>,
-  ): Promise<{ items: ScheduledTaskGrant[] }> {
+  ): Promise<{ items: ScheduledTaskGrantView[] }> {
     const p = requireUser(principal);
     return {
       items: await this.tasks.grants(
