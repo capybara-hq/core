@@ -80,6 +80,25 @@ export const CHANNEL_PHRASES = {
   },
   /** 审批卡片的标题与随附文本。 */
   approvalTitle: { zh: "需要你的批准", en: "Approval required" },
+  /** A network ask's card title for one host (`{host}`; network ask-to-allow spec §6.5). */
+  networkTitleOne: {
+    zh: "智能体想访问 {host}，允许吗？",
+    en: "The agent wants to reach {host}. Allow?",
+  },
+  /** A network ask's card title for several hosts (`{n}`). */
+  networkTitleMany: {
+    zh: "智能体想访问 {n} 个域名，允许吗？",
+    en: "The agent wants to reach {n} domains. Allow?",
+  },
+  /** Under a network ask's host list: an IM card has no per-host choice (spec §6.4). */
+  networkAllHosts: {
+    zh: "这个决定对以上所有域名生效",
+    en: "This decision applies to all the domains above",
+  },
+  /** A network ask's 「once」 button. */
+  networkAllowOnce: { zh: "这次允许", en: "Allow this time" },
+  /** A network ask's 「always」 button. */
+  networkAllowAlways: { zh: "这台设备一直允许", en: "Always allow on this device" },
   /** 提问卡片的随附文本。 */
   questionTitle: { zh: "需要你的回答", en: "Your input is needed" },
   /** 连接卡片的随附文本。 */

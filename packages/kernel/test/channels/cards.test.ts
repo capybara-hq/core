@@ -1,3 +1,4 @@
+import { renderCardAsText } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   answerSummary,
@@ -9,6 +10,7 @@ import {
   KEY_ARG_MAX,
   keyArgument,
   maskSecrets,
+  networkCardText,
   webBase,
 } from "../../src/channels/cards.js";
 import {
@@ -233,5 +235,119 @@ describe("a Platform confirmation card", () => {
     const card = await approvalCard(deps(plain), "ap1", "https://cap.example", "en");
     expect(card?.scopes).toEqual(["once", "session", "always"]);
     expect(card?.inputPreview).toBe("Run: pnpm test");
+  });
+});
+
+describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
+  const view = {
+    id: "na1",
+    orgId: "o1",
+    kind: "network",
+    detail: {
+      deviceId: "d1",
+      hosts: [
+        { host: "files.slack.com", port: 443 },
+        { host: "slack-edge.com", port: 443 },
+        { host: "files.slack.com", port: 80 },
+      ],
+      command: `curl -H 'X-Token: s3cr3t' https://files.slack.com/${"x".repeat(400)}`,
+      description: "Download the file",
+    },
+    toolKey: "Bash",
+    toolName: "Bash",
+    connector: null,
+    extension: null,
+    agent: { id: "ag1", name: "Helper" },
+    input: {},
+    summary: null,
+    scopes: ["once", "always"],
+    requestedFor: "a1",
+    expiresAt: "2026-11-13T12:00:00.000Z",
+    status: "pending",
+    decidedBy: null,
+    denyReason: null,
+    conversationPath: "/chat/c1",
+  };
+  const deps = (v: object) =>
+    ({
+      db: {} as never,
+      approvals: { describe: async () => v },
+      registry: {
+        builtinSpecs: () => {
+          throw new Error("a network ask needs no tool display");
+        },
+        extensionToolSpecs: () => [],
+      },
+    }) as never;
+  const redact = (s: string) => s.replaceAll("s3cr3t", "***");
+
+  it("titles one host by name and several by number, in zh and en", () => {
+    const one = { hosts: [{ host: "files.slack.com", port: 443 }], command: "curl x" };
+    expect(networkCardText(one, "zh").title).toBe("智能体想访问 files.slack.com，允许吗？");
+    expect(networkCardText(one, "en").title).toBe(
+      "The agent wants to reach files.slack.com. Allow?",
+    );
+    expect(networkCardText(view.detail, "zh").title).toBe("智能体想访问 2 个域名，允许吗？");
+    expect(networkCardText(view.detail, "en").title).toBe(
+      "The agent wants to reach 2 domains. Allow?",
+    );
+    // one host: the preview has no line about deciding for all of them
+    expect(networkCardText(one, "en").inputPreview).toBe("files.slack.com\n\ncurl x");
+  });
+
+  it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line and the scope labels", async () => {
+    const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
+    expect(zh).toMatchObject({
+      kind: "approval",
+      title: "智能体想访问 2 个域名，允许吗？",
+      toolName: "Bash",
+      scopes: ["once", "always"],
+      scopeLabels: { once: "这次允许", always: "这台设备一直允许" },
+      state: "pending",
+      webUrl: "https://cap.example/chat/c1",
+    });
+    const lines = zh?.inputPreview.split("\n") ?? [];
+    expect(lines[0]).toBe("files.slack.com");
+    expect(lines[1]).toBe("slack-edge.com");
+    const command = lines[3] as string;
+    expect(command).toHaveLength(CARD_SUMMARY_MAX);
+    expect(command.endsWith("…")).toBe(true);
+    expect(command).toContain("X-Token: ***");
+    expect(zh?.inputPreview).not.toContain("s3cr3t");
+    expect(lines.at(-1)).toBe("这个决定对以上所有域名生效");
+    // the description stays on the web
+    expect(zh?.inputPreview).not.toContain("Download the file");
+    const en = await approvalCard(deps(view), "na1", "https://cap.example", "en", redact);
+    expect(en?.scopeLabels).toEqual({
+      once: "Allow this time",
+      always: "Always allow on this device",
+    });
+    expect(en?.inputPreview.split("\n").at(-1)).toBe(
+      "This decision applies to all the domains above",
+    );
+  });
+
+  it("an ask the device takes only once labels only once; skipped is a state", async () => {
+    const card = await approvalCard(
+      deps({ ...view, scopes: ["once"], status: "skipped", decidedBy: null }),
+      "na1",
+      "https://cap.example",
+      "en",
+    );
+    expect(card).toMatchObject({ scopes: ["once"], state: "skipped" });
+    expect(card?.scopeLabels).toEqual({ once: "Allow this time" });
+  });
+
+  it("the text fallback carries the title, the hosts and the scope labels", async () => {
+    const card = await approvalCard(deps(view), "na1", "https://cap.example", "en", redact);
+    const text = renderCardAsText(card as NonNullable<typeof card>, "en");
+    expect(text).toContain("The agent wants to reach 2 domains. Allow?");
+    expect(text).toContain("files.slack.com");
+    expect(text).toContain("This decision applies to all the domains above");
+    expect(text).toContain("Allow this time / Always allow on this device");
+    const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
+    expect(renderCardAsText(zh as NonNullable<typeof zh>, "zh")).toContain(
+      "这次允许 / 这台设备一直允许",
+    );
   });
 });

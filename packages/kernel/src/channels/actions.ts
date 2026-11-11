@@ -144,6 +144,12 @@ export class ChannelCardActions {
         await reply("cannotHandle");
         return;
       }
+      // a network ask is the device owner's, decided by them in person (network ask-to-allow
+      // spec §5.2): the shared guest account never decides one, whoever clicks
+      if (a.cardKind === "approval" && (await this.isNetworkAsk(row.orgId, a.cardId))) {
+        await reply("cannotHandle");
+        return;
+      }
     }
     try {
       if (a.cardKind === "approval" && (a.action === "approve" || a.action === "deny")) {
@@ -171,5 +177,16 @@ export class ChannelCardActions {
     // the delivery of the card's conversation (the thread's): for a sub-agent's card the decided
     // row is the child's, which has no delivery of its own
     await this.deps.outbound.enqueue(card.conversation_id);
+  }
+
+  /** Whether the approval `id` of the org is a network ask. */
+  private async isNetworkAsk(orgId: string, id: string): Promise<boolean> {
+    const r = await this.deps.db
+      .selectFrom("approvals")
+      .select("kind")
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    return r?.kind === "network";
   }
 }
