@@ -110,24 +110,27 @@ export function UserBubble({
         </div>
       ) : null}
       {attachments}
-      <div
-        className="cb-bubble"
-        data-part="bubble"
-        data-cap-part="message.user.bubble"
-        data-queued={queued ? "true" : undefined}
-      >
+      {/* An attachment-only message (an image sent without words) draws no empty bubble */}
+      {text.trim() === "" && skill === undefined ? null : (
         <div
-          ref={bodyRef}
-          id={bodyId}
-          className="cb-bubble-body"
-          data-part="bubble-body"
-          data-expanded={expanded ? "true" : "false"}
-          data-overflows={overflows && !expanded ? "true" : undefined}
+          className="cb-bubble"
+          data-part="bubble"
+          data-cap-part="message.user.bubble"
+          data-queued={queued ? "true" : undefined}
         >
-          {skill !== undefined ? <BubbleSkill label={skill} /> : null}
-          {text}
+          <div
+            ref={bodyRef}
+            id={bodyId}
+            className="cb-bubble-body"
+            data-part="bubble-body"
+            data-expanded={expanded ? "true" : "false"}
+            data-overflows={overflows && !expanded ? "true" : undefined}
+          >
+            {skill !== undefined ? <BubbleSkill label={skill} /> : null}
+            {text}
+          </div>
         </div>
-      </div>
+      )}
       {expanded || overflows ? (
         <button
           type="button"
