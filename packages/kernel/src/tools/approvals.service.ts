@@ -12,12 +12,15 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { readScheduleSettings } from "../schedules/effective-settings.js";
+import { grantRefusalOf } from "../schedules/grant-rules.js";
 import { ScheduledTaskStore } from "../schedules/store.js";
 import { unattendedTaskRunOf } from "../schedules/unattended.js";
 import { pluginDisplayNames } from "./display-names.js";
+import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
+import { ToolRegistry } from "./registry.js";
 
 export { APPROVAL_DENY_REASON_MAX_CHARS } from "../conversations/events.js";
 
@@ -197,6 +200,8 @@ export class ApprovalsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ScheduledTaskStore)
     private readonly schedules: Pick<ScheduledTaskStore, "addGrant">,
+    /** A trial approval is kept only for a tool the task may hold as a grant (its agent's tools). */
+    @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "forAgent">,
   ) {}
 
   /**
@@ -505,10 +510,12 @@ export class ApprovalsService {
   /**
    * A trial run of a scheduled task (scheduled tasks spec §7): an approval its creator granted, in
    * any scope, is also added to the task's grants with the approved definition's hash, so its
-   * unattended runs do not ask again. Not kept: a role-escalated approval (`requestedFor` null, it
-   * stays `once`), one another account decided, one whose scopes never allowed remembering (an org
-   * / platform operation: "once" only), and a tool in the org's `forbiddenTools`. In the decision's
-   * transaction.
+   * unattended runs do not ask again. Kept only by the rule `addGrants` applies
+   * (`grantRefusalOf`, against the task agent's tools now): never a role-escalated approval
+   * (`requestedFor` null, it stays `once`), one another account decided, one whose scopes never
+   * allowed remembering (an org / platform operation: "once" only), a per-call key
+   * (`Platform:<operation>`), `SkillWrite`, a fixed ask, a tool the org forbids (its key or the
+   * call's), or a tool the task's agent does not have. In the decision's transaction.
    */
   @Transactional({ propagation: "mandatory" })
   private async keepTrialGrant(a: ApprovalRecord, decidedBy: string): Promise<void> {
@@ -518,14 +525,41 @@ export class ApprovalsService {
     const served = await unattendedTaskRunOf(t, a.runId);
     if (served === null || !served.trial) return;
     const task = await t
-      .selectFrom("scheduled_tasks")
-      .select("account_id")
-      .where("id", "=", served.taskId)
-      .where("deleted_at", "is", null)
+      .selectFrom("scheduled_tasks as s")
+      .innerJoin("agents as ag", "ag.id", "s.agent_id")
+      .leftJoin("agent_versions as v", (j) =>
+        j.onRef("v.agent_id", "=", "ag.id").onRef("v.version", "=", "ag.current_version"),
+      )
+      .select(["s.account_id", "ag.visibility", "v.definition"])
+      .where("s.id", "=", served.taskId)
+      .where("s.deleted_at", "is", null)
       .executeTakeFirst();
     if (task?.account_id !== decidedBy) return;
-    const { forbiddenTools } = (await readOrgSettings(t, a.orgId)).scheduledTasks;
-    if (forbiddenTools.includes(a.toolKey)) return;
+    const member = await t
+      .selectFrom("memberships")
+      .select("role")
+      .where("org_id", "=", a.orgId)
+      .where("account_id", "=", decidedBy)
+      .executeTakeFirst();
+    if (!member) return;
+    const def =
+      task.definition === null
+        ? undefined
+        : await normalizeStoredDefinitionIn(t, a.orgId, task.definition);
+    const { tools } = await this.registry.forAgent(a.orgId, {
+      disabledTools: def?.disabledTools ?? [],
+      subagentTools: def?.subagentTools,
+      subagents: def?.subagents,
+    });
+    const tool = tools.find((x) => x.key === a.toolKey);
+    const { forbiddenTools } = await readScheduleSettings(t, this.config, a.orgId);
+    const why = grantRefusalOf(a.toolKey, tool, {
+      role: member.role,
+      visibility: task.visibility,
+      skillWritePolicy: def?.skills?.writePolicy,
+      forbiddenTools,
+    });
+    if (why !== null) return;
     await this.schedules.addGrant(t, served.taskId, {
       toolKey: a.toolKey,
       specHash: a.specHash,

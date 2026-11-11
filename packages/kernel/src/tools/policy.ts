@@ -3,6 +3,7 @@ import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
+import { grantRefusalOf } from "../schedules/grant-rules.js";
 import { findTaskGrant } from "../schedules/store.js";
 import {
   UNATTENDED_ASK_ERROR,
@@ -10,18 +11,15 @@ import {
   UNATTENDED_QUESTION_ERROR,
   unattendedRules,
 } from "../schedules/unattended.js";
-import {
-  BUILTIN,
-  R3_FIXED_ASK_TOOL_KEYS,
-  R3_SHARED_AGENT_ONLY_TOOL_KEYS,
-  SANDBOX_ASK_TOOL_NAMES,
-} from "./builtin-names.js";
+import { BUILTIN, SANDBOX_ASK_TOOL_NAMES } from "./builtin-names.js";
 import { personalAuth } from "./connector-account-policies.js";
+import { isFixedAsk } from "./fixed-ask.js";
 import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
 
 export { R3_FIXED_ASK_TOOL_KEYS, R3_SHARED_AGENT_ONLY_TOOL_KEYS } from "./builtin-names.js";
+export { isFixedAsk } from "./fixed-ask.js";
 
 const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
 
@@ -58,24 +56,6 @@ export function decide(input: PolicyInput): ToolPolicy {
   if (input.fixedAsk) p = stricter(p, "ask");
   if (p === "ask" && input.grant !== null && !input.fixedAsk) return "allow";
   return p;
-}
-
-/**
- * 是否属于 R3 固定询问（清单或工具声明需要用户交互）。`visibility` 为 agent 当前的可见性：
- * {@link R3_SHARED_AGENT_ONLY_TOOL_KEYS} 里的内置工具在私有 agent 上不算固定询问，
- * 除非 agent 当前版本的 `skills.writePolicy` 为 `ask`（`skillWritePolicy`）；不知道可见性时按共享处理（更严）。
- */
-export function isFixedAsk(
-  tool: ResolvedTool,
-  visibility?: "private" | "org" | "members" | undefined,
-  skillWritePolicy?: "allow" | "ask" | undefined,
-): boolean {
-  if (tool.spec.annotations?.requiresUserInteraction === true) return true;
-  if (!R3_FIXED_ASK_TOOL_KEYS.has(tool.key)) return false;
-  const builtinOnly =
-    tool.source.kind === "builtin" && R3_SHARED_AGENT_ONLY_TOOL_KEYS.has(tool.key);
-  // 私有 agent：缺省 / allow 不问（R4），负责人设为 ask（D10）时与共享 agent 一样固定询问
-  return !(builtinOnly && visibility === "private" && skillWritePolicy !== "ask");
 }
 
 const asSetting = (v: unknown): ToolPolicy | undefined =>
@@ -289,6 +269,8 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     }
 
     let escalateTo: OrgRole | null = null;
+    /** The acting account's role, read only for a tool that declares `requiredRole`. */
+    let memberRole: OrgRole | null = null;
     if (tool.requiredRole !== undefined) {
       const m = await db
         .selectFrom("memberships")
@@ -297,6 +279,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
         .where("account_id", "=", ctx.accountId)
         .executeTakeFirst();
       if (!m) return "deny";
+      memberRole = m.role;
       if (!roleAtLeast(m.role, tool.requiredRole)) escalateTo = tool.requiredRole;
     }
 
@@ -339,8 +322,22 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     }
     // an ask outside the grants in an unattended run, `fail` mode: no approval (spec §7)
     if (unattended?.unattendedAsk === "fail") {
-      // a fixed ask is never covered by a grant: refused, and not recorded as a missing grant
-      if (fixedAsk) return { refused: UNATTENDED_FIXED_ASK_ERROR(policyKey) };
+      // recorded as a missing grant only when the creator could grant it to the task (the task
+      // grants' own rule) or could once promoted (`needs_role`, which the inbox says); a fixed
+      // ask, a per-call key, SkillWrite or a forbidden tool never can: refused as a fixed ask,
+      // not recorded, so the inbox never offers a grant that cannot be added
+      const why = fixedAsk
+        ? { code: "fixed_ask" as const }
+        : grantRefusalOf(policyKey, tool, {
+            // only `requiredRole` reads the role, and then it was read above
+            role: memberRole ?? "guest",
+            visibility: current?.visibility ?? "org",
+            skillWritePolicy: writePolicy,
+            forbiddenTools: unattended.forbiddenTools,
+          });
+      if (why !== null && why.code !== "needs_role") {
+        return { refused: UNATTENDED_FIXED_ASK_ERROR(policyKey) };
+      }
       return { refused: UNATTENDED_ASK_ERROR(policyKey), missingGrant: policyKey };
     }
     const ask: AskRequest = {

@@ -146,8 +146,11 @@ export interface ScheduledTaskGrant {
   toolKey: string;
   specHash: string;
   connectorId: string | null;
-  /** The tool changed since it was approved: the approval no longer applies (spec §7). */
-  stale?: boolean;
+  /**
+   * The tool changed since it was approved: the approval no longer applies (spec §7); null when
+   * the kernel could not read the agent's tools just now.
+   */
+  stale?: boolean | null;
 }
 
 /** When a task fires, before the zone is fixed (the create / patch body's `trigger`). */

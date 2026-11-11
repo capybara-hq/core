@@ -71,12 +71,19 @@ export function credentialsFor(
   );
 }
 
-/** The approvals over a test's Kysely and an event log; `events` gets `approval.decided`. */
+/**
+ * The approvals over a test's Kysely and an event log; `events` gets `approval.decided`.
+ * `registry`: the agent's tools a trial run's kept approval is checked against (default: none, so
+ * no trial approval becomes a task grant).
+ */
 export function approvalsFor(
   db: Kysely<any>,
   eventLog: EventLog,
   config: () => unknown,
   events: KernelEvents = new KernelEvents(quiet),
+  registry: Pick<ToolRegistry, "forAgent"> = {
+    forAgent: async () => ({ tools: [], unavailable: [], hidden: [], toolSearch: false }),
+  },
 ): ApprovalsService {
   const h = handlesFor(db);
   return new ApprovalsService(
@@ -86,6 +93,7 @@ export function approvalsFor(
     events,
     h.txHost,
     new ScheduledTaskStore(),
+    registry,
   );
 }
 

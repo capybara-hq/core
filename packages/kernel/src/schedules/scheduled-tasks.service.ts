@@ -16,14 +16,14 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { isTimeZone } from "../time-zone.js";
-import { BUILTIN } from "../tools/builtin-names.js";
-import { isFixedAsk } from "../tools/policy.js";
-import { type ResolvedTool, ToolRegistry } from "../tools/registry.js";
+import { ToolRegistry } from "../tools/registry.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
 import {
   grantNotAllowed,
@@ -32,6 +32,12 @@ import {
   scheduleNotFound,
   targetInvalid,
 } from "./errors.js";
+import {
+  type GrantContext,
+  type GrantRefusalCode,
+  grantRefusal,
+  grantRefusalOf,
+} from "./grant-rules.js";
 import { schedFireJob } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
@@ -45,6 +51,8 @@ import type {
   ScheduleTrigger,
   TaskRun,
 } from "./types.js";
+
+export { type GrantContext, type GrantRefusalCode, grantRefusal, grantRefusalOf };
 
 /** When a task fires, before the zone is fixed (spec §5). */
 export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
@@ -141,77 +149,6 @@ const PROMPT_MAX = 20_000;
 /** A DM thread's key on `channel_threads` (`channels/threads.ts` `threadKeyOf`). */
 const DM_THREAD_PREFIX = "dm:";
 
-/**
- * Why `tool` cannot be one of a task's grants (spec §7), or null when it can: the creator could
- * approve it with scope `always` themselves (no `requiredRole` above their role, not a fixed ask),
- * it is not `SkillWrite` (an unattended run never rewrites the agent's skills) and the org did not
- * forbid it. `tool` undefined: the agent does not have that tool now.
- */
-export function grantRefusal(
-  toolKey: string,
-  tool: ResolvedTool | undefined,
-  ctx: GrantContext,
-): string | null {
-  return grantRefusalOf(toolKey, tool, ctx)?.message ?? null;
-}
-
-/** Who asks for a grant and where: the inputs of {@link grantRefusal}. */
-export interface GrantContext {
-  role: OrgRole;
-  visibility: AgentView["visibility"];
-  skillWritePolicy?: "allow" | "ask" | undefined;
-  forbiddenTools: readonly string[];
-}
-
-/**
- * Why a tool can't be a task's grant, as a code the UI words: `forbidden` (the org's
- * `forbiddenTools`), `not_grantable` (by design: `SkillWrite`), `not_available` (not one of the
- * agent's tools now), `needs_role` (a `requiredRole` above the creator's), `fixed_ask` (always
- * asks a person).
- */
-export type GrantRefusalCode =
-  | "forbidden"
-  | "not_grantable"
-  | "not_available"
-  | "needs_role"
-  | "fixed_ask";
-
-/** {@link grantRefusal} with its code; null when the tool can be granted. */
-export function grantRefusalOf(
-  toolKey: string,
-  tool: ResolvedTool | undefined,
-  ctx: GrantContext,
-): { code: GrantRefusalCode; message: string } | null {
-  if (ctx.forbiddenTools.includes(toolKey)) {
-    return {
-      code: "forbidden",
-      message: `The organization does not allow ${toolKey} in scheduled runs`,
-    };
-  }
-  if (toolKey === BUILTIN.SkillWrite) {
-    return {
-      code: "not_grantable",
-      message: `${toolKey} cannot be approved for a scheduled task: an unattended run never changes the agent's skills`,
-    };
-  }
-  if (!tool) {
-    return { code: "not_available", message: `${toolKey} is not one of the agent's tools now` };
-  }
-  if (tool.requiredRole !== undefined && !roleAtLeast(ctx.role, tool.requiredRole)) {
-    return {
-      code: "needs_role",
-      message: `${toolKey} needs the ${tool.requiredRole} role to approve; you cannot approve it for the task`,
-    };
-  }
-  if (isFixedAsk(tool, ctx.visibility, ctx.skillWritePolicy)) {
-    return {
-      code: "fixed_ask",
-      message: `${toolKey} always asks a person and cannot be approved in advance`,
-    };
-  }
-  return null;
-}
-
 /** One of the agent's tools as the task form offers it (`GET …/schedules/grantable-tools`). */
 export interface GrantableTool {
   key: string;
@@ -224,10 +161,16 @@ export interface GrantableTool {
   reason: GrantRefusalCode | null;
 }
 
-/** A grant as the task page shows it: `stale` when the tool's definition changed (spec §7). */
+/**
+ * A grant as the task page shows it: `stale` when the tool's definition changed or the tool left
+ * (spec §7); null when the agent's tools cannot be read now.
+ */
 export interface ScheduledTaskGrantView extends ScheduledTaskGrant {
-  stale: boolean;
+  stale: boolean | null;
 }
+
+/** An agent's tools by key, as {@link ScheduledTasksService} checks grants against them. */
+type AgentToolFacts = Map<string, { specHash: string; requiredRole?: OrgRole }>;
 
 /** The latest settled (completed, failed or skipped) non-trial run of a task. */
 export interface TaskLastRun {
@@ -281,6 +224,7 @@ export class ScheduledTasksService {
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
     /** A task's model must resolve for the org and declare its effort (as a message's switch). */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** "Run now" enqueues the fire job (consumed by the worker role). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
   ) {}
@@ -752,20 +696,13 @@ export class ScheduledTasksService {
     const task = await this.get(orgId, actor, id);
     const grants = await this.store.listGrants(this.db.db, task.id);
     if (grants.length === 0) return [];
-    // the creator's view of the agent's tools: a grant whose tool changed or left is stale
-    let current = new Map<string, string>();
-    try {
-      const d = (await this.agents.get(orgId, task.agentId, task.accountId)).definition;
-      const { tools } = await this.tools.forAgent(orgId, {
-        disabledTools: d.disabledTools ?? [],
-        subagentTools: d.subagentTools,
-        subagents: d.subagents,
-      });
-      current = new Map(tools.map((x) => [x.key, x.specHash]));
-    } catch (e) {
-      if (!(e instanceof ApiError && e.code === "agent.not_found")) throw e;
-    }
-    return grants.map((g) => ({ ...g, stale: current.get(g.toolKey) !== g.specHash }));
+    // the creator's view of the agent's tools: a grant whose tool changed or left is stale;
+    // unknown (null) when the tools cannot be read now, rather than failing the task page
+    const current = await this.agentToolFacts(orgId, task.accountId, task.agentId);
+    return grants.map((g) => ({
+      ...g,
+      stale: current === null ? null : current.get(g.toolKey)?.specHash !== g.specHash,
+    }));
   }
 
   /** Creator only; each grant is checked as at create (spec §7). */
@@ -852,18 +789,24 @@ export class ScheduledTasksService {
     const runs = new Map(latest.map((r) => [r.task_id, r]));
     const grantRows = await db
       .selectFrom("scheduled_task_grants")
-      .select(["task_id", "tool_key"])
+      .select(["task_id", "tool_key", "spec_hash"])
       .where("task_id", "in", ids)
       .execute();
-    const granted = new Map<string, Set<string>>();
+    /** Per task: each granted tool key with the definition hash it was granted for. */
+    const granted = new Map<string, Map<string, string>>();
     for (const g of grantRows) {
-      const set = granted.get(g.task_id) ?? new Set<string>();
-      set.add(g.tool_key);
-      granted.set(g.task_id, set);
+      const byKey = granted.get(g.task_id) ?? new Map<string, string>();
+      byKey.set(g.tool_key, g.spec_hash);
+      granted.set(g.task_id, byKey);
     }
     let loaded = false;
     let role: OrgRole | null = null;
-    const gated = new Map<string, Promise<Map<string, OrgRole>>>();
+    const agentTools = new Map<string, Promise<AgentToolFacts | null>>();
+    const toolsOf = (agentId: string) => {
+      const lookup = agentTools.get(agentId) ?? this.agentToolFacts(orgId, accountId, agentId);
+      agentTools.set(agentId, lookup);
+      return lookup;
+    };
     for (const task of tasks) {
       if (task.status === "paused" && task.pauseReason !== null && task.pauseReason !== "creator") {
         out.push({
@@ -896,20 +839,27 @@ export class ScheduledTasksService {
         });
       }
       const have = granted.get(task.id);
-      const missing = run.missing_grants.filter((k) => !have?.has(k));
+      const refused = run.missing_grants;
+      // a refused tool granted since drops out, unless its grant no longer matches the tool's
+      // definition (stale: it would be refused again)
+      const facts = refused.some((k) => !k.startsWith("connection:"))
+        ? await toolsOf(task.agentId)
+        : null;
+      const missing = refused.filter((k) => {
+        const hash = have?.get(k);
+        if (hash === undefined) return true;
+        const current = facts?.get(k);
+        return facts !== null && current?.specHash !== hash;
+      });
       if (missing.length === 0) continue;
       let needsRole: string[] = [];
-      if (missing.some((k) => !k.startsWith("connection:"))) {
+      if (facts !== null && missing.some((k) => !k.startsWith("connection:"))) {
         if (!loaded) {
           role = await this.roleOrNull(orgId, accountId);
           loaded = true;
         }
-        const lookup =
-          gated.get(task.agentId) ?? this.requiredRoles(orgId, accountId, task.agentId);
-        gated.set(task.agentId, lookup);
-        const required = await lookup;
         needsRole = missing.filter((k) => {
-          const req = required.get(k);
+          const req = facts.get(k)?.requiredRole;
           return req !== undefined && (role === null || !roleAtLeast(role, req));
         });
       }
@@ -937,28 +887,41 @@ export class ScheduledTasksService {
     return m?.role ?? null;
   }
 
-  /** The agent's tools that declare a `requiredRole`, by key; none when the agent is gone or hidden. */
-  private async requiredRoles(
+  /**
+   * The agent's tools by key (their `requiredRole` and definition hash) as the creator sees them;
+   * empty when the agent is gone or hidden (the task is paused for that anyway); null when they
+   * cannot be read now (logged: the caller then cannot tell what is stale or needs a role).
+   */
+  private async agentToolFacts(
     orgId: string,
     accountId: string,
     agentId: string,
-  ): Promise<Map<string, OrgRole>> {
-    let d: AgentView["definition"];
+  ): Promise<AgentToolFacts | null> {
     try {
-      d = (await this.agents.get(orgId, agentId, accountId)).definition;
+      const d = (await this.agents.get(orgId, agentId, accountId)).definition;
+      const { tools } = await this.tools.forAgent(orgId, {
+        disabledTools: d.disabledTools ?? [],
+        subagentTools: d.subagentTools,
+        subagents: d.subagents,
+      });
+      return new Map(
+        tools.map((x) => [
+          x.key,
+          {
+            specHash: x.specHash,
+            ...(x.requiredRole !== undefined && { requiredRole: x.requiredRole }),
+          },
+        ]),
+      );
     } catch (e) {
-      // the task is paused for that reason anyway
       if (e instanceof ApiError && e.code === "agent.not_found") return new Map();
-      throw e;
+      this.log.warn("scheduled task: the agent's tools could not be read", {
+        orgId,
+        agentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return null;
     }
-    const { tools } = await this.tools.forAgent(orgId, {
-      disabledTools: d.disabledTools ?? [],
-      subagentTools: d.subagentTools,
-      subagents: d.subagents,
-    });
-    const out = new Map<string, OrgRole>();
-    for (const x of tools) if (x.requiredRole !== undefined) out.set(x.key, x.requiredRole);
-    return out;
   }
 
   /**

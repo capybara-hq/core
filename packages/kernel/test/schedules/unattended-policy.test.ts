@@ -23,6 +23,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
+import { grantRefusalOf } from "../../src/schedules/grant-rules.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import {
   UNATTENDED_ASK_ERROR,
@@ -143,6 +144,11 @@ const FIXED = pluginTool("fixed", "ask", { annotations: { requiresUserInteractio
 const ADMIN = pluginTool("admin", "ask", {}, "admin");
 const SKILL_WRITE = builtinTool("SkillWrite", "allow");
 const ASK_USER = builtinTool("AskUserQuestion", "allow");
+/** A tool whose calls are decided per call under their own key (as the Platform tool's ops). */
+const PER_CALL: ResolvedTool = {
+  ...pluginTool("percall", "allow"),
+  callPolicy: async () => ({ key: "plugin__probe__percall:op", policy: "ask", remember: true }),
+};
 
 let calls: string[] = [];
 const ran =
@@ -156,6 +162,7 @@ const handlers: Record<string, ToolHandler> = {
   plugin__probe__banned: ran("banned"),
   plugin__probe__fixed: ran("fixed"),
   plugin__probe__admin: ran("admin"),
+  plugin__probe__percall: ran("percall"),
   plugin__probe__form: async () => {
     calls.push("form");
     return {
@@ -371,8 +378,20 @@ beforeEach(async () => {
   seed = await seedConversation(raw);
   await setMember(seed.accountId, "member");
   runId = randomUUID();
-  approvals = approvalsFor(db, eventLog, config);
-  resolved = [GATED, BANNED, FIXED, ADMIN, SKILL_WRITE, ASK_USER, pluginTool("form", "allow")];
+  // a trial approval is checked against the task agent's tools: the ones this test resolves
+  approvals = approvalsFor(db, eventLog, config, undefined, {
+    forAgent: async () => ({ tools: resolved, unavailable: [], hidden: [], toolSearch: false }),
+  });
+  resolved = [
+    GATED,
+    BANNED,
+    FIXED,
+    ADMIN,
+    SKILL_WRITE,
+    ASK_USER,
+    PER_CALL,
+    pluginTool("form", "allow"),
+  ];
 });
 
 const stepCtx = (over: Partial<ToolStepContext> = {}): ToolStepContext => ({
@@ -536,6 +555,17 @@ describe("unattended runs (spec §7)", () => {
       isError: true,
       content: UNATTENDED_FIXED_ASK_ERROR(FIXED.key),
     });
+    expect(await missingGrants()).toEqual([]);
+  });
+
+  it("a per-call key is refused as a fixed ask and never recorded", async () => {
+    const { evs } = await runCalls([{ id: "c1", name: PER_CALL.key, input: {} }]);
+    expect(calls).toEqual([]);
+    expect(resultsOf(evs)[0]).toMatchObject({
+      isError: true,
+      content: UNATTENDED_FIXED_ASK_ERROR("plugin__probe__percall:op"),
+    });
+    // the creator could never add it to the task: no dead end in the inbox
     expect(await missingGrants()).toEqual([]);
   });
 
@@ -763,6 +793,27 @@ describe("trial runs (spec §7)", () => {
     await setScheduleSettings({ forbiddenTools: [GATED.key] });
     await askAndDecide(GATED, seed.accountId, "once");
     expect(await store.listGrants(db, taskId)).toEqual([]);
+  });
+
+  it("a fixed-ask tool approved in a trial is not kept", async () => {
+    await askAndDecide(FIXED, seed.accountId, "once");
+    expect(await store.listGrants(db, taskId)).toEqual([]);
+  });
+
+  it("a per-call key approved in a trial is not kept", async () => {
+    await askAndDecide(PER_CALL, seed.accountId, "always");
+    expect(await store.listGrants(db, taskId)).toEqual([]);
+  });
+
+  it("a tool whose base key the org forbids is not kept through its per-call key", async () => {
+    await setScheduleSettings({ forbiddenTools: [GATED.key] });
+    expect(
+      grantRefusalOf(`${GATED.key}:op`, GATED, {
+        role: "member",
+        visibility: "org",
+        forbiddenTools: [GATED.key],
+      })?.code,
+    ).toBe("forbidden");
   });
 
   it("an attended run's approval adds no task grant", async () => {

@@ -170,6 +170,43 @@ describe("schedule_attention inbox items", () => {
     expect(await attention(aliceId)).toEqual([]);
   });
 
+  it("a refused tool granted since drops out, unless its grant is stale", async () => {
+    const task = await mkTask();
+    await svc.addGrants(orgId, aliceId, task.id, [{ toolKey: "AskUserQuestion" }]);
+    await seedRun(task.id, ["AskUserQuestion"]);
+    expect(await attention(aliceId)).toEqual([]);
+    // the tool's definition changed since: the grant no longer covers it
+    await db
+      .updateTable("scheduled_task_grants")
+      .set({ spec_hash: "an-older-definition" })
+      .where("task_id", "=", task.id)
+      .execute();
+    const [item] = await attention(aliceId);
+    expect(item).toMatchObject({
+      id: `${task.id}:grants`,
+      attention: { reason: "missing_grants", missing: ["AskUserQuestion"] },
+    });
+    // the task page says so too
+    expect(await svc.grants(orgId, { accountId: aliceId }, task.id)).toMatchObject([
+      { toolKey: "AskUserQuestion", stale: true },
+    ]);
+  });
+
+  it("unreadable agent tools leave the task page up, staleness unknown", async () => {
+    const task = await mkTask();
+    await svc.addGrants(orgId, aliceId, task.id, [{ toolKey: "AskUserQuestion" }]);
+    const stub = vi
+      .spyOn(k.app.get(ToolRegistry), "forAgent")
+      .mockRejectedValue(new Error("registry down"));
+    try {
+      expect(await svc.grants(orgId, { accountId: aliceId }, task.id)).toMatchObject([
+        { toolKey: "AskUserQuestion", stale: null },
+      ]);
+    } finally {
+      stub.mockRestore();
+    }
+  });
+
   it("a tool above the creator's role is marked needsRole", async () => {
     const task = await mkTask();
     const registry = k.app.get(ToolRegistry);
