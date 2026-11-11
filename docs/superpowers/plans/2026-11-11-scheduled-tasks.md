@@ -22,7 +22,7 @@ section numbers below are the spec's).
 ## Global Constraints
 
 - AGENTS.md applies in full; skills to read per task are named in each task.
-- Migration file: `packages/kernel/src/migrations/0109_scheduled_tasks.sql`, plain SQL,
+- Migration file: `packages/kernel/src/migrations/0113_scheduled_tasks.sql`, plain SQL,
   `IF [NOT] EXISTS`, schema `capybara`, expand-only.
 - BullMQ job ids contain no `:`; the fire job id is `sched-fire-<taskRunId>` on the maintenance
   queue (`MAINTENANCE_QUEUE_NAME`).
@@ -75,7 +75,7 @@ section numbers below are the spec's).
 Skills: `writing-migrations`.
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0109_scheduled_tasks.sql`
+- Create: `packages/kernel/src/migrations/0113_scheduled_tasks.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (new table interfaces; `RunsTable`,
   `ConversationsTable`, `ConversationQueueTable` columns)
 - Create: `packages/kernel/src/schedules/types.ts`, `packages/kernel/src/schedules/store.ts`,

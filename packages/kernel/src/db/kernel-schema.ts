@@ -297,7 +297,7 @@ export interface ConversationsTable {
   subagent_depth: ColumnType<number, number | undefined, number>;
   /** 0088, renamed in 0105: the device the conversation runs in; null = not chosen yet. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0109: the scheduled task that created it (`new` mode); null otherwise. */
+  /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
   scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -341,7 +341,7 @@ export interface ConversationQueueTable {
   /** 0062: the `user_message.skill` record of a queued skill invocation, or null. */
   skill: ColumnType<unknown, string | null | undefined, string | null>;
   /**
-   * 0109: the schedule marker of a scheduled task's message, plus the task's zone (`timeZone`, the
+   * 0113: the schedule marker of a scheduled task's message, plus the task's zone (`timeZone`, the
    * message's zone override; not copied into the logged marker); null for a person's message.
    */
   schedule: ColumnType<
@@ -399,7 +399,7 @@ export interface RunsTable {
    */
   budget_run_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
-   * 0109: the scheduled task run this run serves (set on the run the task's message triggers and
+   * 0113: the scheduled task run this run serves (set on the run the task's message triggers and
    * inherited by its unattended descendants); null = a person's run.
    */
   scheduled_task_run_id: ColumnType<string | null, string | null | undefined, string | null>;
@@ -714,7 +714,7 @@ export interface ChannelDeliveriesTable {
   fail_count: Generated<number>;
   updated_at: Ts;
   /**
-   * 0109: a scheduled group run's thread is still to bind; the account its thread row gets when
+   * 0113: a scheduled group run's thread is still to bind; the account its thread row gets when
    * outbound has the run's first post (thread key = that message's id). Null otherwise.
    */
   pending_thread_account_id: ColumnType<string | null, string | null | undefined, string | null>;
@@ -1298,7 +1298,7 @@ export interface ModelUsageTable {
 type NullableText = ColumnType<string | null, string | null | undefined, string | null>;
 type NullableTs = ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 
-/** 0109: a scheduled task (scheduled tasks spec §4). */
+/** 0113: a scheduled task (scheduled tasks spec §4). */
 export interface ScheduledTasksTable {
   id: string;
   org_id: string;
@@ -1329,7 +1329,7 @@ export interface ScheduledTasksTable {
   deleted_at: NullableTs;
 }
 
-/** 0109: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
+/** 0113: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
 export interface ScheduledTaskRunsTable {
   id: string;
   task_id: string;
@@ -1353,7 +1353,7 @@ export interface ScheduledTaskRunsTable {
   rechecked_at: NullableTs;
 }
 
-/** 0109: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */
+/** 0113: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */
 export interface ScheduledTaskGrantsTable {
   task_id: string;
   tool_key: string;

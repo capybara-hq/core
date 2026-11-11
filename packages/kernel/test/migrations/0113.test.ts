@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0109_scheduled_tasks.sql (scheduled tasks spec §4): three new tables and three nullable columns
+ * 0113_scheduled_tasks.sql (scheduled tasks spec §4): three new tables and three nullable columns
  * on existing ones. Migrates to the migration before it, writes a run, a conversation and a queued
- * message, then runs 0109: the existing rows read null in the new columns.
+ * message, then runs 0113: the existing rows read null in the new columns.
  */
-const FILE = "0109_scheduled_tasks.sql";
+const FILE = "0113_scheduled_tasks.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -72,7 +72,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0109_scheduled_tasks", () => {
+describe("0113_scheduled_tasks", () => {
   it("adds the nullable link columns; existing rows read null", async () => {
     expect(await column("runs", "scheduled_task_run_id")).toEqual([
       { data_type: "text", is_nullable: "YES" },

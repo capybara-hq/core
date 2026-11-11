@@ -3,7 +3,7 @@ import type { ModelRef } from "../agents/definition.js";
 /**
  * Scheduled tasks (spec 2026-11-11-scheduled-tasks-design.md §4): the shapes the kernel reads and
  * writes. The rows live in `capybara.scheduled_tasks`, `scheduled_task_runs` and
- * `scheduled_task_grants` (migration 0109).
+ * `scheduled_task_grants` (migration 0113).
  */
 
 /** When a task fires: a 5-field cron, or once at a local date-time, both in an IANA zone (§5). */
