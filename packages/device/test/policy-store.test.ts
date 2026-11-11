@@ -73,6 +73,19 @@ describe("PolicyStore", () => {
     expect(store.current().allowedDomains).toEqual(["c.com"]);
   });
 
+  it("an invalid network or remoteGrants keeps the last good policy, never a looser one", () => {
+    writePolicy(dir, { ...withDomains(["a.com"]), remoteGrants: "off" });
+    const errors: string[] = [];
+    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
+    expect(store.current().remoteGrants).toBe("off");
+    writeFileSync(policyPath(dir), JSON.stringify({ remoteGrants: "yes", network: "open" }));
+    expect(store.current()).toMatchObject({ network: "allowlist", remoteGrants: "off" });
+    expect(errors[0]).toMatch(/remoteGrants must be "owner" or "off"/);
+    writeFileSync(policyPath(dir), JSON.stringify({ network: "everything" }));
+    expect(store.current()).toMatchObject({ network: "allowlist", remoteGrants: "off" });
+    expect(errors[1]).toMatch(/network must be "allowlist" or "open"/);
+  });
+
   it("a bad version reported once is reported again when it comes back later", () => {
     writePolicy(dir, withDomains(["a.com"]));
     const errors: string[] = [];

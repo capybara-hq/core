@@ -16,6 +16,7 @@ const sbx = vi.hoisted(() => {
     pending: undefined as string[] | undefined,
     throwOnLookup: false,
     lookups: [] as string[],
+    registered: [] as Array<{ id: string; allowedDomains: string[] }>,
   };
   return state;
 });
@@ -40,7 +41,9 @@ vi.mock("@anthropic-ai/sandbox-runtime", () => ({
       sbx.pending = undefined;
       return command;
     },
-    registerCommandNetworkLists: () => {},
+    registerCommandNetworkLists: (id: string, lists: { allowedDomains: string[] }) => {
+      sbx.registered.push({ id, allowedDomains: [...lists.allowedDomains] });
+    },
     unregisterCommandNetworkLists: () => {},
     cleanupAfterCommand: () => {},
     reset: async () => {},
@@ -91,6 +94,7 @@ beforeEach(() => {
   sbx.violations.clear();
   sbx.pending = undefined;
   sbx.lookups.length = 0;
+  sbx.registered.length = 0;
 });
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
@@ -217,6 +221,104 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
     await ex.writeFile(join(ex.roots.workspace, "a.txt"), Buffer.from("hi"));
     expect(sbx.commandIds.length).toBeGreaterThan(0);
     expect(sbx.lookups).toEqual([]);
+    await ex.dispose();
+  });
+
+  it("reports the classified refusals in the result's network field", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    sbx.pending = [deny("files.slack.com:443"), deny("api.foo.com:443"), deny("10.0.0.5:22")];
+    const r = await ex.exec(execArgs("true"), never);
+    expect(r.network).toEqual({
+      blocked: [
+        { host: "files.slack.com", port: 443, layer: "device" },
+        { host: "api.foo.com", port: 443, layer: "org" },
+        { host: "10.0.0.5", port: 22, layer: "address" },
+      ],
+    });
+    sbx.pending = ["deny file-read-data /x"];
+    const quiet = await ex.exec(execArgs("true"), never);
+    expect(quiet.network).toBeUndefined();
+    expect("network" in quiet).toBe(false);
+    await ex.dispose();
+  });
+
+  const grants = (...hosts: string[]) => ({
+    hosts,
+    source: { kind: "run" as const, id: "run_1", accountId: "acc" },
+  });
+
+  it("adds run grants to the command's list under remoteGrants owner, within the org", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    policy = { ...policy, allowedDomains: ["a.com"] };
+    const limits = { ...LIMITS, allowHosts: ["a.com", "files.slack.com"] };
+    await ex.exec(
+      execArgs("true", { limits, grants: grants("files.slack.com", "evil.com") }),
+      never,
+    );
+    expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["a.com", "files.slack.com"]);
+    // A granted host that is still refused is not blamed on the device.
+    sbx.pending = [deny("files.slack.com:443")];
+    const r = await ex.exec(execArgs("true", { limits, grants: grants("files.slack.com") }), never);
+    expect(r.network?.blocked).toEqual([{ host: "files.slack.com", port: 443, layer: "unknown" }]);
+    await ex.dispose();
+  });
+
+  it("ignores grants under remoteGrants off", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    policy = { ...policy, allowedDomains: ["a.com"], remoteGrants: "off" };
+    const limits = { ...LIMITS, allowHosts: ["a.com", "files.slack.com"] };
+    sbx.pending = [deny("files.slack.com:443")];
+    const r = await ex.exec(execArgs("true", { limits, grants: grants("files.slack.com") }), never);
+    expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["a.com"]);
+    expect(r.network?.blocked).toEqual([{ host: "files.slack.com", port: 443, layer: "device" }]);
+    await ex.dispose();
+  });
+
+  it("network open with an org allowlist registers the org's list", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    policy = { ...policy, network: "open" };
+    await ex.exec(execArgs("true"), never);
+    expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["files.slack.com"]);
+    await ex.dispose();
+  });
+
+  it("network open with an org that is open: no list, the ask callback allows public hosts", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    const ask = sbx.initialize.mock.calls[0]?.[1] as (p: {
+      host: string;
+      port: number;
+    }) => Promise<unknown>;
+    policy = { ...policy, network: "open" };
+    const open = { ...LIMITS, egress: "open" as const, allowHosts: [] };
+    await ex.exec(execArgs("true", { limits: open }), never);
+    // The runtime refuses "*" in a per-command list: it is never registered.
+    expect(sbx.registered.every((x) => !x.allowedDomains.includes("*"))).toBe(true);
+    expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
+    expect(await ask({ host: "Anything.Example.org.", port: 443 })).toBe(true);
+    // Addresses and internal names stay refused.
+    for (const host of ["10.0.0.5", "127.0.0.1", "intranet", "printer.local", "::1"]) {
+      expect(await ask({ host, port: 443 }), host).toMatchObject({ allow: false });
+    }
+    // Narrowing applies at once: back to allowlist, or a later command under an org list.
+    policy = { ...policy, network: "allowlist" };
+    expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
+    policy = { ...policy, network: "open" };
+    await ex.exec(execArgs("true"), never);
+    expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
+    await ex.dispose();
+  });
+
+  it("remoteGrants does not matter for a device that is open already", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    policy = { ...policy, network: "open", remoteGrants: "off" };
+    await ex.exec(execArgs("true"), never);
+    expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["files.slack.com"]);
     await ex.dispose();
   });
 });

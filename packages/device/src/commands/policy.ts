@@ -76,8 +76,9 @@ function edit(
 /**
  * `policy show` prints the local policy; `policy set <key> <value>` replaces one field;
  * `policy add|remove <key> <value>` adds or removes entries of a list field. The machine's user
- * edits this file; the cloud never writes it. Writes take policy.json.lock, and a running
- * program applies the change at its next command.
+ * edits this file; the deployment changes it only through the `policy` op, on the device owner's
+ * decision and only while `remoteGrants` is `owner` (narrowing always). Writes take
+ * policy.json.lock, and a running program applies the change at its next command.
  */
 export function policyCommand(
   cmd: Extract<Command, { command: "policy" }>,

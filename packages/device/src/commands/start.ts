@@ -66,15 +66,22 @@ export async function start(deps: StartDeps): Promise<number> {
   writePid(stateDir, proc.pid);
   try {
     let executor: Executor;
+    let policy: PolicyStore;
     try {
       // An invalid policy.json stops the start; later, a broken edit keeps the last good policy.
-      executor = await deps.createExecutor(cred, new PolicyStore(stateDir, { err }));
+      policy = new PolicyStore(stateDir, { err });
+      executor = await deps.createExecutor(cred, policy);
     } catch (e) {
       err(`Cannot start: ${(e as Error).message}`);
       return 1;
     }
     if (stopRequested) return 0;
-    conn = (deps.connect ?? connect)(cred, executor, { log: new CommandLog(stateDir), err });
+    // One store: the executor's commands, the hello summary and the policy op see the same policy.
+    conn = (deps.connect ?? connect)(cred, executor, {
+      log: new CommandLog(stateDir),
+      err,
+      policy,
+    });
     if (drainRequested) conn.drain();
     out(`capybara-device: serving device ${cred.deviceId} (${cred.mode} mode)`);
     return await conn.done;

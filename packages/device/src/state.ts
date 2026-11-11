@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { DeviceNetworkMode, DeviceRemoteGrants } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -39,6 +40,17 @@ export interface Policy {
   allowCredentials: string[];
   cpu: number | null;
   memoryMb: number | null;
+  /**
+   * `allowlist` (default): commands reach only `allowedDomains`, within the org's egress.
+   * `open`: the local policy stops narrowing; commands reach what the org allows.
+   */
+  network: DeviceNetworkMode;
+  /**
+   * `owner` (default): the deployment may widen this policy (the `policy` op's `add` and
+   * `network: "open"`, an exec's run or task grants) on the device owner's decision. `off`: only
+   * narrowing changes from the deployment are accepted. Set only locally.
+   */
+  remoteGrants: DeviceRemoteGrants;
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -49,6 +61,8 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
+  network: "allowlist",
+  remoteGrants: "owner",
 };
 
 type Env = Record<string, string | undefined>;
@@ -168,6 +182,12 @@ export function readPolicyFile(dir: string): { policy: Policy; extra: Record<str
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
+  if (policy.network !== "allowlist" && policy.network !== "open") {
+    throw bad("network", '"allowlist" or "open"');
+  }
+  if (policy.remoteGrants !== "owner" && policy.remoteGrants !== "off") {
+    throw bad("remoteGrants", '"owner" or "off"');
+  }
   const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) if (!POLICY_KEYS.includes(k)) extra[k] = v;
   return {
@@ -176,6 +196,8 @@ export function readPolicyFile(dir: string): { policy: Policy; extra: Record<str
       allowCredentials: policy.allowCredentials,
       cpu: policy.cpu,
       memoryMb: policy.memoryMb,
+      network: policy.network,
+      remoteGrants: policy.remoteGrants,
     },
     extra,
   };

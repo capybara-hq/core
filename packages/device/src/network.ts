@@ -60,6 +60,15 @@ function normalizeHost(host: string): string {
   return h.endsWith(".") ? h.slice(0, -1) : h;
 }
 
+/**
+ * Whether `host` is a public DNS name a command may reach when nothing narrows it (device and org
+ * both open): never an IP literal, a single-label or internal name, or a wildcard.
+ */
+export function isPublicName(host: string): boolean {
+  const h = normalizeHost(host);
+  return !h.startsWith("*") && validateAllowHost(h).length === 0;
+}
+
 function admittedBy(list: readonly string[], host: string): boolean {
   return list.some((p) => covers(p.toLowerCase(), host));
 }

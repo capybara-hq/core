@@ -14,8 +14,14 @@ import type {
   SandboxLimits,
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
-import { blockedHosts, denyReason, networkTrailer } from "../network.js";
-import { effectiveEgress, srtConfig } from "../policy.js";
+import {
+  type BlockedHost,
+  blockedHosts,
+  denyReason,
+  isPublicName,
+  networkTrailer,
+} from "../network.js";
+import { ANY_HOST, effectiveEgress, grantedHosts, srtConfig } from "../policy.js";
 import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
@@ -158,20 +164,32 @@ export class OsExecutor implements Executor {
   }
 
   /**
-   * The sandbox's ask callback: reached only for a host no list allows, it always refuses, with
-   * a reason clients that print the proxy's status phrase show (spec §9.1).
+   * The sandbox's ask callback, reached only for a host no list allows. When the device's policy
+   * is `open` and the org's egress (of the latest command) is `open` too, it allows any public
+   * name: sandbox-runtime refuses `*` in a per-command list, so this is how such a command reaches
+   * any host. The callback has no command id, so it judges the policy and limits now; narrowing
+   * either takes effect at once, also for commands already running. Otherwise it refuses, with a
+   * reason clients that print the proxy's status phrase show (spec §9.1).
    */
-  readonly askCallback: SandboxAskCallback = async ({ host }) => ({
-    allow: false,
-    reason: denyReason(host, this.lastLimits, this.opts.policy()),
-  });
+  readonly askCallback: SandboxAskCallback = async ({ host }) => {
+    const policy = this.opts.policy();
+    const limits = this.lastLimits;
+    if (
+      limits !== undefined &&
+      effectiveEgress(policy, limits).includes(ANY_HOST) &&
+      isPublicName(host)
+    ) {
+      return true;
+    }
+    return { allow: false, reason: denyReason(host, limits, policy) };
+  };
 
-  /** The stderr trailer for the network refusals of one command (read before it unregisters). */
-  private trailerFor(commandId: string, limits: SandboxLimits, policy: Policy): string {
+  /** The classified network refusals of one command (read before it unregisters). */
+  private blockedFor(commandId: string, limits: SandboxLimits, policy: Policy): BlockedHost[] {
     const lines = SandboxManager.getSandboxViolationStore()
       .getViolationsForCommand(commandId)
       .map((v) => v.line);
-    return networkTrailer(blockedHosts(lines, limits, policy));
+    return blockedHosts(lines, limits, policy);
   }
 
   /** The marker value of a tag's processes. */
@@ -223,8 +241,10 @@ export class OsExecutor implements Executor {
     );
     // The kernel may have cancelled while the wrap was prepared.
     o.signal?.throwIfAborted();
-    if (o.egress.length > 0) {
-      SandboxManager.registerCommandNetworkLists(commandId, { allowedDomains: o.egress });
+    // "*" (any host) is refused in a per-command list: the ask callback allows those hosts.
+    const listed = o.egress.filter((d) => d !== ANY_HOST);
+    if (listed.length > 0) {
+      SandboxManager.registerCommandNetworkLists(commandId, { allowedDomains: listed });
     }
     let child: ChildProcess;
     try {
@@ -284,11 +304,16 @@ export class OsExecutor implements Executor {
     // Read once: the command's lists and the explanation of its refusals use the same policy.
     const policy = this.opts.policy();
     this.lastLimits = args.limits;
+    // A granted host the command still could not reach is not the device's doing.
+    const judged: Policy = {
+      ...policy,
+      allowedDomains: [...policy.allowedDomains, ...grantedHosts(policy, args.limits, args.grants)],
+    };
     const { child, commandId } = await this.spawnSandboxed(args.command, {
       cwd,
       ...(args.env !== undefined && { env: args.env }),
       tag: args.tag,
-      egress: effectiveEgress(policy, args.limits),
+      egress: effectiveEgress(policy, args.limits, args.grants),
       signal,
     });
     return new Promise<ExecResult>((resolvePromise, reject) => {
@@ -329,12 +354,13 @@ export class OsExecutor implements Executor {
         if (settled || exit === undefined) return;
         settled = true;
         // Before cleanup: the violations are looked up by the command's id.
-        let trailer = "";
+        let blocked: BlockedHost[] = [];
         try {
-          trailer = this.trailerFor(commandId, args.limits, policy);
+          blocked = this.blockedFor(commandId, args.limits, judged);
         } catch {
           // The explanation is best effort: the command's result always comes back.
         }
+        const trailer = networkTrailer(blocked);
         cleanup();
         child.stdout?.destroy();
         child.stderr?.destroy();
@@ -353,6 +379,7 @@ export class OsExecutor implements Executor {
           stderr,
           truncated: cap.truncated,
           timedOut,
+          ...(blocked.length > 0 && { network: { blocked } }),
         });
       };
       child.stdout?.on("data", (b: Buffer) => cap.push("stdout", b));

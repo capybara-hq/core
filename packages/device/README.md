@@ -61,7 +61,8 @@ bubblewrap; Linux needs `bwrap` and `socat`): writes only under `workspace/` and
 `skills/` read only, `~/.ssh`, cloud CLI credentials, `~/.netrc`, `~/.gnupg`, browser profiles and
 this program's state directory unreadable. Network is limited to the domains of the local policy
 that the device's egress also allows; with an empty policy (the default) commands reach no
-network at all. Only you edit the policy, the platform can never widen it:
+network at all. You edit the policy locally; the deployment can change it only as described in
+[Changes from the deployment](#changes-from-the-deployment):
 
 ```bash
 capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
@@ -89,6 +90,48 @@ lift it:
 The trailer is part of the command's output, so the agent reads it too. It comes after the
 output the deployment asked for (`maxOutputBytes`), so stderr can exceed that cap by the trailer's
 lines (at most 21).
+
+In OS mode each command's result also carries the refused hosts and their layers, so the
+deployment can ask the device owner on the spot (the device announces this in its hello, together
+with a summary of its local policy: `network`, `allowedDomains` and `remoteGrants`).
+
+### Network open
+
+`network` in `policy.json` is `allowlist` (default) or `open`. Under `open` the local policy stops
+narrowing: a command may reach exactly what the organization allows (its allowlist; any public host
+when the organization's egress is open; nothing when it is none). Loopback, private addresses and
+internal names stay refused. With nothing narrowing it, a command can upload files to any outside
+site the organization allows, and prompt injection can make an agent do that: turn it on only on
+your own development machine, with agents and material you trust.
+
+### Changes from the deployment
+
+`remoteGrants` in `policy.json` decides whether the deployment may widen this device's network
+policy on the device owner's decision (an approval answered in a signed-in web or IM session, or
+the device page):
+
+- `owner` (default): the device accepts the `policy` operation's additions to `allowedDomains`
+  (an approval adds an exact host; the device page may add a `*.` wildcard) and `network: open`,
+  and adds a run's or a scheduled task's granted hosts to a command's list. Grants are exact hosts
+  and never go beyond the organization's egress.
+- `off`: the device refuses every widening from the deployment (additions, `network: open`, run and
+  task grants) with "This device does not accept network changes from the deployment; allow it
+  locally: capybara-device policy add allowedDomains <host>".
+
+Narrowing (removing hosts, `network: allowlist`) is always accepted. Every host is validated like
+a local one, the change is written under `policy.json.lock`, and it applies at the next command.
+`remoteGrants` itself is set only locally, in `policy.json`. Each change from the deployment is
+recorded in the local command log (`commands.log`, next to `policy.json`) with who decided it,
+and so is a refused attempt and the grants a command was given:
+
+```text
+{"op":"policy","detail":"policy add files.slack.com by Ada Lovelace (acc_123) via web, approval apr_456",...}
+{"op":"policy","detail":"policy refused network open by Ada Lovelace (acc_123) via web",...}
+{"op":"exec","detail":"grants run run_789 by acc_123: files.slack.com",...}
+```
+
+Docker mode has no per-host view: it reports no refused hosts and ignores grants, but applies the
+`policy` operation to `policy.json` like OS mode.
 
 Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.

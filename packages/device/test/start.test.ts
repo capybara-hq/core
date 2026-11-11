@@ -132,6 +132,7 @@ describe("start, stop, drain", () => {
     writeCredential(dir, cred);
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
     let store: PolicyStore | undefined;
+    let served: PolicyStore | undefined;
     const code = await start({
       stateDir: dir,
       out: () => {},
@@ -141,9 +142,14 @@ describe("start, stop, drain", () => {
         store = s;
         return new FakeExecutor();
       },
-      connect: () => ({ done: Promise.resolve(0), drain: () => {}, stop: () => {} }),
+      connect: (_cred, _ex, opts) => {
+        served = opts?.policy;
+        return { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
+      },
     });
     expect(code).toBe(0);
+    // The policy op and the hello work on the store the executor reads.
+    expect(served).toBe(store);
     expect(store?.current().allowedDomains).toEqual(["a.com"]);
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["b.com"] });
     expect(store?.current().allowedDomains).toEqual(["b.com"]);
