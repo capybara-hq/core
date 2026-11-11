@@ -60,7 +60,7 @@ let orgOfEnv: string | null;
 let maxFrameBytes: number;
 /** What `NetworkGrants.forExec` answers, and the calls it got. */
 let runGrants: DeviceExecGrants | undefined;
-let grantCalls: { orgId: string; runId: string }[];
+let grantCalls: { orgId: string; runId: string; deviceId: string }[];
 /** What the machine's exec answers. */
 let execResult: Record<string, unknown>;
 beforeEach(() => {
@@ -333,16 +333,28 @@ describe("LocalDeviceProvider", () => {
     // a run without grants: asked with the device's org, nothing sent
     const actor = { accountId: "a", conversationId: "c", runId: "run-1" };
     await provider.exec(handle, { ...base, actor, signal: signal() });
-    expect(grantCalls).toEqual([{ orgId: "org-1", runId: "run-1" }]);
+    expect(grantCalls).toEqual([{ orgId: "org-1", runId: "run-1", deviceId: h.deviceId }]);
     expect((h.frames[1] as KernelReq).args).not.toHaveProperty("grants");
     expect((h.frames[1] as KernelReq).args).toMatchObject({ actor });
     // a run with grants: they travel with the exec
     runGrants = {
-      hosts: ["files.slack.com"],
+      hosts: ["example.com"],
       source: { kind: "run", id: "root-run", accountId: "owner" },
     };
     await provider.exec(handle, { ...base, actor, signal: signal() });
     expect((h.frames[2] as KernelReq).args).toMatchObject({ grants: runGrants, limits: LIMITS });
+    // a grant beyond the org's limits never reaches the device
+    runGrants = {
+      hosts: ["example.com", "evil.example.net"],
+      source: { kind: "run", id: "root-run", accountId: "owner" },
+    };
+    await provider.exec(handle, { ...base, actor, signal: signal() });
+    expect((h.frames[3] as KernelReq).args).toMatchObject({
+      grants: { ...runGrants, hosts: ["example.com"] },
+    });
+    orgLimits = { ...LIMITS, egress: "none", allowHosts: [] };
+    await provider.exec(handle, { ...base, actor, signal: signal() });
+    expect((h.frames[4] as KernelReq).args).not.toHaveProperty("grants");
     await h.disconnect();
   });
 

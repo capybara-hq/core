@@ -52,7 +52,7 @@ export class DevicePolicyService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(LocalDeviceRelay) private readonly relay: Pick<LocalDeviceRelay, "call">,
+    @Inject(LocalDeviceRelay) private readonly relay: Pick<LocalDeviceRelay, "call" | "holderLive">,
     @Inject(MachinesService) private readonly machines: Pick<MachinesService, "activeFor">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
@@ -95,6 +95,10 @@ export class DevicePolicyService {
     if (!machine.features.includes("policyOp")) {
       return { applied: false, reason: "unsupported", message: UNSUPPORTED_MESSAGE };
     }
+    // not connected: nothing is sent (a queued op would wait for a reconnect nobody watches)
+    if (!(await this.relay.holderLive(input.deviceId))) {
+      return { applied: false, reason: "offline", message: OFFLINE_MESSAGE };
+    }
     const args: DevicePolicyArgs = { ...input.change, source: input.source };
     let policy: DeviceLocalPolicySummary;
     try {
@@ -104,6 +108,11 @@ export class DevicePolicyService {
         signal: new AbortController().signal,
       }));
     } catch (e) {
+      if (e instanceof ApiError && e.code === "device.offline") {
+        // the op was sent and the wait ran out: the machine may still apply it, so the attempt is
+        // audited unconfirmed; its next hello reports the policy as it is
+        await this.record({ ...input, machineId: machine.id, policy: null });
+      }
       return this.notApplied(input.deviceId, e);
     }
     await this.record({ ...input, machineId: machine.id, policy });
@@ -118,7 +127,10 @@ export class DevicePolicyService {
     return m === null ? null : { features: m.features, policy: m.localPolicy };
   }
 
-  /** Keeps the policy the machine wrote on its row and audits the change. */
+  /**
+   * Keeps the policy the machine wrote on its row and audits the change (`confirmed`); with no
+   * policy (the answer never came) only audits the attempt, unconfirmed.
+   */
   @Transactional()
   private async record(input: {
     orgId: string;
@@ -127,14 +139,16 @@ export class DevicePolicyService {
     change: Omit<DevicePolicyArgs, "source">;
     source: DevicePolicyArgs["source"];
     actorTokenId?: string;
-    policy: DeviceLocalPolicySummary;
+    policy: DeviceLocalPolicySummary | null;
   }): Promise<void> {
-    await this.db
-      .updateTable("device_machines")
-      .set({ local_policy: JSON.stringify(input.policy) })
-      .where("id", "=", input.machineId)
-      .where("revoked_at", "is", null)
-      .execute();
+    if (input.policy !== null) {
+      await this.db
+        .updateTable("device_machines")
+        .set({ local_policy: JSON.stringify(input.policy) })
+        .where("id", "=", input.machineId)
+        .where("revoked_at", "is", null)
+        .execute();
+    }
     const { change, source } = input;
     await audit(this.db.db, {
       actorAccountId: source.accountId,
@@ -149,6 +163,7 @@ export class DevicePolicyService {
         by: source.accountId,
         via: source.via,
         approvalId: source.approvalId ?? null,
+        confirmed: input.policy !== null,
       },
     });
   }

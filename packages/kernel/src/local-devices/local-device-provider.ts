@@ -9,7 +9,7 @@ import type {
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { NetworkGrants, relayer } from "./network-grants.js";
+import { grantsWithin, NetworkGrants, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets, sameRoots } from "./targets.js";
 
@@ -150,8 +150,8 @@ export class LocalDeviceProvider implements SandboxProvider {
 
   /**
    * Runs the command on the machine with the org's limits now (ruling R27) and, for a command of a
-   * run, the hosts the kernel allows that run beyond the local policy (network ask-to-allow spec
-   * §6.3; sent only when there are some). The device's report of refused hosts is re-layered
+   * run, the hosts the kernel allows that run on this device beyond the local policy (network
+   * ask-to-allow spec §6.3; only those the org's limits admit, sent only when there are some). The device's report of refused hosts is re-layered
    * against the limits this exec carried: the kernel never takes the device's word that the org
    * allows a host (spec §4.1).
    */
@@ -160,7 +160,11 @@ export class LocalDeviceProvider implements SandboxProvider {
     signal.throwIfAborted();
     const { orgId, limits } = await this.currentLimits(h.id);
     const runId = rest.actor?.runId;
-    const grants = runId !== undefined ? await this.grants.forExec({ orgId, runId }) : undefined;
+    // the run's grants for this device, cut to what the org allows now
+    const grants =
+      runId !== undefined
+        ? grantsWithin(await this.grants.forExec({ orgId, runId, deviceId: h.id }), limits)
+        : undefined;
     signal.throwIfAborted();
     let result: ExecResult;
     try {

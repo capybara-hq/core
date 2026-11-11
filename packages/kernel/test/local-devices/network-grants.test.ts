@@ -6,7 +6,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { NetworkGrants, relayer } from "../../src/local-devices/network-grants.js";
+import { grantsWithin, NetworkGrants, relayer } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
 import { databaseHandles } from "../helpers/database.js";
 
@@ -65,12 +65,13 @@ async function ask(
     org?: string;
     decidedBy?: string | null;
     decidedAt?: string;
+    deviceId?: string;
   } = {},
 ): Promise<void> {
   const status = opts.status ?? "approved";
   const decided = status !== "pending";
   const detail = {
-    deviceId: "d1",
+    deviceId: opts.deviceId ?? "d1",
     hosts: hosts.map((host) => ({ host, port: 443 })),
     command: "curl",
     description: null,
@@ -105,8 +106,8 @@ describe("NetworkGrants.forExec", () => {
       decidedBy: "other",
       decidedAt: "2026-11-12T02:00:00Z",
     });
-    const forRoot = await grants.forExec({ orgId: "o1", runId: root });
-    const forChild = await grants.forExec({ orgId: "o1", runId: child });
+    const forRoot = await grants.forExec({ orgId: "o1", runId: root, deviceId: "d1" });
+    const forChild = await grants.forExec({ orgId: "o1", runId: child, deviceId: "d1" });
     for (const g of [forRoot, forChild]) {
       expect(g?.source).toEqual({ kind: "run", id: root, accountId: "other" });
       expect([...(g?.hosts ?? [])].sort()).toEqual(["api.github.com", "files.slack.com"]);
@@ -118,9 +119,9 @@ describe("NetworkGrants.forExec", () => {
     await ask(root, ["files.slack.com"], { granted: ["files.slack.com"] });
     // another tree of the same org
     const other = await run();
-    expect(await grants.forExec({ orgId: "o1", runId: other })).toBeUndefined();
+    expect(await grants.forExec({ orgId: "o1", runId: other, deviceId: "d1" })).toBeUndefined();
     // the same run read for another org
-    expect(await grants.forExec({ orgId: "o2", runId: root })).toBeUndefined();
+    expect(await grants.forExec({ orgId: "o2", runId: root, deviceId: "d1" })).toBeUndefined();
 
     const r = await run();
     await ask(r, ["a.example.com"], { status: "pending" });
@@ -132,7 +133,7 @@ describe("NetworkGrants.forExec", () => {
     await ask(r, ["e.example.com"]);
     // a grant of another org written against this run is ignored
     await ask(r, ["f.example.com"], { org: "o2", granted: ["f.example.com"] });
-    expect(await grants.forExec({ orgId: "o1", runId: r })).toBeUndefined();
+    expect(await grants.forExec({ orgId: "o1", runId: r, deviceId: "d1" })).toBeUndefined();
   });
 
   it("drops wildcards and invalid hosts from a stored grant", async () => {
@@ -140,11 +141,57 @@ describe("NetworkGrants.forExec", () => {
     await ask(r, ["ok.example.com"], {
       granted: ["*.example.com", "10.0.0.1", "localhost", "ok.example.com"],
     });
-    expect((await grants.forExec({ orgId: "o1", runId: r }))?.hosts).toEqual(["ok.example.com"]);
+    expect((await grants.forExec({ orgId: "o1", runId: r, deviceId: "d1" }))?.hosts).toEqual([
+      "ok.example.com",
+    ]);
+  });
+});
+
+describe("NetworkGrants.forExec scope", () => {
+  it("grants only the device the ask was about", async () => {
+    const r = await run();
+    await ask(r, ["files.slack.com"], { granted: ["files.slack.com"], deviceId: "d2" });
+    expect(await grants.forExec({ orgId: "o1", runId: r, deviceId: "d1" })).toBeUndefined();
+    expect((await grants.forExec({ orgId: "o1", runId: r, deviceId: "d2" }))?.hosts).toEqual([
+      "files.slack.com",
+    ]);
+  });
+
+  it("a grant ends with its root run; a later run of the budget window does not inherit it", async () => {
+    const root = await run();
+    const child = await run("o1", root);
+    await ask(root, ["files.slack.com"], { granted: ["files.slack.com"] });
+    for (const status of ["queued", "waiting", "running"]) {
+      await sql`update capybara.runs set status = ${status} where id = ${root}`.execute(raw);
+      expect(await grants.forExec({ orgId: "o1", runId: child, deviceId: "d1" })).toBeDefined();
+    }
+    for (const status of ["completed", "failed", "aborted"]) {
+      await sql`update capybara.runs set status = ${status} where id = ${root}`.execute(raw);
+      // a wake run of the same window (child still running) gets nothing either
+      expect(await grants.forExec({ orgId: "o1", runId: child, deviceId: "d1" })).toBeUndefined();
+      expect(await grants.forExec({ orgId: "o1", runId: root, deviceId: "d1" })).toBeUndefined();
+    }
   });
 });
 
 describe("NetworkGrants.runState", () => {
+  it("with a device, counts only that device's grants and refusals; asks and pending count all", async () => {
+    const r = await run();
+    await ask(r, ["a.example.com"], { granted: ["a.example.com"], deviceId: "d1" });
+    await ask(r, ["b.example.com"], { granted: ["b.example.com"], deviceId: "d2" });
+    await ask(r, ["c.example.com"], { status: "denied", deviceId: "d2" });
+    await ask(r, ["d.example.com"], { status: "pending", deviceId: "d2" });
+    const s = await grants.runState(r, "d1");
+    expect([...s.granted]).toEqual(["a.example.com"]);
+    expect([...s.refused]).toEqual([]);
+    expect(s.asks).toBe(4);
+    expect(s.pending).toBe(true);
+    // without a device: all of them
+    const all = await grants.runState(r);
+    expect([...all.granted].sort()).toEqual(["a.example.com", "b.example.com"]);
+    expect([...all.refused]).toEqual(["c.example.com"]);
+  });
+
   it("adds up the tree's grants, refusals and pending ask, and counts this run's asks", async () => {
     const root = await run();
     const child = await run("o1", root);
@@ -214,5 +261,24 @@ describe("relayer", () => {
     expect(relayer([blocked(host, layer)], limits as typeof allowlist)).toEqual([
       { ...blocked(host, layer), layer: want },
     ]);
+  });
+});
+
+describe("grantsWithin", () => {
+  const g = (hosts: string[]) => ({
+    hosts,
+    source: { kind: "run" as const, id: "r", accountId: "a" },
+  });
+  it("keeps only the hosts the org's limits admit", () => {
+    const hosts = ["example.com", "api.github.com", "github.com", "evil.example.net"];
+    expect(
+      grantsWithin(g(hosts), { egress: "allowlist", allowHosts: ["example.com", "*.github.com"] }),
+    ).toEqual(g(["example.com", "api.github.com"]));
+    expect(grantsWithin(g(hosts), { egress: "open", allowHosts: [] })).toEqual(g(hosts));
+    expect(grantsWithin(g(hosts), { egress: "none", allowHosts: [] })).toBeUndefined();
+    expect(
+      grantsWithin(g(["evil.example.net"]), { egress: "allowlist", allowHosts: ["example.com"] }),
+    ).toBeUndefined();
+    expect(grantsWithin(undefined, { egress: "open", allowHosts: [] })).toBeUndefined();
   });
 });

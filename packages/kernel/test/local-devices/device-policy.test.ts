@@ -201,6 +201,7 @@ describe("DevicePolicyService.apply", () => {
           by: d.accountId,
           via: "web",
           approvalId: "ap-1",
+          confirmed: true,
         },
       },
     ]);
@@ -254,6 +255,32 @@ describe("DevicePolicyService.apply", () => {
     expect((await devices.get(orgId, d.accountId, d.deviceId)).network).toBeNull();
     expect(await auditsOf(d.deviceId)).toEqual([]);
   });
+
+  it("an answer that never comes is offline, and the attempt is audited unconfirmed", async () => {
+    const d = await device();
+    // the machine takes the op, then drops without answering
+    const machine = await connect(
+      d,
+      (req) => (req.op === "policy" ? undefined : { ok: true, result: null }),
+      FEATURES,
+    );
+    void machine.next((f) => f.type === "req" && f.op === "policy").then(() => machine.close());
+    const out = await policies.apply({
+      orgId,
+      deviceId: d.deviceId,
+      change: { add: ["files.slack.com"] },
+      source: source(d.accountId),
+    });
+    expect(out).toMatchObject({ applied: false, reason: "offline" });
+    expect(await auditsOf(d.deviceId)).toEqual([
+      expect.objectContaining({
+        actor_account_id: d.accountId,
+        detail: expect.objectContaining({ add: ["files.slack.com"], confirmed: false }),
+      }),
+    ]);
+    // the summary stays what the machine last reported
+    expect((await policies.summary(d.deviceId))?.policy).toEqual(POLICY);
+  }, 60_000);
 
   it("a device refusing with kind policy is refused with its message; nothing is stored", async () => {
     const d = await device();
