@@ -462,9 +462,8 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
       payload: { definition: agentBody([s1, s2, s3]).definition },
     });
     expect(addDeleted.statusCode).toBe(400);
-    const sorted = [s1, s2, s3].sort();
     expect(addDeleted.json().error.details).toEqual([
-      expect.objectContaining({ path: `disabledSkills.${sorted.indexOf(s3)}` }),
+      expect.objectContaining({ path: "disabledSkills.2" }),
     ]);
     // a new agent is checked strictly: a deleted skill is refused
     const createDeleted = await admin({

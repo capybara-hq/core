@@ -44,10 +44,12 @@ import {
   agentOwnSkillIds,
   builtinSkillIds,
   builtinSkillPlugins,
+  linkedCopyIds,
   PLATFORM_SOURCE,
   platformSkillsOn,
   platformSource,
   skillFileStore,
+  skillIdsOf,
   skillVersionsById,
   usableSkills,
 } from "./usable.js";
@@ -322,6 +324,11 @@ export async function assertDisabledSkills(
   });
   if (toCheck.length === 0) return;
   const usable = await usableSkills(db, a.orgId);
+  const linked = await linkedCopyIds(
+    db,
+    a.orgId,
+    usable.flatMap((u) => (u.origin === "platform" ? [u.id] : [])),
+  );
   const builtinPlugins = await builtinSkillPlugins(db);
   const builtinIds = new Set(await builtinSkillIds(db, a.orgId));
   const { own, shared } =
@@ -340,7 +347,7 @@ export async function assertDisabledSkills(
         });
         continue;
       }
-      const skill = usable.find((u) => u.id === r.skillId);
+      const skill = usable.find((u) => skillIdsOf(u, linked).includes(r.skillId));
       if (skill === undefined || skill.plugin !== null) {
         details.push({
           path,

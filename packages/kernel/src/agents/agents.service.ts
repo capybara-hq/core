@@ -30,6 +30,7 @@ import {
   type AgentDefinition,
   canonicalDisabledSkills,
   canonicalDisabledTools,
+  type DisabledSkillRef,
   type DisabledToolRef,
   normalizeStoredDefinition,
   type PendingConnector,
@@ -565,6 +566,7 @@ export class AgentsService {
     const given = withoutRemovedBuiltinPolicies(request.definition);
     const input = {
       ...request,
+      givenDisabledSkills: given.disabledSkills ?? [],
       // run context spec §3.5: version 1 carries the description (the profile's when the
       // definition gives none)
       definition: withCanonicalTools(
@@ -603,6 +605,8 @@ export class AgentsService {
       visibility: AgentVisibility;
       memberIds?: string[];
       profile?: ProfileInput;
+      /** `disabledSkills` as given (before canonical form): error paths name the caller's index. */
+      givenDisabledSkills?: readonly DisabledSkillRef[];
     },
     toolKeys: Set<string>,
     template: TemplateProvenance | null,
@@ -621,7 +625,7 @@ export class AgentsService {
     await assertDisabledSkills(t, {
       orgId,
       agentId: null,
-      disabled: input.definition.disabledSkills ?? [],
+      disabled: input.givenDisabledSkills ?? input.definition.disabledSkills ?? [],
     });
     await assertSubagents(t, {
       orgId,
@@ -858,7 +862,8 @@ export class AgentsService {
       await assertDisabledSkills(t, {
         orgId,
         agentId,
-        disabled: definition.disabledSkills ?? [],
+        // as given, so `disabledSkills.<i>` names the caller's index; the canonical form is saved
+        disabled: patch.definition.disabledSkills ?? [],
         kept: currentDefinition.disabledSkills ?? [],
       });
       await assertSubagents(t, {

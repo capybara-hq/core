@@ -213,11 +213,8 @@ describe("disabledSkills", { timeout: 60_000 }, () => {
           ],
         }),
       ),
-    ).toEqual([
-      "disabledSkills.1",
-      // the canonical order is checked: plugins first, then skill ids sorted
-      `disabledSkills.${withPlugin < plain ? 2 : 3}`,
-    ]);
+      // paths name the caller's index, whatever the stored (canonical) order
+    ).toEqual(["disabledSkills.1", "disabledSkills.3"]);
     expect(
       invalidPaths(
         await create({ disabledSkills: [{ kind: "plugin", plugin: "kit", skills: ["gamma"] }] }),

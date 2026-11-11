@@ -415,9 +415,8 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       disabledTools: parentOff,
       subagentTools: { deny: REMOVED },
       toolPolicies: { Bash: "ask", Write: "deny" },
-      // the parent's catalog: what it turns off (skills default-on §6.1)
+      // the parent's catalog: what it turns off (skills default-on §6.1); never its writePolicy
       disabledSkills: [{ kind: "skill", skillId: s }],
-      skills: { writePolicy: "ask" },
       subagents: { inline: [inline("scout")] },
     });
     expect(r.template).toEqual({ source: "general" });

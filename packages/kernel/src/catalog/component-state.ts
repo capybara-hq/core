@@ -293,11 +293,17 @@ export async function loadScopeState(
   if (itemIds.length > 0) {
     const items = await db
       .selectFrom("catalog_items")
-      .select(["id", "scope", "builtin", "disabled"])
+      .select(["id", "scope", "builtin", "disabled", "owner_org_id"])
       .where("id", "in", itemIds)
       .where("deleted_at", "is", null)
       .execute();
-    for (const i of items) state.plugins.set(i.id, i);
+    for (const i of items) {
+      state.plugins.set(i.id, {
+        scope: i.scope,
+        builtin: platformBuiltin(i),
+        disabled: i.disabled,
+      });
+    }
     const listed = await db
       .selectFrom("catalog_item_scope_orgs")
       .select(["item_id", "org_id"])
@@ -346,6 +352,16 @@ export async function loadScopeState(
   }
   return state;
 }
+
+/**
+ * Whether a catalog item is builtin: marked so and owned by the platform. An org-owned item marked
+ * builtin (never so in practice) is an ordinary item: never on without an install, never locked,
+ * and its skills can be turned off (skills default-on spec §3).
+ */
+export const platformBuiltin = (item: {
+  builtin: boolean | null;
+  owner_org_id: string | null;
+}): boolean => item.builtin === true && item.owner_org_id === null;
 
 /** The plugin facts of `itemId` for one org from a {@link ScopeState} (null: no plugin). */
 export function pluginFactsOf(

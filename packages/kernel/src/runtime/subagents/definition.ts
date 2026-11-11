@@ -208,7 +208,8 @@ function orgAgentDefinition(
   // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3); its own `subagents`
   // block stays: it is the roster the child dispatches from (agent map spec §4.1); pending
   // connectors are authoring data too (ruling P4-6)
-  const { skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
+  // `skills.writePolicy` never reaches a child: it governs registration on the agent itself
+  const { skills: _skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
   const { subagentTools: _filter, ...ownRest } = rest;
   const definition: AgentDefinition = {
     ...ownRest,
@@ -219,7 +220,6 @@ function orgAgentDefinition(
     toolPolicies: stricterPolicies(own.toolPolicies ?? {}, a.parent.toolPolicies ?? {}),
     // its own skills: what it turns off (skills default-on spec §6.1)
     disabledSkills: own.disabledSkills ?? [],
-    ...(skills !== undefined && { skills }),
   };
   return {
     definition,
@@ -296,7 +296,6 @@ export async function effectiveDefinition(
       if (v !== undefined) modelParams = { ...modelParams, [decl.key]: v };
     }
   }
-  const parentSkills = parent.skills;
   const definition: AgentDefinition = {
     name: childName(parent.name, entry.type),
     avatarUrl: parent.avatarUrl,
@@ -310,7 +309,6 @@ export async function effectiveDefinition(
     toolPolicies,
     // the parent's catalog (skills default-on spec §6.1)
     disabledSkills: parent.disabledSkills ?? [],
-    ...(parentSkills !== undefined && { skills: parentSkills }),
     ...(parent.subagents !== undefined && { subagents: parent.subagents }),
   };
   return {

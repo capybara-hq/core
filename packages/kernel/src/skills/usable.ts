@@ -8,7 +8,7 @@
 // disable of that platform row applies to the owner org too (platform governance, ruling P3-49).
 import type { Logger, ObjectStore } from "@capybara-hq/plugin-sdk";
 import { type DisabledSkillRef, skillDisabled } from "../agents/definition.js";
-import { componentOn } from "../catalog/component-state.js";
+import { componentOn, platformBuiltin } from "../catalog/component-state.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 
 /** The `source` prefix of a platform skill version in a snapshot or an invocation record. */
@@ -100,6 +100,8 @@ async function platformRowsOn(
       "c.disabled as item_disabled",
       "c.builtin as item_builtin",
       "c.owner_org_id as item_owner",
+      "p.owner_org_id",
+      "p.shareable",
       eb
         .exists(
           eb
@@ -129,36 +131,44 @@ async function platformRowsOn(
         .as("switch"),
     ])
     .where("p.deleted_at", "is", null)
-    .where("p.disabled", "=", false)
-    // the share gate (ruling P3-1): another org's skill only while its owner shares it
-    .where((eb) =>
-      eb.or([
-        eb("p.owner_org_id", "is", null),
-        eb("p.owner_org_id", "=", orgId),
-        eb("p.shareable", "=", true),
-      ]),
-    );
+    .where("p.disabled", "=", false);
   if (ids !== undefined) q = q.where("p.id", "in", [...ids]);
+  // the share gate (ruling P3-1, as `usableBy` in catalog/ownership.ts): another org's skill
+  // while its owner shares it, or while this org is associated with it (listed, its plugin
+  // installed here, or switched on here: an org keeps what it has when sharing stops, P3-16)
+  const gate = (r: {
+    owner_org_id: string | null;
+    shareable: boolean;
+    listed: unknown;
+    installed: unknown;
+    switch: boolean | null;
+  }) =>
+    r.owner_org_id === null ||
+    r.owner_org_id === orgId ||
+    r.shareable ||
+    Boolean(r.listed) ||
+    Boolean(r.installed) ||
+    r.switch === true;
   // the predicate of component scope (catalog/component-state.ts); `disabled` is filtered above
-  return (await q.execute()).filter((r) =>
-    componentOn(
-      { scopeMode: r.scope_mode, scope: r.scope, disabled: false, itemId: r.catalog_item_id },
-      r.catalog_item_id === null
-        ? null
-        : {
-            live: r.item_id !== null,
-            disabled: r.item_disabled === true,
-            // only the platform's own items are builtin (skills default-on spec §3: on for every
-            // agent, never turned off)
-            builtin: r.item_builtin === true && r.item_owner === null,
-            // the plugin's own scope and list do not decide whether a component is on
-            scope: "optional",
-            listed: false,
-            installed: Boolean(r.installed),
-          },
-      Boolean(r.listed),
-      r.switch ?? null,
-    ),
+  return (await q.execute()).filter(
+    (r) =>
+      gate(r) &&
+      componentOn(
+        { scopeMode: r.scope_mode, scope: r.scope, disabled: false, itemId: r.catalog_item_id },
+        r.catalog_item_id === null
+          ? null
+          : {
+              live: r.item_id !== null,
+              disabled: r.item_disabled === true,
+              builtin: platformBuiltin({ builtin: r.item_builtin, owner_org_id: r.item_owner }),
+              // the plugin's own scope and list do not decide whether a component is on
+              scope: "optional",
+              listed: false,
+              installed: Boolean(r.installed),
+            },
+        Boolean(r.listed),
+        r.switch ?? null,
+      ),
   );
 }
 
@@ -485,11 +495,47 @@ export async function agentOwnSkillIds(
   };
 }
 
-/** The ids a disabled skill entry may name for `r`: its own, and the platform skill it serves. */
-const idsOf = (r: UsableSkill): string[] =>
-  r.platformSkillId !== undefined && r.platformSkillId !== r.id
-    ? [r.id, r.platformSkillId]
-    : [r.id];
+/**
+ * The org's copies linked to the platform skills `platformIds` without a pin (ruling B2), by
+ * platform skill id (the first by id when there are several): such a copy keeps its own id in an
+ * agent's catalog, as when it was selected, so the snapshot does not change when a copy gets
+ * linked.
+ */
+export async function linkedCopyIds(
+  db: KernelSchemaDb,
+  orgId: string,
+  platformIds: readonly string[],
+): Promise<Map<string, string>> {
+  const linked = new Map<string, string>();
+  if (platformIds.length === 0) return linked;
+  const copies = await db
+    .selectFrom("skills")
+    .select(["id", "platform_skill_id"])
+    .where("org_id", "=", orgId)
+    .where("scope", "=", "org")
+    .where("deleted_at", "is", null)
+    .where("pinned_version", "is", null)
+    .where("platform_skill_id", "in", [...platformIds])
+    .orderBy("id")
+    .execute();
+  for (const c of copies) {
+    const pid = c.platform_skill_id as string;
+    if (!linked.has(pid)) linked.set(pid, c.id);
+  }
+  return linked;
+}
+
+/**
+ * The ids a disabled skill entry may name for `r`: its own, the platform skill it serves and the
+ * org's linked copy listed under it (`linked`, from {@link linkedCopyIds}).
+ */
+export function skillIdsOf(r: UsableSkill, linked: ReadonlyMap<string, string>): string[] {
+  const ids = new Set([r.id]);
+  if (r.platformSkillId !== undefined) ids.add(r.platformSkillId);
+  const copy = linked.get(r.id);
+  if (copy !== undefined) ids.add(copy);
+  return [...ids];
+}
 
 /**
  * The skills an agent has (skills default-on spec §3), sorted by id: its own skills, the org
@@ -510,38 +556,22 @@ export async function agentSkills(
     if (r.scope === "agent" ? r.agentId === a.agentId : true) out.set(r.id, r);
   }
   const usable = await usableSkillVersions(db, a.orgId, log);
-  // an org copy linked to a platform skill without a pin (ruling B2) keeps its own id in the
-  // catalog, as when it was selected: the snapshot does not change when a copy gets linked
-  const linked = new Map<string, string>();
-  const platformIds = usable.flatMap((r) => (r.origin === "platform" ? [r.id] : []));
-  if (platformIds.length > 0) {
-    const copies = await db
-      .selectFrom("skills")
-      .select(["id", "platform_skill_id"])
-      .where("org_id", "=", a.orgId)
-      .where("scope", "=", "org")
-      .where("deleted_at", "is", null)
-      .where("pinned_version", "is", null)
-      .where("platform_skill_id", "in", platformIds)
-      .orderBy("id")
-      .execute();
-    for (const c of copies) {
-      const pid = c.platform_skill_id as string;
-      if (!linked.has(pid)) linked.set(pid, c.id);
-    }
-  }
+  // a linked copy keeps its own id in the catalog (see linkedCopyIds)
+  const linked = await linkedCopyIds(
+    db,
+    a.orgId,
+    usable.flatMap((r) => (r.origin === "platform" ? [r.id] : [])),
+  );
   const builtin = a.disabledSkills.length === 0 ? new Set<string>() : await builtinSkillPlugins(db);
   const builtinIds =
     a.disabledSkills.length === 0 ? new Set<string>() : new Set(await builtinSkillIds(db, a.orgId));
   for (const r of usable) {
     if (out.has(r.id)) continue;
+    const ids = skillIdsOf(r, linked);
     const fixed =
       (r.plugin !== null && builtin.has(r.plugin) && r.origin === "platform") ||
-      idsOf(r).some((id) => builtinIds.has(id));
-    if (
-      !fixed &&
-      skillDisabled(a.disabledSkills, { plugin: r.plugin, name: r.name, ids: idsOf(r) })
-    ) {
+      ids.some((id) => builtinIds.has(id));
+    if (!fixed && skillDisabled(a.disabledSkills, { plugin: r.plugin, name: r.name, ids })) {
       continue;
     }
     const copy = linked.get(r.id);

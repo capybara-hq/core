@@ -476,6 +476,79 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     ]);
   });
 
+  it("another org's skill stays on for an org associated with it after its owner stops sharing (P3-16)", async () => {
+    const owner2 = await createOrg(owner, "owner2");
+    const other = await createOrg(owner, "other");
+    const alpha = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "A." });
+    // owned by another org and no longer shared; this org installed its plugin before
+    await db
+      .updateTable("platform_skills")
+      .set({ owner_org_id: owner2, shareable: false })
+      .where("id", "=", alpha.id)
+      .execute();
+    await installPlugin("kit");
+    expect((await usableSkills(db, orgId)).map((s) => s.id)).toEqual([alpha.id]);
+    // an org that is not associated never gets it
+    expect(await usableSkills(db, other)).toEqual([]);
+    const agentId = await agentWith();
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([alpha.id]);
+    const lib = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
+    expect(lib.statusCode, lib.body).toBe(200);
+    expect((lib.json() as { skills: { id: string }[] }).skills.map((s) => s.id)).toEqual([
+      alpha.id,
+    ]);
+  });
+
+  it("a skill entry naming an org copy linked to a platform skill without a plugin turns it off", async () => {
+    // a platform skill without a plugin (another org's, shared), linked by an org copy
+    const pid = randomUUID();
+    const owner2 = await createOrg(owner, "owner2");
+    await db
+      .insertInto("platform_skills")
+      .values({
+        id: pid,
+        name: "beta",
+        description: "Use for beta work.",
+        current_version: 1,
+        scope_mode: "own",
+        scope: "all",
+        owner_org_id: owner2,
+        shareable: true,
+      })
+      .execute();
+    await db
+      .insertInto("platform_skill_versions")
+      .values({
+        skill_id: pid,
+        version: 1,
+        manifest: JSON.stringify({ name: "beta", description: "Use for beta work.", files: [] }),
+        object_prefix: `platform/skills/${pid}/1/`,
+        catalog_version: "1.0.0",
+      })
+      .execute();
+    const copy = await seedOrgSkill({ name: "beta", body: "B." });
+    await db
+      .updateTable("skills")
+      .set({ platform_skill_id: pid })
+      .where("id", "=", copy.id)
+      .execute();
+    const on = await agentWith();
+    const conv = await createConv(owner, orgId, on);
+    await say(conv, 1);
+    // listed under the copy's id
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([copy.id]);
+
+    // the copy's id (what the agent sees) and the platform id both turn it off
+    for (const skillId of [copy.id, pid]) {
+      const off = await agentWith([{ kind: "skill", skillId }]);
+      const c = await createConv(owner, orgId, off);
+      await say(c, 1);
+      expect(await catalogs(c)).toEqual([]);
+    }
+  });
+
   it("the org's own skills and the ones the agent shared are on by default; only the org's can be turned off", async () => {
     const mine = await seedOrgSkill({ name: "mine", body: "M." });
     const agentId = await agentWith();

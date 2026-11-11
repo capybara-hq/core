@@ -8,6 +8,7 @@ import {
   type AgentDefinition,
   AgentDefinitionSchema,
   builtinDisabled,
+  canonicalDisabledSkills,
   canonicalDisabledTools,
   type ModelRef,
   normalizeStoredDefinition,
@@ -442,7 +443,7 @@ const hasAgent = (d: AgentDefinition): boolean =>
 const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
   canonicalJson({
     disabledTools: canonicalDisabledTools(d.disabledTools ?? []),
-    disabledSkills: d.disabledSkills ?? [],
+    disabledSkills: canonicalDisabledSkills(d.disabledSkills ?? []),
     listed:
       started.template.source === "general"
         ? d.subagents?.general !== false

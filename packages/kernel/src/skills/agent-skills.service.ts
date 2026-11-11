@@ -844,7 +844,14 @@ export class AgentSkillsService {
         agentId: actor.agentId,
         disabledSkills,
       })
-    ).find((r) => r.scope === "org" && r.origin === "org" && r.name === name);
+    ).find(
+      (r) =>
+        r.scope === "org" &&
+        r.name === name &&
+        // an org skill, or the org's copy linked to a platform skill (listed under the copy's id);
+        // a platform skill itself is not the org's to clash with
+        (r.origin === "org" || (r.platformSkillId !== undefined && r.id !== r.platformSkillId)),
+    );
     if (used) {
       throw new ApiError(
         "skill.name_exists",
