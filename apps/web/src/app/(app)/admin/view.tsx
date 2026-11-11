@@ -34,9 +34,16 @@ function AdminOverview() {
   const read = usePageQuery(adminOverviewQuery());
   const value = (n: number) => n.toLocaleString("en-US");
   const header = { path: [...scope], title: t("title"), description: t("overview.intro") };
+  // An attention source could not be read: the 待处理 number leaves its items out.
+  const partial = read.kind === "ready" && read.data.partial === true;
   // The sections read for themselves: they render while the numbers load.
   const sections = (
     <Stack gap={16}>
+      {partial && (
+        <Text variant="prose" tone="muted">
+          {t("overview.partial")}
+        </Text>
+      )}
       <AttentionSection />
       <AuditSection />
       <Text variant="prose" tone="muted">

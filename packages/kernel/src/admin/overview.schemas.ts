@@ -4,4 +4,5 @@ import type { RouteSchemas } from "../platform/route-schemas.js";
 export const OVERVIEW_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/admin/overview" },
   { route: "GET /api/v1/admin/overview/attention" },
+  { route: "GET /api/v1/admin/overview/health" },
 ];

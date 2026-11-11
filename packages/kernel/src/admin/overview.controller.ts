@@ -1,5 +1,6 @@
 import { Controller, Get, Inject } from "@nestjs/common";
 import { SuperAdmin } from "../identity/principal.js";
+import { type AdminHealth, AdminHealthService } from "./health.service.js";
 import {
   type AdminAttention,
   AdminOverviewService,
@@ -14,7 +15,10 @@ import {
 @Controller("api/v1/admin/overview")
 @SuperAdmin()
 export class AdminOverviewController {
-  constructor(@Inject(AdminOverviewService) private readonly overview: AdminOverviewService) {}
+  constructor(
+    @Inject(AdminOverviewService) private readonly overview: AdminOverviewService,
+    @Inject(AdminHealthService) private readonly health: AdminHealthService,
+  ) {}
 
   /** The numbers: orgs, accounts and everything waiting for a super admin. */
   @Get()
@@ -26,5 +30,14 @@ export class AdminOverviewController {
   @Get("attention")
   attention(): Promise<AdminAttention> {
     return this.overview.attention();
+  }
+
+  /**
+   * How the platform runs: live replicas by role, kernel queue counts, channel, device and sandbox
+   * counts. Not cached; a source that does not answer is named in `unavailable`.
+   */
+  @Get("health")
+  readHealth(): Promise<AdminHealth> {
+    return this.health.read();
   }
 }

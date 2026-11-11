@@ -120,10 +120,14 @@ function AdminInbox({
       cell: (item) => <DateTime value={item.createdAt} />,
     },
   ];
-  // Dismissing a platform notice changes only the inbox and its count
+  // Dismissing a platform notice changes the inbox, its count and the overview's total
   const dismiss = useAppMutation({
     fn: (id: string) => dismissPlatformNotice(id),
-    invalidates: () => [keys.deployment().adminInbox(), keys.deployment().adminInboxCount()],
+    invalidates: () => [
+      keys.deployment().adminInbox(),
+      keys.deployment().adminInboxCount(),
+      keys.deployment().adminOverview(),
+    ],
   });
   const open = (item: PlatformInboxItem): ActionRowProps =>
     item.type === "ownership_transferred"

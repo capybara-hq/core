@@ -12,6 +12,7 @@ const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "identity.unlinked": "identityUnlinked",
   "deployment.settings.updated": "deploymentSettingsUpdated",
   "bootstrap.completed": "bootstrapCompleted",
+  "deployment.setup_completed": "deploymentSetupCompleted",
   "marketplace.added": "marketplaceAdded",
   "marketplace.updated": "marketplaceUpdated",
   "marketplace.removed": "marketplaceRemoved",

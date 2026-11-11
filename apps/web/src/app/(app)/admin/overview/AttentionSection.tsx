@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Button,
   EmptyState,
   ItemList,
   type ItemListRow,
@@ -56,47 +57,73 @@ export function AttentionSection() {
   const attention = useQuery({ ...aq, retryOnMount: retryOnMountOf(aq.queryKey) });
   const inbox = useQuery({ ...iq, retryOnMount: retryOnMountOf(iq.queryKey) });
 
-  if (attention.data === undefined || inbox.data === undefined) {
-    const failed = [attention, inbox].filter((q) => q.data === undefined && q.error);
-    if (failed.length > 0) {
-      return (
-        <OverviewSection
-          title={t("title")}
-          state="error"
-          error={{
-            summary: t("failed"),
-            detail: failed.map((q) => errorMessage(q.error)).join("\n"),
-            // only what failed is read again
-            onRetry: () => {
-              for (const q of failed) void q.refetch();
-            },
-          }}
-        />
-      );
-    }
+  const pending = (q: { data: unknown; error: unknown }) => q.data === undefined && !q.error;
+  // Still loading either read: the skeleton (never half the groups, then the rest).
+  if (pending(attention) || pending(inbox)) {
     return (
       <OverviewSection title={t("title")} state="loading" loading={[{ kind: "list", items: 4 }]} />
     );
   }
+  // Both failed: the section's error; one failed: its groups say so, the other's render.
+  if (attention.data === undefined && inbox.data === undefined) {
+    return (
+      <OverviewSection
+        title={t("title")}
+        state="error"
+        error={{
+          summary: t("failed"),
+          detail: [attention.error, inbox.error].map((e) => errorMessage(e)).join("\n"),
+          onRetry: () => {
+            void attention.refetch();
+            void inbox.refetch();
+          },
+        }}
+      />
+    );
+  }
   return (
     <OverviewSection title={t("title")} state="ready">
-      <AttentionGroups attention={attention.data} inbox={inbox.data} t={t} locale={locale} />
+      <AttentionGroups
+        attention={attention.data ?? null}
+        inbox={inbox.data ?? null}
+        retryAttention={() => void attention.refetch()}
+        retryInbox={() => void inbox.refetch()}
+        t={t}
+        locale={locale}
+      />
     </OverviewSection>
   );
 }
 
+/** What a failed read leaves: no lists, every source unavailable. */
+const NO_ATTENTION: AdminAttention = {
+  extensions: [],
+  updates: [],
+  providers: [],
+  more: { extensions: 0, updates: 0, providers: 0 },
+  unavailable: ["extensions", "updates", "providers"],
+};
+
 function AttentionGroups({
-  attention,
+  attention: read,
   inbox,
+  retryAttention,
+  retryInbox,
   t,
   locale,
 }: {
-  attention: AdminAttention;
-  inbox: PlatformInboxView;
+  /** null: the attention read failed (its three groups say so, with 重试). */
+  attention: AdminAttention | null;
+  /** null: the inbox read failed (its group says so, with 重试). */
+  inbox: PlatformInboxView | null;
+  retryAttention(): void;
+  retryInbox(): void;
   t: T;
   locale: string;
 }) {
-  const unavailable = new Set(attention.unavailable);
+  const attention = read ?? NO_ATTENTION;
+  const unavailable = new Set<string>(attention.unavailable);
+  if (inbox === null) unavailable.add("inbox");
   const more = (source: AttentionSource): ItemListRow[] =>
     attention.more[source] > 0
       ? [
@@ -107,14 +134,16 @@ function AttentionGroups({
           },
         ]
       : [];
-  const inboxRows: ItemListRow[] = PLATFORM_INBOX_TYPES.filter(
-    (type) => (inbox.byType[type] ?? 0) > 0,
-  ).map((type) => ({
-    id: type,
-    title: t(`inboxTypes.${type}`),
-    status: { label: inbox.byType[type].toLocaleString("en-US"), tone: "accent" },
-    href: platformInboxTypeHref(type),
-  }));
+  const byType = inbox?.byType;
+  const inboxRows: ItemListRow[] =
+    byType === undefined
+      ? []
+      : PLATFORM_INBOX_TYPES.filter((type) => (byType[type] ?? 0) > 0).map((type) => ({
+          id: type,
+          title: t(`inboxTypes.${type}`),
+          status: { label: byType[type].toLocaleString("en-US"), tone: "accent" },
+          href: platformInboxTypeHref(type),
+        }));
   const extensionRows: ItemListRow[] = [
     ...attention.extensions.map((e) => ({
       id: e.name,
@@ -149,39 +178,51 @@ function AttentionGroups({
     })),
     ...more("providers"),
   ];
-  const groups: { id: string; title: string; rows: ItemListRow[]; source?: AttentionSource }[] = [
-    { id: "inbox", title: t("groups.inbox"), rows: inboxRows },
+  const groups: { id: string; title: string; rows: ItemListRow[]; source: string }[] = [
+    { id: "inbox", title: t("groups.inbox"), rows: inboxRows, source: "inbox" },
     { id: "extensions", title: t("groups.extensions"), rows: extensionRows, source: "extensions" },
     { id: "updates", title: t("groups.updates"), rows: updateRows, source: "updates" },
     { id: "providers", title: t("groups.providers"), rows: providerRows, source: "providers" },
   ];
   // A group shows when it has rows, or when its list could not be read (it says so).
-  const shown = groups.filter(
-    (g) => g.rows.length > 0 || (g.source !== undefined && unavailable.has(g.source)),
-  );
+  const shown = groups.filter((g) => g.rows.length > 0 || unavailable.has(g.source));
+  // A failed read (not a source the kernel reported) can be read again from its group.
+  const retryOf = (g: { source: string }) =>
+    g.source === "inbox"
+      ? inbox === null
+        ? retryInbox
+        : null
+      : read === null
+        ? retryAttention
+        : null;
   if (shown.length === 0) return <EmptyState size="panel" text={t("empty")} />;
-  return shown.map((g) => (
-    <Subsection
-      key={g.id}
-      title={g.title}
-      variant="divided"
-      {...(g.id === "inbox"
-        ? {
-            actions: (
-              <LinkButton href="/admin/inbox" density="dense">
-                {t("viewInbox")}
-              </LinkButton>
-            ),
-          }
-        : {})}
-    >
-      {g.source !== undefined && unavailable.has(g.source) ? (
-        <Text variant="prose" tone="muted">
-          {t("unavailable")}
-        </Text>
-      ) : (
-        <ItemList label={g.title} rows={g.rows} />
-      )}
-    </Subsection>
-  ));
+  return shown.map((g) => {
+    const retry = retryOf(g);
+    const actions =
+      retry !== null ? (
+        <Button density="dense" onClick={retry}>
+          {t("retry")}
+        </Button>
+      ) : g.id === "inbox" ? (
+        <LinkButton href="/admin/inbox" density="dense">
+          {t("viewInbox")}
+        </LinkButton>
+      ) : null;
+    return (
+      <Subsection
+        key={g.id}
+        title={g.title}
+        variant="divided"
+        {...(actions !== null ? { actions } : {})}
+      >
+        {unavailable.has(g.source) ? (
+          <Text variant="prose" tone="muted">
+            {t("unavailable")}
+          </Text>
+        ) : (
+          <ItemList label={g.title} rows={g.rows} />
+        )}
+      </Subsection>
+    );
+  });
 }

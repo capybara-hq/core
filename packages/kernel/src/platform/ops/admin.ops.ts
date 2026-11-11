@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { DeploymentSettingsBody, PurposeParams } from "../../admin/admin.schemas.js";
 import { AuditListQuery } from "../../admin/audit.schemas.js";
+import { AdminHealthService } from "../../admin/health.service.js";
 import { type AdminAttention, AdminOverviewService } from "../../admin/overview.service.js";
 import { PlatformAuditService } from "../../admin/platform-audit.service.js";
 import { ApiError } from "../../errors.js";
@@ -100,6 +101,7 @@ export class AdminOperations implements OnModuleInit {
     @Inject(ThemesService) private readonly themes: ThemesService,
     @Inject(PlatformAuditService) private readonly audit: PlatformAuditService,
     @Inject(AdminOverviewService) private readonly overview: AdminOverviewService,
+    @Inject(AdminHealthService) private readonly health: AdminHealthService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -131,6 +133,17 @@ export class AdminOperations implements OnModuleInit {
         mirrors: ["GET /api/v1/admin/overview/attention"],
         confirm: "read",
         run: async () => attentionRows(await this.overview.attention()),
+      }),
+      defineOperation({
+        id: "admin.health",
+        description:
+          'How the platform runs right now (super admin), to answer "is the worker up, is the run queue backing up": kernel.version; replicas (live kernel processes: id, roles, version, startedAt) and roles (live replicas per role: api serves requests, worker runs conversations and jobs, gateway holds channel and device connections; 0 workers means no run starts); queues (per kernel queue, e.g. cap-kernel-runs: waiting, active, delayed, failed and failedLastDay, counts only); channels (online, offline: active long connections no replica holds, webhook, disabled, error); devices (online / local); sandboxes (running, suspended, running per provider). unavailable names a source that did not answer (redis or database); its numbers are then null. Failure details are in the kernel logs, not here.',
+        input: z.object({}).strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/overview/health"],
+        confirm: "read",
+        run: () => this.health.read(),
       }),
       defineOperation({
         id: "admin.audit",
