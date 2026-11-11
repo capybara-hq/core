@@ -165,6 +165,18 @@ export interface UpdateTaskInput {
   expiresAt?: Date | null;
 }
 
+/**
+ * Where a grant write comes from: `fromSession` only for a person in a signed-in web session (not a
+ * personal access token, the Platform tool or the schedule tools). Network domains are approved
+ * only there (network ask-to-allow spec §8.1): an agent must never pre-approve a domain for itself.
+ */
+export interface GrantWriteSource {
+  fromSession?: boolean;
+}
+
+/** The refusal of a network grant written outside a person's web session. */
+const NETWORK_GRANT_NEEDS_PERSON = "Network domains are approved on the task page by a person.";
+
 /** Who acts on a task: the service reads their live role itself and decides by that one. */
 export interface ScheduleActor {
   accountId: string;
@@ -271,6 +283,7 @@ export class ScheduledTasksService {
     accountId: string,
     input: CreateTaskInput,
     browserTimeZone?: string,
+    source: GrantWriteSource = {},
   ): Promise<ScheduledTask> {
     const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
     const t = this.db.db;
@@ -323,7 +336,8 @@ export class ScheduledTasksService {
       agent,
       settings,
       input.grants ?? [],
-      await this.taskDeviceOf({ ...target, deviceId: pick.deviceId }),
+      await this.taskDeviceOf(orgId, { ...target, deviceId: pick.deviceId }),
+      source,
     );
     const id = randomUUID();
     const jitter = jitterForGap(id, gap);
@@ -757,13 +771,17 @@ export class ScheduledTasksService {
     }));
   }
 
-  /** Creator only; each grant is checked as at create (spec §7). */
+  /**
+   * Creator only; each grant is checked as at create (spec §7); network domains only from a web
+   * session (`source.fromSession`).
+   */
   @Transactional()
   async addGrants(
     orgId: string,
     accountId: string,
     id: string,
     grants: GrantInput[],
+    source: GrantWriteSource = {},
   ): Promise<ScheduledTaskGrant[]> {
     const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
     const t = this.db.db;
@@ -776,7 +794,8 @@ export class ScheduledTasksService {
       agent,
       settings,
       grants,
-      await this.taskDeviceOf(task),
+      await this.taskDeviceOf(orgId, task),
+      source,
     );
     for (const g of resolved) await this.store.addGrant(t, task.id, g);
     await audit(t, {
@@ -927,7 +946,7 @@ export class ScheduledTasksService {
       const needsAdmin = missing.filter((k) => isNetworkGrantKey(k) && !admits(k));
       let deviceRefuses = false;
       if (missing.some(isNetworkGrantKey)) {
-        const deviceId = await this.taskDeviceOf(task).catch(() => null);
+        const deviceId = await this.taskDeviceOf(orgId, task).catch(() => null);
         const summary =
           deviceId === null ? null : await this.devicePolicy.summary(deviceId).catch(() => null);
         deviceRefuses = summary?.policy?.remoteGrants === "off";
@@ -1263,7 +1282,9 @@ export class ScheduledTasksService {
    * source connector), refused by {@link grantRefusal}; each `network:<host>` key (lower-cased)
    * refused by {@link networkGrantRefusal} against the org's effective egress and the summary of
    * `deviceId`, the task's device (null: none can be determined, the device rule is skipped),
-   * stored with `spec_hash` `network` and no connector (plan P-D7). Duplicates keep the last.
+   * stored with `spec_hash` `network` and no connector (plan P-D7), and only when
+   * `source.fromSession` (a person on the task page; never a token, the Platform tool or the
+   * schedule tools). Duplicates keep the last.
    */
   private async resolveGrants(
     orgId: string,
@@ -1272,11 +1293,13 @@ export class ScheduledTasksService {
     settings: EffectiveScheduleSettings,
     grants: readonly GrantInput[],
     deviceId: string | null,
+    source: GrantWriteSource = {},
   ): Promise<ScheduledTaskGrant[]> {
     if (grants.length === 0) return [];
     const out = new Map<string, ScheduledTaskGrant>();
     const network = grants.filter((g) => isNetworkGrantKey(g.toolKey));
     if (network.length > 0) {
+      if (source.fromSession !== true) throw grantNotAllowed(NETWORK_GRANT_NEEDS_PERSON);
       const ctx = await this.networkGrantContext(orgId, deviceId);
       for (const g of network) {
         if (g.connectorId !== undefined) {
@@ -1329,20 +1352,26 @@ export class ScheduledTasksService {
 
   /**
    * The device a task's runs use, as far as the task tells: a `new` task's own device, a
-   * `conversation` task's conversation's device; null for a chat task (its IM conversation's
-   * device is the connection's default) or when none is chosen.
+   * `conversation` task's conversation's device (in the org); null when none is chosen, and for a
+   * chat task: its IM conversation's device is not known until it runs, so the device rule of a
+   * network grant is skipped there (the device still refuses grants at the command when its owner
+   * turned them off, and the run notes it).
    */
-  private async taskDeviceOf(task: {
-    mode: ScheduleMode;
-    deviceId: string | null;
-    conversationId: string | null;
-  }): Promise<string | null> {
+  private async taskDeviceOf(
+    orgId: string,
+    task: {
+      mode: ScheduleMode;
+      deviceId: string | null;
+      conversationId: string | null;
+    },
+  ): Promise<string | null> {
     if (task.mode === "new") return task.deviceId;
     if (task.mode !== "conversation" || task.conversationId === null) return null;
     const c = await this.db.db
       .selectFrom("conversations")
       .select("device_id")
       .where("id", "=", task.conversationId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
     return c?.device_id ?? null;
   }

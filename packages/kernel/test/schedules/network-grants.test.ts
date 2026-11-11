@@ -19,6 +19,7 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants, type NetworkRunState } from "../../src/local-devices/network-grants.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
@@ -32,7 +33,7 @@ import {
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
-import { accountsFor } from "../helpers/identity.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
@@ -462,6 +463,78 @@ describe("adding network grants", { timeout: 60_000 }, () => {
     expect(res.statusCode).toBe(400);
     expect(codeOf(res)).toBe("schedule.grant_not_allowed");
     expect(res.body).toContain("capybara-device policy add allowedDomains files.example.com");
+  });
+});
+
+describe("who may approve domains", { timeout: 60_000 }, () => {
+  const refusal = "Network domains are approved on the task page by a person.";
+
+  it("a personal access token cannot add or create network grants", async () => {
+    const s = await setup();
+    const taskId = await createTask(s);
+    const pat = await apiTokensFor(db).createPersonal(s.accountId, { name: "cli" });
+    const viaPat = (url: string, payload: unknown) =>
+      k.http.inject({
+        method: "POST",
+        url,
+        headers: { authorization: `Bearer ${pat.token}`, "x-capybara-csrf": "1" },
+        payload: payload as Record<string, unknown>,
+      });
+    let res = await viaPat(`${base()}/${taskId}/grants`, {
+      grants: [{ toolKey: "network:files.example.com" }],
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(codeOf(res)).toBe("schedule.grant_not_allowed");
+    expect(res.body).toContain(refusal);
+    res = await viaPat(base(), {
+      agentId: s.agentId,
+      name: "Nightly",
+      prompt: "Fetch.",
+      trigger: { kind: "cron", expr: "0 9 * * *" },
+      mode: "new",
+      deviceId: s.deviceId,
+      grants: [{ toolKey: "network:files.example.com" }],
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.body).toContain(refusal);
+    expect(await grantKeys(s, taskId)).toEqual([]);
+  });
+
+  it("the Platform operations cannot add or create network grants", async () => {
+    const s = await setup();
+    const taskId = await createTask(s);
+    const ops = k.app.get(PlatformOperations);
+    const ctx = {
+      orgId,
+      actorAccountId: s.accountId,
+      agentId: s.agentId,
+      conversationId: s.conversationId,
+      runId: randomUUID(),
+      signal: new AbortController().signal,
+    };
+    const call = (id: string, input: unknown) => {
+      const o = ops.get(id);
+      if (o === null) throw new Error(`no operation ${id}`);
+      return o.run(o.input.parse(input), ctx);
+    };
+    await expect(
+      call("schedules.grants-add", {
+        scheduleId: taskId,
+        grants: [{ toolKey: "network:files.example.com" }],
+      }),
+    ).rejects.toThrow(refusal);
+    await expect(
+      call("schedules.create", {
+        agentId: s.agentId,
+        name: "Nightly",
+        prompt: "Fetch.",
+        trigger: { kind: "cron", expr: "0 9 * * *" },
+        mode: "new",
+        deviceId: s.deviceId,
+        grants: [{ toolKey: "network:files.example.com" }],
+      }),
+    ).rejects.toThrow(refusal);
+    expect(await grantKeys(s, taskId)).toEqual([]);
   });
 });
 

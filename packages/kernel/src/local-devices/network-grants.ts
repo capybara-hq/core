@@ -97,6 +97,9 @@ export class NetworkGrants {
     const task = await this.taskGrants(input);
     if (task === undefined) return run;
     if (run === undefined) return task;
+    // one exec frame carries one source: the task's, the standing approval behind an unattended
+    // run (the run grants of an unattended run come from asks only in `wait` mode); the device
+    // logs it with the command, and the kernel's approvals keep the per-host record
     const hosts = [...new Set([...task.hosts, ...run.hosts])].slice(0, MAX_GRANT_HOSTS);
     return { hosts, source: task.source };
   }
