@@ -16,6 +16,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
@@ -66,7 +67,12 @@ export interface DeviceView {
    * ask-to-allow spec §5.4): the program's features and its local policy summary (null when
    * unknown). null for a cloud device or a local one without a connected machine.
    */
-  network: { features: string[]; policy: DeviceLocalPolicySummary | null } | null;
+  network: {
+    features: string[];
+    policy: DeviceLocalPolicySummary | null;
+    /** The device's last {@link RECENT_POLICY_CHANGES} policy changes, newest first (§10.4). */
+    recent: DevicePolicyChangeView[];
+  } | null;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
@@ -74,6 +80,29 @@ export interface DeviceView {
   /** The org's effective sandbox limits (phase 1 devices use them unchanged, spec §8.4). */
   limits: SandboxLimits;
   createdAt: string;
+}
+
+/** How many recent policy changes a device view lists. */
+export const RECENT_POLICY_CHANGES = 10;
+
+/** One `device.policy_changed` audit row, as the device's owner sees it on the device page. */
+export interface DevicePolicyChangeView {
+  at: string;
+  add: string[];
+  remove: string[];
+  network: "allowlist" | "open" | null;
+  /** The deciding account's display name (null when the account is gone). */
+  by: string | null;
+  via: "web" | "im";
+  /** The machine answered with the policy as written (false: the answer never came). */
+  confirmed: boolean;
+}
+
+/** A change of a device's network policy by its owner (`POST /devices/:id/policy`). */
+export interface DevicePolicyChange {
+  add?: string[] | undefined;
+  remove?: string[] | undefined;
+  network?: "allowlist" | "open" | undefined;
 }
 
 /** The machine connected to a local device, as its owner sees it. */
@@ -131,6 +160,8 @@ export class DevicesService {
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(MachinesService)
     private readonly machines: Pick<MachinesService, "revoke" | "revokeActive">,
+    @Inject(DevicePolicyService)
+    private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
   ) {}
 
   /**
@@ -444,6 +475,48 @@ export class DevicesService {
     actorTokenId?: string,
   ): Promise<void> {
     await this.machines.revoke(orgId, accountId, id, actorTokenId);
+  }
+
+  /**
+   * The owner changes one of their own devices' network policy (network ask-to-allow spec §7,
+   * §13 Q6): sent to the machine with the `policy` op, which is the authority and answers with
+   * the policy as written. Anyone but the owner gets `device.not_found`. A widening change (`add`,
+   * `network: "open"`) is refused up front with `device.policy_refused` unless the machine last
+   * reported `remoteGrants: "owner"` (the machine checks again); narrowing is always sent. The
+   * machine offline → `device.offline`; a cloud device or a program without the `policyOp` feature
+   * → `device.policy_unsupported`; the machine's refusal → `device.policy_refused` with its message.
+   * Callers are human sessions only (no personal access token, no service token, no Platform op).
+   */
+  async changePolicy(
+    orgId: string,
+    account: { id: string; displayName: string },
+    id: string,
+    change: DevicePolicyChange,
+  ): Promise<DeviceLocalPolicySummary> {
+    await this.access.usable(orgId, account.id, id);
+    const summary = await this.policies.summary(id);
+    const widens = (change.add?.length ?? 0) > 0 || change.network === "open";
+    // a machine that cannot take the op (or none) is answered by apply: unsupported or offline
+    const canApply = summary?.features.includes("policyOp") === true;
+    if (widens && canApply && summary?.policy?.remoteGrants !== "owner") {
+      throw new ApiError("device.policy_refused", remoteGrantsOffMessage(change));
+    }
+    const out = await this.policies.apply({
+      orgId,
+      deviceId: id,
+      change: {
+        ...(change.add !== undefined && { add: change.add }),
+        ...(change.remove !== undefined && { remove: change.remove }),
+        ...(change.network !== undefined && { network: change.network }),
+      },
+      source: { accountId: account.id, accountName: account.displayName, via: "web" },
+    });
+    if (out.applied) return out.policy;
+    if (out.reason === "offline") throw new ApiError("device.offline", out.message);
+    if (out.reason === "unsupported") {
+      throw new ApiError("device.policy_unsupported", out.message);
+    }
+    throw new ApiError("device.policy_refused", out.message);
   }
 
   /**
@@ -817,9 +890,13 @@ export class DevicesService {
     const demotedProviders = [
       ...new Set(rows.flatMap((r) => (demoted.get(r.id) ? [demoted.get(r.id) as string] : []))),
     ];
-    const [limits, names] = await Promise.all([
+    const [limits, names, recent] = await Promise.all([
       this.sandbox.orgLimits(orgId),
       this.displayNames.many(demotedProviders),
+      this.recentPolicyChanges(
+        orgId,
+        rows.filter((r) => r.source === "local" && r.machine_id !== null).map((r) => r.id),
+      ),
     ]);
     const current = this.providers.cloud()?.plugin;
     // a local device is online while a replica holds its machine's connection lease
@@ -873,6 +950,7 @@ export class DevicesService {
             ? {
                 features: deviceFeaturesOf(r.machine_features),
                 policy: localPolicyOf(r.machine_local_policy),
+                recent: recent.get(r.id) ?? [],
               }
             : null,
         // a local device's machine decides it; cloud devices have none in phase 2
@@ -888,6 +966,57 @@ export class DevicesService {
         createdAt: r.created_at.toISOString(),
       };
     });
+  }
+
+  /**
+   * The last {@link RECENT_POLICY_CHANGES} `device.policy_changed` audit rows of each device in
+   * the org, newest first, with the deciding account's display name.
+   */
+  private async recentPolicyChanges(
+    orgId: string,
+    deviceIds: string[],
+  ): Promise<Map<string, DevicePolicyChangeView[]>> {
+    const out = new Map<string, DevicePolicyChangeView[]>();
+    if (deviceIds.length === 0) return out;
+    const ranked = this.db
+      .selectFrom("audit_events as a")
+      .select([
+        "a.target",
+        "a.at",
+        "a.detail",
+        "a.actor_account_id",
+        sql<number>`row_number() OVER (PARTITION BY a.target ORDER BY a.at DESC, a.id DESC)`.as(
+          "n",
+        ),
+      ])
+      .where("a.org_id", "=", orgId)
+      .where("a.action", "=", "device.policy_changed")
+      .where("a.target", "in", deviceIds);
+    const rows = await this.db
+      .selectFrom(ranked.as("r"))
+      .leftJoin("accounts as ac", "ac.id", "r.actor_account_id")
+      .select(["r.target", "r.at", "r.detail", "ac.display_name"])
+      .where("r.n", "<=", RECENT_POLICY_CHANGES)
+      .orderBy("r.at", "desc")
+      .execute();
+    for (const r of rows) {
+      if (r.target === null) continue;
+      const d = r.detail as Record<string, unknown>;
+      const hosts = (v: unknown) =>
+        Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
+      const list = out.get(r.target) ?? [];
+      list.push({
+        at: r.at.toISOString(),
+        add: hosts(d.add),
+        remove: hosts(d.remove),
+        network: d.network === "allowlist" || d.network === "open" ? d.network : null,
+        by: r.display_name ?? null,
+        via: d.via === "im" ? "im" : "web",
+        confirmed: d.confirmed === true,
+      });
+      out.set(r.target, list);
+    }
+    return out;
   }
 
   /**
@@ -966,4 +1095,18 @@ function refuseDeviceReset(env: { provider: string | null }): void {
       "This device's files are in a directory on its connected machine and cannot be reset from here. To start over, run capybara-device logout, then capybara-device login into this device, on that machine.",
     );
   }
+}
+
+/**
+ * The refusal of a widening change on a device whose machine reported `remoteGrants: "off"`: the
+ * command to run on the machine instead.
+ */
+function remoteGrantsOffMessage(change: DevicePolicyChange): string {
+  const local = [
+    ...(change.add !== undefined && change.add.length > 0
+      ? [`capybara-device policy add allowedDomains ${change.add.join(",")}`]
+      : []),
+    ...(change.network === "open" ? ["capybara-device policy set network open"] : []),
+  ];
+  return `This device does not accept network changes from the deployment; change it on the machine: ${local.join("; ")}`;
 }

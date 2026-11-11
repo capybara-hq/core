@@ -76,7 +76,7 @@ export class DevicePolicyService {
           "first, then record the decision in a transaction.",
       );
     }
-    assertHosts(input.change);
+    assertHosts(input.change, input.source.approvalId !== undefined);
     const device = await this.db
       .selectFrom("devices as e")
       .innerJoin("orgs as o", "o.id", "e.org_id")
@@ -192,13 +192,14 @@ export class DevicePolicyService {
 }
 
 /**
- * Hosts the platform may send: `add` takes exact hosts only (the platform never adds a wildcard to
- * a device's policy); `remove` takes any valid entry (narrowing, a wildcard too).
+ * Hosts the platform may send: an approval's `add` takes exact hosts only (a card never grants a
+ * wildcard); the owner's own change on the device page (no approval) may add a wildcard (spec §7);
+ * `remove` takes any valid entry (narrowing, a wildcard too).
  */
-function assertHosts(change: Omit<DevicePolicyArgs, "source">): void {
+function assertHosts(change: Omit<DevicePolicyArgs, "source">, fromApproval: boolean): void {
   const bad = (h: string) => typeof h !== "string" || validateAllowHost(h).length > 0;
   for (const h of change.add ?? []) {
-    if (bad(h) || h.startsWith("*.")) {
+    if (bad(h) || (fromApproval && h.startsWith("*."))) {
       throw new Error(`not an exact host to add to a device policy: ${JSON.stringify(h)}`);
     }
   }

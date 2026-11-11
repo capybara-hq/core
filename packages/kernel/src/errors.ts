@@ -349,6 +349,13 @@ export const ERROR_CODES = {
   "device.offline": 503,
   /** The local device's machine runs a `capybara-device` too old for this kernel; update it. */
   "device.program_outdated": 426,
+  /**
+   * The device's machine refused a network policy change (its local `remoteGrants` is `off`, it
+   * runs in Docker mode, or a host is invalid); the message says how to allow it on the machine.
+   */
+  "device.policy_refused": 409,
+  /** The device cannot change its network policy from the platform (cloud, or an older program). */
+  "device.policy_unsupported": 409,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

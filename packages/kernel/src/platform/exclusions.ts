@@ -300,6 +300,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Disconnects a person's own machine (revokes its credential); a trust decision taken on the device's page",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/devices/:id/policy",
+    category: "human-only",
+    reason:
+      "A person changes their own machine's network policy; agents never widen a device's network",
+  },
+  {
     route: "POST /api/v1/device/authorize",
     category: "transport",
     reason:
