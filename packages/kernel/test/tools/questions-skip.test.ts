@@ -298,8 +298,13 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
       convId,
       `slowtool:2000:AskUserQuestion:${JSON.stringify(ASK_INPUT)}`,
     );
-    await waitForEvent(db, convId, (e) => e.type === "run_started");
+    // Wait for the step's model_call (logged once the request is built, before it streams), not
+    // run_started: a message logged before the request is built becomes the model's last user
+    // message, and model-fake then echoes it instead of asking (a flake under load)
+    await waitForEvent(db, convId, (e) => e.type === "model_call");
     const msgSeq = await postMessage(reqA, orgId, convId, "echo:early");
+    const call = ofType(await eventsOf(db, convId), "model_call")[0];
+    expect(call?.payload.request.absorbedUpToSeq).toBeLessThan(msgSeq);
     const { questionIds } = await waiting(convId);
     const asked = ofType(await eventsOf(db, convId), "question_asked")[0];
     expect(asked?.seq).toBeGreaterThan(msgSeq);
