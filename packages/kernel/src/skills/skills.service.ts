@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { DisabledSkillRef } from "../agents/definition.js";
+import { type DisabledSkillRef, skillDisabled } from "../agents/definition.js";
 import { offeredNamed } from "../catalog/component-state.js";
 import { type Owner, PLATFORM_OWNER } from "../catalog/ownership.js";
 import { type OwnerVersion, PlatformComponents } from "../catalog/platform-components.js";
@@ -1115,7 +1115,78 @@ export class SkillsService {
    * content under its own id, so its detail is the platform skill's (its id, versions and body;
    * 404 while that skill is off in the org); a pinned copy keeps its own (Task 10).
    */
-  async get(orgId: string, skillId: string): Promise<SkillDetail> {
+  async get(orgId: string, skillId: string): Promise<SkillDetail & { agentsOff: number }> {
+    const detail = await this.detail(orgId, skillId);
+    return { ...detail, agentsOff: await this.agentsOff(orgId, detail) };
+  }
+
+  /**
+   * How many of the org's live agents turn the skill off in their current version (skills
+   * default-on spec §10: 「N 个智能体关闭了它」): matched by the rule of `agentSkills` against the
+   * skill as the org's usable set holds it. A builtin skill, one not usable in the org and an org
+   * skill for the agent that shared it count 0.
+   */
+  private async agentsOff(orgId: string, skill: SkillDetail): Promise<number> {
+    const db = this.db.db;
+    const usable = await usableSkills(db, orgId);
+    const linked = await linkedCopyIds(
+      db,
+      orgId,
+      usable.flatMap((u) => (u.origin === "platform" ? [u.id] : [])),
+    );
+    const u = usable.find((x) => skillIdsOf(x, linked).includes(skill.id));
+    if (u === undefined) return 0;
+    const ids = skillIdsOf(u, linked);
+    if (
+      u.plugin !== null &&
+      u.origin === "platform" &&
+      (await builtinSkillPlugins(db)).has(u.plugin)
+    )
+      return 0;
+    const builtinIds = new Set(await builtinSkillIds(db, orgId));
+    if (ids.some((id) => builtinIds.has(id))) return 0;
+    const rows = await db
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select([
+        "agents.id",
+        sql<unknown>`agent_versions.definition->'disabledSkills'`.as("disabled_skills"),
+      ])
+      .where("agents.org_id", "=", orgId)
+      .where("agents.deleted_at", "is", null)
+      .where(
+        sql<boolean>`jsonb_array_length(coalesce(agent_versions.definition->'disabledSkills', '[]'::jsonb)) > 0`,
+      )
+      .execute();
+    if (rows.length === 0) return 0;
+    // the agent that shared an org skill always has it
+    const sharedBy = await db
+      .selectFrom("skills")
+      .select("origin_agent_id")
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("id", "in", ids)
+      .where("origin_agent_id", "is not", null)
+      .execute();
+    const sharers = new Set(sharedBy.map((r) => r.origin_agent_id as string));
+    return rows.filter(
+      (r) =>
+        !sharers.has(r.id) &&
+        Array.isArray(r.disabled_skills) &&
+        skillDisabled(r.disabled_skills as DisabledSkillRef[], {
+          plugin: u.plugin,
+          name: u.name,
+          ids,
+        }),
+    ).length;
+  }
+
+  private async detail(orgId: string, skillId: string): Promise<SkillDetail> {
     const link = await this.db
       .selectFrom("skills")
       .select("platform_skill_id")

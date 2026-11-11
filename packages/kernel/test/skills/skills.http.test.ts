@@ -474,6 +474,43 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
     expect(createDeleted.statusCode).toBe(400);
   });
 
+  it("the skill detail counts the org's live agents whose current version turns it off (agentsOff)", async () => {
+    const s1 = await skill("one");
+    const s2 = await skill("two");
+    const agentsOff = async (id: string) => {
+      const r = await member({ method: "GET", url: `/api/v1/orgs/${orgId}/skills/${id}` });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { agentsOff: number }).agentsOff;
+    };
+    expect(await agentsOff(s1)).toBe(0);
+    const create = async (off: string[]) => {
+      const r = await admin({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/agents`,
+        payload: agentBody(off),
+      });
+      expect(r.statusCode, r.body).toBe(201);
+      return r.json().agent.id as string;
+    };
+    await create([s1]);
+    await create([s1, s2]);
+    await create([]);
+    // an older version turned it off, the current one does not
+    const changed = await create([s1]);
+    const upd = await admin({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${changed}`,
+      payload: { definition: agentBody([]).definition },
+    });
+    expect(upd.statusCode, upd.body).toBe(200);
+    // a deleted agent does not count
+    const gone = await create([s1]);
+    const del = await admin({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${gone}` });
+    expect(del.statusCode, del.body).toBeLessThan(300);
+    expect(await agentsOff(s1)).toBe(2);
+    expect(await agentsOff(s2)).toBe(1);
+  });
+
   it("软删除：详情 404、列表不再有；同名可重新上传为新技能", async () => {
     const id = await skill("gone");
     expect(

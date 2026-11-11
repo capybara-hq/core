@@ -103,7 +103,7 @@ export class SkillsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-  ): Promise<SkillDetail> {
+  ): Promise<SkillDetail & { agentsOff: number }> {
     requireUser(principal);
     return this.skills.get(org.orgId, id);
   }
