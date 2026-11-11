@@ -68,7 +68,7 @@ beforeEach(async () => {
       name: "Helper",
       instructions: "Be helpful.",
       model: MODEL,
-      disabledTools: builtinsOff("AskUserQuestion", "SkillWrite"),
+      disabledTools: builtinsOff("AskUserQuestion"),
       toolPolicies: {},
       fallback: null,
       modelParams: {},

@@ -667,8 +667,6 @@ export class ScheduledTasksService {
     });
     const ctx: GrantContext = {
       role,
-      visibility: agent.visibility,
-      skillWritePolicy: d.skills?.writePolicy,
       forbiddenTools: settings.forbiddenTools,
     };
     return tools.map((tool) => {
@@ -1198,8 +1196,6 @@ export class ScheduledTasksService {
       const tool = tools.find((x) => x.key === g.toolKey);
       const why = grantRefusal(g.toolKey, tool, {
         role,
-        visibility: agent.visibility,
-        skillWritePolicy: d.skills?.writePolicy,
         forbiddenTools: settings.forbiddenTools,
       });
       if (why !== null || !tool) throw grantNotAllowed(why ?? `${g.toolKey} cannot be approved`);

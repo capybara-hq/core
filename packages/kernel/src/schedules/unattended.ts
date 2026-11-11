@@ -78,7 +78,26 @@ export const UNATTENDED_ASK_ERROR = (tool: string) =>
   `This scheduled run cannot ask for approval; the task's owner can add ${tool} to the task's approved tools.`;
 
 /**
- * The result of a fixed ask (R3, `requiresUserInteraction`, `SkillWrite` unattended, a per-call
+ * The Platform operations that change an agent's skills: an unattended run never calls them
+ * without a person (spec §7), even where a private agent's owner would not be asked. Each is a
+ * fixed ask there, outside every grant.
+ */
+export const UNATTENDED_SKILL_OPERATIONS: ReadonlySet<string> = new Set<string>([
+  "agents.register-skill",
+  "agents.delete-skill",
+  "agents.share-skill",
+]);
+
+/** Whether a call's policy key (`Platform:<operation>`) is one of {@link UNATTENDED_SKILL_OPERATIONS}. */
+export function changesAgentSkills(policyKey: string): boolean {
+  const prefix = "Platform:";
+  return (
+    policyKey.startsWith(prefix) && UNATTENDED_SKILL_OPERATIONS.has(policyKey.slice(prefix.length))
+  );
+}
+
+/**
+ * The result of a fixed ask (R3, `requiresUserInteraction`, a skill change unattended, a per-call
  * policy that never remembers) in an unattended run, `fail` mode: no grant can ever cover it, so
  * it is not a missing grant either.
  */

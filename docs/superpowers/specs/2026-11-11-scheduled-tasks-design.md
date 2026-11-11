@@ -279,9 +279,11 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
   Another person's message (someone replying in a group thread the task posted into) keeps the run
   unattended, since the grants and approvals are the creator's. A later wake of the conversation
   (a background task or sub-agent finishing) is unattended again.
-- **`SkillWrite` in unattended runs** (*my call*): always treated as an ask outside the grants,
-  even on a private agent where it normally runs without asking, so an unattended run cannot
-  rewrite the agent's skills (anti-goal: the model widening what the task does).
+- **Skill changes in unattended runs** (*my call*; `SkillWrite` was removed on main, so the rule
+  now covers the Platform operations `agents.register-skill`, `agents.delete-skill` and
+  `agents.share-skill`): always treated as an ask outside the grants, even on a private agent where
+  registering normally runs without asking, so an unattended run cannot rewrite the agent's skills
+  (anti-goal: the model widening what the task does).
 - **Who can add a grant**: the creator, only for a tool they could approve with scope `always`
   themselves. A tool with a `requiredRole` the creator lacks cannot be pre-approved; in `wait` mode
   its approval goes to the role holders as today, and an escalated approval in a trial run is not
@@ -291,7 +293,7 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
   decides what can be a task grant, and every path asks it: the task form and `addGrants`
   (`grantable-tools` gives its code per tool: `forbidden`, `not_grantable`, `not_available`,
   `needs_role`, `fixed_ask`), a trial run's kept approvals, and the unattended refusals below. It
-  refuses a tool the org forbids (by its key or the call's key), `SkillWrite`, a per-call key
+  refuses a tool the org forbids (by its key or the call's key), a skill change, a per-call key
   (`Platform:<operation>`, decided per call), a tool the agent does not have now, a
   `requiredRole` above the creator's, and a fixed ask.
 - **How grants are collected** (*decided* in principle; the UI is *my call*):
@@ -308,7 +310,7 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
     `missing_grants`. The run ends normally; the task page and the creator's inbox say which
     grants are missing. Only a key the creator could grant is recorded, or one that needs a role
     they lack (the inbox lists it under "needs a role you don't have", with no action); a fixed
-    ask, a per-call key, `SkillWrite` or a forbidden tool gets the fixed-ask text ("<tool> always
+    ask, a per-call key (a skill change among them) or a forbidden tool gets the fixed-ask text ("<tool> always
     needs a person's approval, which a scheduled run cannot ask for; state what you wanted to do
     in your final answer.") and is not recorded, so the inbox never offers a grant that cannot be
     added (*decided during implementation*). `missing_grants` thus holds tool keys and
@@ -476,7 +478,7 @@ the org's limits; errors are English and actionable (`writing-tools`).
 - Time zones: `0 9 * * *` in `Asia/Shanghai` and `America/New_York` across a DST change.
 - Minimum interval, task counts and rate limit enforced on create, update and fire.
 - Unattended: a granted ask runs; an ungranted ask fails with `missing_grants` (`fail`) or waits for
-  the creator (`wait`); a fixed-ask, forbidden or switched-off tool is refused; `SkillWrite` is
+  the creator (`wait`); a fixed-ask, forbidden or switched-off tool is refused; `agents.register-skill` is
   refused on a private agent; `AskUserQuestion`, a missing connection and an elicitation do not
   wait; a stale `spec_hash` is treated as ungranted; a sub-agent and a wake run descending from the
   scheduled run use the task's grants; a person's message in a conversation a task posts into

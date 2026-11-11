@@ -514,7 +514,7 @@ export class ApprovalsService {
    * (`grantRefusalOf`, against the task agent's tools now): never a role-escalated approval
    * (`requestedFor` null, it stays `once`), one another account decided, one whose scopes never
    * allowed remembering (an org / platform operation: "once" only), a per-call key
-   * (`Platform:<operation>`), `SkillWrite`, a fixed ask, a tool the org forbids (its key or the
+   * (`Platform:<operation>`, a skill change among them), a fixed ask, a tool the org forbids (its key or the
    * call's), or a tool the task's agent does not have. In the decision's transaction.
    */
   @Transactional({ propagation: "mandatory" })
@@ -530,7 +530,7 @@ export class ApprovalsService {
       .leftJoin("agent_versions as v", (j) =>
         j.onRef("v.agent_id", "=", "ag.id").onRef("v.version", "=", "ag.current_version"),
       )
-      .select(["s.account_id", "ag.visibility", "v.definition"])
+      .select(["s.account_id", "v.definition"])
       .where("s.id", "=", served.taskId)
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
@@ -555,8 +555,6 @@ export class ApprovalsService {
     const { forbiddenTools } = await readScheduleSettings(t, this.config, a.orgId);
     const why = grantRefusalOf(a.toolKey, tool, {
       role: member.role,
-      visibility: task.visibility,
-      skillWritePolicy: def?.skills?.writePolicy,
       forbiddenTools,
     });
     if (why !== null) return;

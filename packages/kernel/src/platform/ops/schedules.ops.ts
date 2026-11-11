@@ -437,7 +437,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.grants-add",
         description:
-          "Approve tools in advance for one of your own scheduled tasks: an unattended run may then call them without asking. Only tools you could approve with always-allow yourself; never SkillWrite and nothing the org forbids. Returns the task's approved tools as { toolKey, connectorId }. The person confirms every change; it is never remembered. Takes the id from schedules.list.",
+          "Approve tools in advance for one of your own scheduled tasks: an unattended run may then call them without asking. Only tools you could approve with always-allow yourself; never a Platform operation (each is decided per call) and nothing the org forbids. Returns the task's approved tools as { toolKey, connectorId }. The person confirms every change; it is never remembered. Takes the id from schedules.list.",
         input: GrantsBody.extend({ scheduleId: Id }).strict(),
         example: { scheduleId: EXAMPLE_ID, grants: [{ toolKey: "WebFetch" }] },
         authz: { orgAction: "schedules.use" },

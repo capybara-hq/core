@@ -134,7 +134,7 @@ beforeAll(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: builtinsOff("AskUserQuestion", "SkillWrite", "CurrentTime"),
+        disabledTools: builtinsOff("AskUserQuestion", "ScheduleCreate", "CurrentTime"),
       },
       visibility: "org",
     },
@@ -200,7 +200,7 @@ describe("schedule reads for the web", () => {
     ).items;
     const of = (key: string) => items.find((t) => t.key === key);
     expect(of("AskUserQuestion")).toMatchObject({ grantable: true, reason: null });
-    expect(of("SkillWrite")).toMatchObject({ grantable: false, reason: "not_grantable" });
+    expect(of("ScheduleCreate")).toMatchObject({ grantable: false, reason: "fixed_ask" });
     expect(of("CurrentTime")).toMatchObject({ grantable: false, reason: "forbidden" });
     res = await alice({ method: "GET", url: `${base()}/grantable-tools?agentId=nope` });
     expect(res.statusCode).toBe(404);

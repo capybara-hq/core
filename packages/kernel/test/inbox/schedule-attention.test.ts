@@ -88,7 +88,7 @@ beforeEach(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: builtinsOff("AskUserQuestion", "SkillWrite"),
+        disabledTools: builtinsOff("AskUserQuestion"),
       },
       visibility: "org",
     },

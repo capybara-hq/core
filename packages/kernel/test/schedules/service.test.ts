@@ -105,7 +105,7 @@ beforeEach(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: builtinsOff("AskUserQuestion", "SkillWrite"),
+        disabledTools: builtinsOff("AskUserQuestion"),
       },
       visibility: "org",
     },
@@ -375,9 +375,9 @@ describe("ScheduledTasksService", () => {
     expect(grants).toHaveLength(1);
     expect(grants[0]).toMatchObject({ toolKey: "AskUserQuestion", connectorId: null });
     expect(grants[0]?.specHash).toMatch(/^[0-9a-f]{16}$/);
-    // SkillWrite never; a tool the agent does not have; a connector that is not the tool's
+    // a skill change never; a tool the agent does not have; a connector that is not the tool's
     for (const g of [
-      { toolKey: "SkillWrite" },
+      { toolKey: "Platform:agents.register-skill" },
       { toolKey: "Bash" },
       { toolKey: "AskUserQuestion", connectorId: randomUUID() },
     ]) {
@@ -403,14 +403,17 @@ describe("ScheduledTasksService", () => {
       defaultPolicy: "ask",
       ...over,
     });
-    const ctx = { role: "member" as const, visibility: "org" as const, forbiddenTools: [] };
+    const ctx = { role: "member" as const, forbiddenTools: [] };
     expect(grantRefusal("Deploy", tool(), ctx)).toBeNull();
     // the codes the web words (grantable-tools)
     expect(grantRefusalOf("Deploy", tool({ requiredRole: "admin" }), ctx)?.code).toBe("needs_role");
     expect(grantRefusalOf("Deploy", tool(), { ...ctx, forbiddenTools: ["Deploy"] })?.code).toBe(
       "forbidden",
     );
-    expect(grantRefusalOf("SkillWrite", tool(), ctx)?.code).toBe("not_grantable");
+    // an unattended run never changes the agent's skills, whatever tool the key resolves to
+    expect(grantRefusalOf("Platform:agents.register-skill", tool(), ctx)?.code).toBe(
+      "not_grantable",
+    );
     expect(grantRefusalOf("Deploy", undefined, ctx)?.code).toBe("not_available");
     expect(grantRefusal("Deploy", tool({ requiredRole: "admin" }), ctx)).toMatch(/admin role/);
     expect(

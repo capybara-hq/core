@@ -109,7 +109,7 @@ const TOOL_KEYS_SCHEMA = {
   description:
     "Tool keys the task may use without asking when it runs unattended, e.g. " +
     '["WebSearch", "mcp__docs__search"]. Only tools this agent has now; tools that always ask a ' +
-    "person (ScheduleCreate, SkillWrite, ...) cannot be listed. A run that needs a tool not listed " +
+    "person (ScheduleCreate, ScheduleUpdate, ...) cannot be listed. A run that needs a tool not listed " +
     "fails that call. The person sees and approves this list.",
 } as const;
 

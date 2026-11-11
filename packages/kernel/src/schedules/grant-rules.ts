@@ -1,8 +1,7 @@
-import type { AgentView } from "../agents/agent-lookup.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import { BUILTIN } from "../tools/builtin-names.js";
 import { isFixedAsk } from "../tools/fixed-ask.js";
 import type { ResolvedTool } from "../tools/registry.js";
+import { changesAgentSkills } from "./unattended.js";
 
 /**
  * The one rule for what can be a scheduled task's grant (spec §7): the task form and
@@ -13,15 +12,13 @@ import type { ResolvedTool } from "../tools/registry.js";
 /** Who asks for a grant and where: the inputs of {@link grantRefusalOf}. */
 export interface GrantContext {
   role: OrgRole;
-  visibility: AgentView["visibility"];
-  skillWritePolicy?: "allow" | "ask" | undefined;
   forbiddenTools: readonly string[];
 }
 
 /**
  * Why a tool can't be a task's grant, as a code the UI words: `forbidden` (the org's
- * `forbiddenTools`), `not_grantable` (by design: `SkillWrite`, or a per-call key such as
- * `Platform:<operation>`), `not_available` (not one of the agent's tools now), `needs_role` (a
+ * `forbiddenTools`), `not_grantable` (by design: a Platform call that changes the agent's
+ * skills, or any other per-call key such as `Platform:<operation>`), `not_available` (not one of the agent's tools now), `needs_role` (a
  * `requiredRole` above the creator's), `fixed_ask` (always asks a person).
  */
 export type GrantRefusalCode =
@@ -35,7 +32,7 @@ export type GrantRefusalCode =
  * Why `toolKey` cannot be one of a task's grants, or null when it can: the creator could approve
  * it with scope `always` themselves (no `requiredRole` above their role, not a fixed ask), it is
  * the tool's own key (a per-call key such as `Platform:<operation>` is decided per call and never
- * a task grant), it is not `SkillWrite` (an unattended run never changes the agent's skills) and
+ * a task grant), it changes none of the agent's skills (an unattended run never does) and
  * the org forbids neither the key nor the tool. `tool`: the agent's tool `toolKey` belongs to,
  * undefined when the agent does not have it now.
  */
@@ -53,7 +50,7 @@ export function grantRefusalOf(
       message: `The organization does not allow ${toolKey} in scheduled runs`,
     };
   }
-  if (toolKey === BUILTIN.SkillWrite || tool?.key === BUILTIN.SkillWrite) {
+  if (changesAgentSkills(toolKey)) {
     return {
       code: "not_grantable",
       message: `${toolKey} cannot be approved for a scheduled task: an unattended run never changes the agent's skills`,
@@ -74,7 +71,7 @@ export function grantRefusalOf(
       message: `${toolKey} needs the ${tool.requiredRole} role to approve; you cannot approve it for the task`,
     };
   }
-  if (isFixedAsk(tool, ctx.visibility, ctx.skillWritePolicy)) {
+  if (isFixedAsk(tool)) {
     return {
       code: "fixed_ask",
       message: `${toolKey} always asks a person and cannot be approved in advance`,

@@ -51,7 +51,7 @@ import {
 
 /**
  * Scheduled tasks spec §7 (Task 7): the policy of unattended runs (task grants, `unattendedAsk`,
- * `forbiddenTools`, `SkillWrite`, the other waits for a person) and trial runs, whose approvals
+ * `forbiddenTools`, skill changes through the Platform tool, the other waits for a person) and trial runs, whose approvals
  * become task grants. Runs the real pipeline with the default policy (`createDecidePolicy`).
  */
 
@@ -142,7 +142,18 @@ const GATED = pluginTool("gated", "ask");
 const BANNED = pluginTool("banned", "deny");
 const FIXED = pluginTool("fixed", "ask", { annotations: { requiresUserInteraction: true } });
 const ADMIN = pluginTool("admin", "ask", {}, "admin");
-const SKILL_WRITE = builtinTool("SkillWrite", "allow");
+/**
+ * The Platform tool calling `agents.register-skill` on a private agent its owner runs: a
+ * `personal` write, so an attended run asks and a remembered grant lets it through.
+ */
+const REGISTER_SKILL: ResolvedTool = {
+  ...builtinTool("Platform", "allow"),
+  callPolicy: async () => ({
+    key: "Platform:agents.register-skill",
+    policy: "ask",
+    remember: true,
+  }),
+};
 const ASK_USER = builtinTool("AskUserQuestion", "allow");
 /** A tool whose calls are decided per call under their own key (as the Platform tool's ops). */
 const PER_CALL: ResolvedTool = {
@@ -172,9 +183,9 @@ const handlers: Record<string, ToolHandler> = {
   },
 };
 const builtinHandlers: Record<string, BuiltinHandler> = {
-  SkillWrite: async () => {
-    calls.push("SkillWrite");
-    return { content: [{ type: "text", text: "skill written" }] };
+  Platform: async () => {
+    calls.push("register-skill");
+    return { content: [{ type: "text", text: "skill registered" }] };
   },
   AskUserQuestion: async () => {
     calls.push("AskUserQuestion");
@@ -387,7 +398,7 @@ beforeEach(async () => {
     BANNED,
     FIXED,
     ADMIN,
-    SKILL_WRITE,
+    REGISTER_SKILL,
     ASK_USER,
     PER_CALL,
     pluginTool("form", "allow"),
@@ -521,25 +532,27 @@ describe("unattended runs (spec §7)", () => {
     expect(resultsOf(evs)[0]).toMatchObject({ isError: true });
   });
 
-  it("SkillWrite on a private agent is refused", async () => {
+  it("registering a skill on a private agent is refused, even with a remembered grant", async () => {
     await sql`UPDATE capybara.agents SET visibility = 'private' WHERE id = ${seed.agentId}`.execute(
       raw,
     );
     await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
       VALUES (${seed.agentId}, 1, ${JSON.stringify(agent)}::jsonb, ${seed.accountId})`.execute(raw);
-    // attended, the same call runs without asking on a private agent (R4)
+    // the owner remembered the registration: attended, the same call runs without asking
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash, connector_id)
+      VALUES (${seed.orgId}, ${seed.accountId}, ${seed.agentId}, 'Platform:agents.register-skill',
+        ${REGISTER_SKILL.specHash}, NULL)`.execute(raw);
     const attendedRun = randomUUID();
     await insertRun(attendedRun, seed.conversationId, null, "completed");
-    await runCalls([{ id: "a1", name: "SkillWrite", input: {} }], { runId: attendedRun });
-    expect(calls).toEqual(["SkillWrite"]);
+    await runCalls([{ id: "a1", name: "Platform", input: {} }], { runId: attendedRun });
+    expect(calls).toEqual(["register-skill"]);
     calls = [];
-    // unattended: a fixed ask, even with a grant; not a missing grant (none can cover it)
-    await grant(SKILL_WRITE);
-    const { evs } = await runCalls([{ id: "c1", name: "SkillWrite", input: {} }]);
+    // unattended: a fixed ask, even with the grant; not a missing grant (none can cover it)
+    const { evs } = await runCalls([{ id: "c1", name: "Platform", input: {} }]);
     expect(calls).toEqual([]);
     expect(resultsOf(evs).at(-1)).toMatchObject({
       isError: true,
-      content: UNATTENDED_FIXED_ASK_ERROR("SkillWrite"),
+      content: UNATTENDED_FIXED_ASK_ERROR("Platform:agents.register-skill"),
     });
     expect(UNATTENDED_FIXED_ASK_ERROR("X")).toBe(
       "X always needs a person's approval, which a scheduled run cannot ask for; state what you wanted to do in your final answer.",
@@ -810,7 +823,6 @@ describe("trial runs (spec §7)", () => {
     expect(
       grantRefusalOf(`${GATED.key}:op`, GATED, {
         role: "member",
-        visibility: "org",
         forbiddenTools: [GATED.key],
       })?.code,
     ).toBe("forbidden");
