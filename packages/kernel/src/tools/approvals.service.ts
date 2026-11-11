@@ -77,8 +77,13 @@ export interface NetworkAskDetail {
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
   /** What took effect: a run grant, the device's policy, or a run grant because the device did not apply it. */
-  outcome?: "once" | "always" | "once_fallback";
-  /** Why 「一直允许」 fell back to a run grant. */
+  /**
+   * What took effect: a run grant (`once`), the device's policy (`always`), a run grant because
+   * the device could not be reached or lacks the feature (`once_fallback`), or nothing because the
+   * device refused the change (`refused`: its owner takes no remote grants; no run grant either).
+   */
+  outcome?: "once" | "always" | "once_fallback" | "refused";
+  /** Why 「一直允许」 did not reach the device's policy. */
   fallback?: "offline" | "refused" | "unsupported";
 }
 
@@ -219,10 +224,12 @@ export interface NetworkAskInput {
 
 /** What a network ask's decision took effect as, passed to the decision's transaction. */
 interface NetworkDecision {
-  /** The hosts allowed (empty when denied). */
+  /** The hosts the owner chose to allow (empty when denied). */
+  wanted: string[];
+  /** The hosts allowed (empty when denied or refused by the device). */
   granted: string[];
   /** Null when denied. */
-  outcome: "once" | "always" | "once_fallback" | null;
+  outcome: "once" | "always" | "once_fallback" | "refused" | null;
   fallback?: "offline" | "refused" | "unsupported";
   via: DecisionVia;
 }
@@ -441,6 +448,13 @@ export class ApprovalsService {
       .where("id", "=", input.conversationId)
       .forUpdate()
       .execute();
+    // only the device's owner is ever asked: never another account the caller names
+    const owner = await this.deviceOwnerOf(input.orgId, input.detail.deviceId);
+    if (owner === null || owner !== input.requestedFor) {
+      throw new Error(
+        `a network ask is for the owner of a live device of the org (device ${input.detail.deviceId})`,
+      );
+    }
     const existing = await this.networkForCall(input.runId, input.callId);
     if (existing !== null) return { record: existing, toSeq: null };
     const last = await t
@@ -581,9 +595,11 @@ export class ApprovalsService {
    * replicas: only the device owner (`requested_for`) decides, in a signed-in session (a personal
    * access token is refused; the route already refuses service and embed tokens); the allowed
    * hosts are a subset of those asked. 「这台设备一直允许」 sends the `policy` op first, outside any
-   * transaction; when the device does not apply it (offline, refused, a program without the
-   * feature) the decision is recorded as a run grant with the reason. Then {@link decideIn}
-   * records what took effect and the run resumes after the commit.
+   * transaction; when the device cannot be reached or lacks the feature the decision is recorded
+   * as a run grant with the reason, and when the device refuses (its owner takes no remote grants)
+   * as `always` with outcome `refused` and nothing granted. Then {@link decideIn} records what took
+   * effect and the run resumes after the commit; a change the device applied after the ask closed
+   * is audited (`late`) and answered with a 409 that says so.
    */
   @WithLock({ key: "network-ask-#{1}", ttl: 60_000, waitTimeout: 45_000 })
   private async decideNetwork(
@@ -603,11 +619,25 @@ export class ApprovalsService {
       .executeTakeFirst();
     if (!row) throw notFound();
     const ask = toRecord(row);
-    if (ask.requestedFor !== accountId) {
-      const owner = ask.requestedFor === null ? null : await this.displayNameOf(ask.requestedFor);
+    const detail = ask.detail;
+    if (detail === null) throw new Error(`network ask ${id} has no detail`);
+    // the device's owner now (an ownership change since the ask is honored), never anyone else
+    const owner = await this.deviceOwnerOf(orgId, detail.deviceId);
+    if (ask.requestedFor !== accountId || owner !== accountId) {
+      // named only to the people the ask is shown to (the run's starter, the asked owner); any
+      // other member learns nothing about it, as `get` (approval.not_found)
+      const trigger = await this.db
+        .selectFrom("runs")
+        .select("trigger_account_id")
+        .where("id", "=", ask.runId)
+        .executeTakeFirst();
+      if (accountId !== ask.requestedFor && accountId !== trigger?.trigger_account_id) {
+        throw notFound();
+      }
+      const name = owner === null ? null : await this.displayNameOf(owner);
       throw new ApiError(
         "approval.not_yours",
-        `Only ${owner ?? "the device's owner"} can allow network access on this device.`,
+        `Only ${name ?? "the device's owner"} can allow network access on this device.`,
       );
     }
     if (actorTokenId !== undefined) {
@@ -620,8 +650,6 @@ export class ApprovalsService {
       throw new ApiError("approval.already_decided", "Approval has already been decided");
     }
     if (row.expired) throw new ApiError("approval.already_decided", "Approval has expired");
-    const detail = ask.detail;
-    if (detail === null) throw new Error(`network ask ${id} has no detail`);
     const asked = [...new Set(detail.hosts.map((h) => h.host))];
     let network: NetworkDecision;
     if (body.decision === "approve") {
@@ -647,7 +675,7 @@ export class ApprovalsService {
           { path: "hosts", message: "Choose at least one host" },
         ]);
       }
-      network = { granted, outcome: "once", via };
+      network = { wanted: granted, granted, outcome: "once", via };
       if (scope === "always") {
         const applied = await this.applyAlways(orgId, detail.deviceId, granted, {
           approvalId: id,
@@ -656,8 +684,11 @@ export class ApprovalsService {
         });
         network =
           applied === null
-            ? { granted, outcome: "always", via }
-            : { granted, outcome: "once_fallback", fallback: applied, via };
+            ? { wanted: granted, granted, outcome: "always", via }
+            : applied === "refused"
+              ? // the device's owner takes no remote grants: nothing is allowed, not even this run
+                { wanted: granted, granted: [], outcome: "refused", fallback: applied, via }
+              : { wanted: granted, granted, outcome: "once_fallback", fallback: applied, via };
       }
     } else {
       if (body.hosts !== undefined) {
@@ -665,18 +696,69 @@ export class ApprovalsService {
           { path: "hosts", message: "Only an approval takes hosts" },
         ]);
       }
-      network = { granted: [], outcome: null, via };
+      network = { wanted: [], granted: [], outcome: null, via };
     }
-    const { record, toSeq } = await this.decideIn(
+    let decided: { record: ApprovalRecord; toSeq: number };
+    try {
+      decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, network);
+    } catch (e) {
+      // the device took the hosts, but a reply, the expiry or a stop closed the ask meanwhile:
+      // the change stands (the owner chose it), so it is audited and said
+      if (
+        network.outcome === "always" &&
+        e instanceof ApiError &&
+        e.code === "approval.already_decided"
+      ) {
+        await this.auditLateAllow(orgId, ask, network);
+        throw new ApiError(
+          "approval.already_decided",
+          `The device now allows ${network.granted.join(", ")}; the request had already closed.`,
+        );
+      }
+      throw e;
+    }
+    await this.announceDecided(decided.record, decided.toSeq);
+    return decided.record;
+  }
+
+  /** `device.network_allowed` of a policy change that reached the device after the ask closed. */
+  @Transactional()
+  private async auditLateAllow(
+    orgId: string,
+    ask: ApprovalRecord,
+    network: NetworkDecision,
+  ): Promise<void> {
+    if (ask.detail === null) return;
+    await audit(this.db.db, {
+      actorAccountId: ask.requestedFor,
       orgId,
-      id,
-      accountId,
-      body,
-      actorTokenId,
-      network,
-    );
-    await this.announceDecided(record, toSeq);
-    return record;
+      action: "device.network_allowed",
+      target: ask.detail.deviceId,
+      detail: {
+        approvalId: ask.id,
+        deviceId: ask.detail.deviceId,
+        hosts: network.granted,
+        scope: "always",
+        outcome: "always",
+        late: true,
+        by: ask.requestedFor,
+        via: network.via,
+        conversationId: ask.conversationId,
+        runId: ask.runId,
+      },
+    });
+  }
+
+  /** The owner of a live device of the org (null: none, deleted, or of another org). */
+  private async deviceOwnerOf(orgId: string, deviceId: string): Promise<string | null> {
+    const d = await this.db
+      .selectFrom("devices")
+      .select("owner_account_id")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    return d?.owner_account_id ?? null;
   }
 
   /**
@@ -778,7 +860,7 @@ export class ApprovalsService {
       ? null
       : network === undefined
         ? (body.scope ?? "once")
-        : network.outcome === "always"
+        : network.outcome === "always" || network.outcome === "refused"
           ? "always"
           : "once";
     // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
@@ -885,7 +967,7 @@ export class ApprovalsService {
     ]);
     if (network !== undefined && before.detail !== null) {
       const asked = [...new Set(before.detail.hosts.map((h) => h.host))];
-      const refused = asked.filter((h) => !network.granted.includes(h));
+      const refused = asked.filter((h) => !network.wanted.includes(h));
       await audit(t, {
         actorAccountId: accountId,
         orgId,
@@ -894,7 +976,7 @@ export class ApprovalsService {
         detail: {
           approvalId: id,
           deviceId: before.detail.deviceId,
-          hosts: approved ? network.granted : asked,
+          hosts: approved ? network.wanted : asked,
           ...(approved && refused.length > 0 && { refused }),
           scope,
           outcome: approved ? network.outcome : "denied",

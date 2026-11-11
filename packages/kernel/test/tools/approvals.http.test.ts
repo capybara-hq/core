@@ -7,9 +7,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { type KernelEventMap, KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
@@ -723,17 +725,26 @@ describe("Review Focus 1：两个副本并发处理同一审批", () => {
 describe("network asks: only the device owner decides, in a signed-in session", () => {
   const KEPT = { content: "curl: (56) CONNECT tunnel failed, response 403", isError: true };
 
-  /** A network ask of the initiator's device (the initiator owns it). */
-  const ask = (scopes: ("once" | "always")[] = ["once", "always"]) =>
+  /** A local device of `accountId` in the org. */
+  const deviceOf = (accountId: string) =>
+    ka.app
+      .get(TransactionHost)
+      .run(async () => (await ka.app.get(DevicesService).createLocal(orgId, accountId, "Box")).id);
+
+  /** A network ask about a device of `deviceOwner` (default: the run's initiator). */
+  const ask = async (
+    scopes: ("once" | "always")[] = ["once", "always"],
+    deviceOwner: string = initiator.account.id,
+  ) =>
     svc().requestNetwork({
       orgId,
       conversationId,
       runId,
       step: 1,
       callId: `c-${randomUUID().slice(0, 8)}`,
-      requestedFor: initiator.account.id,
+      requestedFor: deviceOwner,
       detail: {
-        deviceId: randomUUID(),
+        deviceId: await deviceOf(deviceOwner),
         hosts: [
           { host: "files.slack.com", port: 443 },
           { host: "api.github.com", port: 443 },
@@ -754,7 +765,25 @@ describe("network asks: only the device owner decides, in a signed-in session", 
         .executeTakeFirstOrThrow()
     ).status;
 
-  it("another member, an org admin and the org owner → 403 approval.not_yours naming the owner", async () => {
+  it("the run's starter who does not own the device → 403 approval.not_yours naming the owner", async () => {
+    // the conversation's run is the initiator's; the device is another member's
+    const a = await ask(["once", "always"], other.account.id);
+    const res = await initiator.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "approve" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      error: {
+        code: "approval.not_yours",
+        message: "Only oth can allow network access on this device.",
+      },
+    });
+    expect(await status(a.id)).toBe("pending");
+  });
+
+  it("any other member, an org admin and the org owner → 404 approval.not_found", async () => {
     const a = await ask();
     const ownerSession = await login("owner");
     for (const u of [other.req, admin.req, ownerSession.req]) {
@@ -763,15 +792,57 @@ describe("network asks: only the device owner decides, in a signed-in session", 
         url: `${base()}/${a.id}/decision`,
         payload: { decision: "approve" },
       });
-      expect(res.statusCode).toBe(403);
-      expect(res.json()).toMatchObject({
-        error: {
-          code: "approval.not_yours",
-          message: "Only ini can allow network access on this device.",
-        },
-      });
+      expect(res.statusCode).toBe(404);
+      expect(errCode(res)).toBe("approval.not_found");
     }
     expect(await status(a.id)).toBe("pending");
+  });
+
+  it("the device's owner now decides: after a transfer the asked account is refused", async () => {
+    const a = await ask();
+    await sql`UPDATE capybara.devices SET owner_account_id = ${other.account.id}
+      WHERE id = ${a.detail?.deviceId}`.execute(raw);
+    const res = await initiator.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "approve" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      error: {
+        code: "approval.not_yours",
+        message: "Only oth can allow network access on this device.",
+      },
+    });
+    expect(await status(a.id)).toBe("pending");
+  });
+
+  it("an ask is only ever for the device's owner, of a live device of the org", async () => {
+    const deviceId = await deviceOf(initiator.account.id);
+    const base = {
+      orgId,
+      conversationId,
+      runId,
+      step: 1,
+      detail: {
+        deviceId,
+        hosts: [{ host: "files.slack.com", port: 443 }],
+        command: "curl x",
+        description: null,
+        result: KEPT,
+      },
+      scopes: ["once" as const],
+    };
+    await expect(
+      svc().requestNetwork({ ...base, callId: "c-not-owner", requestedFor: other.account.id }),
+    ).rejects.toThrow(/owner of a live device/);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${deviceId}`.execute(raw);
+    await expect(
+      svc().requestNetwork({ ...base, callId: "c-deleted", requestedFor: initiator.account.id }),
+    ).rejects.toThrow(/owner of a live device/);
+    expect(
+      await db.selectFrom("approvals").select("id").where("kind", "=", "network").execute(),
+    ).toEqual([]);
   });
 
   it("the owner's personal access token → 403 auth.session_required; a service token → 403", async () => {

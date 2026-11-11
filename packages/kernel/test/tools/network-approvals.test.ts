@@ -39,6 +39,7 @@ import {
   waitFor,
 } from "../helpers/runs.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Network asks (network ask-to-allow spec §5.2, §6.1–§6.8, P1.6): approvals of kind `network`
@@ -200,7 +201,7 @@ const networkAudits = (deviceId: string) =>
     .execute();
 
 /** Connects the device's machine with the policy op and waits until its hello is recorded. */
-async function connect(answer: (req: KernelReq) => { ok: true; result: unknown } | undefined) {
+async function connect(answer: (req: KernelReq) => Answer) {
   const machine = new FakeMachine(wsUrl, s.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
@@ -296,7 +297,9 @@ describe("decide", () => {
       outcome: "once",
       result: KEPT,
     });
-    const grants = await k.app.get(NetworkGrants).forExec({ orgId, runId: s.runId });
+    const grants = await k.app
+      .get(NetworkGrants)
+      .forExec({ orgId, runId: s.runId, deviceId: s.deviceId });
     expect([...(grants?.hosts ?? [])].sort()).toEqual(["api.github.com", "files.slack.com"]);
     const [decided] = ofType(await eventsOf(db, s.conversationId), "approval_decided");
     expect(decided?.payload).toEqual({
@@ -390,11 +393,83 @@ describe("decide", () => {
       scope: "once",
       detail: { outcome: "once_fallback", fallback: "offline" },
     });
-    const grants = await k.app.get(NetworkGrants).forExec({ orgId, runId: s.runId });
+    const grants = await k.app
+      .get(NetworkGrants)
+      .forExec({ orgId, runId: s.runId, deviceId: s.deviceId });
     expect(grants?.hosts).toHaveLength(2);
     const audits = await networkAudits(s.deviceId);
     expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
     expect(audits[0]?.detail).toMatchObject({ outcome: "once_fallback", fallback: "offline" });
+  });
+
+  it("「一直允许」 refused by the device: approved as always, nothing granted, not even for the run", async () => {
+    await connect((req) =>
+      req.op === "policy"
+        ? {
+            ok: false,
+            error: { kind: "policy", message: "This device does not accept network changes." },
+          }
+        : { ok: true, result: null },
+    );
+    const a = await ask();
+    const res = await decide(a.id, { decision: "approve", scope: "always" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { approval: unknown }).approval).toMatchObject({
+      status: "approved",
+      scope: "always",
+      detail: { grantedHosts: [], outcome: "refused", fallback: "refused" },
+    });
+    expect(
+      await k.app.get(NetworkGrants).forExec({ orgId, runId: s.runId, deviceId: s.deviceId }),
+    ).toBeUndefined();
+    const state = await k.app.get(NetworkGrants).runState(s.runId);
+    expect([...state.refused].sort()).toEqual(["api.github.com", "files.slack.com"]);
+    const audits = await networkAudits(s.deviceId);
+    expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
+    expect(audits[0]?.detail).toMatchObject({
+      hosts: ["files.slack.com", "api.github.com"],
+      scope: "always",
+      outcome: "refused",
+      fallback: "refused",
+    });
+  });
+
+  it("「一直允许」 applied after the ask closed: audited as late, 409 saying what the device allows", async () => {
+    let now = POLICY;
+    const machine = await connect(() => undefined);
+    const a = await ask();
+    const pending = decide(a.id, {
+      decision: "approve",
+      scope: "always",
+      hosts: ["files.slack.com"],
+    });
+    const op = (await machine.next((f) => f.type === "req" && f.op === "policy")) as KernelReq;
+    // a reply, the expiry or a stop closes the ask while the device applies the change
+    await sql`UPDATE capybara.approvals SET status = 'cancelled', decided_at = now()
+      WHERE id = ${a.id}`.execute(raw);
+    now = { ...now, allowedDomains: [...now.allowedDomains, "files.slack.com"] };
+    machine.respond(op.id, { ok: true, result: { policy: now } });
+    const res = await pending;
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      error: {
+        code: "approval.already_decided",
+        message: "The device now allows files.slack.com; the request had already closed.",
+      },
+    });
+    expect((await row(a.id)).status).toBe("cancelled");
+    const audits = await networkAudits(s.deviceId);
+    expect(audits.map((x) => x.action)).toEqual([
+      "device.policy_changed",
+      "device.network_allowed",
+    ]);
+    expect(audits[1]?.detail).toMatchObject({
+      approvalId: a.id,
+      hosts: ["files.slack.com"],
+      scope: "always",
+      outcome: "always",
+      late: true,
+    });
   });
 
   it("a device without remote grants is asked once only; always → 409 approval.scope_not_allowed", async () => {
@@ -411,7 +486,9 @@ describe("decide", () => {
     const a = await ask();
     const res = await decide(a.id, { decision: "deny", reason: "Not this one" });
     expect(res.statusCode, res.body).toBe(200);
-    expect(await k.app.get(NetworkGrants).forExec({ orgId, runId: s.runId })).toBeUndefined();
+    expect(
+      await k.app.get(NetworkGrants).forExec({ orgId, runId: s.runId, deviceId: s.deviceId }),
+    ).toBeUndefined();
     const state = await k.app.get(NetworkGrants).runState(s.runId);
     expect([...state.refused].sort()).toEqual(["api.github.com", "files.slack.com"]);
     const audits = await networkAudits(s.deviceId);
