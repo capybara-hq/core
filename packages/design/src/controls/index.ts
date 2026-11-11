@@ -1,4 +1,5 @@
 export { Button, type ButtonProps, IconButton, LinkButton, type LinkButtonProps } from "./button";
+export { CheckList, type CheckListProps, type CheckListRow } from "./check-list";
 export { type Density, DensityContext, useDensity } from "./density";
 export { Field } from "./field";
 export { FieldRow, FieldRowGroup } from "./field-row";

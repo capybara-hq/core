@@ -138,6 +138,8 @@ export const REFERENCE_COMPONENTS = [
   "trend-chart",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
+  // skills to choose, grouped with a select-all per group (maintainer acceptance 2026-11-12)
+  "check-list",
   // theme picker card (themes spec §10)
   "theme-swatch",
   // the theme picker: the cards in one radio group (themes spec §10)

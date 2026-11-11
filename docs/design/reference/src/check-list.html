@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>CheckList · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>CheckList</h1>
+<p>A multi-select of named things with a line of description each (spec §6.39): the checkbox, the name and its badges on the first line (the badges never shrink or wrap), the description as one cut muted line under it; a locked row (a built-in skill) checked and disabled. Grouped, each group's head row is its select-all checkbox with the group's name, mixed while some rows are checked, and the n/m count; a group of locked rows only has its name and count.</p>
+<div class="r-blocks">
+<section data-ref-block="check-list-default" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">组织技能</div><div class="r-boxcard-body">
+  <div class="r-check-list" data-part="check-list">
+    <ul class="r-check-list-rows">
+      <li class="r-check-list-row" data-part="check-list-row" data-state="checked"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-check-list-title" data-part="check-list-title">brainstorming</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span></span></span><span class="r-check-list-description" data-part="check-list-description">You MUST use this before any creative work - creating features, building components, adding functionality, modifying behavior.</span></li>
+      <li class="r-check-list-row" data-part="check-list-row" data-state="unchecked"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-check-list-title" data-part="check-list-title">using-superpowers</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span></span></span><span class="r-check-list-description" data-part="check-list-description">Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions</span></li>
+      <li class="r-check-list-row" data-part="check-list-row" data-state="checked"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-check-list-title" data-part="check-list-title">csv-report</span></span></span><span class="r-check-list-description" data-part="check-list-description">Turn a CSV file into a short report with charts.</span></li>
+      <li class="r-check-list-row" data-part="check-list-row" data-state="checked" data-locked="true"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="checked" data-locked="true"><i data-icon="check" data-size="12"></i></span><span class="r-check-list-title" data-part="check-list-title">skill-guide</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span><span class="r-cl-badge">内置</span></span></span><span class="r-check-list-description" data-part="check-list-description">How to find, read and use skills; loaded by the model when needed.</span></li>
+    </ul>
+  </div>
+  </div></section>
+</section>
+<section data-ref-block="check-list-group" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">组织技能</div><div class="r-boxcard-body">
+  <div class="r-tool-policy-search" data-part="tool-policy-search"><div class="r-input r-tp-search" data-step="dense" data-part="input"><i data-icon="search" data-size="14"></i><span class="r-faint">搜索技能</span></div></div>
+  <div class="r-check-list" data-part="check-list">
+    <div class="r-check-list-all" data-part="check-list-all"><span class="r-tp-check"><span class="r-tp-box" data-state="mixed">–</span><span class="r-check-list-group" data-part="check-list-group">superpowers</span></span><span class="r-check-list-count" data-part="check-list-count">2/3</span></div>
+    <ul class="r-check-list-rows">
+      <li class="r-check-list-row" data-part="check-list-row" data-state="checked"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-check-list-title" data-part="check-list-title">systematic-debugging</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span></span></span><span class="r-check-list-description" data-part="check-list-description">Use when encountering any bug, test failure, or unexpected behavior.</span></li>
+      <li class="r-check-list-row" data-part="check-list-row" data-state="checked"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-check-list-title" data-part="check-list-title">test-driven-development</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span></span></span><span class="r-check-list-description" data-part="check-list-description">Use when implementing any feature or bugfix, before writing implementation code.</span></li>
+      <li class="r-check-list-row" data-part="check-list-row" data-state="unchecked"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-check-list-title" data-part="check-list-title">writing-plans</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span></span></span><span class="r-check-list-description" data-part="check-list-description">Use when you have a spec or requirements for a multi-step task.</span></li>
+    </ul>
+  </div>
+  <div class="r-check-list" data-part="check-list" data-gap>
+    <div class="r-check-list-all" data-part="check-list-all"><span class="r-check-list-group" data-part="check-list-group">内置</span><span class="r-check-list-count" data-part="check-list-count">1</span></div>
+    <ul class="r-check-list-rows">
+      <li class="r-check-list-row" data-part="check-list-row" data-state="checked" data-locked="true"><span class="r-check-list-line" data-part="check-list-line"><span class="r-tp-check"><span class="r-tp-box" data-state="checked" data-locked="true"><i data-icon="check" data-size="12"></i></span><span class="r-check-list-title" data-part="check-list-title">skill-guide</span></span><span class="r-check-list-marks" data-part="check-list-marks"><span class="r-cl-badge">平台</span><span class="r-cl-badge">内置</span></span></span><span class="r-check-list-description" data-part="check-list-description">How to find, read and use skills; loaded by the model when needed.</span></li>
+    </ul>
+  </div>
+  <p class="r-faint r-small">内置技能对每个智能体都生效，无需选择：模型按需加载。</p>
+  </div></section>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

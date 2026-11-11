@@ -834,7 +834,7 @@ States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
 | select | error | border-top-color | color.fail |
 
 ### 6.3 Checkbox / Radio / Switch / option card
-- Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
+- Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Disabled: `line` border on the `hover` ground; a checked disabled box (a choice that cannot change, a built-in skill) keeps its `check` in `muted`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
 - Switch: a `space.7` × `space.5` (32 × 20) track with radius `bubble` and 2px padding, a `space.4` (16) round knob; off: `line` track + `muted` knob; on: `accent` track + `on-accent` knob moved right by `space.3`; the knob moves over `motion.hover`. Where a switch stands alone its label and current state ("On" / "Off", muted) are shown as text next to it, so the state never relies on color: `SwitchField` draws that row, `control.default` high with `space.2` gaps (clicking the label toggles too).
 - Switch list (`SwitchList`, a form's tools and similar lists): one `row.roomy` row per item with the name and a `small` prose `muted` description (each one line with an ellipsis), `muted` `small` meta text (such as the policy) and the switch; padding `space.4`, rows divided by `line-soft`; it sits in a `flush` FormSection card.
 - Option card (rich option of a single choice): 1px `line` border, radius `md`; selected: `line-strong` border + `selected` ground (neutral, §2.3), the radio dot in `accent`. Option cards are the one allowed card inside a box (§1): a choice drawn as cards on purpose (the org 沙箱 page's 直接执行 / 需要审批 inside its form card).
@@ -889,7 +889,7 @@ States: `default`, `selected`, `focus`
 | segment[aria-checked=true] | focus | outline-width | 2 |
 
 ### 6.5 Badge / Kbd / Tooltip / metrics
-- Badge: 1px `line` border, small, radius `sm`, 6 left and right; the emphasis version is outlined in the accent color; the count version is `selected` ground with `ink` text.
+- Badge: 1px `line` border, small, radius `sm`, 6 left and right; the emphasis version is outlined in the accent color; the count version is `selected` ground with `ink` text. A badge is one unit: it never shrinks or wraps beside a long text (`flex: none`, `nowrap`), so a squeezed row never draws 「平 / 台」 one character per line.
 - Kbd: 1px `line` border + 2px bottom edge, radius `sm`.
 - Tooltip: `panel` ground + `line-strong` border + `shadow-1`, radius `sm`, small, padding `pad.dense`, 400ms delay.
 - Up / down: `trending-up` 8.2% (ok) / `trending-down` 1.1s (fail) — up and down are the one place `ok` is shown.
@@ -3173,6 +3173,34 @@ States: `default`
 |---|---|---|---|
 | theme-swatch-group | default | column-gap | space.3 |
 | theme-swatch-group | default | row-gap | space.3 |
+
+### 6.39 CheckList
+
+`CheckList({ label, rows, onCheck, onCheckAll?, title?, disabled?, inset?: "card" | "flush" })` with `CheckListRow { id, title, marks?, description?, checked, locked? }`: a multi-select of named things that each carry a line of description (the agent page's 组织技能 and the agent template's 技能, maintainer acceptance 2026-11-12). It replaces a column of checkboxes whose labels ran 「name · description」 in one long wrapping line with the badges squeezed beside them.
+
+- **Rows**: a `ul` named by `label`; one row per choice, at least `row.default` high, `space.1` above and below, its two lines `space.1` apart, split by `line-soft` hairlines (never cards, §1). The first line: the Checkbox (§6.3) named by the `title` alone (`ink`, one line with an ellipsis, the full name as its hover), then the `marks` (`Badge`s: 平台, 内置, 手动) `space.2` after it, which never shrink or wrap. The second line: the `description` in prose, `small`, `muted`, indented to the title (22 px: the box and its gap), cut at one line with an ellipsis and its full text as the hover (`title`); a row without one has no second line.
+- **Head row** (`title` and / or `onCheckAll`): a row of the same height under a `line-soft` hairline. With `onCheckAll`, the group's checkbox, its text the group's `title` (500, `ink`; 「全选」 without one) and named 「全选「<title>」」, mixed while some rows are checked, and the checked count `n/m` (`small`, `muted`, tabular) at the right; it acts on the rows given (a page that filters passes only the rows it shows). Without `onCheckAll`, or when every row is locked, the head is the title as text and the row count.
+- **Locked** (`locked`): a choice that cannot change (a built-in skill every agent has): its checkbox drawn checked and disabled, the title `muted`; it counts in neither the head's state nor `n/m`, and select-all leaves it alone.
+- **Groups and filter**: groups are one `CheckList` each, `space.3` apart (a plugin's skills, the org's own, the built-in ones); with many choices (about eight or more) the page draws one `dense` search Input with the `search` icon above all the groups, narrowing by title and description, and the panel EmptyState (§6.18) when nothing matches, as the connector's 工具 tab does (§6.36).
+- **Inset**: `card` (default) in a padded box: the rows reach its padding; `flush` alone in a flush card: rows and head padded `space.4` at the sides.
+- `disabled` turns every checkbox off (while a save runs).
+
+<!-- states: check-list -->
+States: `default`, `group`
+
+<!-- size-table: check-list -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| check-list-row | default | min-height | row.default |
+| check-list-row | default | padding-top | space.1 |
+| check-list-title | default | color | color.ink |
+| check-list-line | default | column-gap | space.2 |
+| check-list-description | default | font-size | type.small |
+| check-list-description | default | color | color.muted |
+| check-list-all | group | min-height | row.default |
+| check-list-group | group | color | color.ink |
+| check-list-count | group | font-size | type.small |
+| check-list-count | group | color | color.muted |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
