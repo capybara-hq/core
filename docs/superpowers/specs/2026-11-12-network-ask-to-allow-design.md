@@ -1,8 +1,9 @@
 # Asking a person to allow a network domain
 
 - Date: 2026-11-12.
-- Status: draft for review. Direction approved by the maintainer (2026-11-12); the calls made here
-  are marked **(designer's call)**; §13 lists what the maintainer still decides.
+- Status: approved (2026-11-12). Direction approved by the maintainer (2026-11-12); the calls made
+  here are marked **(designer's call)**; the maintainer answered §13's six questions as recommended
+  (2026-11-12), now recorded decisions. Plan: `docs/superpowers/plans/2026-11-12-network-ask-to-allow.md`.
 - Amends: the environments spec `2026-11-07-environments-design.md` (§6.4 local policy, §8.2 "the
   local policy cannot be loosened remotely", §13.6 the program), the scheduled tasks spec
   `2026-11-11-scheduled-tasks-design.md` (§7 task grants), the reply-while-question spec
@@ -186,7 +187,7 @@ machine **(designer's call)**.
   It travels the existing relay (`capk:device-req:<deviceId>`, the gateway's `capk:device-taken`
   check), so only the kernel, over the device's authenticated socket, can send it.
 - **What the device does.** It refuses `add` and `network: "open"` unless its local setting
-  `remoteGrants` is `"owner"` (default, §13 Q1); `remove` and `network: "allowlist"` (narrowing) are
+  `remoteGrants` is `"owner"` (default, decided §13 Q1); `remove` and `network: "allowlist"` (narrowing) are
   always accepted. Each entry must pass `validateAllowHost`. It applies the change with a
   read-modify-write of `policy.json` under a lock file (`policy.json.lock`, `O_EXCL`, stale after
   10 s) so a concurrent `capybara-device policy` run cannot lose an update, writes atomically
@@ -215,7 +216,7 @@ it would need an OS notification with buttons per platform. The owner who wants 
 
 The card states the fact and offers 「请管理员添加」 (members) or a link 「去组织设置添加」 to the org
 settings' sandbox network section with the host prefilled (org admins), never a one-click widening
-of an org-wide setting from inside a conversation **(designer's call, §13 Q4)**.
+of an org-wide setting from inside a conversation **(decided, §13 Q4)**.
 
 The request reuses the catalog request flow (`packages/kernel/src/catalog/requests.service.ts`,
 inbox type `catalog_request`, decided notice `catalog_request_decided`): a new kind
@@ -270,7 +271,7 @@ sub-agent waits (`subagent_waiting` kind `approval`) and the multi-replica resum
    agent decides whether to re-run (the command may have had side effects before the refusal), which
    the note tells it to do.
 
-### 6.3 Options and their scope (designer's call, §13 Q2)
+### 6.3 Options and their scope (decided, §13 Q2)
 
 | Option | zh / en | Effect |
 |---|---|---|
@@ -364,7 +365,7 @@ outcome:
 
 The device's own trailer (§9) stays in stderr as well; the kernel's note adds only the outcome.
 
-### 6.7 Timeouts and replies (designer's call, §13 Q3)
+### 6.7 Timeouts and replies (decided, §13 Q3)
 
 - Expiry: `tools.approvalTimeoutHours` (24 h default), as for tool approvals.
 - **A message from the person skips the ask** (outcome `skipped`, access stays blocked, the run goes
@@ -395,7 +396,7 @@ lacks the feature: the note or the device trailer explains, no card.
   refused by the runtime's guard. So the org always narrows: a member cannot open more than the org
   allows **(designer's call)**. `effectiveEgress` returns the org's list for `allowlist` and `["*"]`
   for `open` (the runtime accepts `*`; the plan verifies its per-command list does).
-- **Where it is set** (designer's call, §13 Q6): locally, `capybara-device policy set network open`,
+- **Where it is set** (decided, §13 Q6): locally, `capybara-device policy set network open`,
   which prints the risk text and asks for `--yes` (or an interactive `y`); and on the device's page by
   its owner (a switch with the same risk text in a confirm dialog), delivered by the `policy` op and
   accepted only under `remoteGrants: "owner"`. Turning it off is always accepted.
@@ -427,7 +428,7 @@ lacks the feature: the note or the device trailer explains, no card.
   a network ask the creator allows 「这次」 in a trial run becomes a task grant when the rule allows it;
   an 「一直允许」 needs no task grant (the device already has it). The task page lists them for review.
 
-### 8.2 Channel connections: no list (designer's call, §13 Q5)
+### 8.2 Channel connections: no list (decided, §13 Q5)
 
 An IM-triggered run is started by a person and is attended by the scheduled tasks spec's definition;
 its ask goes to that person (the device owner) on the card in the thread, and a reply skips it
@@ -563,17 +564,20 @@ Each phase is a design-reviewed plan in `docs/superpowers/plans/`; phase 1 touch
   button, address facts), the device page network section, the 「不限网络」 confirm dialog, i18n zh / en
   (`check:i18n`: 智能体, 平台, 超级管理员).
 
-## 13. Open questions for the maintainer
+## 13. Decisions (maintainer, 2026-11-12)
 
-1. **May the cloud widen a device's policy by default?** `remoteGrants` default `"owner"` (cards can
-   offer 「这次」 / 「一直允许」 and the web switch works) or `"off"` (the old guarantee; cards only show
-   the CLI command). *Recommendation*: `"owner"`, as the approved direction implies; the risk is stated
-   in the trust model, and the owner can turn it off locally.
-2. **What does 「这次允许」 cover?** The rest of the current run including its sub-agents, vs this one
-   command, vs this conversation. *Recommendation*: the current run (§6.3).
-3. **Does a reply skip a pending network ask?** Unlike tool approvals. *Recommendation*: yes (§6.7).
-4. **May an org admin widen the org allowlist from the card in one click?** *Recommendation*: no; a
-   link to org settings with the host prefilled, and a request for members (§5.3).
-5. **Pre-approved domains per channel connection?** *Recommendation*: no for now (§8.2).
-6. **「不限网络」 from the web too, or only the device CLI?** *Recommendation*: both, the web switch only
-   while `remoteGrants` is `"owner"`, with the risk text in a confirm dialog (§7).
+The six questions this section held were answered "as recommended":
+
+1. **The cloud may widen a device's policy by default.** `remoteGrants` defaults to `"owner"`: cards
+   offer 「这次允许」 / 「这台设备一直允许」 and the web switch works. The owner can turn it off locally
+   (`capybara-device policy set remoteGrants off`); the risk is stated in the trust model (§10.1).
+2. **「这次允许」 covers the current run tree**: the rest of the current run of the conversation,
+   including its sub-agents (§6.3); not one command, not the conversation.
+3. **A new message skips a pending network ask**, like a pending question and unlike a tool approval
+   (§6.7); the outcome is `skipped`, access stays blocked.
+4. **No one-click widening of the org allowlist from the card.** Org admins get a link to the org
+   settings' sandbox network section with the host prefilled; members file a request that reaches
+   the admins' inbox (§5.3).
+5. **No pre-approved domains per channel connection** for now (§8.2).
+6. **「不限网络」 can be turned on from the CLI and from the device page**; the web switch only while
+   the device reports `remoteGrants: "owner"`, always behind the risk text in a confirm dialog (§7).
