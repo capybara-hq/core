@@ -520,7 +520,11 @@
         "WebSearch": "Search the web",
         "WebFetch": "Read web pages",
         "Platform": "Use the platform",
-        "CurrentTime": "Current time"
+        "CurrentTime": "Current time",
+        "ScheduleCreate": "Create scheduled tasks",
+        "ScheduleUpdate": "Change scheduled tasks",
+        "ScheduleList": "List scheduled tasks",
+        "ScheduleDelete": "Delete scheduled tasks"
       },
       "connectorsLabel": "Connectors",
       "noConnectors": "No connectors are installed.",

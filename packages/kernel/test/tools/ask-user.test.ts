@@ -339,6 +339,10 @@ describe("AskUserQuestion 端到端", () => {
       "CurrentTime",
       "Platform",
       "ReadToolOutput",
+      "ScheduleCreate",
+      "ScheduleDelete",
+      "ScheduleList",
+      "ScheduleUpdate",
       "SendMessage",
       "SkillWrite",
     ]);

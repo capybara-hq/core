@@ -21,6 +21,7 @@ import { AdminConnectors } from "./admin-connectors.js";
 import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
+import { ScheduleUpdates } from "./builtins/schedules.js";
 import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
@@ -74,6 +75,8 @@ import { ToolRegistry } from "./registry.js";
     Credentials,
     ToolOutputs,
     BuiltinTools,
+    // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
+    ScheduleUpdates,
     WebPages,
     ToolRegistry,
     ApprovalsService,

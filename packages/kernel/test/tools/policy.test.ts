@@ -85,8 +85,8 @@ describe("decide", () => {
     expect(decide({ ...base, connectorDefault: "allow", agentOverride: "ask" })).toBe("ask");
   });
 
-  it("R3 固定询问清单：M5 起含 SkillWrite（改共享技能），只对共享 agent 生效", () => {
-    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["SkillWrite"]);
+  it("the R3 fixed-ask list: SkillWrite (shared skills, shared agents only) and the schedule writes", () => {
+    expect([...R3_FIXED_ASK_TOOL_KEYS]).toEqual(["SkillWrite", "ScheduleCreate", "ScheduleUpdate"]);
     const tool = (key: string) =>
       ({
         key,
@@ -101,6 +101,9 @@ describe("decide", () => {
     // 不知道可见性时按共享处理（更严）
     expect(isFixedAsk(tool("SkillWrite"), undefined)).toBe(true);
     expect(isFixedAsk(tool("Skill"), "org")).toBe(false);
+    // a task an agent creates or widens is always approved by a person, private agents included
+    expect(isFixedAsk(tool("ScheduleCreate"), "private")).toBe(true);
+    expect(isFixedAsk(tool("ScheduleUpdate"), "private")).toBe(true);
   });
 
   it("SkillWrite 的私有 agent 开关（D10）：私有且 ask → 固定询问；缺省 / allow → 不问；共享不论取值都问", () => {

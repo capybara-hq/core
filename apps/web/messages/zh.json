@@ -520,7 +520,11 @@
         "WebSearch": "搜索网页",
         "WebFetch": "读取网页",
         "Platform": "操作平台",
-        "CurrentTime": "获取当前时间"
+        "CurrentTime": "获取当前时间",
+        "ScheduleCreate": "创建定时任务",
+        "ScheduleUpdate": "修改定时任务",
+        "ScheduleList": "查看定时任务",
+        "ScheduleDelete": "删除定时任务"
       },
       "connectorsLabel": "连接器",
       "noConnectors": "还没有安装连接器。",

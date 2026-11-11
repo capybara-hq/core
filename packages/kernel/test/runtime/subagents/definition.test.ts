@@ -385,7 +385,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     "Agent",
   );
   /** Every child's key filter removes these (sub-agents spec §5.3). */
-  const REMOVED = ["AskUserQuestion", "Deliver", "SkillWrite"];
+  const REMOVED = [...CHILD_REMOVED_TOOLS];
 
   it("general-purpose: the parent's definition minus the child-removed tools, nothing pinned", async () => {
     const s = await skill("brainstorming");
@@ -401,7 +401,15 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       subagents: { inline: [inline("scout")] },
     });
     const r = await eff(parent, "general-purpose");
-    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver", "SkillWrite"]);
+    expect(CHILD_REMOVED_TOOLS).toEqual([
+      "AskUserQuestion",
+      "Deliver",
+      "SkillWrite",
+      "ScheduleCreate",
+      "ScheduleUpdate",
+      "ScheduleList",
+      "ScheduleDelete",
+    ]);
     expect(r.definition).toEqual({
       name: "Lead › general-purpose",
       avatarUrl: "https://example.com/a.png",
