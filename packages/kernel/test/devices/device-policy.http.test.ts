@@ -331,10 +331,17 @@ describe("POST /devices/:id/policy", () => {
       { network: "everything" },
       { add: ["a.example.com"], extra: true },
       { add: Array.from({ length: 21 }, (_, i) => `h${i}.example.com`) },
+      { add: ["*.com"] },
+      { add: ["*.co.uk"] },
+      { add: ["*.github.io"] },
     ]) {
       const res = await post(d.req, d.deviceId, payload);
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
     }
+    const suffix = await post(d.req, d.deviceId, { add: ["*.co.uk"] });
+    expect(JSON.stringify(suffix.json())).toContain(
+      "Use a narrower domain; *.co.uk covers a whole public suffix.",
+    );
     expect(policyReqs(machine)).toEqual([]);
   });
 
@@ -351,6 +358,14 @@ describe("POST /devices/:id/policy", () => {
     expect(res.statusCode, res.body).toBe(503);
     expect(errCode(res)).toBe("device.offline");
     expect(await auditsOf(d.deviceId)).toEqual([]);
+  });
+
+  it("an unknown policy summary lets the machine decide a widening", async () => {
+    const d = await owned();
+    const machine = await connect(d, applying(POLICY), { features: ["networkReport", "policyOp"] });
+    const res = await post(d.req, d.deviceId, { add: ["files.slack.com"] });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(policyReqs(machine)).toHaveLength(1);
   });
 
   it("a program without the policyOp feature → device.policy_unsupported", async () => {

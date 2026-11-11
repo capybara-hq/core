@@ -481,8 +481,8 @@ export class DevicesService {
    * The owner changes one of their own devices' network policy (network ask-to-allow spec §7,
    * §13 Q6): sent to the machine with the `policy` op, which is the authority and answers with
    * the policy as written. Anyone but the owner gets `device.not_found`. A widening change (`add`,
-   * `network: "open"`) is refused up front with `device.policy_refused` unless the machine last
-   * reported `remoteGrants: "owner"` (the machine checks again); narrowing is always sent. The
+   * `network: "open"`) is refused up front with `device.policy_refused` when the machine last
+   * reported `remoteGrants: "off"` (otherwise the machine decides); narrowing is always sent. The
    * machine offline → `device.offline`; a cloud device or a program without the `policyOp` feature
    * → `device.policy_unsupported`; the machine's refusal → `device.policy_refused` with its message.
    * Callers are human sessions only (no personal access token, no service token, no Platform op).
@@ -496,9 +496,10 @@ export class DevicesService {
     await this.access.usable(orgId, account.id, id);
     const summary = await this.policies.summary(id);
     const widens = (change.add?.length ?? 0) > 0 || change.network === "open";
-    // a machine that cannot take the op (or none) is answered by apply: unsupported or offline
+    // only a known "off" is refused here; an unknown summary, a machine that cannot take the op
+    // or none at all are left to apply (the machine decides, or unsupported / offline)
     const canApply = summary?.features.includes("policyOp") === true;
-    if (widens && canApply && summary?.policy?.remoteGrants !== "owner") {
+    if (widens && canApply && summary?.policy?.remoteGrants === "off") {
       throw new ApiError("device.policy_refused", remoteGrantsOffMessage(change));
     }
     const out = await this.policies.apply({
