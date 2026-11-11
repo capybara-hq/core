@@ -83,7 +83,7 @@ inside a part are headings and hairlines, which is what "one box is enough" asks
 | Queue backlog and failures | The kernel queues are fixed names (`cap-kernel-runs`, `cap-kernel-subagent-runs`, `cap-kernel-channels`, `cap-kernel-maintenance`, `cap-kernel-plugin-scope`, `cap-kernel-titles`, `cap-kernel-usage-report`, `cap-kernel-evals`); no route reads them. Jobs keep `removeOnFail: 5000` (`infra/queue/queue.module.ts`). | new read (§5.2) |
 | Channel connections | PG `channel_connections.status` (`active` / `disabled` / `error`) and `inbound_mode`; a long connection is held while the lease `capk:channel-lease:<id>` exists (`channels/supervisor.ts`) | online count (§5.1, §5.2) |
 | Devices online | A local device is online while a replica holds `capk:device-lease:<deviceId>` (`DevicesService`, `local-devices/keys.ts`); `LocalDeviceGateway` keeps its connections in a per-process `Set` | online count (§5.1) |
-| Running sandbox instances | PG `environment_instances.status` (`running` / `suspended`), partial indexes `environment_instances_running_idx` / `_live_idx` (migration 0088, table renamed in 0105) | none |
+| Running sandbox instances | PG `device_instances.status` (`running` / `suspended`), partial indexes `environment_instances_running_idx` / `_live_idx` (migration 0088, table renamed in 0105) | none |
 
 ### 4.3 Part 3: 用量
 
@@ -118,18 +118,22 @@ minimal multi-replica-safe mechanism follows the gateway heartbeat already in pr
 (`channels/supervisor.ts`):
 
 - `ReplicaPresence` (`packages/kernel/src/infra/presence/replica-presence.ts`), one `@Injectable`,
-  provided in the kernel core module so **every process** runs it whatever its roles (it is not a
-  shared periodic job, so it is not `@LockedInterval` and not under `WorkerModule`).
-- Every 15 s (`PRESENCE_INTERVAL_MS`; a `setTimeout` chain with `unref`, started after the start gate,
-  stopped in the shutdown) it runs one Lua script on Redis:
+  provided by the global `PresenceModule` the kernel module imports, so **every process** runs it
+  whatever its roles (it is not a shared periodic job, so it is not `@LockedInterval` and not under
+  `WorkerModule`).
+- Every 15 s (the `PRESENCE_INTERVAL_MS` test seam; a `setTimeout` chain with `unref`) it runs one
+  Lua script on Redis. `KernelLifecycle` starts it as the last step of the start (after the start
+  gate opened, the first beat at once) and stops it as the first stop phase (1 s budget), so the
+  entry leaves before the long stop phases. The beat:
   `ZADD capk:replicas <redis TIME ms> <replicaId>`, `HSET capk:replica:<replicaId>` with `roles`,
   `version` (`KERNEL_VERSION`), `startedAt`, `httpReplicaId`, `channelsHeld`, `devicesConnected`,
   then `PEXPIRE` both keys to 3 × the interval and `ZREMRANGEBYSCORE` members older than that.
   Scores use the Redis server clock (replica clocks may drift), as the gateway ZSET does.
 - `replicaId` is the process's existing id (`ReplicaStatusStore.replicaId`, the one the gateway
   heartbeat and extension status rows use), so the three views name a replica the same way.
+- `startedAt` = when the process finished its start (the presence start).
 - `channelsHeld` = the supervisor's held connections; `devicesConnected` = the size of
-  `LocalDeviceGateway`'s connection set. Both are per-process facts the process reports about
+  `LocalDeviceGateway`'s connection set (through `GatewayRole`; 0 without the gateway role). Both are per-process facts the process reports about
   itself; summing them over live replicas gives the online counts without scanning lease keys.
 - A graceful stop `ZREM`s and `DEL`s its own entry; a crash ages out in ≤ 45 s.
 - Read: `ZRANGEBYSCORE capk:replicas (now − 45 s) +inf` then one pipelined `HGETALL` per live member.
@@ -154,7 +158,7 @@ reads, no writes, no audit (reads of aggregates are not audited; D5). Schemas in
 | `GET /admin/overview` (changed) | 1 | `{ orgs, accounts, attentionTotal, partial }` | Counts only. `attentionTotal` = inbox total + extensions needing attention + newer plugins + provider problems (the 待处理 stat); an extension pending approval whose plugin already waits in the inbox (permission confirmation or org upload) is counted and listed once, as the inbox item. `partial` is true when an attention source was unavailable (its items are then not in `attentionTotal`). Drops `extensionsNeedingAction` / `catalogRequestsPending` (pre-0.1.0, no compat). |
 | `GET /admin/inbox` (changed) | 1 | adds `byType: Record<PlatformInboxItem["type"], number>` | The service already counts each source; `permission_confirmation` vs `org_upload_pending` split from the pending list it already loads. |
 | `GET /admin/overview/attention` (new) | 1 | `{ extensions: [{ name, displayName, icon, status, reason }], updates: [{ itemId, name, displayName, icon, version, marketplaceVersion, marketplaceId, marketplaceName }], providers: [{ plugin, displayName, icon, problem }] }` | `ExtensionAdmin.list()` + `CatalogService.list()` filtered on `newerInMarketplace` + `listWithStatus()` (Redis-cached lists, so no provider is called more than once per 600 s; a failure 15 s). Not cached further: everything is already PG or Redis-cached. Lists capped at 20 each with `more: n`. |
-| `GET /admin/overview/health` (new) | 2 | `{ kernel: { version }, replicas: [{ id, roles, version, startedAt, httpReplicaId }], roles: { api, worker, gateway }, queues: [{ name, waiting, active, delayed, failed, failedLastDay }], channels: { online, offline, webhook, disabled, error }, devices: { online, local }, sandboxes: { running, suspended, byProvider: [{ provider, running }] } }` | Redis: one ZRANGE + n HGETALL; 8 × `getJobCounts` + 8 × `ZCOUNT bull:<q>:failed` over the last 24 h (the failed set's score is `finishedOn`; verified by a test, §11). PG: one grouped count on `channel_connections`, one on local `devices`, one on `environment_instances` (partial indexes). Not cached (cheap, and stale health misleads). |
+| `GET /admin/overview/health` (new) | 2 | `{ kernel: { version }, replicas: [{ id, roles, version, startedAt, httpReplicaId }], roles: { api, worker, gateway }, queues: [{ name, waiting, active, delayed, failed, failedLastDay }], channels: { online, offline, webhook, disabled, error }, devices: { online, local }, sandboxes: { running, suspended, byProvider: [{ provider, running }] } }` | Redis: one ZRANGE + n HGETALL; 8 × `getJobCounts` + 8 × `ZCOUNT bull:<q>:failed` over the last 24 h (the failed set's score is `finishedOn`; verified by a test, §11). PG: one grouped count on `channel_connections`, one on local `devices`, one on `device_instances` (partial indexes). Not cached (cheap, and stale health misleads). `waiting` = BullMQ `wait` + `prioritized`. Channels (connections not deleted, org not deleted): `online` = the live replicas' `channelsHeld`; `offline` = active long-connection connections minus `online` (≥ 0: waiting for a gateway, backing off, or the plugin is off in the org); `webhook` = active webhook-mode ones; `disabled` / `error` = that status, any mode. The queue counts read the queue instances their owners register (re-exported), no connection of their own. |
 | `GET /admin/overview/usage?tz=<IANA>` (new) | 3 | `{ from, to, tz, currency, days: [{ date, runs, tokens: { input, output, cacheRead, cacheWrite, embedding }, cost }], costPartial, orgs: [{ orgId, name, runs, tokens, cost }] }` (orgs: top 10 by tokens, plus `otherOrgs` totals) | Bounded window: today and the 6 days before, in `tz`. Three grouped queries (§5.4) on time indexes; `@Cacheable` 300 s keyed by `tz` + the window's first day, so every replica serves the same cached answer and at most one recompute per 5 min per zone. Run with `SET LOCAL statement_timeout = '10s'`; a timeout is `admin.usage_unavailable` (503) and the block shows its error. |
 | `GET /admin/audit?after=<id>&limit=<1..100>` (new) | 1 | `{ events: [{ id, at, actor: { id, name, email } \| null, viaToken, viaAgent, action, target }], next }` | Keyset on `id` descending, `org_id IS NULL`; new partial index (§5.4). `detail` is not returned except `detail.via === "agent"` → `viaAgent` (§9). Actor joined from `accounts` (a deleted account reads as its id). |
 
@@ -222,9 +226,10 @@ table written by a `@LockedCron` job; not built now (YAGNI, measured first) **(d
 ### 5.5 Errors
 
 New codes in `ERROR_CODES`: `admin.usage_unavailable` (503, the aggregate timed out). The health
-route degrades per source instead of failing: a Redis failure gives `replicas: null`,
-`queues: null`, `channels.online: null` with `unavailable: ["redis"]`, so PG-backed numbers still
-show. Attention degrades per list the same way (`unavailable: ["providers"]`).
+route degrades per source instead of failing: a Redis failure (no answer within 3 s) gives
+`replicas`, `roles`, `queues`, `channels.online` / `.offline` and `devices.online` null with
+`unavailable: ["redis"]`, so PG-backed numbers still show; a PG failure symmetrically nulls the
+channel, device and sandbox numbers with `unavailable: ["database"]`. Attention degrades per list the same way (`unavailable: ["providers"]`).
 
 ## 6. The four parts in the page
 

@@ -170,6 +170,7 @@ describe("registration and who may call", () => {
       "admin.connector-get",
       "admin.connector-set-status",
       "admin.connectors-list",
+      "admin.health",
       "admin.org-members",
       "admin.overview",
       "admin.settings",
@@ -398,6 +399,21 @@ describe("admin and models", () => {
       via: "agent",
     });
     await run("admin.update-settings", { orgCreation: "anyone" });
+  });
+
+  it("admin.health answers what GET /admin/overview/health does", async () => {
+    const out = (await run("admin.health", {})) as Record<string, unknown>;
+    const res = (
+      await root({ method: "GET", url: "/api/v1/admin/overview/health" })
+    ).json() as Record<string, unknown>;
+    expect(Object.keys(out).sort()).toEqual(Object.keys(res).sort());
+    // live numbers may move between the two reads; the stable parts are equal
+    expect(out.kernel).toEqual(res.kernel);
+    expect(out.unavailable).toEqual([]);
+    expect(out.roles).toMatchObject({ api: 1, worker: 1 });
+    expect((out.queues as { name: string }[]).map((q) => q.name)).toEqual(
+      (res.queues as { name: string }[]).map((q) => q.name),
+    );
   });
 
   it("admin.attention reads compact rows with more and unavailable, never an error text", async () => {
