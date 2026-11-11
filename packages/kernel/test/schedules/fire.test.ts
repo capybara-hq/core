@@ -8,6 +8,7 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -16,6 +17,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
+import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { ScheduledTaskScanJob } from "../../src/schedules/scan.job.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -80,6 +82,8 @@ beforeAll(async () => {
       },
     ),
   );
+  // the tests own the scanner: the worker's once-a-minute scan would race their scanAt calls
+  k.app.get(SchedulerRegistry).getCronJob(SCHED_SCAN_JOB).stop();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   const accounts = accountsFor(db);
@@ -233,16 +237,26 @@ async function liveDmThread(messageId: string): Promise<string> {
     "dm thread",
   );
   const live = thread.conversation_id;
-  await waitFor(
+  const msg = await waitFor(
     async () =>
-      (await userMessages(live)).some((m) => {
+      (await userMessages(live)).find((m) => {
         const c = m.payload.content[0];
         return c?.type === "text" && c.text === `hi ${messageId}`;
       }),
     10_000,
     "inbound message",
   );
-  await waitFor(async () => (await runsOf(db, live)).every((r) => r.status === "completed"));
+  // the run that answers it has ended (not just "no run yet"): a terminal event after it, and
+  // nothing left running, so the task's message is the next run's trigger
+  await waitFor(
+    async () =>
+      (await eventsOf(db, live)).some(
+        (e) => e.seq > msg.seq && ["run_finished", "run_failed", "run_aborted"].includes(e.type),
+      ) &&
+      (await runsOf(db, live)).every((r) => ["completed", "failed", "aborted"].includes(r.status)),
+    20_000,
+    "the inbound message's run ended",
+  );
   return live;
 }
 
@@ -662,16 +676,7 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
           FOR EACH ROW EXECUTE FUNCTION capybara.fail_sched_insert();`)
       .execute(raw);
     try {
-      // (the worker's own once-a-minute scan may hold the row for a moment: try again)
-      let failed: unknown;
-      for (let i = 0; i < 5 && failed === undefined; i++) {
-        await scanner()
-          .scanAt(new Date())
-          .catch((e: unknown) => {
-            failed = e;
-          });
-      }
-      expect(String(failed)).toMatch(/simulated database error/);
+      await expect(scanner().scanAt(new Date())).rejects.toThrow(/simulated database error/);
       expect(await taskOf(t.id)).toMatchObject({ status: "active", pauseReason: null });
       expect(await store.listRuns(db, t.id, 10)).toEqual([]);
     } finally {
@@ -725,5 +730,61 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
       skipReason: "removed",
       firedAt: null,
     });
+  });
+
+  it("the repair rechecks the least recently checked stuck runs first, so a new one is reached", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const t = await task({ status: "ended", nextRunAt: null });
+    const hours = (h: number) => new Date(Date.now() - h * 3600_000);
+    // three started runs still in flight (their items wait in the queue), older than the new one
+    const inFlight: TaskRun[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await pendingRun(t, {
+        scheduledFor: hours(5 - i),
+        firedAt: hours(5 - i),
+        conversationId: conv,
+      });
+      inFlight.push(r);
+      await db
+        .insertInto("conversation_queue")
+        .values({
+          id: randomUUID(),
+          conversation_id: conv,
+          account_id: ownerId,
+          position: i + 1,
+          text: "queued",
+          content: "[]",
+          client_message_id: `rot-${r.id}`,
+          schedule: JSON.stringify({ taskRunId: r.id, taskId: t.id }),
+        })
+        .execute();
+    }
+    // a run whose start failed for good, newer than the others
+    const stuck = await pendingRun(t, { scheduledFor: hours(2), firedAt: hours(2) });
+    try {
+      // a batch of 2: the first pass takes the two oldest, the second the rest
+      for (let pass = 0; pass < 2; pass++) await scanner().scanAt(new Date(), 2);
+      expect(await runOf(stuck.id)).toMatchObject({ status: "skipped", skipReason: "removed" });
+      for (const r of inFlight) expect((await runOf(r.id)).status).toBe("pending");
+      const stamped = await db
+        .selectFrom("scheduled_task_runs")
+        .select("rechecked_at")
+        .where(
+          "id",
+          "in",
+          inFlight.map((r) => r.id),
+        )
+        .execute();
+      expect(stamped.every((r) => r.rechecked_at !== null)).toBe(true);
+    } finally {
+      await db.deleteFrom("conversation_queue").where("conversation_id", "=", conv).execute();
+      for (const r of inFlight) {
+        await store.updateRun(db, r.id, {
+          status: "skipped",
+          skipReason: "removed",
+          firedAt: null,
+        });
+      }
+    }
   });
 });

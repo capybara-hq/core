@@ -83,24 +83,31 @@ export class ScheduledTaskScanJob {
     await this.scanAt(new Date());
   }
 
-  /** One scan as of `now` (tests pass their own); returns how many due tasks it handled. */
-  async scanAt(now: Date): Promise<number> {
+  /**
+   * One scan as of `now` (tests pass their own); returns how many due tasks it handled. The repair
+   * runs even when the scan loop failed (its error is rethrown afterwards). `repairBatch`: how many
+   * rows each repair step takes (tests pass a small one).
+   */
+  async scanAt(now: Date, repairBatch: number = REPAIR_BATCH): Promise<number> {
     const settings = new Map<string, EffectiveScheduleSettings>();
     let total = 0;
-    for (; total < MAX_TASKS; total++) {
-      try {
-        if (!(await this.scanOne(now, settings))) break;
-      } catch (err) {
-        if (!(err instanceof TaskScanFailed)) throw err;
-        // one task that cannot be advanced must not hold the others back every minute
-        this.log.error("scheduled task cannot be advanced; paused", {
-          taskId: err.taskId,
-          err: err.cause,
-        });
-        await this.quarantine(err.taskId);
+    try {
+      for (; total < MAX_TASKS; total++) {
+        try {
+          if (!(await this.scanOne(now, settings))) break;
+        } catch (err) {
+          if (!(err instanceof TaskScanFailed)) throw err;
+          // one task that cannot be advanced must not hold the others back every minute
+          this.log.error("scheduled task cannot be advanced; paused", {
+            taskId: err.taskId,
+            err: err.cause,
+          });
+          await this.quarantine(err.taskId);
+        }
       }
+    } finally {
+      await this.repair(now, repairBatch);
     }
-    await this.repair(now);
     return total;
   }
 
@@ -205,7 +212,7 @@ export class ScheduledTaskScanJob {
   }
 
   /** Lost fire jobs (see the class). */
-  private async repair(now: Date): Promise<void> {
+  private async repair(now: Date, batch: number): Promise<void> {
     const stale = await this.db
       .selectFrom("scheduled_task_runs")
       .select(["id", "scheduled_for"])
@@ -213,7 +220,7 @@ export class ScheduledTaskScanJob {
       .where("fired_at", "is", null)
       .where("scheduled_for", "<", new Date(now.getTime() - REPAIR_AFTER_MS))
       .orderBy("scheduled_for")
-      .limit(REPAIR_BATCH)
+      .limit(batch)
       .execute();
     const retry: string[] = [];
     const lost: string[] = [];
@@ -231,7 +238,7 @@ export class ScheduledTaskScanJob {
       .where("fired_at", "<", new Date(now.getTime() - GIVE_UP_AFTER_MS))
       .orderBy(sql`rechecked_at NULLS FIRST`)
       .orderBy("scheduled_for")
-      .limit(REPAIR_BATCH)
+      .limit(batch)
       .execute();
     for (const r of started) await this.recheck(r.id, now);
   }
