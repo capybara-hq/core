@@ -942,7 +942,8 @@ export class ScheduledTasksService {
    * "Run now" (spec §6), creator only: a task run for the request time, outside the schedule (no
    * unique-key conflict with a tick, and `next_run_at` does not move), fired at once through the
    * fire job after the commit. `trial`: an attended trial run whose approvals become the task's
-   * grants (§7). Counted in the rate limit like any run. An ended task cannot run.
+   * grants (§7). Counted in the rate limit like any run. An ended task cannot run; a paused one
+   * can (only its creator gets here: the run is `manual`, which the fire's paused check lets by).
    */
   @Transactional()
   async runNow(
@@ -963,6 +964,7 @@ export class ScheduledTasksService {
       orgId,
       scheduledFor: new Date(),
       trial: opts.trial,
+      manual: true,
     });
     if (!run) throw new ApiError("conflict", "The task is being run; retry");
     await audit(t, {

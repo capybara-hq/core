@@ -1330,6 +1330,8 @@ export interface ScheduledTaskRunsTable {
   scheduled_for: Date | string;
   fired_at: NullableTs;
   trial: ColumnType<boolean, boolean | undefined, boolean>;
+  /** A person's "run now" (trial or not): runs even while the task is paused. */
+  manual: ColumnType<boolean, boolean | undefined, boolean>;
   conversation_id: NullableText;
   run_id: NullableText;
   status: ColumnType<TaskRunStatus, TaskRunStatus | undefined, TaskRunStatus>;

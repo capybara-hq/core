@@ -26,13 +26,15 @@ export interface TaskRunInsert {
   orgId: string;
   scheduledFor: Date;
   trial: boolean;
+  /** A person's "run now" (default false: a tick of the schedule). */
+  manual?: boolean;
   status?: TaskRunStatus;
   skipReason?: TaskRun["skipReason"];
   firedAt?: Date | null;
   conversationId?: string | null;
 }
 
-export type TaskRunPatch = Partial<Omit<TaskRun, "id" | "taskId" | "orgId" | "trial">>;
+export type TaskRunPatch = Partial<Omit<TaskRun, "id" | "taskId" | "orgId" | "trial" | "manual">>;
 
 const NON_TERMINAL: TaskRunStatus[] = ["pending", "running"];
 
@@ -71,6 +73,7 @@ const toRun = (r: Selectable<ScheduledTaskRunsTable>): TaskRun => ({
   scheduledFor: date(r.scheduled_for),
   firedAt: dateOrNull(r.fired_at),
   trial: r.trial,
+  manual: r.manual,
   conversationId: r.conversation_id,
   runId: r.run_id,
   status: r.status,
@@ -271,6 +274,7 @@ export class ScheduledTaskStore {
         org_id: run.orgId,
         scheduled_for: run.scheduledFor,
         trial: run.trial,
+        manual: run.manual ?? false,
         status: run.status ?? "pending",
         skip_reason: run.skipReason ?? null,
         fired_at: run.firedAt ?? null,

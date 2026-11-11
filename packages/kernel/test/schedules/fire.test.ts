@@ -679,6 +679,24 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     }
   });
 
+  it("a tick of a task paused before its fire job is skipped; run now still runs", async () => {
+    const t = await task();
+    const r = await pendingRun(t);
+    // the creator paused between the scan and the fire job
+    await svc().pause(orgId, { accountId: ownerId }, t.id);
+    await firer().fire(r.id);
+    expect(await runOf(r.id)).toMatchObject({
+      status: "skipped",
+      skipReason: "task_paused",
+      firedAt: null,
+    });
+    expect(await taskOf(t.id)).toMatchObject({ status: "paused", pauseReason: "creator" });
+    // the creator's "run now" on the paused task runs it
+    const now = await svc().runNow(orgId, ownerId, t.id, { trial: false });
+    expect(now.manual).toBe(true);
+    expect((await settled(now.id)).status).toBe("completed");
+  });
+
   it("run now does not move next_run_at", async () => {
     const created = await svc().create(orgId, ownerId, {
       agentId,

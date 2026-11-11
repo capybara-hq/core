@@ -88,7 +88,8 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  * Idempotent on the task run: only a `pending` one is fired. Two steps:
  *
  * 1. The claim, one transaction under the org row lock (which serializes the org's rate limit
- *    count), then the task run and the task rows: the checks in order (org disabled, creator
+ *    count), then the task run and the task rows: the checks in order (task paused since the
+ *    scan, unless a person's "run now"; org disabled, creator
  *    inactive or not a member, agent gone or not visible, conversation gone, connection inactive,
  *    overlap, rate limit, device offline, queue paused), each a `skipped` run with its reason, the
  *    lasting ones also pausing the task; then `fired_at` is written, after the rate limit count.
@@ -190,6 +191,8 @@ export class ScheduledTaskFirer {
       return { skip: reason };
     };
 
+    // paused after the scan recorded the tick: only a person's "run now" still runs
+    if (!resumed && !run.manual && task.status === "paused") return skip("task_paused");
     const settings = await readScheduleSettings(t, this.config, orgId);
     if (!resumed && !settings.enabled) return skip("org_disabled");
     if (!resumed && !(await this.creatorActive(orgId, task.accountId))) {

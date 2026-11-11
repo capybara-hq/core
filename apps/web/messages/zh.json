@@ -5664,7 +5664,8 @@
         "conversation_gone": "会话已不存在",
         "org_disabled": "组织已关闭定时任务",
         "unsupported_target": "暂不支持这个目标",
-        "task_deleted": "任务已删除"
+        "task_deleted": "任务已删除",
+        "task_paused": "任务已暂停"
       },
       "missing": "被拒绝：{tools}",
       "open": "打开会话",

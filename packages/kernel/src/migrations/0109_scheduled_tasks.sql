@@ -51,13 +51,15 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
   scheduled_for timestamptz NOT NULL,
   fired_at timestamptz,
   trial boolean NOT NULL DEFAULT false,
+  -- a person's "run now" (trial or not), outside the schedule: it runs even while the task is paused
+  manual boolean NOT NULL DEFAULT false,
   conversation_id text,
   run_id text,
   status text NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
   skip_reason text CHECK (skip_reason IN ('missed', 'overlap', 'rate_limited', 'queue_paused',
     'removed', 'device_offline', 'creator_inactive', 'agent_gone', 'target_gone',
-    'conversation_gone', 'org_disabled', 'unsupported_target', 'task_deleted')),
+    'conversation_gone', 'org_disabled', 'unsupported_target', 'task_deleted', 'task_paused')),
   error text,
   -- tool keys refused for lack of a grant (§7)
   missing_grants jsonb NOT NULL DEFAULT '[]'::jsonb,

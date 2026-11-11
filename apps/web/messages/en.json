@@ -5676,7 +5676,8 @@
         "conversation_gone": "The conversation is gone",
         "org_disabled": "Turned off by the organization",
         "unsupported_target": "This target is not supported yet",
-        "task_deleted": "The task was deleted"
+        "task_deleted": "The task was deleted",
+        "task_paused": "The task was paused"
       },
       "missing": "Refused: {tools}",
       "open": "Open conversation",
