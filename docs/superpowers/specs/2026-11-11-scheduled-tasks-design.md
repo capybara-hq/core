@@ -1,7 +1,9 @@
 # Scheduled tasks
 
-Status: draft (2026-11-11), for maintainer review. The decisions the maintainer made in the
-brainstorm are marked *decided*; the calls marked *my call* are open to review.
+Status: built on `feat/scheduled-tasks` (2026-11-11), written back to match the code after the
+final review. The decisions the maintainer made in the brainstorm are marked *decided*; the calls
+marked *my call* are open to review; what the build settled is marked *decided during
+implementation*.
 
 ## 0. Why
 
@@ -93,22 +95,40 @@ Kernel schema `capybara`, one migration (names are *my call*):
   `timeZone` is an IANA name (§5).
 - `mode` `'new' | 'conversation' | 'chat'`; `conversation_id` (`conversation` only);
   `chat` jsonb (`chat` only): `{ connectionId, chatId, chatType }`.
-- `model`, `effort` (null = the agent's defaults); `device_id` (null = the default pick for new
-  conversations, `ConversationDevices.forNew`). *My call*: any device the creator may use is
-  allowed, a `capybara-device` laptop or server included; when it is offline at fire time the run
-  is `skipped` (`device_offline`) without pausing the task.
+- `model` jsonb, a `ModelRef` `{ provider, model }` like an agent definition's (provider 1–100,
+  model 1–200 characters), and `effort` (null = the agent's defaults); `device_id` (null = the
+  default pick for new conversations, `ConversationDevices.forNew`). All three are a `new`-mode
+  task's only (*decided during implementation*): a `conversation` or `chat` task runs with that
+  conversation's selection and device, so a task never switches the model of a person's DM or
+  conversation for their later turns. Create and update refuse them for another mode
+  (`validation_failed`), switching a task away from `new` clears them, and the model must resolve
+  for the org (`agent.model_unavailable`) and declare the effort (`validation_failed`), as a
+  message's switch. The device is one of the creator's live personal devices in the org (a
+  `capybara-device` laptop or server included); when it is offline at fire time the run is
+  `skipped` (`device_offline`) without pausing the task.
 - `status` `'active' | 'paused' | 'ended'`; `pause_reason` (`creator` / `admin` / `failures` /
   `creator_inactive` / `agent_gone` / `target_gone` / `conversation_gone` / `org_disabled` /
-  `expired`); `paused_by`.
+  `expired` / `invalid_schedule`: the scanner cannot evaluate the stored trigger, §6); `paused_by`.
 - `next_run_at` timestamptz (null when not active), `jitter_seconds`, `expires_at` (nullable),
   `consecutive_failures`, `created_at`, `updated_at`, `deleted_at`.
 - Partial index on `(next_run_at) WHERE status = 'active' AND deleted_at IS NULL`.
 
 `scheduled_task_runs`
 - `id`, `task_id`, `org_id`, `scheduled_for` (the tick, before jitter), `fired_at`,
-  `trial` boolean, `conversation_id`, `run_id`, `status` (`pending` / `running` / `completed` /
-  `failed` / `skipped`), `skip_reason`, `error`, `missing_grants` jsonb (tool keys refused for lack
-  of a grant, §7).
+  `trial` boolean, `manual` boolean (a person's "Run now", trial or not), `conversation_id`,
+  `run_id`, `status` (`pending` / `running` / `completed` / `failed` / `skipped`), `skip_reason`,
+  `error`, `missing_grants` jsonb (§7), `rechecked_at` (when the scan's repair last found this
+  started run still in flight; it rotates the rechecks so a new stuck run is reached).
+- `skip_reason`: `missed`, `overlap`, `rate_limited`, `queue_paused`, `removed`, `device_offline`,
+  `creator_inactive`, `agent_gone`, `target_gone`, `conversation_gone`, `org_disabled`, and
+  (*decided during implementation*) `unsupported_target` (a group chat on a channel without
+  threads), `task_deleted` (the task was deleted after the tick was recorded) and `task_paused`
+  (the task was paused after the scan recorded the tick; a "Run now" still runs).
+- `fired_at` (*decided during implementation*): written by the fire job's claim once every check
+  passed, before it creates the conversation or queues the message; a run that is skipped or
+  released (its start found the target gone, its queued item removed) clears it again. The org's
+  `maxRunsPerHour` counts non-skipped runs by `fired_at`, so a claimed run whose start failed
+  counts until it is released.
 - `UNIQUE (task_id, scheduled_for)` for non-trial runs: the exactly-once guard.
 
 `scheduled_task_grants`
@@ -122,8 +142,17 @@ descends from it without a person: sub-agent runs, and wake runs (`background_ta
 `budget_run_id`. A run triggered by a person's message is never unattended, even in a conversation a task
 posts into.
 
-`conversations.scheduled_task_id` (nullable): set on the conversations a `new`-mode task creates, so
-the web can group and label them (*my call*).
+`conversations.scheduled_task_id` (nullable): set on the conversations a task's fire creates, so
+the web can group and label them ("Started by the scheduled task <name>"): every `new`-mode
+conversation, a `chat` DM conversation the fire created because the chat had no live thread, and
+each group run's conversation. Never on an existing conversation (*decided during implementation*:
+the label stays true).
+
+Also added by the migration (*decided during implementation*): `conversation_queue.schedule`
+jsonb, the marker of a queued task message (null for a person's), copied to the `user_message`
+when the item is dispatched; `channel_deliveries.pending_thread_account_id`, a group run's
+delivery whose thread is not bound yet (§8); and an index on `channel_threads (account_id,
+connection_id)` for the chat targets.
 
 ## 5. Schedules and time zones
 
@@ -136,14 +165,21 @@ the web can group and label them (*my call*).
   UTC. A tool call uses the zone of the current run's `run_context`. *My call*: later changes to the
   account setting do not move existing tasks; the task page shows the zone and lets the creator
   change it. DST follows `CronTime` (a skipped local time does not fire that day; a repeated one
-  fires once).
+  fires once). A `once` time inside a DST gap fires at the first valid instant after the gap
+  (02:30 → 03:00), since a one-off the person asked for should run (*decided during
+  implementation*). A malformed `once` time (out-of-range fields such as `2030-02-30T09:00`) is
+  `schedule.invalid_once_time`; a past one `schedule.once_in_past`.
 - **Minimum interval**: the smallest gap between the next 50 fire times must be at least the org's
-  `minIntervalMinutes` (§9). Checked on create and on update.
+  `minIntervalMinutes` (§9). Checked on create and on an update of the schedule; resume does not
+  re-check it (a task that met the minimum when saved keeps running after the org raises it).
 - **Jitter** (*my call*): a fixed per-task offset `jitter_seconds = hash(task id) mod min(10 % of the
   interval, 300 s)`, added to every tick, so a thousand "09:00" tasks do not fire in the same second.
   The UI shows "runs at about 09:00". `once` tasks have no jitter.
-- **Expiry**: `expires_at` from the org's `defaultExpiryDays` (null = never) or set by the creator;
-  past it the task ends (`status = 'ended'`, reason `expired`). A `once` task ends after its run.
+- **Expiry**: `expires_at` set by the creator (it must lie in the future), else, for a cron task,
+  now + the org's `defaultExpiryDays` when the org sets one, else never. An explicit null counts as
+  "not given" on create and on update alike, so a creator cannot clear the org's expiry policy by
+  sending null (*decided during implementation*). Past it the task ends (`status = 'ended'`,
+  reason `expired`). A `once` task ends after its run and has no default expiry.
 
 ## 6. Firing (multi-replica)
 
@@ -158,14 +194,29 @@ the web can group and label them (*my call*).
   3. Advance `next_run_at` to the next tick plus jitter.
   4. In `afterCommit`, enqueue the fire job `sched-fire-<taskRunId>` on the maintenance queue (no
      `:` in ids).
+  A task whose stored trigger the schedule math cannot evaluate is paused (`invalid_schedule`)
+  instead of failing the scan; a database error fails the pass (the next minute retries) and
+  pauses nothing (*decided during implementation*).
+- **Repair** (*decided during implementation*): after the due tasks, the same scan re-enqueues the
+  fire job of a run still `pending` and unfired 10 minutes after its tick, and gives it up
+  (`skipped`, `missed`) after an hour; a run fired an hour ago and still `pending` goes through the
+  run tracker's check, which links it to its run, settles it, or releases it, so a `once` task's
+  last run never stays pending. A started run that shows no queued item, no message and no run
+  5 minutes after `fired_at` is released (`skipped`, `removed`).
 - The fire job (idempotent on the task run's status) re-checks, then starts the run:
-  - **Checks**: the creator is active and still a member of the org; the agent exists and is
-    visible to them (`authorCanSend`); the org has scheduled tasks enabled; the org's
-    `maxRunsPerHour` is not exceeded; for `conversation`, the target conversation exists, is not
-    deleted and the creator can send to it; for `chat`, the connection is active. A
-    failed check marks the run `skipped` with the reason, and a lasting one (creator gone, agent
-    gone, conversation or target gone) pauses the task with that reason. The rate limit skips
-    (reason `rate_limited`) without pausing.
+  - **Checks**, in order: the task still exists (else `task_deleted`) and, for a tick of the
+    schedule, is not paused since the scan (`task_paused`; a person's "Run now" is `manual` and
+    still runs on a paused task, and only the creator can ask for one); the org has scheduled tasks
+    enabled; the creator is active and still a member of the org; the agent exists and is visible
+    to them (`authorCanSend`); for `conversation`, the target conversation exists, is not deleted
+    and the creator can send to it; for `chat`, the connection is active and bound to the task's
+    agent (a group also needs a channel with threads, else `unsupported_target`, and the
+    creator's thread row there); then overlap, the org's `maxRunsPerHour`, the device and a paused
+    queue. A failed check marks the run `skipped` with the reason, and a lasting one pauses the
+    task with that reason: creator gone, agent gone, conversation or target gone, and the org
+    turning scheduled tasks off (`org_disabled`, *decided during implementation*: a task paused
+    so needs its creator's resume once the org turns them back on). The rate limit, overlap, a
+    paused queue and an offline device skip without pausing.
   - **Overlap** (*my call*): if the task's previous run is not terminal (still running, waiting on
     an approval in `wait` mode, or still queued), the new tick is `skipped` (`overlap`). A task
     never has two runs in flight.
@@ -187,8 +238,14 @@ the web can group and label them (*my call*).
     (`conversation_queue`, the path that waits for the conversation to be idle), not
     `postUserMessage`, which would be absorbed into a run in progress, possibly one a person is
     attending. The queue item carries the schedule marker and `dispatchQueuedIn` copies it to the
-    `user_message`. A paused queue skips the run (`queue_paused`); a person may delete the queued
-    item like any other (the run becomes `skipped`, `removed`).
+    `user_message`. A paused queue skips the run (`queue_paused`). A person may remove, edit or
+    "send now" the queued item like any other (*decided during implementation*): an edit or a
+    send-now drops the marker (the item becomes the person's message), and in all three cases the
+    task run becomes `skipped` (`removed`), so the next tick is not held by the overlap check. A
+    task message that a person's run took in with their own message (dispatched while the
+    person's message arrived, consumed by that run) has no run of its own: the overlap check
+    finds it at or below the conversation's `consumed_seq` and settles the task run as
+    `completed`, since its content was handled.
   - Either way the message is a `user_message` authored by the creator with a new
     non-model-visible marker `schedule: { taskId, taskRunId, scheduledFor, trial }`, and its
     `timeZone` is the task's zone through a new top-priority override in `readMessageContext`
@@ -197,7 +254,10 @@ the web can group and label them (*my call*).
     `runs.scheduled_task_run_id` from its marker.
 - The task run follows its kernel run to a terminal state (`completed` / `failed`; *my call*: a
   run aborted by a person counts as completed). A failed run increments `consecutive_failures`; a
-  completed one resets it; at the org's `pauseAfterFailures` the task pauses (`failures`).
+  completed one resets it; at the org's `pauseAfterFailures` the task pauses (`failures`). A start
+  the kernel refuses for a reason that is not a lasting skip (a full queue, a model removed since
+  the task was saved, …) fails the task run the same way and counts toward the pause (*decided
+  during implementation*); a trial run's failures never count.
 - **"Run now"**: inserts a run for `now()` outside the schedule (no unique-key conflict: it uses the
   request time) and fires it at once; it does not move `next_run_at`. Counted in the rate limit.
 - **Trial run** (§7): a "Run now" with `trial = true`.
@@ -210,7 +270,15 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
   check (`createDecidePolicy`) also looks up `scheduled_task_grants` of the run's task: a matching
   grant turns `ask` into `allow`, exactly like a `tool_grants` entry. It never turns `deny` into
   anything, never covers the R3 fixed-ask tools (`requiresUserInteraction`), and never covers a tool
-  the org admin turned off.
+  the org admin turned off. The creator's own grants of this conversation and their "always"
+  grants for the agent apply too, as in any run of theirs (*decided during implementation*: they
+  are checked first; a task grant is the fallback).
+- **Who is present** (*decided during implementation*): a run is attended again only when the
+  task's creator joins it, that is a message of theirs (no schedule marker) that the run already
+  absorbed after its trigger; the rest of that run asks the creator as an attended run would.
+  Another person's message (someone replying in a group thread the task posted into) keeps the run
+  unattended, since the grants and approvals are the creator's. A later wake of the conversation
+  (a background task or sub-agent finishing) is unattended again.
 - **`SkillWrite` in unattended runs** (*my call*): always treated as an ask outside the grants,
   even on a private agent where it normally runs without asking, so an unattended run cannot
   rewrite the agent's skills (anti-goal: the model widening what the task does).
@@ -219,17 +287,32 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
   its approval goes to the role holders as today, and an escalated approval in a trial run is not
   added to the task's grants (it stays `once`). Org admins can list tools in `forbiddenTools`: those
   never enter a task's grants and are refused in unattended runs.
+- **One rule** (*decided during implementation*): `grantRefusalOf` (`schedules/grant-rules.ts`)
+  decides what can be a task grant, and every path asks it: the task form and `addGrants`
+  (`grantable-tools` gives its code per tool: `forbidden`, `not_grantable`, `not_available`,
+  `needs_role`, `fixed_ask`), a trial run's kept approvals, and the unattended refusals below. It
+  refuses a tool the org forbids (by its key or the call's key), `SkillWrite`, a per-call key
+  (`Platform:<operation>`, decided per call), a tool the agent does not have now, a
+  `requiredRole` above the creator's, and a fixed ask.
 - **How grants are collected** (*decided* in principle; the UI is *my call*):
   - picked from the agent's tool list when creating or editing the task;
   - by a **trial run**: an attended "Run now" whose approvals reach the creator as usual (in the
-    conversation, the inbox, or the IM card). Every approval the creator grants in a trial run is
-    added to the task's grants; afterwards the task page lists them for review.
+    conversation, the inbox, or the IM card). An approval the creator grants in a trial run is
+    added to the task's grants when the rule above allows it against the task agent's tools at
+    that moment (never one another account decided, nor one whose scopes were "once" only);
+    afterwards the task page lists them for review.
 - **An ask outside the grants** in an unattended run, by the org's `unattendedAsk` setting:
   - `fail` (default, *my call*, so runs are not blocked): no approval is created; the tool call
     returns an error the model can act on ("This scheduled run cannot ask for approval; the task's
     owner can add <tool> to the task's approved tools."), and the tool key is recorded in
     `missing_grants`. The run ends normally; the task page and the creator's inbox say which
-    grants are missing.
+    grants are missing. Only a key the creator could grant is recorded, or one that needs a role
+    they lack (the inbox lists it under "needs a role you don't have", with no action); a fixed
+    ask, a per-call key, `SkillWrite` or a forbidden tool gets the fixed-ask text ("<tool> always
+    needs a person's approval, which a scheduled run cannot ask for; state what you wanted to do
+    in your final answer.") and is not recorded, so the inbox never offers a grant that cannot be
+    added (*decided during implementation*). `missing_grants` thus holds tool keys and
+    `connection:<connector slug>` entries (below).
   - `wait`: an ordinary approval to the creator (inbox, IM card), expiring after
     `approvalTimeoutHours`.
 - **Other waits for a person** (*my call*), in `fail` mode:
@@ -241,6 +324,9 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
   In `wait` mode they behave as today, addressed to the creator.
 - A grant whose `spec_hash` no longer matches (the tool definition changed) does not apply; the
   call is handled as an ask outside the grants, and the task page shows "approval out of date".
+  The inbox treats such a grant as missing (a refused tool granted since drops out of the item
+  only while its grant matches the tool now). When the agent's tools cannot be read, the task
+  page shows the grants with their staleness unknown instead of failing.
 - Sub-agents of an unattended run are unattended and use the root task's grants.
 
 ## 8. Delivery
@@ -261,15 +347,34 @@ The goal is that automation is not blocked (*decided*), and the prompt is never 
     thread key once outbound has it, so replies in that thread continue the run. On a channel
     without threads (`features.threads` false), group targets are not offered in this version.
     The creator must be a member of the group (a group thread row with them exists).
-  - Creating a task from an IM conversation (through the tools) makes it a `chat` task for that
-    chat, not a `conversation` task pinned to today's conversation.
+    Built (*decided during implementation*): each run's conversation gets a `channel_deliveries`
+    row with no thread yet and `pending_thread_account_id` = the creator; outbound's first
+    successful post binds it (`bindThreadIn`, conditional on still pending, written before the
+    lease check so a retry never posts a second root). Thread rows are per account, so replies in
+    that thread continue the conversation only for the creator; another member's reply starts
+    their own conversation, as for any group message.
+  - Creating a task from an IM conversation (through the tools, `mode: "here"`) makes it a `chat`
+    task for that chat when the conversation is the creator's live DM thread, not a
+    `conversation` task pinned to today's conversation. From an IM group thread it is a
+    `conversation` task for that thread's conversation (*decided during implementation*: a group
+    target starts a new thread per run, which is not "here").
   - A `ChannelSendError` with reason `target_gone` or `auth` pauses the task (`target_gone`). The
     error surfaces in the async outbound worker (`channels/outbound.ts`), which today only stops
     that delivery; the plan adds the link from there to the task (the task run that triggered the
-    run being delivered, through `runs.scheduled_task_run_id`).
+    run being delivered, through `runs.scheduled_task_run_id`). Built so; `auth` pauses as
+    `target_gone` too, and nothing resumes the task after the credentials are rotated: the creator
+    resumes it (*decided during implementation*).
 - **Attention**: there is no notification system. The creator's inbox (`InboxService`) gets a new
   item kind for a task that needs attention: paused (any reason but `creator`), missing grants, or
   `pauseAfterFailures` reached. Org admins see nothing extra; the admin page (§10) shows status.
+  Built (*decided during implementation*): the item is `schedule_attention`, derived live (no
+  table), with ids `<taskId>:paused` (any pause but the creator's; `pausedBy` names an admin),
+  `<taskId>:failed` (an active task whose latest settled run failed, with its error; a paused one
+  shows its pause instead) and `<taskId>:grants` (the latest settled run's `missing_grants` the
+  task still lacks: `missing`, with `needsRole` the keys whose `requiredRole` the creator lacks,
+  and `connection:<slug>` entries offered as "connect"). Skipped runs (`queue_paused`, `overlap`,
+  `rate_limited`, …) are not surfaced. Resuming, a clean run or a granted tool clears the item; a
+  task paused by `org_disabled` needs its creator's resume.
 
 ## 9. Org and platform settings
 
@@ -301,19 +406,35 @@ Roles (`orgs/roles.ts`, all `HUMAN_ONLY` except reads):
 - `schedules.manage` (admin and up): list every task in the org, pause, resume, delete any task
   (*decided*: admins manage). They cannot edit another person's prompt, schedule, target or grants:
   the task runs as its creator, and editing it would act with the creator's rights (*my call*).
-  Each admin action is audited and the creator's inbox says who paused or deleted the task.
+  Each admin action is audited and the creator's inbox says who paused the task; an admin's
+  deletion is only audited (no inbox item: a deleted task has nothing to act on; *decided during
+  implementation*).
+- A creator demoted to guest may still list, pause and delete their own tasks (narrowing only;
+  these routes take `org.read`, the service decides by ownership), not edit, resume or run them
+  (*decided during implementation*).
 
-HTTP (`/api/v1/orgs/:orgId/schedules…`): list (own; `?all=true` for admins), get, create, patch,
-delete, pause, resume, run (`{ trial?: boolean }`), runs (history), grants (list, add, remove).
-Every route gets a Platform operation or an exclusion with a reason (`check:platform-ops`): *my
-call*: operations for list / get / pause / resume / run / delete; create, patch and grant changes
-too, confirm class `personal`, so the Platform tool and the dedicated tools below share them.
+HTTP (`/api/v1/orgs/:orgId/schedules…`): list (own; `?all=true` for admins; `?conversationId=`
+keeps the tasks that post into that conversation, for its side panel; each item carries `lastRun`,
+its latest settled non-trial run), get, create, patch, delete, pause, resume, run
+(`{ trial?: boolean }`), runs (history), grants (list, add, remove), and (*decided during
+implementation*) `chat-targets` (the creator's DMs with each active connection's bot and, on a
+channel with threads, the groups they have talked in) and `grantable-tools?agentId=` (the agent's
+tools with `grantable` and the refusal code of §7).
+Every route gets a Platform operation (`check:platform-ops`): `schedules.list`,
+`schedules.chat-targets`, `schedules.grantable-tools`, `schedules.get`, `schedules.create`,
+`schedules.update`, `schedules.delete`, `schedules.pause`, `schedules.resume`, `schedules.run`,
+`schedules.runs`, `schedules.grants-list`, `schedules.grants-add`, `schedules.grants-remove` (an
+operation id allows one dot). Writes are confirm class `personal`; `create`, `update`, `delete`,
+`run`, `resume`, `grants-add` and `grants-remove` are `rememberable: false`, so no remembered
+approval or task grant lets an unattended run create, widen, restart or trigger a task.
 
 Web (`writing-web-ui`, zh copy 定时任务, 智能体):
 - `/schedules`: the member's tasks (`ListPage`), each with status, next run, last result.
 - `/schedules/new` and `/schedules/<id>`: `FormPage` with name, agent, prompt, schedule (presets
-  plus cron, the zone shown), where runs go (`new` / `conversation` / `chat`), model and effort, approved tools, and a run
-  history table; actions "Run now", "Trial run", pause / resume, delete.
+  plus cron, the zone shown), where runs go (`new` / `conversation` / `chat`), model and effort
+  (`new` tasks only), approved tools, and a run history table; actions "Run now", "Trial run",
+  pause / resume, delete. A new task's end date is read in the zone it will take (the account's,
+  else the browser's), and a one-off sends none.
 - `/settings/schedules`: org admins: the settings of §9 and every task in the org.
 - A conversation started by a task shows "Started by the scheduled task <name>" and links to it; a
   conversation a task posts into shows its tasks in the side panel.
@@ -330,7 +451,8 @@ Web (`writing-web-ui`, zh copy 定时任务, 智能体):
   card shows the whole task, grants included, so a person approves every task an agent creates.
 - `ScheduleUpdate { id, … }`: fixed ask, same card with the diff.
 - `ScheduleList`: allow; the creator's tasks.
-- `ScheduleDelete { id }`: allow for the creator's own tasks (deleting only narrows).
+- `ScheduleDelete { id }`: allow for the creator's own tasks (deleting only narrows), even when the
+  caller is an org admin: an agent never deletes another member's task.
 - Because the first two are fixed-ask, an unattended run can never create or widen a task (§7).
 
 All four act as the run's trigger account through the same service as the HTTP routes and respect
