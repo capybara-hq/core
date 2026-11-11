@@ -691,21 +691,6 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     expect((await settled(run?.id as string)).status).toBe("completed");
   });
 
-  it("a group chat target is skipped without pausing until group threads land", async () => {
-    const t = await task({
-      mode: "chat",
-      chat: { connectionId: connId, chatId: "grp-1", chatType: "group" },
-    });
-    const r = await pendingRun(t);
-    await firer().fire(r.id);
-    expect(await runOf(r.id)).toMatchObject({
-      status: "skipped",
-      skipReason: "unsupported_target",
-      firedAt: null,
-    });
-    expect((await taskOf(t.id)).status).toBe("active");
-  });
-
   it("a run of a deleted task is skipped with task_deleted", async () => {
     const t = await task();
     const r = await pendingRun(t);

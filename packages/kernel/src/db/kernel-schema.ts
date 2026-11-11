@@ -712,6 +712,11 @@ export interface ChannelDeliveriesTable {
   fail_seq: ColumnType<string | null, number | string | null | undefined, number | string | null>;
   fail_count: Generated<number>;
   updated_at: Ts;
+  /**
+   * 0109: a scheduled group run's thread is still to bind; the account its thread row gets when
+   * outbound has the run's first post (thread key = that message's id). Null otherwise.
+   */
+  pending_thread_account_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0018_channels.sql：出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11，用于更新卡片状态）。 */

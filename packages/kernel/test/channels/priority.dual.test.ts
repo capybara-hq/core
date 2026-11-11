@@ -101,6 +101,8 @@ describe("渠道队列优先级（行为）", () => {
       { get: config },
       log,
       {} as never,
+      // no scheduled task is delivered here
+      { pauseFor: async () => {} },
     );
     // the worker as the kernel's `@Processor` builds it (worker role): the same options and the
     // processor's own job path (`runJob`)

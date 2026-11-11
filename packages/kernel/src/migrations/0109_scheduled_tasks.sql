@@ -97,3 +97,6 @@ CREATE INDEX IF NOT EXISTS conversations_scheduled_task_idx ON conversations (sc
   WHERE scheduled_task_id IS NOT NULL;
 -- The schedule marker of a queued task message (ScheduleMarker); null for a person's message.
 ALTER TABLE conversation_queue ADD COLUMN IF NOT EXISTS schedule jsonb;
+-- A group chat run's delivery whose thread is not bound yet (§8): the account its thread row gets
+-- once outbound has the run's first post (thread key = that message's id); null afterwards.
+ALTER TABLE channel_deliveries ADD COLUMN IF NOT EXISTS pending_thread_account_id text;

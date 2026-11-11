@@ -670,6 +670,24 @@ describe("unattended runs (spec §7)", () => {
     expect((await approvalRows()).map((r) => r.requested_for)).toEqual([seed.accountId]);
   });
 
+  it("another person's message the run absorbed keeps it unattended (only the creator joins)", async () => {
+    // e.g. someone else replying in a group thread the task posted into
+    const [msg] = await eventLog.append(seed.conversationId, [
+      {
+        type: "user_message",
+        idemKey: `user_message:${randomUUID()}`,
+        payload: {
+          authorAccountId: randomUUID(),
+          content: [{ type: "text", text: "go ahead with everything" }],
+        },
+      },
+    ]);
+    await modelCall(1, (msg as ConversationEvent).seq);
+    const { evs } = await runCalls([{ id: "c1", name: GATED.key, input: {} }]);
+    expect(resultsOf(evs)[0]).toMatchObject({ content: UNATTENDED_ASK_ERROR(GATED.key) });
+    expect(await approvalRows()).toEqual([]);
+  });
+
   it("a scheduled message absorbed later keeps the run unattended", async () => {
     const [msg] = await eventLog.append(seed.conversationId, [
       {

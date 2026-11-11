@@ -114,14 +114,19 @@ export const unattendedFails = (u: UnattendedRun | null | undefined): boolean =>
   unattendedRules(u) && u.unattendedAsk === "fail";
 
 /**
- * Whether a person joined the run (scheduled tasks rulings, Task 7): the run's conversation holds a
- * `user_message` after the run's boundary (`trigger_seq`) that is a person's (no schedule marker,
- * no sub-agent dispatch) and that the run already absorbed (at or below the `absorbedUpToSeq` of
- * its latest model call). The rest of such a run is attended.
+ * Whether the task's creator joined the run (scheduled tasks rulings, Task 7 and Task 8): the run's
+ * conversation holds a `user_message` after the run's boundary (`trigger_seq`) that the creator
+ * wrote (no schedule marker, no sub-agent dispatch, `authorAccountId` = the task's account) and
+ * that the run already absorbed (at or below the `absorbedUpToSeq` of its latest model call). The
+ * rest of such a run is attended. Another person's message (someone replying in a group thread the
+ * task posted into) does not make it attended: the task's grants are the creator's, and only the
+ * creator is the one asked.
  */
 async function personJoined(db: KernelSchemaDb, runId: string): Promise<boolean> {
   const row = await db
     .selectFrom("runs as r")
+    .innerJoin("scheduled_task_runs as tr", "tr.id", "r.scheduled_task_run_id")
+    .innerJoin("scheduled_tasks as st", "st.id", "tr.task_id")
     .select(
       sql<boolean>`EXISTS (
         SELECT 1 FROM capybara.conversation_events u
@@ -130,6 +135,7 @@ async function personJoined(db: KernelSchemaDb, runId: string): Promise<boolean>
           AND u.seq > r.trigger_seq
           AND NOT (u.payload ? 'schedule')
           AND NOT (u.payload ? 'dispatch')
+          AND u.payload->>'authorAccountId' = st.account_id
           AND u.seq <= (
             SELECT COALESCE((m.payload->'request'->>'absorbedUpToSeq')::bigint, m.seq)
             FROM capybara.conversation_events m

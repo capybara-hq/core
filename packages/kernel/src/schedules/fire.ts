@@ -58,7 +58,8 @@ const LASTING: ReadonlySet<TaskRunSkipReason> = new Set<TaskRunSkipReason>([
 type StartPlan =
   | { mode: "new"; task: ScheduledTask; run: TaskRun }
   | { mode: "conversation"; task: ScheduledTask; run: TaskRun; conversationId: string }
-  | { mode: "chat"; task: ScheduledTask; run: TaskRun; thread: ThreadKey; target: ChannelTarget };
+  | { mode: "chat"; task: ScheduledTask; run: TaskRun; thread: ThreadKey; target: ChannelTarget }
+  | { mode: "group"; task: ScheduledTask; run: TaskRun; connectionId: string; chatId: string };
 
 /** Why a claim refused the run (a skip), or the plan to start it. */
 type ClaimResult = { skip: TaskRunSkipReason } | { plan: StartPlan } | null;
@@ -104,8 +105,9 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  * 2. The start, idempotent: `new` creates the conversation with its first message keyed by the
  *    task run id (`create_request_id`); `conversation` queues the prompt in the target
  *    conversation's queue (never absorbed into a run in progress); `chat` finds the DM's live
- *    thread or creates and binds a conversation (one transaction), then queues the prompt there.
- *    A start that finds the target gone takes `fired_at` back and skips the run.
+ *    thread or creates and binds a conversation (one transaction), then queues the prompt there;
+ *    a group chat gets a new conversation per run whose thread outbound binds at the run's first
+ *    post (`openGroup`). A start that finds the target gone takes `fired_at` back and skips the run.
  *
  * Every message carries the schedule marker and the task's zone; the kernel run its message
  * triggers takes the task run (`linkStartedRunIn`), and the run tracker follows it to its end.
@@ -125,7 +127,8 @@ export class ScheduledTaskFirer {
     @Inject(ConversationsService)
     private readonly conversations: Pick<ConversationsService, "createWithMessage" | "create">,
     @Inject(ConversationQueue) private readonly queue: Pick<ConversationQueue, "add">,
-    @Inject(ChannelConnections) private readonly connections: Pick<ChannelConnections, "row">,
+    @Inject(ChannelConnections)
+    private readonly connections: Pick<ChannelConnections, "row" | "channel">,
     @Inject(RunControl) private readonly runs: Pick<RunControl, "ensureRun">,
     /** Reads a local device's connection lease (online or not). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
@@ -231,21 +234,28 @@ export class ScheduledTaskFirer {
         return skip("target_gone");
       }
       if (chat.chatType === "group") {
-        // scheduled tasks plan Task 8: a group run will start its own thread at its first post;
-        // until then the run is skipped without pausing the task
-        return skip("unsupported_target");
+        // a group has no current conversation: each run starts its own thread at its first post
+        // (spec §8), which needs a channel with threads; the creator must have written there
+        if (!this.connections.channel(conn.plugin).features.threads) {
+          return skip("unsupported_target");
+        }
+        if (!(await this.inGroup(chat.connectionId, chat.chatId, task.accountId))) {
+          return skip("target_gone");
+        }
+        plan = { mode: "group", task, run, connectionId: chat.connectionId, chatId: chat.chatId };
+      } else {
+        const threadKey = await this.dmThreadKey(conn, chat.chatId, task.accountId);
+        if (threadKey === undefined) return skip("target_gone");
+        const thread: ThreadKey = {
+          connectionId: chat.connectionId,
+          chatId: chat.chatId,
+          threadKey,
+          accountId: task.accountId,
+        };
+        plan = { mode: "chat", task, run, thread, target: { chatId: chat.chatId, chatType: "dm" } };
+        const live = await findThread(t, thread);
+        if (live !== undefined && (await this.queuePaused(live))) queuePausedOn = live;
       }
-      const threadKey = await this.dmThreadKey(conn, chat.chatId, task.accountId);
-      if (threadKey === undefined) return skip("target_gone");
-      const thread: ThreadKey = {
-        connectionId: chat.connectionId,
-        chatId: chat.chatId,
-        threadKey,
-        accountId: task.accountId,
-      };
-      plan = { mode: "chat", task, run, thread, target: { chatId: chat.chatId, chatType: "dm" } };
-      const live = await findThread(t, thread);
-      if (live !== undefined && (await this.queuePaused(live))) queuePausedOn = live;
     } else {
       plan = { mode: "new", task, run };
     }
@@ -296,8 +306,8 @@ export class ScheduledTaskFirer {
         return;
       }
       let conversationId: string;
-      if (plan.mode === "chat") {
-        const bound = await this.bindChat(plan);
+      if (plan.mode === "chat" || plan.mode === "group") {
+        const bound = plan.mode === "chat" ? await this.bindChat(plan) : await this.openGroup(plan);
         if (bound === null) return;
         conversationId = bound;
       } else {
@@ -316,7 +326,7 @@ export class ScheduledTaskFirer {
         e.code === "agent.not_found"
           ? "agent_gone"
           : e.code === "conversation.not_found"
-            ? plan.mode === "chat"
+            ? plan.mode === "chat" || plan.mode === "group"
               ? "target_gone"
               : "conversation_gone"
             : DEVICE_GONE.has(e.code)
@@ -378,6 +388,53 @@ export class ScheduledTaskFirer {
     }
     await this.store.updateRun(t, run.id, { conversationId });
     return conversationId;
+  }
+
+  /**
+   * A group run's conversation (spec §8): a new one per run, the task's
+   * (`conversations.scheduled_task_id`), whose delivery goes to the group with its thread still to
+   * bind (`channel_deliveries.pending_thread_account_id` = the creator): outbound binds it at the
+   * run's first post, thread key = that message's id, so replies in that thread continue the
+   * conversation. One transaction; a retried start reuses the conversation it made before.
+   */
+  @Transactional()
+  private async openGroup(plan: Extract<StartPlan, { mode: "group" }>): Promise<string | null> {
+    const { task, run } = plan;
+    const t = this.db;
+    // the one lock order: task row, then the task run
+    await lockTaskRow(t, task.id);
+    const locked = await t
+      .selectFrom("scheduled_task_runs")
+      .select(["status", "conversation_id"])
+      .where("id", "=", run.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (locked?.status !== "pending") return null;
+    if (locked.conversation_id !== null) return locked.conversation_id;
+    const conv = await this.conversations.create(
+      task.orgId,
+      task.accountId,
+      task.agentId,
+      task.deviceId === null ? { im: true } : { deviceId: task.deviceId },
+    );
+    await t
+      .updateTable("conversations")
+      .set({ scheduled_task_id: task.id })
+      .where("id", "=", conv.id)
+      .execute();
+    const target: ChannelTarget = { chatId: plan.chatId, chatType: "group" };
+    await t
+      .insertInto("channel_deliveries")
+      .values({
+        conversation_id: conv.id,
+        connection_id: plan.connectionId,
+        target: JSON.stringify(target),
+        last_seq: 0,
+        pending_thread_account_id: task.accountId,
+      })
+      .execute();
+    await this.store.updateRun(t, run.id, { conversationId: conv.id });
+    return conv.id;
   }
 
   /** The start found the target gone: `fired_at` back to null, skipped with `reason`. */
@@ -516,6 +573,23 @@ export class ScheduledTaskFirer {
       if (keys[0] !== undefined) return keys[0];
     }
     return used[0];
+  }
+
+  /**
+   * The creator has written in the group (spec §8: a group thread row of theirs exists there,
+   * archived ones included), so a run may post there on their behalf.
+   */
+  private async inGroup(connectionId: string, chatId: string, accountId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("channel_threads")
+      .select("id")
+      .where("connection_id", "=", connectionId)
+      .where("chat_id", "=", chatId)
+      .where("account_id", "=", accountId)
+      .where("thread_key", "not like", "dm:%")
+      .limit(1)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   /** The device is gone, or a local device whose machine is not connected now. */
