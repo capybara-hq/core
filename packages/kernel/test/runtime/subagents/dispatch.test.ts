@@ -326,7 +326,6 @@ describe("dispatch", () => {
       deny: [
         "AskUserQuestion",
         "Deliver",
-        "SkillWrite",
         "ScheduleCreate",
         "ScheduleUpdate",
         "ScheduleList",

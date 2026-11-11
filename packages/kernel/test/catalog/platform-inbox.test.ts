@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { CatalogItemView } from "../../src/catalog/catalog.service.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import {
+  PLATFORM_INBOX_TYPES,
+  PlatformInboxService,
+} from "../../src/inbox/platform-inbox.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
@@ -34,7 +40,17 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetOrgCatalog(env);
   await env.db.deleteFrom("platform_migration_runs").execute();
+  await env.db.deleteFrom("platform_notices").execute();
 });
+
+const NO_ITEMS = {
+  catalog_request: 0,
+  permission_confirmation: 0,
+  org_upload_pending: 0,
+  scope_sync_failed: 0,
+  platform_migration: 0,
+  ownership_transferred: 0,
+};
 
 interface Item {
   type: string;
@@ -61,7 +77,12 @@ const liveIn = async (itemId: string): Promise<boolean> =>
     .where("status", "in", ["installing", "installed", "upgrading"])
     .executeTakeFirst()) !== undefined;
 
-async function inbox(): Promise<{ items: Item[]; truncated: boolean; total: number }> {
+async function inbox(): Promise<{
+  items: Item[];
+  truncated: boolean;
+  total: number;
+  byType: Record<string, number>;
+}> {
   const r = await env.root({ method: "GET", url: "/api/v1/admin/inbox" });
   expect(r.statusCode, r.body).toBe(200);
   return r.json();
@@ -73,7 +94,7 @@ describe("platform inbox", { timeout: 90_000 }, () => {
   it("is for super admins only, and empty when nothing waits", async () => {
     expect((await env.boss({ method: "GET", url: "/api/v1/admin/inbox" })).statusCode).toBe(403);
     expect((await env.mem({ method: "GET", url: "/api/v1/admin/inbox" })).statusCode).toBe(403);
-    expect(await inbox()).toEqual({ items: [], truncated: false, total: 0 });
+    expect(await inbox()).toEqual({ items: [], truncated: false, total: 0, byType: NO_ITEMS });
     expect(await count()).toBe(0);
     expect((await env.boss({ method: "GET", url: "/api/v1/admin/inbox/count" })).statusCode).toBe(
       403,
@@ -340,6 +361,66 @@ describe("platform inbox", { timeout: 90_000 }, () => {
     expect(r.items).toHaveLength(100);
     expect(r.truncated).toBe(true);
     expect(r.total).toBe(101);
+    // byType counts everything waiting, not the 100 listed
+    expect(r.byType).toEqual({ ...NO_ITEMS, scope_sync_failed: 101 });
     expect(await count()).toBe(101);
+  });
+
+  it("byType counts every source, the pending list split by owner, and sums to total", async () => {
+    const itemId = randomUUID();
+    await env.db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: "counted",
+        package_name: "@acme/plugin-counted",
+        publisher: "Acme",
+        description: "counted",
+        latest_version: "1.0.0",
+        policy: "allow" as const,
+      })
+      .execute();
+    await env.db
+      .insertInto("plugin_scope_sync_failures")
+      .values({ item_id: itemId, org_id: env.orgId, op: "install", code: "internal", message: "x" })
+      .execute();
+    await env.db
+      .insertInto("platform_notices")
+      .values({
+        id: randomUUID(),
+        kind: "ownership_transferred",
+        detail: JSON.stringify({
+          ref: { kind: "skill", id: randomUUID() },
+          name: "weekly",
+          fromOrg: { id: randomUUID(), name: "Gone" },
+          reason: "org_deleted",
+          usedBy: 0,
+        }),
+      })
+      .execute();
+    const pending = (kind: "platform" | "org") =>
+      ({
+        id: randomUUID(),
+        updatedAt: new Date().toISOString(),
+        owner: kind === "org" ? { kind, orgId: env.orgId, orgName: "Acme" } : { kind },
+      }) as unknown as CatalogItemView;
+    // the requests and the pending list from stubs (their own tests cover them), the rest from PG
+    const service = new PlatformInboxService(
+      { listDeployment: async () => [], countPendingDeployment: async () => 2 },
+      { list: (async () => [pending("platform"), pending("org")]) as never },
+      env.k.app.get(KernelDb),
+    );
+    const view = await service.list();
+    expect(view.byType).toEqual({
+      catalog_request: 2,
+      permission_confirmation: 1,
+      org_upload_pending: 1,
+      scope_sync_failed: 1,
+      platform_migration: 0,
+      ownership_transferred: 1,
+    });
+    expect(Object.keys(view.byType).sort()).toEqual([...PLATFORM_INBOX_TYPES].sort());
+    expect(view.total).toBe(6);
+    expect(await service.count()).toBe(6);
   });
 });

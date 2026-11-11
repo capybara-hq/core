@@ -813,6 +813,10 @@ export interface SkillsTable {
   platform_skill_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0081: a pin keeps the copy on its own stored version (ruling B2). */
   pinned_version: ColumnType<number | null, number | null | undefined, number | null>;
+  /** 0111: the agent a shared org skill came from (cleared when that agent is deleted). */
+  origin_agent_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0111: the account that maintains a shared org skill. */
+  maintainer_account_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0024_skills.sql：技能的版本。 */
@@ -857,8 +861,11 @@ export interface SkillChangeRequestsTable {
   proposed_version: Json<ProposedSkillVersion>;
   object_prefix: string;
   requested_by_account: string;
-  requested_in_conversation: string;
+  /** 0112: null for a share request and for a version proposal registered on the web. */
+  requested_in_conversation: string | null;
   status: Generated<"pending" | "approved" | "rejected" | "cancelled">;
+  /** 0111: a share of an agent skill with the org, or a new version of a shared skill. */
+  kind: Dflt<"share" | "version">;
   decided_by: string | null;
   decided_at: TsNullable;
   created_at: Ts;

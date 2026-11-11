@@ -16,8 +16,9 @@ import { optionLabels, pickOption } from "./support/select";
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 /**
- * The replaceable slots of 界面位置 (client extensions spec §6.3): one table row per single slot
- * with a select 内置 / candidates, whether the org follows the platform, and 跟随平台.
+ * 替换, the replaceable slots (client extensions spec §6.3), on 组织设置 › 外观: one table row per
+ * single slot with a select 内置 / candidates and one 来源 column (本组织 with 改为跟随平台, or
+ * 跟随平台).
  */
 
 const BASE = "/api/v1/orgs/o1";
@@ -33,9 +34,10 @@ const brand = (over: Partial<UiArrangementSingleSlot> = {}): UiArrangementSingle
 
 function api(single: UiArrangementSingleSlot) {
   return stubApi({
-    [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
-    [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
-    [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
+    [`GET ${BASE}/themes`]: () =>
+      json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
+    [`GET ${BASE}/components?kind=theme`]: () => json(200, { components: [] }),
+    "GET /api/v1/platform/theme": () => json(200, null),
     [`GET ${BASE}/ui/arrangement`]: () =>
       json(200, {
         slots: [
@@ -59,7 +61,7 @@ const as = (role: "owner" | "admin" | "member"): Me => ({
 });
 
 beforeEach(() => {
-  resetNavigation("/extensions");
+  resetNavigation("/settings/appearance");
   window.history.replaceState(null, "", "/");
 });
 afterEach(() => {
@@ -69,10 +71,10 @@ afterEach(() => {
 
 const table = () => screen.getByRole("table", { name: t.replaceTitle });
 
-describe("replaceable slots on /extensions", () => {
+describe("替换 on /settings/appearance (组织设置 › 外观)", () => {
   it("the single-slot select writes use and shows follows-platform", async () => {
     const calls = api(brand());
-    const { client } = await renderRouteWithCache("/extensions", lastStubRoutes(), {
+    const { client } = await renderRouteWithCache("/settings/appearance", lastStubRoutes(), {
       me: as("admin"),
     });
     client.setQueryData(keys.org("o1").clientExtensions(), {
@@ -106,7 +108,7 @@ describe("replaceable slots on /extensions", () => {
 
   it("an org's 内置 is its own pick (use: null); 跟随平台 removes the entry", async () => {
     const calls = api(brand({ use: "theme-neon/brand", followsPlatform: false }));
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
     const user = userEvent.setup();
     const row = within(await screen.findByRole("table", { name: t.replaceTitle })).getByRole(
       "row",
@@ -127,9 +129,31 @@ describe("replaceable slots on /extensions", () => {
     });
   });
 
+  it("one 来源 column: 本组织 with 改为跟随平台 in the same cell, or 跟随平台 (zh)", async () => {
+    const z = zh.uiArrangement;
+    api(brand({ use: "theme-neon/brand", followsPlatform: false }));
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), {
+      locale: "zh",
+      me: as("admin"),
+    });
+    const tbl = await screen.findByRole("table", { name: z.replaceTitle });
+    const headers = within(tbl)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent?.trim());
+    expect(headers).toEqual([z.columns.slot, z.columns.use, z.columns.source]);
+    const row = within(tbl).getByRole("row", { name: /侧边栏品牌/ });
+    const cells = within(row).getAllByRole("cell");
+    const source = cells[cells.length - 1] as HTMLElement;
+    expect(within(source).getByText(z.orgOwn)).toBeTruthy();
+    const follow = within(source).getByRole("button", { name: "重置侧边栏品牌" });
+    expect(follow.textContent).toBe(z.resetOrg);
+    // the cell never repeats 跟随平台 as a label beside the action
+    expect(within(tbl).queryByText(z.followsPlatform)).toBeNull();
+  });
+
   it("a stored pick that is no candidate any more shows as not available", async () => {
     api(brand({ use: "gone/brand", followsPlatform: false }));
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
     const row = within(await screen.findByRole("table", { name: t.replaceTitle })).getByRole(
       "row",
       {
@@ -141,7 +165,7 @@ describe("replaceable slots on /extensions", () => {
 
   it("members see read-only picks (zh)", async () => {
     const calls = api(brand({ use: "theme-neon/brand" }));
-    await renderRouteWithCache("/extensions", lastStubRoutes(), {
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), {
       locale: "zh",
       me: as("member"),
     });

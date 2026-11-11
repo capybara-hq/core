@@ -319,6 +319,9 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
         "the asking step streams",
       );
       const msgSeq = await postMessage(reqA, orgId, convId, "echo:early");
+      // the request was built before the message: the model never sees it in this step
+      const call = ofType(await eventsOf(db, convId), "model_call")[0];
+      expect(call?.payload.request.absorbedUpToSeq).toBeLessThan(msgSeq);
       openBarrier("asking");
       const { questionIds } = await waiting(convId);
       const asked = ofType(await eventsOf(db, convId), "question_asked")[0];

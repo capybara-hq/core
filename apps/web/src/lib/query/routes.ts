@@ -38,6 +38,7 @@ import {
   marketplaceEntriesQuery,
   marketplacesQuery,
   pendingPluginsQuery,
+  platformAuditQuery,
   stagedImportQuery,
 } from "./admin";
 import {
@@ -247,8 +248,19 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin",
-    // Super admins (no org needed): the four numbers.
-    queries: ({ me }) => (superAdmin(me) ? [q(adminOverviewQuery())] : []),
+    // Super admins (no org needed): the numbers, the inbox (待处理's counts by type) and the
+    // newest platform audit events, all PG reads. The other 待处理 lists are not prefetched: they
+    // may wait on a provider's model list; nor is 运行状况 (Redis and PG counts, polled): each
+    // section draws its own skeleton.
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [q(adminOverviewQuery()), q(adminInboxQuery()), q(platformAuditQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/audit",
+    // Super admins: the newest page of the platform audit log.
+    queries: ({ me }) => (superAdmin(me) ? [q(platformAuditQuery())] : []),
   },
   {
     pattern: "/admin/accounts",
@@ -928,17 +940,16 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/extensions",
     // Members: the extensions' state; org admins also the default providers and the file
-    // previewers (sections); everyone the 界面位置 listing.
+    // previewers (sections). 界面位置 lives on /settings/appearance.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
         : !atLeast(me, "admin")
-          ? [q(orgExtensionsQuery(orgId)), q(uiArrangementQuery(orgId))]
+          ? [q(orgExtensionsQuery(orgId))]
           : [
               q(orgExtensionsQuery(orgId)),
               q(extensionPointDefaultsQuery(orgId)),
               q(orgFilePreviewersQuery(orgId)),
-              q(uiArrangementQuery(orgId)),
             ],
   },
   {
@@ -1142,7 +1153,8 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/settings/appearance",
-    // Members read it: the org's themes and setting, and the theme components with their switches.
+    // Members read it: the org's themes and setting, the theme components with their switches,
+    // and the arrangement of extension UI (替换, 界面位置).
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
@@ -1151,6 +1163,7 @@ export const ROUTES: readonly RouteEntry[] = [
             q(orgComponentsQuery(orgId, { kind: "theme" })),
             // 跟随平台's swatches
             q(platformThemeQuery()),
+            q(uiArrangementQuery(orgId)),
           ],
   },
   {

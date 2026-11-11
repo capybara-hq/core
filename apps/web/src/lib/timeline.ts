@@ -1542,9 +1542,19 @@ export function buildEventTimeline(
     }
   }
 
-  if (groupFiles.size === 0 && groupCards.size === 0) return { entries: out, modelOf };
-  const withExtras: TimelineEntry[] = [];
+  // One connect card per connector: each tool that hits a missing connection asks again, so only
+  // the latest card of a connector stays (it is the live one; the earlier ones are its repeats).
+  const lastConnect = new Map<string, string>();
   for (const entry of out) {
+    if (entry.kind === "connect") lastConnect.set(entry.item.connectorId, entry.key);
+  }
+  const shown = out.filter(
+    (entry) => entry.kind !== "connect" || lastConnect.get(entry.item.connectorId) === entry.key,
+  );
+
+  if (groupFiles.size === 0 && groupCards.size === 0) return { entries: shown, modelOf };
+  const withExtras: TimelineEntry[] = [];
+  for (const entry of shown) {
     withExtras.push(entry);
     if (entry.kind !== "tools") continue;
     const files = groupFiles.get(entry.key);

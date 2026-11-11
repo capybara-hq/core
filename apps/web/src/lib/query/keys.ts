@@ -453,8 +453,21 @@ export const keys = {
         version: string,
         locale: string,
       ): readonly unknown[] => [...all, "adminSetupGuide", itemId, guideId, version, locale],
-      /** The admin console's four overview numbers. */
+      /** The admin overview's numbers (also the prefix of its 待处理 lists). */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
+      /**
+       * The admin overview's 待处理 lists: under `adminOverview`, so whatever invalidates the
+       * numbers (an extension or plugin change) reads the lists again too.
+       */
+      adminAttention: (): readonly unknown[] => [...all, "adminOverview", "attention"],
+      /** The admin overview's 运行状况 (polled while the page shows). */
+      adminHealth: (): readonly unknown[] => [...all, "adminHealth"],
+      /** The admin overview's 用量 in the reader's zone (the days are calendar days in it). */
+      adminUsage: (tz: string): readonly unknown[] => [...all, "adminUsage", tz],
+      /** Every page of the platform audit log (an invalidation prefix). */
+      platformAuditAll: (): readonly unknown[] => [...all, "platformAudit"],
+      /** A page of the platform audit log: the newest (`after: ""`) or the one after a cursor. */
+      platformAudit: (after = ""): readonly unknown[] => [...all, "platformAudit", after],
       /** The super admin's inbox (its items). */
       adminInbox: (): readonly unknown[] => [...all, "adminInbox"],
       /** How many items wait in the super admin's inbox (the admin sidebar's count). */

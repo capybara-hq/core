@@ -18,8 +18,7 @@ import { createDb } from "../../src/db/pool.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
-import { SkillChangesService } from "../../src/skills/changes.service.js";
-import { buildSkillWrite } from "../../src/tools/builtins/skill-write.js";
+import { AgentSkillsService } from "../../src/skills/agent-skills.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -35,6 +34,7 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
+import { makeZip, SKILL_MD } from "../skills/zip.js";
 
 /**
  * Task 11b of the Platform tool: devices (personal, with the fake sandbox), the agent's own
@@ -164,18 +164,15 @@ async function agentOf(owner: string, visibility: "private" | "org") {
 }
 
 async function writeSkill(agentId: string, accountId: string, name: string) {
-  const built = buildSkillWrite({
-    name,
-    description: `Use for ${name} work.`,
-    files: [{ path: "SKILL.md", content: `Do ${name}.` }],
-  });
-  if ("errors" in built) throw new Error(built.errors.join("; "));
+  const zip = new Uint8Array(
+    makeZip([{ name: "SKILL.md", data: SKILL_MD(name, `Use for ${name} work.`) }]),
+  );
   const conversationId = await createConv(
     await session(k, accountId === ownerId ? "owner" : "mem"),
     orgId,
     agentId,
   );
-  return k.app.get(SkillChangesService).write({ orgId, agentId, accountId, conversationId }, built);
+  return k.app.get(AgentSkillsService).register({ orgId, agentId, accountId, conversationId }, zip);
 }
 
 describe("devices", () => {
@@ -405,14 +402,7 @@ describe("agent skills", () => {
 
   it("a shared agent's skill delete is an org write, and only the owner may do it", async () => {
     const agentId = await agentOf(ownerId, "org");
-    // a shared agent's write becomes a change request; approve it through the service
-    const out = await writeSkill(agentId, ownerId, "keep");
-    expect(out.kind).toBe("requested");
-    await k.app
-      .get(SkillChangesService)
-      .decide(orgId, (out as { requestId: string }).requestId, ownerId, {
-        decision: "approve",
-      });
+    await writeSkill(agentId, ownerId, "keep");
     const ctx = ctxOf(ownerId);
     const skillId = ((await run("agents.skills", { agentId }, ctx)) as { items: { id: string }[] })
       .items[0]?.id as string;
@@ -427,23 +417,53 @@ describe("agent skills", () => {
 });
 
 describe("skills.get-change", () => {
-  it("shows the summary without file contents, to the agent's owner and the requester only", async () => {
+  it("shows the summary without file contents, to org admins and the requester only", async () => {
     const agentId = await agentOf(ownerId, "org");
-    const out = await writeSkill(agentId, memberId, "keep");
-    const changeId = (out as { requestId: string }).requestId;
+    const otherId = (
+      await accountsFor(db).createLocal({ login: "oth", password: PW, displayName: "X" })
+    ).id;
+    await testMembers(db).add(orgId, otherId, "member", ownerId);
+    // a pending version request seeded directly
+    const changeId = randomUUID();
+    const body = "Steps.";
+    await db
+      .insertInto("skill_change_requests")
+      .values({
+        id: changeId,
+        org_id: orgId,
+        agent_id: agentId,
+        skill_id: null,
+        proposed_version: JSON.stringify({
+          skillId: randomUUID(),
+          version: 1,
+          manifest: {
+            name: "keep",
+            description: "Use for keep work.",
+            files: [{ path: "SKILL.md", size: body.length, sha256: "0".repeat(64) }],
+          },
+        }),
+        object_prefix: `skill-changes/${randomUUID()}/`,
+        requested_by_account: memberId,
+        requested_in_conversation: await createConv(await session(k, "mem"), orgId, agentId),
+      })
+      .execute();
     const r = (await run("skills.get-change", { changeId }, ctxOf(ownerId))) as {
       skillChange: Record<string, unknown>;
     };
     expect(r.skillChange).toMatchObject({
       id: changeId,
+      kind: "version",
       name: "keep",
       state: "pending",
       version: 1,
       files: [{ path: "SKILL.md", size: expect.any(Number) }],
     });
-    expect(JSON.stringify(r)).not.toContain("Do keep.");
+    expect(JSON.stringify(r)).not.toContain("Steps.");
     expect(String(r.skillChange.next)).toContain("agents never decide");
-    await expect(run("skills.get-change", { changeId }, ctxOf(adminId))).rejects.toThrow(
+    // another org admin and the requester read it; a member who did not ask does not
+    await run("skills.get-change", { changeId }, ctxOf(adminId));
+    await run("skills.get-change", { changeId }, ctxOf(memberId));
+    await expect(run("skills.get-change", { changeId }, ctxOf(otherId))).rejects.toThrow(
       /inbox\.list/,
     );
     expect(op("skills.get-change").confirm).toBe("read");

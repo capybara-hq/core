@@ -663,3 +663,59 @@ export * from "./conversation";
  */
 export const PLUGIN_ICON_FIXTURE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='20' height='20' rx='5'/%3E%3Cpath d='M7 12h10M12 7v10' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E";
+
+/**
+ * The overview section's reference blocks (spec §5.6 "OverviewSection"): a section of the admin
+ * overview (待处理) with its rows, the loading shape (the rows' list), and the in-place error
+ * (a sentence, the raw text behind 原始错误).
+ */
+export const OVERVIEW_SECTION_FIXTURE = {
+  title: "待处理",
+  action: "查看全部",
+  rows: [
+    { id: "requests", title: "扩展权限审批", meta: "2 个扩展等待批准", count: "2" },
+    { id: "updates", title: "可更新的插件", meta: "crm v1.2.0 → v1.3.0", count: "1" },
+    { id: "providers", title: "模型供应商", meta: "deepseek 无法列出模型", count: "1" },
+  ],
+  loadingItems: 3,
+  errorSummary: "无法加载待处理事项。",
+  errorDetail: "GET /api/admin/attention: 503 Service Unavailable (upstream timed out after 10s)",
+};
+
+/**
+ * The trend chart's reference blocks (spec §6.8 "TrendChart"): the admin overview's 用量 · 近 7 天
+ * (admin overview design §6.3): two panels, 运行 (count) and Token (compact), sharing the seven
+ * dates; today (the last point) is the current one; the cost is the tooltip's extra line.
+ */
+export const TREND_CHART_FIXTURE = {
+  label: "近 7 天用量",
+  x: [
+    { key: "2026-11-05", label: "11-05" },
+    { key: "2026-11-06", label: "11-06" },
+    { key: "2026-11-07", label: "11-07" },
+    { key: "2026-11-08", label: "11-08" },
+    { key: "2026-11-09", label: "11-09" },
+    { key: "2026-11-10", label: "11-10" },
+    { key: "2026-11-11", label: "11-11" },
+  ],
+  runs: { id: "runs", label: "运行", values: [96, 132, 118, 87, 128, 112, 64] },
+  tokens: {
+    id: "tokens",
+    label: "Token",
+    values: [2_410_000, 3_120_000, 2_870_000, 1_960_000, 3_400_000, 3_050_000, 1_520_000],
+  },
+  /** The gap block: no data for 11-07 and 11-08 (null, drawn as a gap). */
+  gapRuns: [96, 132, null, null, 128, 112, 64] as (number | null)[],
+  gapTokens: [2_410_000, 3_120_000, null, null, 3_400_000, 3_050_000, 1_520_000] as (
+    | number
+    | null
+  )[],
+  cost: ["¥9.80", "¥12.10", "¥11.40", "¥7.60", "¥12.30", "¥11.90", "¥5.90"],
+  costLabel: "估算",
+  /** The hidden table's header of the cost column. */
+  extraLabel: "估算费用",
+  current: 6,
+  /** The index the hover block shows (11-09, the highest day). */
+  hover: 4,
+  empty: "近 7 天没有运行。",
+};

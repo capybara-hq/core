@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
-import type { UiArrangementListSlot } from "../src/lib/ui";
+import type { UiArrangementListSlot, UiArrangementSlot } from "../src/lib/ui";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { FakeEventSource } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
@@ -37,12 +37,13 @@ const slot = (source: UiArrangementListSlot["source"]): UiArrangementListSlot =>
   ],
 });
 
-function api(source: UiArrangementListSlot["source"] = "none") {
+function api(source: UiArrangementListSlot["source"] = "none", extra: UiArrangementSlot[] = []) {
   return stubApi({
-    [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
-    [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
-    [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
-    [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [slot(source)] }),
+    [`GET ${BASE}/themes`]: () =>
+      json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
+    [`GET ${BASE}/components?kind=theme`]: () => json(200, { components: [] }),
+    "GET /api/v1/platform/theme": () => json(200, null),
+    [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [slot(source), ...extra] }),
     [`GET ${BASE}/ui/contributions`]: () => json(200, { items: [] }),
     [`PATCH ${BASE}/settings`]: () => json(200, { settings: {} }),
     "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
@@ -56,7 +57,7 @@ const as = (role: "owner" | "admin" | "member"): Me => ({
 });
 
 beforeEach(() => {
-  resetNavigation("/extensions");
+  resetNavigation("/settings/appearance");
   window.history.replaceState(null, "", "/");
 });
 afterEach(() => {
@@ -64,23 +65,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("界面位置 on /extensions", () => {
+describe("界面位置 on /settings/appearance (组织设置 › 外观)", () => {
   it("a member sees the arrangement read only", async () => {
     const calls = api();
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("member") });
-    expect(await screen.findByText(t.title)).toBeTruthy();
-    expect(screen.getByText(t.descriptionReadonly)).toBeTruthy();
-    expect(screen.getByText("Beta")).toBeTruthy();
-    expect(screen.queryByRole("switch")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Move .* up/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Reset/ })).toBeNull();
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("member") });
+    const section = await screen.findByRole("region", { name: t.title });
+    expect(within(section).getByText(t.descriptionReadonly)).toBeTruthy();
+    expect(within(section).getByText("Beta")).toBeTruthy();
+    expect(within(section).queryByRole("switch")).toBeNull();
+    expect(within(section).queryByRole("button", { name: /Move .* up/ })).toBeNull();
+    expect(within(section).queryByRole("button", { name: /^Reset/ })).toBeNull();
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("an admin hides a contribution and the PATCH carries only that slot", async () => {
     const calls = api();
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "Hide Beta" }));
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
@@ -98,7 +99,7 @@ describe("界面位置 on /extensions", () => {
 
   it("move up sends the new order", async () => {
     const calls = api();
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
     const user = userEvent.setup();
     expect(
       (await screen.findByRole("button", { name: "Move Alpha up" })).hasAttribute("disabled"),
@@ -115,9 +116,52 @@ describe("界面位置 on /extensions", () => {
     });
   });
 
+  it("the first row's up and the last row's down are disabled, the others usable", async () => {
+    api();
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
+    const section = await screen.findByRole("region", { name: t.title });
+    const button = (name: string) => within(section).getByRole("button", { name });
+    expect(button("Move Alpha up")).toHaveProperty("disabled", true);
+    expect(button("Move Alpha down")).toHaveProperty("disabled", false);
+    expect(button("Move Beta up")).toHaveProperty("disabled", false);
+    expect(button("Move Beta down")).toHaveProperty("disabled", false);
+    expect(button("Move Gamma up")).toHaveProperty("disabled", false);
+    expect(button("Move Gamma down")).toHaveProperty("disabled", true);
+    // disabled buttons are announced as such (and skipped by the tab order)
+    expect(
+      within(section)
+        .getAllByRole("button", { name: /^Move/ })
+        .filter((b) => b.matches(":disabled"))
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Move Alpha up", "Move Gamma down"]);
+  });
+
+  it("外观 holds the theme first, then 替换, then 界面位置", async () => {
+    api("none", [
+      {
+        slot: "shell.brand",
+        candidates: [{ key: "theme-neon/brand", title: { zh: "霓虹品牌", en: "Neon brand" } }],
+        use: null,
+        followsPlatform: true,
+      },
+    ]);
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
+    await screen.findByRole("region", { name: t.title });
+    const names = screen
+      .getAllByRole("region")
+      .map((r) => r.getAttribute("aria-label"))
+      .filter((n) => n !== null);
+    expect(names).toEqual([
+      en.appearance.themes.title,
+      en.appearance.org.title,
+      t.replaceTitle,
+      t.title,
+    ]);
+  });
+
   it("the arrangement change refreshes the contribution lists", async () => {
     const calls = api();
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
     const user = userEvent.setup();
     // the first paint read nothing in the browser (hydrated): this read is the refetch
     expect(calls.some((c) => c.url === `${BASE}/ui/arrangement`)).toBe(false);
@@ -127,18 +171,18 @@ describe("界面位置 on /extensions", () => {
 
   it("跟随平台 shows when the slot follows the platform", async () => {
     api("platform");
-    await renderRouteWithCache("/extensions", lastStubRoutes(), {
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), {
       locale: "zh",
       me: as("admin"),
     });
-    expect(await screen.findByText(zh.uiArrangement.title)).toBeTruthy();
-    expect(screen.getByText("跟随平台")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "跟随平台" })).toBeNull();
+    const section = await screen.findByRole("region", { name: zh.uiArrangement.title });
+    expect(within(section).getByText(zh.uiArrangement.followsPlatform)).toBeTruthy();
+    expect(within(section).queryByRole("button", { name: /^重置/ })).toBeNull();
   });
 
   it("an org's own arrangement can be reset, which sends null", async () => {
     const calls = api("org");
-    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    await renderRouteWithCache("/settings/appearance", lastStubRoutes(), { me: as("admin") });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Reset Org pages" }));
     await waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
@@ -146,6 +190,49 @@ describe("界面位置 on /extensions", () => {
       uiArrangement: { "org.page": null },
     });
     expect(within(document.body).queryByText(t.followsPlatform)).toBeNull();
+  });
+});
+
+describe("/extensions points to 外观", () => {
+  function extensionsApi() {
+    return stubApi({
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+      [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
+      [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [slot("none")] }),
+      [`GET ${BASE}/ui/contributions`]: () => json(200, { items: [] }),
+      "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+    });
+  }
+
+  for (const role of ["admin", "member"] as const) {
+    it(`an org ${role} finds one line with a link to 组织设置 › 外观, not the arrangement`, async () => {
+      resetNavigation("/extensions");
+      const calls = extensionsApi();
+      await renderRouteWithCache("/extensions", lastStubRoutes(), {
+        locale: "zh",
+        me: as(role),
+      });
+      const link = await screen.findByRole("link", { name: zh.extensions.arrangementLink });
+      expect(link.getAttribute("href")).toBe("/settings/appearance");
+      expect(screen.getByText(zh.extensions.arrangementPointer)).toBeTruthy();
+      expect(screen.queryByRole("region", { name: zh.uiArrangement.title })).toBeNull();
+      expect(screen.queryByRole("table", { name: zh.uiArrangement.replaceTitle })).toBeNull();
+      // the page no longer reads the arrangement
+      expect(calls.some((c) => c.url === `${BASE}/ui/arrangement`)).toBe(false);
+    });
+  }
+
+  it("a search hides the pointer", async () => {
+    resetNavigation("/extensions");
+    extensionsApi();
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("admin") });
+    const user = userEvent.setup();
+    await screen.findByRole("link", { name: en.extensions.arrangementLink });
+    await user.type(screen.getByRole("searchbox"), "x");
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: en.extensions.arrangementLink })).toBeNull(),
+    );
   });
 });
 

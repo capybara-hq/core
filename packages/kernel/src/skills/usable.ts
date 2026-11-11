@@ -387,9 +387,10 @@ async function ownedPlatformIds(
 }
 
 /**
- * The skills an agent selects, sorted by id: its own skills (`scope = 'agent'`) and the ids of
- * `orgSkills` that resolve ({@link skillVersionsById}: org skills, linked copies, platform skills
- * on in the org). Not deduplicated by name.
+ * The skills an agent selects, sorted by id: its own skills (`scope = 'agent'`), the org skills
+ * it shared (`origin_agent_id`: the agent keeps a shared skill without a definition change) and
+ * the ids of `orgSkills` that resolve ({@link skillVersionsById}: org skills, linked copies,
+ * platform skills on in the org). Not deduplicated by name.
  */
 export async function selectedSkills(
   db: KernelSchemaDb,
@@ -404,7 +405,15 @@ export async function selectedSkills(
     .where("agent_id", "=", a.agentId)
     .where("deleted_at", "is", null)
     .execute();
-  const orgSkills = new Set(a.orgSkills);
+  const shared = await db
+    .selectFrom("skills")
+    .select("id")
+    .where("org_id", "=", a.orgId)
+    .where("scope", "=", "org")
+    .where("origin_agent_id", "=", a.agentId)
+    .where("deleted_at", "is", null)
+    .execute();
+  const orgSkills = new Set([...a.orgSkills, ...shared.map((r) => r.id)]);
   const byId = await skillVersionsById(
     db,
     a.orgId,

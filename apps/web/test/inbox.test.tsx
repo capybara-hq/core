@@ -93,6 +93,7 @@ const inbox = (
 const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
   id,
   orgId: "o1",
+  kind: "version",
   agent: { id: "ag1", name: "Shared agent" },
   skillId: "k1",
   name: "notes-style",
@@ -306,13 +307,30 @@ describe("收件箱：技能变更", () => {
       });
       expect(within(row).getByRole("button", { name: m.inbox.skillChange.approve })).toBeTruthy();
       expect(within(row).getByRole("button", { name: m.inbox.skillChange.reject })).toBeTruthy();
-      // 打开发起对话
-      await userEvent
-        .setup()
-        .click(within(card).getByRole("button", { name: m.inbox.openConversation }));
-      expect(router.push).toHaveBeenCalledWith("/chat/c9");
+      // the proposing conversation is the requester's: an admin reviewing it gets no link
+      expect(within(card).queryByRole("button", { name: m.inbox.openConversation })).toBeNull();
     },
   );
+
+  it("the requester sees a link to the proposing conversation", async () => {
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([], [skillChange("sc1", { requestedBy: "a1" })])),
+      [DETAIL]: () => json(200, { skillChange: detail({ requestedBy: "a1" }) }),
+    });
+    const table = await screen.findByRole("table", { name: en.inbox.listLabel });
+    await userEvent
+      .setup()
+      .click(within(table).getByText("notes-style", { selector: ".cb-cell-title-name" }));
+    const card = await vi.waitFor(() => {
+      const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;
+      if (!el) throw new Error("no card");
+      return el;
+    });
+    await userEvent
+      .setup()
+      .click(within(card).getByRole("button", { name: en.inbox.openConversation }));
+    expect(router.push).toHaveBeenCalledWith("/chat/c9");
+  });
 
   it("批准：POST decide 后重读列表、顶栏待处理数刷新", async () => {
     let changes = [skillChange("sc1")];
@@ -332,6 +350,9 @@ describe("收件箱：技能变更", () => {
     expect(calls.filter((c) => c.method === "GET")).toEqual([]);
     // the sidebar's count is cached (the shell reads it)
     client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
+    client.setQueryData(["org", "o1", "skills"], { skills: [] });
+    client.setQueryData(["org", "o1", "components"], { items: [] });
+    client.setQueryData(["org", "o1", "agentSkills", "ag1"], { skills: [] });
     const row = await screen.findByRole("region", { name: "Pending changes" });
     await userEvent
       .setup()
@@ -348,6 +369,10 @@ describe("收件箱：技能变更", () => {
     ]);
     expect(client.getQueryState(["org", "o1", "skillChange", "sc1"])?.isInvalidated).toBe(true);
     expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
+    // approving a share creates an org skill (a version changes one): the org lists are stale too
+    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "components"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "agentSkills", "ag1"])?.isInvalidated).toBe(true);
   });
 
   it("拒绝失败（已被处理）：toast 显示 skill_change.already_decided 的文案", async () => {
@@ -367,16 +392,28 @@ describe("收件箱：技能变更", () => {
     expect(await screen.findByText(zh.errors.skill_change.already_decided)).toBeTruthy();
   });
 
-  it("新技能（没有当前版本）：全部文件为新增；自己发起的显示「两步确认」说明；列表被截断时提示", async () => {
+  it("新技能（没有当前版本）：全部文件为新增；共享申请显示共享说明、没有发起会话时不显示打开会话；列表被截断时提示", async () => {
     const { container } = await renderInbox({
       [LIST]: () =>
         json(
           200,
-          inbox([], [skillChange("sc1", { skillId: null, version: 1, requestedBy: "a1" })], true),
+          inbox(
+            [],
+            [
+              skillChange("sc1", {
+                kind: "share",
+                version: 1,
+                requestedBy: "a1",
+                requestedInConversation: null,
+                conversationPath: null,
+              }),
+            ],
+            true,
+          ),
         ),
       [DETAIL]: () =>
         json(200, {
-          skillChange: detail({ skillId: null, version: 1, requestedBy: "a1", current: null }),
+          skillChange: detail({ kind: "share", version: 1, requestedBy: "a1", current: null }),
         }),
     });
     expect(await screen.findByText(en.inbox.truncated)).toBeTruthy();
@@ -387,11 +424,48 @@ describe("收件箱：技能变更", () => {
     });
     expect(await within(card).findByText(`SKILL.md · ${en.inbox.skillChange.added}`)).toBeTruthy();
     expect(within(card).getByText(en.inbox.skillChange.newSkill)).toBeTruthy();
-    expect(within(card).getByText(en.inbox.skillChange.selfHint)).toBeTruthy();
+    expect(within(card).getByText(en.inbox.skillChange.shareHint)).toBeTruthy();
+    // a share request has no proposing conversation to open
+    expect(within(card).queryByRole("button", { name: en.inbox.openConversation })).toBeNull();
     const diff = within(card).getByLabelText(
       en.inbox.skillChange.diffLabel.replace("{path}", "SKILL.md"),
     );
     expect(diff.textContent).toContain("+ # Notes");
+  });
+});
+
+describe("inbox: skill change kinds", () => {
+  it.each(LOCALES)("each row names its kind: share or new version (%s)", async (locale) => {
+    const m = msgs[locale];
+    await renderInbox(
+      {
+        [LIST]: () =>
+          json(
+            200,
+            inbox(
+              [],
+              [
+                skillChange("sc1", { kind: "share", name: "alpha" }),
+                skillChange("sc2", { kind: "version", name: "beta" }),
+              ],
+            ),
+          ),
+        "GET /api/v1/orgs/o1/skill-changes/sc1": () => json(404, { error: { code: "x" } }),
+        "GET /api/v1/orgs/o1/skill-changes/sc2": () => json(404, { error: { code: "x" } }),
+      },
+      { locale },
+    );
+    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    const rowOf = (name: string) =>
+      within(table)
+        .getAllByRole("row")
+        .find((r) => r.textContent?.includes(name)) as HTMLElement;
+    expect(rowOf("alpha").textContent).toContain(
+      `${m.inbox.skillChange.kind.share} · Shared agent`,
+    );
+    expect(rowOf("beta").textContent).toContain(
+      `${m.inbox.skillChange.kind.version} · Shared agent`,
+    );
   });
 });
 

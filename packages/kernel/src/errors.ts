@@ -222,6 +222,8 @@ export const ERROR_CODES = {
   "plugin.upgrade_failed": 502,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
+  /** The admin overview's seven-day usage aggregate ran past its statement timeout (spec §5.5). */
+  "admin.usage_unavailable": 503,
   "agent.not_found": 404,
   "agent.version_conflict": 409,
   /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */
@@ -316,6 +318,14 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
+  /** A sandbox file path the kernel reads is not absolute or not under the sandbox roots. */
+  "sandbox.file_invalid_path": 422,
+  /** No file at the sandbox path the kernel reads. */
+  "sandbox.file_not_found": 422,
+  /** The sandbox path the kernel reads is a directory, not one file. */
+  "sandbox.file_is_directory": 422,
+  /** The sandbox file the kernel reads is over the caller's size limit. */
+  "sandbox.file_too_large": 422,
   /** The device is missing, deleted, or not the caller's (never 403, so ids cannot be probed). */
   "device.not_found": 404,
   /** The cloud device's file system is gone at the provider; reset its files to start empty. */
@@ -377,15 +387,25 @@ export const ERROR_CODES = {
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,
+  /** An agent already has `AGENT_SKILLS_MAX` own skills. */
+  "skill.agent_cap": 409,
+  /** Sharing this agent skill with the org is already waiting for an org admin. */
+  "skill.share_pending": 409,
+  /** Another conversation's proposed version of this shared skill is waiting for an org admin. */
+  "skill.proposal_pending_elsewhere": 409,
+  /** A sub-agent conversation tried to register a skill on its agent (only the root registers). */
+  "skill.subagent_register": 403,
   /**
    * A person invoked a skill (`/name`, phase D) that is not one of the agent's effective skills
    * (`details: [{ reason: "not_found" }]`) or is hidden from the menu (`not_user_invocable`).
    */
   "skill.not_invocable": 400,
-  /** Creating a skill from text (P3-24, F18): an org-level skill with this name already exists in the org. */
+  /**
+   * Uploading or sharing a skill: an org-level skill with this name already exists in the org
+   * (P3-24, F18).
+   */
   "skill.name_exists": 409,
   "skill_change.not_found": 404,
-  "skill_change.not_owner": 403,
   "skill_change.already_decided": 409,
   "trajectory.not_found": 404,
   "eval.run_not_finished": 409,

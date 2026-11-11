@@ -88,7 +88,7 @@ export interface PlatformOperation<I = unknown> {
   mirrors: readonly string[];
   /**
    * Fields of the mirrored route (body, query, path params but `:orgId`) the input leaves out, e.g.
-   * `uploadId` of `skills.create` (spec §14.5 item 3; the parity test in `tools/checks` holds it).
+   * an `uploadId` (spec §14.5 item 3; the parity test in `tools/checks` holds it).
    */
   omits?: readonly string[];
   /** Input fields the mirrored route lacks, e.g. `cursor` of a paged list. */

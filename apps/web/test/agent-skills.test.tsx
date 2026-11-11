@@ -86,6 +86,38 @@ const ownSkill = {
   currentVersion: 2,
 };
 
+/** Stub of the direct-to-storage upload: completes with 204 right after send. */
+class FakeXhr {
+  static instances: FakeXhr[] = [];
+  method = "";
+  url = "";
+  body: unknown;
+  status = 0;
+  withCredentials = false;
+  readonly upload = { onprogress: null as ((e: ProgressEvent) => void) | null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  constructor() {
+    FakeXhr.instances.push(this);
+  }
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader() {}
+  send(body: unknown) {
+    this.body = body;
+    queueMicrotask(() => {
+      this.status = 204;
+      this.onload?.();
+    });
+  }
+  abort() {
+    this.onabort?.();
+  }
+}
+
 beforeEach(() => resetNavigation("/agents/new"));
 afterEach(() => {
   cleanup();
@@ -254,7 +286,9 @@ describe("编辑 agent（FormPage）", () => {
     stubApi(routes());
     await renderEditAgent({ section: "skills" });
     await screen.findByRole("region", { name: en.agents.form.orgSkillsLabel });
-    expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillRegister }),
+    ).toBeNull();
     cleanup();
 
     const def = agent().definition;
@@ -266,7 +300,7 @@ describe("编辑 agent（FormPage）", () => {
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
     await renderEditAgent({ section: "skills" });
-    const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
+    const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillRegister });
     expect(sw).toHaveProperty("checked", true);
     const user = userEvent.setup();
     await user.click(sw);
@@ -278,12 +312,217 @@ describe("编辑 agent（FormPage）", () => {
     expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
   });
 
-  it("不是负责人：自己的技能没有删除按钮", async () => {
+  it("not the owner: the own skills are listed read-only, with no upload, share or delete", async () => {
     stubApi(routes({ ownerAccountId: "someone-else" }));
     await renderEditAgent({ section: "skills" });
     const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
     await within(list).findByText("notes-style");
     expect(within(list).queryByRole("button")).toBeNull();
+  });
+
+  it("the owner uploads a skill package: uploads route, direct upload, register route, lists read again", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    FakeXhr.instances = [];
+    let own = [ownSkill];
+    const calls = stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: own }),
+      [`POST ${ORG}/agents/ag1/skills/uploads`]: () =>
+        json(201, {
+          id: "up1",
+          upload: { method: "POST", url: "http://s3.test/b", headers: {}, fields: { key: "k" } },
+          expiresAt: T,
+        }),
+      [`POST ${ORG}/agents/ag1/skills`]: () => {
+        own = [...own, { ...ownSkill, id: "k2", name: "fresh-skill", currentVersion: 1 }];
+        return json(200, {
+          skill: { kind: "version", skillId: "k2", name: "fresh-skill", version: 1, created: true },
+        });
+      },
+    });
+    await renderEditAgent({ section: "skills" });
+    const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
+    const user = userEvent.setup();
+    await user.click(within(list).getByRole("button", { name: en.agents.form.uploadSkill }));
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File([new Uint8Array(4)], "fresh-skill.zip"));
+    expect(
+      await screen.findByText(
+        en.agents.form.uploadSkillDialog.created.replace("{name}", "fresh-skill"),
+      ),
+    ).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.url === `${ORG}/agents/ag1/skills/uploads`))).toEqual({
+      name: "fresh-skill.zip",
+      size: 4,
+    });
+    expect(FakeXhr.instances[0]?.url).toBe("http://s3.test/b");
+    expect(
+      bodyOf(calls.find((c) => c.method === "POST" && c.url === `${ORG}/agents/ag1/skills`)),
+    ).toEqual({
+      uploadId: "up1",
+    });
+    expect(await within(list).findByText("fresh-skill")).toBeTruthy();
+  });
+
+  /** Opens the upload dialog as the owner and returns its parts. */
+  async function openUpload(applyAccept = true) {
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    FakeXhr.instances = [];
+    await renderEditAgent({ section: "skills" });
+    const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
+    const user = userEvent.setup({ applyAccept });
+    await user.click(within(list).getByRole("button", { name: en.agents.form.uploadSkill }));
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    return { user, dialog, input };
+  }
+  const UPLOADS = `POST ${ORG}/agents/ag1/skills/uploads`;
+  const upload = {
+    id: "up1",
+    upload: { method: "POST", url: "http://s3.test/b", headers: {}, fields: { key: "k" } },
+    expiresAt: T,
+  };
+
+  it("an upload that is proposed (a shared skill version for an admin to decide) toasts that", async () => {
+    stubApi({
+      ...routes(),
+      [UPLOADS]: () => json(201, upload),
+      [`POST ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skill: { kind: "proposed", name: "shared-notes" } }),
+    });
+    const { user, input } = await openUpload();
+    await user.upload(input, new File([new Uint8Array(4)], "shared-notes.zip"));
+    expect(
+      await screen.findByText(
+        en.agents.form.uploadSkillDialog.proposed.replace("{name}", "shared-notes"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a rejected package shows the kernel's error and keeps the dialog open", async () => {
+    stubApi({
+      ...routes(),
+      [UPLOADS]: () => json(201, upload),
+      [`POST ${ORG}/agents/ag1/skills`]: () =>
+        json(409, { error: { code: "skill.agent_cap", message: "cap" } }),
+    });
+    const { user, dialog, input } = await openUpload();
+    await user.upload(input, new File([new Uint8Array(4)], "x.zip"));
+    expect(await within(dialog).findByText(en.errors.skill.agent_cap)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeTruthy();
+  });
+
+  it("a file that is not a zip is refused in the browser, before any request", async () => {
+    const calls = stubApi({ ...routes(), [UPLOADS]: () => json(201, upload) });
+    const { user, dialog, input } = await openUpload(false);
+    await user.upload(input, new File([new Uint8Array(4)], "notes.txt"));
+    expect(await within(dialog).findByText(en.agents.form.uploadSkillDialog.notZip)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  /** Opens the share dialog of notes-style (owner view) and returns the list region. */
+  async function openShare() {
+    await renderEditAgent({ section: "skills" });
+    const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
+    const user = userEvent.setup();
+    await user.click(
+      await within(list).findByRole("button", {
+        name: en.agents.form.shareOwnSkillLabel.replace("{name}", "notes-style"),
+      }),
+    );
+    return { list, user, dialog: await screen.findByRole("dialog") };
+  }
+  const SHARE = `POST ${ORG}/agents/ag1/skills/k1/share`;
+
+  it("a share request: the list marks the skill waiting for an org admin (sharePending from the kernel)", async () => {
+    let pending = false;
+    const calls = stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skills: [{ ...ownSkill, sharePending: pending }] }),
+      [SHARE]: () => {
+        pending = true;
+        return json(200, { share: { kind: "requested", requestId: "r1" } });
+      },
+    });
+    const { list, user, dialog } = await openShare();
+    // nothing is sent before the confirm
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: en.agents.form.shareConfirm }));
+    expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
+    expect(within(list).queryByRole("button", { name: /Share skill/ })).toBeNull();
+  });
+
+  it("a skill that is already pending shows waiting from the first read", async () => {
+    stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skills: [{ ...ownSkill, sharePending: true }] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
+    expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
+  });
+
+  it("a skill the agent shared stays in its own skills, marked shared, in effect and pinnable, with no share or delete", async () => {
+    const f = en.agents.form;
+    const shared = { ...orgSkill("k2", "team-notes"), shared: true };
+    stubApi({
+      ...routes({
+        definition: { ...agent().definition, skills: { orgSkills: ["s1"], pinned: ["k2"] } },
+      }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills: [orgSkill("s1", "pdf-tools"), shared] }),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(200, { skills: [{ ...ownSkill, shared: false }, shared] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const own = await screen.findByRole("region", { name: f.ownSkillsLabel });
+    await within(own).findByText("team-notes");
+    expect(within(own).getByText(f.sharedWithOrg)).toBeTruthy();
+    // the owner still shares and deletes the own skill, never the shared one
+    expect(within(own).getAllByRole("button", { name: /notes-style/ })).toHaveLength(2);
+    expect(within(own).queryByRole("button", { name: /team-notes/ })).toBeNull();
+    // not offered unticked in the org picker: it is in effect through the agent
+    const orgPicker = screen.getByRole("region", { name: f.orgSkillsLabel });
+    expect(within(orgPicker).queryByRole("checkbox", { name: /team-notes/ })).toBeNull();
+    // its pin is live, never a deleted skill
+    const pinned = screen.getByRole("region", { name: f.pinnedLabel });
+    const pin = within(pinned).getByRole("checkbox", {
+      name: f.pinSkill.replace("{name}", "team-notes"),
+    });
+    expect((pin as HTMLInputElement).checked).toBe(true);
+    expect(within(pinned).queryByText(f.deletedSkill.replace("{id}", "k2"))).toBeNull();
+    expect(zh.agents.form.sharedWithOrg).toBe("已共享到组织");
+  });
+
+  it("an org admin owner: the share answer `shared` toasts at once", async () => {
+    stubApi({
+      ...routes(),
+      [SHARE]: () => json(200, { share: { kind: "shared", skillId: "k1" } }),
+    });
+    const { user, dialog } = await openShare();
+    await user.click(within(dialog).getByRole("button", { name: en.agents.form.shareConfirm }));
+    expect(
+      await screen.findByText(en.agents.form.ownSkillShared.replace("{name}", "notes-style")),
+    ).toBeTruthy();
+  });
+
+  it("a 409 skill.share_pending toasts the kernel's message and reads the list again", async () => {
+    let reads = 0;
+    stubApi({
+      ...routes(),
+      [`GET ${ORG}/agents/ag1/skills`]: () => {
+        reads += 1;
+        return json(200, { skills: [{ ...ownSkill, sharePending: reads > 1 }] });
+      },
+      [SHARE]: () =>
+        json(409, { error: { code: "skill.share_pending", message: "Share is pending" } }),
+    });
+    const { list, user, dialog } = await openShare();
+    await user.click(within(dialog).getByRole("button", { name: en.agents.form.shareConfirm }));
+    expect(await screen.findByText(en.errors.skill.share_pending)).toBeTruthy();
+    expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
   });
 
   it("an agent the kernel does not find is the not-found state in the shell", async () => {
@@ -533,8 +772,8 @@ describe("pinned skills (skills.pinned)", () => {
       expect(within(pinned).getByText(f.noPinnable)).toBeTruthy();
       expect(within(pinned).queryByRole("checkbox")).toBeNull();
       // own skills: the confirmation and its one-line help, then the empty state
-      const sw = within(own).getByRole("checkbox", { name: f.confirmSkillWrite });
-      expect(within(own).getByText(f.confirmSkillWriteHint)).toBeTruthy();
+      const sw = within(own).getByRole("checkbox", { name: f.confirmSkillRegister });
+      expect(within(own).getByText(f.confirmSkillRegisterHint)).toBeTruthy();
       expect(await within(own).findByText(f.noOwnSkills)).toBeTruthy();
       // no internal names in the section's copy
       const text = screen.getByRole("region", { name: f.orgSkillsLabel }).closest("section")

@@ -22,6 +22,7 @@ import { databaseCheck, HEALTH_CHECKS, redisCheck } from "./infra/health/health.
 import { GracefulShutdownModule } from "./infra/lifecycle/graceful-shutdown.module.js";
 import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
+import { PresenceModule } from "./infra/presence/presence.module.js";
 import { QueueModule } from "./infra/queue/queue.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
 import { KernelThrottlerModule } from "./infra/throttler/throttler.module.js";
@@ -100,6 +101,8 @@ export class KernelModule {
         QueueModule.forRoot(),
         KernelThrottlerModule,
         HealthModule,
+        // every process's presence beat (admin overview spec §5.1), whatever its roles
+        PresenceModule,
         ValidationModule,
         ErrorFilterModule,
         KernelAppOptionsModule.forRoot({ ...options, logger }),

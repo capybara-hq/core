@@ -7,6 +7,7 @@ import { ConnectCard } from "../src/components/ConnectCard";
 import { navigateBrowser } from "../src/lib/browser";
 import { parseConnectResult, useConnectResultToast } from "../src/lib/connect";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { findCard, footControls, MORE, openCardMenu } from "./support/cards";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { renderPage } from "./support/render";
@@ -168,28 +169,33 @@ describe("个人连接页：OAuth 连接器", () => {
     const { container } = await renderRouteWithCache("/account/connections", lastStubRoutes(), {
       locale,
     });
-    const section = await screen.findByRole("region", { name: "Docs" });
-    // 没有 token 输入框；页面没有多个主操作
-    expect(within(section).queryByLabelText(m.connectors.form.tokenLabel)).toBeNull();
-    expect(
-      container.querySelectorAll('[data-variant="primary"], .cb-btn-link-primary').length,
-    ).toBeLessThanOrEqual(1);
-    expect(within(section).queryByRole("button", { name: m.connections.disconnect })).toBeNull();
+    const card = await findCard(m.connections.nav.connections, "Docs");
+    // 没有 token 输入框；页面没有主操作；一张卡一个按钮
+    expect(within(card).queryByLabelText(m.connectors.form.tokenLabel)).toBeNull();
+    expect(container.querySelectorAll('[data-variant="primary"]').length).toBe(0);
+    expect(footControls(card)).toEqual([m.connections.oauthConnect]);
     const user = userEvent.setup();
-    await user.click(within(section).getByRole("button", { name: m.connections.oauthConnect }));
+    await user.click(within(card).getByRole("button", { name: m.connections.oauthConnect }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(AUTH_URL));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       returnTo: `/${locale}/account/connections`,
     });
 
-    // 已连接：重新连接 + 断开连接
+    // 已连接：权限；⋯ 重新连接 + 断开连接
     cleanup();
     status = "connected";
     await renderRouteWithCache("/account/connections", lastStubRoutes(), { locale });
-    const again = await screen.findByRole("region", { name: "Docs" });
-    expect(within(again).getByRole("button", { name: m.connections.reconnect })).toBeTruthy();
-    await user.click(within(again).getByRole("button", { name: m.connections.disconnect }));
+    const again = await findCard(m.connections.nav.connections, "Docs");
+    expect(footControls(again)).toEqual([m.connectors.cards.permissions, MORE[locale]]);
+    const items = await openCardMenu(again, MORE[locale]);
+    expect(items.map((i) => i.textContent)).toEqual([
+      m.connections.reconnect,
+      m.connections.disconnect,
+    ]);
+    await user.click(items[1] as HTMLElement);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
-    expect(await screen.findByRole("button", { name: m.connections.oauthConnect })).toBeTruthy();
+    expect(
+      await within(again).findByRole("button", { name: m.connections.oauthConnect }),
+    ).toBeTruthy();
   });
 });

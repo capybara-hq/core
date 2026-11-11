@@ -109,7 +109,9 @@ Each line is the rule you must not miss; the skill has the rest.
   building. [replay-evals](.agents/skills/replay-evals/SKILL.md)
 - **Extensions:** in-process, full trust (approval is governance, not a sandbox); lifecycle changes
   never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
-  (required ones are `builtin`, the rest optional preinstalls, off in every org until switched on);
+  (required ones are `builtin`; `builtin: true` entries are builtin but imported after the
+  extensions load and may fail without stopping the start; the rest optional preinstalls, off in
+  every org until switched on);
   hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
   extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields), and policy
   hooks fail closed. An extension call made for an org carries `config`, the

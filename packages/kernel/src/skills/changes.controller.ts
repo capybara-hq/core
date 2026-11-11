@@ -1,6 +1,5 @@
-import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
-import { AgentsService } from "../agents/agents.service.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -17,7 +16,6 @@ import {
   SkillChangesService,
   type SkillChangeView,
 } from "./changes.service.js";
-import { type SkillSummary, SkillsService } from "./skills.service.js";
 
 const DecideBody = z
   .object({
@@ -31,9 +29,11 @@ const NoticeParamsSchema = InboxNoticeParams;
 class NoticeParams extends createZodDto(NoticeParamsSchema, "InboxNoticeParams") {}
 
 /**
- * 共享 agent 的技能变更申请（`/api/v1/orgs/:orgId/skill-changes`，M5 T15，R4）。动作 `approvals.decide`
- * （访客起、仅限用户主体：agent / 服务令牌不能决定，R2）；能否决定由服务按该 agent **当前的负责人**判定，
- * 其他人 403 `skill_change.not_owner`。详情只给负责人与发起人，其他人 404。
+ * Skill change requests (`/api/v1/orgs/:orgId/skill-changes`): sharing an agent skill with the org
+ * and version proposals on a shared skill (spec §5.4, §5.5), user principals only (agents and
+ * service tokens never decide). `GET /:id` is `approvals.decide`; the service shows it to org
+ * admins and the requester only, anyone else 404. `POST /:id/decide` is `skills.manage` (org
+ * admins; the service re-checks the role live under the org row lock).
  */
 @Controller("api/v1/orgs/:orgId/skill-changes")
 export class SkillChangesController {
@@ -52,7 +52,7 @@ export class SkillChangesController {
 
   @Post(":id/decide")
   @HttpCode(200)
-  @OrgAction("approvals.decide")
+  @OrgAction("skills.manage")
   async decide(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
@@ -63,50 +63,6 @@ export class SkillChangesController {
     return {
       skillChange: await this.changes.decide(org.orgId, id, p.account.id, body, patTokenId(p)),
     };
-  }
-}
-
-/**
- * agent 自己的技能（`/api/v1/orgs/:orgId/agents/:agentId/skills`，M5 T15 / T16）：
- * - `GET /`：列表（`scope=agent`、未删除，按名字），与 `GET /agents/:agentId` 同一可见性（`agents.use`；
- *   看不到的 agent → 404 `agent.not_found`；服务令牌只看到 visibility='org' 的 agent）；
- * - `DELETE /:skillId`：软删除，只有该 agent 当前的负责人（其他人 403 `forbidden`），仅限用户主体
- *   （`agents.create` 属 HUMAN_ONLY）。同名的待处理改动一并取消。
- */
-@Controller("api/v1/orgs/:orgId/agents/:agentId/skills")
-export class AgentSkillsController {
-  constructor(
-    @Inject(SkillChangesService) private readonly changes: SkillChangesService,
-    @Inject(AgentsService) private readonly agents: AgentsService,
-    @Inject(SkillsService) private readonly skills: SkillsService,
-  ) {}
-
-  @Get()
-  @OrgAction("agents.use")
-  async list(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("agentId") agentId: string,
-  ): Promise<{ skills: SkillSummary[] }> {
-    await this.agents.get(
-      org.orgId,
-      agentId,
-      principal.kind === "user" ? principal.account.id : null,
-    );
-    return { skills: await this.skills.listForAgent(org.orgId, agentId) };
-  }
-
-  @Delete(":skillId")
-  @HttpCode(204)
-  @OrgAction("agents.create")
-  async remove(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("agentId") agentId: string,
-    @Param("skillId") skillId: string,
-  ): Promise<void> {
-    const p = requireUser(principal);
-    await this.changes.deleteAgentSkill(org.orgId, agentId, skillId, p.account.id, patTokenId(p));
   }
 }
 

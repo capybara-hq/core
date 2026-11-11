@@ -2,6 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  BackgroundFinishedList,
   type BackgroundItem,
   BackgroundTaskRow,
   BackgroundTasks,
@@ -186,6 +187,24 @@ describe("BackgroundTasks task rows", () => {
     expect(onOpen).toHaveBeenCalledWith("sa_new");
   });
 
+  it("with onOpenCompleted, N completed opens the finished list instead of the newest", async () => {
+    const onOpen = vi.fn();
+    const onOpenCompleted = vi.fn();
+    wrap(
+      <BackgroundTasks
+        items={[task({ id: "t_old", status: "completed", finishedAt: T0 + 1_000 })]}
+        now={NOW}
+        onStop={vi.fn()}
+        onOpen={onOpen}
+        onOpenCompleted={onOpenCompleted}
+      />,
+      "en",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /1 completed/ }));
+    expect(onOpenCompleted).toHaveBeenCalled();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it("completedLabel replaces the default wording", () => {
     wrap(
       <BackgroundTasks
@@ -197,6 +216,47 @@ describe("BackgroundTasks task rows", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /done 1/ })).toBeTruthy();
+  });
+});
+
+describe("BackgroundFinishedList", () => {
+  it("lists the finished tasks and sub-agents newest first, with status, time and when; a row opens", async () => {
+    const onOpen = vi.fn();
+    const { container } = wrap(
+      <BackgroundFinishedList
+        items={[
+          task({ id: "t_run" }),
+          task({ id: "t_old", description: "old", status: "completed", finishedAt: T0 + 1_000 }),
+          agent({ id: "sa_new", name: "newest", status: "completed", finishedAt: T0 + 9_000 }),
+          {
+            ...agent({ id: "sa_run" }),
+            tasks: [
+              task({ id: "t_fail", description: "mid", status: "failed", finishedAt: T0 + 3_000 }),
+            ],
+          } as BackgroundItem,
+        ]}
+        onOpen={onOpen}
+      />,
+      "en",
+    );
+    const rows = [...container.querySelectorAll('[data-part="task-row"]')];
+    expect(rows.map((r) => r.querySelector("button")?.textContent)).toEqual([
+      "newest",
+      "mid",
+      "old",
+    ]);
+    // no spinner, no stop, a status word, the elapsed time and the finish time on every row
+    expect(container.querySelector(".cb-spinner")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
+    expect(rows[1]?.textContent).toContain("Failed");
+    expect(rows.every((r) => r.querySelector('[data-part="task-time"]') !== null)).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "mid" }));
+    expect(onOpen).toHaveBeenCalledWith("t_fail");
+  });
+
+  it("an empty list says so", () => {
+    wrap(<BackgroundFinishedList items={[task()]} onOpen={vi.fn()} />, "en");
+    expect(screen.getByText("No finished background tasks")).toBeTruthy();
   });
 });
 
@@ -262,7 +322,7 @@ describe("TaskOutputPanel", () => {
     expect(onStop).toHaveBeenCalled();
   });
 
-  it('source "event" puts the unavailable note above the last lines; a finished task has no stop', () => {
+  it('source "event" puts the reason above the last lines; a finished task has no stop', () => {
     const { container } = wrap(
       <TaskOutputPanel
         description="pnpm dev"
@@ -271,14 +331,108 @@ describe("TaskOutputPanel", () => {
         elapsed="5s"
         text="tail"
         source="event"
+        unavailable={{ reason: "suspended", environment: "sandbox" }}
         onStop={vi.fn()}
       />,
       "en",
     );
     const note = container.querySelector('[data-part="task-output-note"]');
-    expect(note?.textContent).toBe("Output unavailable (sandbox suspended)");
+    expect(note?.textContent).toBe(
+      "The sandbox is suspended; the full output can't be read. Below are the last lines kept when it finished.",
+    );
     const code = container.querySelector(".cb-code") as Element;
     expect(note?.compareDocumentPosition(code)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
+  });
+
+  it("names the device, never the sandbox, for a task on a local device", () => {
+    const { container } = wrap(
+      <TaskOutputPanel
+        description="t"
+        command="c"
+        status="completed"
+        elapsed="5s"
+        text=""
+        source="none"
+        unavailable={{ reason: "device_offline", environment: "device" }}
+        onStop={vi.fn()}
+      />,
+    );
+    const note = container.querySelector('[data-part="task-output-note"]')?.textContent ?? "";
+    expect(note).toBe("设备离线，读不到完整输出。");
+    expect(note).not.toContain("沙箱");
+  });
+
+  it("a task that never started says so with the launch's reason and draws no output box", () => {
+    const { container } = wrap(
+      <TaskOutputPanel
+        description="t"
+        command="c"
+        status="failed"
+        elapsed="0.2 秒"
+        text=""
+        source="none"
+        unavailable={{
+          reason: "not_started",
+          environment: "device",
+          detail: "setsid is missing",
+        }}
+        onStop={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-part="task-output-note"]')?.textContent).toBe(
+      "任务没有启动。",
+    );
+    expect(container.querySelector('[data-part="task-output-detail"]')?.textContent).toBe(
+      "setsid is missing",
+    );
+    expect(container.querySelector(".cb-code")).toBeNull();
+    expect(container.querySelector('[data-part="task-output-empty"]')).toBeNull();
+  });
+
+  it("empty output: a muted 'No output' line instead of an empty box", () => {
+    const { container } = wrap(
+      <TaskOutputPanel
+        description="t"
+        command="c"
+        status="completed"
+        elapsed="1s"
+        text=""
+        source="sandbox"
+        onStop={vi.fn()}
+      />,
+      "en",
+    );
+    expect(container.querySelector(".cb-code")).toBeNull();
+    const empty = container.querySelector('[data-part="task-output-empty"]');
+    expect(empty?.textContent).toBe("No output");
+    expect(empty?.className).toContain("cb-muted");
+  });
+
+  it("the device and sandbox words of each reason are in both languages", () => {
+    for (const environment of ["device", "sandbox"] as const) {
+      for (const locale of ["zh", "en"] as const) {
+        const { container, unmount } = wrap(
+          <TaskOutputPanel
+            description="t"
+            command="c"
+            status="completed"
+            elapsed="1s"
+            text=""
+            source="none"
+            unavailable={{ reason: "output_missing", environment }}
+            onStop={vi.fn()}
+          />,
+          locale,
+        );
+        const note = container.querySelector('[data-part="task-output-note"]')?.textContent ?? "";
+        const word = {
+          device: { zh: "设备", en: "device" },
+          sandbox: { zh: "沙箱", en: "sandbox" },
+        };
+        expect(note).toContain(word[environment][locale]);
+        unmount();
+      }
+    }
   });
 });

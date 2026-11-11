@@ -216,6 +216,13 @@ describe("org tool switches over HTTP", () => {
       url: `/api/v1/orgs/${orgId}/extensions/not-loaded/tools`,
     });
     expect(noExt.statusCode, noExt.body).toBe(404);
+    // an extension the org sees that registers no tools (a model provider) lists none, not 404
+    const noTools = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/extensions/model-fake/tools`,
+    });
+    expect(noTools.statusCode, noTools.body).toBe(200);
+    expect(noTools.json()).toEqual({ tools: [] });
     const bad = await put(owner, "echo", { enabled: "no" });
     expect(bad.statusCode).toBe(400);
   });

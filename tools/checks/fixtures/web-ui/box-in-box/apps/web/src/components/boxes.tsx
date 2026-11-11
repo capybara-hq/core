@@ -7,9 +7,11 @@ import {
   FormSection,
   ItemList,
   ItemListItem,
+  OverviewSection,
   RadioGroup,
   RightPanel,
   Sheet,
+  StatCards,
   Subsection,
 } from "@capybara-hq/design";
 import type { ReactNode } from "react";
@@ -54,6 +56,12 @@ export function Bad() {
         <ReNotice />
       </Frame>
       <Card title="列表" actions={<Card>标题里的卡片</Card>} />
+      <OverviewSection title="待处理" state="ready">
+        <StatCards metrics={[]} />
+      </OverviewSection>
+      <Card title="外">
+        <OverviewSection title="区块" state="ready" />
+      </Card>
     </>
   );
 }
@@ -84,6 +92,10 @@ export function Good() {
         </RightPanel>
       </Sheet>
       <PurposeCard />
+      <OverviewSection title="最近的平台操作" state="ready">
+        <ItemList label="收件箱" rows={[]} />
+        <DataTable label="表" columns={[]} rows={[]} rowKey={() => ""} />
+      </OverviewSection>
     </>
   );
 }

@@ -8,6 +8,7 @@ import { useDesignT } from "../provider";
 import { LoadFailed } from "./file-preview";
 import { TypeBadge } from "./files";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
+import { useRightFull } from "./right-full";
 import { fillCopy } from "./tool-copy";
 
 // The extension slots and side areas of the conversation page (spec §6.16.16–§6.16.18): the
@@ -342,7 +343,11 @@ export type RightPanelProps = {
   onBack?(): void;
   /** Header actions before full screen and close (icon buttons, Stop). */
   actions?: ReactNode;
-  /** The full-screen button is left out without it (a loading panel has nothing to expand). */
+  /**
+   * The full-screen button is left out without it (a loading panel has nothing to expand). It
+   * maximises the panel inside the page (`ConversationPage` `rightFull`); while maximised the
+   * button reads "退出全屏" / "Exit full screen" (`minimize-2`) and restores it.
+   */
   onFullscreen?(): void;
   onClose(): void;
   state?: BlockState;
@@ -379,6 +384,7 @@ export function RightPanel({
   children,
 }: RightPanelProps): JSX.Element {
   const t = useDesignT();
+  const full = useRightFull();
   const entries: ConvMenuEntry[] = [];
   switcher?.groups.forEach((g, gi) => {
     if (gi > 0) entries.push({ kind: "separator" });
@@ -456,8 +462,8 @@ export function RightPanel({
           {actions}
           {onFullscreen ? (
             <IconButton
-              label={t("panel.fullscreen")}
-              icon={<Icon name="maximize-2" size={16} />}
+              label={t(full ? "panel.exitFullscreen" : "panel.fullscreen")}
+              icon={<Icon name={full ? "minimize-2" : "maximize-2"} size={16} />}
               onClick={onFullscreen}
             />
           ) : null}

@@ -13,6 +13,7 @@ import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../../src/conversati
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { type SkillsSnapshot, snapshotChangeText } from "../../src/runtime/context/skills.js";
+import { AgentSkillsService } from "../../src/skills/agent-skills.service.js";
 import { invocationOf, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -24,13 +25,11 @@ import {
   createOrg,
   eventsOf,
   PW,
-  postMessage,
   type Req,
   runConfig,
   session,
   startKernel,
   type TestKernel,
-  waitForTerminal,
 } from "../helpers/runs.js";
 import { makeZip } from "./zip.js";
 
@@ -281,22 +280,21 @@ describe("manifest.invocation", { timeout: 60_000 }, () => {
     );
   });
 
-  it("SkillWrite of a SKILL.md with disable-model-invocation: true creates a manual-only version", async () => {
-    const agent = await agentId({}, [{ kind: "builtin", name: "SkillWrite" }]);
+  it("registering a package whose SKILL.md has disable-model-invocation: true creates a manual-only version", async () => {
+    const agent = await agentId({});
     const conv = await createConv(owner, orgId, agent);
-    const input = {
-      name: "notes",
-      description: "Take notes.",
-      files: [
-        {
-          path: "SKILL.md",
-          content:
-            "---\ndisable-model-invocation: true\nargument-hint: '[topic]'\n---\nTake notes.",
-        },
-      ],
-    };
-    await postMessage(owner, orgId, conv, `tool:SkillWrite:${JSON.stringify(input)}`);
-    await waitForTerminal(db, conv, 1, 30_000);
+    const out = await k.app.get(AgentSkillsService).register(
+      { orgId, agentId: agent, accountId: ownerId, conversationId: conv },
+      new Uint8Array(
+        makeZip([
+          {
+            name: "SKILL.md",
+            data: md("notes", "disable-model-invocation: true\nargument-hint: '[topic]'\n"),
+          },
+        ]),
+      ),
+    );
+    expect(out).toMatchObject({ kind: "version", name: "notes", manualOnly: true });
     const row = await db
       .selectFrom("skills")
       .select("id")

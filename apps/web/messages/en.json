@@ -132,6 +132,9 @@
       "already_completed": "Setup has already been completed.",
       "token_invalid": "The setup token is missing or invalid."
     },
+    "admin": {
+      "usage_unavailable": "The usage figures took too long to compute. Try again in a moment."
+    },
     "agent": {
       "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
       "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
@@ -163,7 +166,7 @@
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
-      "output_unavailable": "The output can't be read now: the sandbox is not running. It is available again once the sandbox resumes."
+      "output_unavailable": "The output can't be read now. Open the task to see why."
     },
     "run": {
       "not_active": "There is no reply in progress.",
@@ -315,7 +318,11 @@
     "sandbox": {
       "not_found": "This conversation has no sandbox yet.",
       "unavailable": "No sandbox is available in this deployment.",
-      "busy": "The sandbox is busy; try again shortly."
+      "busy": "The sandbox is busy; try again shortly.",
+      "file_invalid_path": "The path must be absolute and inside the sandbox.",
+      "file_not_found": "No file at this path in the sandbox.",
+      "file_is_directory": "This path is a directory; pass one file.",
+      "file_too_large": "The file is too large."
     },
     "device": {
       "not_found": "The device does not exist or has been deleted.",
@@ -341,11 +348,14 @@
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
       "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu.",
-      "name_exists": "A skill with this name already exists in the organization. Choose another name."
+      "name_exists": "A skill with this name already exists in the organization. Choose another name.",
+      "agent_cap": "This agent already has the maximum number of skills. Delete one, or upload a new version of an existing skill (same name).",
+      "subagent_register": "A sub-agent cannot register skills; only the agent you talk with can.",
+      "share_pending": "Sharing this skill with the organization is already waiting for an admin's decision.",
+      "proposal_pending_elsewhere": "A proposed version of this skill from another conversation is waiting for an admin's decision. Wait for it, or continue in that conversation."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",
-      "not_owner": "Only the agent's owner can approve or reject its skill changes.",
       "already_decided": "This skill change has already been handled."
     },
     "inbox": {
@@ -522,7 +532,6 @@
       "builtin": {
         "AskUserQuestion": "Ask the user",
         "ReadToolOutput": "Read archived tool output",
-        "SkillWrite": "Write skills",
         "Bash": "Run commands",
         "Read": "Read files",
         "Write": "Write files",
@@ -557,13 +566,38 @@
       "skillsSectionHint": "Skills the agent can load when a task needs them.",
       "orgSkillsLabel": "Org skills",
       "goToSkills": "Go to Skills",
-      "confirmSkillWrite": "Ask me before each write",
-      "confirmSkillWriteHint": "Private agents only; on a shared agent the owner approves each change in the inbox",
+      "confirmSkillRegister": "Confirm every skill registration",
+      "confirmSkillRegisterHint": "When on, the agent asks you each time it registers a skill, and the answer is never remembered.",
       "noOrgSkills": "The organization has no skills yet",
       "deletedSkill": "Deleted skill ({id})",
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
-      "ownSkillsLabel": "Skills this agent wrote",
-      "noOwnSkills": "This agent hasn't written any skills yet",
+      "ownSkillsLabel": "Agent's own skills",
+      "noOwnSkills": "This agent has no skills of its own yet",
+      "uploadSkill": "Upload skill package",
+      "uploadSkillDialog": {
+        "title": "Upload skill package",
+        "hint": "Upload a .zip file with SKILL.md at the root, or inside a single top-level folder. A package with the name of an existing skill adds a new version. Limits: the zip file up to 50 MB, each file up to 10 MB, and 50 MB in total after unzipping.",
+        "choose": "Choose a .zip file",
+        "chooseHint": "or drop the .zip file here.",
+        "drop": "Drop the .zip file to upload",
+        "uploading": "Uploading… {percent}%",
+        "created": "Skill \"{name}\" added.",
+        "versionCreated": "Skill \"{name}\" updated to version {version}.",
+        "proposed": "A new version of \"{name}\" was proposed. An org admin decides it in the inbox.",
+        "notZip": "Choose a .zip file.",
+        "tooLarge": "The zip file is larger than 50 MB.",
+        "cancel": "Cancel"
+      },
+      "shareOwnSkill": "Share with org",
+      "shareOwnSkillLabel": "Share skill {name} with the org",
+      "shareOwnSkillTitle": "Share skill {name} with the org?",
+      "shareOwnSkillHint": "Every agent in the org will be able to use this skill, and you stay its maintainer. If you are not an org admin, an admin decides the request first.",
+      "shareConfirm": "Share",
+      "shareCancel": "Cancel",
+      "shareWaiting": "Waiting for an org admin",
+      "sharedWithOrg": "Shared with the org",
+      "shareRequested": "Sharing \"{name}\" was requested. An org admin decides it in the inbox.",
+      "ownSkillShared": "Skill \"{name}\" is now shared with the org.",
       "deleteOwnSkill": "Delete",
       "deleteOwnSkillLabel": "Delete skill {name}",
       "deleteOwnSkillTitle": "Delete skill {name}?",
@@ -1280,22 +1314,7 @@
       "previewFailed": "What deleting it does could not be read; retry before confirming.",
       "previewRetry": "Retry"
     },
-    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
-    "create": {
-      "open": "New",
-      "title": "New skill",
-      "name": "Name",
-      "nameHelp": "Lowercase letters, digits and single hyphens, up to 64 characters. Skill names are unique in an organization.",
-      "nameInvalid": "Use only lowercase letters, digits and single hyphens.",
-      "description": "Description",
-      "descriptionHelp": "Say what the skill does and when to use it: agents decide when to load it from this.",
-      "body": "Content",
-      "bodyHelp": "The body of SKILL.md. SKILL.md is generated from the name and the description: a leading --- frontmatter in the body is dropped, except the invocation keys (such as disable-model-invocation and context).",
-      "shareable": "Shareable",
-      "submit": "Create",
-      "cancel": "Cancel",
-      "created": "Skill \"{name}\" created."
-    }
+    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off."
   },
   "chat": {
     "waitingFor": {
@@ -1557,9 +1576,10 @@
       "loginStep": "2. Sign in and confirm on the page it opens",
       "copy": "Copy",
       "copied": "Copied.",
-      "waiting": "Waiting for the machine to connect… Once confirmed it shows up in your devices.",
+      "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
       "connected": "{name} connected.",
-      "close": "Close"
+      "close": "Close",
+      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
     },
     "detail": {
       "tabsLabel": "Device sections",
@@ -1730,9 +1750,9 @@
   "connect": {
     "title": "Connection required",
     "status": "Not connected",
-    "description": "{connector} needs your credential before the agent can use it.",
+    "description": "Connect your {connector} account before the agent can use it.",
     "action": "Connect",
-    "ended": "{connector} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "ended": "{connector} was not connected when this ran. Connect it, then ask the agent again.",
     "result": {
       "connected": "Connector connected. Ask the agent to try again.",
       "unknown": "Could not complete the connection. Please try again.",
@@ -1766,8 +1786,11 @@
     },
     "truncated": "Only the newest items are shown. Handle some to see the rest.",
     "skillChange": {
-      "label": "Skill change",
-      "title": "Skill change · {name}",
+      "kind": {
+        "share": "Share skill",
+        "version": "New skill version"
+      },
+      "title": "{kind} · {name}",
       "newSkill": "New skill",
       "update": "Version {from} → {to}",
       "agent": "Agent",
@@ -1781,8 +1804,8 @@
       "unchanged": "unchanged",
       "contentUnavailable": "The content of this file cannot be shown.",
       "diffLabel": "Changes in {path}",
-      "ownerHint": "After you approve, the change applies to every conversation with this agent. Until then, only the conversation that requested it can use it.",
-      "selfHint": "You requested this change in your own conversation. As the owner of a shared agent, you confirm the tool call there and then approve the change here. That is by design.",
+      "shareHint": "After you approve, this skill becomes an org skill that every agent in the org can use. The requester stays its maintainer.",
+      "versionHint": "After you approve, the new version applies to every agent that uses this skill, at its next run. Until then, nothing changes.",
       "approve": "Approve",
       "reject": "Reject",
       "approved": "Skill change approved",
@@ -1948,14 +1971,19 @@
       "credential": "Status"
     },
     "tools": {
-      "columns": {
-        "name": "Tool",
-        "policy": "Default policy",
-        "status": "Enabled"
+      "title": "Tools",
+      "hintManage": "Each tool shows its default policy and its switch on the right. Hover a tool's name to see its full name and description.",
+      "hintRead": "Each tool shows its default policy on the right. Hover a tool's name to see its full name and description.",
+      "search": "Search tools",
+      "noMatch": "No matching tools",
+      "groups": {
+        "read": "Read-only",
+        "readHint": "The tool declares that it only reads data.",
+        "write": "May write",
+        "writeHint": "May change data, or does not declare whether it is read-only."
       },
-      "policyLabel": "Default policy of {tool}",
-      "enabledLabel": "Enable {tool}",
-      "enabled": "Enabled",
+      "openReview": "Review",
+      "openReviewLabel": "Review {tool}",
       "disabled": "Disabled",
       "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",
@@ -1981,7 +2009,9 @@
       "rotate": "Replace client",
       "rotated": "OAuth client replaced.",
       "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
-      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect."
+      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect.",
+      "callbackTitle": "Redirect URL",
+      "callbackHint": "Register this exact URL at the authorization server (e.g. the Slack app's OAuth settings)."
     },
     "settings": {
       "title": "General",
@@ -2124,15 +2154,11 @@
       "disabled": "Disabled"
     },
     "cards": {
-      "connect": "Connect",
-      "connected": "Connected",
-      "notConnected": "Not connected",
       "permissions": "Permissions"
     },
     "permissions": {
       "title": "Permissions for {name}",
       "hint": "Applies to your own connection, in every agent you use. An agent can override them, except the tools you set to Deny.",
-      "listLabel": "Tool permissions",
       "allow": "Allow",
       "ask": "Ask",
       "deny": "Deny",
@@ -2146,7 +2172,13 @@
       "save": "Save",
       "cancel": "Cancel",
       "saved": "Permissions saved.",
-      "loading": "Reading the tools…"
+      "loading": "Reading the tools…",
+      "groups": {
+        "read": "Read-only",
+        "readHint": "These tools declare that they only read data; allowed by default.",
+        "write": "May write",
+        "writeHint": "These may change data, or do not declare that they only read; ask by default."
+      }
     },
     "templates": {
       "needsConfig": "Needs setup",
@@ -2176,7 +2208,6 @@
     "connected": "Connected",
     "missing": "Not connected",
     "save": "Save",
-    "clear": "Clear",
     "saved": "Credential for \"{connector}\" saved.",
     "cleared": "Credential for \"{connector}\" cleared.",
     "grants": {
@@ -2196,7 +2227,16 @@
     "reconnect": "Reconnect",
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
-    "oauthHint": "Sign in to this connector with your own account; other members use theirs."
+    "disconnected": "Disconnected \"{connector}\".",
+    "clearCredential": "Clear credential",
+    "editConfig": "Edit configuration",
+    "enterCredential": "Enter credential",
+    "updateCredential": "Update credential",
+    "cancel": "Cancel",
+    "enterCredentialTitle": "Enter your credential for {name}",
+    "updateCredentialTitle": "Update your credential for {name}",
+    "updateHint": "Saving replaces the credential you saved; other members use theirs.",
+    "manageCredentials": "Manage credentials"
   },
   "sandboxSettings": {
     "title": "Sandbox",
@@ -2598,6 +2638,8 @@
     "search": "Search extensions",
     "emptyTab": "No extensions of this kind",
     "noResults": "No extension name contains \"{query}\".",
+    "arrangementPointer": "Replacing, showing, hiding and ordering extension UI is set on the organization's Appearance settings.",
+    "arrangementLink": "UI placement is in Org settings → Appearance",
     "stateTitle": "State",
     "capabilitiesTitle": "Capabilities",
     "permissionsNone": "None",
@@ -3347,6 +3389,7 @@
       "group": "Admin",
       "overview": "Overview",
       "inbox": "Inbox",
+      "audit": "Audit log",
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
@@ -3361,13 +3404,152 @@
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
-      "noConversations": "Super admins cannot read conversations.",
       "metrics": {
-        "extensions": "Extensions needing action",
-        "catalogRequests": "Pending catalog requests",
+        "attention": "Needs attention",
         "orgs": "Organizations",
-        "accounts": "Accounts"
-      }
+        "accounts": "Accounts",
+        "runs7d": "Runs, last 7 days"
+      },
+      "footnote": "Super admins cannot read conversations; the usage above holds totals only.",
+      "attention": {
+        "title": "Needs attention",
+        "empty": "Nothing needs attention.",
+        "failed": "Could not load what needs attention.",
+        "unavailable": "Unavailable right now",
+        "more": "+{n} more",
+        "viewInbox": "Open inbox",
+        "groups": {
+          "inbox": "Inbox",
+          "extensions": "Extensions",
+          "updates": "Plugin updates",
+          "providers": "Model providers"
+        },
+        "inboxTypes": {
+          "catalog_request": "Catalog requests",
+          "permission_confirmation": "Permission confirmations",
+          "scope_sync_failed": "Scope sync failures",
+          "platform_migration": "Migration needs a look",
+          "ownership_transferred": "Ownership transfers",
+          "org_upload_pending": "Org uploads to confirm"
+        },
+        "reasons": {
+          "missingConfig": "Deployment config missing",
+          "invalidConfig": "Config invalid",
+          "load_failed": "Failed to load",
+          "approval": "Permissions to approve",
+          "dependency": "Dependency missing",
+          "conflict": "Conflict",
+          "converging": "Converging",
+          "legacy_format": "Needs repackaging"
+        },
+        "problems": {
+          "list_failed": "Model list failed",
+          "no_chat_model": "No usable chat model"
+        },
+        "retry": "Retry"
+      },
+      "health": {
+        "title": "Health",
+        "failed": "Could not load health.",
+        "unavailable": "Unavailable right now",
+        "stale": "The last refresh failed; showing the data from <time></time>.",
+        "retry": "Retry",
+        "groups": {
+          "kernel": "Kernel",
+          "queues": "Queues",
+          "connections": "Connections"
+        },
+        "kernel": {
+          "version": "Version",
+          "kernelVersion": "Kernel",
+          "replicas": "Replicas",
+          "mixedVersions": "Replicas report different versions (rolling upgrade?)",
+          "replicaList": "Replicas ({n})"
+        },
+        "roles": {
+          "api": "api",
+          "worker": "worker",
+          "gateway": "gateway"
+        },
+        "noReplicas": {
+          "api": "No api replica online: the API cannot be reached",
+          "worker": "No worker replica online: runs will not start",
+          "gateway": "No gateway replica online: channel long connections will not be held"
+        },
+        "replicaColumns": {
+          "id": "Replica",
+          "roles": "Roles",
+          "version": "Version",
+          "startedAt": "Started"
+        },
+        "queueColumns": {
+          "name": "Queue",
+          "waiting": "Waiting",
+          "active": "Active",
+          "delayed": "Delayed",
+          "failedLastDay": "Failed in 24 h"
+        },
+        "queues": {
+          "runs": "Runs",
+          "subagentRuns": "Sub-agent runs",
+          "channels": "Channels",
+          "maintenance": "Maintenance",
+          "pluginScope": "Plugin scope sync",
+          "titles": "Titles",
+          "usageReport": "Usage reports",
+          "evals": "Evals"
+        },
+        "connections": {
+          "channels": "Channels",
+          "devices": "Devices",
+          "sandboxes": "Sandboxes",
+          "byProvider": "By provider"
+        },
+        "channelParts": {
+          "online": "Online",
+          "offline": "Offline",
+          "webhook": "Webhook",
+          "disabled": "Disabled",
+          "error": "Error"
+        },
+        "deviceParts": {
+          "online": "Online",
+          "local": "Local"
+        },
+        "sandboxParts": {
+          "running": "Running",
+          "suspended": "Suspended"
+        }
+      },
+      "audit": {
+        "title": "Recent platform activity",
+        "viewAll": "View all",
+        "failed": "Could not load platform activity."
+      },
+      "usage": {
+        "title": "Usage · last 7 days",
+        "estimated": "Costs are estimates",
+        "failed": "Could not load usage.",
+        "chart": "Usage over the last 7 days",
+        "runs": "Runs",
+        "tokens": "Tokens",
+        "estimate": "est. {cost}",
+        "unpriced": "Not priced",
+        "cost": "Est. cost",
+        "empty": "No runs in the last 7 days.",
+        "total": "7-day total: Runs {runs} · Tokens {tokens} · Est. cost {cost}",
+        "totalPartial": "{total} <link></link>",
+        "costPartial": "(some models have no price and are not counted)",
+        "ranking": {
+          "title": "Top organizations",
+          "org": "Organization",
+          "runs": "Runs",
+          "tokens": "Tokens",
+          "cost": "Est. cost",
+          "others": "{n, plural, one {# other organization} other {# other organizations}}"
+        }
+      },
+      "partial": "The number needing attention leaves out sources that could not be read."
     },
     "inbox": {
       "title": "Inbox",
@@ -3379,6 +3561,8 @@
       "pendingCount": "{n} pending",
       "inspectorTitle": "Details",
       "truncated": "Only the newest items are shown. Handle some to see the rest.",
+      "filtered": "Showing only: {type}",
+      "clearFilter": "Show all",
       "columns": {
         "item": "Item",
         "time": "Time"
@@ -3451,6 +3635,67 @@
         "dismiss": "Got it",
         "view": "View",
         "dismissed": "Dismissed."
+      }
+    },
+    "audit": {
+      "title": "Audit log",
+      "description": "Platform-level actions, newest first. Actions inside an org are not listed here.",
+      "listLabel": "Platform actions",
+      "empty": "No platform actions yet.",
+      "loadMore": "Load more",
+      "columns": {
+        "time": "Time",
+        "actor": "Actor",
+        "action": "Action",
+        "target": "Target"
+      },
+      "system": "System",
+      "deletedAccount": "Deleted account",
+      "viaAgent": "Through an agent",
+      "viaToken": "Personal token",
+      "actions": {
+        "accountCreated": "Created an account",
+        "accountUpdated": "Updated an account",
+        "identityLinked": "Linked an external identity",
+        "identityVerified": "Verified an external identity",
+        "identityUnlinked": "Unlinked an external identity",
+        "deploymentSettingsUpdated": "Changed the deployment settings",
+        "bootstrapCompleted": "Set up the bootstrap plugins",
+        "deploymentSetupCompleted": "Completed the deployment setup",
+        "marketplaceAdded": "Added a marketplace",
+        "marketplaceUpdated": "Updated a marketplace",
+        "marketplaceRemoved": "Removed a marketplace",
+        "marketplaceRefreshed": "Refreshed a marketplace",
+        "catalogImported": "Imported a plugin",
+        "catalogPluginStaged": "Staged a plugin package for review",
+        "catalogRemoved": "Removed a plugin",
+        "catalogScopeChanged": "Changed a plugin's scope",
+        "catalogShownChanged": "Changed whether a plugin is shown to orgs",
+        "catalogUploadConfirmed": "Confirmed an org's plugin upload",
+        "catalogUploadRejected": "Rejected an org's plugin upload",
+        "catalogUploadWithdrawn": "Withdrew an org's plugin upload",
+        "catalogOwnershipTransferred": "Moved a shared item to the platform",
+        "pluginPlatformUpdated": "Updated a platform plugin",
+        "pluginPlatformUpdateFailed": "A platform plugin update failed",
+        "componentScopeChanged": "Changed a component's scope",
+        "componentShownChanged": "Changed whether a component is shown to orgs",
+        "componentVersionUploaded": "Uploaded a new component version",
+        "componentRemoved": "Removed a component",
+        "extensionInstalled": "Installed an extension",
+        "extensionUninstalled": "Uninstalled an extension",
+        "extensionEnabled": "Turned on an extension",
+        "extensionDisabled": "Turned off an extension",
+        "extensionInstallSourceChanged": "Changed an extension's install source",
+        "extensionPackageUploaded": "Uploaded an extension package",
+        "extensionPermissionsApproved": "Confirmed an extension's permissions",
+        "extensionPermissionsRestored": "Restored an extension's permissions",
+        "extensionPermissionDenied": "An extension call was denied a permission",
+        "extensionDeploymentConfigUpdated": "Changed an extension's deployment config",
+        "extensionConfigCleared": "Cleared an extension's deployment config",
+        "modelPriceUpdated": "Changed a model price",
+        "modelPriceDeleted": "Deleted a model price",
+        "modelPurposeMapped": "Changed a purpose's default model",
+        "modelDisabledSet": "Changed the models switched off on the platform"
       }
     },
     "accounts": {
@@ -4645,7 +4890,8 @@
       "kind": {
         "skill": "Skill",
         "connector_template": "Connector template",
-        "agent_template": "Agent template"
+        "agent_template": "Agent template",
+        "theme": "Theme"
       },
       "change": {
         "added": "Added",
@@ -4728,8 +4974,7 @@
       "move": "Order",
       "slot": "Place",
       "use": "Uses",
-      "source": "From",
-      "reset": "Follow"
+      "source": "From"
     },
     "slots": {
       "conversationPanel": "Conversation panels",
@@ -4791,6 +5036,7 @@
     "noticeNoCode": "Background task “{description}” {status}",
     "open": "Open",
     "panelTitle": "Background task",
+    "finishedTitle": "Finished background tasks",
     "notFound": "This background task cannot be found.",
     "status": {
       "completed": "completed",

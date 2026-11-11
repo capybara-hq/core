@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { useAccountNav } from "../../../../components/settings-nav";
+import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import {
@@ -83,7 +83,7 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
     onSuccess: (res) => qc.setQueryData(preferencesQuery(accountId).queryKey, res),
   });
   const header = {
-    path: [...scope, { label: "account", href: "/account/connections" }, { label: "preferences" }],
+    path: [...scope, { label: "account", href: ACCOUNT_HOME }, { label: "preferences" }],
     title: t("title"),
   };
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;

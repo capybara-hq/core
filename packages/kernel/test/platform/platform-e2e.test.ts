@@ -125,12 +125,13 @@ const call = (operation: string, params: Record<string, unknown> = {}) =>
   `tool:Platform:${JSON.stringify({ action: "call", operation, params })}`;
 const platform = (input: Record<string, unknown>) => `tool:Platform:${JSON.stringify(input)}`;
 
-const skillsOf = async (req: Req): Promise<string[]> => {
-  const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
+/** The org settings the e2e writes go through (`org-settings.update`, an org-confirmed write). */
+const settingsOf = async (req: Req): Promise<Record<string, unknown>> => {
+  const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/settings` });
   expect(res.statusCode, res.body).toBe(200);
-  const body = res.json() as { skills: { name: string }[] };
-  return body.skills.map((s) => s.name);
+  return (res.json() as { settings: Record<string, unknown> }).settings;
 };
+const UPDATE = "org-settings.update";
 
 /** A conversation as `who`; each `turn` posts a message and waits for the next terminal event. */
 async function conversation(who: Req = owner) {
@@ -201,20 +202,16 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
   it("(b) an admin's write asks first: kernel summary, once only; approving runs it", async () => {
     capture.reset();
     const conv = await conversation(owner);
-    const params = {
-      name: "weekly-report",
-      description: "Use for weekly reports.",
-      body: "# Steps",
-    };
-    const asked = await conv.ask(call("skills.create", params));
-    expect(asked.payload.toolKey).toBe("Platform:skills.create");
+    const params = { timeZone: "Asia/Tokyo" };
+    const asked = await conv.ask(call(UPDATE, params));
+    expect(asked.payload.toolKey).toBe(`Platform:${UPDATE}`);
     const approval = await approvalOf(owner, asked.payload.approvalId);
     expect(approval.scopes).toEqual(["once"]);
     expect(approval.summary).toEqual({
-      zh: "新建组织技能「weekly-report」",
-      en: 'Create org skill "weekly-report"',
+      zh: '修改组织设置：timeZone → "Asia/Tokyo"',
+      en: 'Update the org settings: timeZone → "Asia/Tokyo"',
     });
-    expect(await skillsOf(owner)).not.toContain("weekly-report");
+    expect(await settingsOf(owner)).not.toHaveProperty("timeZone", "Asia/Tokyo");
     // "always" is not on offer for an org operation
     const refused = await decide(owner, asked.payload.approvalId, {
       decision: "approve",
@@ -229,15 +226,15 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
     expect(ok.statusCode, ok.body).toBe(200);
     const evs = await conv.finish();
     expect(lastResult(evs)).toMatchObject({ toolKey: "Platform", isError: false });
-    expect(await skillsOf(owner)).toContain("weekly-report");
+    expect(await settingsOf(owner)).toHaveProperty("timeZone", "Asia/Tokyo");
     // the audit trail says the agent did it
     const audit = await sql<{ detail: Record<string, unknown> }>`
       SELECT detail FROM capybara.audit_events
-      WHERE org_id = ${orgId} AND detail->>'operation' = 'skills.create'`.execute(db);
+      WHERE org_id = ${orgId} AND detail->>'operation' = ${UPDATE}`.execute(db);
     expect(audit.rows[0]?.detail).toMatchObject({
       via: "agent",
       agentConversationId: conv.id,
-      operation: "skills.create",
+      operation: UPDATE,
     });
 
     // (f) the log replays with zero drift
@@ -264,9 +261,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
 
   it("(c) a denied write: the model gets the denial and nothing is created", async () => {
     const conv = await conversation(owner);
-    const asked = await conv.ask(
-      call("skills.create", { name: "denied-skill", description: "d", body: "b" }),
-    );
+    const asked = await conv.ask(call(UPDATE, { locale: "zh" }));
     const res = await decide(owner, asked.payload.approvalId, {
       decision: "deny",
       reason: "not now",
@@ -275,7 +270,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
     const evs = await conv.finish();
     expect(lastResult(evs).isError).toBe(true);
     expect(lastResult(evs).content).toMatch(/denied|not now/i);
-    expect(await skillsOf(owner)).not.toContain("denied-skill");
+    expect(await settingsOf(owner)).toHaveProperty("locale", "en");
   });
 
   it("(d) no person present (the org's anonymous guest account): the write is unavailable, no approval", async () => {
@@ -290,22 +285,18 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
     await sql`INSERT INTO capybara.org_anonymous_accounts (org_id, account_id)
       VALUES (${orgId}, ${guest.id})`.execute(db);
     const conv = await conversation(await session(k, "anon"));
-    const evs = await conv.turn(
-      call("skills.create", { name: "anon-skill", description: "d", body: "b" }),
-    );
+    const evs = await conv.turn(call(UPDATE, { locale: "zh" }));
     expect(ofType(evs, "approval_requested")).toEqual([]);
     expect(lastResult(evs).isError).toBe(true);
     expect(lastResult(evs).content).toMatch(/no person is present/);
-    expect(await skillsOf(owner)).not.toContain("anon-skill");
+    expect(await settingsOf(owner)).toHaveProperty("locale", "en");
   });
 
   it("(e) read-only refuses writes and still reads; off makes the tool unavailable", async () => {
     try {
       await setSetting("read-only");
       let conv = await conversation(owner);
-      let evs = await conv.turn(
-        call("skills.create", { name: "ro-skill", description: "d", body: "b" }),
-      );
+      let evs = await conv.turn(call(UPDATE, { locale: "zh" }));
       expect(ofType(evs, "approval_requested")).toEqual([]);
       expect(lastResult(evs).isError).toBe(true);
       expect(lastResult(evs).content).toMatch(/read-only/i);
@@ -318,7 +309,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
       expect(ofType(evs, "approval_requested")).toEqual([]);
       expect(lastResult(evs).isError).toBe(true);
       expect(lastResult(evs).content).toMatch(/off|unavailable/i);
-      expect(await skillsOf(owner)).not.toContain("ro-skill");
+      expect(await settingsOf(owner)).toHaveProperty("locale", "en");
     } finally {
       await setSetting("on");
     }
@@ -326,17 +317,15 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
 
   it("a member's write of an org operation is refused with the reason, no approval", async () => {
     const conv = await conversation(member);
-    const evs = await conv.turn(
-      call("skills.create", { name: "member-skill", description: "d", body: "b" }),
-    );
+    const evs = await conv.turn(call(UPDATE, { locale: "zh" }));
     expect(ofType(evs, "approval_requested")).toEqual([]);
     expect(lastResult(evs).isError).toBe(true);
-    expect(await skillsOf(owner)).not.toContain("member-skill");
+    expect(await settingsOf(owner)).toHaveProperty("locale", "en");
   });
 
   it("params that do not match the schema are refused naming describe, no approval", async () => {
     const conv = await conversation(owner);
-    const evs = await conv.turn(call("skills.create", { name: "x" }));
+    const evs = await conv.turn(call(UPDATE, { locale: "klingon" }));
     expect(ofType(evs, "approval_requested")).toEqual([]);
     expect(lastResult(evs).isError).toBe(true);
     expect(lastResult(evs).content).toMatch(/describe/);
@@ -401,18 +390,18 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
 
   it("(g) two calls with different params: each needs its own approval, none borrows another's", async () => {
     const conv = await conversation(owner);
-    const a = { name: "skill-a", description: "d", body: "b" };
-    const b = { name: "skill-b", description: "d", body: "b" };
+    const a = { locale: "zh" };
+    const b = { sandboxToolPolicy: "ask" };
     const msg = `tools:${JSON.stringify(
       [a, b].map((params) => ({
         name: "Platform",
-        input: { action: "call", operation: "skills.create", params },
+        input: { action: "call", operation: UPDATE, params },
       })),
     )}`;
     const first = await conv.ask(msg);
     const inputOf = async (id: string) =>
-      (await approvalOf(owner, id)).input as { params: { name: string } };
-    const firstName = (await inputOf(first.payload.approvalId)).params.name;
+      (await approvalOf(owner, id)).input as { params: Record<string, string> };
+    const firstKey = Object.keys((await inputOf(first.payload.approvalId)).params)[0] as string;
     expect(
       await decide(owner, first.payload.approvalId, { decision: "approve", scope: "once" }),
     ).toMatchObject({ statusCode: 200 });
@@ -423,14 +412,14 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
       "second approval_requested",
     );
     expect(second.payload.approvalId).not.toBe(first.payload.approvalId);
-    const otherName = firstName === "skill-a" ? "skill-b" : "skill-a";
-    expect((await inputOf(second.payload.approvalId)).params.name).toBe(otherName);
-    const mid = await skillsOf(owner);
-    expect(mid).toContain(firstName);
-    expect(mid).not.toContain(otherName);
+    const otherKey = firstKey === "locale" ? "sandboxToolPolicy" : "locale";
+    expect(Object.keys((await inputOf(second.payload.approvalId)).params)).toEqual([otherKey]);
+    const mid = await settingsOf(owner);
+    expect(mid[firstKey]).toBe(firstKey === "locale" ? "zh" : "ask");
+    expect(mid[otherKey]).toBe(otherKey === "locale" ? "en" : "allow");
     await decide(owner, second.payload.approvalId, { decision: "deny" });
     await conv.finish();
-    expect(await skillsOf(owner)).not.toContain(otherName);
+    expect((await settingsOf(owner))[otherKey]).toBe(otherKey === "locale" ? "en" : "allow");
     await waitForEvent(db, conv.id, (e) => e.type === "run_finished");
   });
 });

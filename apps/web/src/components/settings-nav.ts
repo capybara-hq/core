@@ -47,6 +47,9 @@ export function useOrgSettingsNav(): NavGroup[] {
   return groups.filter((g) => g.items.length > 0);
 }
 
+/** Where `account` in a personal settings page's path leads: the first page of its nav. */
+export const ACCOUNT_HOME = "/account/preferences";
+
 /** The personal settings' navigation (`/account/*`): one group. */
 export function useAccountNav(): NavGroup[] {
   const t = useTranslations("connections.nav");
@@ -54,7 +57,7 @@ export function useAccountNav(): NavGroup[] {
     {
       group: t("groupPersonal"),
       items: [
-        { id: "preferences", label: t("preferences"), href: "/account/preferences" },
+        { id: "preferences", label: t("preferences"), href: ACCOUNT_HOME },
         { id: "connections", label: t("connections"), href: "/account/connections" },
         { id: "grants", label: t("grants"), href: "/account/grants" },
         { id: "identities", label: t("identities"), href: "/account/identities" },

@@ -14,6 +14,7 @@ import {
 } from "../connectors";
 import {
   type BackgroundTaskOutput,
+  type BackgroundTaskUnavailable,
   type Conversation,
   type ConversationEvent,
   fromStart,
@@ -179,22 +180,45 @@ export const backgroundTasksQuery = (orgId: string, id: string) =>
 export const TASK_OUTPUT_POLL_MS = 2000;
 
 /**
- * A task's output tail; `null` when nothing is readable now (409
- * `background_task.output_unavailable`: the sandbox is suspended or gone). Polled every
+ * A task's output tail; `{ unreadable }` when nothing is readable now (409
+ * `background_task.output_unavailable`, with its reason when the kernel sent one). Polled every
  * {@link TASK_OUTPUT_POLL_MS} while the task runs ({@link taskOutputPollMs}); `changed: background`
  * reads it once more when the task finishes.
  */
 export const taskOutputQuery = (orgId: string, id: string, taskId: string) =>
-  defineQuery<BackgroundTaskOutput | null>({
+  defineQuery<BackgroundTaskOutput | { unreadable: BackgroundTaskUnavailable | null }>({
     key: keys.org(orgId).conversation(id).backgroundOutput(taskId),
     fn: () =>
       readBackgroundTaskOutput(orgId, id, taskId).catch((e: unknown) => {
         if (e instanceof ApiClientError && e.code === "background_task.output_unavailable")
-          return null;
+          return { unreadable: unavailableOf(e.rawDetails[0]) };
         throw e;
       }),
     freshness: "live",
   });
+
+const REASONS = new Set<string>([
+  "starting",
+  "not_started",
+  "device_offline",
+  "suspended",
+  "rebuilt",
+  "output_missing",
+  "no_access",
+  "unavailable",
+  "read_failed",
+]);
+
+/** The 409's `details[0]`, when it is a reason the page knows. */
+function unavailableOf(d: unknown): BackgroundTaskUnavailable | null {
+  if (typeof d !== "object" || d === null) return null;
+  const { reason, environment } = d as Record<string, unknown>;
+  if (typeof reason !== "string" || !REASONS.has(reason)) return null;
+  return {
+    reason: reason as BackgroundTaskUnavailable["reason"],
+    environment: environment === "local" ? "local" : "cloud",
+  };
+}
 
 /** The output query's `refetchInterval`: every 2 s while the task runs, never once it ended. */
 export const taskOutputPollMs = (status: string | undefined): number | false =>

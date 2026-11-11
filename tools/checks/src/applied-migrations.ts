@@ -46,9 +46,56 @@ export function withoutRemovedPlugins(nameStatus: string): string {
     .join("\n");
 }
 
+/** A migration moved to another number with its content unchanged, and why. */
+export interface Renumbered {
+  from: string;
+  to: string;
+  reason: string;
+}
+
+/**
+ * Renumbers that may rename a migration of the base. Only for a collision that already reached
+ * `main` (two PRs taking the same numbers while neither had the other in its base): the file merged
+ * last and not released moves above the other, content unchanged (git reports `R100`), so databases
+ * that ran the other file are not refused as out of order. An entry is only read by the diff of the
+ * PR that makes the rename; a later PR may remove it.
+ */
+export const RENUMBERED_MIGRATIONS: readonly Renumbered[] = [
+  {
+    from: "packages/kernel/src/migrations/0109_agent_skill_sharing.sql",
+    to: "packages/kernel/src/migrations/0111_agent_skill_sharing.sql",
+    reason: "#169 and #171 both took 0109; #169's was merged last and not released",
+  },
+  {
+    from: "packages/kernel/src/migrations/0110_skill_share_requests.sql",
+    to: "packages/kernel/src/migrations/0112_skill_share_requests.sql",
+    reason: "#169 and #171 both took 0110; #169's was merged last and not released",
+  },
+];
+
+/** Drops the `R100` lines of `nameStatus` that match an entry of `renumbered` exactly. */
+export function withoutListedRenumbers(
+  nameStatus: string,
+  renumbered: readonly Renumbered[],
+): string {
+  return nameStatus
+    .split("\n")
+    .filter((line) => {
+      const [status = "", from = "", to = ""] = line.split("\t");
+      return !(status === "R100" && renumbered.some((r) => r.from === from && r.to === to));
+    })
+    .join("\n");
+}
+
 /** plugin-tools' `checkAppliedMigrations` on core's migrations ({@link isMigrationFile}). */
-export const checkAppliedMigrations = (nameStatus: string): Finding[] =>
-  checkApplied(withoutRemovedPlugins(nameStatus), isMigrationFile);
+export const checkAppliedMigrations = (
+  nameStatus: string,
+  renumbered: readonly Renumbered[] = RENUMBERED_MIGRATIONS,
+): Finding[] =>
+  checkApplied(
+    withoutListedRenumbers(withoutRemovedPlugins(nameStatus), renumbered),
+    isMigrationFile,
+  );
 
 /** The applied-migrations check on `<base>...HEAD` in `cwd` (the repository root). */
 export function diffAppliedMigrations(cwd: string, base: string): Finding[] {

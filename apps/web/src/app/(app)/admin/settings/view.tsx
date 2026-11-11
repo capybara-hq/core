@@ -20,7 +20,10 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
-import { UiArrangementSection } from "../../../../components/UiArrangementSection";
+import {
+  UiPlacementSection,
+  UiReplacementsSection,
+} from "../../../../components/UiArrangementSection";
 import {
   CLIENT_EXTENSIONS_DEFAULT,
   type ClientExtensionsSetting,
@@ -310,7 +313,8 @@ function AdminSettings({
         />
       </FormSection>
       <ClientCodeSection value={client} onChange={setClientDraft} />
-      <UiArrangementSection scope={{ kind: "platform" }} canEdit />
+      <UiReplacementsSection scope={{ kind: "platform" }} canEdit />
+      <UiPlacementSection scope={{ kind: "platform" }} canEdit />
     </FormPage>
   );
 }

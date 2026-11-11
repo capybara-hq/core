@@ -84,16 +84,7 @@ export class SkillsController {
   ): Promise<UploadedSkill> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    if (body.uploadId !== undefined) {
-      return this.skills.upload(org.orgId, p.account.id, body.uploadId, tokenId, body.shareable);
-    }
-    return this.skills.createFromText(org.orgId, p.account.id, {
-      name: body.name as string,
-      description: body.description as string,
-      body: body.body as string,
-      ...(body.shareable !== undefined && { shareable: body.shareable }),
-      ...(tokenId !== undefined && { actorTokenId: tokenId }),
-    });
+    return this.skills.upload(org.orgId, p.account.id, body.uploadId, tokenId, body.shareable);
   }
 
   @Get()

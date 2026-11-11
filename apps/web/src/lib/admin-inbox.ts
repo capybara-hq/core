@@ -58,10 +58,27 @@ export interface PlatformNotice {
   };
 }
 
+/** The inbox's item types, in the order the overview lists them. */
+export const PLATFORM_INBOX_TYPES = [
+  "catalog_request",
+  "permission_confirmation",
+  "scope_sync_failed",
+  "platform_migration",
+  "ownership_transferred",
+  "org_upload_pending",
+] as const satisfies readonly PlatformInboxItem["type"][];
+
+export type PlatformInboxType = PlatformInboxItem["type"];
+
+export const isPlatformInboxType = (v: string | null | undefined): v is PlatformInboxType =>
+  (PLATFORM_INBOX_TYPES as readonly string[]).includes(v ?? "");
+
 export interface PlatformInboxView {
   items: PlatformInboxItem[];
   truncated: boolean;
   total: number;
+  /** How many items wait per type (all of them, not only the listed page; zeros included). */
+  byType: Record<PlatformInboxType, number>;
 }
 
 export const getPlatformInbox = () => apiFetch<PlatformInboxView>("/api/v1/admin/inbox");
@@ -100,5 +117,24 @@ export function platformInboxHref(item: PlatformInboxItem): string {
             : "/admin/agents/templates";
       return `${base}/${encodeURIComponent(ref.id)}`;
     }
+  }
+}
+
+/**
+ * Where the overview's row for one inbox type links: the 待确认 tab for requests, permission
+ * confirmations and org uploads, the plugin list for a migration run, and the inbox filtered to the
+ * type for failed scope syncs and transfers (they are spread over several pages).
+ */
+export function platformInboxTypeHref(type: PlatformInboxType): string {
+  switch (type) {
+    case "catalog_request":
+    case "permission_confirmation":
+    case "org_upload_pending":
+      return "/admin/plugins/pending";
+    case "platform_migration":
+      return "/admin/plugins";
+    case "scope_sync_failed":
+    case "ownership_transferred":
+      return `/admin/inbox?type=${type}`;
   }
 }

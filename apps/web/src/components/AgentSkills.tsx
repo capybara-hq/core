@@ -5,7 +5,9 @@ import {
   Button,
   Checkbox,
   DangerConfirm,
+  Dialog,
   EmptyState,
+  FilePicker,
   ItemList,
   ItemListItem,
   Stack,
@@ -14,18 +16,24 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
+import { ApiClientError, issueLines } from "../lib/api";
 import { type OrgComponent, unavailableComponent } from "../lib/components";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import {
   deleteAgentSkill,
   PINNED_SKILLS_LIMITS,
+  precheckSkillZip,
   type SkillSummary,
+  shareAgentSkill,
   skillAliases,
+  uploadAgentSkillZip,
 } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
+import { FormError } from "./form-error";
 
 /**
  * 组织技能多选：每个技能一个复选框（名称 · 描述），平台技能带「平台」标记。已选但不在库里的 id（技能已被删除）显示为
@@ -42,10 +50,13 @@ export function OrgSkillsPicker({
   value,
   onChange,
   skillsHref,
+  alsoKnown = [],
 }: {
   skills: SkillSummary[] | undefined;
   /** The platform components offered to the org: an id of one that is off reads as unavailable. */
   offered?: OrgComponent[] | null;
+  /** Ids listed elsewhere on the page (skills the agent shared): never shown as deleted here. */
+  alsoKnown?: readonly string[];
   value: string[];
   onChange(next: string[]): void;
   /** The skills page, for the empty state's action; undefined when the viewer cannot see it. */
@@ -56,7 +67,7 @@ export function OrgSkillsPicker({
     const aliases = skillAliases(s);
     onChange(on ? [...value, s.id] : value.filter((x) => !aliases.includes(x)));
   };
-  const known = new Set((skills ?? []).flatMap(skillAliases));
+  const known = new Set([...(skills ?? []).flatMap(skillAliases), ...alsoKnown]);
   const missing = skills === undefined ? [] : value.filter((id) => !known.has(id));
   // a platform skill off in the org (spec §5 rule 8): unavailable, back when it is on again
   const unavailable = missing.flatMap((id) => {
@@ -140,12 +151,13 @@ function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork" | "o
 }
 
 /**
- * A private agent's `SkillWrite` confirmation (`skills.writePolicy`, D10): ticked = `ask`, every
- * skill write waits for the owner's confirmation; unticked (the default) = it takes effect
- * directly. A shared agent's skill changes always go through approval, so the form shows it only
- * on private agents, inside the agent-written skills region.
+ * A private agent's registration confirmation (`skills.writePolicy`, governs
+ * `agents.register-skill`): ticked = `ask`, every registration waits for the owner's confirmation
+ * and the answer is never remembered; unticked (the default) = it takes effect directly. A shared
+ * agent's registrations always ask, so the form shows it only on private agents, inside the
+ * agent's own skills region.
  */
-export function SkillWriteSwitch({
+export function SkillRegistrationSwitch({
   value,
   onChange,
 }: {
@@ -155,9 +167,9 @@ export function SkillWriteSwitch({
   const t = useTranslations("agents.form");
   return (
     <Stack gap={4}>
-      <Checkbox label={t("confirmSkillWrite")} checked={value} onChange={onChange} />
+      <Checkbox label={t("confirmSkillRegister")} checked={value} onChange={onChange} />
       <Text variant="small" tone="faint">
-        {t("confirmSkillWriteHint")}
+        {t("confirmSkillRegisterHint")}
       </Text>
     </Stack>
   );
@@ -317,38 +329,64 @@ export function PinnedSkillsPicker({
 }
 
 /**
- * The skills the agent wrote itself (`scope=agent`, read-only): name · version and description;
- * the owner may delete one (typing its name to confirm), then `onDeleted` lets the caller read
- * again. A region of the skills card; `children` (the write confirmation) stand under its heading,
- * above the list or its panel empty state.
+ * The agent's own skills (`scope=agent`) and the org skills it shared (marked "shared with the
+ * org", no actions): name · version and description. Everyone who can open
+ * the agent reads the list; only the owner (`canManage`) sees the actions: upload a skill package
+ * (zip), share one with the org (a confirm dialog; for a non-admin it files a request, shown as
+ * "waiting for an org admin" from then on) and delete (typing its name to confirm). `onDeleted`
+ * lets the caller drop what referenced it. A region of the skills card; `children` (the
+ * registration confirmation) stand under its heading, above the list.
  */
 export function OwnSkills({
   orgId,
   agentId,
   skills,
-  canDelete,
+  canManage,
   onDeleted,
   children,
 }: {
   orgId: string;
   agentId: string;
   skills: SkillSummary[] | undefined;
-  canDelete: boolean;
+  canManage: boolean;
   onDeleted(skillId: string): void;
   children?: ReactNode;
 }) {
   const t = useTranslations("agents.form");
   const toast = useToast();
+  const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const [target, setTarget] = useState<SkillSummary>();
+  const [shareTarget, setShareTarget] = useState<SkillSummary>();
+  const [shareError, setShareError] = useState<string>();
+  const [uploading, setUploading] = useState(false);
   // A delete invalidates the agent's own skills: the list is read again.
   const remove = useAppMutation({
     fn: (skillId: string) => deleteAgentSkill(orgId, agentId, skillId),
     invalidates: () => [keys.org(orgId).agentSkills(agentId)],
   });
+  // A shared skill joins the org's list and stays in the agent's, marked shared
+  const share = useAppMutation({
+    fn: (skillId: string) => shareAgentSkill(orgId, agentId, skillId),
+    invalidates: () => [
+      keys.org(orgId).agentSkills(agentId),
+      keys.org(orgId).skills(),
+      keys.org(orgId).componentsAll(),
+    ],
+  });
 
   return (
-    <Subsection variant="divided" title={t("ownSkillsLabel")}>
+    <Subsection
+      variant="divided"
+      title={t("ownSkillsLabel")}
+      actions={
+        canManage ? (
+          <Button density="dense" onClick={() => setUploading(true)}>
+            {t("uploadSkill")}
+          </Button>
+        ) : undefined
+      }
+    >
       <Stack gap={8}>
         {children}
         {skills !== undefined && (
@@ -359,16 +397,36 @@ export function OwnSkills({
                 title={s.name}
                 code={versionLabel(s.currentVersion)}
                 meta={s.description}
+                marks={s.shared === true ? <Badge>{t("sharedWithOrg")}</Badge> : undefined}
                 actions={
-                  canDelete ? (
-                    <Button
-                      variant="danger"
-                      density="dense"
-                      aria-label={t("deleteOwnSkillLabel", { name: s.name })}
-                      onClick={() => setTarget(s)}
-                    >
-                      {t("deleteOwnSkill")}
-                    </Button>
+                  // a shared skill is the org's now: no share or delete from the agent
+                  canManage && s.shared !== true ? (
+                    <Stack direction="row" gap={8} align="center">
+                      {s.sharePending === true ? (
+                        <Text variant="small" tone="muted">
+                          {t("shareWaiting")}
+                        </Text>
+                      ) : (
+                        <Button
+                          density="dense"
+                          aria-label={t("shareOwnSkillLabel", { name: s.name })}
+                          onClick={() => {
+                            setShareError(undefined);
+                            setShareTarget(s);
+                          }}
+                        >
+                          {t("shareOwnSkill")}
+                        </Button>
+                      )}
+                      <Button
+                        variant="danger"
+                        density="dense"
+                        aria-label={t("deleteOwnSkillLabel", { name: s.name })}
+                        onClick={() => setTarget(s)}
+                      >
+                        {t("deleteOwnSkill")}
+                      </Button>
+                    </Stack>
                   ) : undefined
                 }
               />
@@ -376,6 +434,58 @@ export function OwnSkills({
           </ItemList>
         )}
       </Stack>
+      {uploading && (
+        <UploadSkillDialog orgId={orgId} agentId={agentId} onClose={() => setUploading(false)} />
+      )}
+      <Dialog
+        open={shareTarget !== undefined}
+        onOpenChange={(open) => {
+          if (!open && !share.isPending) setShareTarget(undefined);
+        }}
+        title={t("shareOwnSkillTitle", { name: shareTarget?.name ?? "" })}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              disabled={share.isPending}
+              onClick={() => setShareTarget(undefined)}
+            >
+              {t("shareCancel")}
+            </Button>
+            <Button
+              variant="primary"
+              loading={share.isPending}
+              onClick={async () => {
+                if (!shareTarget) return;
+                setShareError(undefined);
+                try {
+                  const r = await share.mutateAsync(shareTarget.id);
+                  if (r.kind === "shared")
+                    toast.success(t("ownSkillShared", { name: shareTarget.name }));
+                  else {
+                    toast.success(t("shareRequested", { name: shareTarget.name }));
+                  }
+                  setShareTarget(undefined);
+                } catch (e) {
+                  if (e instanceof ApiClientError && e.code === "skill.share_pending") {
+                    // Already waiting (another tab, or a stale list): read the list again
+                    await qc.invalidateQueries({ queryKey: keys.org(orgId).agentSkills(agentId) });
+                    setShareTarget(undefined);
+                    toast.error(errorMessage(e));
+                  } else setShareError(errorMessage(e));
+                }
+              }}
+            >
+              {t("shareConfirm")}
+            </Button>
+          </>
+        }
+      >
+        <Stack gap={8}>
+          <Text variant="prose">{t("shareOwnSkillHint")}</Text>
+          {shareError !== undefined && <FormError message={shareError} />}
+        </Stack>
+      </Dialog>
       <DangerConfirm
         open={target !== undefined}
         onOpenChange={(open) => {
@@ -398,5 +508,95 @@ export function OwnSkills({
         }}
       />
     </Subsection>
+  );
+}
+
+/**
+ * Picks one skill package (.zip) for the agent: prechecked in the browser, uploaded with its
+ * progress and registered by the kernel. A new version of a shared skill the owner maintains may
+ * be proposed to the org admins instead of applied (a different toast).
+ */
+function UploadSkillDialog({
+  orgId,
+  agentId,
+  onClose,
+}: {
+  orgId: string;
+  agentId: string;
+  onClose(): void;
+}) {
+  const t = useTranslations("agents.form.uploadSkillDialog");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [progress, setProgress] = useState<number>();
+  const [error, setError] = useState<{ message: string; extra: string[] }>();
+  // A registration adds the agent's skill, or a version of a shared skill (the org's lists too)
+  const send = useAppMutation({
+    fn: (file: File) =>
+      uploadAgentSkillZip(orgId, agentId, file, { onProgress: (f) => setProgress(f) }),
+    invalidates: () => [
+      keys.org(orgId).agentSkills(agentId),
+      keys.org(orgId).skills(),
+      keys.org(orgId).componentsAll(),
+    ],
+  });
+
+  async function pick(files: File[]) {
+    const file = files[0];
+    if (!file || send.isPending) return;
+    const bad = precheckSkillZip(file);
+    if (bad !== null) {
+      setError({ message: t(bad), extra: [] });
+      return;
+    }
+    setError(undefined);
+    setProgress(0);
+    try {
+      const r = await send.mutateAsync(file);
+      toast.success(
+        r.kind === "proposed"
+          ? t("proposed", { name: r.name })
+          : r.created
+            ? t("created", { name: r.name })
+            : t("versionCreated", { name: r.name, version: r.version }),
+      );
+      onClose();
+    } catch (e) {
+      setError({ message: errorMessage(e), extra: issueLines(e) });
+    } finally {
+      setProgress(undefined);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !send.isPending) onClose();
+      }}
+      title={t("title")}
+      footer={
+        <Button variant="ghost" disabled={send.isPending} onClick={onClose}>
+          {t("cancel")}
+        </Button>
+      }
+    >
+      <Stack gap={12}>
+        <Text variant="prose">{t("hint")}</Text>
+        <FilePicker
+          label={t("choose")}
+          hint={t("chooseHint")}
+          dropLabel={t("drop")}
+          accept=".zip,application/zip"
+          onFiles={(f) => void pick(f)}
+          disabled={send.isPending}
+        >
+          {progress !== undefined && (
+            <Text variant="small">{t("uploading", { percent: Math.round(progress * 100) })}</Text>
+          )}
+        </FilePicker>
+        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+      </Stack>
+    </Dialog>
   );
 }

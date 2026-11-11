@@ -341,7 +341,8 @@ describe("成员页（SettingsPage）", () => {
         role: "guest",
         expiresInHours: 24,
       });
-      expect(link.value).toBe(`${window.location.origin}/${locale}/invite/cap_inv_tok`);
+      // no language in the link: the invitee's own language applies
+      expect(link.value).toBe(`${window.location.origin}/invite/cap_inv_tok`);
       expect(link.readOnly).toBe(true);
       await user.click(within(dialog).getByRole("button", { name: m.inviteDialog.copy }));
       // userEvent.setup() 自带剪贴板替身

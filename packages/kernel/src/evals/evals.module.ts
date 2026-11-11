@@ -20,6 +20,9 @@ import { EvalSetsService } from "./sets.service.js";
 import { TrajectoryService } from "./trajectory.service.js";
 import { EVAL_MAX_STALLED_COUNT, EvalWorker } from "./worker.js";
 
+/** The eval queue's registration (re-exported: the admin health reads its counts). */
+const EVAL_QUEUE_MODULE = QueueModule.registerQueue(EVAL_QUEUE_NAME);
+
 /**
  * Evals: the trajectory viewer, eval sets and cases, eval runs (the producer of
  * `cap-kernel-evals`) and the run bookkeeping ({@link EvalBudgetModule}, re-exported).
@@ -32,10 +35,17 @@ import { EVAL_MAX_STALLED_COUNT, EvalWorker } from "./worker.js";
     OrgLockModule,
     ProvidersModule,
     EvalBudgetModule,
-    QueueModule.registerQueue(EVAL_QUEUE_NAME),
+    EVAL_QUEUE_MODULE,
   ],
   providers: [TrajectoryService, EvalSetsService, EvalRunsService, EvalJobs],
-  exports: [TrajectoryService, EvalSetsService, EvalRunsService, EvalJobs, EvalBudgetModule],
+  exports: [
+    TrajectoryService,
+    EvalSetsService,
+    EvalRunsService,
+    EvalJobs,
+    EvalBudgetModule,
+    EVAL_QUEUE_MODULE,
+  ],
 })
 export class EvalsModule {}
 

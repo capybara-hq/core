@@ -211,13 +211,13 @@ describe("agent page Tools section: everything on by default, groups in a Sheet"
     ).toHaveProperty("disabled", true);
     const user = userEvent.setup();
     await pickOption(
-      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.SkillWrite}` }),
+      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.Deliver}` }),
       m.policy.deny,
       user,
     );
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.toolPolicies).toEqual({ SkillWrite: "deny" });
+    expect(patchBody(calls).definition.toolPolicies).toEqual({ Deliver: "deny" });
     expect(patchBody(calls).definition.disabledTools).toEqual([ASK_OFF]);
   });
 
@@ -396,6 +396,25 @@ describe("agent page Tools section: connectors", () => {
       m.policy.deny,
     ]);
     expect(within(sheet).getByText(m.connectorPolicyHint)).toBeTruthy();
+  });
+
+  it("a connector tool's row is its title or bare name; the key and description are its hover text", async () => {
+    stubApi(
+      routes(
+        [],
+        {},
+        { ...DOCS, tools: [tool("search", "Search documents"), tool("create", null)] },
+      ),
+    );
+    await renderEditAgent({ section: "tools" });
+    const sheet = await openGroup("Docs");
+    const titled = await within(sheet).findByText("Search documents");
+    expect(titled.getAttribute("title")).toBe("mcp__docs__search\nsearch.");
+    expect(within(sheet).getByText("create").getAttribute("title")).toBe(
+      "mcp__docs__create\ncreate.",
+    );
+    expect(within(sheet).queryByText(/mcp__docs__/)).toBeNull();
+    expect(within(sheet).queryByText("search.")).toBeNull();
   });
 
   it("an org connector is on for the agent: its enabled tools all ticked; unticking one turns it off", async () => {

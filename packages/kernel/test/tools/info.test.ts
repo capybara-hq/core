@@ -161,7 +161,6 @@ describe("tool kinds", () => {
       TaskStop: "command",
       ToolSearch: "meta",
       Skill: "meta",
-      SkillWrite: "meta",
       ReadToolOutput: "meta",
       AskUserQuestion: "meta",
       SendMessage: "meta",

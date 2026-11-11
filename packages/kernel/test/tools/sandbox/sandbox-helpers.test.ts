@@ -20,7 +20,6 @@ import {
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
 import { skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
-import { skillWriteTool } from "../../../src/tools/builtins/skill-write.js";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
 import { noRowsDb, onlyBuiltins } from "../../helpers/disabled-tools.js";
 
@@ -918,7 +917,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
         (n) => d.tool(n).spec,
       ),
       skillLoadTool({} as never).spec,
-      skillWriteTool({} as never).spec,
     ];
     for (const spec of specs) {
       const json = JSON.stringify(spec);

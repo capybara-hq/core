@@ -27,6 +27,13 @@ export const OVERLAY_ROUTES = [
   "overlays/toast",
 ] as const;
 
+/**
+ * Real app pages drawn from a seeded query cache in the admin console's shell (`pages.tsx`): no
+ * kernel behind them. Screenshotted by their own visual spec (`visual/admin-overview.spec.ts`), so
+ * they are not catalog routes.
+ */
+export const PAGE_ROUTES = ["pages/admin-overview"] as const;
+
 export const CATALOG_ROUTES = [
   "components",
   "table",
@@ -125,6 +132,10 @@ export const REFERENCE_COMPONENTS = [
   "impact-preview",
   // cards on the page ground (plugin scope phase 4, ruling P4-15)
   "card-grid",
+  // one section of an overview page in its own state (admin overview design §10.2)
+  "overview-section",
+  // the usage chart: two panels on one x-axis, never a second y-scale (admin overview design §10.1)
+  "trend-chart",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // theme picker card (themes spec §10)
@@ -140,6 +151,11 @@ export const REFERENCE_ROUTES = REFERENCE_COMPONENTS.map((c) => `reference/${c}`
 export type CatalogRoute = (typeof CATALOG_ROUTES)[number];
 export type TemplateRoute = (typeof TEMPLATE_ROUTES)[number];
 export type OverlayRoute = (typeof OVERLAY_ROUTES)[number];
+export type PageRoute = (typeof PAGE_ROUTES)[number];
+
+export function isPageRoute(r: string): r is PageRoute {
+  return (PAGE_ROUTES as readonly string[]).includes(r);
+}
 
 export function isCatalogRoute(r: string): r is CatalogRoute {
   return (CATALOG_ROUTES as readonly string[]).includes(r);

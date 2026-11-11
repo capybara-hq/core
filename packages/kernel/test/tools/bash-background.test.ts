@@ -345,14 +345,14 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
       exitCode: 127,
       stdout: "",
       stderr:
-        "Background tasks need bash, setsid, nohup, timeout, pgrep, pkill, base64 in the sandbox; setsid is missing.\n",
+        "Background tasks need bash, setsid, nohup, timeout, pgrep, pkill, base64 in this environment; setsid is missing.\n",
       truncated: false,
       timedOut: false,
     };
     await expect(
       bash().run({ command: "sleep 30", description: "No setsid", run_in_background: true }, ctx()),
     ).rejects.toThrow(
-      "The background task was not started: Background tasks need bash, setsid, nohup, timeout, pgrep, pkill, base64 in the sandbox; setsid is missing. Check the sandbox, or call Bash without run_in_background.",
+      "The background task was not started: Background tasks need bash, setsid, nohup, timeout, pgrep, pkill, base64 in this environment; setsid is missing. Check the environment, or call Bash without run_in_background.",
     );
     const [row] = await store.listFor([seed.conversationId]);
     expect(row).toMatchObject({ status: "failed", sid: null, description: "No setsid" });
@@ -435,7 +435,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     await expect(
       bash().run({ command, description: "Huge", run_in_background: true }, ctx()),
     ).rejects.toThrow(
-      "The background task was not started: argument list too long. Check the sandbox, or call Bash without run_in_background. A very large command (over about 96 KB after base64) cannot be started in the background",
+      "The background task was not started: argument list too long. Check the environment, or call Bash without run_in_background. A very large command (over about 96 KB after base64) cannot be started in the background",
     );
     const [row] = await store.listFor([seed.conversationId]);
     expect(row).toMatchObject({ status: "failed", sid: null });

@@ -96,10 +96,10 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await expect(page).toHaveURL(/\/connectors\/[^/]+$/);
   await expect(
     page.getByRole("combobox", {
-      name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__pets__createPet"),
+      name: designZh("toolPolicy.policyOf").replace("{tool}", "createPet"),
     }),
   ).toHaveAttribute("value", "ask");
-  await expect(page.getByText("mcp__pets__deletePet")).toHaveCount(0);
+  await expect(page.getByText("deletePet", { exact: true })).toHaveCount(0);
 
   // 4. agent 调 POST 操作 → 审批 → 批准 → 回复含接口返回
   const input = await chatWithAgent(page, "Pets agent", "Pets");

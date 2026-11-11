@@ -132,6 +132,9 @@
       "already_completed": "系统已完成初始化。",
       "token_invalid": "初始化令牌缺失或错误。"
     },
+    "admin": {
+      "usage_unavailable": "用量统计耗时过长，请稍后重试。"
+    },
     "agent": {
       "pinned_invalid": "置顶技能无法保存：最多置顶 3 个已选中的技能，且它们的 SKILL.md 合计不超过 32 KB。",
       "subagents_invalid": "子智能体设置无法保存：请检查所列的模板、名称、工具、技能与智能体，且智能体类型最多 20 个。",
@@ -163,7 +166,7 @@
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
-      "output_unavailable": "现在读不到输出：沙箱没有在运行。沙箱恢复后可再查看。"
+      "output_unavailable": "现在读不到输出。打开任务可查看原因。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",
@@ -315,7 +318,11 @@
     "sandbox": {
       "not_found": "本会话还没有沙箱。",
       "unavailable": "当前部署没有可用的沙箱。",
-      "busy": "沙箱正忙，请稍后再试。"
+      "busy": "沙箱正忙，请稍后再试。",
+      "file_invalid_path": "路径必须是沙箱内的绝对路径。",
+      "file_not_found": "沙箱里没有这个文件。",
+      "file_is_directory": "这个路径是目录，请指定一个文件。",
+      "file_too_large": "文件过大。"
     },
     "device": {
       "not_found": "该设备不存在或已被删除。",
@@ -341,11 +348,14 @@
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
       "not_invocable": "这个智能体不能调用该技能，请从 / 菜单中选择。",
-      "name_exists": "本组织已有同名技能，请换一个名字。"
+      "name_exists": "本组织已有同名技能，请换一个名字。",
+      "agent_cap": "这个智能体的技能数已达上限。请先删除一个，或为已有技能（同名）上传新版本。",
+      "subagent_register": "子智能体不能登记技能，只有与你对话的智能体可以。",
+      "share_pending": "共享这个技能的申请已在等待管理员处理。",
+      "proposal_pending_elsewhere": "另一个对话中提出的该技能新版本正在等待管理员处理。请等待处理结果，或在那个对话中继续。"
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",
-      "not_owner": "只有该智能体的所有者可以批准或拒绝它的技能改动。",
       "already_decided": "该技能改动已被处理。"
     },
     "inbox": {
@@ -522,7 +532,6 @@
       "builtin": {
         "AskUserQuestion": "向用户提问",
         "ReadToolOutput": "读取存档的工具结果",
-        "SkillWrite": "编写技能",
         "Bash": "运行命令",
         "Read": "读取文件",
         "Write": "写入文件",
@@ -558,12 +567,37 @@
       "orgSkillsLabel": "组织技能",
       "goToSkills": "去技能页",
       "noOrgSkills": "组织还没有技能",
-      "confirmSkillWrite": "写入前需要我确认",
-      "confirmSkillWriteHint": "仅私有智能体；共享智能体的每次改动由所有者在收件箱批准",
+      "confirmSkillRegister": "每次登记技能都确认",
+      "confirmSkillRegisterHint": "开启后，智能体每次登记技能都会请你确认，且不会记住授权。",
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
-      "ownSkillsLabel": "智能体自己写的技能",
-      "noOwnSkills": "这个智能体还没有写过技能",
+      "ownSkillsLabel": "智能体自己的技能",
+      "noOwnSkills": "这个智能体还没有自己的技能",
+      "uploadSkill": "上传技能包",
+      "uploadSkillDialog": {
+        "title": "上传技能包",
+        "hint": "上传 .zip 文件，SKILL.md 在根目录，或在唯一的顶层文件夹内。与已有技能同名的包会新增一个版本。限制：zip 文件最大 50 MB，单个文件最大 10 MB，解压后合计最大 50 MB。",
+        "choose": "选择 .zip 文件",
+        "chooseHint": "或把 .zip 文件拖到这里。",
+        "drop": "松开以上传 .zip 文件",
+        "uploading": "正在上传… {percent}%",
+        "created": "已添加技能「{name}」。",
+        "versionCreated": "技能「{name}」已更新到版本 {version}。",
+        "proposed": "已提交「{name}」的新版本，等待组织管理员在收件箱里决定。",
+        "notZip": "请选择 .zip 文件。",
+        "tooLarge": "zip 文件超过 50 MB。",
+        "cancel": "取消"
+      },
+      "shareOwnSkill": "共享给组织",
+      "shareOwnSkillLabel": "把技能 {name} 共享给组织",
+      "shareOwnSkillTitle": "把技能 {name} 共享给组织？",
+      "shareOwnSkillHint": "组织里的所有智能体都能使用这个技能，你仍是它的维护人。如果你不是组织管理员，需要先由管理员决定。",
+      "shareConfirm": "共享",
+      "shareCancel": "取消",
+      "shareWaiting": "等待组织管理员处理",
+      "sharedWithOrg": "已共享到组织",
+      "shareRequested": "已申请共享「{name}」，等待组织管理员在收件箱里决定。",
+      "ownSkillShared": "技能「{name}」已共享给组织。",
       "deleteOwnSkill": "删除",
       "deleteOwnSkillLabel": "删除技能 {name}",
       "deleteOwnSkillTitle": "删除技能 {name}？",
@@ -1280,22 +1314,7 @@
       "previewFailed": "读不到删除的影响，确认前请重试。",
       "previewRetry": "重试"
     },
-    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。",
-    "create": {
-      "open": "新建",
-      "title": "新建技能",
-      "name": "名称",
-      "nameHelp": "小写字母、数字和单个连字符，最多 64 个字符。同一组织里技能名称不能重复。",
-      "nameInvalid": "名称只能包含小写字母、数字和单个连字符。",
-      "description": "描述",
-      "descriptionHelp": "写清这个技能做什么、什么时候用，智能体据此决定何时加载它。",
-      "body": "内容",
-      "bodyHelp": "SKILL.md 的正文。SKILL.md 由名称和描述生成：正文开头的 --- frontmatter 会被去掉，只保留调用相关的键（例如 disable-model-invocation、context）。",
-      "shareable": "可共享",
-      "submit": "创建",
-      "cancel": "取消",
-      "created": "已创建技能「{name}」。"
-    }
+    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。"
   },
   "chat": {
     "waitingFor": {
@@ -1545,9 +1564,10 @@
       "loginStep": "2. 登录并在打开的网页上确认",
       "copy": "复制",
       "copied": "已复制。",
-      "waiting": "正在等待机器连接…确认后它会出现在设备列表里。",
+      "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
-      "close": "关闭"
+      "close": "关闭",
+      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
     },
     "detail": {
       "tabsLabel": "设备分区",
@@ -1718,9 +1738,9 @@
   "connect": {
     "title": "需要授权连接器",
     "status": "未连接",
-    "description": "智能体使用 {connector} 前，需要先填写你的凭据。",
+    "description": "智能体使用 {connector} 前，需要先连接你的账号。",
     "action": "连接",
-    "ended": "这次运行时 {connector} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "ended": "这次运行时 {connector} 尚未连接。连接后让智能体重试。",
     "result": {
       "connected": "连接器已连接，请让智能体重试。",
       "unknown": "无法完成该连接器的授权，请重试。",
@@ -1754,8 +1774,11 @@
     },
     "truncated": "只显示最新的事项，处理掉一些后可看到其余的。",
     "skillChange": {
-      "label": "技能变更",
-      "title": "技能变更 · {name}",
+      "kind": {
+        "share": "共享技能",
+        "version": "技能新版本"
+      },
+      "title": "{kind} · {name}",
       "newSkill": "新技能",
       "update": "版本 {from} → {to}",
       "agent": "智能体",
@@ -1769,8 +1792,8 @@
       "unchanged": "未变",
       "contentUnavailable": "无法显示这个文件的内容。",
       "diffLabel": "{path} 的改动",
-      "ownerHint": "批准后，改动对这个智能体的所有会话生效；在此之前只有发起改动的会话能用。",
-      "selfHint": "这项改动是你在自己的会话里发起的。作为共享智能体的所有者，你先在会话里确认工具调用，再在这里批准改动，这是有意的设计。",
+      "shareHint": "批准后，这个技能成为组织技能，组织里的所有智能体都能使用；申请人仍是它的维护人。",
+      "versionHint": "批准后，新版本会在使用这个技能的每个智能体下次运行时生效；在此之前不会有任何变化。",
       "approve": "批准",
       "reject": "拒绝",
       "approved": "已批准技能变更",
@@ -1936,14 +1959,19 @@
       "credential": "凭据状态"
     },
     "tools": {
-      "columns": {
-        "name": "工具",
-        "policy": "默认策略",
-        "status": "启用"
+      "title": "工具",
+      "hintManage": "每个工具右侧是它的默认策略和启用开关。将指针停在工具名上可查看完整名称和说明。",
+      "hintRead": "每个工具右侧是它的默认策略。将指针停在工具名上可查看完整名称和说明。",
+      "search": "搜索工具",
+      "noMatch": "没有匹配的工具",
+      "groups": {
+        "read": "只读",
+        "readHint": "工具声明只读取数据。",
+        "write": "可能写入",
+        "writeHint": "可能修改数据，或没有声明是否只读。"
       },
-      "policyLabel": "{tool} 的默认策略",
-      "enabledLabel": "启用 {tool}",
-      "enabled": "启用",
+      "openReview": "去复核",
+      "openReviewLabel": "复核 {tool}",
       "disabled": "已停用",
       "empty": "该连接器没有工具。",
       "missing": "服务已不再提供此工具",
@@ -1969,7 +1997,9 @@
       "rotate": "替换客户端",
       "rotated": "OAuth 客户端已替换。",
       "rotateVerified": "新客户端会先换取一次令牌验证，验证失败则不做任何修改。",
-      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。"
+      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。",
+      "callbackTitle": "回调地址",
+      "callbackHint": "在授权服务器（如 Slack 应用的 OAuth 设置）里登记这个地址，必须一字不差。"
     },
     "settings": {
       "title": "常规",
@@ -2112,15 +2142,11 @@
       "disabled": "已停用"
     },
     "cards": {
-      "connect": "连接",
-      "connected": "已连接",
-      "notConnected": "未连接",
       "permissions": "权限"
     },
     "permissions": {
       "title": "{name} 的权限",
       "hint": "只对你自己的连接生效，用于你使用的所有智能体。智能体可单独覆盖，但你设为「禁止」的工具不会被覆盖。",
-      "listLabel": "工具权限",
       "allow": "允许",
       "ask": "询问",
       "deny": "禁止",
@@ -2134,7 +2160,13 @@
       "save": "保存",
       "cancel": "取消",
       "saved": "已保存权限。",
-      "loading": "正在读取工具…"
+      "loading": "正在读取工具…",
+      "groups": {
+        "read": "只读",
+        "readHint": "工具声明只读取数据，默认允许。",
+        "write": "可能写入",
+        "writeHint": "可能修改数据，或没有声明是否只读，默认询问。"
+      }
     },
     "templates": {
       "needsConfig": "需要配置",
@@ -2164,7 +2196,6 @@
     "connected": "已连接",
     "missing": "未连接",
     "save": "保存",
-    "clear": "清除",
     "saved": "「{connector}」的凭据已保存。",
     "cleared": "「{connector}」的凭据已清除。",
     "grants": {
@@ -2184,7 +2215,16 @@
     "reconnect": "重新连接",
     "oauthConnect": "连接",
     "disconnect": "断开连接",
-    "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
+    "disconnected": "已断开「{connector}」。",
+    "clearCredential": "清除凭据",
+    "editConfig": "修改配置",
+    "enterCredential": "填写凭据",
+    "updateCredential": "更新凭据",
+    "cancel": "取消",
+    "enterCredentialTitle": "填写 {name} 的凭据",
+    "updateCredentialTitle": "更新 {name} 的凭据",
+    "updateHint": "保存后替换你已保存的凭据，其他成员使用各自的凭据。",
+    "manageCredentials": "管理凭据"
   },
   "sandboxSettings": {
     "title": "沙箱",
@@ -2586,6 +2626,8 @@
     "search": "搜索扩展",
     "emptyTab": "这一类没有扩展",
     "noResults": "没有名称包含「{query}」的扩展。",
+    "arrangementPointer": "扩展界面的替换、显示、隐藏和顺序在组织设置的外观页调整。",
+    "arrangementLink": "界面位置在 组织设置 → 外观",
     "stateTitle": "状态",
     "capabilitiesTitle": "能力",
     "permissionsNone": "无",
@@ -3335,6 +3377,7 @@
       "group": "管理后台",
       "overview": "概览",
       "inbox": "收件箱",
+      "audit": "审计日志",
       "accounts": "账号",
       "orgs": "组织",
       "settings": "部署设置",
@@ -3349,13 +3392,152 @@
     },
     "overview": {
       "intro": "管理整个部署：账号、组织、扩展与部署设置。",
-      "noConversations": "超级管理员不能查看会话内容。",
       "metrics": {
-        "extensions": "需要处理的扩展",
-        "catalogRequests": "待处理的平台目录申请",
+        "attention": "待处理",
         "orgs": "组织",
-        "accounts": "账号"
-      }
+        "accounts": "账号",
+        "runs7d": "近 7 天运行"
+      },
+      "footnote": "超级管理员不能查看会话内容；以上用量只含汇总数字。",
+      "attention": {
+        "title": "待处理",
+        "empty": "没有需要处理的事项。",
+        "failed": "无法加载待处理事项。",
+        "unavailable": "暂时无法读取",
+        "more": "+{n} 项",
+        "viewInbox": "查看收件箱",
+        "groups": {
+          "inbox": "收件箱",
+          "extensions": "扩展",
+          "updates": "插件更新",
+          "providers": "模型供应商"
+        },
+        "inboxTypes": {
+          "catalog_request": "平台目录申请",
+          "permission_confirmation": "权限确认",
+          "scope_sync_failed": "范围同步失败",
+          "platform_migration": "迁移需要查看",
+          "ownership_transferred": "所有权转移",
+          "org_upload_pending": "组织上传待确认"
+        },
+        "reasons": {
+          "missingConfig": "缺少部署配置",
+          "invalidConfig": "配置无效",
+          "load_failed": "加载失败",
+          "approval": "待批准权限",
+          "dependency": "依赖缺失",
+          "conflict": "冲突",
+          "converging": "正在收敛",
+          "legacy_format": "需要重新打包"
+        },
+        "problems": {
+          "list_failed": "列模型失败",
+          "no_chat_model": "没有可用的对话模型"
+        },
+        "retry": "重试"
+      },
+      "health": {
+        "title": "运行状况",
+        "failed": "无法加载运行状况。",
+        "unavailable": "暂时无法读取",
+        "stale": "最近一次刷新失败，显示的是 <time></time> 的数据。",
+        "retry": "重试",
+        "groups": {
+          "kernel": "内核",
+          "queues": "队列",
+          "connections": "连接"
+        },
+        "kernel": {
+          "version": "版本",
+          "kernelVersion": "内核",
+          "replicas": "副本",
+          "mixedVersions": "副本版本不一致（滚动升级中？）",
+          "replicaList": "副本列表（{n}）"
+        },
+        "roles": {
+          "api": "api（接口）",
+          "worker": "worker（后台任务）",
+          "gateway": "gateway（长连接）"
+        },
+        "noReplicas": {
+          "api": "没有在线的 api：接口无法访问",
+          "worker": "没有在线的 worker：运行不会开始",
+          "gateway": "没有在线的 gateway：渠道长连接不会建立"
+        },
+        "replicaColumns": {
+          "id": "副本",
+          "roles": "角色",
+          "version": "版本",
+          "startedAt": "启动于"
+        },
+        "queueColumns": {
+          "name": "队列",
+          "waiting": "等待",
+          "active": "进行中",
+          "delayed": "延迟",
+          "failedLastDay": "24 小时内失败"
+        },
+        "queues": {
+          "runs": "运行",
+          "subagentRuns": "子智能体运行",
+          "channels": "渠道",
+          "maintenance": "维护",
+          "pluginScope": "插件范围同步",
+          "titles": "会话标题",
+          "usageReport": "用量上报",
+          "evals": "评测"
+        },
+        "connections": {
+          "channels": "渠道",
+          "devices": "设备",
+          "sandboxes": "沙箱",
+          "byProvider": "按供应商"
+        },
+        "channelParts": {
+          "online": "在线",
+          "offline": "离线",
+          "webhook": "Webhook",
+          "disabled": "已停用",
+          "error": "出错"
+        },
+        "deviceParts": {
+          "online": "在线",
+          "local": "本地"
+        },
+        "sandboxParts": {
+          "running": "运行中",
+          "suspended": "已挂起"
+        }
+      },
+      "audit": {
+        "title": "最近的平台操作",
+        "viewAll": "查看全部",
+        "failed": "无法加载平台操作。"
+      },
+      "usage": {
+        "title": "用量 · 近 7 天",
+        "estimated": "费用为估算",
+        "failed": "无法加载用量。",
+        "chart": "近 7 天用量",
+        "runs": "运行",
+        "tokens": "Token",
+        "estimate": "估算 {cost}",
+        "unpriced": "未定价",
+        "cost": "估算费用",
+        "empty": "近 7 天没有运行。",
+        "total": "7 天合计：运行 {runs} · Token {tokens} · 估算费用 {cost}",
+        "totalPartial": "{total}<link></link>",
+        "costPartial": "（部分模型未设置价格，未计入）",
+        "ranking": {
+          "title": "组织排行",
+          "org": "组织",
+          "runs": "运行",
+          "tokens": "Token",
+          "cost": "估算费用",
+          "others": "其他 {n} 个组织"
+        }
+      },
+      "partial": "待处理的数字不含暂时无法读取的来源。"
     },
     "inbox": {
       "title": "收件箱",
@@ -3367,6 +3549,8 @@
       "pendingCount": "{n} 项待处理",
       "inspectorTitle": "详情",
       "truncated": "只显示最新的事项。处理一些后可以看到其余的。",
+      "filtered": "只显示：{type}",
+      "clearFilter": "显示全部",
       "columns": {
         "item": "事项",
         "time": "时间"
@@ -3439,6 +3623,67 @@
         "dismiss": "知道了",
         "view": "查看",
         "dismissed": "已处理。"
+      }
+    },
+    "audit": {
+      "title": "审计日志",
+      "description": "平台级操作的记录，最新的在前。组织内的操作不在这里。",
+      "listLabel": "平台操作",
+      "empty": "还没有平台操作记录。",
+      "loadMore": "加载更多",
+      "columns": {
+        "time": "时间",
+        "actor": "操作者",
+        "action": "操作",
+        "target": "对象"
+      },
+      "system": "系统",
+      "deletedAccount": "已删除的账号",
+      "viaAgent": "经由智能体",
+      "viaToken": "个人令牌",
+      "actions": {
+        "accountCreated": "创建了账号",
+        "accountUpdated": "修改了账号",
+        "identityLinked": "关联了外部身份",
+        "identityVerified": "验证了外部身份",
+        "identityUnlinked": "解除了外部身份关联",
+        "deploymentSettingsUpdated": "修改了部署设置",
+        "bootstrapCompleted": "完成了预装插件的初始化",
+        "deploymentSetupCompleted": "完成了部署初始化",
+        "marketplaceAdded": "添加了市场",
+        "marketplaceUpdated": "修改了市场",
+        "marketplaceRemoved": "移除了市场",
+        "marketplaceRefreshed": "刷新了市场",
+        "catalogImported": "导入了插件",
+        "catalogPluginStaged": "上传了插件包待审阅",
+        "catalogRemoved": "移除了插件",
+        "catalogScopeChanged": "修改了插件范围",
+        "catalogShownChanged": "修改了插件对组织的显示",
+        "catalogUploadConfirmed": "确认了组织上传的插件",
+        "catalogUploadRejected": "拒绝了组织上传的插件",
+        "catalogUploadWithdrawn": "撤回了组织上传的插件",
+        "catalogOwnershipTransferred": "将共享项转为平台所有",
+        "pluginPlatformUpdated": "更新了平台插件",
+        "pluginPlatformUpdateFailed": "平台插件更新失败",
+        "componentScopeChanged": "修改了组件范围",
+        "componentShownChanged": "修改了组件对组织的显示",
+        "componentVersionUploaded": "上传了组件新版本",
+        "componentRemoved": "移除了组件",
+        "extensionInstalled": "安装了扩展",
+        "extensionUninstalled": "卸载了扩展",
+        "extensionEnabled": "启用了扩展",
+        "extensionDisabled": "停用了扩展",
+        "extensionInstallSourceChanged": "更改了扩展的安装来源",
+        "extensionPackageUploaded": "上传了扩展包",
+        "extensionPermissionsApproved": "确认了扩展权限",
+        "extensionPermissionsRestored": "恢复了扩展权限",
+        "extensionPermissionDenied": "扩展的调用因缺少权限被拒绝",
+        "extensionDeploymentConfigUpdated": "修改了扩展的部署配置",
+        "extensionConfigCleared": "清除了扩展的部署配置",
+        "modelPriceUpdated": "修改了模型价格",
+        "modelPriceDeleted": "删除了模型价格",
+        "modelPurposeMapped": "修改了用途的默认模型",
+        "modelDisabledSet": "修改了平台停用的模型"
       }
     },
     "accounts": {
@@ -4633,7 +4878,8 @@
       "kind": {
         "skill": "技能",
         "connector_template": "连接器模板",
-        "agent_template": "智能体模板"
+        "agent_template": "智能体模板",
+        "theme": "主题"
       },
       "change": {
         "added": "新增",
@@ -4701,7 +4947,7 @@
     "description": "扩展在哪些位置展示页面和区块。隐藏后不再列出，也可以调整顺序。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
     "descriptionReadonly": "扩展在哪些位置展示页面和区块。只有组织管理员可以修改。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
     "followsPlatform": "跟随平台",
-    "resetOrg": "跟随平台",
+    "resetOrg": "改为跟随平台",
     "resetPlatform": "恢复默认",
     "resetLabel": "重置{slot}",
     "hideLabel": "隐藏 {name}",
@@ -4716,8 +4962,7 @@
       "move": "顺序",
       "slot": "位置",
       "use": "使用",
-      "source": "来源",
-      "reset": "跟随"
+      "source": "来源"
     },
     "slots": {
       "conversationPanel": "对话面板",
@@ -4779,6 +5024,7 @@
     "noticeNoCode": "后台任务「{description}」{status}",
     "open": "打开",
     "panelTitle": "后台任务",
+    "finishedTitle": "已完成的后台任务",
     "notFound": "找不到这个后台任务。",
     "status": {
       "completed": "已完成",

@@ -11,7 +11,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { InitialPasswordCleanupJob } from "../../src/identity/initial-passwords.job.js";
 import {
   deleteExpiredInitialPasswords,
   InitialPasswords,
@@ -316,7 +315,9 @@ describe("accounts.create through the super admin's private agent", { timeout: 1
     }
     await sql`UPDATE capybara.account_initial_passwords SET expires_at = now() - interval '1 minute'
       WHERE run_id = 'run-old1'`.execute(db);
-    await k.app.get(InitialPasswordCleanupJob).cleanup();
+    // The job's own delete, called directly: InitialPasswordCleanupJob.cleanup() is a LockedCron
+    // that runs once per scheduled tick, so calling it in the tick's minute (:20) is skipped
+    expect(await deleteExpiredInitialPasswords(db)).toBe(1);
     const left = await db
       .selectFrom("account_initial_passwords")
       .select("run_id")

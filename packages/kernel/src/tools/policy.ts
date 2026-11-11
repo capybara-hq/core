@@ -1,11 +1,11 @@
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { grantRefusalOf } from "../schedules/grant-rules.js";
 import { findTaskGrant } from "../schedules/store.js";
 import {
+  changesAgentSkills,
   UNATTENDED_ASK_ERROR,
   UNATTENDED_FIXED_ASK_ERROR,
   UNATTENDED_QUESTION_ERROR,
@@ -18,7 +18,7 @@ import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
 
-export { R3_FIXED_ASK_TOOL_KEYS, R3_SHARED_AGENT_ONLY_TOOL_KEYS } from "./builtin-names.js";
+export { R3_FIXED_ASK_TOOL_KEYS } from "./builtin-names.js";
 export { isFixedAsk } from "./fixed-ask.js";
 
 const RANK: Record<ToolPolicy, number> = { allow: 0, ask: 1, deny: 2 };
@@ -39,7 +39,7 @@ export interface PolicyInput {
   connectorDefault: ToolPolicy;
   /** agent 负责人的收紧（`definition.toolPolicies[key]`）。 */
   agentOverride?: "ask" | "deny";
-  /** R3 清单或 `requiresUserInteraction`。 */
+  /** `requiresUserInteraction`。 */
   fixedAsk: boolean;
   /**
    * 已记住且 specHash 与当前一致的授权; `task`: a scheduled task's grant in its unattended run.
@@ -48,8 +48,8 @@ export interface PolicyInput {
 }
 
 /**
- * 策略判定（纯函数）：取组织默认、agent 收紧、R3 固定询问三者中最严者；
- * 记住的授权只能把 `ask` 放行为 `allow`，不能越过 `deny`，对 R3 / `requiresUserInteraction` 的工具无效。
+ * 策略判定（纯函数）：取组织默认、agent 收紧、固定询问三者中最严者；
+ * 记住的授权只能把 `ask` 放行为 `allow`，不能越过 `deny`，对 `requiresUserInteraction` 的工具无效。
  */
 export function decide(input: PolicyInput): ToolPolicy {
   let p = stricter(input.connectorDefault, input.agentOverride);
@@ -101,7 +101,7 @@ export type ConnectorPolicySource = "org" | "member" | "agent";
  * 4. the member's own `allow` / `ask`;
  * 5. the org's default (`connector_tools.default_policy`, the annotation default unless an org
  *    admin changed it: `readOnlyHint: true` allows, anything else asks).
- * Fixed asks (R3, `requiresUserInteraction`), role escalation and grants apply after this.
+ * Fixed asks (`requiresUserInteraction`), role escalation and grants apply after this.
  */
 export function connectorPolicy(input: {
   orgDefault: ToolPolicy;
@@ -136,7 +136,8 @@ export function connectorPolicy(input: {
  *
  * An unattended run (`ctx.unattended`, not a trial run; scheduled tasks spec §7):
  * - a tool in the org's `forbiddenTools` (by tool key or per-call key) is denied;
- * - `SkillWrite` is an ask no grant covers, even on a private agent where it would run;
+ * - a Platform call that changes the agent's skills (`agents.register-skill`, ...) is an ask no
+ *   grant covers, even on a private agent where it would run without asking;
  * - an ask is also allowed by a task grant of the current definition (`{ grant: "task" }`), never
  *   for a fixed ask, a role escalation or a connector tool whose definition changed;
  * - in `fail` mode an ask still left is refused (`{ refused, missingGrant }`, no approval), and
@@ -230,7 +231,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
           .onRef("agent_versions.agent_id", "=", "agents.id")
           .onRef("agent_versions.version", "=", "agents.current_version"),
       )
-      .select(["agent_versions.definition", "agents.visibility"])
+      .select(["agent_versions.definition"])
       .where("agents.id", "=", ctx.agentId)
       .executeTakeFirst();
     // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
@@ -283,18 +284,18 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       if (!roleAtLeast(m.role, tool.requiredRole)) escalateTo = tool.requiredRole;
     }
 
-    // 可见性实时读（R5）：共享 agent 的 SkillWrite 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
-    // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
-    const writePolicy = (currentDef as AgentDefinition | undefined)?.skills?.writePolicy;
     // `remember: false` on a call that is not a plain allow (an org / platform operation, or a read
     // an agent tightened to ask): every call asks, grants never apply. A read (`allow`) never asks.
-    // an unattended run never rewrites the agent's skills on its own (spec §7): SkillWrite asks,
-    // outside every grant
-    const unattendedSkillWrite =
-      unattended !== undefined && tool.source.kind === "builtin" && tool.key === BUILTIN.SkillWrite;
+    // an unattended run never changes the agent's skills on its own (spec §7): a Platform call
+    // that registers, deletes or shares one asks, outside every grant
+    const unattendedSkillChange =
+      unattended !== undefined &&
+      tool.source.kind === "builtin" &&
+      tool.key === BUILTIN.Platform &&
+      changesAgentSkills(policyKey);
     const fixedAsk =
-      unattendedSkillWrite ||
-      isFixedAsk(tool, current?.visibility, writePolicy) ||
+      unattendedSkillChange ||
+      isFixedAsk(tool) ||
       (call !== null && !call.remember && (call.policy !== "allow" || agentOverride !== undefined));
     const input: PolicyInput = {
       connectorDefault,
@@ -324,15 +325,13 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     if (unattended?.unattendedAsk === "fail") {
       // recorded as a missing grant only when the creator could grant it to the task (the task
       // grants' own rule) or could once promoted (`needs_role`, which the inbox says); a fixed
-      // ask, a per-call key, SkillWrite or a forbidden tool never can: refused as a fixed ask,
+      // ask, a per-call key (a skill change among them) or a forbidden tool never can: refused as a fixed ask,
       // not recorded, so the inbox never offers a grant that cannot be added
       const why = fixedAsk
         ? { code: "fixed_ask" as const }
         : grantRefusalOf(policyKey, tool, {
             // only `requiredRole` reads the role, and then it was read above
             role: memberRole ?? "guest",
-            visibility: current?.visibility ?? "org",
-            skillWritePolicy: writePolicy,
             forbiddenTools: unattended.forbiddenTools,
           });
       if (why !== null && why.code !== "needs_role") {
@@ -347,7 +346,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       requestedFor: escalateTo === null ? ctx.accountId : null,
       approverRole: escalateTo,
       // the most specific rule that asked: role escalation, the agent's tightening, the connector,
-      // a fixed ask (R3, requiresUserInteraction), the org's sandboxToolPolicy, else the tool's own
+      // a fixed ask (requiresUserInteraction), the org's sandboxToolPolicy, else the tool's own
       // default
       policy:
         escalateTo !== null

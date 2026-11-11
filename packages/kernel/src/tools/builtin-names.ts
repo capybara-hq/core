@@ -1,3 +1,4 @@
+import { parseToolKey } from "@capybara-hq/plugin-sdk";
 import type { ToolKind } from "./info.js";
 
 /**
@@ -16,7 +17,6 @@ export const BUILTIN = {
   Grep: "Grep",
   Deliver: "Deliver",
   Skill: "Skill",
-  SkillWrite: "SkillWrite",
   AskUserQuestion: "AskUserQuestion",
   ReadToolOutput: "ReadToolOutput",
   ToolSearch: "ToolSearch",
@@ -100,7 +100,6 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.ReadToolOutput,
   BUILTIN.ToolSearch,
   BUILTIN.Skill,
-  BUILTIN.SkillWrite,
   ...SANDBOX_TOOL_NAMES,
   BUILTIN.Agent,
   BUILTIN.SendMessage,
@@ -110,6 +109,18 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.CurrentTime,
   ...SCHEDULE_TOOL_NAMES,
 ];
+
+const BUILTIN_NAME_SET: ReadonlySet<string> = new Set<string>(Object.values(BUILTIN));
+
+/**
+ * Is `key` a builtin-shaped key (a bare name, no `mcp__` / `plugin__` prefix) that names no
+ * builtin the kernel has now, e.g. the removed `SkillWrite`? Saving an agent or an org template
+ * drops such a `toolPolicies` key instead of refusing the save: a stored definition may still
+ * carry it, and the web sends the whole definition back.
+ */
+export function isRemovedBuiltinKey(key: string): boolean {
+  return parseToolKey(key)?.kind === "builtin" && !BUILTIN_NAME_SET.has(key);
+}
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
 export const SKILL_LOAD = BUILTIN.Skill;
@@ -133,38 +144,28 @@ export const SUBAGENT_MESSAGE_TOOLS: ReadonlySet<string> = new Set<string>([
 ]);
 
 /**
+/**
  * Tool keys on the spec 3.6 R3 fixed list ("allowed is not confirmed"): their policy is at least
- * `ask` and remembered grants never let them through. `SkillWrite` changes shared skills;
- * `ScheduleCreate` and `ScheduleUpdate` set what a task runs unattended, so a person approves every
- * task an agent creates or widens (scheduled tasks spec §11), never covered by a task grant and
- * refused in an unattended run in `fail` mode. Connector and extension tools express the same rule
- * with `annotations.requiresUserInteraction`.
+ * `ask` and remembered grants never let them through. `ScheduleCreate` and `ScheduleUpdate` set
+ * what a task runs unattended, so a person approves every task an agent creates or widens
+ * (scheduled tasks spec §11), never covered by a task grant and refused in an unattended run in
+ * `fail` mode. Connector and extension tools express the same rule with
+ * `annotations.requiresUserInteraction`.
  */
 export const R3_FIXED_ASK_TOOL_KEYS: ReadonlySet<string> = new Set<string>([
-  BUILTIN.SkillWrite,
   BUILTIN.ScheduleCreate,
   BUILTIN.ScheduleUpdate,
 ]);
 
 /**
- * R3 keys that apply only to shared agents: a private agent's skills are not shared, so its
- * `SkillWrite` takes effect without asking (R4).
- */
-export const R3_SHARED_AGENT_ONLY_TOOL_KEYS: ReadonlySet<string> = new Set<string>([
-  BUILTIN.SkillWrite,
-]);
-
-/**
  * Tools a sub-agent never gets (sub-agents spec §5.3, §5.5): `AskUserQuestion` (the person does
- * not see the child), `Deliver` (delivering files is the parent's job), `SkillWrite` and the
- * schedule tools (a person manages tasks from the conversation they see, never from a child).
- * `Agent` is removed only from a child at `subagents.maxDepth` (agent map spec §4.1,
- * `effectiveDefinition`).
+ * not see the child), `Deliver` (delivering files is the parent's job) and the schedule tools (a
+ * person manages tasks from the conversation they see, never from a child). `Agent` is removed
+ * only from a child at `subagents.maxDepth` (agent map spec §4.1, `effectiveDefinition`).
  */
 export const CHILD_REMOVED_TOOLS = [
   BUILTIN.AskUserQuestion,
   BUILTIN.Deliver,
-  BUILTIN.SkillWrite,
   BUILTIN.ScheduleCreate,
   BUILTIN.ScheduleUpdate,
   BUILTIN.ScheduleList,
@@ -199,7 +200,6 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.TaskStop]: "command",
   [BUILTIN.ToolSearch]: "meta",
   [BUILTIN.Skill]: "meta",
-  [BUILTIN.SkillWrite]: "meta",
   [BUILTIN.ReadToolOutput]: "meta",
   [BUILTIN.AskUserQuestion]: "meta",
   [BUILTIN.SendMessage]: "meta",

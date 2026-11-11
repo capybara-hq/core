@@ -143,7 +143,8 @@ init_log_has() {
   log="$(dc logs --no-color init)"
   grep -qF -- "$1" <<<"$log"
 }
-# bootstrap_once: the bootstrap step completed exactly once, with two required bootstrap installs.
+# bootstrap_once: the bootstrap step completed exactly once, with two required bootstrap installs
+# and the builtin skills-core.
 bootstrap_once() {
   [ "$(psql_q "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] \
     || fail "expected one bootstrap run, got $(psql_q "SELECT count(*) FROM capybara.bootstrap_runs")"
@@ -151,6 +152,9 @@ bootstrap_once() {
     || fail "expected one bootstrap.completed audit"
   [ "$(psql_q "SELECT string_agg(name, ',' ORDER BY name) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "object-store-s3,openai-compatible" ] \
     || fail "the bootstrap plugins are not installed as required and enabled"
+  # The builtin skills-core: imported by init's second pass, into the object store init waits for
+  [ "$(psql_q "SELECT count(*) FROM capybara.catalog_items WHERE name = 'skills-core' AND builtin AND scope = 'all' AND deleted_at IS NULL")" = "1" ] \
+    || fail "skills-core is not a builtin catalog item"
 }
 
 echo "==> first up, no admin password file (init migrates and bootstraps)"

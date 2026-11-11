@@ -214,10 +214,13 @@ ui: [
   arrangement, `null` removes it. No migration. The org's entry for a slot replaces the platform's
   entry for that slot; a slot the org has not arranged follows the platform. The org arrangement
   takes no `platform.page` entry (400 `validation_failed`); an unknown slot id is 400.
-- **Where it is set (decided by Claude under the 2026-11-09 grant, R7)**: a section 界面位置 on
-  the workspace 扩展 page (`/extensions`, next to the file previewer section), editable by org
-  admins and read only for members; the platform default is a section 界面位置 in 平台设置
-  (`/admin/settings`).
+- **Where it is set (maintainer decision 2026-11-10, replacing R7's place on `/extensions`)**:
+  appearance is in one place, 组织设置 › 外观 (`/settings/appearance`): the org's theme, then
+  替换 (the replaceable slots, client extensions spec §6.3), then the section 界面位置 (hide and
+  order per list slot). Org admins edit it, members read it (the same gates the 扩展 page had);
+  the workspace 扩展 page keeps one line linking there. The platform default is the same two
+  sections, 替换 then 界面位置, in 平台设置 (`/admin/settings`), after the platform theme.
+  In each slot's order controls the first row's up and the last row's down are disabled.
 - **The sidebar follows `org.page` (decided by Claude under the 2026-11-09 grant, R5)**: org pages
   are already listed in the sidebar's 更多 group, so hiding or reordering `org.page` contributions
   hides or reorders them there; no separate sidebar slot.
@@ -398,7 +401,8 @@ dropped list (§3.2); `place` leaves in three steps because of the pinned `todo`
 apps/web file and `ExtensionSlot` lives in apps/web (§3.1, §7); the real properties panel order and
 no per-person collapsed state (§5); `workspace.sidebar.item` dropped, the `org.page` arrangement
 is the sidebar's (§5, §6); `agent.detail.section` as extra nav items (§6); `org.settings.section`
-on 组织设置 › 通用 and the arrangement on the workspace 扩展 page (§5, §6); org-less platform routes
+on 组织设置 › 通用 and the arrangement on the workspace 扩展 page (§5, §6; moved to 组织设置 › 外观
+on 2026-11-10); org-less platform routes
 and embed scopes (§7); `minRole` onto kernel roles (§3.1); arrangement storage in existing settings
 (§5); the catalog route, Platform operation and `ui.schemas.ts` (§7); new web tests are named
 `ui-slot-*.test.tsx` because `apps/web/test/extension-slots.test.tsx` is taken (R12).

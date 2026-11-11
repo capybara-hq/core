@@ -51,6 +51,9 @@ export function useDecideSkillChange(orgId: string) {
       decideSkillChange(orgId, v.change.id, { decision: v.decision }),
     invalidates: ({ change }) => [
       keys.org(orgId).agentSkills(change.agent.id),
+      // approving a share creates an org skill, approving a version changes one
+      keys.org(orgId).skills(),
+      keys.org(orgId).componentsAll(),
       ...inboxChangeKeys(orgId),
     ],
     // The decided change is stale, but not read again now: the inbox hides it at once.
@@ -114,8 +117,8 @@ function FileDiff({
 }
 
 /**
- * A skill change card in the inbox: agent, requester, version, description, open the conversation,
- * and each file's plain-text diff against the current version. The detail (file texts and the
+ * A skill change card in the inbox: agent, requester, version, description, open the conversation
+ * (for the requester only: it is their conversation), and each file's plain-text diff against the current version. The detail (file texts and the
  * current version) comes from the query cache (the layout prefetched the first item's on a first
  * load), else it is read when the card is shown (`GET /skill-changes/:id`); a refusal or failure
  * is the files' error.
@@ -140,13 +143,15 @@ function SkillChangeCard({
   const ti = useTranslations("inbox");
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const { me } = useSession();
   const current = detail?.current ?? null;
+  const { me } = useSession();
+  // the proposing conversation is the requester's own: anyone else would land on a 404
+  const conversationPath = change.requestedBy === me.account.id ? change.conversationPath : null;
   return (
     <div data-skill-change-id={change.id}>
       <Card
-        title={t("title", { name: change.name })}
-        actions={<StatusMark status="waiting" label={t("label")} />}
+        title={t("title", { kind: t(`kind.${change.kind}`), name: change.name })}
+        actions={<StatusMark status="waiting" label={t(`kind.${change.kind}`)} />}
       >
         <Stack gap={12}>
           <KeyValue
@@ -157,7 +162,7 @@ function SkillChangeCard({
               {
                 k: t("version"),
                 v:
-                  change.skillId === null || (detail !== undefined && current === null)
+                  change.kind === "share"
                     ? t("newSkill")
                     : t("update", {
                         from: current?.version ?? change.version - 1,
@@ -175,18 +180,15 @@ function SkillChangeCard({
             </Text>
           </Stack>
           <Text variant="small" tone="muted">
-            {t("ownerHint")}
+            {t(`${change.kind}Hint`)}
           </Text>
-          {change.requestedBy === me.account.id && (
-            <Text variant="small" tone="muted">
-              {t("selfHint")}
-            </Text>
+          {conversationPath !== null && (
+            <Stack direction="row">
+              <Button onClick={() => router.push(conversationPath)}>
+                {ti("openConversation")}
+              </Button>
+            </Stack>
           )}
-          <Stack direction="row">
-            <Button onClick={() => router.push(change.conversationPath)}>
-              {ti("openConversation")}
-            </Button>
-          </Stack>
           <Stack gap={8}>
             <Text variant="small" tone="muted">
               {t("files")}

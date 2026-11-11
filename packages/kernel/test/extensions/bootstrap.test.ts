@@ -785,6 +785,54 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
     ]);
   });
 
+  /** The object store (required) and a builtin skill plugin, as npm entries. */
+  const builtinFixture = async () =>
+    fixture(
+      [
+        { bytes: await packFake("fake-bootstrap-b") },
+        { bytes: await skillPkg("delta"), builtin: true },
+      ],
+      { source: "npm" },
+    );
+
+  it("two passes download each package once; a builtin entry only in the second pass", async () => {
+    const fx = await builtinFixture();
+    await serve(fx.packages);
+    const k = await boot(fx, { ...OBJECT_STORE_CONFIG, packages: { npmRegistry: reg?.url } });
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
+    expect(tarballs()).toEqual([
+      "/@test/plugin-fake-bootstrap-b/-/plugin-fake-bootstrap-b-0.1.0.tgz",
+      "/@test/plugin-delta/-/plugin-delta-1.0.0.tgz",
+    ]);
+  });
+
+  it("a builtin entry whose download fails in the second pass: the start continues, the run stays not done", async () => {
+    const fx = await builtinFixture();
+    // The registry has the object store only
+    await serve(fx.packages.filter((p) => p.name !== "@test/plugin-delta"));
+    const { logger, lines } = recordingLogger();
+    const k = await boot(
+      fx,
+      { ...OBJECT_STORE_CONFIG, packages: { npmRegistry: reg?.url } },
+      logger,
+    );
+    expect(k.port).toBeGreaterThan(0);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    expect((await installs()).map((r) => r.name)).toEqual(["fake-bootstrap-b"]);
+    const final = lines.find((l) => l.msg.includes("retried on the next start"));
+    expect(final?.fields?.failures).toEqual([
+      expect.objectContaining({
+        name: "delta",
+        required: false,
+        code: "bootstrap.download_failed",
+      }),
+    ]);
+  });
+
   it("a file of any name with the pinned sha512 is used; the registry is not asked", async () => {
     const fx = await npmFixture();
     for (const [i, p] of fx.packages.entries()) {
@@ -939,6 +987,214 @@ describe("a declarative entry", { timeout: 30_000 }, () => {
       results: [
         { name: "fake-bootstrap-b", action: "installed", version: "0.1.0" },
         { name: "delta", action: "imported", version: "1.0.0" },
+      ],
+    });
+  });
+});
+
+/** A declarative plugin shipping a skill (its files need the object store). */
+const skillPkg = (name: string, version = "1.0.0") =>
+  pluginTgz({
+    manifest: { name, version },
+    files: {
+      "skills/hello/SKILL.md": "---\nname: hello\ndescription: Says hello.\n---\nSay hello.\n",
+    },
+  });
+
+/** A logger that records error and warn lines and drops the rest. */
+function recordingLogger(): {
+  logger: KernelLogger;
+  lines: { level: string; msg: string; fields?: Record<string, unknown> }[];
+} {
+  const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = [];
+  const base = createLogger("error");
+  const logger = new Proxy(base, {
+    get(t, k, receiver) {
+      if (k === "warn" || k === "error") {
+        return (msg: string, fields?: Record<string, unknown>) => {
+          lines.push({ level: k, msg, ...(fields !== undefined && { fields }) });
+        };
+      }
+      const v = Reflect.get(t, k);
+      return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+    },
+  });
+  return { logger, lines };
+}
+
+const OBJECT_STORE_CONFIG = {
+  extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
+};
+
+describe("a builtin entry", { timeout: 30_000 }, () => {
+  afterAll(stopAll);
+  type Item = { id: string; name: string; builtin: boolean; scope: string; disabled: boolean };
+  const itemNamed = async (name: string) =>
+    (
+      (await admin({ method: "GET", url: "/api/v1/admin/catalog/items" })).json().items as Item[]
+    ).find((i) => i.name === name);
+
+  it("is skipped by the first pass, imported once the object store runs, builtin and locked on in orgs", async () => {
+    await reset();
+    // Listed before the object store: the first pass would fail it with storage.unavailable
+    const fx = await fixture([
+      { bytes: await skillPkg("delta"), builtin: true },
+      { bytes: await packFake("fake-bootstrap-b") },
+    ]);
+    expect(fx.manifest.plugins[0]).toMatchObject({ required: false, builtin: true });
+    const { logger, lines } = recordingLogger();
+    const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
+    // Deferred, not failed: no entry failure and no "could not be installed" line in any pass
+    expect(lines.filter((l) => l.msg.includes("could not be installed"))).toEqual([]);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "delta", action: "imported", version: "1.0.0" },
+        { name: "fake-bootstrap-b", action: "installed", version: "0.1.0" },
+      ],
+    });
+    await loginAdmin(k);
+    expect(await itemNamed("delta")).toMatchObject({
+      builtin: true,
+      scope: "all",
+      disabled: false,
+    });
+    const orgId = await createOrg(admin, "Builtin");
+    const item = (await itemNamed("delta")) as Item;
+    const off = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/catalog/${item.id}/switch`,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode, off.body).toBe(409);
+    expect(off.json().error.code).toBe("plugin.scope_locked");
+  });
+
+  it("a failing builtin entry does not stop the start; the run stays not done", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    // The pinned package holds another plugin than the entry names
+    const wrong = await skillPkg("other");
+    const delta = fx.manifest.plugins[1] as BootstrapManifest["plugins"][number];
+    await writeFile(join(fx.dir, bootstrapFileName(delta)), wrong);
+    delta.integrity = `sha512-${createHash("sha512").update(wrong).digest("base64")}`;
+    const { logger, lines } = recordingLogger();
+    const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
+    expect(k.port).toBeGreaterThan(0);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    expect((await installs()).map((r) => r.name)).toEqual(["fake-bootstrap-b"]);
+    expect(
+      lines.some((l) => l.level === "error" && l.msg.includes("retried on the next start")),
+    ).toBe(true);
+  });
+
+  it("without a configured object store: skipped by the first pass, failed by the second, the start continues", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    const { logger, lines } = recordingLogger();
+    // No extensionConfig: fake-bootstrap-b waits for its config, so no object store runs
+    const k = await boot(fx, {}, logger);
+    expect(k.port).toBeGreaterThan(0);
+    expect(k.app.get(StorageService).available).toBe(false);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    // Tried once, by the second pass
+    const failed = lines.filter((l) => l.msg.includes("a plugin could not be installed"));
+    expect(failed.map((l) => l.fields?.plugin)).toEqual(["delta"]);
+    expect(
+      lines.find((l) => l.msg.includes("retried on the next start"))?.fields?.failures,
+    ).toEqual([expect.objectContaining({ name: "delta", code: "storage.unavailable" })]);
+  });
+
+  it("an org-owned item named like the entry is never touched; the entry fails with plugin.name_taken", async () => {
+    await reset();
+    await db.insertInto("orgs").values({ id: "org-held", slug: "held", name: "Held" }).execute();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: "00000000-0000-4000-8000-0000000000bb",
+        name: "delta",
+        package_name: "@held/delta",
+        publisher: "Held",
+        description: "delta",
+        latest_version: "1.0.0",
+        created_by: null,
+        owner_org_id: "org-held",
+      })
+      .execute();
+    const before = await db
+      .selectFrom("catalog_items")
+      .select(["builtin", "scope", "disabled", "scope_version", "updated_at"])
+      .where("name", "=", "delta")
+      .executeTakeFirstOrThrow();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    const { logger, lines } = recordingLogger();
+    const k = await boot(fx, OBJECT_STORE_CONFIG, logger);
+    expect(k.port).toBeGreaterThan(0);
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["builtin", "scope", "disabled", "scope_version", "updated_at"])
+        .where("name", "=", "delta")
+        .execute(),
+    ).toEqual([before]);
+    expect(await k.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      false,
+    );
+    expect(
+      lines.find((l) => l.msg.includes("retried on the next start"))?.fields?.failures,
+    ).toEqual([expect.objectContaining({ name: "delta", code: "plugin.name_taken" })]);
+  });
+
+  it("a builtin entry a super admin removed is imported again by the next run", async () => {
+    await reset();
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await skillPkg("delta"), builtin: true },
+    ]);
+    const k = await boot(fx, OBJECT_STORE_CONFIG);
+    await loginAdmin(k);
+    const item = (await itemNamed("delta")) as Item;
+    const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalog/items/${item.id}` });
+    expect(del.statusCode, del.body).toBe(204);
+    expect(await itemNamed("delta")).toBeUndefined();
+    await stopAll();
+
+    // A core upgrade: a new manifest (one more entry) runs the step again
+    const extra = await fixture([
+      { bytes: await lifePkg({ name: "epsilon", version: "1.0.0" }), required: false },
+    ]);
+    const epsilon = extra.manifest.plugins[0] as BootstrapManifest["plugins"][number];
+    await writeFile(
+      join(fx.dir, bootstrapFileName(epsilon)),
+      await readFile(join(extra.dir, bootstrapFileName(epsilon))),
+    );
+    fx.manifest.plugins.push(epsilon);
+    const k2 = await boot(fx, OBJECT_STORE_CONFIG);
+    expect(await k2.app.get(BootstrapService).isDone(bootstrapManifestSha256(fx.manifest))).toBe(
+      true,
+    );
+    admin = await session(k2, "root");
+    expect(await itemNamed("delta")).toMatchObject({ builtin: true, scope: "all" });
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [
+        { name: "fake-bootstrap-b", action: "kept" },
+        { name: "delta", action: "imported", version: "1.0.0" },
+        { name: "epsilon", action: "installed", version: "1.0.0" },
       ],
     });
   });

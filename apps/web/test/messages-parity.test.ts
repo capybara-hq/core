@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { CatalogItemVersion } from "../src/lib/catalog";
+import { PLATFORM_COMPONENT_KINDS } from "../src/lib/components";
 
 /** 把嵌套文案展平为叶子 key 的点路径（有序）；非对象值都算叶子。 */
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -103,4 +104,26 @@ describe("plugin version sources (kernel CatalogVersionSource)", () => {
       .versionSource;
     expect(SOURCES.filter((s) => typeof labels[s] !== "string")).toEqual([]);
   });
+});
+
+describe("every platform component kind has its labels", () => {
+  // A kind added to PLATFORM_COMPONENT_KINDS (e.g. theme) must be labelled wherever a kind is
+  // drawn from a template key, or the page throws MISSING_MESSAGE (acceptance 2026-11-10).
+  const paths = ["catalog.update.kind", "orgComponents.kind"];
+  for (const locale of ["zh", "en"]) {
+    it(locale, () => {
+      const messages = load(locale) as Record<string, unknown>;
+      for (const path of paths) {
+        const node = path
+          .split(".")
+          .reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], messages);
+        for (const kind of PLATFORM_COMPONENT_KINDS) {
+          expect(
+            (node as Record<string, unknown> | undefined)?.[kind],
+            `${locale} ${path}.${kind}`,
+          ).toEqual(expect.any(String));
+        }
+      }
+    });
+  }
 });

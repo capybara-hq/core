@@ -20,10 +20,10 @@ const hideSwitch = (page: Page, slot: string, title: string) =>
  */
 
 /**
- * 界面位置 on the fakes `fake-embed` (org page `panel`) and `fake-tools-ui` (agent section
- * `agent-notes`, org settings section `org-admin`, platform page `platform-home`): hiding a
- * contribution only unlists it, a direct URL still renders; the super admin's platform default
- * removes the admin nav's 扩展 entry. Every arrangement is cleared at the end (the stack is shared).
+ * 界面位置 (组织设置 › 外观) on the fakes `fake-embed` (org page `panel`) and `fake-tools-ui`
+ * (agent section `agent-notes`, org settings section `org-admin`, platform page `platform-home`):
+ * hiding a contribution only unlists it, a direct URL still renders; the super admin's platform
+ * default removes the admin nav's 扩展 entry. Every arrangement is cleared at the end (the stack is shared).
  */
 test("hiding unlists a contribution from its slot; a direct URL still works", async ({ page }) => {
   await signIn(page);
@@ -61,7 +61,7 @@ test("hiding unlists a contribution from its slot; a direct URL still works", as
       page.getByRole("menu", { name: "更多" }).getByRole("menuitem", { name: "面板", exact: true }),
     ).toBeVisible();
     await page.keyboard.press("Escape");
-    await page.goto("/extensions");
+    await page.goto("/settings/appearance");
     await hydrated(page);
     await expect(page.getByRole("heading", { name: "界面位置" })).toBeVisible();
     await hideSwitch(page, "组织页面", "面板").click();
@@ -79,7 +79,7 @@ test("hiding unlists a contribution from its slot; a direct URL still works", as
     await page.goto(`/agents/${agentId}`);
     await hydrated(page);
     await expect(page.getByRole("link", { name: "智能体备注" })).toBeVisible();
-    await page.goto("/extensions");
+    await page.goto("/settings/appearance");
     await hideSwitch(page, "智能体页面区块", "智能体备注").click();
     await expect(hideSwitch(page, "智能体页面区块", "智能体备注")).toBeChecked();
     await page.goto(`/agents/${agentId}`);
@@ -90,7 +90,7 @@ test("hiding unlists a contribution from its slot; a direct URL still works", as
     await page.goto("/settings/organization");
     await hydrated(page);
     await expect(page.getByText("组织设置扩展")).toBeVisible();
-    await page.goto("/extensions");
+    await page.goto("/settings/appearance");
     await hideSwitch(page, "组织设置区块", "组织设置扩展").click();
     await expect(hideSwitch(page, "组织设置区块", "组织设置扩展")).toBeChecked();
     await page.goto("/settings/organization");

@@ -6,6 +6,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
+import { MORE, openCardMenu } from "./support/cards";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -541,9 +542,12 @@ describe("connector template place: live rows", () => {
       locale: "en",
       me: MEMBER,
     });
+    // 如何连接 sits in the card's ⋯ beside its one primary
+    const more = await screen.findByRole("button", { name: MORE.en });
+    const items = await openCardMenu(more.closest("li") as HTMLElement);
     await userEvent
       .setup()
-      .click(await screen.findByRole("button", { name: en.setupGuide.howToConnect }));
+      .click(items.find((i) => i.textContent === en.setupGuide.howToConnect) as HTMLElement);
     const sheet = await screen.findByRole("dialog", { name: "How to connect Slack" });
     expect(await within(sheet).findByText("You have not connected yet.")).toBeTruthy();
     expect(within(sheet).queryByRole("group", { name: "OAuth client works" })).toBeNull();

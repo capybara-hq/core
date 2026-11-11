@@ -1,11 +1,8 @@
 import type { LocalizedName, Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Patch, Post, Put } from "@nestjs/common";
 import type { z } from "zod";
-import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ApiError } from "../errors.js";
-import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
-import { extensionNeedsAction } from "../extensions/permission-view.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import {
@@ -56,19 +53,6 @@ import {
 } from "./admin.schemas.js";
 import { type LimitDefaults, limitDefaults } from "./limit-defaults.js";
 
-/** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
-export interface AdminOverview {
-  /**
-   * Extensions a super admin has to act on (pending approval or configuration, failed, missing
-   * dependency, replicas disagree); see `extensionNeedsAction`.
-   */
-  extensionsNeedingAction: number;
-  /** Catalog requests waiting for a super admin (stage deployment, pending). */
-  catalogRequestsPending: number;
-  orgs: number;
-  accounts: number;
-}
-
 class AccountListQueryDto extends createZodDto(AccountListQuery, "AccountListQuery") {}
 class CreateAccountBodyDto extends createZodDto(CreateAccountBody, "CreateAccountBody") {}
 class UpdateAccountBodyDto extends createZodDto(UpdateAccountBody, "UpdateAccountBody") {}
@@ -97,32 +81,13 @@ export class AdminController {
     @Inject(SettingsService) private readonly settings: SettingsService,
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
-    @Inject(ExtensionAdmin) private readonly plugins: ExtensionAdmin,
     @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
-    @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
     @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(MembersService) private readonly members: MembersService,
   ) {}
-
-  /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
-  @Get("overview")
-  async overview(): Promise<AdminOverview> {
-    const [plugins, orgs, accounts, catalogRequestsPending] = await Promise.all([
-      this.plugins.list(),
-      this.orgs.listAll(),
-      this.accounts.count(),
-      this.catalogRequests.countPendingDeployment(),
-    ]);
-    return {
-      extensionsNeedingAction: plugins.filter((p) => extensionNeedsAction(p.status)).length,
-      catalogRequestsPending,
-      orgs: orgs.length,
-      accounts,
-    };
-  }
 
   /**
    * 全部账号，按 id 升序分页：`next` 为下一页的游标（作为 `after` 传回），没有更多时为 null。

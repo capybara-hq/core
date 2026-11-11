@@ -160,6 +160,7 @@ export type BootstrapEntry = {
     version: string;
     integrity: string;
     required: boolean;
+    builtin?: boolean;
 } | {
     name: string;
     source: "workspace";
@@ -167,6 +168,7 @@ export type BootstrapEntry = {
     version: string;
     integrity: string;
     required: boolean;
+    builtin?: boolean;
 };
 
 // @public
@@ -2539,7 +2541,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.14";
+export const SDK_VERSION = "0.1.0-rc.15";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

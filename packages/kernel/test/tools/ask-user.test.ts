@@ -344,7 +344,6 @@ describe("AskUserQuestion 端到端", () => {
       "ScheduleList",
       "ScheduleUpdate",
       "SendMessage",
-      "SkillWrite",
     ]);
     expect(
       ofType(evs, "reminder").filter((e) => e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX)),

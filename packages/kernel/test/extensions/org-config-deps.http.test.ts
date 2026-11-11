@@ -216,8 +216,10 @@ describe("GET 插件列表：权限清单与配置 schema", () => {
     expect(secrets).toMatchObject({
       category: "secrets",
       sensitive: true,
-      items: expect.arrayContaining(["appSecret"]),
-      entries: expect.arrayContaining([{ value: "appSecret", sensitive: true, reason: "secrets" }]),
+      items: expect.arrayContaining(["org:appSecret"]),
+      entries: expect.arrayContaining([
+        { value: "org:appSecret", sensitive: true, reason: "secrets" },
+      ]),
     });
     expect(org?.orgConfigSchema?.properties?.appSecret?.["x-secret"]).toBe(true);
     expect(org?.orgConfigSchema?.properties?.appId).not.toHaveProperty("x-secret");

@@ -496,7 +496,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(row()).toBeNull();
     await view.navigate("/agents/ag1?s=tools");
     expect(row()).toBeNull();
-    await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.SkillWrite }));
+    await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.Deliver }));
     expect(row()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     // saved: the section follows the saved agent, so nothing is left to save

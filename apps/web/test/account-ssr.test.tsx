@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { json, noContent, stubApi } from "./support/api";
+import { footControls, openCardMenu } from "./support/cards";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -74,6 +75,22 @@ const IDENTITY = {
   createdAt: T,
 };
 
+/** The personal connection card named `name` on /account/connections, or null. */
+const card = (name: string): HTMLElement | null => {
+  const list = screen.queryByRole("list", { name: en.connections.nav.connections });
+  if (list === null) return null;
+  const li = within(list)
+    .queryAllByRole("listitem")
+    .find((x) => within(x).queryByText(name, { exact: true }) !== null);
+  return (li as HTMLElement | undefined) ?? null;
+};
+const findCard = async (name: string) => {
+  await vi.waitFor(() => {
+    if (card(name) === null) throw new Error(`no card ${name}`);
+  });
+  return card(name) as HTMLElement;
+};
+
 const ROUTES: Routes = {
   [`GET ${O}/settings`]: () =>
     json(200, {
@@ -134,12 +151,18 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/account/connections: a first render from the hydrated cache makes no browser read (the layout's `then` read the details)", async () => {
     const browser = expectNoFirstPaintFetch();
     const { calls } = await renderRouteWithCache("/account/connections", ROUTES);
-    expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Wiki" })).toBeTruthy();
+    expect(card("Docs")).not.toBeNull();
+    expect(card("Wiki")).not.toBeNull();
     expect(screen.queryByText("Shared")).toBeNull();
     expect(calls.map((c) => c.url)).not.toContain(`${O}/connectors/c3`);
     await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("the path's `account` leads to the first personal settings page (preferences)", async () => {
+    await renderRouteWithCache("/account/connections", ROUTES);
+    const link = await screen.findByRole("link", { name: "account" });
+    expect(link.getAttribute("href")).toBe("/account/preferences");
   });
 
   it("/account/connections: a connector the kernel no longer shows is left out", async () => {
@@ -148,8 +171,8 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       ...ROUTES,
       [`GET ${O}/connectors/c2`]: () => json(404, { error: { code: "connector.not_found" } }),
     });
-    expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "Wiki" })).toBeNull();
+    expect(card("Docs")).not.toBeNull();
+    expect(card("Wiki")).toBeNull();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -177,14 +200,14 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const calls = stubApi(routes);
     await renderRouteWithCache("/account/connections", routes);
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
-    expect(screen.queryByRole("region", { name: "Docs" })).toBeNull();
+    expect(card("Docs")).toBeNull();
     await settle();
     // the hydrated error is not read again on mount
     expect(calls).toEqual([]);
     failing500 = false;
     await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
-    expect(await screen.findByRole("region", { name: "Wiki" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
+    expect(await findCard("Wiki")).toBeTruthy();
+    expect(card("Docs")).not.toBeNull();
     expect(calls.map((c) => `${c.method} ${c.url}`)).toContain(`GET ${O}/connectors/c2`);
   });
 
@@ -214,14 +237,16 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => {
       if (template("SettingsPage") === null) throw new Error("no page");
     });
-    // the list answered: its sections stand in until every detail answered
+    // the list answered: one skeleton card per personal connector until every detail answered
     await vi.waitFor(() =>
-      expect(document.querySelector("[aria-busy='true']")?.textContent).toContain("Wiki"),
+      expect(document.querySelectorAll("[aria-busy='true'] [data-part='object-card']").length).toBe(
+        2,
+      ),
     );
-    expect(screen.queryByRole("region", { name: "Docs" })).toBeNull();
+    expect(card("Docs")).toBeNull();
     await release();
-    expect(await screen.findByRole("region", { name: "Wiki" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Docs" })).toBeTruthy();
+    expect(await findCard("Wiki")).toBeTruthy();
+    expect(card("Docs")).not.toBeNull();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
@@ -335,13 +360,12 @@ describe("mutations invalidate the cache", () => {
     };
     const calls = stubApi(routes);
     await renderRouteWithCache("/account/connections", routes);
-    const docs = screen.getByRole("region", { name: "Docs" });
+    const docs = await findCard("Docs");
+    const items = await openCardMenu(docs);
     await userEvent
       .setup()
-      .click(within(docs).getByRole("button", { name: en.connections.disconnect }));
-    await vi.waitFor(() =>
-      expect(within(docs).queryByRole("button", { name: en.connections.disconnect })).toBeNull(),
-    );
+      .click(items.find((i) => i.textContent === en.connections.disconnect) as HTMLElement);
+    await vi.waitFor(() => expect(footControls(docs)).toEqual([en.connections.oauthConnect]));
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `DELETE ${O}/connectors/c1/credentials/me`,
       `GET ${O}/connectors/c1`,

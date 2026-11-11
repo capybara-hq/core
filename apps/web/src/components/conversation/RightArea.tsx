@@ -39,7 +39,7 @@ import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 import { ICON_OF } from "../extension-ui/ExtensionBlocks";
 import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { AgentMap } from "./AgentMap";
-import { BackgroundTaskPanel } from "./BackgroundSection";
+import { BackgroundListPanel, BackgroundTaskPanel } from "./BackgroundSection";
 import type { RightAreaSlot } from "./ConversationView";
 import { FilePanel } from "./FilePanel";
 import { PropertiesSections } from "./PropertiesSections";
@@ -50,7 +50,10 @@ import { SubagentPanel } from "./SubagentPanel";
  * none, so nothing carries over). Opening one thing closes the other (spec §5.1). `back` leaves a
  * sub-agent for what was open before it (e.g. the properties panel it was opened from), else closes.
  * The agent map (`#agents…`, a dialog over the page) is kept in the hash too: what was open before
- * it stays drawn under it (`beneath`), and `closeMap` returns to it, as it was.
+ * it stays drawn under it (`beneath`), and `closeMap` returns to it, as it was. A background
+ * task's output opened from the finished list (`#bg`) goes back to it the same way.
+ * `full`: the open panel is maximised inside the page (design `ConversationPage` `rightFull`); it
+ * is page state, not in the hash, and ends when the panel closes or the properties open.
  */
 export function useRightArea(): {
   target: RightTarget | null;
@@ -59,8 +62,14 @@ export function useRightArea(): {
   closeMap(): void;
   /** While the agent map is open: what stays open in the right area under it. */
   beneath: RightTarget | null;
+  full: boolean;
+  setFull(full: boolean): void;
+  /** The background task now shown was opened from the finished list: its Back returns there. */
+  fromList: boolean;
 } {
   const [target, setTarget] = useState<RightTarget | null>(null);
+  const [full, setFull] = useState(false);
+  const [fromList, setFromList] = useState(false);
   const [beneath, setBeneath] = useState<RightTarget | null>(null);
   const current = useRef<RightTarget | null>(null);
   /** What was open before the sub-agent now shown (opening another sub-agent keeps it). */
@@ -84,6 +93,8 @@ export function useRightArea(): {
       previous.current = null;
       beforeMap.current = null;
       setBeneath(null);
+      setFull(false);
+      setFromList(false);
       setTarget(t);
     };
     read();
@@ -92,6 +103,7 @@ export function useRightArea(): {
   }, []);
   const show = useCallback((t: RightTarget | null) => {
     current.current = t;
+    if (t === null || t.kind === "properties") setFull(false);
     setTarget(t);
     const { pathname, search } = window.location;
     window.history.replaceState(
@@ -110,7 +122,11 @@ export function useRightArea(): {
         }
       } else if (t?.kind === "subagent") {
         if (current.current?.kind !== "subagent") previous.current = current.current;
+      } else if (t?.kind === "background") {
+        // Back from a task's output returns to the finished list it was opened from
+        previous.current = current.current?.kind === "backgroundList" ? current.current : null;
       } else previous.current = null;
+      setFromList(t?.kind === "background" && previous.current !== null);
       show(t);
     },
     [show],
@@ -122,7 +138,7 @@ export function useRightArea(): {
     setBeneath(null);
     show(t);
   }, [show]);
-  return { target, open, back, closeMap, beneath };
+  return { target, open, back, closeMap, beneath, full, setFull, fromList };
 }
 
 /** The full archived output of a call (replaces the old Run tab's "View full output"). */
@@ -243,12 +259,6 @@ function useBackgroundTasks(
   };
 }
 
-const fullscreen = () => {
-  const el = document.querySelector('[data-part="right-panel"]');
-  if (el && typeof (el as HTMLElement).requestFullscreen === "function")
-    void (el as HTMLElement).requestFullscreen().catch(() => {});
-};
-
 /**
  * The right area of the conversation page (Task 20): the title-bar panel icons (Files, then the
  * extensions' panels), the properties panel (Context, Files, the extensions' sections) or one right
@@ -284,7 +294,18 @@ export function useRightAreaSlot(p: {
 }): RightAreaSlot {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
-  const { target: hashTarget, open, back, closeMap, beneath } = useRightArea();
+  const {
+    target: hashTarget,
+    open,
+    back,
+    closeMap,
+    beneath,
+    full,
+    setFull,
+    fromList,
+  } = useRightArea();
+  /** The panel's full-screen button: maximise inside the page, or restore (never the browser's). */
+  const fullscreen = useCallback(() => setFull(!full), [full, setFull]);
   // The agent map is a dialog over the page: the right area keeps showing what was open under it
   const target = hashTarget?.kind === "agents" ? beneath : hashTarget;
   // The extensions' contributions (enabled and loaded only) and the conversation's file outputs.
@@ -489,6 +510,19 @@ export function useRightAreaSlot(p: {
         onFullscreen={fullscreen}
       />
     );
+  } else if (target?.kind === "backgroundList") {
+    panelNode = (
+      <BackgroundListPanel
+        views={p.subagents ?? NO_SUBAGENTS}
+        tasks={background.tasks ?? NO_TASKS}
+        loading={background.pending}
+        onOpen={(item) =>
+          item.kind === "task" ? openTask(item.id) : open({ kind: "subagent", id: item.id })
+        }
+        onClose={close}
+        onFullscreen={fullscreen}
+      />
+    );
   } else if (target?.kind === "background") {
     panelNode = (
       <BackgroundTaskPanel
@@ -501,6 +535,7 @@ export function useRightAreaSlot(p: {
         lastLines={lastLines.get(target.taskId)}
         stopping={background.stopping.has(target.taskId)}
         onStop={() => background.stop(target.taskId)}
+        {...(fromList ? { onBack: back } : {})}
         onClose={close}
         onFullscreen={fullscreen}
       />
@@ -629,6 +664,7 @@ export function useRightAreaSlot(p: {
                   item.kind === "task"
                     ? openTask(item.id)
                     : open({ kind: "subagent", id: item.id }),
+                onOpenCompleted: () => open({ kind: "backgroundList" }),
               }
             : undefined
         }
@@ -640,6 +676,8 @@ export function useRightAreaSlot(p: {
     ...(agents !== undefined && agents.count > 0 ? { agents: { ...agents, onOpen: openMap } } : {}),
     ...(loading !== undefined ? { loading } : {}),
     onCloseRight: close,
+    rightFull: full && right === "panel",
+    onRightFullChange: setFull,
     thread: {
       onOpenFile: openFile,
       onMoreFiles: () => open({ kind: "properties" }),

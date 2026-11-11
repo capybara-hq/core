@@ -287,6 +287,7 @@ export function statusPrompt(login: string, slug: string | null, pathname: strin
 const ADMIN_ICONS: Record<AdminPageId, IconName> = {
   overview: "gauge",
   inbox: "inbox",
+  audit: "file-text",
   accounts: "user",
   orgs: "building",
   plugins: "catalog",

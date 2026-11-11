@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>ToolPolicyList</h1>
-<p>Tools with their policy next to them (spec §6.36): one row per tool, the checkbox and its title on the left, the dense policy select on the right (disabled while the tool is unchecked), rows split by hairlines inside the one box; with select-all, the 「全选」 head row and the checked count, and the filter field above it in a Sheet.</p>
+<p>Tools with their policy next to them (spec §6.36): one row per tool, the checkbox and its title on the left, the dense policy select on the right (disabled while the tool is unchecked), rows split by hairlines inside the one box; with select-all, the 「全选」 head row and the checked count, and the filter field above it in a Sheet; with a switch (a connector's 工具 tab) the switch at the row's end and the select kept on, a note's 去复核 link; read-only, the policy as text.</p>
 <div class="r-blocks">
 <section data-ref-block="tool-policy-list-default" style="width:640px" data-pad>
   <section class="r-boxcard"><div class="r-boxcard-head">内置工具</div><div class="r-boxcard-body">
@@ -34,6 +34,28 @@
       <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-tool-policy-title" data-part="tool-policy-title">Create document</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">需审批</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
       <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="unchecked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-tool-policy-title" data-part="tool-policy-title">Delete document</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox" disabled><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
       <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="unchecked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-tool-policy-title" data-part="tool-policy-title">List folders</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox" disabled><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+    </ul>
+  </div>
+  </div></section>
+</section>
+<section data-ref-block="tool-policy-list-switch" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">工具</div><div class="r-boxcard-body">
+  <div class="r-tool-policy" data-part="tool-policy-list">
+    <ul class="r-tool-policy-rows">
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text" data-check="none"><span class="r-tool-policy-title" data-part="tool-policy-title">Send message</span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">询问</span><i data-icon="chevron-down" data-size="14"></i></button></span><span class="r-tool-policy-switch" data-part="tool-policy-switch"><button class="r-switch" role="switch" aria-checked="true"><span></span></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text" data-check="none"><span class="r-tool-policy-title" data-part="tool-policy-title">slack_schedule_message</span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">询问</span><i data-icon="chevron-down" data-size="14"></i></button></span><span class="r-tool-policy-switch" data-part="tool-policy-switch"><button class="r-switch" role="switch" aria-checked="true"><span></span></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="unchecked"><span class="r-tool-policy-text" data-check="none"><span class="r-tool-policy-title" data-part="tool-policy-title">slack_create_canvas</span><span class="r-tool-policy-note" data-part="tool-policy-note" data-tone="warn"><i data-icon="circle-alert" data-size="12"></i><span>待复核</span><button class="r-tool-policy-note-action" data-part="tool-policy-note-action">去复核</button></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">询问</span><i data-icon="chevron-down" data-size="14"></i></button></span><span class="r-tool-policy-switch" data-part="tool-policy-switch"><button class="r-switch" role="switch" aria-checked="false" disabled><span></span></button></span></li>
+    </ul>
+  </div>
+  </div></section>
+</section>
+<section data-ref-block="tool-policy-list-read-only" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">工具</div><div class="r-boxcard-body">
+  <div class="r-tool-policy" data-part="tool-policy-list">
+    <ul class="r-tool-policy-rows">
+      <li class="r-tool-policy-row" data-part="tool-policy-row"><span class="r-tool-policy-text" data-check="none"><span class="r-tool-policy-title" data-part="tool-policy-title">Read channel</span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><span class="r-tool-policy-value" data-part="tool-policy-value">允许</span></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row"><span class="r-tool-policy-text" data-check="none"><span class="r-tool-policy-title" data-part="tool-policy-title">Search messages</span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><span class="r-tool-policy-value" data-part="tool-policy-value">允许</span></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row"><span class="r-tool-policy-text" data-check="none"><span class="r-tool-policy-title" data-part="tool-policy-title">slack_read_canvas</span><span class="r-tool-policy-note" data-part="tool-policy-note" data-tone="muted"><span>已停用</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><span class="r-tool-policy-value" data-part="tool-policy-value">允许</span></span></li>
     </ul>
   </div>
   </div></section>

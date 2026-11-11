@@ -349,7 +349,7 @@ async function runInBackground(
       await announce();
       if (!isLarge || e instanceof ToolError) throw e;
       throw new ToolError(
-        `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the sandbox, or call Bash without run_in_background.${largeText()}`,
+        `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the environment, or call Bash without run_in_background.${largeText()}`,
       );
     }
   }
@@ -357,7 +357,7 @@ async function runInBackground(
     await background.failLaunch(id, launch.why);
     await announce();
     throw new ToolError(
-      `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${largeText()}`,
+      `The background task was not started: ${launch.why}. Check the environment, or call Bash without run_in_background.${largeText()}`,
     );
   }
   if (launch.kind === "stopped") {

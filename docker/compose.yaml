@@ -34,7 +34,7 @@ name: capybara
 x-images:
   # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
   # (capybara-api:<version>, as built by compose.build.yaml).
-  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.20}
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.22}
 
 x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
@@ -185,12 +185,17 @@ services:
     # Root, so a 0600 password file owned by the host user is readable (compose bind-mounts
     # file secrets with their host owner and mode). init talks to PostgreSQL, to valkey (the
     # bootstrap step runs under the Redis lock lock:bootstrap that starting kernels share) and, on
-    # the first bootstrap, the npm registry.
+    # the first bootstrap, the npm registry; and the object store: the bootstrap's second pass
+    # loads object-store-s3 to store the skills of builtin entries (skills-core).
     user: "0"
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+      seaweedfs-s3:
         condition: service_healthy
     environment:
       <<: *kernel-env
@@ -234,7 +239,7 @@ services:
 
   worker:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.20}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.22}
     environment:
       <<: *kernel-env
     # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
@@ -244,7 +249,7 @@ services:
 
   gateway:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.20}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.22}
     environment:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
@@ -269,7 +274,7 @@ services:
       - devices
 
   web:
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.20}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.22}
     init: true
     restart: unless-stopped
     depends_on:
@@ -339,7 +344,7 @@ services:
   # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#23106860bf79b5ab49ea3a0eeacd60b84142b463:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#050de1403662d2ba04cb96839b742aaa0166c00e:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -347,7 +352,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#23106860bf79b5ab49ea3a0eeacd60b84142b463:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#050de1403662d2ba04cb96839b742aaa0166c00e:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

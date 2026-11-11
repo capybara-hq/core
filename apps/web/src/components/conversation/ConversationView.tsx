@@ -143,6 +143,9 @@ export type RightAreaSlot = {
    */
   agents?: AgentsSummary & { onOpen(): void };
   onCloseRight(): void;
+  /** The open panel is maximised inside the page (its full-screen button; Esc restores). */
+  rightFull?: boolean;
+  onRightFullChange?(full: boolean): void;
   /** The open area's read is on its way (its loading state; `title`: the open panel's). */
   loading?: true | { title: string };
   thread: Pick<
@@ -533,6 +536,8 @@ export function useConversationPage(
     ...(slot?.propertiesNode !== undefined ? { properties: slot.propertiesNode } : {}),
     ...(slot?.panelNode !== undefined ? { panel: slot.panelNode } : {}),
     onCloseRight: slot?.onCloseRight ?? (() => {}),
+    ...(slot?.rightFull ? { rightFull: true } : {}),
+    ...(slot?.onRightFullChange ? { onRightFullChange: slot.onRightFullChange } : {}),
   };
   const loading = {
     ...(conv.loading ? { thread: true } : {}),

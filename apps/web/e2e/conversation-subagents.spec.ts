@@ -74,6 +74,13 @@ test("sub-agents: the call block, the finish notice, the record on the right, st
   await props
     .getByRole("button", { name: designZh("subagent.completed").replace("{n}", "1") })
     .click();
+  // "1 completed" opens the list of finished items; its row opens the sub-agent
+  await expect(page).toHaveURL(/#bg$/);
+  await page
+    .getByRole("complementary", { name: zh.background.finishedTitle })
+    .locator('[data-part="task-row"] button')
+    .first()
+    .click();
   await expect(page).toHaveURL(/#subagent=/);
   const record = panel(page, "Check the docs");
   await expect(record.locator('[data-part="subagent-task"]')).toContainText(

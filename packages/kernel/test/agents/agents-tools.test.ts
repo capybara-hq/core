@@ -275,6 +275,50 @@ describe("agent definition tools (tools default-on spec §2)", () => {
     expect(patched.statusCode).toBe(400);
     expect(detailPaths(patched)).toEqual(["toolPolicies.mcp__docs__nope"]);
   });
+
+  it("a stored policy for a removed builtin (SkillWrite) does not block saving and is dropped", async () => {
+    const res = await createAgent({ toolPolicies: { AskUserQuestion: "ask" } });
+    expect(res.statusCode, res.body).toBe(201);
+    const { agent } = res.json() as AgentRes;
+    // a version saved while SkillWrite existed
+    await sql`UPDATE capybara.agent_versions
+      SET definition = jsonb_set(definition, '{toolPolicies}',
+        '{"AskUserQuestion":"ask","SkillWrite":"ask"}'::jsonb)
+      WHERE agent_id = ${agent.id}`.execute(raw);
+    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` });
+    const stored = (got.json() as AgentRes).agent.definition;
+    expect(stored.toolPolicies).toEqual({ AskUserQuestion: "ask", SkillWrite: "ask" });
+
+    // the web sends the whole definition back
+    const patched = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
+      payload: { definition: { ...stored, description: "edited" } },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    expect((patched.json() as AgentRes).agent.definition.toolPolicies).toEqual({
+      AskUserQuestion: "ask",
+    });
+
+    // a definition copied from elsewhere (a template) carrying it saves too
+    const created = await createAgent({
+      toolPolicies: { SkillWrite: "deny" },
+      subagents: {
+        inline: [
+          {
+            name: "helper",
+            description: "Helps",
+            instructions: "Help.",
+            toolPolicies: { SkillWrite: "ask" },
+          },
+        ],
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const def = (created.json() as AgentRes).agent.definition;
+    expect(def.toolPolicies).toEqual({});
+    expect(def.subagents?.inline?.[0]?.toolPolicies ?? {}).toEqual({});
+  });
 });
 
 describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => {

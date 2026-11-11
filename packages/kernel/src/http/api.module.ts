@@ -4,7 +4,9 @@ import { AdminController } from "../admin/admin.controller.js";
 import { AdminModule } from "../admin/admin.module.js";
 import { AdminAgentsController } from "../admin/admin-agents.controller.js";
 import { AdminConnectorsController } from "../admin/admin-connectors.controller.js";
+import { AdminAuditController } from "../admin/audit.controller.js";
 import { AdminExtensionsController } from "../admin/extensions.controller.js";
+import { AdminOverviewController } from "../admin/overview.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsModule } from "../agents/agents.module.js";
@@ -88,11 +90,8 @@ import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SetupChecksController } from "../setup/setup-checks.controller.js";
 import { SetupGuidesController } from "../setup/setup-guides.controller.js";
-import {
-  AgentSkillsController,
-  InboxController,
-  SkillChangesController,
-} from "../skills/changes.controller.js";
+import { AgentSkillsController } from "../skills/agent-skills.controller.js";
+import { InboxController, SkillChangesController } from "../skills/changes.controller.js";
 import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";
@@ -130,6 +129,8 @@ const CONTROLLERS: Type[] = [
   AdminController,
   AdminAgentsController,
   AdminConnectorsController,
+  AdminAuditController,
+  AdminOverviewController,
   AdminExtensionsController,
   AdminCatalogController,
   AdminComponentsController,

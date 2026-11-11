@@ -20,7 +20,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
@@ -406,7 +406,6 @@ function Invitations({
 function InviteDialog({ orgId, onClose }: { orgId: string; onClose(): void }) {
   const t = useTranslations("members");
   const tc = useTranslations("common");
-  const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
@@ -426,7 +425,7 @@ function InviteDialog({ orgId, onClose }: { orgId: string; onClose(): void }) {
     setError(null);
     try {
       const { token } = await invite.mutateAsync({ role, expiresInHours: hours });
-      setLink(inviteUrl(window.location.origin, locale, token));
+      setLink(inviteUrl(window.location.origin, token));
     } catch (e) {
       setError(errorMessage(e));
     } finally {

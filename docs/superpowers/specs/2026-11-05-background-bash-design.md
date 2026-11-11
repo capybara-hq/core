@@ -308,7 +308,12 @@ next person message would pick it up.
 - `GET …/background-tasks/:taskId/output?tail=<bytes>`: up to 64 KiB of the end of the output, read
   through one short exec while the sandbox runs. Otherwise the response is 409
   `background_task.output_unavailable`, unless the task finished and its last lines were kept in
-  the event.
+  the event. Either way the answer says why it was not read live: `unavailable: { reason,
+  environment }` beside the event's lines, `details: [{ reason, environment }]` on the 409.
+  `environment` is `local` (a local device) or `cloud`; `reason` is `starting` (no session id
+  yet), `not_started` (the launch failed), `device_offline`, `suspended`, `rebuilt` (the instance
+  and its files are gone), `output_missing` (the instance runs, the `.out` file is gone),
+  `no_access`, `unavailable` (no provider) or `read_failed`.
 - The SSE stream gains `changed: "background"`.
 
 ### 4.7 Config
@@ -327,15 +332,20 @@ next person message would pick it up.
     - a finished row: a status mark (done, failed, stopped, timed out, lost) instead of the spinner;
   - **sub-agents**, as today;
   - **each sub-agent's own tasks**, indented under it, while the sub-agent runs.
-- "N 个已完成 ›" counts the finished tasks and sub-agents together. It opens the newest finished
-  item, as it does today.
+- "N 个已完成 ›" counts the finished tasks and sub-agents together. It opens their list in the
+  right area (`#bg`): newest finished first, each row the description, status, elapsed time and
+  when it finished; a row opens the task's output (`#bg-<taskId>`, whose Back returns to the list)
+  or the sub-agent. (It used to open the newest finished item; acceptance 2026-11-10.)
 - The section shows when there is a task or a sub-agent.
 - **The output panel** is a right-area panel (`#bg-<taskId>` in the URL hash):
   - the description and the command (mono);
   - the status and elapsed time;
   - the output tail in a code block, refreshed every 2 s while running;
   - stop.
-  - When the output can't be read: "输出不可读（沙箱已暂停）" or the last lines from the event.
+  - When the output can't be read live: a note saying why, naming the device (a local device) or
+    the sandbox (a cloud one), from the kernel's reason (§4.6), then the event's last lines, or
+    "没有输出" / "No output" when there are none (never an empty box). A task whose launch failed
+    says it did not start, with the launch's reason.
 - **The tool row** of a background `Bash` call shows "后台运行" / "In background" after its
   description, and a link to the task. A `TaskOutput` or `TaskStop` row shows the task's
   description. The `background_task_finished` event renders in the thread as a quiet one-line

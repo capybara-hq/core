@@ -581,7 +581,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
   );
 });
 
-describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview", () => {
+describe("plugin scope phase 3: the 可共享 switch and the delete preview", () => {
   const GUEST = {
     ...ME,
     account: { ...ME.account, isSuperAdmin: false },
@@ -589,82 +589,28 @@ describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview",
   };
   const fill = (s: string, vars: Record<string, string>) =>
     s.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? "");
-  const c = (locale: "zh" | "en") => msgs[locale].skills.create;
+  // The removed 新建 action: its label in both locales
+  const CREATE_LABEL = /^(New|新建)$/;
 
-  it.each(LOCALES)("org admins get 新建 next to 上传 (%s)", async (locale) => {
+  it.each(LOCALES)("org admins get 上传技能 and no 新建 (%s)", async (locale) => {
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
     await renderSkills({ locale });
     await screen.findByText("pdf-tools");
-    expect(screen.getByRole("button", { name: c(locale).open })).toBeTruthy();
     expect(screen.getByRole("button", { name: msgs[locale].skills.upload.open })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: CREATE_LABEL })).toBeNull();
   });
 
-  it("members and guests do not get 新建", async () => {
+  it("members and guests do not get 上传技能", async () => {
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
     await renderSkills({ me: MEMBER });
     await screen.findByText("pdf-tools");
-    expect(screen.queryByRole("button", { name: en.skills.create.open })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.skills.upload.open })).toBeNull();
     cleanup();
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
     await renderSkills({ me: GUEST });
     await settle();
-    expect(screen.queryByRole("button", { name: en.skills.create.open })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.skills.upload.open })).toBeNull();
     expect(screen.queryByText("pdf-tools")).toBeNull();
-  });
-
-  it("the dialog posts { name, description, body, shareable } and opens the new skill", async () => {
-    const m = en.skills.create;
-    const calls = stubApi({
-      [`GET ${BASE}`]: () => json(200, { skills: [] }),
-      [`POST ${BASE}`]: () =>
-        json(201, { skill: skill("s9", "notes", { shareable: true }), version: 1, created: true }),
-    });
-    await renderSkills();
-    const user = userEvent.setup();
-    await user.click((await screen.findAllByRole("button", { name: m.open }))[0] as HTMLElement);
-    const dialog = await screen.findByRole("dialog", { name: m.title });
-    // the body's frontmatter rule is said where the body is written
-    expect(within(dialog).getByText(m.bodyHelp)).toBeTruthy();
-    const submit = within(dialog).getByRole("button", { name: m.submit });
-    expect(submit).toHaveProperty("disabled", true);
-    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "Notes");
-    await user.type(within(dialog).getByRole("textbox", { name: m.description }), "Take notes.");
-    await user.type(within(dialog).getByRole("textbox", { name: m.body }), "# Notes");
-    // an invalid name keeps the primary disabled
-    expect(submit).toHaveProperty("disabled", true);
-    expect(within(dialog).getByText(m.nameInvalid)).toBeTruthy();
-    await user.clear(within(dialog).getByRole("textbox", { name: m.name }));
-    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "notes");
-    const share = within(dialog).getByRole("switch", { name: m.shareable });
-    expect(share.getAttribute("aria-checked")).toBe("false");
-    await user.click(share);
-    await user.click(submit);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills/s9"));
-    expect(bodyOf(calls.find((x) => x.method === "POST" && x.url === BASE))).toEqual({
-      name: "notes",
-      description: "Take notes.",
-      body: "# Notes",
-      shareable: true,
-    });
-    expect(await screen.findByText(fill(m.created, { name: "notes" }))).toBeTruthy();
-  });
-
-  it("409 skill.name_exists keeps the dialog open with its copy", async () => {
-    const m = zh.skills.create;
-    stubApi({
-      [`GET ${BASE}`]: () => json(200, { skills: [] }),
-      [`POST ${BASE}`]: () => json(409, { error: { code: "skill.name_exists", message: "x" } }),
-    });
-    await renderSkills({ locale: "zh" });
-    const user = userEvent.setup();
-    await user.click((await screen.findAllByRole("button", { name: m.open }))[0] as HTMLElement);
-    const dialog = await screen.findByRole("dialog", { name: m.title });
-    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "notes");
-    await user.type(within(dialog).getByRole("textbox", { name: m.description }), "记笔记。");
-    await user.type(within(dialog).getByRole("textbox", { name: m.body }), "# Notes");
-    await user.click(within(dialog).getByRole("button", { name: m.submit }));
-    expect(await within(dialog).findByText(zh.errors.skill.name_exists)).toBeTruthy();
-    expect(router.push).not.toHaveBeenCalled();
   });
 
   it.each(LOCALES)(
