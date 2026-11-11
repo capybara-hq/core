@@ -122,6 +122,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   is the agent's own and shared skills plus every skill on in the org its `disabledSkills` leaves on. A skill that appears because a
   plugin was enabled gets a new snapshot and the existing "New skills" notice at the next run start: it is in the log, so no
   `DriftReason`. A step replay renders the recorded catalog whatever the candidate's `disabledSkills` say.
+- **Catalog budget** (spec §7): the cut is decided when the snapshot is written (`skills[].nameOnly`, from
+  `skills.catalogBudgetChars` at that run start), so rendering stays a pure function of the snapshot and needs no `DriftReason`; a
+  later budget never changes an old request. A snapshot without `nameOnly` renders byte for byte as before. `sameSkills` compares
+  `nameOnly`, so an entry crossing the budget writes a new snapshot and shows in the "Updated skills" notice at the next run start.
+  Zero-drift case: "a catalog budget change between runs" in `reconstruct.test.ts`; unit tests in
+  `test/runtime/context/skills-budget.test.ts`.
 - **Nothing is pinned any more**: run start reads no bodies and new snapshots carry no `pinned`. The event schema keeps the optional
   `pinned` (and the `EVENT_*` caps for its bodies) so old logs parse, and every pinned rendering path stays, since it reads only the
   log. The first run on a conversation whose latest snapshot has pins writes one without them, and the request gets

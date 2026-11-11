@@ -13,7 +13,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../src/agents/definition.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -34,13 +34,16 @@ import {
 } from "../../src/evals/snapshot.js";
 import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import type { KernelLogger } from "../../src/log.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
+import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
+import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
@@ -1117,6 +1120,76 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     expect(updatedLists.some((l) => l.includes("- house-rules:"))).toBe(true);
     expect(texts.some((t) => t.includes("Pinned skill"))).toBe(false);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a catalog budget change between runs: a new snapshot with name-only entries and an updated notice, then back; zero drift", async () => {
+    reset();
+    // org skills rank before plugin skills, whatever their names (skills default-on spec §7)
+    const plugged = await seedSkill("budget-a", "A.", undefined, { plugin: "budgetplug" });
+    const b = await seedSkill("budget-b", "B.");
+    const c = await seedSkill("budget-c", "C.");
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: [plugged, b, c] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    // a smaller budget (below the schema's minimum, so set directly): budget-b and budget-c fit
+    const config = k.app.get(KernelConfigService);
+    const real = config.get();
+    const line = (name: string) => catalogLineChars({ name, description: `Use for ${name} work.` });
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      skills: { catalogBudgetChars: line("budget-b") + line("budget-c") },
+    });
+    // the service's own logger (KERNEL_LOGGER is transient: one instance per consumer)
+    const serviceLog = (k.app.get(SkillsCatalogService) as unknown as { log: KernelLogger }).log;
+    const info = vi.spyOn(serviceLog, "info");
+    try {
+      await turn("echo:second");
+    } finally {
+      spy.mockRestore();
+    }
+    const overBudget = info.mock.calls.filter(([msg]) => msg === "skills.catalog_over_budget");
+    info.mockRestore();
+    expect(overBudget).toHaveLength(1);
+    expect(overBudget[0]?.[1]).toMatchObject({
+      orgId,
+      agentId,
+      entries: 3,
+      nameOnly: 1,
+      characters: line("budget-a") + line("budget-b") + line("budget-c"),
+    });
+    await turn("echo:third");
+
+    const snaps = (await eventsOf(db, conv)).filter(
+      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+        e.type === "skills_catalog",
+    );
+    expect(
+      snaps.map((e) => e.payload.skills.filter((s) => s.nameOnly === true).map((s) => s.name)),
+    ).toEqual([[], ["budget-a"], []]);
+    const first = sent[0] as ModelRequest;
+    expect(first.system[0]?.text).toContain("- budget-a: Use for budget-a work.");
+    expect(first.system[0]?.text).not.toContain(MORE_SKILLS_HEADER);
+    const notices = sent.map((r) =>
+      r.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : [])),
+    );
+    expect(notices[1]).toContain(
+      "The skills available in this conversation have changed.\n\n" +
+        `Updated skills (call Skill again before relying on earlier instructions):\n${MORE_SKILLS_HEADER}\nbudget-a`,
+    );
+    expect(notices[2]?.at(-1)).toBe(
+      "The skills available in this conversation have changed.\n\n" +
+        "Updated skills (call Skill again before relying on earlier instructions):\n" +
+        "- budget-a: Use for budget-a work.",
+    );
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

@@ -774,6 +774,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
              * resolves `<plugin>:<name>` with it; it is not model-visible otherwise.
              */
             plugin: z.string().min(1).max(64).optional(),
+            /**
+             * Listed by name only, past the catalog budget (`skills.catalogBudgetChars`, skills
+             * default-on spec §7): decided when the snapshot is written, so a later budget never
+             * changes an old request. Absent in every snapshot before phase 2 (= described).
+             */
+            nameOnly: z.literal(true).optional(),
           }),
         )
         .max(SKILLS_CATALOG_MAX),
