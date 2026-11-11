@@ -83,6 +83,7 @@ import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
+import { SchedulesController } from "../schedules/schedules.controller.js";
 import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SetupChecksController } from "../setup/setup-checks.controller.js";
@@ -147,6 +148,7 @@ const CONTROLLERS: Type[] = [
   ConversationsController,
   BackgroundController,
   DevicesController,
+  SchedulesController,
   AttachmentsController,
   SkillsController,
   SkillChangesController,

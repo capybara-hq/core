@@ -22,6 +22,7 @@ import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
+import { SCHEDULE_ROUTES } from "../schedules/schedules.schemas.js";
 import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
 import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
@@ -91,4 +92,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...UI_ROUTES,
   // every org's agents and connectors (admin agents and connectors spec §4)
   ...ADMIN_ITEM_ROUTES,
+  // scheduled tasks (scheduled tasks spec §10)
+  ...SCHEDULE_ROUTES,
 ];

@@ -14,6 +14,7 @@ import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
+import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ThemesModule } from "../themes/themes.module.js";
@@ -45,6 +46,7 @@ import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
 import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
+import { SchedulesOperations } from "./ops/schedules.ops.js";
 import { SetupOperations } from "./ops/setup.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { ThemesOperations } from "./ops/themes.ops.js";
@@ -97,6 +99,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   UiOperations,
   // every org's agents and connectors, the conversation org's through the tool (spec §4.5)
   AdminItemsOperations,
+  // scheduled tasks (scheduled tasks spec §10)
+  SchedulesOperations,
 ] as const;
 
 /**
@@ -126,6 +130,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     FilesModule,
     ThemesModule,
     SetupModule,
+    SchedulesModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })
