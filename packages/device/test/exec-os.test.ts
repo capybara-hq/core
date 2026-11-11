@@ -197,6 +197,8 @@ describe.skipIf(!availability.ok)(
     let fakeHome: string;
     let state: string;
     let ex: OsExecutor;
+    /** Domains the local policy gains while the executor runs (a live policy change). */
+    let extraDomains: string[] = [];
     const never = new AbortController().signal;
 
     beforeAll(async () => {
@@ -214,7 +216,7 @@ describe.skipIf(!availability.ok)(
         dir,
         policy: () => ({
           ...DEFAULT_POLICY,
-          allowedDomains: ["one.example.com", "two.example.com"],
+          allowedDomains: ["one.example.com", "two.example.com", ...extraDomains],
         }),
         home: fakeHome,
         denyRead: [state],
@@ -495,6 +497,42 @@ describe.skipIf(!availability.ok)(
         expect(r.exitCode).not.toBe(0);
         expect(r.stderr).toMatch(/403/);
       });
+
+      it("a host the device does not allow gets the device trailer", async () => {
+        const r = await ex.exec(
+          execArgs(curl("github.com"), { limits: { ...LIMITS, egress: "open" } }),
+          never,
+        );
+        expect(r.stderr).toContain(
+          "[capybara-device] Network access was blocked:\n" +
+            "- github.com:443: not in this device's allowed domains. Only the device owner can " +
+            "allow it (capybara-device policy add allowedDomains github.com, or the device page).",
+        );
+      });
+
+      it("a host the org does not allow gets the org trailer", async () => {
+        const r = await ex.exec(execArgs(curl("one.example.com")), never);
+        expect(r.stderr).toContain(
+          "- one.example.com:443: not in the organization's network allowlist. " +
+            "Only an organization admin can add it.",
+        );
+        expect(r.stderr).not.toContain("not in this device's allowed domains");
+      });
+
+      it("a policy change applies at the next command, without a restart", async () => {
+        const open = { limits: { ...LIMITS, egress: "open" as const } };
+        // `.invalid` never resolves: once allowed, the proxy fails the lookup, connecting nowhere.
+        const before = await ex.exec(execArgs(curl("allowed.invalid"), open), never);
+        expect(before.stderr).toContain("- allowed.invalid:443: not in this device's allowed");
+        extraDomains = ["allowed.invalid"];
+        try {
+          const after = await ex.exec(execArgs(curl("allowed.invalid"), open), never);
+          expect(after.exitCode).not.toBe(0);
+          expect(after.stderr).not.toContain("[capybara-device]");
+        } finally {
+          extraDomains = [];
+        }
+      }, 30_000);
 
       it("two concurrent commands each get only their own allow list", async () => {
         const allow = (h: string): SandboxLimits => ({
