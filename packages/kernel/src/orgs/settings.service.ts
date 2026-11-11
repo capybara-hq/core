@@ -84,6 +84,59 @@ export type OrgThemeSetting = z.infer<typeof OrgThemeSettingSchema>;
 /** The theme setting of an org that has none: follow the platform, personal picks allowed. */
 export const DEFAULT_ORG_THEME: OrgThemeSetting = { id: null, personal: "allowed" };
 
+const posInt = (max: number, def: number) =>
+  z.number().int().min(1).max(max).default(def).catch(def);
+
+/** A stored `forbiddenTools` entry worth keeping: a tool key of the length the PATCH accepts. */
+const isForbiddenToolEntry = (v: unknown): v is string =>
+  typeof v === "string" && v.length >= 1 && v.length <= 200;
+
+/**
+ * Org settings of scheduled tasks (spec §9); every field reads leniently (invalid = default,
+ * except `forbiddenTools`, which keeps its valid entries).
+ */
+export const ScheduledTasksSettingsSchema = z.object({
+  enabled: z.boolean().default(true).catch(true),
+  minIntervalMinutes: posInt(1_000_000, 60),
+  maxTasksPerMember: posInt(1_000_000, 20),
+  maxTasksPerOrg: posInt(1_000_000, 200),
+  maxRunsPerHour: posInt(1_000_000, 60),
+  defaultExpiryDays: z.number().int().min(1).max(36_500).nullable().default(null).catch(null),
+  catchUpWindowMinutes: posInt(1_000_000, 60),
+  unattendedAsk: z.enum(["fail", "wait"]).default("fail").catch("fail"),
+  pauseAfterFailures: posInt(1000, 5),
+  // fail-safe: an invalid entry is dropped, the valid ones stay forbidden (never reset to []);
+  // past the PATCH's 500 the list is truncated
+  forbiddenTools: z
+    .preprocess(
+      (v) => (Array.isArray(v) ? v.filter(isForbiddenToolEntry).slice(0, 500) : v),
+      z.array(z.string()).max(500).default([]),
+    )
+    .catch([]),
+});
+
+export type ScheduledTasksSettings = z.infer<typeof ScheduledTasksSettingsSchema>;
+
+/**
+ * The PATCH form: a partial merge into the group (fields left out keep their stored value; see
+ * `OrgSettingsService.update`). A field given replaces that field whole, `forbiddenTools` too.
+ */
+export const ScheduledTasksPatchSchema = z
+  .object({
+    enabled: z.boolean(),
+    minIntervalMinutes: z.number().int().min(1).max(1_000_000),
+    maxTasksPerMember: z.number().int().min(1).max(1_000_000),
+    maxTasksPerOrg: z.number().int().min(1).max(1_000_000),
+    maxRunsPerHour: z.number().int().min(1).max(1_000_000),
+    defaultExpiryDays: z.number().int().min(1).max(36_500).nullable(),
+    catchUpWindowMinutes: z.number().int().min(1).max(1_000_000),
+    unattendedAsk: z.enum(["fail", "wait"]),
+    pauseAfterFailures: z.number().int().min(1).max(1000),
+    forbiddenTools: z.array(z.string().min(1).max(200)).max(500),
+  })
+  .partial()
+  .strict();
+
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
@@ -98,6 +151,10 @@ export const OrgSettingsSchema = z.object({
   theme: OrgThemeSettingSchema.optional().catch(undefined),
   /** Hidden and ordered extension contributions per slot; absent = follow the platform. */
   uiArrangement: UiArrangementSchema.optional().catch(undefined),
+  /** Scheduled tasks (spec §9); the platform bounds clamp it, see `effectiveScheduleSettings`. */
+  scheduledTasks: ScheduledTasksSettingsSchema.prefault({}).catch(
+    ScheduledTasksSettingsSchema.parse({}),
+  ),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -125,6 +182,8 @@ export const OrgSettingsPatchSchema = z
      * null removes a slot's entry (it follows the platform again). `platform.page` is refused.
      */
     uiArrangement: OrgUiArrangementPatchSchema.optional(),
+    /** Fields to change in the scheduled-tasks group; the rest keep their value. */
+    scheduledTasks: ScheduledTasksPatchSchema.optional(),
   })
   .strict();
 
@@ -300,7 +359,16 @@ export class OrgSettingsService {
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
     delete changes.uiArrangement;
+    delete changes.scheduledTasks;
     const after: OrgSettings = { ...before, ...changes };
+    if (patch.scheduledTasks !== undefined) {
+      after.scheduledTasks = ScheduledTasksSettingsSchema.parse({
+        ...before.scheduledTasks,
+        ...Object.fromEntries(
+          Object.entries(patch.scheduledTasks).filter(([, v]) => v !== undefined),
+        ),
+      });
+    }
     if (arrangementPatch !== undefined) {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
@@ -323,6 +391,7 @@ export class OrgSettingsService {
       timeZone: _oldZone,
       theme: _oldTheme,
       uiArrangement: _oldArrangement,
+      scheduledTasks: _oldScheduled,
       ...rest
     } = stored;
     await this.db

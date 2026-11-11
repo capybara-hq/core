@@ -31,6 +31,21 @@ function oneLine(text: string, max: number, ellipsis: boolean): string {
 /** A sender's name as logged: one line, at most {@link SENDER_NAME_MAX} code points. */
 export const sanitizeSenderName = (name: string): string => oneLine(name, SENDER_NAME_MAX, false);
 
+/** The longest task name a schedule header shows, in code points. */
+const SCHEDULE_NAME_MAX = 200;
+
+/**
+ * The English header of a scheduled task's message (scheduled tasks spec §12):
+ * `[Scheduled task "<name>", run for <local time>]`, from the marker fields fixed in the log, so a
+ * later rename of the task never changes a rebuilt request. The name is one line, JSON-quoted.
+ */
+export const scheduleHeader = (m: { taskName: string; localTime: string }): string =>
+  `[Scheduled task ${JSON.stringify(oneLine(m.taskName, SCHEDULE_NAME_MAX, true))}, run for ${oneLine(
+    m.localTime,
+    64,
+    false,
+  )}]`;
+
 /** An agent's description as a snapshot carries it; empty → undefined. */
 export function snapshotDescription(description: string | undefined): string | undefined {
   if (description === undefined) return undefined;

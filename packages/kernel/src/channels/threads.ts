@@ -142,6 +142,47 @@ export async function insertThread(
   return winner;
 }
 
+/**
+ * The live conversation of a thread, or a new one bound to it, inside the caller's transaction
+ * (a scheduled task posting into a chat, scheduled tasks spec §6): the live thread row's
+ * conversation when there is one; otherwise `create()`'s conversation, bound with
+ * {@link insertThread} and given the chat as its delivery target (`channel_deliveries`), as an
+ * inbound message would. When a concurrent inbound bound the thread first, the empty conversation
+ * just created is deleted and the winner's returned. `created` is true only for `create()`'s.
+ */
+export async function findOrBindThread(
+  db: KernelSchemaDb,
+  k: ThreadKey,
+  target: ChannelTarget,
+  create: () => Promise<string>,
+): Promise<{ conversationId: string; created: boolean }> {
+  const found = await findThread(db, k);
+  if (found !== undefined) return { conversationId: found, created: false };
+  const id = await create();
+  const winner = await insertThread(db, k, id);
+  if (winner !== id) {
+    await db.deleteFrom("conversations").where("id", "=", id).where("last_seq", "=", "0").execute();
+    return { conversationId: winner, created: false };
+  }
+  await db
+    .insertInto("channel_deliveries")
+    .values({
+      conversation_id: id,
+      connection_id: k.connectionId,
+      target: JSON.stringify(target),
+      last_seq: 0,
+    })
+    .onConflict((oc) =>
+      oc.column("conversation_id").doUpdateSet({
+        connection_id: k.connectionId,
+        target: JSON.stringify(target),
+        updated_at: new Date(),
+      }),
+    )
+    .execute();
+  return { conversationId: id, created: true };
+}
+
 /** 私聊 `/new`：归档当前话题行（下一条消息新建对话）。返回是否归档了一行。 */
 export async function archiveThread(db: KernelSchemaDb, k: ThreadKey): Promise<boolean> {
   const r = await db

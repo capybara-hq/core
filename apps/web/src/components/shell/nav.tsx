@@ -24,7 +24,7 @@ export type NavLevel = "guest" | "member" | "admin";
 
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
- * `primary` items follow New conversation (智能体, 技能, 连接器, 设备; there is no home page: the new
+ * `primary` items follow New conversation (智能体, 技能, 连接器, 设备, 定时任务; there is no home page: the new
  * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
@@ -70,6 +70,15 @@ const NAV: readonly {
     href: "/devices",
     audience: "all",
     icon: "cpu",
+    section: "primary",
+  },
+  // Scheduled tasks: a member's own tasks (guests can't create them, spec §10)
+  {
+    id: "schedules",
+    key: "schedules",
+    href: "/schedules",
+    audience: "member",
+    icon: "clock",
     section: "primary",
   },
   // Plugins (what the platform offers this org): members browse and ask, org admins switch them
@@ -176,6 +185,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
   if (under(pathname, "/devices")) return "devices";
+  if (under(pathname, "/schedules")) return "schedules";
   return "";
 }
 

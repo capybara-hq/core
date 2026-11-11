@@ -31,6 +31,7 @@ import { UsageReportModule, UsageSweepJob } from "../runtime/usage-report.js";
 import { WaitSweepJob } from "../runtime/waits.js";
 import { SandboxSweepJobs } from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { ScheduledTaskFireModule } from "../schedules/fire.js";
 import { StoragePurgeJob } from "../storage/purge.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolJobs } from "../tools/jobs.js";
@@ -76,6 +77,8 @@ export class WorkerModule {
         OrgLockModule,
         ExtensionsModule,
         ChannelsModule,
+        // the scheduled task scanner (`@LockedCron`) and the fire job's body
+        ScheduledTaskFireModule,
       ],
       providers: [
         WaitSweepJob,

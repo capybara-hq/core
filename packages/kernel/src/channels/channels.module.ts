@@ -16,6 +16,7 @@ import { runJob } from "../infra/queue/run-job.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
+import { SchedulesModule } from "../schedules/schedules.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { ChannelConnections } from "./connections.service.js";
 import { ChannelInbound } from "./inbound.js";
@@ -44,6 +45,8 @@ const CHANNEL_QUEUE_MODULE = QueueModule.registerQueue(CHANNEL_QUEUE_NAME);
     ToolsModule,
     ConversationsModule,
     RuntimeModule,
+    // outbound pauses the scheduled task of a run whose chat is gone (scheduled tasks spec §8)
+    SchedulesModule,
     CHANNEL_QUEUE_MODULE,
   ],
   providers: [

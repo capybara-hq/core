@@ -11,6 +11,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { REDIS } from "../infra/tokens.js";
+import { ScheduledTaskTrackerModule } from "../schedules/run-tracker.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { RunAbort } from "./abort.js";
@@ -57,6 +58,8 @@ import { DecisionResumer, Waits } from "./waits.js";
     TitlesModule,
     StepLogModule,
     BackgroundModule,
+    // a scheduled task's run follows its kernel run's end (`RunFinish`)
+    ScheduledTaskTrackerModule,
     // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],

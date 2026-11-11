@@ -7,6 +7,7 @@ import {
   QuickActions,
   RenameDialog,
   Stack,
+  Text,
   type TitleBarMenuItem,
   untitledLabel,
   useNow,
@@ -16,6 +17,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
 import type { ModelRef } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
@@ -29,6 +31,7 @@ import {
 } from "../../lib/query/conversation";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
+import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
 import {
@@ -430,6 +433,7 @@ export function useConversationPage(
     },
     thread: (
       <>
+        <StartedBy orgId={orgId} taskId={conv.conversation?.scheduledTaskId ?? null} />
         <Thread
           orgId={orgId}
           conversationId={conversationId}
@@ -555,4 +559,37 @@ export function useConversationPage(
     </>
   );
   return { page, dialogs };
+}
+
+/**
+ * A conversation a scheduled task started (`conversation.scheduledTaskId`): "Started by the
+ * scheduled task <name>", linking to the task (scheduled tasks spec §10); the task's name is read
+ * through the cache, and a task I can no longer read (deleted) is named without a link.
+ */
+function StartedBy({ orgId, taskId }: { orgId: string; taskId: string | null }) {
+  const t = useTranslations("schedules");
+  const q = scheduleQuery(orgId, taskId ?? "");
+  const task = useQuery({
+    ...q,
+    enabled: taskId !== null,
+    retry: false,
+    retryOnMount: retryOnMountOf(q.queryKey),
+  });
+  if (taskId === null) return null;
+  if (task.data === undefined) {
+    return task.error ? (
+      <Text variant="small" tone="muted">
+        {t("startedByGone")}
+      </Text>
+    ) : null;
+  }
+  const name = task.data.task.name;
+  return (
+    <Text variant="small" tone="muted">
+      {t.rich("startedBy", {
+        name,
+        link: (chunks) => <Link href={`/schedules/${encodeURIComponent(taskId)}`}>{chunks}</Link>,
+      })}
+    </Text>
+  );
 }

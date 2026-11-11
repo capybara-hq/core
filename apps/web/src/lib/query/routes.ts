@@ -92,6 +92,16 @@ import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import {
+  chatTargetsQuery,
+  conversationSchedulesQuery,
+  grantableToolsQuery,
+  scheduleGrantsQuery,
+  scheduleQuery,
+  scheduleRunsQuery,
+  schedulesQuery,
+  scheduleTargetsQuery,
+} from "./schedules";
+import {
   extensionPointDefaultsQuery,
   invitationsQuery,
   modelsCatalogQuery,
@@ -707,10 +717,12 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/chat/[conversationId]",
-    queries: ({ orgId, params }) => {
+    queries: ({ orgId, params, me }) => {
       const id = params.conversationId;
       if (orgId === null || id === undefined) return [];
       return [
+        // members up: my tasks posting into it (the properties panel's 定时任务 section)
+        ...(atLeast(me, "member") ? [q(conversationSchedulesQuery(orgId, id))] : []),
         q(conversationQuery(orgId, id)),
         q(eventsQuery(orgId, id)),
         q(agentsQuery(orgId)),
@@ -731,9 +743,13 @@ export const ROUTES: readonly RouteEntry[] = [
       const row = qc.getQueryData<Conversation>(conversationQuery(orgId, id).queryKey);
       if (events === undefined || row === undefined) return;
       await Promise.all(
-        conversationFollowUps(orgId, id, events, row, me?.account.id).map((o) =>
-          qc.prefetchQuery({ ...o, retry: false }),
-        ),
+        [
+          ...conversationFollowUps(orgId, id, events, row, me?.account.id),
+          // the task that started it, named above the thread
+          ...(row.scheduledTaskId != null && atLeast(me, "member")
+            ? [q(scheduleQuery(orgId, row.scheduledTaskId))]
+            : []),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
   },
@@ -1068,6 +1084,74 @@ export const ROUTES: readonly RouteEntry[] = [
           ],
   },
   {
+    pattern: "/schedules",
+    // Members up (guests get no access): my tasks, the agents that name them and the org's
+    // settings (turned off; sections).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))],
+  },
+  {
+    pattern: "/schedules/new",
+    // Members up: the agents to pick, the models, my chats (the chat picker), the org's settings
+    // (turned off, the shortest interval) and my preferences (the zone the task takes, which the
+    // end date is read in); then the first agent's grantable tools.
+    queries: ({ orgId, me }) =>
+      orgId === null || me === null || !atLeast(me, "member")
+        ? []
+        : [
+            q(agentsQuery(orgId)),
+            q(modelsQuery(orgId)),
+            q(chatTargetsQuery(orgId)),
+            q(orgSettingsQuery(orgId)),
+            q(preferencesQuery(me.account.id)),
+          ],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me }, qc) => {
+      if (orgId === null || !atLeast(me, "member")) return;
+      const first = qc.getQueryData<{ agents: Agent[] }>(agentsQuery(orgId).queryKey)?.agents[0];
+      if (first === undefined) return;
+      await qc.prefetchQuery({ ...grantableToolsQuery(orgId, first.id), retry: false });
+    },
+  },
+  {
+    pattern: "/schedules/[id]",
+    // Members up: the task (an org admin may open another member's, read-only), its runs and
+    // approved tools, the agents, the models and the members (the creator's name; sections).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.id === undefined || !atLeast(me, "member")
+        ? []
+        : [
+            q(scheduleQuery(orgId, params.id)),
+            q(scheduleRunsQuery(orgId, params.id)),
+            q(scheduleGrantsQuery(orgId, params.id)),
+            q(agentsQuery(orgId)),
+            q(modelsQuery(orgId)),
+            q(membersQuery(orgId)),
+            q(orgSettingsQuery(orgId)),
+          ],
+    // Mine: the agent's grantable tools, my chats, and for a conversation task the target
+    // picker's conversations (my conversations with the task's agent).
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me, params }, qc) => {
+      if (orgId === null || params.id === undefined || !atLeast(me, "member") || me === null) {
+        return;
+      }
+      const task = qc.getQueryData<{
+        task: { agentId: string; mode: string; accountId: string };
+      }>(scheduleQuery(orgId, params.id).queryKey)?.task;
+      if (task === undefined || task.accountId !== me.account.id) return;
+      await Promise.all(
+        [
+          q(grantableToolsQuery(orgId, task.agentId)),
+          q(chatTargetsQuery(orgId)),
+          ...(task.mode === "conversation" ? [q(scheduleTargetsQuery(orgId, task.agentId))] : []),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
+      );
+    },
+  },
+  {
     pattern: "/settings/appearance",
     // Members read it: the org's themes and setting, the theme components with their switches,
     // and the arrangement of extension UI (替换, 界面位置).
@@ -1080,6 +1164,20 @@ export const ROUTES: readonly RouteEntry[] = [
             // 跟随平台's swatches
             q(platformThemeQuery()),
             q(uiArrangementQuery(orgId)),
+          ],
+  },
+  {
+    pattern: "/settings/schedules",
+    // Org admins (schedules.manage): the settings, every task of the org, and the agents and
+    // members that name them (sections).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [
+            q(orgSettingsQuery(orgId)),
+            q(schedulesQuery(orgId, "all")),
+            q(agentsQuery(orgId)),
+            q(membersQuery(orgId)),
           ],
   },
   {

@@ -515,6 +515,8 @@ export interface Conversation {
   accountId?: string;
   /** The device it runs in, bound at the first message (null: none, or an older kernel). */
   deviceId?: string | null;
+  /** The scheduled task that started it (a `new`-mode task); null otherwise. */
+  scheduledTaskId?: string | null;
   /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
   activity?: "running" | "waiting" | null;
 }

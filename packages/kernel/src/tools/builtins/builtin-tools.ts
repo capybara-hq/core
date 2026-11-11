@@ -21,6 +21,7 @@ import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-conte
 import { StepLog } from "../../runtime/step-log.js";
 import { UsageReporter } from "../../runtime/usage-report.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
+import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
 import { ToolOutputs } from "../outputs.js";
 import type { BuiltinTool } from "../registry.js";
@@ -32,6 +33,7 @@ import { platformTool } from "./platform.js";
 import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
+import { ScheduleToolsPort, ScheduleUpdates, scheduleTools } from "./schedules.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillLoadTool } from "./skill-load.js";
 import { toolSearchTool } from "./tool-search.js";
@@ -70,6 +72,12 @@ export class BuiltinTools {
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
+    /** The schedule tools read tasks and grants; their writes go through the task service. */
+    @Inject(ScheduledTaskStore) scheduleStore: ScheduledTaskStore,
+    /** `ScheduleUpdate`'s write: its field change and grant changes in one transaction. */
+    @Inject(ScheduleUpdates) scheduleUpdates: ScheduleUpdates,
+    /** The task service, bound by `SchedulesModule` at start (a registration port: no cycle). */
+    @Inject(ScheduleToolsPort) schedulePort: ScheduleToolsPort,
     /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
     @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
   ) {
@@ -135,6 +143,16 @@ export class BuiltinTools {
         now: now ?? Date.now,
         timeZoneOf: ({ orgId, conversationId }) =>
           conversationTimeZone(db.db, orgId, conversationId),
+      }),
+      // the person's scheduled tasks (scheduled tasks spec §11)
+      ...scheduleTools({
+        db: () => db.db,
+        config,
+        store: scheduleStore,
+        service: () => schedulePort.get(),
+        updates: scheduleUpdates,
+        timeZoneOf: (orgId, conversationId) => conversationTimeZone(db.db, orgId, conversationId),
+        now: now ?? Date.now,
       }),
     ];
   }

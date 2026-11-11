@@ -1,5 +1,16 @@
 import type { FileSystemHandle, ParsedTheme, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
+import type { ModelRef } from "../agents/definition.js";
+import type {
+  ScheduleChat,
+  ScheduleMarker,
+  ScheduleMode,
+  SchedulePauseReason,
+  ScheduleStatus,
+  ScheduleTrigger,
+  TaskRunSkipReason,
+  TaskRunStatus,
+} from "../schedules/types.js";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
 type Ts = ColumnType<Date, Date | string | undefined, Date | string>;
@@ -286,6 +297,8 @@ export interface ConversationsTable {
   subagent_depth: ColumnType<number, number | undefined, number>;
   /** 0088, renamed in 0105: the device the conversation runs in; null = not chosen yet. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
+  scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -327,6 +340,15 @@ export interface ConversationQueueTable {
   effort: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0062: the `user_message.skill` record of a queued skill invocation, or null. */
   skill: ColumnType<unknown, string | null | undefined, string | null>;
+  /**
+   * 0113: the schedule marker of a scheduled task's message, plus the task's zone (`timeZone`, the
+   * message's zone override; not copied into the logged marker); null for a person's message.
+   */
+  schedule: ColumnType<
+    (ScheduleMarker & { timeZone?: string }) | null,
+    string | null | undefined,
+    string | null
+  >;
   created_at: Ts;
   updated_at: Ts;
 }
@@ -376,6 +398,11 @@ export interface RunsTable {
    * and its descendants' tokens, agent map spec §6); null = the run is its own budget run.
    */
   budget_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0113: the scheduled task run this run serves (set on the run the task's message triggers and
+   * inherited by its unattended descendants); null = a person's run.
+   */
+  scheduled_task_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */
@@ -686,6 +713,11 @@ export interface ChannelDeliveriesTable {
   fail_seq: ColumnType<string | null, number | string | null | undefined, number | string | null>;
   fail_count: Generated<number>;
   updated_at: Ts;
+  /**
+   * 0113: a scheduled group run's thread is still to bind; the account its thread row gets when
+   * outbound has the run's first post (thread key = that message's id). Null otherwise.
+   */
+  pending_thread_account_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0018_channels.sql：出站投递发出的审批 / 提问卡片对应的 IM 消息（Task 11，用于更新卡片状态）。 */
@@ -1263,6 +1295,73 @@ export interface ModelUsageTable {
   report_failed_at: TsNullable;
 }
 
+type NullableText = ColumnType<string | null, string | null | undefined, string | null>;
+type NullableTs = ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+
+/** 0113: a scheduled task (scheduled tasks spec §4). */
+export interface ScheduledTasksTable {
+  id: string;
+  org_id: string;
+  account_id: string;
+  agent_id: string;
+  name: string;
+  prompt: string;
+  trigger: ColumnType<ScheduleTrigger, string, string>;
+  mode: ScheduleMode;
+  conversation_id: NullableText;
+  chat: ColumnType<ScheduleChat | null, string | null | undefined, string | null>;
+  model: ColumnType<ModelRef | null, string | null | undefined, string | null>;
+  effort: NullableText;
+  device_id: NullableText;
+  status: ColumnType<ScheduleStatus, ScheduleStatus | undefined, ScheduleStatus>;
+  pause_reason: ColumnType<
+    SchedulePauseReason | null,
+    SchedulePauseReason | null | undefined,
+    SchedulePauseReason | null
+  >;
+  paused_by: NullableText;
+  next_run_at: NullableTs;
+  jitter_seconds: ColumnType<number, number | undefined, number>;
+  expires_at: NullableTs;
+  consecutive_failures: ColumnType<number, number | undefined, number>;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: NullableTs;
+}
+
+/** 0113: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
+export interface ScheduledTaskRunsTable {
+  id: string;
+  task_id: string;
+  org_id: string;
+  scheduled_for: Date | string;
+  fired_at: NullableTs;
+  trial: ColumnType<boolean, boolean | undefined, boolean>;
+  /** A person's "run now" (trial or not): runs even while the task is paused. */
+  manual: ColumnType<boolean, boolean | undefined, boolean>;
+  conversation_id: NullableText;
+  run_id: NullableText;
+  status: ColumnType<TaskRunStatus, TaskRunStatus | undefined, TaskRunStatus>;
+  skip_reason: ColumnType<
+    TaskRunSkipReason | null,
+    TaskRunSkipReason | null | undefined,
+    TaskRunSkipReason | null
+  >;
+  error: NullableText;
+  missing_grants: ColumnType<string[], string | undefined, string>;
+  /** When the scanner's repair last found this started run still in flight. */
+  rechecked_at: NullableTs;
+}
+
+/** 0113: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */
+export interface ScheduledTaskGrantsTable {
+  task_id: string;
+  tool_key: string;
+  spec_hash: string;
+  connector_id: string | null;
+  created_at: Ts;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
   account_initial_passwords: AccountInitialPasswordsTable;
@@ -1316,6 +1415,9 @@ export interface KernelDatabase {
   device_defaults: DeviceDefaultsTable;
   device_machines: DeviceMachinesTable;
   background_tasks: BackgroundTasksTable;
+  scheduled_tasks: ScheduledTasksTable;
+  scheduled_task_runs: ScheduledTaskRunsTable;
+  scheduled_task_grants: ScheduledTaskGrantsTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

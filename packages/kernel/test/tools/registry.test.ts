@@ -9,6 +9,7 @@ import { createDb } from "../../src/db/pool.js";
 import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
+import { parseOrgSettings } from "../../src/orgs/settings.service.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { OrgToolSwitches } from "../../src/tools/org-tool-switches.js";
 import {
@@ -416,11 +417,20 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
   });
 
+  /** The scheduled-task group the settings read always carries (defaults, spec §9). */
+  const SCHEDULED_TASK_DEFAULTS = parseOrgSettings({}).scheduledTasks;
+
   it("GET 默认 toolSearch=on；PATCH 需 org.update，非法值 400，改动写审计", async () => {
     const got = await req({ method: "GET", url: settingsUrl() });
     expect(got.statusCode, got.body).toBe(200);
     expect(got.json()).toEqual({
-      settings: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
+      settings: {
+        toolSearch: "on",
+        locale: "en",
+        sandboxToolPolicy: "allow",
+        platformTool: "on",
+        scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+      },
       deployment: {
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
       },
@@ -456,8 +466,20 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       .execute();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toEqual({
-      before: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
-      after: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
+      before: {
+        toolSearch: "on",
+        locale: "en",
+        sandboxToolPolicy: "allow",
+        platformTool: "on",
+        scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+      },
+      after: {
+        toolSearch: "off",
+        locale: "en",
+        sandboxToolPolicy: "allow",
+        platformTool: "on",
+        scheduledTasks: SCHEDULED_TASK_DEFAULTS,
+      },
     });
 
     // 存量 jsonb 里的未知键保留、非法值按默认读
@@ -468,6 +490,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       locale: "en",
       sandboxToolPolicy: "allow",
       platformTool: "on",
+      scheduledTasks: SCHEDULED_TASK_DEFAULTS,
     });
     await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     const row = await db
@@ -480,6 +503,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       locale: "en",
       sandboxToolPolicy: "allow",
       platformTool: "on",
+      scheduledTasks: SCHEDULED_TASK_DEFAULTS,
       future: 1,
     });
 

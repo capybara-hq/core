@@ -14,6 +14,7 @@ import {
 import { z } from "zod";
 import { AgentDefinitionSchema, DisabledToolRef, ModelRef } from "../agents/definition.js";
 import { ORG_ROLES } from "../orgs/roles.js";
+import type { ScheduleMarker } from "../schedules/types.js";
 import {
   TOOL_VIEW_DIFF_MAX_LINES,
   TOOL_VIEW_LINE_MAX_CHARS,
@@ -254,6 +255,16 @@ export const MessageSenderSchema = z.object({
   anonymous: z.literal(true).optional(),
 });
 
+/** `user_message.schedule` (scheduled tasks spec §6): the `ScheduleMarker` shape. */
+export const ScheduleMarkerSchema = z.object({
+  taskId: z.string(),
+  taskRunId: z.string(),
+  scheduledFor: z.string(),
+  trial: z.boolean(),
+  taskName: z.string(),
+  localTime: z.string(),
+});
+
 /** `run_context` (run context spec §3.1): every field optional, a later event holds changes only. */
 export const RunContextSchema = z.object({
   /** The agent itself: its name and its versioned description collapsed to one line. */
@@ -339,6 +350,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         })
         .optional(),
       /**
+       * A scheduled task's message (scheduled tasks spec §6, §12): which task and tick posted it.
+       * Not model-visible as such: request building renders only `taskName` and `localTime`, fixed
+       * here at write time, as the header `[Scheduled task "<name>", run for <local time>]`
+       * (`scheduleHeader`). The run this message triggers is unattended
+       * (`runs.scheduled_task_run_id`).
+       */
+      schedule: ScheduleMarkerSchema.optional(),
+      /**
        * Set on a sub-agent's task message (phase C, spec §6.3): which parent call dispatched it.
        * Not model-visible; the web renders the message as the task block.
        */
@@ -401,9 +420,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * What started the run (display only): absent or `message` = a person's message (or a
        * sub-agent's task), `background_task` = a finished background task woke the conversation
        * (spec 2026-11-05-background-bash-design §3), `subagent` = a sub-agent's delivery woke it
-       * (agent map spec §5.3).
+       * (agent map spec §5.3), `schedule` = a scheduled task's message (scheduled tasks spec §6).
        */
-      trigger: z.enum(["message", "background_task", "subagent"]).optional(),
+      trigger: z.enum(["message", "background_task", "subagent", "schedule"]).optional(),
       /**
        * A wake run's boundary: the seq of the finish or delivery that woke it (full-run replay
        * seeds from it).
@@ -1058,6 +1077,8 @@ const _toolResult: Same<
   Omit<ToolResultBlock, "type">
 > = true;
 void _toolResult;
+const _schedule: Same<z.infer<typeof ScheduleMarkerSchema>, ScheduleMarker> = true;
+void _schedule;
 void _blocks;
 void _logIsBlock;
 void _stop;

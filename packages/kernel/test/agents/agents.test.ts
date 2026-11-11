@@ -76,9 +76,13 @@ const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => {
 };
 
 let n = 0;
-const account = (): Promise<Account> => {
+/** The hash of PW, computed once: no test here signs in, scrypt is not under test. */
+let pwHash: Promise<string> | undefined;
+const account = async (): Promise<Account> => {
   n++;
-  return accounts.createLocal({ login: `user${n}`, password: PW, displayName: `U${n}` });
+  const input = { login: `user${n}`, password: PW, displayName: `U${n}` };
+  pwHash ??= accounts.hashNewPassword(PW);
+  return accounts.createLocal(input, await pwHash);
 };
 
 /** 新建组织（owner 为新账号），按 roles 加入新成员；返回组织 id 与各账号。 */

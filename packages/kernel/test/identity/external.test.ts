@@ -64,9 +64,16 @@ const ident = (over: Partial<ExternalIdentity> = {}): ExternalIdentity => ({
   ...over,
 });
 
-/** 本地账号，邮箱已验证与否可选。 */
+/** The hash of PW, computed once: these tests never check passwords, scrypt is not under test. */
+let pwHash: Promise<string> | undefined;
+
+/** A local account, its email verified or not. */
 async function local(login: string, email: string, verified: boolean) {
-  const a = await accounts.createLocal({ login, password: PW, displayName: login, email });
+  pwHash ??= accounts.hashNewPassword(PW);
+  const a = await accounts.createLocal(
+    { login, password: PW, displayName: login, email },
+    await pwHash,
+  );
   await sql`UPDATE capybara.accounts SET email_verified = ${verified} WHERE id = ${a.id}`.execute(
     raw,
   );

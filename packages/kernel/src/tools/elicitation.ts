@@ -267,6 +267,8 @@ export class ElicitationSession {
       resume?: { state: unknown; answer: FormAnswer | null } | undefined;
       onSuspend: () => void;
       declineAll?: boolean;
+      /** With `declineAll`: the note added to the result instead of the default one. */
+      declineNote?: string;
     },
   ) {
     const prev = opts.resume ? parseState(opts.resume.state) : undefined;
@@ -283,7 +285,9 @@ export class ElicitationSession {
 
   handle = async (req: ElicitationRequest): Promise<ElicitationResponse> => {
     if (this.opts.declineAll) {
-      this.notes.push(unsupportedNote("this tool cannot pause for user input"));
+      this.notes.push(
+        this.opts.declineNote ?? unsupportedNote("this tool cannot pause for user input"),
+      );
       return { action: "decline" };
     }
     const fp = fingerprint(req);

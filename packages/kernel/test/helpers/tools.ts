@@ -12,6 +12,7 @@ import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
+import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { Credentials } from "../../src/tools/credentials.js";
@@ -70,15 +71,30 @@ export function credentialsFor(
   );
 }
 
-/** The approvals over a test's Kysely and an event log; `events` gets `approval.decided`. */
+/**
+ * The approvals over a test's Kysely and an event log; `events` gets `approval.decided`.
+ * `registry`: the agent's tools a trial run's kept approval is checked against (default: none, so
+ * no trial approval becomes a task grant).
+ */
 export function approvalsFor(
   db: Kysely<any>,
   eventLog: EventLog,
   config: () => unknown,
   events: KernelEvents = new KernelEvents(quiet),
+  registry: Pick<ToolRegistry, "forAgent"> = {
+    forAgent: async () => ({ tools: [], unavailable: [], hidden: [], toolSearch: false }),
+  },
 ): ApprovalsService {
   const h = handlesFor(db);
-  return new ApprovalsService(h.db, configFrom(config), eventLog, events, h.txHost);
+  return new ApprovalsService(
+    h.db,
+    configFrom(config),
+    eventLog,
+    events,
+    h.txHost,
+    new ScheduledTaskStore(),
+    registry,
+  );
 }
 
 /** The questions over a test's Kysely and an event log; `events` gets `question.answered`. */
