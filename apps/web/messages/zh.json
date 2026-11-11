@@ -335,7 +335,9 @@
       "files_on_device": "本地设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
       "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
-      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。"
+      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
+      "policy_refused": "这台设备不接受平台的这次网络修改，请在机器上修改。",
+      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
@@ -1626,6 +1628,55 @@
       "revokeHint": "这台机器的连接凭据会被撤销，正在运行的命令会结束。机器上的文件会保留。要再次连接，在机器上运行 capybara-device login。",
       "revokeSubmit": "断开",
       "revoked": "已断开 {name}。"
+    },
+    "network": {
+      "title": "网络",
+      "description": "在组织允许的范围内，这台机器上的命令还能访问哪些域名。",
+      "open": "不限网络",
+      "openOnHint": "命令可以访问组织允许的任何地址。关闭后回到下面的域名列表。",
+      "openOffHint": "命令只能访问下面的域名，且不超出组织允许的范围。",
+      "remoteGrants": "接受平台修改",
+      "remoteGrantsOwner": "接受你的修改",
+      "remoteGrantsOff": "不接受",
+      "remoteGrantsHint": "只能在机器上设置：capybara-device policy set remoteGrants owner|off",
+      "remoteGrantsOffHint": "这台机器不接受平台放宽网络，添加域名和不限网络都要在机器上操作：capybara-device policy add allowedDomains files.example.com；或运行 capybara-device policy set remoteGrants owner 允许在这里修改。",
+      "domains": "允许的域名",
+      "domainsEmpty": "这台机器还没有允许任何域名。",
+      "remove": "移除",
+      "removeLabel": "移除 {host}",
+      "removed": "已移除 {host}。",
+      "add": "添加域名",
+      "addHelp": "完整主机名（files.example.com）或通配符（*.example.com）。",
+      "addDisabled": "这台机器不接受平台添加域名。",
+      "addSubmit": "添加",
+      "added": "已添加 {host}。",
+      "hostInvalid": "请输入小写主机名，不带协议、端口或路径，例如 files.example.com 或 *.example.com。",
+      "hostPresent": "这个域名已经允许。",
+      "upgrade": "这台机器上的设备程序不支持从平台修改网络设置。请在机器上升级 capybara-device。",
+      "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
+      "unknown": "机器还没有上报它的网络设置。",
+      "opened": "已开启不限网络。",
+      "closed": "已恢复网络限制。",
+      "confirmTitle": "这台设备不限网络？",
+      "confirmSubmit": "开启不限网络",
+      "cancel": "取消",
+      "risk": "不限网络后，智能体在这台设备上运行的命令可以访问组织允许的任何地址（组织也不限时，就是任何公网地址），包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
+      "recent": {
+        "title": "最近的修改",
+        "add": "添加 {hosts}",
+        "remove": "移除 {hosts}",
+        "network": {
+          "open": "开启不限网络",
+          "allowlist": "恢复网络限制"
+        },
+        "none": "没有改动",
+        "unknownBy": "未知账号",
+        "via": {
+          "web": "网页",
+          "im": "IM"
+        },
+        "unconfirmed": "机器未确认"
+      }
     }
   },
   "nav": {

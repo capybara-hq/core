@@ -497,6 +497,40 @@ describe("the device picker (environments design §4.1)", () => {
     expect(online.textContent).toContain(en.devices.state.online);
   });
 
+  it("a device with no network limit carries the 不限网络 mark in the picker", async () => {
+    resetNavigation("/");
+    const net = (network: string) => ({
+      features: ["policyOp"],
+      policy: { network, allowedDomains: [], remoteGrants: "owner" },
+      recent: [],
+    });
+    const devices = {
+      ...DEVICES,
+      items: [
+        ...DEVICES.items,
+        envView("d1", "Laptop", {
+          source: "local",
+          provider: "@local",
+          online: true,
+          network: net("open"),
+        }),
+        envView("d2", "Server", {
+          source: "local",
+          provider: "@local",
+          online: true,
+          network: net("allowlist"),
+        }),
+      ],
+    };
+    await renderRouteWithCache("/", withDevices(devices));
+    const user = userEvent.setup();
+    await user.click(picker() as HTMLElement);
+    const open = await screen.findByRole("menuitemradio", { name: /Laptop/ });
+    expect(open.textContent).toContain(en.devices.network.open);
+    const limited = screen.getByRole("menuitemradio", { name: /Server/ });
+    expect(limited.textContent).not.toContain(en.devices.network.open);
+  });
+
   it("without a cloud sandbox the picker still lists the local devices", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });

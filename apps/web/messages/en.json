@@ -335,7 +335,9 @@
       "files_on_device": "A local device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same device.",
       "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
-      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer."
+      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
+      "policy_refused": "This device does not accept this network change from the platform. Change it on the machine.",
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -1638,6 +1640,55 @@
       "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
       "revokeSubmit": "Disconnect",
       "revoked": "{name} disconnected."
+    },
+    "network": {
+      "title": "Network",
+      "description": "Which domains commands on this machine may reach, on top of what the organization allows.",
+      "open": "No network limit",
+      "openOnHint": "Commands reach anything the organization allows. Turning it off goes back to the domains below.",
+      "openOffHint": "Commands reach only the domains below, within what the organization allows.",
+      "remoteGrants": "Changes from the platform",
+      "remoteGrantsOwner": "Accepted from you",
+      "remoteGrantsOff": "Not accepted",
+      "remoteGrantsHint": "Set only on the machine: capybara-device policy set remoteGrants owner|off",
+      "remoteGrantsOffHint": "This machine accepts no widening from the platform, so adding domains and turning the limit off happen on the machine: capybara-device policy add allowedDomains files.example.com, or capybara-device policy set remoteGrants owner to allow changes from here.",
+      "domains": "Allowed domains",
+      "domainsEmpty": "No domains allowed on this machine yet.",
+      "remove": "Remove",
+      "removeLabel": "Remove {host}",
+      "removed": "{host} removed.",
+      "add": "Add a domain",
+      "addHelp": "An exact host (files.example.com) or a wildcard (*.example.com).",
+      "addDisabled": "This machine does not take new domains from the platform.",
+      "addSubmit": "Add",
+      "added": "{host} added.",
+      "hostInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com or *.example.com.",
+      "hostPresent": "This domain is already allowed.",
+      "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
+      "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
+      "unknown": "The machine has not reported its network settings yet.",
+      "opened": "No network limit is on.",
+      "closed": "The network limit is back on.",
+      "confirmTitle": "Turn off the network limit on this device?",
+      "confirmSubmit": "Turn off the limit",
+      "cancel": "Cancel",
+      "risk": "With no network limit, agent commands on this device can reach any address the organization allows (any public address if the organization has no limit), including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
+      "recent": {
+        "title": "Recent changes",
+        "add": "Added {hosts}",
+        "remove": "Removed {hosts}",
+        "network": {
+          "open": "No network limit on",
+          "allowlist": "Network limit back on"
+        },
+        "none": "No change",
+        "unknownBy": "Unknown account",
+        "via": {
+          "web": "web",
+          "im": "IM"
+        },
+        "unconfirmed": "Not confirmed by the machine"
+      }
     }
   },
   "nav": {
