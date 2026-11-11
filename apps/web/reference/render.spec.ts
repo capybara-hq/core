@@ -34,6 +34,8 @@ const PAGES = [
   "tool-row",
   "diff-block",
   "approval-block",
+  // network ask spec §6.5: what a command was refused that no card lifts
+  "network-facts",
   "question-block",
   "connect-block",
   "queued-message",
