@@ -1055,29 +1055,44 @@ export class SkillsService {
   }
 
   /**
-   * The agent's own skills as the agent page lists them: {@link listForAgent} plus `sharePending`,
-   * true while a share request of the skill waits for an org admin.
+   * The agent's skills as the agent page lists them, by name: {@link listForAgent} (`shared:
+   * false`) plus `sharePending`, true while a share request of the skill waits for an org admin,
+   * and the org skills the agent shared (`origin_agent_id`; `scope: 'org'`, `shared: true`, same
+   * id as before sharing): the agent keeps them without selecting them.
    */
   async listOwnForAgent(
     orgId: string,
     agentId: string,
-  ): Promise<(SkillSummary & { sharePending: boolean })[]> {
-    const skills = await this.listForAgent(orgId, agentId);
-    if (skills.length === 0) return [];
-    const pending = await this.db
-      .selectFrom("skill_change_requests")
-      .select("skill_id")
-      .where("org_id", "=", orgId)
-      .where("kind", "=", "share")
-      .where("status", "=", "pending")
-      .where(
-        "skill_id",
-        "in",
-        skills.map((s) => s.id),
-      )
-      .execute();
+  ): Promise<(SkillSummary & { sharePending: boolean; shared: boolean })[]> {
+    const [skills, shared] = await Promise.all([
+      this.listForAgent(orgId, agentId),
+      summaryQuery(this.db.db)
+        .where("s.org_id", "=", orgId)
+        .where("s.scope", "=", "org")
+        .where("s.origin_agent_id", "=", agentId)
+        .where("s.deleted_at", "is", null)
+        .execute(),
+    ]);
+    const pending =
+      skills.length === 0
+        ? []
+        : await this.db
+            .selectFrom("skill_change_requests")
+            .select("skill_id")
+            .where("org_id", "=", orgId)
+            .where("kind", "=", "share")
+            .where("status", "=", "pending")
+            .where(
+              "skill_id",
+              "in",
+              skills.map((s) => s.id),
+            )
+            .execute();
     const ids = new Set(pending.map((r) => r.skill_id));
-    return skills.map((s) => ({ ...s, sharePending: ids.has(s.id) }));
+    return [
+      ...skills.map((s) => ({ ...s, sharePending: ids.has(s.id), shared: false })),
+      ...shared.map((r) => ({ ...summary(r), sharePending: false, shared: true })),
+    ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
   }
 
   /** 对该 agent 自动生效的技能（`scope=agent`、未删除），按名字排序。 */

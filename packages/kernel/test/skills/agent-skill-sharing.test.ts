@@ -251,6 +251,29 @@ describe("sharing an agent skill", () => {
     expect(await env.db.selectFrom("skill_change_requests").select("id").execute()).toEqual([]);
   });
 
+  it("the agent's skill list keeps a skill it shared, marked shared", async () => {
+    const agentId = await createAgent(env.boss);
+    const kept = await svc.register(actor(agentId, env.bossId), zipOf("alpha"));
+    const own = await svc.register(actor(agentId, env.bossId), zipOf("notes"));
+    await svc.share(actor(agentId, env.bossId), own.skillId);
+    const res = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/agents/${agentId}/skills`,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { skills: unknown[] }).skills).toMatchObject([
+      { id: kept.skillId, name: "alpha", scope: "agent", shared: false, sharePending: false },
+      { id: own.skillId, name: "notes", scope: "org", shared: true, sharePending: false },
+    ]);
+    // another agent does not list it
+    const other = await createAgent(env.boss);
+    const otherRes = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/agents/${other}/skills`,
+    });
+    expect((otherRes.json() as { skills: unknown[] }).skills).toEqual([]);
+  });
+
   it("over HTTP: POST .../skills/:skillId/share", async () => {
     const agentId = await createAgent(env.mem);
     const own = await svc.register(actor(agentId, env.memId), zipOf("notes"));
