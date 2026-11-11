@@ -237,7 +237,9 @@ test("the owner uploads a skill package on the agent page and shares it with the
   await expect(
     page.getByText(fill(zh.agents.form.ownSkillShared, { name: "team-glossary" })),
   ).toBeVisible();
-  await expect(item).toHaveCount(0);
+  // it stays in the agent's own skills, marked shared, with no share or delete
+  await expect(item).toContainText(zh.agents.form.sharedWithOrg);
+  await expect(item.getByRole("button")).toHaveCount(0);
   await page.goto("/skills");
   await expect(page.getByText("team-glossary").first()).toBeVisible();
 });
