@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, DataTable, ListPage, Stack } from "@capybara-hq/design";
+import { Button, DataTable, ListPage, Stack, useToast } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -11,6 +11,7 @@ import type { PlatformAuditEvent, PlatformAuditPage } from "../../../../lib/admi
 import { platformAuditQuery } from "../../../../lib/query/admin";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
+import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 import { useAuditColumns } from "../overview/AuditSection";
 
@@ -54,6 +55,8 @@ function AuditLog({
 }) {
   const t = useTranslations("admin.audit");
   const qc = useQueryClient();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
   const columns = useAuditColumns();
   // Later pages belong to the first page they continue (a newer first page starts over).
   const [more, setMore] = useState<{ source: PlatformAuditPage; pages: PlatformAuditPage[] }>({
@@ -68,7 +71,7 @@ function AuditLog({
     setLoadingMore(true);
     qc.fetchQuery(platformAuditQuery(after))
       .then((page) => setMore({ source: first, pages: [...pages, page] }))
-      .catch(() => {})
+      .catch((e: unknown) => toast.error(errorMessage(e)))
       .finally(() => setLoadingMore(false));
   };
   return (

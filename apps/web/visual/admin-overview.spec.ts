@@ -21,7 +21,8 @@ async function open(page: Page, theme: (typeof THEMES)[number], width: number) {
   await page.goto("/dev/ui/pages/admin-overview");
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
-  await expect(page.locator('[data-part="overview-section"][data-state="ready"]')).toHaveCount(2);
+  // a loaded section carries no data-state (only loading and error do)
+  await expect(page.locator('[data-part="overview-section"]:not([data-state])')).toHaveCount(2);
 }
 
 for (const theme of THEMES) {

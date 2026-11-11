@@ -429,6 +429,8 @@ export const keys = {
        * numbers (an extension or plugin change) reads the lists again too.
        */
       adminAttention: (): readonly unknown[] => [...all, "adminOverview", "attention"],
+      /** Every page of the platform audit log (an invalidation prefix). */
+      platformAuditAll: (): readonly unknown[] => [...all, "platformAudit"],
       /** A page of the platform audit log: the newest (`after: ""`) or the one after a cursor. */
       platformAudit: (after = ""): readonly unknown[] => [...all, "platformAudit", after],
       /** The super admin's inbox (its items). */

@@ -367,7 +367,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(screen.getByText("3")).toBeTruthy();
     // the audit section is ready on the first paint
     const audit = screen.getByText(O.audit.title).closest('[data-part="overview-section"]');
-    expect(audit?.getAttribute("data-state")).toBe("ready");
+    expect(audit?.hasAttribute("data-state")).toBe(false);
     expect(within(audit as HTMLElement).getByText("Grant")).toBeTruthy();
     // 待处理 draws its skeleton: its lists were not prefetched
     const attention = screen

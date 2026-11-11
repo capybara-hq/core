@@ -47,13 +47,16 @@ import NotFound from "../../../not-found";
 type SourceList = { items: Marketplace[]; offline: boolean };
 
 /**
- * What a change to a marketplace changes besides the marketplaces: the entries to browse and the
- * catalog's "newer in the marketplace" marks.
+ * What a change to a marketplace changes besides the marketplaces: the entries to browse, the
+ * catalog's "newer in the marketplace" marks, the overview (its plugin updates) and the platform
+ * audit log.
  */
 const sourceChangeKeys = (): (readonly unknown[])[] => [
   keys.deployment().marketplaceEntriesAll(),
   keys.deployment().catalog(),
   keys.deployment().catalogItemsAll(),
+  keys.deployment().adminOverview(),
+  keys.deployment().platformAuditAll(),
 ];
 
 type Problem = { message: string; extra: string[] };

@@ -3336,7 +3336,7 @@
         "orgs": "组织",
         "accounts": "账号"
       },
-      "footnote": "超级管理员不能查看会话内容；以上用量只含汇总数字。",
+      "footnote": "超级管理员不能查看会话内容。",
       "attention": {
         "title": "待处理",
         "empty": "没有需要处理的事项。",
@@ -3371,13 +3371,15 @@
         "problems": {
           "list_failed": "列模型失败",
           "no_chat_model": "没有可用的对话模型"
-        }
+        },
+        "retry": "重试"
       },
       "audit": {
         "title": "最近的平台操作",
         "viewAll": "查看全部",
         "failed": "无法加载平台操作。"
-      }
+      },
+      "partial": "待处理的数字不含暂时无法读取的来源。"
     },
     "inbox": {
       "title": "收件箱",
@@ -3489,6 +3491,7 @@
         "identityUnlinked": "解除了外部身份关联",
         "deploymentSettingsUpdated": "修改了部署设置",
         "bootstrapCompleted": "完成了预装插件的初始化",
+        "deploymentSetupCompleted": "完成了部署初始化",
         "marketplaceAdded": "添加了市场",
         "marketplaceUpdated": "修改了市场",
         "marketplaceRemoved": "移除了市场",

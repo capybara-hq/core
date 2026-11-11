@@ -233,7 +233,10 @@ export const getAdminOverview = () => apiFetch<AdminOverview>("/api/v1/admin/ove
 /** The overview's 待处理 lists (may wait on a provider's model list). */
 export const getAdminAttention = () => apiFetch<AdminAttention>("/api/v1/admin/overview/attention");
 
-/** A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. */
+/**
+ * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. The
+ * overview and `/admin/audit` share the first page (limit 20; the overview shows the first 10).
+ */
 export const listPlatformAudit = (after?: string) =>
   apiFetch<PlatformAuditPage>(
     `/api/v1/admin/audit?limit=20${after === undefined ? "" : `&after=${encodeURIComponent(after)}`}`,
