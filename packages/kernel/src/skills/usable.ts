@@ -46,6 +46,14 @@ export interface UsableSkill {
   platformSkillId?: string;
 }
 
+/**
+ * A resolver's logger: name clashes are warnings; `debug` (the kernel logger has it) takes the ones
+ * nobody chose (a builtin skill no agent selected, shadowed for every resolution).
+ */
+type ResolveLog = Pick<Logger, "warn"> & {
+  debug?: (msg: string, fields?: Record<string, unknown>) => void;
+};
+
 /** A usable or selected skill with what the resolvers need beyond {@link UsableSkill}. */
 export interface SkillVersionRow extends UsableSkill {
   /** `agent`: an agent's own skill (never in the org library). Platform skills are `org`. */
@@ -190,7 +198,9 @@ async function platformOn(
   db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[] | undefined,
-  log?: Pick<Logger, "warn">,
+  log?: ResolveLog,
+  /** Ids nobody selected (builtin skills): their shadowing is logged at `debug`. */
+  quiet: ReadonlySet<string> = new Set(),
 ): Promise<SkillVersionRow[]> {
   const rows = await platformRowsOn(db, orgId, ids);
   if (rows.length === 0) return [];
@@ -224,12 +234,10 @@ async function platformOn(
         o.platform_skill_id === r.id ||
         (o.catalog_item_id !== null && o.catalog_item_id === r.catalog_item_id);
       if (!sameComponent) {
-        log?.warn("platform skill shadowed by an org skill of the same name", {
-          orgId,
-          name: r.name,
-          platformSkillId: r.id,
-          skillId: o.id,
-        });
+        const fields = { orgId, name: r.name, platformSkillId: r.id, skillId: o.id };
+        const msg = "platform skill shadowed by an org skill of the same name";
+        if (quiet.has(r.id)) log?.debug?.(msg, fields);
+        else log?.warn(msg, fields);
       }
       continue;
     }
@@ -273,7 +281,9 @@ export async function skillVersionsById(
   db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[],
-  log?: Pick<Logger, "warn">,
+  log?: ResolveLog,
+  /** Ids nobody selected (builtin skills): a name clash of theirs is logged at `debug`. */
+  quiet: ReadonlySet<string> = new Set(),
 ): Promise<Map<string, SkillVersionRow>> {
   const unique = [...new Set(ids)];
   const out = new Map<string, SkillVersionRow>();
@@ -314,7 +324,9 @@ export async function skillVersionsById(
       ...linked.map((r) => r.platform_skill_id as string),
     ]),
   ];
-  const platform = new Map((await platformOn(db, orgId, platformIds, log)).map((p) => [p.id, p]));
+  const platform = new Map(
+    (await platformOn(db, orgId, platformIds, log, quiet)).map((p) => [p.id, p]),
+  );
   const owned = await ownedPlatformIds(
     db,
     orgId,
@@ -429,7 +441,7 @@ export async function builtinSkillIds(db: KernelSchemaDb, orgId: string): Promis
 export async function selectedSkills(
   db: KernelSchemaDb,
   a: { orgId: string; agentId: string; orgSkills: readonly string[] },
-  log?: Pick<Logger, "warn">,
+  log?: ResolveLog,
 ): Promise<SkillVersionRow[]> {
   const agentOwn = await db
     .selectFrom("skills")
@@ -447,16 +459,16 @@ export async function selectedSkills(
     .where("origin_agent_id", "=", a.agentId)
     .where("deleted_at", "is", null)
     .execute();
-  const orgSkills = new Set([
-    ...a.orgSkills,
-    ...shared.map((r) => r.id),
-    ...(await builtinSkillIds(db, a.orgId)),
-  ]);
+  const chosen = new Set([...a.orgSkills, ...shared.map((r) => r.id)]);
+  const builtin = await builtinSkillIds(db, a.orgId);
+  const quiet = new Set(builtin.filter((id) => !chosen.has(id)));
+  const orgSkills = new Set([...chosen, ...builtin]);
   const byId = await skillVersionsById(
     db,
     a.orgId,
     [...agentOwn.map((r) => r.id), ...orgSkills],
     log,
+    quiet,
   );
   return [...byId.values()]
     .filter((r) => (r.scope === "agent" ? r.agentId === a.agentId : orgSkills.has(r.id)))

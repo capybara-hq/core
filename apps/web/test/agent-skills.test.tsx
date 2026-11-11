@@ -600,6 +600,8 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
         json(200, {
           skills: [
             { ...orgSkill("g1", "skill-guide"), origin: "platform", builtin: true, plugin: "core" },
+            // the org's pinned copy of a builtin skill is always included too
+            { ...orgSkill("c1", "core-notes"), origin: "org", builtin: true },
           ],
         }),
     });
@@ -608,8 +610,11 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
     const box = await within(group).findByRole("checkbox", { name: /skill-guide/ });
     expect(box).toHaveProperty("checked", true);
     expect(box).toHaveProperty("disabled", true);
-    expect(within(group).getByText(en.agents.form.skillTag.builtin)).toBeTruthy();
+    expect(within(group).getAllByText(en.agents.form.skillTag.builtin)).toHaveLength(2);
     expect(within(group).getByText(en.agents.form.builtinHint)).toBeTruthy();
+    const copy = within(group).getByRole("checkbox", { name: /core-notes/ });
+    expect(copy).toHaveProperty("checked", true);
+    expect(copy).toHaveProperty("disabled", true);
   });
 });
 

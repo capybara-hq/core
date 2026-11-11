@@ -235,8 +235,9 @@ export interface SkillSummary {
    */
   linkedIds?: string[];
   /**
-   * In the library list only: a platform skill of a builtin plugin, in every agent's catalog
-   * without being selected (skill authoring spec §5.7). Absent otherwise.
+   * In the library list only: a platform skill of a builtin plugin or the org's pinned copy of
+   * one, in every agent's catalog without being selected (skill authoring spec §5.7). Absent
+   * otherwise.
    */
   builtin?: true;
 }
@@ -1025,7 +1026,8 @@ export class SkillsService {
    * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
    * to a platform skill without a pin, and the platform skills on in the org (phase 2,
    * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`);
-   * a platform skill of a builtin plugin carries `builtin: true` (every agent has it).
+   * a platform skill of a builtin plugin, or the org's pinned copy of one, carries `builtin: true`
+   * (every agent has it).
    */
   async list(orgId: string): Promise<SkillSummary[]> {
     const usable = await usableSkills(this.db.db, orgId);
@@ -1041,15 +1043,18 @@ export class SkillsService {
           : [],
       ),
     );
+    // builtin plugins' skills (and the org's pinned copies of them): every agent has them
+    const builtin = new Set(await builtinSkillIds(this.db.db, orgId));
     const own =
       orgIds.length === 0
         ? []
         : await Promise.all(
             (
               await summaryQuery(this.db.db).where("s.id", "in", orgIds).orderBy("s.name").execute()
-            ).map((r) => {
+            ).map(async (r): Promise<SkillSummary> => {
               const to = promotedTo.get(r.id);
-              return to === undefined ? summary(r) : this.promotedSummary(r.id, to);
+              const s = to === undefined ? summary(r) : await this.promotedSummary(r.id, to);
+              return builtin.has(r.id) ? { ...s, builtin: true } : s;
             }),
           );
     if (platformIds.length === 0) return own;
@@ -1068,7 +1073,6 @@ export class SkillsService {
       const k = l.platform_skill_id as string;
       linked.set(k, [...(linked.get(k) ?? []), l.id]);
     }
-    const builtin = new Set(await builtinSkillIds(this.db.db, orgId));
     const platform = (
       await platformSummaryQuery(this.db.db).where("p.id", "in", platformIds).execute()
     ).map((r) => ({

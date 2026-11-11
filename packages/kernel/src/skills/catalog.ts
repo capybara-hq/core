@@ -53,14 +53,15 @@ export interface EffectiveSkillsInput {
 }
 
 /**
- * 此刻对这个对话生效的技能，按名字（码点序）排序：
- * - 运行所用 agent 版本选中的组织技能（`scope='org'`，id 在 `skills.orgSkills` 里）；
- * - 加上这个 agent 自己的技能（`scope='agent'`）；
+ * The skills in effect for this conversation now, sorted by name (code point order):
+ * - the org skills the run's agent version selects (`scope='org'`, ids in `skills.orgSkills`);
+ * - plus the agent's own skills (`scope='agent'`);
  * - plus the skills of builtin plugins on in the org (skill authoring spec §5.7), never selected:
  *   every agent lists them (not pinned); a selected one is listed once;
- * - 已删除的跳过（保存过的 agent 版本仍可能引用它们）；
- * - 版本取 `current_version`，描述取该版本清单里的描述。
- * 组织技能与 agent 自己的技能同名时只保留 agent 自己的（更具体；`/skills/<name>/` 与按名字加载都不能有两个）。
+ * - deleted skills are skipped (a saved agent version may still name them);
+ * - the version is `current_version`, the description the one in that version's manifest.
+ * When an org skill and the agent's own skill share a name only the agent's own is kept (more
+ * specific; neither `/skills/<name>/` nor loading by name can have two).
  *
  * Trials: a pending version proposal of this agent made in this conversation replaces, by name,
  * the version of its skill (the id of the existing skill, the version it would become on

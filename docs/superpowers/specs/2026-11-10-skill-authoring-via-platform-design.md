@@ -211,7 +211,10 @@ agent skill has become an org skill, the existing chain applies.
   description), never pinned; ranking is unchanged (the agent's own skill of the same name, then
   an org skill, then the platform skill), a skill also selected is listed once, a manual-only
   version stays out of the model's catalog, and a skill off in the org (deployment disable, a
-  component switch) is absent. Old conversations keep their recorded snapshots; the next run start
+  component switch) is absent, as is one an org skill of the same name shadows org-wide (rule 10;
+  the org's pinned copy of the builtin skill takes its place instead). Only platform-owned items
+  and skills count (`owner_org_id IS NULL`), and a sub-agent template may pin one only when the
+  parent selects it. Old conversations keep their recorded snapshots; the next run start
   records a new one with the usual "skills changed" reminder. The agent page shows these skills
   ticked and disabled with a "Built-in" tag (the library list's `builtin: true`).
 - Content (English, Agent Skills format, `SKILL.md` under 500 lines / ~5000 tokens, detail in

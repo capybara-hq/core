@@ -747,6 +747,66 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
     const r = await call(conv, "Skill", { skill: "skill-guide" }, 1);
     expect(r.content).toContain("Pinned guide.");
     expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([copy.id]);
+    // the library marks the copy as builtin too (the agent page shows it as always included)
+    const lib = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
+    expect(
+      (lib.json() as { skills: { id: string; builtin?: boolean }[] }).skills.map((s) => [
+        s.id,
+        s.builtin,
+      ]),
+    ).toEqual([[copy.id, true]]);
+  });
+
+  it("a builtin item or skill owned by another org never reaches this org's agents unselected", async () => {
+    const other = await createOrg(owner, "other");
+    // an org-owned item marked builtin (never so in practice): its skill is not auto-included
+    const otherItem = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: otherItem,
+        name: "theirs",
+        package_name: "@acme/plugin-theirs",
+        publisher: "Acme",
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+        builtin: true,
+        scope: "all",
+        owner_org_id: other,
+        shareable: true,
+      })
+      .execute();
+    await seedPlatformSkill({ name: "theirs", plugin: "theirs", body: "T." });
+    // a skill owned by another org inside a platform builtin item: not auto-included either
+    const guide = await seedBuiltinSkill();
+    const owned = await seedPlatformSkill({ name: "owned", plugin: "core", body: "O." });
+    await db
+      .updateTable("platform_skills")
+      .set({ owner_org_id: other })
+      .where("id", "=", owned.id)
+      .execute();
+    // another org's pinned copy of the builtin skill
+    const copyId = randomUUID();
+    await db
+      .insertInto("skills")
+      .values({
+        id: copyId,
+        org_id: other,
+        scope: "org",
+        agent_id: null,
+        name: "skill-guide",
+        description: "d",
+        current_version: 1,
+        created_by: ownerId,
+        platform_skill_id: guide.id,
+        pinned_version: 1,
+      })
+      .execute();
+    const agentId = await agentWith([]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([guide.id]);
   });
 
   it("follows the org's component switch and stays out when manual-only", async () => {

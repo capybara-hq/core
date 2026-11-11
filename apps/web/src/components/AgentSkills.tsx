@@ -36,8 +36,10 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * 组织技能多选：每个技能一个复选框（名称 · 描述），平台技能带「平台」标记。已选但不在库里的 id（技能已被删除）显示为
- * 「已删除的技能」并保持勾选，取消勾选即从定义里移除（内核修改时只核对新加的引用，保留它不会报错）。
+ * The org skills multi-select: one checkbox per skill (name · description), platform skills with a
+ * "platform" tag. A selected id that is not in the library (the skill was deleted) shows as a
+ * deleted skill and stays ticked; unticking removes it from the definition (the kernel checks only
+ * newly added references on save, so keeping it is not an error).
  * A platform skill is selected when the definition names it or one of the org copies linked to it
  * (`linkedIds`, older agents); those copy ids are never shown as deleted. Unticking it removes
  * every alias; ticking it adds the platform skill's own id. A builtin plugin's skill (`builtin`)
