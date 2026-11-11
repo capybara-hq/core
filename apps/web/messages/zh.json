@@ -3337,9 +3337,10 @@
       "metrics": {
         "attention": "待处理",
         "orgs": "组织",
-        "accounts": "账号"
+        "accounts": "账号",
+        "runs7d": "近 7 天运行"
       },
-      "footnote": "超级管理员不能查看会话内容。",
+      "footnote": "超级管理员不能查看会话内容；以上用量只含汇总数字。",
       "attention": {
         "title": "待处理",
         "empty": "没有需要处理的事项。",
@@ -3453,6 +3454,28 @@
         "title": "最近的平台操作",
         "viewAll": "查看全部",
         "failed": "无法加载平台操作。"
+      },
+      "usage": {
+        "title": "用量 · 近 7 天",
+        "estimated": "费用为估算",
+        "failed": "无法加载用量。",
+        "chart": "近 7 天用量",
+        "runs": "运行",
+        "tokens": "Token",
+        "estimate": "估算 {cost}",
+        "unpriced": "未定价",
+        "cost": "估算费用",
+        "empty": "近 7 天没有运行。",
+        "total": "7 天合计：运行 {runs} · Token {tokens} · 估算费用 {cost}",
+        "costPartial": "（部分模型未设置价格，未计入）",
+        "ranking": {
+          "title": "组织排行",
+          "org": "组织",
+          "runs": "运行",
+          "tokens": "Token",
+          "cost": "估算费用",
+          "others": "其他 {n} 个组织"
+        }
       },
       "partial": "待处理的数字不含暂时无法读取的来源。"
     },

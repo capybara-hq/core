@@ -3,6 +3,7 @@ import {
   getAdminAttention,
   getAdminHealth,
   getAdminOverview,
+  getAdminUsage,
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
@@ -55,6 +56,14 @@ export const adminAttentionQuery = () =>
  */
 export const adminHealthQuery = () =>
   defineQuery({ key: d().adminHealth(), fn: () => getAdminHealth(), freshness: "live" });
+
+/**
+ * The overview's 用量 (runs, tokens and estimated cost per day, the org ranking) in the reader's
+ * zone `tz`, which the key holds. Not prefetched: the kernel may take seconds on a cold cache, so
+ * its section draws its own skeleton; the header's 近 7 天运行 reads the same query.
+ */
+export const adminUsageQuery = (tz: string) =>
+  defineQuery({ key: d().adminUsage(tz), fn: () => getAdminUsage(tz), freshness: "deployment" });
 
 /**
  * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. Its

@@ -1,3 +1,4 @@
+import { formatCompact } from "@capybara-hq/design";
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,6 +7,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { activeNavOf } from "../src/components/shell/nav";
 import { Catalog } from "../src/dev/catalog";
+import { adminUsageQuery } from "../src/lib/query/admin";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -166,6 +168,47 @@ const HEALTH = {
   },
   unavailable: [],
 };
+/** The five token kinds of a day summing to `n` (the chart's Token is their sum). */
+const tok = (n: number) =>
+  n === 0
+    ? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, embedding: 0 }
+    : { input: n - 4000, output: 1000, cacheRead: 1000, cacheWrite: 1000, embedding: 1000 };
+const USAGE_DATES = [
+  "2026-11-04",
+  "2026-11-05",
+  "2026-11-06",
+  "2026-11-07",
+  "2026-11-08",
+  "2026-11-09",
+  "2026-11-10",
+];
+const USAGE_RUNS = [100, 120, 90, 0, 140, 234, 128];
+const USAGE_TOKENS = [3_000_000, 3_500_000, 2_800_000, 0, 4_000_000, 5_000_000, 3_400_000];
+const USAGE_COSTS = [10.5, 12, 9.6, 0, 14, 20, 12.3];
+const USAGE = {
+  from: "2026-11-03T16:00:00.000Z",
+  to: "2026-11-10T16:00:00.000Z",
+  tz: "Asia/Shanghai",
+  currency: "CNY",
+  days: USAGE_DATES.map((date, i) => ({
+    date,
+    runs: USAGE_RUNS[i],
+    tokens: tok(USAGE_TOKENS[i] as number),
+    cost: USAGE_COSTS[i],
+  })),
+  costPartial: false,
+  orgs: [
+    { orgId: "o1", name: "Acme", runs: 600, tokens: 15_000_000, cost: 55.2 },
+    { orgId: "o2", name: "Beta", runs: 200, tokens: 6_650_000, cost: null },
+  ],
+  otherOrgs: { count: 3, runs: 12, tokens: 50_000, cost: 0.5 },
+};
+const EMPTY_USAGE = {
+  ...USAGE,
+  days: USAGE_DATES.map((date) => ({ date, runs: 0, tokens: tok(0), cost: 0 })),
+  orgs: [],
+  otherOrgs: { count: 0, runs: 0, tokens: 0, cost: null },
+};
 const overviewRoutes = (over: Record<string, () => Response> = {}) => ({
   "GET /api/v1/admin/overview": () => json(200, { orgs: 2, accounts: 7, attentionTotal: 12 }),
   "GET /api/v1/admin/inbox": () => json(200, OV_INBOX),
@@ -173,6 +216,7 @@ const overviewRoutes = (over: Record<string, () => Response> = {}) => ({
   "GET /api/v1/admin/overview/attention": () => json(200, ATTENTION),
   "GET /api/v1/admin/audit": () => json(200, AUDIT),
   "GET /api/v1/admin/overview/health": () => json(200, HEALTH),
+  "GET /api/v1/admin/overview/usage": () => json(200, USAGE),
   ...over,
 });
 /** The section titled `title` (an OverviewSection is the section's Card). */
@@ -200,7 +244,7 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(metric(a.overview.metrics.attention).getByText("12")).toBeTruthy();
     expect(metric(a.overview.metrics.orgs).getByText("2")).toBeTruthy();
     expect(metric(a.overview.metrics.accounts).getByText("7")).toBeTruthy();
-    expect(container.querySelectorAll('[data-part="stat-card"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-part="stat-card"]')).toHaveLength(4);
     const statLink = (label: string) =>
       within(metrics).getByText(label).closest("a")?.getAttribute("href");
     expect(statLink(a.overview.metrics.attention)).toBe("/admin/inbox");
@@ -471,6 +515,10 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(section(o.audit.title).hasAttribute("data-state")).toBe(false);
     expect(section(o.health.title).hasAttribute("data-state")).toBe(false);
     expect(within(section(o.health.title)).getByText(o.health.queues.runs)).toBeTruthy();
+    expect(section(o.usage.title).hasAttribute("data-state")).toBe(false);
+    expect(
+      within(section(o.usage.title)).getByRole("table", { name: o.usage.ranking.title }),
+    ).toBeTruthy();
     expect(screen.getByText(o.footnote)).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(calls).toEqual([]);
@@ -779,7 +827,7 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/overview/health"]);
   });
 
-  it("the sections stack in order: 待处理, 运行状况, 最近的平台操作", async () => {
+  it("the sections stack in order: 待处理, 运行状况, 用量, 最近的平台操作", async () => {
     const o = zh.admin.overview;
     stubApi(overviewRoutes());
     await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
@@ -787,7 +835,8 @@ describe("/admin 概览（OverviewPage）", () => {
     const follows = (a: HTMLElement, b: HTMLElement) =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
     expect(follows(section(o.attention.title), section(o.health.title))).toBe(true);
-    expect(follows(section(o.health.title), section(o.audit.title))).toBe(true);
+    expect(follows(section(o.health.title), section(o.usage.title))).toBe(true);
+    expect(follows(section(o.usage.title), section(o.audit.title))).toBe(true);
   });
 
   it("the /dev/ui overview does not poll the health (no kernel behind the catalog)", async () => {
@@ -801,6 +850,221 @@ describe("/admin 概览（OverviewPage）", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /** The 用量 section once loaded. */
+  const usageBox = async (title: string) =>
+    vi.waitFor(
+      () => {
+        const s = section(title);
+        if (s === undefined || s.hasAttribute("data-state")) throw new Error("not ready");
+        return s;
+      },
+      { timeout: 3000 },
+    );
+  const money = (locale: string, n: number) =>
+    new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: "CNY",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n);
+  /** The chart's visually hidden table: one row per day, its cells as text. */
+  const chartRows = (box: HTMLElement) =>
+    [...box.querySelectorAll('[data-part="trend-chart"] table tbody tr')].map((tr) =>
+      [...tr.children].map((c) => c.textContent ?? ""),
+    );
+  const usageCalls = (calls: { url: string }[]) =>
+    calls.filter((c) => new URL(c.url, "http://x").pathname === "/api/v1/admin/overview/usage");
+
+  it.each(LOCALES)(
+    "用量：两个面板（运行、Token）来自应答，日期 MM-DD，今天为当前点，每个费用都带估算（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      // the head says the costs are estimates
+      expect(within(box).getByText(u.estimated).getAttribute("data-tone")).toBe("muted");
+      const chart = box.querySelector('[data-part="trend-chart"]') as HTMLElement;
+      expect(chart.getAttribute("aria-label")).toBe(u.chart);
+      const titles = [...chart.querySelectorAll('[data-part="trend-chart-title"]')].map(
+        (el) => el.textContent,
+      );
+      expect(titles).toEqual([u.runs, u.tokens]);
+      const header = [...chart.querySelectorAll("table thead th")].map((th) => th.textContent);
+      expect(header.slice(1)).toEqual([u.runs, u.tokens, u.cost]);
+      const rows = chartRows(box);
+      expect(rows).toHaveLength(7);
+      expect(rows.map((r) => (r[0] as string).slice(0, 5))).toEqual(
+        USAGE_DATES.map((d) => d.slice(5)),
+      );
+      // today (the last day) is the current point
+      expect(rows[6]?.[0]).not.toBe("11-10");
+      expect(rows.map((r) => r[1])).toEqual(USAGE_RUNS.map(String));
+      expect(rows.map((r) => r[2])).toEqual(USAGE_TOKENS.map((n) => formatCompact(n, locale)));
+      expect(rows.map((r) => r[3])).toEqual(
+        USAGE_COSTS.map((c) => fill(u.estimate, { cost: money(locale, c) })),
+      );
+      expect(
+        chart.querySelector('[data-part="trend-chart-point"][data-kind="current"]'),
+      ).not.toBeNull();
+      expect(
+        chart
+          .querySelector('[data-part="trend-chart-point"][data-kind="current"]')
+          ?.getAttribute("data-index"),
+      ).toBe("6");
+      // the 7-day total line
+      expect(
+        within(box).getByText(
+          fill(u.total, {
+            runs: 812,
+            tokens: formatCompact(21_700_000, locale),
+            cost: money(locale, 78.4),
+          }),
+        ),
+      ).toBeTruthy();
+      expect(within(box).queryByText(u.costPartial)).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("用量：zh 合计行写作「7 天合计：运行 812 · Token 2170万 · 估算费用 ¥78.40」", async () => {
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await usageBox(zh.admin.overview.usage.title);
+    expect(
+      within(box).getByText("7 天合计：运行 812 · Token 2170万 · 估算费用 ¥78.40"),
+    ).toBeTruthy();
+  });
+
+  it("用量：费用为 null 时写「未定价」而不是 0；部分未定价时合计行后的说明链接到模型页", async () => {
+    const u = zh.admin.overview.usage;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/usage": () =>
+          json(200, {
+            ...USAGE,
+            days: USAGE.days.map((d, i) => (i === 5 ? { ...d, cost: null } : d)),
+            costPartial: true,
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await usageBox(u.title);
+    const rows = chartRows(box);
+    expect(rows[5]?.[3]).toBe(u.unpriced);
+    expect(rows[3]?.[3]).toBe(fill(u.estimate, { cost: "¥0.00" }));
+    // the total counts only the priced days, and says so
+    expect(
+      within(box).getByText(
+        fill(u.total, { runs: 812, tokens: "2170万", cost: money("zh", 78.4 - 20) }),
+      ),
+    ).toBeTruthy();
+    const note = within(box).getByRole("link", { name: u.costPartial });
+    expect(note.getAttribute("href")).toBe("/admin/models");
+    // an org without priced tokens is 未定价 too
+    const ranking = within(box).getByRole("table", { name: u.ranking.title });
+    const beta = within(ranking).getByText("Beta").closest("tr") as HTMLElement;
+    expect(within(beta).getByText(u.unpriced)).toBeTruthy();
+    expect(within(beta).queryByText("¥0.00")).toBeNull();
+  });
+
+  it.each(LOCALES)(
+    "用量：组织排行（组织链接到组织页、运行、Token、估算费用）与其他（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      expect(within(box).getByText(u.ranking.title)).toBeTruthy();
+      const ranking = within(box).getByRole("table", { name: u.ranking.title });
+      const headers = within(ranking)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent);
+      expect(headers).toEqual([u.ranking.org, u.ranking.runs, u.ranking.tokens, u.ranking.cost]);
+      const acme = within(ranking).getByRole("link", { name: "Acme" });
+      expect(acme.getAttribute("href")).toBe("/admin/orgs");
+      const row = (name: string) => within(ranking).getByText(name).closest("tr") as HTMLElement;
+      expect(within(row("Acme")).getByText("600")).toBeTruthy();
+      expect(within(row("Acme")).getByText(formatCompact(15_000_000, locale))).toBeTruthy();
+      expect(within(row("Acme")).getByText(money(locale, 55.2))).toBeTruthy();
+      const others = locale === "zh" ? "其他 3 个组织" : "3 other organizations";
+      expect(within(row(others)).getByText("12")).toBeTruthy();
+      expect(within(row(others)).getByText(formatCompact(50_000, locale))).toBeTruthy();
+      expect(within(row(others)).getByText(money(locale, 0.5))).toBeTruthy();
+      expect(within(ranking).queryByRole("link", { name: others })).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("用量：近 7 天没有运行时图表是零状态，没有组织排行", async () => {
+    const u = zh.admin.overview.usage;
+    stubApi(overviewRoutes({ "GET /api/v1/admin/overview/usage": () => json(200, EMPTY_USAGE) }));
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await usageBox(u.title);
+    const chart = box.querySelector('[data-part="trend-chart"]') as HTMLElement;
+    expect(chart.getAttribute("data-state")).toBe("empty");
+    expect(within(box).getByText(u.empty)).toBeTruthy();
+    expect(within(box).queryByText(u.ranking.title)).toBeNull();
+  });
+
+  it("用量读取失败（503）：只有这个区块出错，重试只重读它；其余区块与前三个数字照常", async () => {
+    const o = zh.admin.overview;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/usage": () =>
+          failing
+            ? json(503, { error: { code: "admin.usage_unavailable", message: "slow" } })
+            : json(200, USAGE),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const alert = await vi.waitFor(() => within(section(o.usage.title)).getByRole("alert"), {
+      timeout: 3000,
+    });
+    expect(within(alert).getByText(o.usage.failed)).toBeTruthy();
+    const metrics = await metricsOf(container);
+    expect(within(metrics).getByText("12")).toBeTruthy();
+    // the 4th number has no answer: a dash, never a blocked header
+    const runs = within(metrics).getByText(o.metrics.runs7d).parentElement as HTMLElement;
+    expect(within(runs).getByText("—")).toBeTruthy();
+    expect(await within(section(o.attention.title)).findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    expect(within(await healthBox(o.health.title)).getByText("v0.1.0")).toBeTruthy();
+    expect(within(section(o.audit.title)).getByText("Grant")).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    const box = await usageBox(o.usage.title);
+    expect(within(box).getByRole("table", { name: o.usage.ranking.title })).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/overview/usage"]);
+    expect(within(runs).getByText("812")).toBeTruthy();
+  });
+
+  it("用量：请求带读者的时区，查询键含时区", async () => {
+    const calls = stubApi(overviewRoutes());
+    const { client } = await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    await usageBox(zh.admin.overview.usage.title);
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const urls = usageCalls(calls).map((c) => new URL(c.url, "http://x"));
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.searchParams.get("tz") === zone)).toBe(true);
+    expect(client.getQueryData(adminUsageQuery(zone).queryKey)).toEqual(USAGE);
+    expect(adminUsageQuery("Asia/Shanghai").queryKey).not.toEqual(
+      adminUsageQuery("Europe/Berlin").queryKey,
+    );
+  });
+
+  it.each(LOCALES)("第四个数字：近 7 天运行来自用量（%s）", async (locale) => {
+    const a = msgs[locale].admin;
+    stubApi(overviewRoutes());
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+    const metrics = await metricsOf(container);
+    const runs = within(metrics).getByText(a.overview.metrics.runs7d).parentElement as HTMLElement;
+    expect(await within(runs).findByText("812")).toBeTruthy();
   });
 
   it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {

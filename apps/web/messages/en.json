@@ -3349,9 +3349,10 @@
       "metrics": {
         "attention": "Needs attention",
         "orgs": "Organizations",
-        "accounts": "Accounts"
+        "accounts": "Accounts",
+        "runs7d": "Runs, last 7 days"
       },
-      "footnote": "Super admins cannot read conversations.",
+      "footnote": "Super admins cannot read conversations; the usage above holds totals only.",
       "attention": {
         "title": "Needs attention",
         "empty": "Nothing needs attention.",
@@ -3465,6 +3466,28 @@
         "title": "Recent platform activity",
         "viewAll": "View all",
         "failed": "Could not load platform activity."
+      },
+      "usage": {
+        "title": "Usage · last 7 days",
+        "estimated": "Costs are estimates",
+        "failed": "Could not load usage.",
+        "chart": "Usage over the last 7 days",
+        "runs": "Runs",
+        "tokens": "Tokens",
+        "estimate": "est. {cost}",
+        "unpriced": "Not priced",
+        "cost": "Est. cost",
+        "empty": "No runs in the last 7 days.",
+        "total": "7-day total: Runs {runs} · Tokens {tokens} · Est. cost {cost}",
+        "costPartial": "(some models have no price and are not counted)",
+        "ranking": {
+          "title": "Top organizations",
+          "org": "Organization",
+          "runs": "Runs",
+          "tokens": "Tokens",
+          "cost": "Est. cost",
+          "others": "{n, plural, one {# other organization} other {# other organizations}}"
+        }
       },
       "partial": "The number needing attention leaves out sources that could not be read."
     },

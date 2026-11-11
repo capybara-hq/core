@@ -142,6 +142,54 @@ export interface AdminHealth {
   unavailable: AdminHealthSource[];
 }
 
+/** Tokens of one day; the four chat kinds do not overlap, `embedding` is `ctx.models.embed` input. */
+export interface AdminUsageTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  embedding: number;
+}
+
+/** One calendar day of the usage week, in the answer's zone. */
+export interface AdminUsageDay {
+  /** `YYYY-MM-DD` in the answer's `tz`. */
+  date: string;
+  /** Runs created that day (sub-agent and eval replay runs included). */
+  runs: number;
+  tokens: AdminUsageTokens;
+  /** Estimated cost in `currency`; null when the day used tokens and none had a price. */
+  cost: number | null;
+}
+
+/** One org's week: totals only (never per account, agent or conversation). */
+export interface AdminUsageOrg {
+  orgId: string;
+  name: string;
+  runs: number;
+  /** Every token kind summed. */
+  tokens: number;
+  cost: number | null;
+}
+
+/**
+ * `GET /admin/overview/usage?tz=` (kernel `admin/usage.service.ts`): runs, tokens and estimated
+ * cost per calendar day in `tz` over today and the 6 days before (today last), and the 10 orgs
+ * that used the most tokens, the rest summed in `otherOrgs`. A null cost is "not priced", never 0.
+ */
+export interface AdminUsageWeek {
+  from: string;
+  to: string;
+  tz: string;
+  /** The deployment setting `priceCurrency`. */
+  currency: string;
+  days: AdminUsageDay[];
+  /** Some tokens of the week had no price: the costs count only the priced ones. */
+  costPartial: boolean;
+  orgs: AdminUsageOrg[];
+  otherOrgs: { count: number; runs: number; tokens: number; cost: number | null };
+}
+
 /**
  * One platform-level audit event (`GET /admin/audit`, org-less events only): who (null: the
  * kernel), whether through a personal token or their agent, the action and its target. Never the
@@ -295,6 +343,10 @@ export const getAdminAttention = () => apiFetch<AdminAttention>("/api/v1/admin/o
 
 /** The overview's 运行状况 (replicas, queues, connections; polled while the page shows). */
 export const getAdminHealth = () => apiFetch<AdminHealth>("/api/v1/admin/overview/health");
+
+/** The overview's 用量: the week in the reader's zone `tz` (`admin.usage_unavailable` 503 on timeout). */
+export const getAdminUsage = (tz: string) =>
+  apiFetch<AdminUsageWeek>(`/api/v1/admin/overview/usage?tz=${encodeURIComponent(tz)}`);
 
 /**
  * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. The

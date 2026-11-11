@@ -22,7 +22,7 @@ async function open(page: Page, theme: (typeof THEMES)[number], width: number) {
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
   // a loaded section carries no data-state (only loading and error do)
-  await expect(page.locator('[data-part="overview-section"]:not([data-state])')).toHaveCount(3);
+  await expect(page.locator('[data-part="overview-section"]:not([data-state])')).toHaveCount(4);
 }
 
 for (const theme of THEMES) {
