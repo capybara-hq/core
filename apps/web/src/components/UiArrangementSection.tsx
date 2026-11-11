@@ -11,6 +11,7 @@ import {
   Stack,
   Subsection,
   Switch,
+  Text,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -79,37 +80,19 @@ function neighbour(items: Item[], i: number, dir: -1 | 1): number | null {
   return null;
 }
 
+type Scope = { kind: "org"; orgId: string } | { kind: "platform" };
+
 /**
- * 界面位置: per list slot the extension contributions the scope lists, with a hide switch and up /
- * down ("hidden" means not listed: a direct link still opens); then one table of the replaceable
- * slots (client extensions spec §6.3), each with a select 内置 / its candidates (an org shows
- * whether it follows the platform, and 跟随平台 drops its own pick). `scope` is an org (org admins
- * write; below admin it is read only, the picks as text) or the platform default (super admins, on
- * the deployment settings page); every change is saved at once (PATCH / PUT) and refreshes the
- * lists that render the slots and the client code the pages load.
+ * The arrangement of a scope (an org, or the platform default) and its one write: every change is
+ * saved at once (PATCH / PUT) and refreshes the lists that render the slots and the client code
+ * the pages load. Shared by 替换 and 界面位置, which sit apart on the 外观 pages.
  */
-export function UiArrangementSection({
-  scope,
-  canEdit,
-}: {
-  scope: { kind: "org"; orgId: string } | { kind: "platform" };
-  canEdit: boolean;
-}) {
-  const t = useTranslations("uiArrangement");
-  const locale = uiLocale(useLocale());
+function useArrangement(scope: Scope) {
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const qc = useQueryClient();
   const q = scope.kind === "org" ? uiArrangementQuery(scope.orgId) : adminUiArrangementQuery();
   const all = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? [];
-  const slots = all.filter(
-    (s): s is UiArrangementListSlot => !isSingleArrangementSlot(s) && s.items.length > 0,
-  );
-  // a replaceable slot is listed when something may replace it or a pick is stored
-  const singles = all.filter(
-    (s): s is UiArrangementSingleSlot =>
-      isSingleArrangementSlot(s) && (s.candidates.length > 0 || s.use !== null),
-  );
   const put = useAppMutation({
     fn: async (patch: Record<string, UiArrangementEntry | null>) => {
       if (scope.kind === "org") await updateOrgSettings(scope.orgId, { uiArrangement: patch });
@@ -134,8 +117,6 @@ export function UiArrangementSection({
     },
   });
   const [busy, setBusy] = useState(false);
-  if (slots.length === 0 && singles.length === 0) return null;
-
   async function save(slot: UiSlotId, entry: UiArrangementEntry | null) {
     setBusy(true);
     try {
@@ -146,6 +127,23 @@ export function UiArrangementSection({
       setBusy(false);
     }
   }
+  return { all, busy, save };
+}
+
+/**
+ * 界面位置: per list slot the extension contributions the scope lists, with a hide switch and up /
+ * down ("hidden" means not listed: a direct link still opens; the first row's up and the last
+ * row's down are disabled). `scope` is an org (on `/settings/appearance`: org admins write, below
+ * admin it is read only) or the platform default (super admins, on the deployment settings page).
+ */
+export function UiPlacementSection({ scope, canEdit }: { scope: Scope; canEdit: boolean }) {
+  const t = useTranslations("uiArrangement");
+  const locale = uiLocale(useLocale());
+  const { all, busy, save } = useArrangement(scope);
+  const slots = all.filter(
+    (s): s is UiArrangementListSlot => !isSingleArrangementSlot(s) && s.items.length > 0,
+  );
+  if (slots.length === 0) return null;
 
   const table = (s: UiArrangementListSlot, slotName: string) => {
     const items = s.items;
@@ -259,16 +257,29 @@ export function UiArrangementSection({
       description={canEdit ? t("description") : t("descriptionReadonly")}
     >
       {slots.map((s) => table(s, t(`slots.${SLOT_NAME[s.slot]}`)))}
-      {singles.length > 0 && (
-        <ReplaceableSlots
-          scope={scope}
-          canEdit={canEdit}
-          busy={busy}
-          slots={singles}
-          save={(slot, entry) => void save(slot, entry)}
-        />
-      )}
     </FormSection>
+  );
+}
+
+/**
+ * 替换: the replaceable slots (client extensions spec §6.3) the scope may change, listed when
+ * something may replace one or a pick is stored; nothing when there is none.
+ */
+export function UiReplacementsSection({ scope, canEdit }: { scope: Scope; canEdit: boolean }) {
+  const { all, busy, save } = useArrangement(scope);
+  const singles = all.filter(
+    (s): s is UiArrangementSingleSlot =>
+      isSingleArrangementSlot(s) && (s.candidates.length > 0 || s.use !== null),
+  );
+  if (singles.length === 0) return null;
+  return (
+    <ReplaceableSlots
+      scope={scope}
+      canEdit={canEdit}
+      busy={busy}
+      slots={singles}
+      save={(slot, entry) => void save(slot, entry)}
+    />
   );
 }
 
@@ -277,8 +288,9 @@ const BUILTIN = "builtin";
 
 /**
  * 替换: one row per replaceable slot, with what it uses (内置 or a contribution) and, for an org,
- * whether that follows the platform. An org admin's 内置 is the org's own pick (`use: null`);
- * 跟随平台 removes the org's entry. On the platform 内置 removes the entry (nothing to follow).
+ * 来源: 本组织 or 跟随平台. An org admin's 内置 is the org's own pick (`use: null`); on a row of the
+ * org's own, 改为跟随平台 removes the org's entry. On the platform 内置 removes the entry (nothing
+ * to follow, no 来源).
  */
 function ReplaceableSlots({
   scope,
@@ -287,7 +299,7 @@ function ReplaceableSlots({
   slots,
   save,
 }: {
-  scope: { kind: "org"; orgId: string } | { kind: "platform" };
+  scope: Scope;
   canEdit: boolean;
   busy: boolean;
   slots: UiArrangementSingleSlot[];
@@ -337,39 +349,35 @@ function ReplaceableSlots({
             key: "source",
             header: t("columns.source"),
             tone: "muted",
+            interactive: canEdit,
             cell: (s: UiArrangementSingleSlot) =>
-              s.followsPlatform ? t("followsPlatform") : t("orgOwn"),
-          } satisfies Column<UiArrangementSingleSlot>,
-        ]
-      : []),
-    ...(org && canEdit
-      ? [
-          {
-            key: "reset",
-            header: t("columns.reset"),
-            interactive: true,
-            fit: true,
-            cell: (s: UiArrangementSingleSlot) =>
-              s.followsPlatform ? null : (
-                <Button
-                  variant="ghost"
-                  density="dense"
-                  disabled={busy}
-                  onClick={() => save(s.slot, null)}
-                  aria-label={t("resetLabel", { slot: slotName(s) })}
-                >
-                  {t("resetOrg")}
-                </Button>
+              s.followsPlatform ? (
+                t("followsPlatform")
+              ) : canEdit ? (
+                <Stack direction="row" gap={8} align="center">
+                  <Text tone="muted">{t("orgOwn")}</Text>
+                  <Button
+                    variant="ghost"
+                    density="dense"
+                    disabled={busy}
+                    onClick={() => save(s.slot, null)}
+                    aria-label={t("resetLabel", { slot: slotName(s) })}
+                  >
+                    {t("resetOrg")}
+                  </Button>
+                </Stack>
+              ) : (
+                t("orgOwn")
               ),
           } satisfies Column<UiArrangementSingleSlot>,
         ]
       : []),
   ];
   return (
-    <Subsection
-      variant="flush"
+    <FormSection
+      id="ui-replace"
+      flush
       title={t("replaceTitle")}
-      count={slots.length}
       description={t("replaceDescription")}
     >
       <DataTable<UiArrangementSingleSlot>
@@ -379,6 +387,6 @@ function ReplaceableSlots({
         rowKey={(s) => s.slot}
         rowLabel={slotName}
       />
-    </Subsection>
+    </FormSection>
   );
 }

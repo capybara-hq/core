@@ -506,7 +506,7 @@ describe("应用此插件的外观 on /extensions", () => {
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
   });
 
-  it("members see no apply action and read-only picks", async () => {
+  it("members see no apply action", async () => {
     // the kernel gives members no suggestion; even with one the page offers no action
     const calls = orgRoutes(ext({ suggestedAppearance: SUGGESTION }));
     await renderRouteWithCache("/extensions", lastStubRoutes(), { me: as("member") });
@@ -517,10 +517,8 @@ describe("应用此插件的外观 on /extensions", () => {
       screen.queryByRole("button", { name: fill(A.actionLabel, { name: "Neon theme" }) }),
     ).toBeNull();
     expect(screen.queryByText(en.extensions.appearanceTitle)).toBeNull();
-    // 界面位置's replaceable slots are read only for members
-    const table = screen.getByRole("table", { name: en.uiArrangement.replaceTitle });
-    expect(within(table).getByText("Other hero")).toBeTruthy();
-    expect(within(table).queryByRole("combobox")).toBeNull();
+    // 替换 lives on 组织设置 › 外观 (read only for members there): not on this page
+    expect(screen.queryByRole("table", { name: en.uiArrangement.replaceTitle })).toBeNull();
     expect(calls.some((c) => c.method === "POST" || c.method === "PATCH")).toBe(false);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });

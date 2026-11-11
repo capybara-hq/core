@@ -28,7 +28,12 @@ import type { ExtensionToolsOffer } from "../../lib/extensions";
 import { availableExtensionPointsQuery, extensionToolsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorQuery } from "../../lib/query/conversation";
-import { connectorToolKey, extensionToolKey } from "../../lib/tool-key";
+import {
+  connectorToolKey,
+  extensionToolKey,
+  toolDisplayName,
+  toolTooltip,
+} from "../../lib/tool-key";
 import { BUILTIN_SET, replaceDisabled, sameJson, savedDefinition } from "./definition-parts";
 import {
   SaveFeedback,
@@ -87,7 +92,10 @@ type GroupTool = {
   key: string;
   /** The tool's name in its extension or connector. */
   name: string;
+  /** Its title, else its bare name (never the key). */
   label: string;
+  /** The row's hover text: the key, then the description. */
+  tooltip: string;
   checked: boolean;
   /** Why a checked tool cannot be used now (the org turned it off). */
   note: string | null;
@@ -239,6 +247,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
           name: tool.name,
           // the declared title; an untitled tool alone in its extension goes by the extension
           label: tool.title ?? (ext.tools.length === 1 ? ext.displayName[lang] : tool.name),
+          tooltip: toolTooltip(tool),
           checked,
           // the org turned it off: no agent gets it, whatever this agent says
           note: checked && tool.switchedOff === true ? t("form.extensionToolOffInOrg") : null,
@@ -263,7 +272,8 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
         ? enabled.map((x) => ({
             key: x.key,
             name: x.name,
-            label: x.title ?? x.name,
+            label: toolDisplayName(x),
+            tooltip: toolTooltip(x),
             checked: !isOff(off, x.name),
             note: null,
           }))
@@ -302,6 +312,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     tools.map((x) => ({
       id: x.key,
       label: x.label,
+      tooltip: x.tooltip,
       checked: x.checked,
       policy: policyOf(x.key, x.checked),
       ...(x.note !== null ? { note: { text: x.note, tone: "warn" as const } } : {}),

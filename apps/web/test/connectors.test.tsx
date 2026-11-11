@@ -1,3 +1,4 @@
+import { findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +8,7 @@ import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page"
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { cardMenuLabels, findCard, footControls, MORE, openCardMenu } from "./support/cards";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -92,6 +94,15 @@ afterEach(() => {
 });
 
 const COMPONENTS = "GET /api/v1/orgs/o1/components?kind=connector_template";
+/** The design package's names of a ToolPolicyList row's select and switch (`toolPolicy.*`). */
+const DESIGN = {
+  zh: { policyOf: "{tool} 的策略", enableOf: "启用 {tool}" },
+  en: { policyOf: "Policy for {tool}", enableOf: "Enable {tool}" },
+} as const;
+const policyOf = (tool: string, locale: "zh" | "en" = "en") =>
+  DESIGN[locale].policyOf.replace("{tool}", tool);
+const enableOf = (tool: string, locale: "zh" | "en" = "en") =>
+  DESIGN[locale].enableOf.replace("{tool}", tool);
 
 describe("连接器列表（ListPage，卡片）", () => {
   it.each(LOCALES)("列出连接器；管理员有「添加连接器」，点击卡片进入详情（%s）", async (locale) => {
@@ -158,6 +169,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     discovery: "manual",
     client: "manual",
   };
+  const BEARER = { type: "bearer", ownership: "personal" };
   const cardOf = async (name: string, label = en.connectors.title) => {
     const list = await screen.findByRole("list", { name: label });
     const card = within(list)
@@ -285,7 +297,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(within(gh).queryByRole("link", { name: en.connectors.templates.configure })).toBeNull();
   });
 
-  it("a personal OAuth connector: 连接 starts the connect flow; once connected the card offers 权限", async () => {
+  it("a personal OAuth connector: one button each; 连接 starts the connect flow; once connected 权限, the rest in ⋯", async () => {
     let connected = false;
     const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH, icon: ICON });
     const calls = stubApi({
@@ -301,13 +313,19 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       [COMPONENTS]: () => json(200, { components: [] }),
       "POST /api/v1/orgs/o1/connectors/c-slack/connect": () =>
         json(200, { authorizationUrl: "https://slack.example/oauth?x=1" }),
+      "DELETE /api/v1/orgs/o1/connectors/c-slack/credentials/me": () => {
+        connected = false;
+        return noContent();
+      },
     });
     await renderList({ me: MEMBER });
     const card = await cardOf("Slack");
-    expect(within(card).getByText(en.connectors.cards.notConnected)).toBeTruthy();
+    expect(within(card).getByText(en.connections.missing)).toBeTruthy();
+    // a member without a guide: 连接 alone, no menu
+    expect(footControls(card)).toEqual([en.connections.oauthConnect]);
     await userEvent
       .setup()
-      .click(within(card).getByRole("button", { name: en.connectors.cards.connect }));
+      .click(within(card).getByRole("button", { name: en.connections.oauthConnect }));
     await vi.waitFor(() =>
       expect(navigateBrowser).toHaveBeenCalledWith("https://slack.example/oauth?x=1"),
     );
@@ -316,13 +334,109 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     connected = true;
     await renderRouteWithCache("/connectors", lastStubRoutes(), { me: MEMBER });
     const again = await cardOf("Slack");
-    expect(within(again).getByText(en.connectors.cards.connected)).toBeTruthy();
-    expect(
-      within(again).getByRole("button", { name: en.connectors.cards.permissions }),
-    ).toBeTruthy();
+    expect(within(again).getByText(en.connections.connected)).toBeTruthy();
+    expect(footControls(again)).toEqual([en.connectors.cards.permissions, MORE.en]);
+    expect(await cardMenuLabels(again)).toEqual([
+      en.connections.reconnect,
+      en.connections.disconnect,
+    ]);
+    // 断开连接 acts at once (only the viewer's connection, 连接 restores it): DELETE, a toast, read again
+    const items = await openCardMenu(again);
+    const before = calls.length;
+    await userEvent
+      .setup()
+      .click(items.find((i) => i.textContent === en.connections.disconnect) as HTMLElement);
+    expect(await screen.findByText('Disconnected "Slack".')).toBeTruthy();
+    expect(calls.slice(before).map((c) => `${c.method} ${c.url}`)).toEqual([
+      "DELETE /api/v1/orgs/o1/connectors/c-slack/credentials/me",
+      "GET /api/v1/orgs/o1/connectors/c-slack",
+    ]);
+    expect(await within(again).findByText(en.connections.missing)).toBeTruthy();
+    expect(footControls(again)).toEqual([en.connections.oauthConnect]);
   });
 
-  it("权限: three choices per tool with the default marked, org locks shown, only changes saved", async () => {
+  it("org admins: 管理凭据 (the 凭据 tab) in ⋯, or 修改配置 without credentials; never two buttons", async () => {
+    const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH });
+    const shared = summary({ id: "c-wiki", name: "Wiki", slug: "wiki" });
+    let connected = false;
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal, shared] }),
+      "GET /api/v1/orgs/o1/connectors/c-slack": () =>
+        json(200, {
+          connector: {
+            ...detail(),
+            ...personal,
+            credential: { ownership: "personal", status: connected ? "connected" : "missing" },
+          },
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+    });
+    await renderList();
+    // a shared connector: 修改配置 is its one button, a link to the 设置 tab
+    const wiki = await cardOf("Wiki");
+    expect(footControls(wiki)).toEqual([en.connections.editConfig]);
+    expect(
+      within(wiki).getByRole("link", { name: en.connections.editConfig }).getAttribute("href"),
+    ).toBe("/connectors/c-wiki?tab=settings");
+    // not connected: 连接, and 修改配置 stays in ⋯ (a menu of one beside the primary)
+    const slack = await cardOf("Slack");
+    expect(footControls(slack)).toEqual([en.connections.oauthConnect, MORE.en]);
+    const items = await openCardMenu(slack);
+    expect(items.map((i) => i.textContent)).toEqual([en.connections.manageCredentials]);
+    expect(items[0]?.getAttribute("href")).toBe("/connectors/c-slack?tab=credentials");
+    await userEvent.setup().keyboard("{Escape}");
+    cleanup();
+    connected = true;
+    await renderRouteWithCache("/connectors", lastStubRoutes());
+    const again = await cardOf("Slack");
+    expect(footControls(again)).toEqual([en.connectors.cards.permissions, MORE.en]);
+    expect(await cardMenuLabels(again)).toEqual([
+      en.connections.reconnect,
+      en.connections.manageCredentials,
+      en.connections.disconnect,
+    ]);
+  });
+
+  it("a personal credential connector: 连接 opens the credential sheet in place; once connected ⋯ 更新凭据 / 清除凭据", async () => {
+    let connected = false;
+    const personal = summary({ id: "c-api", name: "Docs API", auth: BEARER });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [personal] }),
+      "GET /api/v1/orgs/o1/connectors/c-api": () =>
+        json(200, {
+          connector: {
+            ...detail(),
+            ...personal,
+            credential: { ownership: "personal", status: connected ? "connected" : "missing" },
+          },
+        }),
+      [COMPONENTS]: () => json(200, { components: [] }),
+      "PUT /api/v1/orgs/o1/connectors/c-api/credentials/me": () => {
+        connected = true;
+        return noContent();
+      },
+    });
+    await renderList({ me: MEMBER });
+    const card = await cardOf("Docs API");
+    expect(footControls(card)).toEqual([en.connections.oauthConnect]);
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: en.connections.oauthConnect }));
+    const sheet = await screen.findByRole("dialog", { name: "Enter your credential for Docs API" });
+    const save = within(sheet).getByRole("button", { name: en.connections.save });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    await user.type(within(sheet).getByLabelText(en.connectors.form.tokenLabel), "tok");
+    await user.click(save);
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ token: "tok" });
+    expect(await within(card).findByText(en.connections.connected)).toBeTruthy();
+    expect(footControls(card)).toEqual([en.connectors.cards.permissions, MORE.en]);
+    expect(await cardMenuLabels(card)).toEqual([
+      en.connections.updateCredential,
+      en.connections.clearCredential,
+    ]);
+  });
+
+  it("权限: one row per tool grouped read-only / may write, default marked, locks shown, only changes saved", async () => {
     const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH });
     const P = en.connectors.permissions;
     const calls = stubApi({
@@ -339,6 +453,16 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       "GET /api/v1/orgs/o1/connectors/c-slack/tool-policies/me": () =>
         json(200, {
           tools: [
+            {
+              name: "read_channel",
+              key: "mcp__slack__read_channel",
+              title: "Read channel",
+              description: "Read.",
+              defaultPolicy: "allow",
+              annotationPolicy: "allow",
+              policy: null,
+              locked: null,
+            },
             {
               name: "send_message",
               key: "mcp__slack__send_message",
@@ -370,13 +494,21 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     );
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText(P.hint)).toBeTruthy();
-    const list = await within(sheet).findByRole("list", { name: P.listLabel });
-    const send = within(list).getByRole("group", { name: "Send message" });
-    expect(within(send).getByText(P.defaultMark.replace("{label}", P.ask))).toBeTruthy();
-    // the org turned delete_message off: locked, no choices
-    expect(within(list).getByText(P.locked.disabled)).toBeTruthy();
-    expect(within(list).queryByRole("group", { name: "Delete message" })).toBeNull();
-    await user.click(within(send).getByRole("radio", { name: P.deny }));
+    const readList = await within(sheet).findByRole("list", { name: P.groups.read });
+    const writeList = within(sheet).getByRole("list", { name: P.groups.write });
+    expect(within(readList).getByText("Read channel")).toBeTruthy();
+    expect(within(readList).queryByText("Send message")).toBeNull();
+    expect(within(sheet).queryAllByRole("checkbox")).toHaveLength(0);
+    // the org turned delete_message off: locked, its select off
+    expect(within(writeList).getByText(P.locked.disabled)).toBeTruthy();
+    expect(within(writeList).getByRole("combobox", { name: /Delete message/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    const send = within(writeList).getByRole("combobox", { name: /Send message/ });
+    expect(send.textContent).toContain(P.defaultMark.replace("{label}", P.ask));
+    await user.click(send);
+    await user.click(screen.getByRole("option", { name: P.deny }));
     await user.click(within(sheet).getByRole("button", { name: P.save }));
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
@@ -384,6 +516,18 @@ describe("/connectors: a card per connector and per template of a plugin on in t
       }),
     );
     expect(await screen.findByText(P.saved)).toBeTruthy();
+  });
+
+  it("?tab=settings (a card's 修改配置) opens the connector's 设置 tab", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+    });
+    await renderRouteWithCache("/connectors/app1?tab=settings", lastStubRoutes());
+    expect(
+      await screen.findByRole("tab", { name: en.connectors.detail.tabs.settings }),
+    ).toHaveProperty("ariaSelected", "true");
+    expect(screen.getByRole("button", { name: en.connectors.settings.save })).toBeTruthy();
   });
 
   it("the connector detail leads with its template's plugin icon", async () => {
@@ -433,9 +577,7 @@ describe("连接器详情（DetailPage）", () => {
     });
     const { container } = await renderDetail({ locale });
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
-    const policy = await screen.findByRole("combobox", {
-      name: m.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
-    });
+    const policy = await screen.findByRole("combobox", { name: policyOf("delete_item", locale) });
     const tabs = screen.getByRole("tablist", { name: m.connectors.detail.tabsLabel });
     expect(
       within(tabs)
@@ -452,11 +594,7 @@ describe("连接器详情（DetailPage）", () => {
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
       tools: { delete_item: { defaultPolicy: "deny" } },
     });
-    await user.click(
-      screen.getByRole("switch", {
-        name: m.connectors.tools.enabledLabel.replace("{tool}", "mcp__fixture__delete_item"),
-      }),
-    );
+    await user.click(screen.getByRole("switch", { name: enableOf("delete_item", locale) }));
     expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
       tools: { delete_item: { status: "disabled" } },
     });
@@ -469,6 +607,80 @@ describe("连接器详情（DetailPage）", () => {
     expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(4);
     expect(within(facts).queryByText("fixture")).toBeNull();
   });
+
+  it.each(LOCALES)(
+    "工具页签：每行是标题或不带前缀的名字（键与说明在悬停提示），按只读 / 可能写入分组计数，可搜索（%s）",
+    async (locale) => {
+      const m = msgs[locale];
+      const reads = [
+        "read_channel",
+        "read_thread",
+        "search_messages",
+        "search_users",
+        "list_files",
+      ];
+      const writes = ["send_message", "schedule_message", "create_canvas", "add_reaction"];
+      stubApi({
+        "GET /api/v1/orgs/o1/connectors/app1": () =>
+          json(200, {
+            connector: detail({
+              tools: [
+                ...reads.map((n) =>
+                  tool(n, {
+                    annotations: { readOnlyHint: true },
+                    defaultPolicy: "allow",
+                    ...(n === "read_channel" ? { title: "Read channel" } : {}),
+                  }),
+                ),
+                ...writes.map((n) => tool(n)),
+              ],
+            }),
+          }),
+      });
+      await renderDetail({ locale });
+      const g = m.connectors.tools.groups;
+      const read = await screen.findByRole("list", { name: g.read });
+      const write = screen.getByRole("list", { name: g.write });
+      expect(within(read).getAllByRole("listitem")).toHaveLength(5);
+      expect(within(write).getAllByRole("listitem")).toHaveLength(4);
+      // each group is a Subsection with its count
+      const heads = [...document.querySelectorAll('[data-part="subsection"]')].map((x) => [
+        x.querySelector('[data-part="subsection-title"]')?.textContent,
+        x.querySelector('[data-part="subsection-count"]')?.textContent,
+      ]);
+      expect(heads).toEqual([
+        [g.read, "5"],
+        [g.write, "4"],
+      ]);
+      // the declared title, else the bare name; the key never shows, it is the hover text
+      const titled = within(read).getByText("Read channel");
+      expect(titled.getAttribute("title")).toBe("mcp__fixture__read_channel\nread_channel things");
+      expect(within(write).getByText("send_message").getAttribute("title")).toBe(
+        "mcp__fixture__send_message\nsend_message things",
+      );
+      expect(screen.queryByText(/mcp__fixture__/)).toBeNull();
+      // the description is not a second visible line
+      expect(screen.queryByText("send_message things")).toBeNull();
+      // nine tools: a filter over both groups, by display name or bare name
+      const user = userEvent.setup();
+      const search = screen.getByRole("searchbox", { name: m.connectors.tools.search });
+      await user.type(search, "message");
+      expect(
+        within(screen.getByRole("list", { name: g.read })).getAllByRole("listitem"),
+      ).toHaveLength(1);
+      expect(
+        within(screen.getByRole("list", { name: g.write })).getAllByRole("listitem"),
+      ).toHaveLength(2);
+      await user.clear(search);
+      await user.type(search, "read channel");
+      expect(screen.getByText("Read channel")).toBeTruthy();
+      expect(screen.queryByRole("list", { name: g.write })).toBeNull();
+      await user.clear(search);
+      await user.type(search, "nothing like this");
+      expect(screen.getByText(m.connectors.tools.noMatch)).toBeTruthy();
+      expect(findNestedBoxes(document.body)).toEqual([]);
+    },
+  );
 
   it.each(LOCALES)(
     "凭据页签：组织凭据未设置 → 填令牌保存 PUT credentials/org（%s）",
@@ -532,10 +744,27 @@ describe("连接器详情（DetailPage）", () => {
   );
 
   it("普通成员：工具策略只读，没有删除", async () => {
-    stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
+    stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, {
+          connector: detail({
+            tools: [
+              tool("search", { defaultPolicy: "allow" }),
+              tool("delete_item", { status: "disabled" }),
+            ],
+          }),
+        }),
+    });
     await renderDetail({ me: MEMBER });
+    // the policy is text, the switch is not drawn; an off tool says so in its note
     expect(await screen.findByText(en.connectors.policy.allow)).toBeTruthy();
+    expect(screen.getByText(en.connectors.policy.ask)).toBeTruthy();
     expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("button", { name: en.connectors.detail.refresh })).toBeNull();
+    const off = screen.getByText("delete_item").closest("li") as HTMLElement;
+    expect(within(off).getByText(en.connectors.tools.disabled)).toBeTruthy();
+    expect(screen.getByText(en.connectors.tools.hintRead)).toBeTruthy();
     await userEvent
       .setup()
       .click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
@@ -592,14 +821,31 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       // 工具页签：待复核的工具显示状态而不是开关；不再提供的工具标注出来
       expect(await screen.findAllByText(`${m.connectors.tools.pendingReview}`)).toHaveLength(2);
       expect(screen.getByText(m.connectors.tools.missing)).toBeTruthy();
-      expect(
-        screen.getByRole("switch", {
-          name: m.connectors.tools.enabledLabel.replace("{tool}", "mcp__fixture__oldOne"),
+      expect(screen.getByRole("switch", { name: enableOf("oldOne", locale) })).toHaveProperty(
+        "disabled",
+        true,
+      );
+      // a pending tool's switch is locked and off; its note leads to the 复核 tab
+      const pending = screen.getByRole("switch", { name: enableOf("getPet", locale) });
+      expect(pending).toHaveProperty("disabled", true);
+      expect(pending.getAttribute("aria-checked")).toBe("false");
+      await user.click(
+        screen.getByRole("button", {
+          name: m.connectors.tools.openReviewLabel.replace("{tool}", "getPet"),
         }),
-      ).toHaveProperty("disabled", true);
-      await user.click(screen.getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` }));
+      );
+      expect(
+        screen
+          .getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
 
-      const card = screen.getByRole("region", { name: "mcp__fixture__getPet" });
+      // the card is named by the tool's display name; the key is its title's hover text
+      const card = screen.getByRole("region", { name: "getPet" });
+      expect(within(card).getByText("getPet").getAttribute("title")).toBe(
+        "mcp__fixture__getPet\nGet a pet",
+      );
+      expect(within(card).queryByText("mcp__fixture__getPet")).toBeNull();
       expect(within(card).getByText(`${r.changedTool}`)).toBeTruthy();
       const field = (label: string, side: "current" | "new") =>
         within(card).getByRole("textbox", { name: `${label} · ${r[side]}` }) as HTMLTextAreaElement;
@@ -615,7 +861,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       expect(within(card).queryByText(r.changed.replace("{field}", r.annotations))).toBeNull();
 
       // 新工具：只有新定义
-      const fresh = screen.getByRole("region", { name: "mcp__fixture__newOne" });
+      const fresh = screen.getByRole("region", { name: "newOne" });
       expect(within(fresh).getByText(`${r.newTool}`)).toBeTruthy();
       expect(
         (
@@ -629,22 +875,20 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       ).toBeNull();
 
       // 不再提供的工具
-      expect(screen.getByText("mcp__fixture__oldOne")).toBeTruthy();
+      expect(screen.getByText("oldOne").getAttribute("title")).toContain("mcp__fixture__oldOne");
 
       await user.click(
         within(card).getByRole("button", {
-          name: r.approveLabel.replace("{tool}", "mcp__fixture__getPet"),
+          name: r.approveLabel.replace("{tool}", "getPet"),
         }),
       );
       expect(bodyOf(calls.find((c) => c.url.endsWith("/tools/getPet/review")))).toEqual({
         action: "approve",
       });
-      await vi.waitFor(() =>
-        expect(screen.queryByRole("region", { name: "mcp__fixture__getPet" })).toBeNull(),
-      );
+      await vi.waitFor(() => expect(screen.queryByRole("region", { name: "getPet" })).toBeNull());
       await user.click(
         screen.getByRole("button", {
-          name: r.rejectLabel.replace("{tool}", "mcp__fixture__newOne"),
+          name: r.rejectLabel.replace("{tool}", "newOne"),
         }),
       );
       expect(bodyOf(calls.find((c) => c.url.endsWith("/tools/newOne/review")))).toEqual({
@@ -699,15 +943,14 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       await renderDetail({ locale });
       const user = userEvent.setup();
       expect(await screen.findByText(m.connectors.tools.neverReviewed)).toBeTruthy();
-      expect(
-        screen.getByRole("switch", {
-          name: m.connectors.tools.enabledLabel.replace("{tool}", "mcp__fixture__nope"),
-        }),
-      ).toHaveProperty("disabled", true);
+      expect(screen.getByRole("switch", { name: enableOf("nope", locale) })).toHaveProperty(
+        "disabled",
+        true,
+      );
       // 页签计数：待复核的，加上带待复核新定义而停用的（不合规的 broken），让管理员注意到
       await user.click(screen.getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` }));
 
-      const fresh = screen.getByRole("region", { name: "mcp__fixture__fresh" });
+      const fresh = screen.getByRole("region", { name: "fresh" });
       expect(within(fresh).getByText(`${r.newTool}`)).toBeTruthy();
       expect(
         (
@@ -720,29 +963,29 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         within(fresh).queryByRole("textbox", { name: `${r.description} · ${r.current}` }),
       ).toBeNull();
 
-      const rej = screen.getByRole("region", { name: "mcp__fixture__nope" });
+      const rej = screen.getByRole("region", { name: "nope" });
       expect(within(rej).getByText(new RegExp(`${r.rejectedNewTool}$`))).toBeTruthy();
       expect(
         within(rej).getByRole("button", {
-          name: r.approveLabel.replace("{tool}", "mcp__fixture__nope"),
+          name: r.approveLabel.replace("{tool}", "nope"),
         }),
       ).toBeTruthy();
       expect(
         within(rej).queryByRole("button", {
-          name: r.rejectLabel.replace("{tool}", "mcp__fixture__nope"),
+          name: r.rejectLabel.replace("{tool}", "nope"),
         }),
       ).toBeNull();
 
-      const bad = screen.getByRole("region", { name: "mcp__fixture__broken" });
+      const bad = screen.getByRole("region", { name: "broken" });
       expect(within(bad).getByText("Tool inputSchema must be an object")).toBeTruthy();
       expect(
         within(bad).getByRole("button", {
-          name: r.approveLabel.replace("{tool}", "mcp__fixture__broken"),
+          name: r.approveLabel.replace("{tool}", "broken"),
         }),
       ).toHaveProperty("disabled", true);
       expect(
         within(bad).getByRole("button", {
-          name: r.rejectLabel.replace("{tool}", "mcp__fixture__broken"),
+          name: r.rejectLabel.replace("{tool}", "broken"),
         }),
       ).toHaveProperty("disabled", false);
     },
@@ -758,7 +1001,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
     await user.click(
       await screen.findByRole("tab", { name: `${en.connectors.detail.tabs.review}1` }),
     );
-    expect(screen.getByRole("region", { name: "mcp__fixture__newOne" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "newOne" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: en.connectors.review.approve })).toBeNull();
     cleanup();
     stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
@@ -857,69 +1100,112 @@ describe("连接器详情：OAuth 客户端轮换", () => {
   );
 });
 
-describe("个人连接（SettingsPage）", () => {
+describe("个人连接（SettingsPage, cards）", () => {
+  const routes = (state: { connected: boolean }) => {
+    const personal = { auth: { type: "basic", ownership: "personal" } };
+    return {
+      "GET /api/v1/orgs/o1/connectors": () =>
+        json(200, { connectors: [summary(personal), summary({ id: "app2", name: "Org app" })] }),
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(200, {
+          connector: detail({
+            ...personal,
+            credential: {
+              ownership: "personal",
+              status: state.connected ? "connected" : "missing",
+            },
+          }),
+        }),
+      "PUT /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
+        state.connected = true;
+        return noContent();
+      },
+      "DELETE /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
+        state.connected = false;
+        return noContent();
+      },
+    };
+  };
+
   it.each(LOCALES)(
-    "只列个人凭据型连接器；填写保存 PUT credentials/me，已连接可清除（%s）",
+    "只列个人凭据型连接器，一张卡一个按钮；填写凭据在 Sheet 里 PUT credentials/me，已连接可从 ⋯ 清除（%s）",
     async (locale) => {
       const m = msgs[locale];
-      let connected = false;
-      const personal = { auth: { type: "basic", ownership: "personal" } };
-      const calls = stubApi({
-        "GET /api/v1/orgs/o1/connectors": () =>
-          json(200, { connectors: [summary(personal), summary({ id: "app2", name: "Org app" })] }),
-        "GET /api/v1/orgs/o1/connectors/app1": () =>
-          json(200, {
-            connector: detail({
-              ...personal,
-              credential: { ownership: "personal", status: connected ? "connected" : "missing" },
-            }),
-          }),
-        "PUT /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
-          connected = true;
-          return noContent();
-        },
-        "DELETE /api/v1/orgs/o1/connectors/app1/credentials/me": () => {
-          connected = false;
-          return noContent();
-        },
-      });
+      const calls = stubApi(routes({ connected: false }));
       const { container } = await renderRouteWithCache("/account/connections", lastStubRoutes(), {
         locale,
       });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
-      const section = await screen.findByRole("region", { name: "Fixture" });
-      // 每个连接器一个分组：页面上没有多个主操作
-      expect(
-        container.querySelectorAll('[data-variant="primary"], .cb-btn-link-primary').length,
-      ).toBeLessThanOrEqual(1);
+      expect(container.querySelector('[data-part="settings-nav"]')).not.toBeNull();
+      const card = await findCard(m.connections.nav.connections, "Fixture");
+      // cards on the page ground: no box in a box, no page-level primary
+      expect(findNestedBoxes(container)).toEqual([]);
+      expect(container.querySelectorAll('[data-variant="primary"]').length).toBe(0);
+      expect(card.id).toBe("connector-app1");
       expect(screen.queryByText("Org app")).toBeNull();
-      expect(within(section).getByText(`${m.connections.missing}`)).toBeTruthy();
+      expect(within(card).getByText(m.connections.missing)).toBeTruthy();
+      expect(card.textContent).toContain(m.connectors.auth.basic);
+      expect(footControls(card)).toEqual([m.connections.enterCredential]);
       const user = userEvent.setup();
-      await user.type(within(section).getByLabelText(m.connectors.form.usernameLabel), "me");
-      await user.type(within(section).getByLabelText(m.connectors.form.passwordLabel), "pw");
-      await user.click(within(section).getByRole("button", { name: m.connections.save }));
+      await user.click(within(card).getByRole("button", { name: m.connections.enterCredential }));
+      const sheet = await screen.findByRole("dialog");
+      await user.type(within(sheet).getByLabelText(m.connectors.form.usernameLabel), "me");
+      await user.type(within(sheet).getByLabelText(m.connectors.form.passwordLabel), "pw");
+      await user.click(within(sheet).getByRole("button", { name: m.connections.save }));
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
         username: "me",
         password: "pw",
       });
-      await vi.waitFor(() =>
-        expect(within(section).getByLabelText(m.connectors.form.passwordLabel)).toHaveProperty(
-          "value",
-          "",
-        ),
-      );
-      expect(within(section).getByLabelText(m.connectors.form.usernameLabel)).toHaveProperty(
-        "value",
-        "",
-      );
-      const clear = await screen.findByRole("button", { name: m.connections.clear });
-      await user.click(clear);
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(await within(card).findByText(m.connections.connected)).toBeTruthy();
+      expect(footControls(card)).toEqual([m.connections.updateCredential, MORE[locale]]);
+      const items = await openCardMenu(card, MORE[locale]);
+      expect(items.map((i) => i.textContent)).toEqual([
+        m.connectors.cards.permissions,
+        m.connections.clearCredential,
+      ]);
+      await user.click(items[1] as HTMLElement);
       expect(calls.some((c) => c.method === "DELETE")).toBe(true);
-      await vi.waitFor(() =>
-        expect(screen.queryByRole("button", { name: m.connections.clear })).toBeNull(),
-      );
+      expect(await within(card).findByText(m.connections.missing)).toBeTruthy();
+      expect(footControls(card)).toEqual([m.connections.enterCredential]);
     },
   );
+
+  it("更新凭据 opens the sheet over the saved credential; 权限 in ⋯ opens the permissions sheet", async () => {
+    stubApi({
+      ...routes({ connected: true }),
+      "GET /api/v1/orgs/o1/connectors/app1/tool-policies/me": () => json(200, { tools: [] }),
+    });
+    await renderRouteWithCache("/account/connections", lastStubRoutes());
+    const card = await findCard(en.connections.nav.connections, "Fixture");
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: en.connections.updateCredential }));
+    const sheet = await screen.findByRole("dialog", { name: "Update your credential for Fixture" });
+    expect(within(sheet).getByText(en.connections.updateHint)).toBeTruthy();
+    await user.click(within(sheet).getByRole("button", { name: en.connections.cancel }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const items = await openCardMenu(card);
+    await user.click(items[0] as HTMLElement);
+    expect(
+      await screen.findByRole("dialog", {
+        name: en.connectors.permissions.title.replace("{name}", "Fixture"),
+      }),
+    ).toBeTruthy();
+  });
+
+  it("#connector-<id> (a conversation's 连接): the card carries the anchor and its credential sheet opens", async () => {
+    stubApi(routes({ connected: false }));
+    window.history.replaceState(null, "", "/account/connections#connector-app1");
+    try {
+      await renderRouteWithCache("/account/connections", lastStubRoutes());
+      expect(
+        await screen.findByRole("dialog", { name: "Enter your credential for Fixture" }),
+      ).toBeTruthy();
+      expect(document.getElementById("connector-app1")?.tagName).toBe("LI");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
 });
 
 describe("连接器详情的工具栏刷新", () => {
@@ -954,7 +1240,7 @@ describe("连接器详情的工具栏刷新", () => {
     );
     await vi.waitFor(() => expect(button.getAttribute("aria-busy")).toBeNull());
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    expect(screen.queryByText("mcp__fixture__delete_item")).toBeNull();
+    expect(screen.queryByText("delete_item")).toBeNull();
   });
 });
 
@@ -1068,16 +1354,10 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "Fixture" })).toBeNull();
-    // the facts block's four rows, then the tools tab's table: its header and, for a manager,
-    // the refresh button (disabled); no generic cards
+    // the facts block's four rows, then the tools tab's card (its title and, for a manager, an
+    // action slot over the rows)
     const page = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
-    expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
-    expect(within(page).getByText(en.connectors.tools.columns.policy)).toBeTruthy();
-    const refresh = within(page).getByRole("button", {
-      name: en.connectors.detail.refresh,
-    }) as HTMLButtonElement;
-    expect(refresh.disabled).toBe(true);
-    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(1);
     expect(page.querySelector(".cb-body-inspector")).toBeNull();
     expect(
       page.querySelectorAll('[data-part="detail-facts"] [data-part="key-value-row"]'),

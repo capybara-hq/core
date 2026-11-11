@@ -255,7 +255,7 @@ describe("client", () => {
     const c = start();
     expect(await c.done).toBe(0);
     expect(errs).toEqual([
-      "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device",
+      "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device@next",
     ]);
   });
 

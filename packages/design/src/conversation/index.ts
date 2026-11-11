@@ -134,6 +134,8 @@ export {
   AgentCallBlock,
   type AgentCallBlockProps,
   type AgentCallState,
+  BackgroundFinishedList,
+  type BackgroundFinishedListProps,
   type BackgroundItem,
   type BackgroundSubagentItem,
   type BackgroundTaskItem,
@@ -157,7 +159,12 @@ export {
   subagentWaitingLabel,
   subagentWaitKind,
 } from "./subagents";
-export { TaskOutputPanel, type TaskOutputPanelProps } from "./task-output-panel";
+export {
+  TaskOutputPanel,
+  type TaskOutputPanelProps,
+  type TaskOutputUnavailable,
+  type TaskOutputUnavailableReason,
+} from "./task-output-panel";
 export { ThinkingRow, type ThinkingRowProps } from "./thinking";
 export { ThreadHistory, type ThreadHistoryProps, type ThreadHistoryState } from "./thread-history";
 export {

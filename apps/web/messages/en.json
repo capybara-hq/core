@@ -166,7 +166,7 @@
     },
     "background_task": {
       "not_found": "The background task does not exist or has been cleaned up.",
-      "output_unavailable": "The output can't be read now: the sandbox is not running. It is available again once the sandbox resumes."
+      "output_unavailable": "The output can't be read now. Open the task to see why."
     },
     "run": {
       "not_active": "There is no reply in progress.",
@@ -1543,9 +1543,10 @@
       "loginStep": "2. Sign in and confirm on the page it opens",
       "copy": "Copy",
       "copied": "Copied.",
-      "waiting": "Waiting for the machine to connect… Once confirmed it shows up in your devices.",
+      "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
       "connected": "{name} connected.",
-      "close": "Close"
+      "close": "Close",
+      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
     },
     "detail": {
       "tabsLabel": "Device sections",
@@ -1715,9 +1716,9 @@
   "connect": {
     "title": "Connection required",
     "status": "Not connected",
-    "description": "{connector} needs your credential before the agent can use it.",
+    "description": "Connect your {connector} account before the agent can use it.",
     "action": "Connect",
-    "ended": "{connector} was not connected when this ran. Set your credential in My connections, then ask again.",
+    "ended": "{connector} was not connected when this ran. Connect it, then ask the agent again.",
     "result": {
       "connected": "Connector connected. Ask the agent to try again.",
       "unknown": "Could not complete the connection. Please try again.",
@@ -1933,14 +1934,19 @@
       "credential": "Status"
     },
     "tools": {
-      "columns": {
-        "name": "Tool",
-        "policy": "Default policy",
-        "status": "Enabled"
+      "title": "Tools",
+      "hintManage": "Each tool shows its default policy and its switch on the right. Hover a tool's name to see its full name and description.",
+      "hintRead": "Each tool shows its default policy on the right. Hover a tool's name to see its full name and description.",
+      "search": "Search tools",
+      "noMatch": "No matching tools",
+      "groups": {
+        "read": "Read-only",
+        "readHint": "The tool declares that it only reads data.",
+        "write": "May write",
+        "writeHint": "May change data, or does not declare whether it is read-only."
       },
-      "policyLabel": "Default policy of {tool}",
-      "enabledLabel": "Enable {tool}",
-      "enabled": "Enabled",
+      "openReview": "Review",
+      "openReviewLabel": "Review {tool}",
       "disabled": "Disabled",
       "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",
@@ -1966,7 +1972,9 @@
       "rotate": "Replace client",
       "rotated": "OAuth client replaced.",
       "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
-      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect."
+      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect.",
+      "callbackTitle": "Redirect URL",
+      "callbackHint": "Register this exact URL at the authorization server (e.g. the Slack app's OAuth settings)."
     },
     "settings": {
       "title": "General",
@@ -2109,15 +2117,11 @@
       "disabled": "Disabled"
     },
     "cards": {
-      "connect": "Connect",
-      "connected": "Connected",
-      "notConnected": "Not connected",
       "permissions": "Permissions"
     },
     "permissions": {
       "title": "Permissions for {name}",
       "hint": "Applies to your own connection, in every agent you use. An agent can override them, except the tools you set to Deny.",
-      "listLabel": "Tool permissions",
       "allow": "Allow",
       "ask": "Ask",
       "deny": "Deny",
@@ -2131,7 +2135,13 @@
       "save": "Save",
       "cancel": "Cancel",
       "saved": "Permissions saved.",
-      "loading": "Reading the tools…"
+      "loading": "Reading the tools…",
+      "groups": {
+        "read": "Read-only",
+        "readHint": "These tools declare that they only read data; allowed by default.",
+        "write": "May write",
+        "writeHint": "These may change data, or do not declare that they only read; ask by default."
+      }
     },
     "templates": {
       "needsConfig": "Needs setup",
@@ -2160,7 +2170,6 @@
     "connected": "Connected",
     "missing": "Not connected",
     "save": "Save",
-    "clear": "Clear",
     "saved": "Credential for \"{connector}\" saved.",
     "cleared": "Credential for \"{connector}\" cleared.",
     "grants": {
@@ -2180,7 +2189,16 @@
     "reconnect": "Reconnect",
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
-    "oauthHint": "Sign in to this connector with your own account; other members use theirs."
+    "disconnected": "Disconnected \"{connector}\".",
+    "clearCredential": "Clear credential",
+    "editConfig": "Edit configuration",
+    "enterCredential": "Enter credential",
+    "updateCredential": "Update credential",
+    "cancel": "Cancel",
+    "enterCredentialTitle": "Enter your credential for {name}",
+    "updateCredentialTitle": "Update your credential for {name}",
+    "updateHint": "Saving replaces the credential you saved; other members use theirs.",
+    "manageCredentials": "Manage credentials"
   },
   "sandboxSettings": {
     "title": "Sandbox",
@@ -2582,6 +2600,8 @@
     "search": "Search extensions",
     "emptyTab": "No extensions of this kind",
     "noResults": "No extension name contains \"{query}\".",
+    "arrangementPointer": "Replacing, showing, hiding and ordering extension UI is set on the organization's Appearance settings.",
+    "arrangementLink": "UI placement is in Org settings → Appearance",
     "stateTitle": "State",
     "capabilitiesTitle": "Capabilities",
     "permissionsNone": "None",
@@ -3403,6 +3423,7 @@
         },
         "kernel": {
           "version": "Version",
+          "kernelVersion": "Kernel",
           "replicas": "Replicas",
           "mixedVersions": "Replicas report different versions (rolling upgrade?)",
           "replicaList": "Replicas ({n})"
@@ -4831,7 +4852,8 @@
       "kind": {
         "skill": "Skill",
         "connector_template": "Connector template",
-        "agent_template": "Agent template"
+        "agent_template": "Agent template",
+        "theme": "Theme"
       },
       "change": {
         "added": "Added",
@@ -4914,8 +4936,7 @@
       "move": "Order",
       "slot": "Place",
       "use": "Uses",
-      "source": "From",
-      "reset": "Follow"
+      "source": "From"
     },
     "slots": {
       "conversationPanel": "Conversation panels",
@@ -4977,6 +4998,7 @@
     "noticeNoCode": "Background task “{description}” {status}",
     "open": "Open",
     "panelTitle": "Background task",
+    "finishedTitle": "Finished background tasks",
     "notFound": "This background task cannot be found.",
     "status": {
       "completed": "completed",

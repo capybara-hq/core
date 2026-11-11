@@ -6,15 +6,14 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useOwnerLabel } from "../../../components/CatalogParts";
 import { useComponentSwitch } from "../../../components/ComponentSwitch";
-import { ConnectorGuideSheet, useMemberGuides } from "../../../components/ConnectorGuides";
-import { ConnectorPermissionsSheet } from "../../../components/ConnectorPermissions";
+import { connectorAdminItem, usePersonalConnections } from "../../../components/ConnectionActions";
+import { useMemberGuides } from "../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useRouter } from "../../../i18n/navigation";
 import { componentLabel, type OrgComponent } from "../../../lib/components";
-import { useStartConnect } from "../../../lib/connect";
 import {
   type ConnectorDetail,
   type ConnectorSummary,
@@ -34,9 +33,12 @@ import NotFound from "../not-found";
  * connector template of a plugin on in the org that has no connector here yet, switched off or
  * not, each with its plugin's icon. Template cards: 未启用 with 启用 for org admins (the component
  * switch, then straight to 补充配置 for the template's input), 需要配置 with 配置 once on without its
- * connector. Connector cards: a personal one shows the viewer's own state, 连接 (OAuth: the connect
- * route, back here) and, once connected, 权限 (the viewer's own tool policies for their
- * connection). Members read the template cards without actions; guests see the connectors only.
+ * connector. Connector cards (one button each, the rest in ⋯, maintainer decision 2026-11-09): a
+ * personal one shows the viewer's own state, 连接 (OAuth: the connect route, back here; a
+ * credential: its sheet) and, once connected, 权限 (the viewer's own tool policies for their
+ * connection), with 如何连接 / 重新连接 / 断开连接 in ⋯ (`usePersonalConnections`); org admins have
+ * 修改配置 in ⋯ on every connector card (its detail's 设置 tab). Members read the template cards
+ * without actions; guests see the connectors only.
  * From the query cache (the layout prefetched the list, the templates and the personal
  * connectors' details on a first load).
  */
@@ -57,15 +59,13 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const tc = useTranslations("orgComponents");
-  const tg = useTranslations("setupGuide");
+  const tn = useTranslations("connections");
   const locale = useLocale();
   const router = useRouter();
   const manage = canManageConnectors(me);
   // the offered templates are a catalog read: members up (guests see the connectors only)
   const member = roleOf(me) !== undefined && roleOf(me) !== "guest";
   const [tab, setTab] = useState<"all" | "disabled">("all");
-  const [permissions, setPermissions] = useState<string | null>(null);
-  const [howTo, setHowTo] = useState<string | null>(null);
   const list = usePageQuery(connectorsQuery(orgId));
   const cq = orgComponentsQuery(orgId, { kind: "connector_template" });
   const offered = useQuery({ ...cq, enabled: member, retryOnMount: retryOnMountOf(cq.queryKey) });
@@ -78,8 +78,15 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   });
   // the personal connectors whose template's guide has a member section: 如何连接 on their card
   const memberGuides = useMemberGuides(orgId, personal);
+  const loaded = details.flatMap((d) => (d.data === undefined ? [] : [d.data]));
+  const connection = usePersonalConnections({
+    orgId,
+    admin: manage,
+    page: "connectors",
+    connectors: loaded,
+    guides: memberGuides,
+  });
   const ownerLabel = useOwnerLabel(orgId);
-  const { start, starting } = useStartConnect(orgId);
   const { actionsOf, dialog, error } = useComponentSwitch({
     orgId,
     admin: manage,
@@ -91,9 +98,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const all = list.kind === "ready" ? list.data.connectors : [];
-  const detailOf = new Map(
-    details.flatMap((d) => (d.data === undefined ? [] : [[d.data.id, d.data] as const])),
-  );
+  const detailOf = new Map(loaded.map((d) => [d.id, d] as const));
   // The templates of plugins on here without a connector (one with a connector is that card)
   const made = new Set(all.flatMap((c) => (c.platformTemplateId ? [c.platformTemplateId] : [])));
   const templates = (offered.data?.components ?? [])
@@ -169,52 +174,27 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
 
   /** A connector's card: its state, and for a personal one the viewer's own connection. */
   const connectorCard = (c: ConnectorSummary) => {
-    const d = detailOf.get(c.id);
+    const d: ConnectorDetail | undefined = detailOf.get(c.id);
     const own = personal.some((p) => p.id === c.id);
-    const connected = d?.credential.status === "connected";
+    // for org admins: the connector's 凭据 tab, or 设置 without credentials (alone, the one button)
+    const config: MenuItem[] = manage ? [connectorAdminItem(c, tn)] : [];
     const base = {
       avatar: { image: c.icon ?? null },
       title: c.name,
       href: `/connectors/${encodeURIComponent(c.id)}`,
       meta: [t(`auth.${c.auth.type}`), c.slug],
+      ...(config.length > 0 ? { menu: config } : {}),
     };
     if (c.status === "disabled") {
       return (
         <ObjectCard key={c.id} {...base} state={{ label: t("status.disabled"), tone: "muted" }} />
       );
     }
-    if (!own || d === undefined) {
+    const parts = own && d !== undefined ? connection.parts(d) : null;
+    if (parts === null) {
       return <ObjectCard key={c.id} {...base} state={{ label: t("status.active"), tone: "ok" }} />;
     }
-    // 如何连接: the member text of its template's guide, in a sheet
-    const howToMenu: MenuItem[] = memberGuides.has(c.id)
-      ? [{ label: tg("howToConnect"), onSelect: () => setHowTo(c.id) }]
-      : [];
-    const menu = howToMenu.length > 0 ? { menu: howToMenu } : {};
-    if (!connected) {
-      return (
-        <ObjectCard
-          key={c.id}
-          {...base}
-          {...menu}
-          state={{ label: t("cards.notConnected"), tone: "warn" }}
-          primary={
-            c.auth.type === "oauth_code"
-              ? { label: t("cards.connect"), onSelect: () => void start(c.id), loading: starting }
-              : { label: t("cards.connect"), href: `/account/connections#app-${c.id}` }
-          }
-        />
-      );
-    }
-    return (
-      <ObjectCard
-        key={c.id}
-        {...base}
-        {...menu}
-        state={{ label: t("cards.connected"), tone: "ok" }}
-        primary={{ label: t("cards.permissions"), onSelect: () => setPermissions(c.id) }}
-      />
-    );
+    return <ObjectCard key={c.id} {...base} {...parts} />;
   };
 
   /** A template's card: off (启用 for admins) or on without its connector (配置 for admins). */
@@ -269,8 +249,6 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
     );
   };
 
-  const open = permissions === null ? undefined : detailOf.get(permissions);
-  const guideOf = howTo === null ? undefined : personal.find((p) => p.id === howTo);
   return (
     <>
       <ListPage header={header} variant="cards" {...callout} {...(empty ? { empty } : {})}>
@@ -278,21 +256,7 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
         {active === "all" && templates.map(templateCard)}
       </ListPage>
       {dialog}
-      {open !== undefined && (
-        <ConnectorPermissionsSheet
-          orgId={orgId}
-          connector={open as ConnectorDetail}
-          onClose={() => setPermissions(null)}
-        />
-      )}
-      {guideOf !== undefined && (
-        <ConnectorGuideSheet
-          orgId={orgId}
-          connector={guideOf}
-          admin={manage}
-          onClose={() => setHowTo(null)}
-        />
-      )}
+      {connection.overlays}
     </>
   );
 }

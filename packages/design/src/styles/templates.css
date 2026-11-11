@@ -959,6 +959,11 @@ a.cb-object-name:hover {
 .cb-form-section ~ .cb-danger-zone {
   margin-left: calc(240px + var(--cb-space-7));
 }
+/* Stacked sections (every SettingsPage section) have no title column: the zone spans their width. */
+.cb-form-section[data-layout="stacked"] ~ .cb-danger-zone,
+.cb-settings-content .cb-form-section ~ .cb-danger-zone {
+  margin-left: 0;
+}
 @media (max-width: 959px) {
   .cb-form-section ~ .cb-danger-zone {
     margin-left: 0;

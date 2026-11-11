@@ -60,6 +60,7 @@ export const ICON_NAMES = [
   "square",
   "panel-right",
   "maximize-2",
+  "minimize-2",
   "square-pen",
   "trash-2",
   "list-checks",
@@ -399,6 +400,12 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
     ["path", { d: "m21 3-7 7" }],
     ["path", { d: "m3 21 7-7" }],
     ["path", { d: "M9 21H3v-6" }],
+  ],
+  "minimize-2": [
+    ["path", { d: "m14 10 7-7" }],
+    ["path", { d: "M20 10h-6V4" }],
+    ["path", { d: "m3 21 7-7" }],
+    ["path", { d: "M4 14h6v6" }],
   ],
   "square-pen": [
     ["path", { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" }],

@@ -7,6 +7,7 @@ import { Menu } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { isSafeImageSrc, TypeBadge, typeBadge } from "./files";
 import { Prose } from "./prose";
+import { useRightFull } from "./right-full";
 import { fillCopy } from "./tool-copy";
 
 // The file preview in the right panel (spec §6.16.22): the frame (header and body) and the built-in
@@ -80,6 +81,7 @@ export function FilePreviewFrame({
   children,
 }: FilePreviewFrameProps): JSX.Element {
   const t = useDesignT();
+  const full = useRightFull();
   const switcher = h.files && h.files.length > 0 && h.onSwitch;
   const title = switcher ? (
     <Menu
@@ -154,8 +156,8 @@ export function FilePreviewFrame({
             onClick={h.onDownload}
           />
           <IconButton
-            icon={<Icon name="maximize-2" size={16} />}
-            label={t("files.fullscreen")}
+            icon={<Icon name={full ? "minimize-2" : "maximize-2"} size={16} />}
+            label={t(full ? "files.exitFullscreen" : "files.fullscreen")}
             onClick={h.onFullscreen}
           />
           <IconButton

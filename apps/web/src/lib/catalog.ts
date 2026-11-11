@@ -1,7 +1,7 @@
 import type { PackageWarning, SingleProviderBlock, SingleProviderNote } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { SuggestedAppearance } from "./appearance";
-import type { Owner } from "./components";
+import type { Owner, PlatformComponentKind } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
 
 /**
@@ -984,7 +984,7 @@ export type UpdateChange = "added" | "removed" | "upgrade" | "downgrade" | "same
 
 /** One component of a platform update preview (kernel `PlatformUpdateComponent`). */
 export interface PlatformUpdateComponent {
-  kind: "skill" | "agent_template" | "connector_template";
+  kind: PlatformComponentKind;
   /** The platform component (null: added by the target). */
   id: string | null;
   /** Skill or agent template name; a connector template's id. */

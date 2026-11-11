@@ -46,7 +46,7 @@ export function newTaskId(): string {
   return out;
 }
 
-/** The programs the launch and the later polls and stops need inside the sandbox. */
+/** The programs the launch and the later polls and stops need in the environment. */
 const REQUIRED = ["bash", "setsid", "nohup", "timeout", "pgrep", "pkill", "base64"];
 
 /** A task id ({@link newTaskId}). */
@@ -57,7 +57,7 @@ export const TASK_ID_RE = /^bt_[a-z2-7]{6}$/;
  * hand) to `.capybara/tasks/<id>.sh` and starts it with bash (the shell a foreground `Bash` call
  * runs its command in) in a session of its own under `timeout -s KILL <seconds>`, with its exit
  * status written to `<id>.exit` and its output to `<id>.out`; writes the session id (`$!`, the pid
- * `setsid` started) to `<id>.sid` and prints it. A sandbox without one of the needed programs fails with a readable error on
+ * `setsid` started) to `<id>.sid` and prints it. An environment without one of the needed programs fails with a readable error on
  * stderr and exit code 127, before anything starts. `id` must be a task id and `seconds` a
  * positive integer (both go into the script unquoted).
  */
@@ -70,7 +70,7 @@ export function launchScript(id: string, command: string, seconds: number): stri
   const t = `${TASKS_DIR}/${id}`;
   return [
     "set -e",
-    `for c in ${REQUIRED.join(" ")}; do command -v "$c" >/dev/null 2>&1 || { echo "Background tasks need ${REQUIRED.join(", ")} in the sandbox; $c is missing." >&2; exit 127; }; done`,
+    `for c in ${REQUIRED.join(" ")}; do command -v "$c" >/dev/null 2>&1 || { echo "Background tasks need ${REQUIRED.join(", ")} in this environment; $c is missing." >&2; exit 127; }; done`,
     `mkdir -p ${TASKS_DIR}`,
     `printf '%s' '${b64}' | base64 -d > ${t}.sh`,
     `setsid nohup sh -c 'timeout -s KILL ${seconds} bash ${t}.sh; echo $? > ${t}.exit' > ${t}.out 2>&1 < /dev/null &`,

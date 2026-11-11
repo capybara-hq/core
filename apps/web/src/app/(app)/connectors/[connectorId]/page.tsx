@@ -1,9 +1,10 @@
 import ConnectorView from "./view";
 
 /**
- * `/connectors/[connectorId]` (guests read it too; `?tab=guide` opens 接入指南 for org admins). It
- * reads nothing: the layout prefetches the connector on a first load (`lib/query/routes.ts`); a
- * missing one is the not-found state in the shell.
+ * `/connectors/[connectorId]` (guests read it too; `?tab=<id>` opens that tab: `guide` 接入指南
+ * for org admins, `settings` from a card's 修改配置). It reads nothing: the layout prefetches the
+ * connector on a first load (`lib/query/routes.ts`); a missing one is the not-found state in the
+ * shell.
  */
 export default async function ConnectorPage({
   params,

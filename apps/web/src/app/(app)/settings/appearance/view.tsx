@@ -21,6 +21,10 @@ import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
+import {
+  UiPlacementSection,
+  UiReplacementsSection,
+} from "../../../../components/UiArrangementSection";
 import { componentDescription, type OrgComponent } from "../../../../lib/components";
 import {
   canUpdateOrg,
@@ -45,8 +49,10 @@ const FOLLOW = "platform";
  * `/settings/appearance`: the org's 外观 (themes spec §7, §10; SettingsPage). 主题: the themes
  * offered to the org with the org admin's switch each (the platform default theme is locked on);
  * 默认主题: 跟随平台 or a theme on in the org, and 允许成员自选 (off locks the personal picker).
+ * Then the org's arrangement of extension UI (ui-slots spec §5, client extensions spec §6.3):
+ * 替换 (侧边栏品牌 / 新对话主视觉) and 界面位置 (hide and order per slot), each saved at once.
  * Members read it all, without controls that act (roles everywhere). From the query cache: the
- * org's themes (the page) and the theme components (a section).
+ * org's themes (the page), the theme components and the arrangement (sections).
  */
 export default function AppearanceSettingsView() {
   const ws = useWorkspace({ min: "member" });
@@ -259,6 +265,8 @@ function Appearance({
           )}
         </Stack>
       </FormSection>
+      <UiReplacementsSection scope={{ kind: "org", orgId }} canEdit={admin} />
+      <UiPlacementSection scope={{ kind: "org", orgId }} canEdit={admin} />
       {sw.dialog}
     </SettingsPage>
   );

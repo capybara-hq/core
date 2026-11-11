@@ -938,6 +938,9 @@ function taskOutputBlocks(): ReactNode {
         elapsed={elapsed}
         text={"ready in 412 ms\nlistening on http://localhost:3000"}
         source={source}
+        {...(source === "event"
+          ? { unavailable: { reason: "suspended" as const, environment: "sandbox" as const } }
+          : {})}
         stopping={stopping}
         onStop={noop}
       />

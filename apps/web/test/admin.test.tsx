@@ -546,12 +546,17 @@ describe("/admin 概览（OverviewPage）", () => {
     async (locale) => {
       const h = msgs[locale].admin.overview.health;
       stubApi(overviewRoutes());
-      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin", lastStubRoutes(), {
+        locale,
+        session: { version: "v9.9.9" },
+      });
       const box = await healthBox(h.title);
       for (const g of Object.values(h.groups)) {
         expect(within(box).getByText(g, { selector: "[data-part=subsection-title]" })).toBeTruthy();
       }
-      expect(kvValue(box, h.kernel.version).textContent).toBe("v0.1.0");
+      // the product version (the web app's, as the status bar shows it), then the kernel package's
+      expect(kvValue(box, h.kernel.version).textContent).toBe("v9.9.9");
+      expect(kvValue(box, h.kernel.kernelVersion).textContent).toBe("v0.1.0");
       expect(kvValue(box, h.kernel.replicas).textContent).toBe(
         `${h.roles.api} 2 · ${h.roles.worker} 1 · ${h.roles.gateway} 1`,
       );
@@ -679,7 +684,7 @@ describe("/admin 概览（OverviewPage）", () => {
     );
     // the queue group says so in place of its table
     expect(within(box).getAllByText(h.unavailable).length).toBeGreaterThanOrEqual(5);
-    expect(kvValue(box, h.kernel.version).textContent).toBe("v0.1.0");
+    expect(kvValue(box, h.kernel.kernelVersion).textContent).toBe("v0.1.0");
   });
 
   it("运行状况：PG 读不到时，渠道、设备、沙箱显示「暂时无法读取」", async () => {

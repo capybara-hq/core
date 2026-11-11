@@ -15,7 +15,8 @@ import {
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, useContext } from "react";
+import { SessionContext } from "../../../../components/shell/session";
 import type {
   AdminHealth,
   AdminHealthQueue,
@@ -222,13 +223,21 @@ function KernelGroup({ health, t }: { health: AdminHealth; t: T }) {
         )),
       )
     );
+  // The product version: the web app's (released in step with @capybara-hq/capybara), as the
+  // status bar shows it
+  const productVersion = useContext(SessionContext)?.version;
   return (
     <Subsection title={t("groups.kernel")} variant="divided">
       <Stack gap={8}>
         <KeyValue
           keyWidth="12ch"
           rows={[
-            { k: t("kernel.version"), v: versionLabel(health.kernel.version) },
+            // The product version (`@capybara-hq/capybara`, released in step with this web app), then
+            // the kernel package's own version, which only moves when the kernel changes
+            ...(productVersion !== undefined
+              ? [{ k: t("kernel.version"), v: productVersion }]
+              : []),
+            { k: t("kernel.kernelVersion"), v: versionLabel(health.kernel.version) },
             { k: t("kernel.replicas"), v: roleLine },
           ]}
         />

@@ -493,7 +493,9 @@ describe("local devices (environments spec §6, §9)", () => {
     const dialog = await screen.findByRole("dialog");
     // no choice to make: only 本地设备, its steps at once
     expect(within(dialog).queryByRole("radiogroup")).toBeNull();
-    expect(within(dialog).getByDisplayValue("npm install -g @capybara-hq/device")).toBeTruthy();
+    expect(
+      within(dialog).getByDisplayValue("npm install -g @capybara-hq/device@next"),
+    ).toBeTruthy();
   });
 
   it("新建设备 → 本地设备 shows the steps and waits until the new machine appears", async () => {
@@ -510,11 +512,15 @@ describe("local devices (environments spec §6, §9)", () => {
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    expect(within(dialog).getByDisplayValue("npm install -g @capybara-hq/device")).toBeTruthy();
+    expect(
+      within(dialog).getByDisplayValue("npm install -g @capybara-hq/device@next"),
+    ).toBeTruthy();
     expect(
       within(dialog).getByDisplayValue(`capybara-device login --url ${window.location.origin}`),
     ).toBeTruthy();
-    expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(2);
+    // login only registers the machine: the third step keeps it online
+    expect(within(dialog).getByDisplayValue("capybara-device start")).toBeTruthy();
+    expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
     expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
     connected = true;
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {

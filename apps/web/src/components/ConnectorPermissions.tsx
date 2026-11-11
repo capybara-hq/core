@@ -2,12 +2,13 @@
 
 import {
   Button,
-  ItemList,
-  ItemListItem,
-  Segmented,
+  EmptyState,
   Sheet,
   Stack,
+  Subsection,
   Text,
+  ToolPolicyList,
+  type ToolPolicyRow,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -33,7 +34,9 @@ const POLICIES: readonly ToolPolicy[] = ["allow", "ask", "deny"];
  * for their own connection, 允许 / 询问 / 禁止, the default marked. It applies in every agent the
  * viewer uses; an agent's tools page can override it except a 禁止; a tool the org turned off or
  * denied is locked. Picking the default clears the setting, so it follows the org's default.
- * Saved together with 保存.
+ * Saved together with 保存. One row per tool (the title and its select, `ToolPolicyList` without
+ * checkboxes), grouped by what the tool declares: read-only tools (default 允许) apart from the
+ * ones that may write (default 询问, an undeclared tool included).
  */
 export function ConnectorPermissionsSheet({
   orgId,
@@ -61,6 +64,32 @@ export function ConnectorPermissionsSheet({
     (x.name in edits ? edits[x.name] : x.policy) ?? x.defaultPolicy;
   const dirty = Object.keys(edits).length > 0;
   const label = (p: ToolPolicy) => t(p);
+  /** A tool's row: its title (the key as hover text), its select, why it is locked. */
+  const rowOf = (x: MemberToolPolicy, group: ToolPolicy): ToolPolicyRow => ({
+    id: x.name,
+    label: x.title ?? x.name,
+    tooltip:
+      x.title !== null ? `${x.name}${x.description ? ` · ${x.description}` : ""}` : x.description,
+    checked: true,
+    policy: x.locked !== null ? "deny" : effective(x),
+    ...(x.locked !== null
+      ? { locked: true, note: { text: t(`locked.${x.locked}`), tone: "warn" as const } }
+      : x.defaultPolicy !== group
+        ? { note: { text: t("default", { label: label(x.defaultPolicy) }) } }
+        : {}),
+  });
+  /** Picking the default clears the setting; back to what is saved drops the edit. */
+  const pick = (x: MemberToolPolicy | undefined, v: string) => {
+    if (x === undefined) return;
+    setEdits((cur) => {
+      const next = v as ToolPolicy;
+      const value = next === x.defaultPolicy ? null : next;
+      const out = { ...cur };
+      if (value === x.policy) delete out[x.name];
+      else out[x.name] = value;
+      return out;
+    });
+  };
   const onSave = async () => {
     setError(undefined);
     try {
@@ -109,51 +138,40 @@ export function ConnectorPermissionsSheet({
               {t("loading")}
             </Text>
           )
+        ) : tools.length === 0 ? (
+          <EmptyState size="panel" text={t("empty")} />
         ) : (
-          <ItemList label={t("listLabel")} empty={t("empty")}>
-            {tools.map((x) => (
-              <ItemListItem
-                key={x.name}
-                title={x.title ?? x.name}
-                code={x.name}
-                meta={
-                  x.locked !== null ? (
-                    <Text variant="small" tone="warn">
-                      {t(`locked.${x.locked}`)}
-                    </Text>
-                  ) : (
-                    <Text variant="small" tone="muted">
-                      {t("default", { label: label(x.defaultPolicy) })}
-                    </Text>
-                  )
-                }
+          (["allow", "ask"] as const).map((group) => {
+            const members = tools.filter((x) => x.annotationPolicy === group);
+            if (members.length === 0) return null;
+            const title = t(group === "allow" ? "groups.read" : "groups.write");
+            return (
+              <Subsection
+                key={group}
+                variant="divided"
+                title={title}
+                count={members.length}
+                description={t(group === "allow" ? "groups.readHint" : "groups.writeHint")}
               >
-                {x.locked === null && (
-                  <Segmented
-                    label={x.title ?? x.name}
-                    density="dense"
-                    value={effective(x)}
-                    options={POLICIES.map((p) => ({
-                      value: p,
-                      label:
-                        p === x.defaultPolicy ? t("defaultMark", { label: label(p) }) : label(p),
-                    }))}
-                    onChange={(v) =>
-                      setEdits((cur) => {
-                        const next = v as ToolPolicy;
-                        // the default clears the setting; back to what is saved drops the edit
-                        const value = next === x.defaultPolicy ? null : next;
-                        const out = { ...cur };
-                        if (value === x.policy) delete out[x.name];
-                        else out[x.name] = value;
-                        return out;
-                      })
-                    }
-                  />
-                )}
-              </ItemListItem>
-            ))}
-          </ItemList>
+                <ToolPolicyList
+                  label={title}
+                  rows={members.map((x) => rowOf(x, group))}
+                  policyOptions={POLICIES.map((p) => ({
+                    value: p,
+                    label: p === group ? t("defaultMark", { label: label(p) }) : label(p),
+                  }))}
+                  onPolicy={(name, v) =>
+                    pick(
+                      members.find((x) => x.name === name),
+                      v,
+                    )
+                  }
+                  disabled={save.isPending}
+                  search={members.length > 8}
+                />
+              </Subsection>
+            );
+          })
         )}
       </Stack>
     </Sheet>

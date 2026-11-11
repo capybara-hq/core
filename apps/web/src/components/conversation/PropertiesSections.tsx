@@ -252,6 +252,8 @@ export function PropertiesSections({
         stopping: ReadonlySet<string>;
         onStop(item: { kind: "task" | "subagent"; id: string }): void;
         onOpen(item: { kind: "task" | "subagent"; id: string }): void;
+        /** "N completed ›": the list of finished items (`#bg`). */
+        onOpenCompleted(): void;
       }
     | undefined;
   total?: string | undefined;
@@ -285,6 +287,7 @@ export function PropertiesSections({
           stopping={background.stopping}
           onStop={background.onStop}
           onOpen={background.onOpen}
+          onOpenCompleted={background.onOpenCompleted}
         />
       ) : null}
       {after("background")}

@@ -128,6 +128,7 @@ describe("right-area hash", () => {
       { kind: "output", callId: "call_1" },
       { kind: "subagent", id: "s1" },
       { kind: "background", taskId: "bt_abc234" },
+      { kind: "backgroundList" },
     ] as const) {
       expect(parseRightHash(formatRightHash(t))).toEqual(t);
     }
@@ -135,6 +136,8 @@ describe("right-area hash", () => {
     expect(parseRightHash("#nope=1")).toBeNull();
     expect(formatRightHash({ kind: "background", taskId: "bt_abc234" })).toBe("#bg-bt_abc234");
     expect(parseRightHash("#bg-")).toBeNull();
+    expect(formatRightHash({ kind: "backgroundList" })).toBe("#bg");
+    expect(parseRightHash("#bg")).toEqual({ kind: "backgroundList" });
     expect(parseRightHash("")).toBeNull();
     expect(formatRightHash(null)).toBe("");
   });

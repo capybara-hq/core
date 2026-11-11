@@ -126,6 +126,8 @@ export interface ConnectorDetail extends ConnectorSummary {
   tools: ConnectorTool[];
   /** 当前用户视角的凭据状态；`ownership` 为 null 表示无需凭据。 */
   credential: { ownership: Ownership | null; status: "connected" | "missing" };
+  /** An `oauth_code` connector read by an admin: the redirect URI (null without a public URL). */
+  oauthCallbackUrl?: string | null;
 }
 
 export interface ToolIssue {

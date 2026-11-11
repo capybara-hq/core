@@ -196,6 +196,15 @@ describe("FormPage", () => {
     expect(narrow).toContain("margin-left: 0");
   });
 
+  it("a DangerZone after stacked sections (a SettingsPage) spans their width, not indented", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule =
+      css.match(
+        /\.cb-form-section\[data-layout="stacked"\] ~ \.cb-danger-zone,\s*\.cb-settings-content \.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(rule).toContain("margin-left: 0");
+  });
+
   it("unsaved=0 不注册 beforeunload", () => {
     const add = vi.spyOn(window, "addEventListener");
     zh(

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BackgroundFinishedList,
   type BackgroundItem,
   type BackgroundTaskItem,
   type BackgroundTaskStatus,
@@ -11,11 +12,17 @@ import {
   type SubagentStatus,
   subagentWaitKind,
   TaskOutputPanel,
+  type TaskOutputUnavailable,
   useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import type { BackgroundTaskView, SubagentView } from "../../lib/conversations";
+import type {
+  BackgroundTaskOutput,
+  BackgroundTaskUnavailable,
+  BackgroundTaskView,
+  SubagentView,
+} from "../../lib/conversations";
 import { taskOutputPollMs, taskOutputQuery } from "../../lib/query/conversation";
 import { useErrorMessage } from "../../lib/use-error-message";
 
@@ -95,8 +102,8 @@ export function backgroundItems(
 /**
  * The "Background tasks" properties section (spec §5.3, §5.6; background Bash spec §5): the running
  * background tasks and sub-agents (a sub-agent's own tasks nested under it) with their time, each
- * stoppable and openable, then "N completed ›" opening the newest finished one. Shown only once the
- * conversation has a task or a sub-agent.
+ * stoppable and openable, then "N completed ›" opening the list of the finished ones (`#bg`,
+ * {@link BackgroundListPanel}). Shown only once the conversation has a task or a sub-agent.
  */
 export function BackgroundSection({
   views,
@@ -104,6 +111,7 @@ export function BackgroundSection({
   stopping,
   onStop,
   onOpen,
+  onOpenCompleted,
 }: {
   /** `GET …/subagents`, newest first. */
   views: readonly SubagentView[];
@@ -113,6 +121,7 @@ export function BackgroundSection({
   stopping?: ReadonlySet<string>;
   onStop(item: { kind: "task" | "subagent"; id: string }): void;
   onOpen(item: { kind: "task" | "subagent"; id: string }): void;
+  onOpenCompleted(): void;
 }) {
   const t = useTranslations("subagents");
   const kindOf = (id: string) => (tasks.some((x) => x.id === id) ? "task" : "subagent");
@@ -122,16 +131,68 @@ export function BackgroundSection({
         items={backgroundItems(views, tasks, stopping)}
         onStop={(id) => onStop({ kind: kindOf(id), id })}
         onOpen={(id) => onOpen({ kind: kindOf(id), id })}
+        onOpenCompleted={onOpenCompleted}
       />
     </PropertySection>
   );
 }
 
 /**
+ * The finished background tasks and sub-agents in the right panel (`#bg`, what "N completed ›"
+ * opens), newest first; a row opens its task's output (whose Back returns here) or its sub-agent.
+ */
+export function BackgroundListPanel({
+  views,
+  tasks,
+  loading,
+  onOpen,
+  onClose,
+  onFullscreen,
+}: {
+  views: readonly SubagentView[];
+  tasks: readonly BackgroundTaskView[];
+  /** The list is still on its way. */
+  loading: boolean;
+  onOpen(item: { kind: "task" | "subagent"; id: string }): void;
+  onClose(): void;
+  onFullscreen(): void;
+}) {
+  const t = useTranslations("background");
+  const kindOf = (id: string) => (tasks.some((x) => x.id === id) ? "task" : "subagent");
+  return (
+    <RightPanel
+      title={t("finishedTitle")}
+      onClose={onClose}
+      {...(loading ? { state: "loading" as const } : { onFullscreen })}
+    >
+      {loading ? null : (
+        <BackgroundFinishedList
+          items={backgroundItems(views, tasks)}
+          onOpen={(id) => onOpen({ kind: kindOf(id), id })}
+        />
+      )}
+    </RightPanel>
+  );
+}
+
+/** The kernel's reason as the design's: a local device is the `device`, a cloud one the `sandbox`. */
+function unavailableOf(
+  u: BackgroundTaskUnavailable | null | undefined,
+  task: BackgroundTaskView,
+): TaskOutputUnavailable | undefined {
+  if (!u) return undefined;
+  return {
+    reason: u.reason,
+    environment: u.environment === "local" ? "device" : "sandbox",
+    ...(u.reason === "not_started" && task.lostReason ? { detail: task.lostReason } : {}),
+  };
+}
+
+/**
  * A background task's output in the right panel (`#bg-<taskId>`, background Bash spec §5): its
  * description, command, status and elapsed time, and the output's end, read again every 2 s while
- * the task runs. When the output cannot be read (409: the sandbox is suspended or gone) the panel
- * says so and shows the last lines the finish event kept.
+ * the task runs. When the output cannot be read live the panel says why (the kernel's reason,
+ * naming the device or the sandbox) and shows the last lines the finish event kept, if any.
  */
 export function BackgroundTaskPanel({
   orgId,
@@ -142,6 +203,7 @@ export function BackgroundTaskPanel({
   lastLines,
   stopping,
   onStop,
+  onBack,
   onClose,
   onFullscreen,
 }: {
@@ -157,6 +219,8 @@ export function BackgroundTaskPanel({
   /** This page's stop of the task is on its way (the task view's `stopping` counts too). */
   stopping: boolean;
   onStop(): void;
+  /** Back to what was open before it (the finished list); absent: no Back. */
+  onBack?: () => void;
   onClose(): void;
   onFullscreen(): void;
 }) {
@@ -174,6 +238,7 @@ export function BackgroundTaskPanel({
     return (
       <RightPanel
         title={t("panelTitle")}
+        {...(onBack ? { onBack } : {})}
         onClose={onClose}
         state={loading ? "loading" : "failed"}
         {...(loading ? {} : { failure: { reason: t("notFound") } })}
@@ -186,6 +251,7 @@ export function BackgroundTaskPanel({
   return (
     <RightPanel
       title={task.description}
+      {...(onBack ? { onBack } : {})}
       onClose={onClose}
       onFullscreen={onFullscreen}
       state={out === undefined ? (q.error !== null ? "failed" : "loading") : "ready"}
@@ -200,12 +266,34 @@ export function BackgroundTaskPanel({
           command={task.command}
           status={status}
           elapsed={formatDuration(end - started, locale, { live: status === "running" })}
-          text={out === null ? (lastLines ?? "") : out.text}
-          source={out === null || out.source === "event" ? "event" : "sandbox"}
+          {...outputProps(out, lastLines, task)}
           stopping={task.stopping || stopping}
           onStop={onStop}
         />
       ) : null}
     </RightPanel>
   );
+}
+
+/** The panel's text, source and reason from the output read (or its 409) and the finish event. */
+function outputProps(
+  out: BackgroundTaskOutput | { unreadable: BackgroundTaskUnavailable | null },
+  lastLines: string | undefined,
+  task: BackgroundTaskView,
+): {
+  text: string;
+  source: "sandbox" | "event" | "none";
+  unavailable?: TaskOutputUnavailable;
+} {
+  if ("unreadable" in out) {
+    const u = unavailableOf(out.unreadable, task);
+    return {
+      text: lastLines ?? "",
+      source: lastLines !== undefined ? "event" : "none",
+      ...(u ? { unavailable: u } : {}),
+    };
+  }
+  if (out.source === "live") return { text: out.text, source: "sandbox" };
+  const u = unavailableOf(out.unavailable, task);
+  return { text: out.text, source: "event", ...(u ? { unavailable: u } : {}) };
 }

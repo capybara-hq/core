@@ -61,11 +61,17 @@ export function osLabel(os: string): string {
   }
 }
 
-/** The command that installs the connector program. */
-export const DEVICE_INSTALL_COMMAND = "npm install -g @capybara-hq/device";
+/**
+ * The command that installs the connector program. Before 0.1.0 the releases are prereleases on
+ * the `next` dist-tag (`latest` still names an older rc), so the command names `next`.
+ */
+export const DEVICE_INSTALL_COMMAND = "npm install -g @capybara-hq/device@next";
 
 /** The command that connects a machine to the deployment at `origin`. */
 export const deviceLoginCommand = (origin: string) => `capybara-device login --url ${origin}`;
+
+/** The command that keeps the machine connected (login only registers it). */
+export const DEVICE_START_COMMAND = "capybara-device start";
 
 const base = "/api/v1/device";
 

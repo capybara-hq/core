@@ -1010,6 +1010,17 @@ button.cb-property-row {
 .cb-conv-new[data-start="true"] > .cb-conv-new-composer > .cb-file-drop {
   margin-top: 0;
 }
+/* The right panel maximised inside the page (§6.16.18): the content area under the title bar. */
+.cb-conv-panel-full {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-conv-panel-full > .cb-rpanel {
+  flex: 1;
+  min-width: 0;
+}
 .cb-conv-panel {
   position: relative;
   display: flex;
@@ -1281,6 +1292,16 @@ button.cb-property-row {
 
 /* ── Background tasks: nested rows and the output panel (§6.16.17, §6.16.18) ── */
 
+.cb-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-task-time {
+  margin-left: auto;
+  white-space: nowrap;
+}
 .cb-task-row[data-nested="true"] {
   padding-left: var(--cb-space-4);
 }
@@ -1304,7 +1325,14 @@ button.cb-property-row {
   font-family: var(--cb-font);
   overflow-wrap: anywhere;
 }
-.cb-task-output-note {
+.cb-task-output-note,
+.cb-task-output-empty {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+.cb-task-output-detail {
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  overflow-wrap: anywhere;
 }

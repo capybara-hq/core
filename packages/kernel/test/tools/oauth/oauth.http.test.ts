@@ -18,6 +18,7 @@ import { createLogger } from "../../../src/log.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
+import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -51,6 +52,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let req: Req;
+let ownerId: string;
 let orgId: string;
 const logLines: string[] = [];
 const httpBodies: string[] = [];
@@ -90,7 +92,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   req = await session(k, "owner");
   const org = await call({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
@@ -241,6 +244,16 @@ describe("安装", () => {
     expect(keys.map((r) => r.key)).toEqual([`credentials:app:${app.id}:client`]);
     // MCP 服务只收到未带凭据的发现探测，没有工具调用
     expect(mcp.requests.every((r) => r.headers.authorization === undefined)).toBe(true);
+  });
+
+  it("the one-connector read gives managers the OAuth redirect URI, members nothing", async () => {
+    const { mcp } = await servers();
+    const app = await installDcr(mcp);
+    expect(await getConnector(app.id)).toMatchObject({ oauthCallbackUrl: CALLBACK });
+    const mem = await accountsFor(db).createLocal({ login: "mem", password: PW, displayName: "M" });
+    await testMembers(db).add(orgId, mem.id, "member", ownerId);
+    const asMember = await getConnector(app.id, await session(k, "mem"));
+    expect(asMember).not.toHaveProperty("oauthCallbackUrl");
   });
 
   it("受保护资源元数据只在 well-known 位置也能安装", async () => {

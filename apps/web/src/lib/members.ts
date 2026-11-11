@@ -97,12 +97,15 @@ export const acceptInvitation = (token: string, signup?: SignupInput) =>
     json("POST", signup ?? {}),
   );
 
-/** 接受页的站内路径（不含语言前缀）。 */
+/** The accept page's path. */
 export const invitePath = (token: string) => `/invite/${encodeURIComponent(token)}`;
 
-/** 发给对方的完整链接（带语言前缀）。 */
-export const inviteUrl = (origin: string, locale: string, token: string) =>
-  `${origin}/${locale}${invitePath(token)}`;
+/**
+ * The full link sent to the invitee. No language prefix: the language is not in the URL (the
+ * invitee's own cookie or browser decides); a legacy `/zh/…` link would also overwrite the
+ * invitee's language with the inviter's.
+ */
+export const inviteUrl = (origin: string, token: string) => `${origin}${invitePath(token)}`;
 
 /** 当前组织里自己的角色（界面用；最终由内核判定）。 */
 export function myRole(me: {

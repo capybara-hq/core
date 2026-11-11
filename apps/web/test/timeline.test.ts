@@ -977,6 +977,23 @@ describe("calls that wait for a person (design §6.16.9)", () => {
     expect(done?.waiting).toBeUndefined();
   });
 
+  it("one connect card per connector: only the latest of its repeats stays", () => {
+    const events = [
+      calls(1, [
+        { id: "a", name: "plugin__slack__search", input: { query: "x" } },
+        { id: "b", name: "plugin__slack__search", input: { query: "y" } },
+        { id: "c", name: "plugin__wiki__read", input: {} },
+      ]),
+      ev(2, "connection_required", { step: 0, callId: "a", appId: "k1", appName: "Slack" }),
+      ev(3, "connection_required", { step: 0, callId: "c", appId: "k2", appName: "Wiki" }),
+      ev(4, "connection_required", { step: 0, callId: "b", appId: "k1", appName: "Slack" }),
+    ];
+    const cards = buildEventTimeline(events, new Map(), "en").entries.flatMap((e) =>
+      e.kind === "connect" ? [`${e.item.connectorName}:${e.item.callId}`] : [],
+    );
+    expect(cards).toEqual(["Wiki:c", "Slack:b"]);
+  });
+
   it("the question tool is kind question and previews the header, else the question, else the title", () => {
     expect(row([ask(1, QUESTIONS)])).toMatchObject({ kind: "question", keyArg: "数据库" });
     expect(row([ask(1, [{ question: "用哪个数据库？" }])])?.keyArg).toBe("用哪个数据库？");

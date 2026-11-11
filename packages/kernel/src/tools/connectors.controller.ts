@@ -9,6 +9,7 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
@@ -30,6 +31,7 @@ import {
   type ToolIssue,
 } from "./connectors.service.js";
 import { publicEndpoint } from "./endpoint.js";
+import { callbackUrl } from "./oauth/flow-paths.js";
 
 /**
  * 没有 `connectors.manage` 的读者只看到端点的公开部分（URL 不带 query、只有头名，见 endpoint.ts），
@@ -115,7 +117,11 @@ class ConnectorGuideAckBody extends createZodDto(
  * 2026-11-09-setup-guides-v2-design.md §9.3, §11).
  */
 export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T &
-  ConnectionGuideState & { icon: string | null };
+  ConnectionGuideState & {
+    icon: string | null;
+    /** The one-connector read of an `oauth_code` connector, for managers: its redirect URI. */
+    oauthCallbackUrl?: string | null;
+  };
 
 /**
  * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
@@ -127,6 +133,7 @@ export class ConnectorsController {
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(ConnectorAccountPolicies) private readonly memberPolicies: ConnectorAccountPolicies,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
   /**
@@ -229,7 +236,16 @@ export class ConnectorsController {
   ): Promise<{ connector: ConnectorPage }> {
     const p = requireUser(principal);
     const view = forViewer(org, await this.connectors.get(org.orgId, connectorId, p.account.id));
-    return { connector: await this.withGuide(org, view) };
+    const page = await this.withGuide(org, view);
+    // The redirect URI to register at the authorization server, for those who manage connectors
+    // (the credentials tab shows it next to the OAuth client); null without `http.publicUrl`.
+    if (page.auth.type !== "oauth_code" || !can(org.role, "connectors.manage")) {
+      return { connector: page };
+    }
+    const publicUrl = this.config.get().http.publicUrl;
+    return {
+      connector: { ...page, oauthCallbackUrl: publicUrl ? callbackUrl(publicUrl) : null },
+    };
   }
 
   @Patch(":connectorId")

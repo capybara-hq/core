@@ -924,17 +924,16 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/extensions",
     // Members: the extensions' state; org admins also the default providers and the file
-    // previewers (sections); everyone the 界面位置 listing.
+    // previewers (sections). 界面位置 lives on /settings/appearance.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
         : !atLeast(me, "admin")
-          ? [q(orgExtensionsQuery(orgId)), q(uiArrangementQuery(orgId))]
+          ? [q(orgExtensionsQuery(orgId))]
           : [
               q(orgExtensionsQuery(orgId)),
               q(extensionPointDefaultsQuery(orgId)),
               q(orgFilePreviewersQuery(orgId)),
-              q(uiArrangementQuery(orgId)),
             ],
   },
   {
@@ -1070,7 +1069,8 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/settings/appearance",
-    // Members read it: the org's themes and setting, and the theme components with their switches.
+    // Members read it: the org's themes and setting, the theme components with their switches,
+    // and the arrangement of extension UI (替换, 界面位置).
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
@@ -1079,6 +1079,7 @@ export const ROUTES: readonly RouteEntry[] = [
             q(orgComponentsQuery(orgId, { kind: "theme" })),
             // 跟随平台's swatches
             q(platformThemeQuery()),
+            q(uiArrangementQuery(orgId)),
           ],
   },
   {

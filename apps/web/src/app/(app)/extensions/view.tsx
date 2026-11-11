@@ -5,6 +5,7 @@ import {
   type Column,
   DataTable,
   initialOf,
+  LinkButton,
   ListPage,
   Stack,
   Switch,
@@ -34,7 +35,6 @@ import {
 import { SwitchOffDialog } from "../../../components/PluginSwitch";
 import { PointDefaultsSection } from "../../../components/PointDefaultsSection";
 import { usePagePath } from "../../../components/shell/path";
-import { UiArrangementSection } from "../../../components/UiArrangementSection";
 import { ApiClientError, configIssues, issueLines } from "../../../lib/api";
 import type { SwitchPreview } from "../../../lib/catalog";
 import {
@@ -90,8 +90,9 @@ import NotFound from "../not-found";
  *
  * Under the list, for org admins: the org's default providers of the points several extensions
  * provide (web tools spec §6; in 全部 and 网页) and the org's file previewers (`file-preview@1`; in
- * 全部 and 工具与界面). From the query cache (the layout prefetched all three on a first load); a
- * change writes the answer into the cached extensions, and enabling or disabling one also
+ * 全部 and 工具与界面); then, for everyone in 全部 and 工具与界面, a line pointing to 组织设置 → 外观,
+ * where the arrangement of extension UI (替换, 界面位置) lives. From the query cache (the layout
+ * prefetched all three on a first load); a change writes the answer into the cached extensions, and enabling or disabling one also
  * invalidates what an extension brings (its UI, its pages, its file previewers, the default
  * providers' candidates) and the plugin's view.
  */
@@ -552,7 +553,7 @@ function ExtensionList({
     canEdit &&
     (tab === "all" || (id === "defaults" ? tab === "web" : tab === "tools")) &&
     search.trim() === "";
-  // 界面位置: members read it too (read only)
+  // 界面位置 lives on 组织设置 → 外观; a pointer where people used to look (members read it too)
   const arrangement = (tab === "all" || tab === "tools") && search.trim() === "";
 
   return (
@@ -579,7 +580,16 @@ function ExtensionList({
         />
         {section("defaults") && <PointDefaultsSection orgId={orgId} />}
         {section("previewers") && <FilePreviewersSection orgId={orgId} />}
-        {arrangement && <UiArrangementSection scope={{ kind: "org", orgId }} canEdit={canEdit} />}
+        {arrangement && (
+          <Stack direction="row" gap={12} align="center" wrap>
+            <Text variant="prose" tone="muted">
+              {t("arrangementPointer")}
+            </Text>
+            <LinkButton href="/settings/appearance" density="dense">
+              {t("arrangementLink")}
+            </LinkButton>
+          </Stack>
+        )}
       </Stack>
       {current !== undefined && (
         <OrgExtensionSheet

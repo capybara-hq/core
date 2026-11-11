@@ -166,7 +166,7 @@
     },
     "background_task": {
       "not_found": "这个后台任务不存在或已被清理。",
-      "output_unavailable": "现在读不到输出：沙箱没有在运行。沙箱恢复后可再查看。"
+      "output_unavailable": "现在读不到输出。打开任务可查看原因。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",
@@ -1531,9 +1531,10 @@
       "loginStep": "2. 登录并在打开的网页上确认",
       "copy": "复制",
       "copied": "已复制。",
-      "waiting": "正在等待机器连接…确认后它会出现在设备列表里。",
+      "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
-      "close": "关闭"
+      "close": "关闭",
+      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
     },
     "detail": {
       "tabsLabel": "设备分区",
@@ -1703,9 +1704,9 @@
   "connect": {
     "title": "需要授权连接器",
     "status": "未连接",
-    "description": "智能体使用 {connector} 前，需要先填写你的凭据。",
+    "description": "智能体使用 {connector} 前，需要先连接你的账号。",
     "action": "连接",
-    "ended": "这次运行时 {connector} 尚未连接。请在「我的连接」中填写凭据后再试。",
+    "ended": "这次运行时 {connector} 尚未连接。连接后让智能体重试。",
     "result": {
       "connected": "连接器已连接，请让智能体重试。",
       "unknown": "无法完成该连接器的授权，请重试。",
@@ -1921,14 +1922,19 @@
       "credential": "凭据状态"
     },
     "tools": {
-      "columns": {
-        "name": "工具",
-        "policy": "默认策略",
-        "status": "启用"
+      "title": "工具",
+      "hintManage": "每个工具右侧是它的默认策略和启用开关。将指针停在工具名上可查看完整名称和说明。",
+      "hintRead": "每个工具右侧是它的默认策略。将指针停在工具名上可查看完整名称和说明。",
+      "search": "搜索工具",
+      "noMatch": "没有匹配的工具",
+      "groups": {
+        "read": "只读",
+        "readHint": "工具声明只读取数据。",
+        "write": "可能写入",
+        "writeHint": "可能修改数据，或没有声明是否只读。"
       },
-      "policyLabel": "{tool} 的默认策略",
-      "enabledLabel": "启用 {tool}",
-      "enabled": "启用",
+      "openReview": "去复核",
+      "openReviewLabel": "复核 {tool}",
       "disabled": "已停用",
       "empty": "该连接器没有工具。",
       "missing": "服务已不再提供此工具",
@@ -1954,7 +1960,9 @@
       "rotate": "替换客户端",
       "rotated": "OAuth 客户端已替换。",
       "rotateVerified": "新客户端会先换取一次令牌验证，验证失败则不做任何修改。",
-      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。"
+      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。",
+      "callbackTitle": "回调地址",
+      "callbackHint": "在授权服务器（如 Slack 应用的 OAuth 设置）里登记这个地址，必须一字不差。"
     },
     "settings": {
       "title": "常规",
@@ -2097,15 +2105,11 @@
       "disabled": "已停用"
     },
     "cards": {
-      "connect": "连接",
-      "connected": "已连接",
-      "notConnected": "未连接",
       "permissions": "权限"
     },
     "permissions": {
       "title": "{name} 的权限",
       "hint": "只对你自己的连接生效，用于你使用的所有智能体。智能体可单独覆盖，但你设为「禁止」的工具不会被覆盖。",
-      "listLabel": "工具权限",
       "allow": "允许",
       "ask": "询问",
       "deny": "禁止",
@@ -2119,7 +2123,13 @@
       "save": "保存",
       "cancel": "取消",
       "saved": "已保存权限。",
-      "loading": "正在读取工具…"
+      "loading": "正在读取工具…",
+      "groups": {
+        "read": "只读",
+        "readHint": "工具声明只读取数据，默认允许。",
+        "write": "可能写入",
+        "writeHint": "可能修改数据，或没有声明是否只读，默认询问。"
+      }
     },
     "templates": {
       "needsConfig": "需要配置",
@@ -2148,7 +2158,6 @@
     "connected": "已连接",
     "missing": "未连接",
     "save": "保存",
-    "clear": "清除",
     "saved": "「{connector}」的凭据已保存。",
     "cleared": "「{connector}」的凭据已清除。",
     "grants": {
@@ -2168,7 +2177,16 @@
     "reconnect": "重新连接",
     "oauthConnect": "连接",
     "disconnect": "断开连接",
-    "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
+    "disconnected": "已断开「{connector}」。",
+    "clearCredential": "清除凭据",
+    "editConfig": "修改配置",
+    "enterCredential": "填写凭据",
+    "updateCredential": "更新凭据",
+    "cancel": "取消",
+    "enterCredentialTitle": "填写 {name} 的凭据",
+    "updateCredentialTitle": "更新 {name} 的凭据",
+    "updateHint": "保存后替换你已保存的凭据，其他成员使用各自的凭据。",
+    "manageCredentials": "管理凭据"
   },
   "sandboxSettings": {
     "title": "沙箱",
@@ -2570,6 +2588,8 @@
     "search": "搜索扩展",
     "emptyTab": "这一类没有扩展",
     "noResults": "没有名称包含「{query}」的扩展。",
+    "arrangementPointer": "扩展界面的替换、显示、隐藏和顺序在组织设置的外观页调整。",
+    "arrangementLink": "界面位置在 组织设置 → 外观",
     "stateTitle": "状态",
     "capabilitiesTitle": "能力",
     "permissionsNone": "无",
@@ -3391,6 +3411,7 @@
         },
         "kernel": {
           "version": "版本",
+          "kernelVersion": "内核",
           "replicas": "副本",
           "mixedVersions": "副本版本不一致（滚动升级中？）",
           "replicaList": "副本列表（{n}）"
@@ -4819,7 +4840,8 @@
       "kind": {
         "skill": "技能",
         "connector_template": "连接器模板",
-        "agent_template": "智能体模板"
+        "agent_template": "智能体模板",
+        "theme": "主题"
       },
       "change": {
         "added": "新增",
@@ -4887,7 +4909,7 @@
     "description": "扩展在哪些位置展示页面和区块。隐藏后不再列出，也可以调整顺序。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
     "descriptionReadonly": "扩展在哪些位置展示页面和区块。只有组织管理员可以修改。隐藏只是不列出：被隐藏的组织页面和平台页面仍可通过直接链接打开，其他位置被隐藏的内容则不再显示。",
     "followsPlatform": "跟随平台",
-    "resetOrg": "跟随平台",
+    "resetOrg": "改为跟随平台",
     "resetPlatform": "恢复默认",
     "resetLabel": "重置{slot}",
     "hideLabel": "隐藏 {name}",
@@ -4902,8 +4924,7 @@
       "move": "顺序",
       "slot": "位置",
       "use": "使用",
-      "source": "来源",
-      "reset": "跟随"
+      "source": "来源"
     },
     "slots": {
       "conversationPanel": "对话面板",
@@ -4965,6 +4986,7 @@
     "noticeNoCode": "后台任务「{description}」{status}",
     "open": "打开",
     "panelTitle": "后台任务",
+    "finishedTitle": "已完成的后台任务",
     "notFound": "找不到这个后台任务。",
     "status": {
       "completed": "已完成",
