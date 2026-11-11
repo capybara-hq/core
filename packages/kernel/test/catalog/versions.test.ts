@@ -160,7 +160,7 @@ describe("stored packages (skills default-on)", () => {
           { path: "./skills/a", pinned: true },
           { path: "./skills/b", pinned: false },
         ],
-      } as Partial<PluginManifest> & { name: string },
+      } as unknown as Partial<PluginManifest> & { name: string },
       files: { "skills/a/SKILL.md": SKILL_MD("a"), "skills/b/SKILL.md": SKILL_MD("b") },
     });
     const pkg = await readPluginPackage(tgz, { maxBytes: 1 << 20, hostSdkVersion: SDK_VERSION });
