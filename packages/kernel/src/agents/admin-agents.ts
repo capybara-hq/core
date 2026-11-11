@@ -3,9 +3,21 @@ import { sql } from "kysely";
 import { escapeLike } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { agentSkills } from "../skills/usable.js";
+import {
+  agentSkills,
+  builtinSkillIds,
+  builtinSkillPlugins,
+  linkedCopyIds,
+  skillIdsOf,
+  usableSkillVersions,
+} from "../skills/usable.js";
 import { AgentLookup, type AgentVisibility } from "./agent-lookup.js";
-import type { AgentDefinition, DisabledToolRef } from "./definition.js";
+import {
+  type AgentDefinition,
+  type DisabledSkillRef,
+  type DisabledToolRef,
+  skillDisabled,
+} from "./definition.js";
 import type { AgentAvatar } from "./profile.js";
 
 /** One row of the super admin's cross-org agent list (admin agents spec §3.2). */
@@ -21,6 +33,11 @@ export interface AdminAgentRow {
   needsReassignment: boolean;
   visibility: AgentVisibility;
   createdFrom: { templateId: string; name: string | null } | null;
+  /**
+   * How many of the skills on in the org it turns off (skills default-on spec §11): a builtin
+   * plugin's skill and an org skill it shared never count, as it always has them.
+   */
+  skillsOff: number;
   updatedAt: Date;
 }
 
@@ -42,8 +59,6 @@ export interface AdminAgentDetail extends AdminAgentRow {
    * (`scope: "agent"`). Never a skill body.
    */
   skills: { id: string; name: string; scope: "org" | "agent" }[];
-  /** How many of the skills on in the org it turns off (spec §11), instead of a selection. */
-  skillsOff: number;
   /**
    * The org's live connectors it can use by name (tools default-on): every one but those whose
    * every tool it turns off. Never auth, credentials or a member's state.
@@ -95,7 +110,9 @@ export class AdminAgents {
       .orderBy("agents.id")
       .limit(q.limit + 1)
       .execute();
-    const page = rows.slice(0, q.limit).map(toRow);
+    const kept = rows.slice(0, q.limit);
+    const off = await this.skillsOff(kept);
+    const page = kept.map((r) => toRow(r, off.get(r.id) ?? 0));
     return { agents: page, next: rows.length > q.limit ? (page.at(-1)?.id ?? null) : null };
   }
 
@@ -111,22 +128,20 @@ export class AdminAgents {
         .where("agent_id", "=", agentId)
         .executeTakeFirstOrThrow(),
     ]);
-    const disabledSkills = view.definition.disabledSkills ?? [];
-    const [skills, everySkill, connectors] = await Promise.all([
-      agentSkills(this.db.db, { orgId: row.org_id, agentId, disabledSkills }),
-      // nothing turned off: the same as `skills`
-      disabledSkills.length === 0
-        ? null
-        : agentSkills(this.db.db, { orgId: row.org_id, agentId, disabledSkills: [] }),
+    const [skills, off, connectors] = await Promise.all([
+      agentSkills(this.db.db, {
+        orgId: row.org_id,
+        agentId,
+        disabledSkills: view.definition.disabledSkills ?? [],
+      }),
+      this.skillsOff([row]),
       this.connectorsOf(row.org_id, view.definition.disabledTools),
     ]);
-    const has = new Set(skills.map((s) => s.id));
     return {
-      ...toRow(row),
+      ...toRow(row, off.get(agentId) ?? 0),
       skills: skills
         .map((s) => ({ id: s.id, name: s.name, scope: s.scope }))
         .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-      skillsOff: (everySkill ?? []).filter((s) => !has.has(s.id)).length,
       connectors,
       profile: {
         description: view.profile.description === "" ? null : view.profile.description,
@@ -137,6 +152,66 @@ export class AdminAgents {
       versions: Number(versions.n),
       createdAt: view.createdAt,
     };
+  }
+
+  /**
+   * How many of the org's skills each agent turns off, by agent id (agents turning none off are
+   * left out): the org's usable skills are resolved once per org, then matched against each
+   * agent's `disabledSkills` by the rule of `agentSkills` (a builtin plugin's skill and an org
+   * skill the agent shared are never off).
+   */
+  private async skillsOff(
+    rows: readonly { id: string; org_id: string; disabled_skills: unknown }[],
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    const byOrg = new Map<string, { id: string; disabled: DisabledSkillRef[] }[]>();
+    for (const r of rows) {
+      const disabled = Array.isArray(r.disabled_skills)
+        ? (r.disabled_skills as DisabledSkillRef[])
+        : [];
+      if (disabled.length === 0) continue;
+      byOrg.set(r.org_id, [...(byOrg.get(r.org_id) ?? []), { id: r.id, disabled }]);
+    }
+    if (byOrg.size === 0) return out;
+    const db = this.db.db;
+    const builtinPlugins = await builtinSkillPlugins(db);
+    const agentIds = [...byOrg.values()].flat().map((a) => a.id);
+    const sharedRows = await db
+      .selectFrom("skills")
+      .select(["id", "origin_agent_id"])
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("origin_agent_id", "in", agentIds)
+      .execute();
+    const shared = new Map<string, Set<string>>();
+    for (const r of sharedRows) {
+      const a = r.origin_agent_id as string;
+      shared.set(a, (shared.get(a) ?? new Set()).add(r.id));
+    }
+    for (const [orgId, agents] of byOrg) {
+      const usable = await usableSkillVersions(db, orgId);
+      const linked = await linkedCopyIds(
+        db,
+        orgId,
+        usable.flatMap((r) => (r.origin === "platform" ? [r.id] : [])),
+      );
+      const builtinIds = new Set(await builtinSkillIds(db, orgId));
+      const candidates = usable.flatMap((r) => {
+        const ids = skillIdsOf(r, linked);
+        const fixed =
+          (r.plugin !== null && builtinPlugins.has(r.plugin) && r.origin === "platform") ||
+          ids.some((id) => builtinIds.has(id));
+        return fixed ? [] : [{ plugin: r.plugin, name: r.name, ids }];
+      });
+      for (const a of agents) {
+        const mine = shared.get(a.id) ?? new Set<string>();
+        const n = candidates.filter(
+          (c) => !c.ids.some((id) => mine.has(id)) && skillDisabled(a.disabled, c),
+        ).length;
+        out.set(a.id, n);
+      }
+    }
+    return out;
   }
 
   /**
@@ -193,6 +268,7 @@ export class AdminAgents {
         "agents.org_id",
         "orgs.name as org_name",
         sql<string>`agent_versions.definition->>'name'`.as("name"),
+        sql<unknown>`agent_versions.definition->'disabledSkills'`.as("disabled_skills"),
         "agents.profile_avatar",
         "agents.owner_account_id",
         "accounts.display_name as owner_name",
@@ -207,20 +283,23 @@ export class AdminAgents {
   }
 }
 
-function toRow(r: {
-  id: string;
-  org_id: string;
-  org_name: string;
-  name: string;
-  profile_avatar: unknown;
-  owner_account_id: string;
-  owner_name: string;
-  needs_reassignment: boolean;
-  visibility: AgentVisibility;
-  created_from_template_id: string | null;
-  created_from_template_name: string | null;
-  updated_at: Date;
-}): AdminAgentRow {
+function toRow(
+  r: {
+    id: string;
+    org_id: string;
+    org_name: string;
+    name: string;
+    profile_avatar: unknown;
+    owner_account_id: string;
+    owner_name: string;
+    needs_reassignment: boolean;
+    visibility: AgentVisibility;
+    created_from_template_id: string | null;
+    created_from_template_name: string | null;
+    updated_at: Date;
+  },
+  skillsOff: number,
+): AdminAgentRow {
   return {
     id: r.id,
     orgId: r.org_id,
@@ -235,6 +314,7 @@ function toRow(r: {
       r.created_from_template_id === null
         ? null
         : { templateId: r.created_from_template_id, name: r.created_from_template_name ?? null },
+    skillsOff,
     updatedAt: r.updated_at,
   };
 }

@@ -53,9 +53,9 @@ export class PlatformOperationsProvider implements OnModuleInit {
   ) {}
 
   /**
-   * The skills the agent has now by the names a run's catalog lists them, each with its plugin
-   * (skills default-on spec §11): the resolver's result for this conversation, as the next run
-   * start would snapshot it (manual-only skills are not in the catalog).
+   * The skills in the agent's catalog now, by the names a run's catalog lists them, each with its
+   * plugin (skills default-on spec §11): the resolver's result for this conversation, as the next
+   * run start would snapshot it (manual-only skills are not in the catalog).
    */
   private async skillNames(
     ctx: { orgId: string; agentId: string; conversationId: string },
@@ -131,7 +131,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills it has now by name with their plugin (every skill on in the org unless the agent turns it off; its own and builtin plugins' skills always), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
+          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills in its catalog now by name with their plugin (every skill on in the org unless the agent turns it off, its own and builtin plugins' skills always; manual-only skills are not in the catalog), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },

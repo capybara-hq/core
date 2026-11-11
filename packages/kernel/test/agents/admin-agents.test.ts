@@ -247,6 +247,30 @@ describe("AdminAgents", () => {
     expect([first.agents[0]?.id, second.agents[0]?.id].sort()).toEqual([f.agentA, f.agentB].sort());
   });
 
+  it("the list counts the org skills each agent turns off; a skill it shared never counts", async () => {
+    const by = f.ownerA.id;
+    const a = await seedSkill(f.orgA, by, "alpha");
+    const b = await seedSkill(f.orgA, by, "beta");
+    const narrow = (
+      await agents.create(f.orgA, f.memberA.id, {
+        definition: def({
+          name: "Narrow",
+          disabledSkills: [
+            { kind: "skill", skillId: a },
+            { kind: "skill", skillId: b },
+          ],
+        }),
+        visibility: "private",
+      })
+    ).agent.id;
+    // `beta` is an org skill this agent shared: it always has it, so it is not counted as off
+    await db.updateTable("skills").set({ origin_agent_id: narrow }).where("id", "=", b).execute();
+    const { agents: rows } = await admin.list({ orgId: f.orgA, limit: 50 });
+    const off = Object.fromEntries(rows.map((r) => [r.name, r.skillsOff]));
+    expect(off).toMatchObject({ Narrow: 1, "Support bot": 0 });
+    expect((await admin.get(narrow)).skillsOff).toBe(1);
+  });
+
   it("detail has instructions and quick action labels only", async () => {
     const d = await admin.get(f.agentA);
     expect(d.definition.instructions).toBe("Answer support tickets politely.");
