@@ -144,6 +144,25 @@ The extension owns its reconnection loop inside `connect` (turning off SDK recon
 
 The kernel treats other exceptions as retryable (a limited number of times). Use `isChannelSendError` to check (duck typing, not `instanceof`). The error message carries only the step and the platform error code, **not tokens, request headers or response bodies** (`cause` may attach the original error, but the original error itself must not contain credentials either).
 
+### Scheduled tasks in a chat (spec `2026-11-11-scheduled-tasks-design.md` §8)
+
+A `chat` task posts into an IM chat as its creator. **A DM** reuses the creator's live DM thread
+(`channel_threads`, key `dm:<externalId>`) or, after `/new` or with no live thread, creates a
+conversation and binds it there (`findOrBindThread`), then queues the prompt in it. **A group**
+needs a channel with `features.threads` (else the run is skipped, `unsupported_target`) and a
+thread row of the creator in that group: each run gets a new conversation whose
+`channel_deliveries` row has no thread yet and `pending_thread_account_id` = the creator. Outbound's
+first successful post is the thread's root: `ChannelOutbound.bindThreadIn` (conditional on the
+binding still pending, so idempotent) sets `target.threadId` = that message's id, clears
+`pending_thread_account_id` and inserts the thread row (key = the root's id, account = the
+creator), so a reply in that thread continues the run's conversation, for the creator only (thread
+rows are per account). The bind is written before the lease check, so a retry never posts a second
+root. **A delivery that fails for good** with `ChannelSendError` `target_gone` or `auth`, for a run
+serving a scheduled task (`runs.scheduled_task_run_id`), pauses that task with `target_gone`
+(`pauseFor` in `outbound.ts`); there is no automatic resume after credentials are rotated: the
+creator resumes it. Nothing changes for channel extensions: these are ordinary `send` calls whose
+target gains a `threadId` after the first. Tests: `packages/kernel/test/schedules/channel-delivery.test.ts`.
+
 ### Sub-agents' approvals and questions in a channel thread (phase C)
 
 A sub-agent runs in a child conversation that has no channel binding. When it waits for a person, the
