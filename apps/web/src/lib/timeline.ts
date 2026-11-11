@@ -29,7 +29,8 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  * - Consecutive tool calls form one `tools` entry; prose, thinking, a user message, a
  *   human-in-the-loop item or a divider ends the group. Prose is never folded into a group.
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
- *   group that holds the call (files first).
+ *   group that holds the call (files first), then its network facts (`network_blocked` hosts of the
+ *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead).
  * - `hook_denied` with a `callId` marks that row as blocked by the extension.
  * - Every run that ended (`run_finished`, `run_failed`, `run_aborted`) becomes a `run` entry at its
  *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
@@ -184,6 +185,8 @@ export interface ApprovalItem {
   policy?: ApprovalPolicy;
   /** Who may decide it (absent in older logs). */
   approver?: Waiter;
+  /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
+  network?: { hosts: string[] };
   decided: ApprovalDecision | null;
   decidedAt: string | null;
 }
@@ -343,6 +346,16 @@ export type TimelineEntry =
   | { kind: "question"; key: string; item: QuestionItem }
   | { kind: "connect"; key: string; item: ConnectItem }
   | { kind: "card"; key: string; plugin: string; view: string; callId: string; cardKey?: string }
+  | {
+      /**
+       * Network hosts a command was refused that no card can lift (`network_blocked`, layers
+       * `org` and `address`), under the group that holds the command.
+       */
+      kind: "network-facts";
+      key: string;
+      callId: string;
+      hosts: { host: string; layer: "org" | "address" }[];
+    }
   | { kind: "files"; key: string; files: FileRef[] }
   | ({ kind: "divider"; key: string } & DividerData)
   | {
@@ -713,6 +726,8 @@ export function buildEventTimeline(
   /** Group key → files delivered by its calls / cards of its calls. */
   const groupFiles = new Map<string, FileRef[]>();
   const groupCards = new Map<string, Extract<TimelineEntry, { kind: "card" }>[]>();
+  /** Group key → the network facts of its calls. */
+  const groupFacts = new Map<string, Extract<TimelineEntry, { kind: "network-facts" }>[]>();
   /** The last user message (Retry repeats it). */
   let lastUser: RetryMessage | null = null;
   /** Plain user bubbles by seq, and the fork invocations (phase D: who waits for a sub-agent). */
@@ -1135,6 +1150,26 @@ export function buildEventTimeline(
         }
         break;
       }
+      case "network_blocked": {
+        // device-layer hosts are the ask's (an approval); unknown ones are explained by the output
+        const hosts = e.payload.hosts.flatMap((h) =>
+          h.layer === "org" || h.layer === "address" ? [{ host: h.host, layer: h.layer }] : [],
+        );
+        if (hosts.length === 0) break;
+        const fact: Extract<TimelineEntry, { kind: "network-facts" }> = {
+          kind: "network-facts",
+          key: `${key}:network`,
+          callId: e.payload.callId,
+          hosts,
+        };
+        const c = calls.get(callKey(e.runId, e.payload.callId));
+        if (c) {
+          const list = groupFacts.get(c.group) ?? [];
+          list.push(fact);
+          groupFacts.set(c.group, list);
+        } else out.push(fact);
+        break;
+      }
       case "hook_denied":
         if (e.payload.mount === "tool.preExecute" && e.payload.callId !== undefined) {
           const c = calls.get(callKey(e.runId, e.payload.callId));
@@ -1330,6 +1365,9 @@ export function buildEventTimeline(
             input: calls.get(callKey(e.runId, e.payload.callId))?.tool.input,
             expiresAt: e.payload.expiresAt,
             ...(e.payload.policy !== undefined ? { policy: e.payload.policy } : {}),
+            ...(e.payload.network !== undefined
+              ? { network: { hosts: [...e.payload.network.hosts] } }
+              : {}),
             ...approverField(e.payload),
             decided: null,
             decidedAt: null,
@@ -1552,7 +1590,8 @@ export function buildEventTimeline(
     (entry) => entry.kind !== "connect" || lastConnect.get(entry.item.connectorId) === entry.key,
   );
 
-  if (groupFiles.size === 0 && groupCards.size === 0) return { entries: shown, modelOf };
+  if (groupFiles.size === 0 && groupCards.size === 0 && groupFacts.size === 0)
+    return { entries: shown, modelOf };
   const withExtras: TimelineEntry[] = [];
   for (const entry of shown) {
     withExtras.push(entry);
@@ -1560,6 +1599,7 @@ export function buildEventTimeline(
     const files = groupFiles.get(entry.key);
     if (files) withExtras.push({ kind: "files", key: `${entry.key}:files`, files });
     for (const card of groupCards.get(entry.key) ?? []) withExtras.push(card);
+    for (const fact of groupFacts.get(entry.key) ?? []) withExtras.push(fact);
   }
   return { entries: withExtras, modelOf };
 }

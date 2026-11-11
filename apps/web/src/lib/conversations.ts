@@ -65,6 +65,12 @@ export type ApprovalPolicy =
   | "org"
   | "fixed";
 
+/**
+ * Which layer refused a network host (network ask spec §4.1): the device's own policy, the org's
+ * egress, a private or local address, or unknown.
+ */
+export type NetworkBlockedLayer = "device" | "org" | "address" | "unknown";
+
 /** `tool_result.view` (kernel `ToolViewSchema`): display only. */
 export type ToolView =
   | { kind: "command"; description?: string; exitCode: number | null; timedOut: boolean }
@@ -226,6 +232,8 @@ type EventBody =
         expiresAt: string;
         /** Which rule asked (display only; absent in older logs). */
         policy?: ApprovalPolicy;
+        /** A network ask: the device-layer hosts asked for (display only). */
+        network?: { hosts: string[] };
       } & Approver;
     }
   | {
@@ -233,11 +241,25 @@ type EventBody =
       payload: {
         approvalId: string;
         callId: string;
-        decision: "approved" | "denied" | "expired" | "cancelled";
+        /** `skipped`: a network ask the person answered with a message instead. */
+        decision: "approved" | "denied" | "expired" | "cancelled" | "skipped";
         scope?: "once" | "session" | "always";
         byAccountId: string | null;
         /** The reason given with a denial. */
         reason?: string;
+      };
+    }
+  /**
+   * A command on a device was refused network hosts (display only, never model-visible): each
+   * host with the layer that refused it. Device-layer hosts are asked about in an approval; the
+   * org and address layers are facts under the command's row.
+   */
+  | {
+      type: "network_blocked";
+      payload: {
+        step: number;
+        callId: string;
+        hosts: { host: string; port: number; layer: NetworkBlockedLayer }[];
       };
     }
   | {

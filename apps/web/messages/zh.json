@@ -1694,7 +1694,8 @@
       "approved": "已批准",
       "denied": "已拒绝",
       "expired": "已过期",
-      "cancelled": "已取消"
+      "cancelled": "已取消",
+      "skipped": "已跳过"
     },
     "decidedBy": "处理人：{who}",
     "you": "你",
@@ -1710,6 +1711,9 @@
       "role": "需要有权限的成员审批",
       "org": "组织策略要求审批",
       "fixed": "该工具总是需要审批"
+    },
+    "network": {
+      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。"
     }
   },
   "question": {

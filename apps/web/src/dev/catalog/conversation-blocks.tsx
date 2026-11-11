@@ -21,6 +21,7 @@ import {
   ImageOutput,
   ImagePreview,
   MarkdownPreview,
+  NetworkBlockedFacts,
   NoPreview,
   Prose,
   QuestionBlock,
@@ -612,6 +613,112 @@ function approvalBlocks(): ReactNode {
           }}
         />
       </Block>
+      {networkApprovalBlocks()}
+    </>
+  );
+}
+
+function networkApprovalBlocks(): ReactNode {
+  const N = H.network;
+  const W = H.decided;
+  const one = { hosts: [N.host], command: N.command, description: N.description };
+  const decided = (
+    id: string,
+    state: Omit<Extract<Parameters<typeof ApprovalBlock>[0]["state"], { kind: "decided" }>, "kind">,
+  ) => (
+    <Block id={id}>
+      <ApprovalBlock
+        tool="Bash"
+        toolKey="Bash"
+        input={{}}
+        scopes={["once", "always"]}
+        network={one}
+        state={{ kind: "decided", ...state }}
+      />
+    </Block>
+  );
+  return (
+    <>
+      <Block id="approval-block-network">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once", "always"]}
+          network={one}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-network-hosts">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once", "always"]}
+          network={{ hosts: N.hosts, command: N.command }}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-network-once">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          network={one}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      {decided("approval-block-network-allowed", {
+        decision: "approved",
+        scope: "once",
+        who: W.who,
+        when: W.approved.at,
+      })}
+      {decided("approval-block-network-always", {
+        decision: "approved",
+        scope: "always",
+        who: W.who,
+        when: W.approved.at,
+      })}
+      {decided("approval-block-network-fallback", {
+        decision: "approved",
+        scope: "once",
+        who: W.who,
+        when: W.approved.at,
+        fallback: "offline",
+      })}
+      {decided("approval-block-network-denied", {
+        decision: "denied",
+        who: W.who,
+        when: W.denied.at,
+        reason: W.denied.reason,
+      })}
+      {decided("approval-block-network-skipped", {
+        decision: "skipped",
+        who: W.who,
+        when: W.denied.at,
+      })}
+    </>
+  );
+}
+
+function networkFactsBlocks(): ReactNode {
+  const N = H.network;
+  return (
+    <>
+      <Block id="network-facts-org">
+        <NetworkBlockedFacts hosts={[{ host: N.orgHost, layer: "org" }]} />
+      </Block>
+      <Block id="network-facts-address">
+        <NetworkBlockedFacts hosts={[{ host: N.addressHost, layer: "address" }]} />
+      </Block>
     </>
   );
 }
@@ -1008,6 +1115,7 @@ export const CONVERSATION_BLOCKS = {
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,
   "approval-block": approvalBlocks,
+  "network-facts": networkFactsBlocks,
   "question-block": questionBlocks,
   "connect-block": connectBlocks,
   "queued-message": queuedBlocks,

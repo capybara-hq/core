@@ -325,6 +325,164 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
   });
 });
 
+describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
+  const NET = {
+    ...APPROVAL,
+    toolKey: "Bash",
+    toolName: "Bash",
+    connector: null,
+    input: { command: "npm install" },
+    kind: "network",
+    scopes: ["once", "always"],
+    detail: {
+      deviceId: "d1",
+      hosts: [
+        { host: "registry.npmjs.org", port: 443 },
+        { host: "files.slack.com.evil.io", port: 443 },
+      ],
+      command: "npm install",
+      description: "Install the dependencies",
+    },
+  };
+  const netItem = (decided: ApprovalItem["decided"] = null): ApprovalItem => ({
+    approvalId: "ap1",
+    callId: "call_1",
+    toolKey: "Bash",
+    input: { command: "npm install", description: "Install the dependencies" },
+    expiresAt: EXPIRES,
+    network: { hosts: ["registry.npmjs.org", "files.slack.com.evil.io"] },
+    decided,
+    decidedAt: decided ? "2026-10-19T10:41:00.000Z" : null,
+  });
+
+  it("asks for the hosts and posts the checked ones with the scope", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: NET }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+        json(200, {
+          approval: {
+            ...NET,
+            status: "approved",
+            scope: "once",
+            decidedBy: ME.account.id,
+            decidedAt: EXPIRES,
+            detail: { ...NET.detail, grantedHosts: ["registry.npmjs.org"], outcome: "once" },
+          },
+        }),
+    });
+    const { container } = renderPage(<ApprovalCard orgId="o1" item={netItem()} />, {
+      locale: "zh",
+    });
+    const once = await screen.findByRole("button", { name: "这次允许" });
+    expect(once.getAttribute("data-variant")).toBe("primary");
+    expect(screen.getByRole("button", { name: "这台设备一直允许" })).toBeTruthy();
+    expect(
+      screen.getByText("这条命令被这台设备的网络规则拦下了：Install the dependencies"),
+    ).toBeTruthy();
+    // the registrable domain is prominent: a lookalike shows evil.io
+    const registrable = [...container.querySelectorAll('[data-part="registrable"]')].map(
+      (e) => e.textContent,
+    );
+    expect(registrable).toEqual(["npmjs.org", "evil.io"]);
+    // no tool policy note on a network ask
+    expect(container.querySelector('[data-part="card-note"]')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "files.slack.com.evil.io" }));
+    await user.click(once);
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      decision: "approve",
+      scope: "once",
+      hosts: ["registry.npmjs.org"],
+    });
+    expect(await screen.findByText(/已允许（这次）/)).toBeTruthy();
+  });
+
+  it("a device that takes no remote grants offers only this time, with the device command", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, { approval: { ...NET, scopes: ["once"] } }),
+    });
+    const { container } = renderPage(<ApprovalCard orgId="o1" item={netItem()} />, {
+      locale: "en",
+    });
+    await screen.findByRole("button", { name: "Allow this time" });
+    expect(screen.queryByRole("button", { name: "Always allow on this device" })).toBeNull();
+    expect(container.querySelector('[data-part="network-remote-off"]')?.textContent).toContain(
+      "capybara-device policy add allowedDomains",
+    );
+  });
+
+  it("decided from the log, it reads the approval for the fallback from always to this time", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: {
+            ...NET,
+            status: "approved",
+            scope: "always",
+            decidedBy: ME.account.id,
+            decidedAt: EXPIRES,
+            detail: {
+              ...NET.detail,
+              grantedHosts: ["registry.npmjs.org", "files.slack.com.evil.io"],
+              outcome: "once_fallback",
+              fallback: "offline",
+            },
+          },
+        }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={netItem({
+          approvalId: "ap1",
+          callId: "call_1",
+          decision: "approved",
+          scope: "always",
+          byAccountId: ME.account.id,
+        })}
+      />,
+      { locale: "zh", me: ME },
+    );
+    expect(await screen.findByText(/设备离线，已按这次允许/)).toBeTruthy();
+    expect(screen.getByText(/已允许（这次）/)).toBeTruthy();
+  });
+
+  it("skipped: one line", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, { approval: { ...NET, status: "skipped", decidedBy: ME.account.id } }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={netItem({
+          approvalId: "ap1",
+          callId: "call_1",
+          decision: "skipped",
+          byAccountId: ME.account.id,
+        })}
+      />,
+      { locale: "en", me: ME },
+    );
+    expect(await screen.findByText(/^Skipped/)).toBeTruthy();
+  });
+
+  it("a viewer who is not the device owner (404) only waits", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "zh" });
+    expect(
+      await screen.findByText(
+        "智能体想访问 registry.npmjs.org, files.slack.com.evil.io，等待设备所有者处理。",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "这次允许" })).toBeNull();
+  });
+});
+
 describe("QuestionCard (design QuestionBlock)", () => {
   const FORM: InputForm = {
     title: { zh: "部署选项", en: "Deploy options" },

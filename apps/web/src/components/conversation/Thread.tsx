@@ -7,6 +7,7 @@ import {
   FileOutputs,
   ImageOutput,
   isInlineImageType,
+  NetworkBlockedFacts,
   Prose,
   RunDivider,
   RunRow,
@@ -762,6 +763,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return <ConnectCard orgId={orgId} item={e.item} />;
       case "card":
         return renderCard?.(e) ?? null;
+      case "network-facts":
+        return <NetworkBlockedFacts hosts={e.hosts} />;
       case "files":
         return files(e.files);
       case "divider":
