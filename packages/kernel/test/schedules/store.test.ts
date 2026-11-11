@@ -5,7 +5,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
+import {
+  findTaskGrant,
+  type ScheduledTaskInsert,
+  ScheduledTaskStore,
+} from "../../src/schedules/store.js";
 import { truncateTables } from "../helpers/db.js";
 import { legacyDbFor } from "../helpers/identity.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -178,18 +182,18 @@ describe("ScheduledTaskStore", () => {
     expect((await store.listRuns(db, t.id, 1)).map((x) => x.id)).toEqual([r2.id]);
   });
 
-  it("findGrant ignores a different spec hash", async () => {
+  it("findTaskGrant ignores a different spec hash", async () => {
     const t = await store.insertTask(db, task());
     await store.addGrant(db, t.id, { toolKey: "Bash", specHash: "h1", connectorId: null });
     await store.addGrant(db, t.id, { toolKey: "search", specHash: "h2", connectorId: "conn-1" });
-    expect(await store.findGrant(db, t.id, "Bash", "h1", null)).toBe(true);
-    expect(await store.findGrant(db, t.id, "Bash", "h-other", null)).toBe(false);
-    expect(await store.findGrant(db, t.id, "search", "h2", "conn-1")).toBe(true);
-    expect(await store.findGrant(db, t.id, "search", "h2", "conn-2")).toBe(false);
-    expect(await store.findGrant(db, t.id, "search", "h2", null)).toBe(false);
+    expect(await findTaskGrant(db, t.id, "Bash", "h1", null)).toBe(true);
+    expect(await findTaskGrant(db, t.id, "Bash", "h-other", null)).toBe(false);
+    expect(await findTaskGrant(db, t.id, "search", "h2", "conn-1")).toBe(true);
+    expect(await findTaskGrant(db, t.id, "search", "h2", "conn-2")).toBe(false);
+    expect(await findTaskGrant(db, t.id, "search", "h2", null)).toBe(false);
     // re-adding replaces the hash
     await store.addGrant(db, t.id, { toolKey: "Bash", specHash: "h3", connectorId: null });
-    expect(await store.findGrant(db, t.id, "Bash", "h1", null)).toBe(false);
+    expect(await findTaskGrant(db, t.id, "Bash", "h1", null)).toBe(false);
     expect(await store.listGrants(db, t.id)).toHaveLength(2);
     await store.removeGrant(db, t.id, "Bash");
     expect(await store.listGrants(db, t.id)).toEqual([

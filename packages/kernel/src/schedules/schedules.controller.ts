@@ -71,7 +71,7 @@ export class SchedulesController {
     const p = requireUser(principal);
     const items = await this.tasks.list(
       org.orgId,
-      { accountId: p.account.id, role: org.role },
+      { accountId: p.account.id },
       {
         all: q.all === "true",
         ...(q.conversationId !== undefined && { conversationId: q.conversationId }),
@@ -123,7 +123,7 @@ export class SchedulesController {
   ): Promise<{ task: ScheduledTask }> {
     const p = requireUser(principal);
     return {
-      task: await this.tasks.get(org.orgId, { accountId: p.account.id, role: org.role }, params.id),
+      task: await this.tasks.get(org.orgId, { accountId: p.account.id }, params.id),
     };
   }
 
@@ -150,7 +150,7 @@ export class SchedulesController {
     @ZParam(ScheduleParamsDto) params: z.infer<typeof ScheduleParams>,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.tasks.remove(org.orgId, { accountId: p.account.id, role: org.role }, params.id);
+    await this.tasks.remove(org.orgId, { accountId: p.account.id }, params.id);
   }
 
   @Post(":id/pause")
@@ -163,11 +163,7 @@ export class SchedulesController {
   ): Promise<{ task: ScheduledTask }> {
     const p = requireUser(principal);
     return {
-      task: await this.tasks.pause(
-        org.orgId,
-        { accountId: p.account.id, role: org.role },
-        params.id,
-      ),
+      task: await this.tasks.pause(org.orgId, { accountId: p.account.id }, params.id),
     };
   }
 
@@ -181,11 +177,7 @@ export class SchedulesController {
   ): Promise<{ task: ScheduledTask }> {
     const p = requireUser(principal);
     return {
-      task: await this.tasks.resume(
-        org.orgId,
-        { accountId: p.account.id, role: org.role },
-        params.id,
-      ),
+      task: await this.tasks.resume(org.orgId, { accountId: p.account.id }, params.id),
     };
   }
 
@@ -216,12 +208,7 @@ export class SchedulesController {
   ): Promise<{ items: TaskRun[] }> {
     const p = requireUser(principal);
     return {
-      items: await this.tasks.runs(
-        org.orgId,
-        { accountId: p.account.id, role: org.role },
-        params.id,
-        q.limit,
-      ),
+      items: await this.tasks.runs(org.orgId, { accountId: p.account.id }, params.id, q.limit),
     };
   }
 
@@ -234,11 +221,7 @@ export class SchedulesController {
   ): Promise<{ items: ScheduledTaskGrantView[] }> {
     const p = requireUser(principal);
     return {
-      items: await this.tasks.grants(
-        org.orgId,
-        { accountId: p.account.id, role: org.role },
-        params.id,
-      ),
+      items: await this.tasks.grants(org.orgId, { accountId: p.account.id }, params.id),
     };
   }
 

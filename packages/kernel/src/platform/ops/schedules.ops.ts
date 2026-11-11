@@ -1,7 +1,5 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
-import { KernelDb } from "../../infra/database/kernel-db.js";
-import type { OrgRole } from "../../orgs/roles.js";
 import {
   type ScheduleActor,
   type ScheduledTaskListItem,
@@ -25,7 +23,6 @@ import {
 import type { ScheduledTask, TaskRun } from "../../schedules/types.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { roleOf } from "./role.js";
 import { named, orElse } from "./summary.js";
 
 const ListQuery = ScheduleListQuery;
@@ -81,19 +78,17 @@ export class SchedulesOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(ScheduledTasksService) private readonly tasks: ScheduledTasksService,
-    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
-  /** The caller as the service expects: the live role (the service re-reads it under its lock). */
-  private async actor(ctx: OperationContext): Promise<ScheduleActor> {
-    const role: OrgRole = (await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId)) ?? "guest";
-    return { accountId: ctx.actorAccountId, role };
+  /** The caller as the service expects (it reads the live role itself). */
+  private actor(ctx: OperationContext): ScheduleActor {
+    return { accountId: ctx.actorAccountId };
   }
 
   /** The task's name for a card; its id when it cannot be read. */
   private label(ctx: OperationContext, id: string): Promise<string> {
     return orElse(
-      async () => named((await this.tasks.get(ctx.orgId, await this.actor(ctx), id)).name),
+      async () => named((await this.tasks.get(ctx.orgId, this.actor(ctx), id)).name),
       id,
     );
   }
@@ -116,7 +111,7 @@ export class SchedulesOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => {
-          const items = await this.tasks.list(ctx.orgId, await this.actor(ctx), {
+          const items = await this.tasks.list(ctx.orgId, this.actor(ctx), {
             all: input.all === "true",
             ...(input.conversationId !== undefined && { conversationId: input.conversationId }),
           });
@@ -173,7 +168,7 @@ export class SchedulesOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => ({
-          task: await this.tasks.get(ctx.orgId, await this.actor(ctx), input.scheduleId),
+          task: await this.tasks.get(ctx.orgId, this.actor(ctx), input.scheduleId),
         }),
       }),
       defineOperation({
@@ -291,7 +286,7 @@ export class SchedulesOperations implements OnModuleInit {
           return { zh: `删除定时任务「${n}」`, en: `Delete scheduled task "${n}"` };
         },
         run: async (input, ctx) => {
-          await this.tasks.remove(ctx.orgId, await this.actor(ctx), input.scheduleId);
+          await this.tasks.remove(ctx.orgId, this.actor(ctx), input.scheduleId);
           return { id: input.scheduleId, deleted: true };
         },
       }),
@@ -316,7 +311,7 @@ export class SchedulesOperations implements OnModuleInit {
           return { zh: `暂停定时任务「${n}」`, en: `Pause scheduled task "${n}"` };
         },
         run: async (input, ctx) => ({
-          task: row(await this.tasks.pause(ctx.orgId, await this.actor(ctx), input.scheduleId)),
+          task: row(await this.tasks.pause(ctx.orgId, this.actor(ctx), input.scheduleId)),
         }),
       }),
       defineOperation({
@@ -351,7 +346,7 @@ export class SchedulesOperations implements OnModuleInit {
           return { zh: `恢复定时任务「${n}」`, en: `Resume scheduled task "${n}"` };
         },
         run: async (input, ctx) => ({
-          task: row(await this.tasks.resume(ctx.orgId, await this.actor(ctx), input.scheduleId)),
+          task: row(await this.tasks.resume(ctx.orgId, this.actor(ctx), input.scheduleId)),
         }),
       }),
       defineOperation({
@@ -410,7 +405,7 @@ export class SchedulesOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => ({
           items: (
-            await this.tasks.runs(ctx.orgId, await this.actor(ctx), input.scheduleId, input.limit)
+            await this.tasks.runs(ctx.orgId, this.actor(ctx), input.scheduleId, input.limit)
           ).map(runRow),
         }),
       }),
@@ -431,7 +426,7 @@ export class SchedulesOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => ({
-          items: (await this.tasks.grants(ctx.orgId, await this.actor(ctx), input.scheduleId)).map(
+          items: (await this.tasks.grants(ctx.orgId, this.actor(ctx), input.scheduleId)).map(
             (g) => ({ toolKey: g.toolKey, connectorId: g.connectorId, stale: g.stale }),
           ),
         }),

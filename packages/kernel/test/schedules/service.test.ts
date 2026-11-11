@@ -123,10 +123,8 @@ const daily = (over: Partial<CreateTaskInput> = {}): CreateTaskInput => ({
   ...over,
 });
 
-const me = (accountId: string, role: "guest" | "member" | "admin" | "owner" = "member") => ({
-  accountId,
-  role,
-});
+/** The actor (the service reads the role itself; the name says who it is in the test). */
+const me = (accountId: string, _role?: "guest" | "member" | "admin" | "owner") => ({ accountId });
 
 async function codeOf(p: Promise<unknown>): Promise<string> {
   try {

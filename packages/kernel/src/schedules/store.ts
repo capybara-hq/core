@@ -405,17 +405,6 @@ export class ScheduledTaskStore {
       .executeTakeFirst();
     return Number(r.numDeletedRows) > 0;
   }
-
-  /** Whether the task holds a grant for this tool as defined now ({@link findTaskGrant}). */
-  async findGrant(
-    t: KernelSchemaDb,
-    taskId: string,
-    toolKey: string,
-    specHash: string,
-    connectorId: string | null,
-  ): Promise<boolean> {
-    return findTaskGrant(t, taskId, toolKey, specHash, connectorId);
-  }
 }
 
 /**

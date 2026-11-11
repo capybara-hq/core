@@ -140,13 +140,13 @@ describe("schedule_attention inbox items", () => {
 
   it("pause by the creator shows nothing", async () => {
     const task = await mkTask();
-    await svc.pause(orgId, { accountId: aliceId, role: "member" }, task.id);
+    await svc.pause(orgId, { accountId: aliceId }, task.id);
     expect(await attention(aliceId)).toEqual([]);
   });
 
   it("admin pause names the admin", async () => {
     const task = await mkTask();
-    await svc.pause(orgId, { accountId: adminId, role: "admin" }, task.id);
+    await svc.pause(orgId, { accountId: adminId }, task.id);
     const [item] = await attention(aliceId);
     expect(item).toMatchObject({
       attention: { reason: "admin", pausedBy: { id: adminId, name: "admin" } },
@@ -197,7 +197,7 @@ describe("schedule_attention inbox items", () => {
     const task = await mkTask();
     await db.transaction().execute((t) => svc.pauseFor(t, task.id, "target_gone", null));
     expect(await attention(aliceId)).toHaveLength(1);
-    await svc.resume(orgId, { accountId: aliceId, role: "member" }, task.id);
+    await svc.resume(orgId, { accountId: aliceId }, task.id);
     expect(await attention(aliceId)).toEqual([]);
   });
 });

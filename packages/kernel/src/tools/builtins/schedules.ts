@@ -889,8 +889,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     unavailable,
     async run(_raw, ctx) {
       const svc = await service();
-      const role = await liveRole(ctx);
-      const tasks = await call(() => svc.list(ctx.orgId, { accountId: ctx.accountId, role }), {});
+      await liveRole(ctx);
+      const tasks = await call(() => svc.list(ctx.orgId, { accountId: ctx.accountId }), {});
       if (tasks.length === 0) {
         return {
           content: [
@@ -944,8 +944,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       // only the person's own task, even for an org admin (who may delete others' on the page)
       const task = await ownTask(ctx.orgId, ctx.accountId, id);
       if (task === null) throw new ToolError(notYoursText(id));
-      const role = await liveRole(ctx);
-      await call(() => svc.remove(ctx.orgId, { accountId: ctx.accountId, role }, task.id), { id });
+      await liveRole(ctx);
+      await call(() => svc.remove(ctx.orgId, { accountId: ctx.accountId }, task.id), { id });
       return {
         content: [{ type: "text", text: `Deleted scheduled task "${task.name}" (id ${task.id}).` }],
         display: display(`已删除定时任务「${task.name}」`, `Deleted scheduled task "${task.name}"`),
