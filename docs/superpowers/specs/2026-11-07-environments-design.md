@@ -424,7 +424,7 @@ person**: credentials, processes (where §7.2 applies), network rules, attributi
 | Removed members | Removal ends their running commands in the environment and refuses their sessions from then on |
 | One session starving the others | Environment quotas (CPU, memory, disk) plus a per-session fair share of concurrent commands |
 | Exfiltration | Egress allowlist per environment; project environments start from the deployment default and only the environment admin widens it |
-| A compromised cloud or a misled agent acting on a device | The local policy (§6.4) bounds every command and cannot be loosened remotely; the machine's user can `stop` at any time |
+| A compromised cloud or a misled agent acting on a device | The local policy (§6.4) bounds every command; since the network ask-to-allow spec (2026-11-12, §10.1) the cloud may widen its network part only by the device owner's own decision in a signed-in session, and only while the device's local `remoteGrants` is `owner` (`off` restores the old guarantee); narrowing is always accepted; the machine's user can `stop` at any time |
 | A root user on a connected machine | Sees everything on it, including credentials in transit through its egress proxy: stated on the authorization page; projects must trust the machine's operator |
 
 ### 8.3 Project defaults are stricter
