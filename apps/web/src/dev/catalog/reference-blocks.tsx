@@ -82,6 +82,7 @@ import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixtur
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { SetupHomeBody, setupFrameProps } from "./templates/setup";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
+import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
 // the reference block's id, box and fixture copy. Pseudo-states are forced by the Playwright specs.
@@ -1327,5 +1328,6 @@ export const REFERENCE_BLOCKS = {
   ...BOX_BLOCKS,
   ...CARD_GRID_BLOCKS,
   ...OVERVIEW_SECTION_BLOCKS,
+  ...TREND_CHART_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
 } as const;

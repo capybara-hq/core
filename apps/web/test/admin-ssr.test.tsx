@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
+import {
+  hydrateRouteWithCache,
+  renderRouteEmptyCache,
+  renderRouteWithCache,
+  testQueryClient,
+} from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
@@ -276,6 +281,22 @@ const ROUTES: Routes = {
       more: { extensions: 0, updates: 0, providers: 0 },
       unavailable: [],
     }),
+  "GET /api/v1/admin/overview/usage": () =>
+    json(200, {
+      from: "2026-11-03T16:00:00.000Z",
+      to: "2026-11-10T16:00:00.000Z",
+      tz: "Asia/Shanghai",
+      currency: "USD",
+      days: ["04", "05", "06", "07", "08", "09", "10"].map((d, i) => ({
+        date: `2026-11-${d}`,
+        runs: 10 + i,
+        tokens: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, embedding: 0 },
+        cost: 0.25,
+      })),
+      costPartial: false,
+      orgs: [{ orgId: "o1", name: "Acme", runs: 91, tokens: 8400, cost: 1.75 }],
+      otherOrgs: { count: 0, runs: 0, tokens: 0, cost: null },
+    }),
   "GET /api/v1/admin/overview/health": () =>
     json(200, {
       kernel: { version: "0.1.0" },
@@ -409,10 +430,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       .closest('[data-part="overview-section"]') as HTMLElement;
     expect(health.getAttribute("data-state")).toBe("loading");
     expect(health.querySelector("[aria-busy='true']")).not.toBeNull();
+    // and 用量 (an aggregate over the week, may take seconds on a cold cache)
+    const usage = screen
+      .getByText(O.usage.title)
+      .closest('[data-part="overview-section"]') as HTMLElement;
+    expect(usage.getAttribute("data-state")).toBe("loading");
+    expect(usage.querySelector("[aria-busy='true']")).not.toBeNull();
     await settle();
     // (the browser stub answers nothing here, so each read is retried once)
     expect(new Set(browser.map((c) => new URL(c.url, "http://x").pathname))).toEqual(
-      new Set(["/api/v1/admin/overview/attention", "/api/v1/admin/overview/health"]),
+      new Set([
+        "/api/v1/admin/overview/attention",
+        "/api/v1/admin/overview/health",
+        "/api/v1/admin/overview/usage",
+      ]),
     );
   });
 
@@ -441,6 +472,43 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(box().getAttribute("data-state")).toBe("loading");
     expect(await within(box()).findByText(H.queues.runs)).toBeTruthy();
     expect(within(box()).getByText("v0.1.0")).toBeTruthy();
+  });
+
+  it("/admin: 用量 shows its skeleton, then the chart and the ranking; 近 7 天运行 follows it", async () => {
+    const U = en.admin.overview.usage;
+    stubApi(ROUTES);
+    const { container } = await renderRouteWithCache("/admin", ROUTES);
+    const box = () =>
+      screen.getByText(U.title).closest('[data-part="overview-section"]') as HTMLElement;
+    expect(box().getAttribute("data-state")).toBe("loading");
+    const runs = within(
+      container.querySelector('[data-part="stat-cards"]') as HTMLElement,
+    ).getByText(en.admin.overview.metrics.runs7d).parentElement as HTMLElement;
+    expect(within(runs).getByText("—")).toBeTruthy();
+    expect(await within(box()).findByRole("table", { name: U.ranking.title })).toBeTruthy();
+    expect(box().querySelector('[data-part="trend-chart"]')).not.toBeNull();
+    expect(within(runs).getByText("91")).toBeTruthy();
+  });
+
+  it("/admin: a server in another zone than the browser: 用量 is read once, in the browser's zone", async () => {
+    const U = en.admin.overview.usage;
+    const browserZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const serverZone = browserZone === "Pacific/Kiritimati" ? "America/Adak" : "Pacific/Kiritimati";
+    const calls = stubApi(ROUTES);
+    const { container, errors, html, unmount } = await hydrateRouteWithCache("/admin", ROUTES, {
+      clock: { now: Date.now(), timeZone: serverZone },
+    });
+    // the server render draws the skeleton and the stat's dash (it does not know the reader's zone)
+    expect(html).toContain("—");
+    expect(errors).toEqual([]);
+    expect(
+      await within(container).findByRole("table", { name: U.ranking.title }, { timeout: 3000 }),
+    ).toBeTruthy();
+    const usage = calls
+      .map((c) => new URL(c.url, "http://x"))
+      .filter((u) => u.pathname === "/api/v1/admin/overview/usage");
+    expect(usage.map((u) => u.searchParams.get("tz"))).toEqual([browserZone]);
+    unmount();
   });
 
   it("/admin/accounts: a first render from the hydrated cache makes no browser read (load more when there is a next)", async () => {
@@ -494,11 +562,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin: while the numbers load the sections and the footnote stay and the numbers are three stat slots", async () => {
+  it("/admin: while the numbers load the sections and the footnote stay and the numbers are four stat slots", async () => {
     const { release } = await renderHeld("/admin", "GET /api/v1/admin/overview");
     await expectLoading("OverviewPage", "7");
     expect(screen.getByText(en.admin.overview.footnote)).toBeTruthy();
-    expect(document.querySelectorAll('[data-part="stat-card"]')).toHaveLength(3);
+    expect(document.querySelectorAll('[data-part="stat-card"]')).toHaveLength(4);
     expect(await screen.findByText("Grant")).toBeTruthy();
     await release();
   });

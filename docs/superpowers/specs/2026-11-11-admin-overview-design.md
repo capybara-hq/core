@@ -220,6 +220,22 @@ GROUP BY 1, 2, 3, 4;
 
 The row count is bounded by days × orgs × models, not by events. Cost per group = `costOf` with the
 group's price; a group without a price adds tokens but no cost and sets `costPartial`.
+A `cost` (a day, an org, `otherOrgs`) is the sum of its priced groups, `null` when it used tokens
+and none of them had a price (so "not priced" never reads as "free"), and `0` when it used no
+tokens. Org `tokens` is the total of every kind, embeddings included. The window's bounds are the
+zone's midnights computed by PG (`'<day>'::date::timestamp AT TIME ZONE <tz>`, DST-safe); "today"
+comes from the kernel clock (`ADMIN_USAGE_TIMINGS` test seam, with the statement timeout). The
+queries run in their own read-only transaction (`requires_new`) so the `SET LOCAL` never reaches a
+caller's. The cached answer carries the prices and currency of when it was computed: a price
+change shows within 300 s. Eval runs here are the full-run replay runs (they live in `runs`, in
+`kind = 'eval'` conversations); step replays and the judge write no `usage` event and are not
+counted.
+A malformed token value in a `usage` payload (a string, null) counts 0 and a fraction is rounded,
+so one bad event cannot fail the week. `tz` is normalized (`Intl` canonical name) before it is
+echoed and keyed; a zone PG's tzdata does not know (SQLSTATE 22023) is `validation_failed` (400).
+`week()` leaves any caller transaction (`runOutsideTransaction`), so the cache always applies. Each
+statement is bounded, not the whole transaction: `transaction_timeout` needs PostgreSQL 17 and the
+kernel supports 15.
 
 If 7-day scans of `conversation_events` become slow at scale, the follow-up is a daily rollup
 table written by a `@LockedCron` job; not built now (YAGNI, measured first) **(designer's call)**.
@@ -400,8 +416,10 @@ TrendChart({
     format(n: number): string;         // axis max and tooltip
   }[];
   current?: number;                    // index drawn in accent (today)
-  extra?(i: number): ReactNode;        // more tooltip lines (估算费用)
+  extra?(i: number): ReactNode;        // more tooltip lines (估算费用), a hidden-table column too
+  extraLabel?: string;                 // that column's header
   empty?: string;                      // the zero-state line
+  defaultActive?: number;              // the point shown before any pointer or key (reference)
 })
 ```
 
