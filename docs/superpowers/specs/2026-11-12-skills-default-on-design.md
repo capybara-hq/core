@@ -2,7 +2,8 @@
 
 - Date: 2026-11-12, written against `origin/main` at `31e69c17` (the agent page's grouped skill list
   is on `fix/acceptance` at `0f8f5bb6`, not yet on `main`).
-- Status: draft for maintainer review. No implementation yet.
+- Status: approved by the maintainer on 2026-11-12 with every recommendation (§13 records the
+  answers); implemented by `docs/superpowers/plans/2026-11-12-skills-default-on.md`.
 - Related: tools default-on (`2026-11-08-tools-default-on-design.md`, the pattern this follows),
   skill authoring (`2026-11-10-skill-authoring-via-platform-design.md` §5.7: builtin skills in every
   catalog), plugin component management (`2026-11-05-plugin-component-management-design.md` §5
@@ -11,8 +12,7 @@
   (`.agents/skills/replay-evals/SKILL.md`), the skill tools (`.agents/skills/writing-tools/SKILL.md`
   "Skill tools"), Claude Code import (`.agents/skills/writing-plugins/SKILL.md`).
 - Markers: **(decided)** is a maintainer decision of 2026-11-12; **(designer's call)** is decided
-  here and may be overturned in review; **Open Qn** (§13) needs the maintainer, each with a
-  recommendation. Items without a marker restate current code.
+  here and may be overturned in review; **Qn** (§13) were open questions, now decided. Items without a marker restate current code.
 
 ## 1. Why
 
@@ -95,11 +95,11 @@ What can be turned off, by whom:
 | Builtin plugin skill (`catalog_items.builtin`, e.g. `skill-guide`) | yes | **no** (decided: builtin skills stay always on) | nobody (fixed) |
 | Platform plugin skill on in the org | yes | yes, by skill or whole plugin | org admin's switch, super admin's scope / disable |
 | Org-owned plugin skill (an org upload) | yes | yes, by skill or whole plugin | org admin (switch the item off, delete) |
-| Org's own skill without a plugin (新建技能, a shared or promoted skill) | **yes (designer's call, Open Q1)** | yes, by skill | org admin (delete) |
+| Org's own skill without a plugin (新建技能, a shared or promoted skill) | **yes (decided, Q1)** | yes, by skill | org admin (delete) |
 | The agent's own skill (`scope = agent`) | yes | no: the owner deletes it | the owner |
 | An org skill this agent shared (`origin_agent_id`) | yes | no, for the agent that shared it | org admin (delete) |
 
-Why org-owned and shared skills are on by default too (designer's call, Open Q1): the maintainer's
+Why org-owned and shared skills are on by default too (decided, Q1): the maintainer's
 reasoning ("if the org enabled it, people want to use it") is about the org's library, not about
 where a skill was made. Every path into the org library already has a human gate: an org admin
 creates (新建技能) or uploads it, or confirms a share (skill authoring §5.4). A second rule for
@@ -159,7 +159,7 @@ skills?: { writePolicy?: "allow" | "ask" }   // only writePolicy is left
 ## 5. Migration of existing data
 
 Pre-0.1.0 there is no compatibility layer, but applied migrations are immutable, so this is a new
-migration, `0114_skills_default_on.sql` (the number is whatever is next when it lands).
+migration, `0116_skills_default_on.sql` (0114 and 0115 are taken by the parallel network ask line).
 
 **Existing agents switch to default-on (designer's call, following the maintainer's stated
 preference).** Every `agent_versions.definition`:
@@ -198,7 +198,7 @@ Also in the migration **(designer's call)**:
   carries the parent's `disabledSkills` (the child sees the parent's catalog, as it saw the parent's
   `orgSkills`). A template's `disallowedSkills` (§6.2) is added to it: narrowing only.
 - **A template's `skills`** (Claude Code's sub-agent field; Claude Code preloads their full content
-  into the sub-agent) no longer pins. **Recommended (designer's call, Open Q3):** the dispatch writes
+  into the sub-agent) no longer pins. **Decided (Q3):** the dispatch writes
   one English line into the child's preamble, which is logged in `subagent_started` and therefore
   replay-safe: `Before you start, load these skills with Skill: <name>, <name>.` (only the names that
   are in the child's effective catalog; the rest go to `subagent_started.warnings` as today's dropped
@@ -215,7 +215,7 @@ Also in the migration **(designer's call)**:
 
 ### 6.2 Agent templates
 
-The SDK template format (`agents/<name>.md`, `AgentTemplate`) **(designer's call, Open Q4)**:
+The SDK template format (`agents/<name>.md`, `AgentTemplate`) **(decided, Q4)**:
 
 - `skills` (≤ 3 names) keeps the Claude Code meaning for sub-agent use (§6.1).
 - `selectedSkills` ("further skills the agent uses", P4-1) is **removed**: with default-on there is
@@ -262,7 +262,7 @@ notices, not in the `Skill` tool description as in Claude Code, which keeps the 
 stable; that stays. Claude Code also caps its listing with a character budget and leaves the rest
 out; we do the same, but recorded in the log.
 
-**Recommended (designer's call, Open Q2):**
+**Decided (Q2), delivered as phase 2 right after phase 1:**
 
 - A deployment config field `skills.catalogBudgetChars` (hot; default **16000** characters, about
   4000 tokens; `adding-config`). At snapshot time the entries are ranked (the agent's own skills,
@@ -449,20 +449,14 @@ it at their next run start with a catalog notice.
 Multi-replica: nothing new. The resolution happens at run start under the existing conversation row
 lock; no process state, no timers; the snapshot is the shared record.
 
-## 13. Open questions (maintainer)
+## 13. Decisions on the open questions (maintainer, 2026-11-12)
 
-- **Q1. Org-owned and shared skills: on for every agent by default?** Recommended: **yes** (§3). The
-  library already has a human gate (an org admin creates, uploads or confirms a share), and one rule
-  for the whole 技能 section is what people expect. Alternative: only plugin skills default-on, the
-  org's own still picked per agent (two semantics in one list, and the per-agent ticking returns).
-- **Q2. Catalog budget now or later, and how?** Recommended: phase 2 right after phase 1, as a
-  recorded name-only overflow with a 16000-character default (§7); `Skill` search only if real orgs
-  hit it. Alternative: ship the budget inside phase 1, or go straight to search.
-- **Q3. A sub-agent template's `skills`:** Recommended: a logged preamble line telling the child to
-  load them first (§6.1), consistent with "load what you need". Alternative: keep Claude Code's
-  preload for children only, by writing the bodies into the logged preamble at dispatch (faithful to
-  imported Claude Code agents, but it keeps a storage read at dispatch and a size limit, i.e. a
-  smaller pinning).
-- **Q4. Template format:** Recommended: remove `selectedSkills`, add `disallowedSkills` (§6.2), so
-  "save as template" keeps an agent's off-list. Alternative: add nothing; templates always create
-  agents with every skill on and the off-list is reported as not kept.
+The maintainer approved every recommendation:
+
+- **Q1.** Org-owned and shared skills are on for every agent by default, like plugin skills (§3).
+- **Q2.** The catalog budget comes right after phase 1, as phase 2: `skills.catalogBudgetChars`
+  (default 16000 characters), entries past it recorded as `nameOnly` in the snapshot (§7). `Skill`
+  search only if real orgs reach it.
+- **Q3.** A sub-agent template's `skills` become one logged preamble line telling the child to load
+  them with `Skill` first; no bodies are preloaded (§6.1).
+- **Q4.** The template format drops `selectedSkills` and adds `disallowedSkills` (§6.2).
