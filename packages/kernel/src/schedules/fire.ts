@@ -1,7 +1,6 @@
 import type { ChannelTarget } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { AgentLookup, AgentLookupModule } from "../agents/agent-lookup.js";
-import type { ModelRef } from "../agents/definition.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnections } from "../channels/connections.service.js";
 import { findOrBindThread, findThread, type ThreadKey } from "../channels/threads.js";
@@ -80,14 +79,6 @@ export function localTimeOf(at: Date, timeZone: string): string {
       .map((x) => [x.type, x.value]),
   );
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} (${timeZone})`;
-}
-
-/** A task's model (`<provider>/<model>`) as a model pick; undefined for the agent's default. */
-function modelPick(model: string | null): ModelRef | undefined {
-  if (model === null) return undefined;
-  const at = model.indexOf("/");
-  if (at <= 0 || at === model.length - 1) return undefined;
-  return { provider: model.slice(0, at), model: model.slice(at + 1) } as ModelRef;
 }
 
 const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.unavailable"]);
@@ -285,7 +276,7 @@ export class ScheduledTaskFirer {
       localTime: localTimeOf(run.scheduledFor, task.trigger.timeZone),
     };
     const internal = { schedule: marker, timeZoneOverride: task.trigger.timeZone };
-    const model = modelPick(task.model);
+    const model = task.model ?? undefined;
     const pick = {
       ...(model !== undefined && { model }),
       ...(task.effort !== null && { effort: task.effort }),

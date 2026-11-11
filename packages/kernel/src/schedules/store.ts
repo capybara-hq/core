@@ -91,7 +91,7 @@ function taskColumns(p: ScheduledTaskPatch): Updateable<ScheduledTasksTable> {
   if (p.mode !== undefined) c.mode = p.mode;
   if (p.conversationId !== undefined) c.conversation_id = p.conversationId;
   if (p.chat !== undefined) c.chat = json(p.chat);
-  if (p.model !== undefined) c.model = p.model;
+  if (p.model !== undefined) c.model = json(p.model);
   if (p.effort !== undefined) c.effort = p.effort;
   if (p.deviceId !== undefined) c.device_id = p.deviceId;
   if (p.status !== undefined) c.status = p.status;
@@ -125,7 +125,7 @@ export class ScheduledTaskStore {
         mode: task.mode,
         conversation_id: task.conversationId,
         chat: json(task.chat),
-        model: task.model,
+        model: json(task.model),
         effort: task.effort,
         device_id: task.deviceId,
         status: task.status,

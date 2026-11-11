@@ -41,7 +41,6 @@ afterAll(async () => {
 let orgId: string;
 let otherOrgId: string;
 let aliceId: string;
-let guestId: string;
 let alice: Req;
 let bob: Req;
 let guest: Req;
@@ -62,7 +61,7 @@ beforeEach(async () => {
   const adminId = await mk("admin");
   aliceId = await mk("alice");
   const bobId = await mk("bob");
-  guestId = await mk("guest");
+  const guestId = await mk("guest");
   await mk("outsider");
   const owner = await session(k, "owner");
   orgId = await createOrg(owner);
@@ -167,18 +166,23 @@ describe("schedules API", () => {
     res = await alice({
       method: "POST",
       url: `${base()}/${t.id}/grants`,
-      payload: { grants: [{ toolKey: "WebFetch" }] },
+      payload: { grants: [{ toolKey: "AskUserQuestion" }] },
     });
-    // WebFetch is off for this agent's builtin set or allowed: both are valid answers of the
-    // service; the route itself must reach it
-    expect([200, 400, 422]).toContain(res.statusCode);
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { items: unknown[] }).items).toEqual([
+      expect.objectContaining({ toolKey: "AskUserQuestion", connectorId: null }),
+    ]);
 
     res = await alice({ method: "GET", url: `${base()}/${t.id}/grants` });
     expect(res.statusCode, res.body).toBe(200);
-    expect(Array.isArray((res.json() as { items: unknown[] }).items)).toBe(true);
+    expect((res.json() as { items: { toolKey: string }[] }).items.map((g) => g.toolKey)).toEqual([
+      "AskUserQuestion",
+    ]);
 
-    res = await alice({ method: "DELETE", url: `${base()}/${t.id}/grants/WebFetch` });
+    res = await alice({ method: "DELETE", url: `${base()}/${t.id}/grants/AskUserQuestion` });
     expect(res.statusCode, res.body).toBe(204);
+    res = await alice({ method: "GET", url: `${base()}/${t.id}/grants` });
+    expect((res.json() as { items: unknown[] }).items).toEqual([]);
   });
 
   it("admin lists every task with all=true; a member may not", async () => {
@@ -223,7 +227,11 @@ describe("schedules API", () => {
     res = await alice({ method: "DELETE", url: `${base()}/${t.id}` });
     expect(res.statusCode, res.body).toBe(204);
     // a guest cannot touch someone else's task
-    expect(guestId).toBeTruthy();
+    const other = await create(bob);
+    res = await alice({ method: "POST", url: `${base()}/${other.id}/pause` });
+    expect(res.statusCode).toBe(404);
+    res = await alice({ method: "DELETE", url: `${base()}/${other.id}` });
+    expect(res.statusCode).toBe(404);
   });
 
   it("another org is 404, never the task", async () => {
@@ -243,12 +251,15 @@ describe("schedules API", () => {
       (await alice({ method: "POST", url: base(), payload: body(over) })).statusCode;
     expect(await bad({ name: "x".repeat(201) })).toBe(400);
     expect(await bad({ prompt: "x".repeat(20_001) })).toBe(400);
-    expect(await bad({ model: "no-slash" })).toBe(400);
-    expect(await bad({ model: `a/${"b".repeat(300)}` })).toBe(400);
+    expect(await bad({ model: "no-object" })).toBe(400);
+    expect(await bad({ model: { provider: "a", model: "b".repeat(300) } })).toBe(400);
+    expect(await bad({ model: "model-fake/fake-1" })).toBe(400);
     expect(await bad({ effort: "extreme" })).toBe(400);
     expect(await bad({ timeZone: "Mars/Base" })).toBe(400);
     expect(await bad({ extra: 1 })).toBe(400);
-    expect(await bad({ model: "model-fake/fake-1", effort: "low" })).toBe(201);
+    expect(await bad({ model: { provider: "model-fake", model: "fake-1" }, effort: "low" })).toBe(
+      201,
+    );
   });
 
   it("a service token gets 403, org.read routes included", async () => {
@@ -278,6 +289,7 @@ describe("schedules API", () => {
       "schedules.create",
       "schedules.update",
       "schedules.delete",
+      "schedules.run",
       "schedules.grants-add",
       "schedules.grants-remove",
     ]) {

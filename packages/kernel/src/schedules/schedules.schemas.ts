@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelRef } from "../agents/definition.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { IanaTimeZone } from "../time-zone.js";
@@ -28,14 +29,15 @@ export const ScheduleChatInput = z
   })
   .strict();
 
-/**
- * A model pick, `<provider>/<model>` (the plugin name, a slash, the model id), like the model of an
- * agent's definition written as one string.
- */
-export const ScheduleModel = z
-  .string()
-  .max(200)
-  .regex(/^[^\s/]+\/\S+$/, "must be <provider>/<model>, such as anthropic/claude-sonnet-4-5");
+/** A model pick: the same `{ provider, model }` an agent's definition uses (strings bounded). */
+export const ScheduleModel = ModelRef.strict().refine(
+  (m) =>
+    m.provider.length >= 1 &&
+    m.provider.length <= 100 &&
+    m.model.length >= 1 &&
+    m.model.length <= 200,
+  "provider is 1-100 and model 1-200 characters",
+);
 
 export const ScheduleEffort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 

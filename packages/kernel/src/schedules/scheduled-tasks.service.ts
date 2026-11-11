@@ -4,6 +4,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { AgentLookup, type AgentView } from "../agents/agent-lookup.js";
+import type { ModelRef } from "../agents/definition.js";
 import { ConversationAccess } from "../conversations/access.js";
 import { readMessageContext } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -85,7 +86,7 @@ export interface CreateTaskInput {
   conversationId?: string;
   /** `chat` mode only. */
   chat?: ScheduleChat;
-  model?: string;
+  model?: ModelRef;
   effort?: string;
   deviceId?: string;
   /**
@@ -106,7 +107,7 @@ export interface UpdateTaskInput {
   mode?: ScheduleMode;
   conversationId?: string | null;
   chat?: ScheduleChat | null;
-  model?: string | null;
+  model?: ModelRef | null;
   effort?: string | null;
   deviceId?: string | null;
   expiresAt?: Date | null;

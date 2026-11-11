@@ -1,3 +1,5 @@
+import type { ModelRef } from "../agents/definition.js";
+
 /**
  * Scheduled tasks (spec 2026-11-11-scheduled-tasks-design.md §4): the shapes the kernel reads and
  * writes. The rows live in `capybara.scheduled_tasks`, `scheduled_task_runs` and
@@ -69,7 +71,7 @@ export interface ScheduledTask {
   /** The target chat (`chat` mode only). */
   chat: ScheduleChat | null;
   /** Null = the agent's default model. */
-  model: string | null;
+  model: ModelRef | null;
   /** Null = the agent's default effort. */
   effort: string | null;
   /** Null = the default pick for new conversations. */

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   -- chat mode only: { connectionId, chatId, chatType }
   chat jsonb,
   -- null = the agent's defaults
-  model text,
+  model jsonb,
   effort text,
   -- null = the default pick for new conversations
   device_id text,

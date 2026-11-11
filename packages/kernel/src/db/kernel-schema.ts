@@ -1,5 +1,6 @@
 import type { FileSystemHandle, ParsedTheme, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
+import type { ModelRef } from "../agents/definition.js";
 import type {
   ScheduleChat,
   ScheduleMarker,
@@ -1302,7 +1303,7 @@ export interface ScheduledTasksTable {
   mode: ScheduleMode;
   conversation_id: NullableText;
   chat: ColumnType<ScheduleChat | null, string | null | undefined, string | null>;
-  model: NullableText;
+  model: ColumnType<ModelRef | null, string | null | undefined, string | null>;
   effort: NullableText;
   device_id: NullableText;
   status: ColumnType<ScheduleStatus, ScheduleStatus | undefined, ScheduleStatus>;
