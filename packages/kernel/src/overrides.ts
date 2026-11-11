@@ -1,10 +1,12 @@
 import type { NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
+import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
+import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "./runtime/run-steps.js";
@@ -29,7 +31,9 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `TOOL_PIPELINE_HOOKS`: the tool pipeline's hooks and policy decision;
  * - `SUBAGENT_MESSAGES_HOOKS`: the sub-agent message tools' hooks (a send raced by a run's end);
  * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
- *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`, `SETUP_CHECK_TIMEOUT`: shorter timings;
+ *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`, `SETUP_CHECK_TIMEOUT`,
+ *   `PRESENCE_INTERVAL_MS`: shorter timings;
+ * - `ADMIN_USAGE_TIMINGS`: the usage aggregate's statement timeout and clock;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
  * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
  *   `CurrentTime` builtin the time;
@@ -48,6 +52,8 @@ interface KernelSeams {
   [SANDBOX_LEASE_TIMINGS]: Partial<SandboxLeaseTimings>;
   [CHANNEL_WEBHOOK_TIMINGS]: Partial<ChannelWebhookTimings>;
   [SETUP_CHECK_TIMEOUT]: number;
+  [PRESENCE_INTERVAL_MS]: number;
+  [ADMIN_USAGE_TIMINGS]: Partial<AdminUsageTimings>;
   [EMBED_TOKEN_CLOCK]: () => number;
   [RUN_CONTEXT_CLOCK]: () => number;
   [APP_INTERCEPTOR]: NestInterceptor;
@@ -76,6 +82,8 @@ const SEAM_TOKENS = [
   SANDBOX_LEASE_TIMINGS,
   CHANNEL_WEBHOOK_TIMINGS,
   SETUP_CHECK_TIMEOUT,
+  PRESENCE_INTERVAL_MS,
+  ADMIN_USAGE_TIMINGS,
   EMBED_TOKEN_CLOCK,
   RUN_CONTEXT_CLOCK,
   APP_INTERCEPTOR,

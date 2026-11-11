@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>OverviewSection · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>OverviewSection</h1>
+<p>One section of an overview page, the one Card, in its own state (spec §5.6): the loaded rows; while loading, the head stays and the body is the loaded block's skeleton; on failure, the sentence with its raw text behind 原始错误 and 重试 at the line's right. The copy is OVERVIEW_SECTION_FIXTURE's.</p>
+<div class="r-blocks">
+<section data-ref-block="overview-section-default" style="width:720px" data-pad>
+  <section class="r-boxcard" data-part="overview-section"><div class="r-boxcard-head r-osec-head"><span>待处理</span><a class="r-link" href="#inbox">查看全部</a></div><div class="r-boxcard-body">
+  <ul class="r-item-list" data-part="item-list">
+    <li class="r-item-row" data-part="item-list-row"><span class="r-item-text"><span class="r-item-title">扩展权限审批</span><span class="r-item-meta">2 个扩展等待批准</span></span><span class="r-item-status">2</span></li>
+    <li class="r-item-row" data-part="item-list-row"><span class="r-item-text"><span class="r-item-title">可更新的插件</span><span class="r-item-meta">crm v1.2.0 → v1.3.0</span></span><span class="r-item-status">1</span></li>
+    <li class="r-item-row" data-part="item-list-row"><span class="r-item-text"><span class="r-item-title">模型供应商</span><span class="r-item-meta">deepseek 无法列出模型</span></span><span class="r-item-status">1</span></li>
+  </ul>
+  </div></section>
+</section>
+<section data-ref-block="overview-section-loading" style="width:720px" data-pad>
+  <section class="r-boxcard" data-part="overview-section"><div class="r-boxcard-head r-osec-head"><span>待处理</span><a class="r-link" href="#inbox">查看全部</a></div><div class="r-boxcard-body">
+  <div class="r-skel-stack" aria-busy="true">
+    <div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>
+    <div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>
+    <div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>
+    <div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>
+  </div>
+  </div></section>
+</section>
+<section data-ref-block="overview-section-error" style="width:720px" data-pad>
+  <section class="r-boxcard" data-part="overview-section"><div class="r-boxcard-head r-osec-head"><span>待处理</span><a class="r-link" href="#inbox">查看全部</a></div><div class="r-boxcard-body">
+  <div class="r-osec-error" data-part="overview-section-error" role="alert">
+    <div class="r-error-detail" data-part="error-detail">
+      <span class="r-error-detail-summary" data-part="error-detail-summary"><span class="r-error-detail-icon"><i data-icon="circle-x" data-size="14"></i></span>无法加载待处理事项。</span>
+      <button class="r-error-detail-toggle" data-part="error-detail-toggle" aria-expanded="false">原始错误<span class="r-error-detail-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+    </div>
+    <button class="r-linkbtn" data-part="overview-section-retry"><i data-icon="refresh" data-size="12"></i>重试</button>
+  </div>
+  </div></section>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -1,4 +1,6 @@
+import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
 import type { UiArrangementEntry } from "./ui";
 
 /**
@@ -6,14 +8,207 @@ import type { UiArrangementEntry } from "./ui";
  * 界面上的隐藏只是方便，最终由内核判定。
  */
 
-/** 后台概览的四个数字（`GET /admin/overview`）。 */
+/** The admin overview's numbers (`GET /admin/overview`, kernel `admin/overview.service.ts`). */
 export interface AdminOverview {
-  /** 需要处理的插件：待批准、待配置、失败、依赖缺失、副本不一致。 */
-  extensionsNeedingAction: number;
-  /** 待处理的平台目录申请（目录申请上线前恒为 0）。 */
-  catalogRequestsPending: number;
   orgs: number;
   accounts: number;
+  /**
+   * What waits for a super admin: the platform inbox total plus the extensions, plugin updates and
+   * model providers of {@link AdminAttention} (counted in full, not capped).
+   */
+  attentionTotal: number;
+  /** An attention list could not be read: `attentionTotal` leaves its items out. */
+  partial?: boolean;
+}
+
+/**
+ * Why an extension needs a look: `config` (missing deployment config while `pending_config`, else
+ * invalid), `load_failed`, `approval`, `dependency`, `conflict`, `converging`, `legacy_format`.
+ */
+export type AttentionExtensionReason =
+  | "config"
+  | "load_failed"
+  | "approval"
+  | "dependency"
+  | "conflict"
+  | "converging"
+  | "legacy_format";
+
+/** What is wrong with a model provider: its model list failed, or no usable chat model. */
+export type AttentionProviderProblem = "list_failed" | "no_chat_model";
+
+/** An attention list (a source the kernel reads on its own). */
+export type AttentionSource = "extensions" | "updates" | "providers";
+
+export interface AttentionExtension {
+  name: string;
+  displayName: LocalizedName | null;
+  /** The plugin's icon URL, or null (the mark falls back to the initial). */
+  icon: string | null;
+  status: ExtensionStatus;
+  reason: AttentionExtensionReason;
+}
+
+/** A platform plugin whose marketplace has a newer version than the newest imported one. */
+export interface AttentionUpdate {
+  itemId: string;
+  name: string;
+  displayName: LocalizedName | null;
+  icon: string | null;
+  version: string;
+  marketplaceVersion: string;
+  marketplaceId: string | null;
+  /** The marketplace's name; null without one. */
+  marketplaceName: string | null;
+}
+
+export interface AttentionProvider {
+  /** The provider's plugin name. */
+  plugin: string;
+  displayName: LocalizedName | null;
+  icon: string | null;
+  problem: AttentionProviderProblem;
+}
+
+/**
+ * `GET /admin/overview/attention`: what needs a super admin besides the inbox, each list capped
+ * (the rest counted in `more`); `unavailable` names the lists the kernel could not read.
+ */
+export interface AdminAttention {
+  extensions: AttentionExtension[];
+  updates: AttentionUpdate[];
+  providers: AttentionProvider[];
+  more: Record<AttentionSource, number>;
+  unavailable: AttentionSource[];
+}
+
+/** A kernel role (`roles` in the kernel config). */
+export type ReplicaRole = "api" | "worker" | "gateway";
+
+/** A live kernel replica (`GET /admin/overview/health`). */
+export interface AdminHealthReplica {
+  /** The process id. */
+  id: string;
+  roles: ReplicaRole[];
+  version: string;
+  startedAt: string;
+  /** The configured `http.replicaId`, null when unset. */
+  httpReplicaId: string | null;
+}
+
+/** One kernel queue: counts only, never job data or a failure text. */
+export interface AdminHealthQueue {
+  name: string;
+  waiting: number;
+  active: number;
+  delayed: number;
+  /** Failed jobs still kept (each queue keeps the last 5000). */
+  failed: number;
+  /** Of those, the ones that failed in the last 24 hours. */
+  failedLastDay: number;
+}
+
+/** A source the kernel could not read right now (its numbers are null). */
+export type AdminHealthSource = "redis" | "database";
+
+/**
+ * `GET /admin/overview/health` (kernel `admin/health.service.ts`): the kernel version, the live
+ * replicas and their roles, the kernel queues, and channel, device and sandbox counts. Each
+ * source degrades on its own: a number the kernel could not read is null, `unavailable` names
+ * the sources.
+ */
+export interface AdminHealth {
+  kernel: { version: string };
+  /** Live replicas, oldest start first. */
+  replicas: AdminHealthReplica[] | null;
+  /** Live replicas per role (a replica with several roles counts in each). */
+  roles: Record<ReplicaRole, number> | null;
+  /** The kernel queues in a fixed order. */
+  queues: AdminHealthQueue[] | null;
+  channels: {
+    online: number | null;
+    offline: number | null;
+    webhook: number | null;
+    disabled: number | null;
+    error: number | null;
+  };
+  devices: { online: number | null; local: number | null };
+  sandboxes: {
+    running: number;
+    suspended: number;
+    /** Running instances per provider (most first). */
+    byProvider: { provider: string; running: number }[];
+  } | null;
+  unavailable: AdminHealthSource[];
+}
+
+/** Tokens of one day; the four chat kinds do not overlap, `embedding` is `ctx.models.embed` input. */
+export interface AdminUsageTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  embedding: number;
+}
+
+/** One calendar day of the usage week, in the answer's zone. */
+export interface AdminUsageDay {
+  /** `YYYY-MM-DD` in the answer's `tz`. */
+  date: string;
+  /** Runs created that day (sub-agent and eval replay runs included). */
+  runs: number;
+  tokens: AdminUsageTokens;
+  /** Estimated cost in `currency`; null when the day used tokens and none had a price. */
+  cost: number | null;
+}
+
+/** One org's week: totals only (never per account, agent or conversation). */
+export interface AdminUsageOrg {
+  orgId: string;
+  name: string;
+  runs: number;
+  /** Every token kind summed. */
+  tokens: number;
+  cost: number | null;
+}
+
+/**
+ * `GET /admin/overview/usage?tz=` (kernel `admin/usage.service.ts`): runs, tokens and estimated
+ * cost per calendar day in `tz` over today and the 6 days before (today last), and the 10 orgs
+ * that used the most tokens, the rest summed in `otherOrgs`. A null cost is "not priced", never 0.
+ */
+export interface AdminUsageWeek {
+  from: string;
+  to: string;
+  tz: string;
+  /** The deployment setting `priceCurrency`. */
+  currency: string;
+  days: AdminUsageDay[];
+  /** Some tokens of the week had no price: the costs count only the priced ones. */
+  costPartial: boolean;
+  orgs: AdminUsageOrg[];
+  otherOrgs: { count: number; runs: number; tokens: number; cost: number | null };
+}
+
+/**
+ * One platform-level audit event (`GET /admin/audit`, org-less events only): who (null: the
+ * kernel), whether through a personal token or their agent, the action and its target. Never the
+ * event's detail.
+ */
+export interface PlatformAuditEvent {
+  id: string;
+  at: string;
+  actor: { id: string; name: string | null; email: string | null } | null;
+  viaToken: boolean;
+  viaAgent: boolean;
+  action: string;
+  target: string | null;
+}
+
+/** A page of platform audit events, newest first; `next` is the `after` of the next page. */
+export interface PlatformAuditPage {
+  events: PlatformAuditEvent[];
+  next: string | null;
 }
 
 export interface AdminAccount {
@@ -142,6 +337,25 @@ export interface AdminAccountsPage {
 }
 
 export const getAdminOverview = () => apiFetch<AdminOverview>("/api/v1/admin/overview");
+
+/** The overview's 待处理 lists (may wait on a provider's model list). */
+export const getAdminAttention = () => apiFetch<AdminAttention>("/api/v1/admin/overview/attention");
+
+/** The overview's 运行状况 (replicas, queues, connections; polled while the page shows). */
+export const getAdminHealth = () => apiFetch<AdminHealth>("/api/v1/admin/overview/health");
+
+/** The overview's 用量: the week in the reader's zone `tz` (`admin.usage_unavailable` 503 on timeout). */
+export const getAdminUsage = (tz: string) =>
+  apiFetch<AdminUsageWeek>(`/api/v1/admin/overview/usage?tz=${encodeURIComponent(tz)}`);
+
+/**
+ * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. The
+ * overview and `/admin/audit` share the first page (limit 20; the overview shows the first 10).
+ */
+export const listPlatformAudit = (after?: string) =>
+  apiFetch<PlatformAuditPage>(
+    `/api/v1/admin/audit?limit=20${after === undefined ? "" : `&after=${encodeURIComponent(after)}`}`,
+  );
 
 /** 账号分页（按 id 升序）：`next` 为下一页游标，没有更多时为 null。 */
 export const listAdminAccounts = (after?: string) =>

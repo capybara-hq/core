@@ -23,6 +23,9 @@ import { CHANNEL_QUEUE_NAME, type ChannelJobData, ChannelJobs } from "./jobs.js"
 import { ChannelOutbound, deliverBackoff } from "./outbound.js";
 import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
 
+/** The channel queue's registration (its producer here; the admin health reads its counts). */
+const CHANNEL_QUEUE_MODULE = QueueModule.registerQueue(CHANNEL_QUEUE_NAME);
+
 /**
  * Channels on every role: the org's channel connections, inbound (dedupe and enqueue; the inbound
  * jobs), the outbound delivery, the producer of the channel queue `cap-kernel-channels`, the
@@ -41,7 +44,7 @@ import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
     ToolsModule,
     ConversationsModule,
     RuntimeModule,
-    QueueModule.registerQueue(CHANNEL_QUEUE_NAME),
+    CHANNEL_QUEUE_MODULE,
   ],
   providers: [
     ChannelJobs,
@@ -51,7 +54,14 @@ import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
     ChannelInbound,
     ChannelOutbound,
   ],
-  exports: [ChannelJobs, ChannelConnections, AnonymousGuests, ChannelInbound, ChannelOutbound],
+  exports: [
+    ChannelJobs,
+    ChannelConnections,
+    AnonymousGuests,
+    ChannelInbound,
+    ChannelOutbound,
+    CHANNEL_QUEUE_MODULE,
+  ],
 })
 export class ChannelsModule {}
 

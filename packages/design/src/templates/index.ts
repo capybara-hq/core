@@ -18,6 +18,12 @@ export { type ListLoading, ListPage } from "./list-page";
 export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
 export { OnboardingPage } from "./onboarding-page";
 export { OverviewPage } from "./overview-page";
+export {
+  OverviewSection,
+  type OverviewSectionError,
+  type OverviewSectionProps,
+  type OverviewSectionState,
+} from "./overview-section";
 export { SettingsPage } from "./settings-page";
 export { SetupPage, type SetupPageProps } from "./setup-page";
 export { StatusPage } from "./status-page";

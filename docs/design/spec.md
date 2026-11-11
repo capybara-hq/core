@@ -588,6 +588,23 @@ States: `default`, `loading`, `keep`, `loading-keep`
 | content | keep | max-width | layout.content |
 | content | loading-keep | max-width | layout.content |
 
+- **Sections** (`OverviewSection({ title, actions?, state, loading?, error?, children })`, `state` `"loading" | "error" | "ready"`): a page whose sections read their own data (the admin overview: 待处理, 最近的平台操作) draws each one as an `OverviewSection`, so the page holds no state logic and one failing read never blanks the others. It is the section's one Card (the Card of §6.9: the head with `title` and the static `actions`, such as 查看全部, kept in every state) and provides the box to what it holds, so its content groups with `ItemList` rows, an unframed DataTable or `Subsection`s, never a second box (§1). Its body is, by `state`: `loading`, the loaded block's skeleton from `loading` (`BlockShape[]`, as in §5.2; default three lines), a busy region named by the title (§6.29: inside the page's own loading group it adds no second announcement); `error`, the in-place error line (the extension block's load-failure line of §6.16): the ErrorDetail sentence (`error.summary`, led by `circle-x`, the raw `error.detail` behind 原始错误, §6.24) with 重试 (`refresh` 12, a `small` muted link button) at the line's right, which calls `error.onRetry` and reads that section again; `ready`, the children. An empty section is its content's own empty state (`EmptyState size="panel"`, §6.18), drawn by the page in `ready`.
+
+<!-- states: overview-section -->
+States: `default`, `loading`, `error`
+
+<!-- size-table: overview-section -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| overview-section | default | background-color | color.panel |
+| overview-section | default | border-top-left-radius | radius.md |
+| overview-section | loading | background-color | color.panel |
+| skeleton-text[data-size=body] | loading | height | type.body.line |
+| error-detail-summary | error | color | color.fail |
+| error-detail-summary | error | font-size | type.body |
+| overview-section-retry | error | color | color.muted |
+| overview-section-retry | error | font-size | type.small |
+
 ### 5.7 Inbox (T6)
 - Rail (320, the list column; wider than a filter rail's 240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400). A row leads with the item's display name (one line, the ellipsis on the name, the full text in `title`), its version beside the name in `CellTitle`'s `trailing` (never cut), and what kind of item it is on the second line; the list's column header is neutral (事项 / Item), since rows are requests and notices alike.
 - **Loading** (`InboxPage.loading`, `{ rows?, inspector? }`): the header is its loading state (§4.2); the rail's `filters` stay real (they are static); the list is `rows` rows (default 4) in the object list's own container (§6.17: the same border, radius and first row) in the 64 px row: a 36 px mark and two text slots (a `body` one at 55%, a `small` one at 30%); `loading.list: "records"` (with `loading.table`: `label`, `columns`, `rowHeight`, `framed`) draws the DataTable's loading state (§6.6) in the caller's table shape instead, for the inbox pages whose list is a DataTable (`rowHeight="dense" framed={false}`); the content is one card-shaped block (§5.2) in place of `children`. A real `inspector` stays. A page whose loaded state opens its first item (the rail-inspector layout, an ActionRow for the decision) keeps both while loading: `inspector` (`true`, or `{ rows?, keyWidth? }` as in §5.2) draws KeyValue placeholders in the inspector column, and the page passes its `inspectorTitle` and its decision `actionRow` (the labels are static), which stays with its buttons disabled (as in §5.3). One busy announcement (§6.29). Nothing animates.
@@ -986,6 +1003,33 @@ States: `skills`, `filtered`
 - Mini trend Sparkline (inside tables): 12 square bars 4px wide, `muted`.
 - The `fail` in a bar chart is a subset of `value` (the total): the bar height = the total, and the failure count is drawn as blocks at the top of the bar.
 - Axis labels small faint; no grid lines.
+- **TrendChart** (`TrendChart({ label, x, panels, current?, extra?, extraLabel?, empty?, defaultActive? })`, `panels` `{ id, label, values: (number | null)[], format(n) }[]`; admin overview design §10.1, decision D1): a time series as **small multiples**, one panel per measure, stacked, sharing the x positions (`x`, the dates) and their labels under the last panel. Each panel has its own scale; there is never a second y-scale on one plot (the eye would compare slopes the scales made up), and the API has no prop for one. A panel is its title (`small` `muted`, left; it names the one series, so there is no legend) and its latest value (the `current` point's, else the last one's; `small` `ink`, right) over the plot, 96 high at `default` and 72 at `dense` (§2.5 density from `DensityContext`): a 2 px polyline in `muted`, a 6 px square marker per value (`crispEdges`), the `current` point and the segment into it in `accent` (the text role of §2.3: the period happening now), a 1 px `line` baseline at zero, and as the y-axis only the panel's max (formatted) at the top-left in `small` `faint`; no grid lines. A `null` value is a gap: no marker, no segment across it. When no value of any panel is above zero the chart draws its flat zero state (the points on the baseline, no max) with the `empty` line (`small` `muted`) above it. The x positions are full-height columns over every panel: hovering one (or tapping it on a touch screen, where it stays after the finger lifts) draws one crosshair (1 px `line-strong`) through every panel and one tooltip (the `panel` ground, a `line-strong` border, `shadow-1`, `radius.sm`, `small`) beside it on the side with more room, holding the date (marked 当前 / current at `current`), each panel's formatted value (the label `muted`, the value `ink`) and `extra(i)` (估算 ¥12.30); it is at most half the chart wide and wraps, so it fits beside the crosshair even on a 390 phone. A pointer's point hides when the pointer leaves. `defaultActive` shows a point before any pointer or key (the reference set's hover block). The columns are the chart's width over the point count: they stay at least 24 px wide (the hit-target floor) up to about 14 points at phone width (358 px of chart), so a longer series on a phone is read through the keyboard, the summaries and the table. The chart is one focusable group (`role="group"` named `label`, the 2 px `accent` focus outline): focus shows the current point, ←/→ move it, Home/End jump, Esc hides, and the tooltip's text of a point reached by keyboard (not a pointer's hover) is mirrored in a polite live region; a point reached by keyboard stays when the pointer leaves. Each panel's plot is `role="img"` with a summary from the design i18n (「运行：最高 11-06 的 132，最新 11-11 的 64」, 「Token：全部为 0」); a visually hidden table holds every value (the row of `current` marked) and `extra(i)` in a last column headed `extraLabel`, so neither the tooltip nor color gates a value. Under `forced-colors` the strokes and markers are `CanvasText` and the current ones `Highlight`. It fills its container's width (the x positions are percentages; a 390 phone holds seven dates). `formatCompact(n, locale)` (en `3.4M`, zh `340万`) formats large measures such as tokens.
+
+<!-- states: trend-chart -->
+States: `default`, `hover`, `current`, `empty`, `gap`, `phone`
+
+<!-- size-table: trend-chart -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| trend-chart-plot | default | height | 96 |
+| trend-chart-title | default | color | color.muted |
+| trend-chart-title | default | font-size | type.small |
+| trend-chart-latest | default | color | color.ink |
+| trend-chart-point | default | width | 6 |
+| trend-chart-point | default | fill | color.muted |
+| trend-chart-segment | default | stroke | color.muted |
+| trend-chart-baseline | default | stroke | color.line |
+| trend-chart-max | default | fill | color.faint |
+| trend-chart-x | default | color | color.faint |
+| trend-chart-x | default | font-size | type.small |
+| trend-chart-point[data-kind=current] | current | fill | color.accent |
+| trend-chart-segment[data-kind=current] | current | stroke | color.accent |
+| trend-chart-crosshair | hover | stroke | color.line-strong |
+| trend-chart-tooltip | hover | background-color | color.panel |
+| trend-chart-tooltip | hover | border-top-color | color.line-strong |
+| trend-chart-tooltip | hover | font-size | type.small |
+| trend-chart-empty | empty | color | color.muted |
+| trend-chart-plot | phone | height | 96 |
 
 ### 6.9 Conversation timeline and plugin view building blocks
 

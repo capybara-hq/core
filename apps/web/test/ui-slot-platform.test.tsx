@@ -85,7 +85,7 @@ describe("the admin nav", () => {
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/ui/contributions"))).toBe(true));
     await waitFor(() =>
       expect(JSON.parse(screen.getByTestId("nav").textContent ?? "[]")).toEqual([
-        [zh.admin.nav.group, 12],
+        [zh.admin.nav.group, 13],
       ]),
     );
   });
