@@ -8,6 +8,7 @@ import {
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
+import type { KernelConfig } from "../../src/config/schema.js";
 import {
   PRESENCE_DEFAULT_INTERVAL_MS,
   PRESENCE_INTERVAL_MS,
@@ -19,7 +20,7 @@ import {
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import type { KernelOverride } from "../../src/overrides.js";
 import { KERNEL_VERSION } from "../../src/version.js";
-import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import { runConfig, sleep, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 
 /**
  * Replica presence (admin overview spec §5.1, §11 presence.test): every process reports itself in
@@ -156,4 +157,72 @@ describe("replica presence (short interval)", () => {
     expect(await redis.zscore(REPLICAS_KEY, idA)).toBeNull();
     expect(await redis.exists(replicaKey(idA))).toBe(0);
   }, 60_000);
+});
+
+describe("replica presence (one process, Redis delays and failures)", () => {
+  let rdc: TestContainer;
+  const clients: Redis[] = [];
+
+  beforeAll(async () => {
+    rdc = await startTestRedis();
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const c of clients) c.disconnect();
+    await rdc?.stop();
+  });
+
+  const config = {
+    get: () => ({ roles: ["api"], http: {} }) as unknown as KernelConfig,
+  };
+  const sources = (replicaId: string) => ({
+    replicaId,
+    channelsHeld: () => 0,
+    devicesConnected: () => 0,
+  });
+  /** A Redis client of its own (its `eval` gets spied on) and one to look with. */
+  const clientsFor = () => {
+    const r = new Redis(rdc.url);
+    const look = new Redis(rdc.url);
+    clients.push(r, look);
+    return { r, look, evalOf: r.eval.bind(r) as (...a: unknown[]) => Promise<unknown> };
+  };
+
+  it("a stop while a beat is in flight waits for it, then removes the entry", async () => {
+    const { r, look, evalOf } = clientsFor();
+    let entered: () => void = () => {};
+    const inFlight = new Promise<void>((res) => {
+      entered = res;
+    });
+    vi.spyOn(r, "eval").mockImplementation((async (...args: unknown[]) => {
+      entered();
+      await sleep(300);
+      return evalOf(...args);
+    }) as never);
+    const p = new ReplicaPresence(r, config, { warn: vi.fn() }, 100);
+    p.start(sources("in-flight"));
+    await inFlight;
+    await p.stop();
+    // the beat finished before the cleanup: nothing of it is left behind
+    expect(await look.zscore(REPLICAS_KEY, "in-flight")).toBeNull();
+    expect(await look.exists(replicaKey("in-flight"))).toBe(0);
+    await sleep(250);
+    expect(await look.exists(replicaKey("in-flight"))).toBe(0);
+  });
+
+  it("a failing beat is logged at warn, and the next beat still runs", async () => {
+    const { r, look, evalOf } = clientsFor();
+    const spy = vi.spyOn(r, "eval");
+    spy.mockRejectedValueOnce(new Error("redis says no"));
+    spy.mockImplementation(((...args: unknown[]) => evalOf(...args)) as never);
+    const warn = vi.fn();
+    const p = new ReplicaPresence(r, config, { warn }, 100);
+    p.start(sources("flaky"));
+    await waitFor(async () => (await look.zscore(REPLICAS_KEY, "flaky")) !== null);
+    expect(warn).toHaveBeenCalledWith("replica presence beat failed", {
+      err: expect.any(Error),
+    });
+    await p.stop();
+    expect(await look.zscore(REPLICAS_KEY, "flaky")).toBeNull();
+  });
 });

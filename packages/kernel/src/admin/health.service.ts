@@ -28,8 +28,8 @@ export const KERNEL_QUEUE_NAMES = [
   EVAL_QUEUE_NAME,
 ] as const;
 
-/** How long the Redis reads may take before the answer marks Redis unavailable. */
-export const HEALTH_REDIS_TIMEOUT_MS = 3_000;
+/** How long each source's reads may take before the answer marks it unavailable. */
+export const HEALTH_READ_TIMEOUT_MS = 3_000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,7 +88,10 @@ export interface AdminHealth {
     disabled: number | null;
     error: number | null;
   };
-  /** `online`: device sockets open on live replicas; `local`: local devices (not deleted). */
+  /**
+   * `local`: local devices (not deleted, org not deleted); `online`: the devices whose connection a
+   * live replica holds (lease held), at most `local`.
+   */
   devices: { online: number | null; local: number | null };
   /** Sandbox instances by status, and running ones per provider (most first). */
   sandboxes: {
@@ -135,7 +138,7 @@ export class AdminHealthService {
   constructor(
     @Inject(ReplicaPresence) private readonly presence: Pick<ReplicaPresence, "live">,
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(REDIS) private readonly redis: Pick<Redis, "zcount">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "zcount" | "status">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(getQueueToken(RUN_QUEUE_NAME)) runs: Queue,
     @Inject(getQueueToken(SUBAGENT_RUN_QUEUE_NAME)) subagentRuns: Queue,
@@ -161,8 +164,9 @@ export class AdminHealthService {
 
   async read(): Promise<AdminHealth> {
     const [r, d] = await Promise.allSettled([
-      within(this.readRedis(), HEALTH_REDIS_TIMEOUT_MS),
-      this.readDb(),
+      within(this.readRedis(), HEALTH_READ_TIMEOUT_MS),
+      // a query left running past the limit finishes on its pooled connection
+      within(this.readDb(), HEALTH_READ_TIMEOUT_MS),
     ]);
     const unavailable: AdminHealthSource[] = [];
     const redis = r.status === "fulfilled" ? r.value : null;
@@ -183,6 +187,12 @@ export class AdminHealthService {
     const channelCount = (f: (c: DbFacts["channels"][number]) => boolean) =>
       db === null ? null : db.channels.filter(f).reduce((n, c) => n + c.n, 0);
     const longActive = channelCount((c) => c.status === "active" && c.mode === "long_connection");
+
+    // Each replica counts only the devices whose lease it holds, so a device is online on at most
+    // one; the clamp covers a lease handover in flight and devices deleted while still connected
+    const connected = sum("devicesConnected");
+    const devicesOnline =
+      connected === null || db === null ? connected : Math.min(connected, db.localDevices);
 
     let sandboxes: AdminHealth["sandboxes"] = null;
     if (db !== null) {
@@ -232,13 +242,21 @@ export class AdminHealthService {
         disabled: channelCount((c) => c.status === "disabled"),
         error: channelCount((c) => c.status === "error"),
       },
-      devices: { online: sum("devicesConnected"), local: db?.localDevices ?? null },
+      devices: { online: devicesOnline, local: db?.localDevices ?? null },
       sandboxes,
       unavailable,
     };
   }
 
   private async readRedis(): Promise<RedisFacts> {
+    // Fail fast while a connection is down: ioredis queues commands until it reconnects (the
+    // BullMQ connections retry forever, maxRetriesPerRequest null), so with the page polling every
+    // 30 s the reads would pile up in the offline queues instead of reporting Redis unavailable
+    if (this.redis.status !== "ready") throw new Error(`redis is ${this.redis.status}`);
+    for (const q of this.queues) {
+      const status = (await q.getBackend().client).status;
+      if (status !== "ready") throw new Error(`queue ${q.name} connection is ${status}`);
+    }
     const since = Date.now() - DAY_MS;
     const [replicas, queues] = await Promise.all([
       this.presence.live(),
@@ -283,13 +301,16 @@ export class AdminHealthService {
         .where("d.deleted_at", "is", null)
         .where("o.deleted_at", "is", null)
         .executeTakeFirst(),
-      // the partial indexes on device_instances (running / live) serve these statuses
+      // the partial indexes on device_instances (running / live) serve these statuses; an
+      // instance of a deleted org is left out like its channels and devices
       db
-        .selectFrom("device_instances")
-        .select(["provider", "status"])
+        .selectFrom("device_instances as i")
+        .innerJoin("orgs as o", "o.id", "i.org_id")
+        .select(["i.provider as provider", "i.status as status"])
         .select(sql<string>`count(*)`.as("n"))
-        .where("status", "in", ["running", "suspended"])
-        .groupBy(["provider", "status"])
+        .where("i.status", "in", ["running", "suspended"])
+        .where("o.deleted_at", "is", null)
+        .groupBy(["i.provider", "i.status"])
         .execute(),
     ]);
     return {
