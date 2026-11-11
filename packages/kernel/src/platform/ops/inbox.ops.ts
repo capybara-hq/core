@@ -116,6 +116,23 @@ function orgRow(i: InboxItem) {
         summary: `Your ${r.kind} request was ${r.status}${r.reason ? `: ${r.reason}` : ""}.`,
       };
     }
+    case "schedule_attention": {
+      const a = i.attention;
+      const summary =
+        a.reason === "missing_grants"
+          ? `Scheduled task "${a.name}" ran without: ${a.missing.join(", ")}.`
+          : `Scheduled task "${a.name}" is paused (${a.reason}${a.pausedBy ? ` by ${a.pausedBy.name || a.pausedBy.id}` : ""}).`;
+      return {
+        ...base,
+        name: a.name,
+        state: a.reason,
+        summary,
+        next:
+          a.reason === "missing_grants"
+            ? "Add the missing tools to the task's approved tools and connect the missing connectors on the web; tools that need a higher role cannot be pre-approved."
+            : "Resume the task once the cause is fixed.",
+      };
+    }
     default: {
       const n = (i as { notice: OrgNoticeView }).notice;
       return {

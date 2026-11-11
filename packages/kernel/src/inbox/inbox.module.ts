@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { CatalogModule } from "../catalog/catalog.module.js";
+import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { InboxService } from "./inbox.service.js";
@@ -10,7 +11,7 @@ import { PlatformInboxService } from "./platform-inbox.service.js";
  * requests, org notices) and the super admin's (`PlatformInboxService`).
  */
 @Module({
-  imports: [ToolsModule, SkillsModule, CatalogModule],
+  imports: [ToolsModule, SkillsModule, CatalogModule, SchedulesModule],
   providers: [InboxService, PlatformInboxService],
   exports: [InboxService, PlatformInboxService],
 })

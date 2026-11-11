@@ -47,6 +47,25 @@ import type {
 /** When a task fires, before the zone is fixed (spec §5). */
 export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
 
+/** A scheduled task that needs its creator's attention (spec §8): the inbox item's payload. */
+export interface ScheduleAttention {
+  taskId: string;
+  name: string;
+  /** `missing_grants`: the latest run was refused tools or connections the task lacks. */
+  reason: SchedulePauseReason | "missing_grants";
+  /** The person who paused the task (`reason: "admin"` names the admin); else null. */
+  pausedBy: { id: string; name: string } | null;
+  /**
+   * `missing_grants` only: tool keys the latest run was refused and the task has no grant for now,
+   * or `connection:<slug>` (connect that connector).
+   */
+  missing: string[];
+  /** The subset of `missing` the creator cannot pre-approve (the tool needs a higher role). */
+  needsRole: string[];
+  /** When the pause happened, or when the refused run fired. */
+  at: Date;
+}
+
 /** A tool the creator pre-approves for the task; the service resolves its current `spec_hash`. */
 export interface GrantInput {
   toolKey: string;
@@ -493,6 +512,115 @@ export class ScheduledTasksService {
         target: task.id,
         detail: { removed: [toolKey] },
       });
+    }
+  }
+
+  /**
+   * The creator's scheduled tasks that need attention (spec §8), derived live: a paused task whose
+   * reason is not `creator` (resuming clears it), and a task whose latest settled non-trial run was
+   * refused tools or connections (a tool granted since drops out; the next clean run clears the
+   * rest). Newest first.
+   */
+  async attentionFor(orgId: string, accountId: string): Promise<ScheduleAttention[]> {
+    const db = this.db.db;
+    const tasks = (await this.store.listForAccount(db, orgId, accountId)).filter(
+      (t) => t.status !== "ended",
+    );
+    if (tasks.length === 0) return [];
+    const out: ScheduleAttention[] = [];
+    const pausers = tasks.flatMap((t) =>
+      t.status === "paused" && t.pausedBy !== null ? [t.pausedBy] : [],
+    );
+    const names = new Map<string, string>();
+    if (pausers.length > 0) {
+      const rows = await db
+        .selectFrom("accounts")
+        .select(["id", "display_name"])
+        .where("id", "in", pausers)
+        .execute();
+      for (const r of rows) names.set(r.id, r.display_name);
+    }
+    let role: OrgRole | null | undefined;
+    for (const task of tasks) {
+      if (task.status === "paused" && task.pauseReason !== null && task.pauseReason !== "creator") {
+        out.push({
+          taskId: task.id,
+          name: task.name,
+          reason: task.pauseReason,
+          pausedBy:
+            task.pausedBy === null
+              ? null
+              : { id: task.pausedBy, name: names.get(task.pausedBy) ?? "" },
+          missing: [],
+          needsRole: [],
+          at: task.updatedAt,
+        });
+      }
+      const run = await db
+        .selectFrom("scheduled_task_runs")
+        .select(["fired_at", "scheduled_for", "missing_grants"])
+        .where("task_id", "=", task.id)
+        .where("trial", "=", false)
+        .where("status", "<>", "skipped")
+        .orderBy("scheduled_for", "desc")
+        .orderBy("id", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      if (!run || run.missing_grants.length === 0) continue;
+      const granted = new Set((await this.store.listGrants(db, task.id)).map((g) => g.toolKey));
+      const missing = run.missing_grants.filter((k) => !granted.has(k));
+      if (missing.length === 0) continue;
+      const toolKeys = missing.filter((k) => !k.startsWith("connection:"));
+      let needsRole: string[] = [];
+      if (toolKeys.length > 0) {
+        role ??= await this.roleOrNull(orgId, accountId);
+        needsRole = await this.rolesTooLow(orgId, accountId, task.agentId, role, toolKeys);
+      }
+      out.push({
+        taskId: task.id,
+        name: task.name,
+        reason: "missing_grants",
+        pausedBy: null,
+        missing,
+        needsRole,
+        at: run.fired_at ?? new Date(run.scheduled_for),
+      });
+    }
+    return out.sort((a, b) => b.at.getTime() - a.at.getTime());
+  }
+
+  private async roleOrNull(orgId: string, accountId: string): Promise<OrgRole | null> {
+    const m = await this.db.db
+      .selectFrom("memberships")
+      .select("role")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+    return m?.role ?? null;
+  }
+
+  /** The keys among `toolKeys` the agent has now with a `requiredRole` above `role`. */
+  private async rolesTooLow(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    role: OrgRole | null,
+    toolKeys: string[],
+  ): Promise<string[]> {
+    try {
+      const d = (await this.agents.get(orgId, agentId, accountId)).definition;
+      const { tools } = await this.tools.forAgent(orgId, {
+        disabledTools: d.disabledTools ?? [],
+        subagentTools: d.subagentTools,
+        subagents: d.subagents,
+      });
+      return toolKeys.filter((k) => {
+        const req = tools.find((x) => x.key === k)?.requiredRole;
+        return req !== undefined && (role === null || !roleAtLeast(role, req));
+      });
+    } catch {
+      // the agent is gone or hidden: the task is paused for that reason anyway
+      return [];
     }
   }
 
