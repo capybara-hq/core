@@ -119,7 +119,6 @@ interface SkillStep {
   prefix: string;
   files: SkillPackageFile[];
   manifest: SkillManifest;
-  suggestPinned: boolean;
 }
 
 interface TemplateStep {
@@ -418,7 +417,7 @@ export class PlatformComponents {
     if (row?.current_version !== v.to - 1) throw versionStale();
     const cur = await t
       .selectFrom("platform_skill_versions")
-      .select(["source_format", "suggest_pinned"])
+      .select(["source_format"])
       .where("skill_id", "=", v.platformId)
       .where("version", "=", row.current_version)
       .executeTakeFirstOrThrow();
@@ -436,7 +435,6 @@ export class PlatformComponents {
         object_prefix: v.prefix,
         catalog_version: null,
         source_format: cur.source_format,
-        suggest_pinned: cur.suggest_pinned,
         created_by: actorAccountId,
       })
       .execute();
@@ -499,7 +497,7 @@ export class PlatformComponents {
     if (isPromoted(row)) throw ownedByOrg("skill", live.name);
     const cur = await t
       .selectFrom("platform_skill_versions")
-      .select(["source_format", "suggest_pinned"])
+      .select(["source_format"])
       .where("skill_id", "=", live.id)
       .where("version", "=", live.current_version)
       .executeTakeFirstOrThrow();
@@ -518,7 +516,6 @@ export class PlatformComponents {
         object_prefix: prefix,
         catalog_version: null,
         source_format: cur.source_format,
-        suggest_pinned: cur.suggest_pinned,
         updated_on_own: true,
         created_by: actor.accountId,
       })
@@ -560,7 +557,7 @@ export class PlatformComponents {
     if (isPromoted(row)) throw ownedByOrg("agent template", live.name);
     const cur = await t
       .selectFrom("platform_agent_template_versions")
-      .select(["source_format", "suggest_pinned"])
+      .select(["source_format"])
       .where("template_id", "=", live.id)
       .where("version", "=", live.current_version)
       .executeTakeFirstOrThrow();
@@ -578,7 +575,6 @@ export class PlatformComponents {
         object_prefix: prefix,
         catalog_version: null,
         source_format: cur.source_format,
-        suggest_pinned: cur.suggest_pinned,
         updated_on_own: true,
         created_by: actor.accountId,
       })
@@ -676,7 +672,6 @@ export class PlatformComponents {
         prefix: syncVersionPrefix(platformSkillPrefix(id, to), version),
         files,
         manifest: skillManifest(pkg),
-        suggestPinned: s.pinned === true,
       });
     }
 
@@ -870,7 +865,6 @@ export class PlatformComponents {
           object_prefix: s.prefix,
           catalog_version: plan.version,
           source_format: plan.sourceFormat,
-          suggest_pinned: s.suggestPinned,
         })
         .execute();
       out.skills.push({

@@ -108,7 +108,7 @@ interface Review {
   repository?: string;
   extension?: unknown;
   translation?: TranslationReport;
-  skills: { name: string; suggestPinned: boolean; path: string }[];
+  skills: { name: string; path: string; suggestPinned?: boolean }[];
   connectorTemplates: { id: string; plugin: string; endpointChecked: boolean; auth: unknown }[];
   dependencies: { name: string; range: string; resolved: string | null }[];
   reviewHash: string;
@@ -191,13 +191,13 @@ const SUPERPOWERS_GROUPS = {
   converted: [],
   needsInput: [],
   ignored: ["hooks_not_run SessionStart", "other_harness .codex-plugin"],
-  warnings: ["session_start_pin_hint SessionStart"],
+  warnings: ["session_start_hook SessionStart"],
 };
 
 // Each case drives git over HTTP, the object store and the kernel end to end: about 1-2 s alone,
 // several times that in a full parallel run, past the local 5 s default (CI has 30 s).
 describe("importing Claude Code plugins", { timeout: 30_000 }, () => {
-  it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 7 skills and the command with suggestPinned false", async () => {
+  it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 7 skills and the command, no pinned suggestion", async () => {
     const files = loadFixtureAsStrings("superpowers");
     await srv.commit("superpowers", files);
     const id = await addGit("superpowers");
@@ -217,16 +217,18 @@ describe("importing Claude Code plugins", { timeout: 30_000 }, () => {
     expect(r.translation?.sessionStart).toBe(true);
     expect(r.translation?.manifestPath).toBe(".claude-plugin/plugin.json");
     expect(groups(r.translation as TranslationReport)).toEqual(SUPERPOWERS_GROUPS);
-    expect(r.skills.map((s) => [s.name, s.suggestPinned])).toEqual([
-      ["brainstorming", false],
-      ["dispatching-parallel-agents", false],
-      ["requesting-code-review", false],
-      ["subagent-driven-development", false],
-      ["test-driven-development", false],
-      ["using-superpowers", false],
-      ["writing-plans", false],
-      ["brainstorm", false],
+    expect(r.skills.map((s) => s.name)).toEqual([
+      "brainstorming",
+      "dispatching-parallel-agents",
+      "requesting-code-review",
+      "subagent-driven-development",
+      "test-driven-development",
+      "using-superpowers",
+      "writing-plans",
+      "brainstorm",
     ]);
+    // pinning is gone (skills default-on): the review suggests nothing
+    expect(r.skills.some((s) => "suggestPinned" in s)).toBe(false);
     // the digest is over the files as read (Review Focus 5), plus the translator revision, since
     // the plugin has a command (phase D spec §8.3)
     expect(r.contentDigest).toBe(
@@ -283,14 +285,14 @@ describe("importing Claude Code plugins", { timeout: 30_000 }, () => {
     expect(shown.json().versions[0]).toMatchObject({ licenseTruncated: false });
   });
 
-  it("confirm with pinnedSuggestions [using-superpowers] stores pinned in the version manifest; an unknown name is validation_failed", async () => {
+  it("confirm refuses the removed pinnedSuggestions; the version manifest lists the skills without pinned flags", async () => {
     await srv.commit("superpowers", loadFixtureAsStrings("superpowers"));
     const p = await prepared(await importGit({ url: srv.url("superpowers") }));
-    const bad = await confirm(p, { pinnedSuggestions: ["using-superpowers", "nope"] });
+    const bad = await confirm(p, { pinnedSuggestions: ["using-superpowers"] });
     expect(bad.statusCode, bad.body).toBe(400);
     expect(bad.json().error.code).toBe("validation_failed");
-    expect(bad.json().error.message).toContain('"nope"');
-    const c = await confirm(p, { pinnedSuggestions: ["using-superpowers"] });
+    expect(bad.body).toContain("pinnedSuggestions");
+    const c = await confirm(p);
     expect(c.statusCode, c.body).toBe(201);
     const v = await versionRow("superpowers");
     expect((v.manifest as { skills: unknown[] }).skills).toEqual([
@@ -299,7 +301,7 @@ describe("importing Claude Code plugins", { timeout: 30_000 }, () => {
       { path: "./skills/requesting-code-review" },
       { path: "./skills/subagent-driven-development" },
       { path: "./skills/test-driven-development" },
-      { path: "./skills/using-superpowers", pinned: true },
+      { path: "./skills/using-superpowers" },
       { path: "./skills/writing-plans" },
       { path: "./.capybara-generated/commands/brainstorm" },
     ]);
@@ -308,9 +310,7 @@ describe("importing Claude Code plugins", { timeout: 30_000 }, () => {
       .select("detail")
       .where("action", "=", "catalog.imported")
       .executeTakeFirstOrThrow();
-    expect((a.detail as { suggestedPinned: string[] }).suggestedPinned).toEqual([
-      "using-superpowers",
-    ]);
+    expect(a.detail).not.toHaveProperty("suggestedPinned");
   });
 
   it("a changed hooks file gives another reviewHash and report item, and confirm with the old hash is plugin.review_stale (the report alone: plugin-review-hash.test.ts)", async () => {

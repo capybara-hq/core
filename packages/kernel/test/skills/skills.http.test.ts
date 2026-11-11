@@ -545,10 +545,9 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
 });
 
 describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
-  it("GET skills returns plugin, sourceFormat, suggestPinned, entryBytes, tokenEstimate, manual, fork; an uploaded skill has plugin null and capybara", async () => {
+  it("GET skills returns plugin, sourceFormat, builtin, manual, fork and no pinning fields; an uploaded skill has plugin null and capybara", async () => {
     const up = await uploadZip(admin, zipOf("pdf-tools"));
     expect((await createSkill(admin, up)).statusCode).toBe(201);
-    const bytes = new TextEncoder().encode(SKILL_MD("pdf-tools")).byteLength;
     const list = await member({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
     expect(list.statusCode, list.body).toBe(200);
     expect(list.json().skills).toMatchObject([
@@ -556,13 +555,15 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
         name: "pdf-tools",
         plugin: null,
         sourceFormat: "capybara",
-        suggestPinned: false,
-        entryBytes: bytes,
-        tokenEstimate: Math.ceil(bytes / 4),
+        builtin: false,
         manual: false,
         fork: false,
       },
     ]);
+    // pinning is gone (skills default-on): no suggestion, no size or token estimate
+    for (const k of ["suggestPinned", "entryBytes", "tokenEstimate"]) {
+      expect(list.json().skills[0]).not.toHaveProperty(k);
+    }
     // the agent's own skills list carries the same fields
     const agentId = await createAgent(admin, orgId);
     await db
@@ -603,9 +604,6 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
         name: "mine",
         plugin: null,
         sourceFormat: "capybara",
-        suggestPinned: false,
-        entryBytes: 40,
-        tokenEstimate: 10,
         manual: true,
         fork: true,
       },

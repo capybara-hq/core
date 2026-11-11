@@ -109,6 +109,9 @@ describe("org plugin upload without an extension", () => {
     expect(p.review.name).toBe("crm");
     expect(p.review.skills.map((s) => s.name)).toEqual(["crm-notes"]);
     expect(p.update).toBeNull();
+    // the removed pinned suggestions are an unknown field (skills default-on)
+    const pinned = await confirm(env.boss, orgA, p, { pinnedSuggestions: ["crm-notes"] });
+    expect(errorOf(pinned)).toEqual([400, "validation_failed"]);
     const c = await confirm(env.boss, orgA, p, { shareable: true });
     expect(c.statusCode, c.body).toBe(201);
     const body = c.json() as {

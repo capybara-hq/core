@@ -204,14 +204,10 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       "writing-plans",
     ]);
 
-    // the admin ticks using-superpowers as pinned in the same review
     const confirmed = await admin({
       method: "POST",
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-      payload: {
-        reviewHash: review.reviewHash,
-        pinnedSuggestions: ["using-superpowers"],
-      },
+      payload: { reviewHash: review.reviewHash },
     });
     expect(confirmed.statusCode, confirmed.body).toBe(201);
     state.itemId = confirmed.json().item.id as string;
@@ -231,17 +227,16 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       name: string;
       plugin?: string;
       sourceFormat?: string;
-      suggestPinned?: boolean;
     }[];
-    expect(skills.map((s) => [s.name, s.plugin, s.sourceFormat, s.suggestPinned])).toEqual([
-      ["brainstorm", "superpowers", "claude-code", false],
-      ["brainstorming", "superpowers", "claude-code", false],
-      ["dispatching-parallel-agents", "superpowers", "claude-code", false],
-      ["requesting-code-review", "superpowers", "claude-code", false],
-      ["subagent-driven-development", "superpowers", "claude-code", false],
-      ["test-driven-development", "superpowers", "claude-code", false],
-      ["using-superpowers", "superpowers", "claude-code", true],
-      ["writing-plans", "superpowers", "claude-code", false],
+    expect(skills.map((s) => [s.name, s.plugin, s.sourceFormat])).toEqual([
+      ["brainstorm", "superpowers", "claude-code"],
+      ["brainstorming", "superpowers", "claude-code"],
+      ["dispatching-parallel-agents", "superpowers", "claude-code"],
+      ["requesting-code-review", "superpowers", "claude-code"],
+      ["subagent-driven-development", "superpowers", "claude-code"],
+      ["test-driven-development", "superpowers", "claude-code"],
+      ["using-superpowers", "superpowers", "claude-code"],
+      ["writing-plans", "superpowers", "claude-code"],
     ]);
     // phase C: the translated code-reviewer agent is an org agent template
     const [reviewer, ...others] = await agentTemplatesFor(db).listForOrg(orgId);

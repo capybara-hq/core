@@ -1,4 +1,4 @@
-import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { type PluginManifest, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { recordedVersion } from "../../src/catalog/catalog-items.js";
@@ -148,6 +148,20 @@ describe("content digest (Decision 5)", () => {
     expect(b.manifest.version).toBe("2.0.0");
     // without a fallback (an upload, npm) plugin.json stays required
     await expect(readPluginPackage(tgz, opts)).rejects.toThrow(/plugin\.json not found/);
+  });
+});
+
+describe("stored packages (skills default-on)", () => {
+  it("a package whose plugin.json still has the removed skills[].pinned flag reads, without it", async () => {
+    const tgz = await pluginTgz({
+      manifest: {
+        name: "old-pins",
+        skills: [{ path: "./skills/a", pinned: true }, { path: "./skills/b", pinned: false }],
+      } as Partial<PluginManifest> & { name: string },
+      files: { "skills/a/SKILL.md": SKILL_MD("a"), "skills/b/SKILL.md": SKILL_MD("b") },
+    });
+    const pkg = await readPluginPackage(tgz, { maxBytes: 1 << 20, hostSdkVersion: SDK_VERSION });
+    expect(pkg.manifest.skills).toEqual([{ path: "./skills/a" }, { path: "./skills/b" }]);
   });
 });
 

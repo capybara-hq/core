@@ -9,8 +9,6 @@ export const OrgUploadConfirmBody = z
     reviewHash: z.string().min(1).max(128),
     /** The org shares the new item with other orgs (default false, P3-16). */
     shareable: z.boolean().optional(),
-    /** Skill names suggested as pinned (spec §9.1); omitted keeps the plugin's flags. */
-    pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
   })
   .strict();
 

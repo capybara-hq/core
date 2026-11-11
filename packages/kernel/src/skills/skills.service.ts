@@ -26,7 +26,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invocationOf } from "./catalog.js";
 import {
@@ -207,12 +206,6 @@ export interface SkillSummary {
   plugin: string | null;
   /** The format of the plugin the current version came from. */
   sourceFormat: SourceFormat;
-  /** The plugin suggests pinning the current version (spec §9.1). */
-  suggestPinned: boolean;
-  /** SKILL.md size of the current version, in bytes (0 when the manifest has none). */
-  entryBytes: number;
-  /** Token estimate of the SKILL.md of the current version (ASCII rule: bytes / 4). */
-  tokenEstimate: number;
   /** Phase D: the current version is manual-only (not in the model's catalog). */
   manual: boolean;
   /** Phase D: the current version runs as a sub-agent when a person invokes it. */
@@ -239,11 +232,11 @@ export interface SkillSummary {
    */
   linkedIds?: string[];
   /**
-   * In the library list only: a platform skill of a builtin plugin or the org's pinned copy of
-   * one, in every agent's catalog without being selected (skill authoring spec §5.7). Absent
-   * otherwise.
+   * In the library list only (true or false on every item there, absent elsewhere): a platform
+   * skill of a builtin plugin (`platformBuiltin`: builtin and platform-owned) or the org's pinned
+   * copy of one. Every agent has it and none can turn it off (skills default-on spec §3).
    */
-  builtin?: true;
+  builtin?: boolean;
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -403,13 +396,11 @@ interface SummaryRow {
   updated_at: Date;
   item_name: string | null;
   source_format: SourceFormat | null;
-  suggest_pinned: boolean | null;
   manifest: SkillManifest | null;
   shareable: boolean;
 }
 
 const summary = (r: SummaryRow): SkillSummary => {
-  const entryBytes = r.manifest?.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
   const inv = r.manifest ? invocationOf(r.manifest) : { model: true, user: true };
   return {
     id: r.id,
@@ -423,9 +414,6 @@ const summary = (r: SummaryRow): SkillSummary => {
     updatedAt: r.updated_at,
     plugin: r.item_name,
     sourceFormat: r.source_format ?? "capybara",
-    suggestPinned: r.suggest_pinned ?? false,
-    entryBytes,
-    tokenEstimate: textBytesTokens(entryBytes),
     manual: inv.model === false,
     fork: inv.fork !== undefined,
     origin: "org",
@@ -452,7 +440,6 @@ const platformSummaryQuery = (db: KernelSchemaDb) =>
       "p.owner_org_id",
       "owner.name as owner_name",
       "v.source_format",
-      "v.suggest_pinned",
       "v.manifest",
     ])
     .where("p.deleted_at", "is", null);
@@ -472,7 +459,6 @@ const platformSummary = (
     updated_at: r.updated_at,
     item_name: r.plugin_name,
     source_format: r.source_format,
-    suggest_pinned: r.suggest_pinned,
     manifest: r.manifest,
     shareable: false,
   }),
@@ -485,7 +471,7 @@ const platformSummary = (
 
 /**
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
- * source format, pinned suggestion and manifest.
+ * source format and manifest.
  */
 const summaryQuery = (db: KernelSchemaDb) =>
   db
@@ -506,7 +492,6 @@ const summaryQuery = (db: KernelSchemaDb) =>
       "s.updated_at",
       "i.name as item_name",
       "v.source_format",
-      "v.suggest_pinned",
       "v.manifest",
       "s.shareable",
     ]);
@@ -706,8 +691,6 @@ export class SkillsService {
         approvedBy?: string;
         /** The catalog version's source format (default capybara). */
         format?: SourceFormat;
-        /** The plugin manifest suggests pinning this skill (spec §9.1). */
-        suggestPinned?: boolean;
       };
       /**
        * The files are already stored (no storage I/O here, so it may join a transaction): at
@@ -901,7 +884,6 @@ export class SkillsService {
         created_by: actorAccountId,
         ...provenance,
         source_format: opts.catalog?.format ?? "capybara",
-        suggest_pinned: opts.catalog?.suggestPinned ?? false,
       })
       .execute();
     await audit(this.db.db, {
@@ -1015,8 +997,8 @@ export class SkillsService {
    * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
    * to a platform skill without a pin, and the platform skills on in the org (phase 2,
    * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`);
-   * a platform skill of a builtin plugin, or the org's pinned copy of one, carries `builtin: true`
-   * (every agent has it).
+   * every item carries `builtin`: true for a platform skill of a builtin plugin or the org's pinned
+   * copy of one (every agent has it, none can turn it off).
    */
   async list(orgId: string): Promise<SkillSummary[]> {
     const usable = await usableSkills(this.db.db, orgId);
@@ -1043,7 +1025,7 @@ export class SkillsService {
             ).map(async (r): Promise<SkillSummary> => {
               const to = promotedTo.get(r.id);
               const s = to === undefined ? summary(r) : await this.promotedSummary(r.id, to);
-              return builtin.has(r.id) ? { ...s, builtin: true } : s;
+              return { ...s, builtin: builtin.has(r.id) };
             }),
           );
     if (platformIds.length === 0) return own;
@@ -1067,7 +1049,7 @@ export class SkillsService {
     ).map((r) => ({
       ...platformSummary(r),
       linkedIds: linked.get(r.id) ?? [],
-      ...(builtin.has(r.id) && { builtin: true as const }),
+      builtin: builtin.has(r.id),
     }));
     return [...own, ...platform].sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1,
