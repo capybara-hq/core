@@ -329,7 +329,12 @@ export class OsExecutor implements Executor {
         if (settled || exit === undefined) return;
         settled = true;
         // Before cleanup: the violations are looked up by the command's id.
-        const trailer = this.trailerFor(commandId, args.limits, policy);
+        let trailer = "";
+        try {
+          trailer = this.trailerFor(commandId, args.limits, policy);
+        } catch {
+          // The explanation is best effort: the command's result always comes back.
+        }
         cleanup();
         child.stdout?.destroy();
         child.stderr?.destroy();

@@ -1,7 +1,10 @@
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -196,10 +199,56 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** Whether the pid written in a lock file names a running process (EPERM: someone else's). */
+function holderAlive(lock: string): boolean {
+  let pid: number;
+  try {
+    pid = Number(readFileSync(lock, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Takes a stale lock out of the way atomically: renames it aside (only one taker can), then
+ * checks the renamed file is the one judged stale. If a fresh lock was renamed instead, it is
+ * linked back (unless a new one exists already). The caller then retries the exclusive create.
+ */
+function takeOver(lock: string, judged: { ino: number; mtimeMs: number }): void {
+  const aside = `${lock}.${process.pid}.${randomBytes(6).toString("hex")}.stale`;
+  try {
+    renameSync(lock, aside);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
+  try {
+    const st = statSync(aside);
+    if (st.ino !== judged.ino || st.mtimeMs !== judged.mtimeMs) {
+      try {
+        linkSync(aside, lock);
+      } catch {
+        // A new lock exists already; its holder goes on.
+      }
+    }
+  } finally {
+    rmSync(aside, { force: true });
+  }
+}
+
 /**
  * Runs `fn` holding policy.json.lock (created with O_EXCL), so a read-modify-write of the policy
  * by this program and a concurrent `capybara-device policy` never loses an update. A lock older
- * than 10 s is stale and taken over; a held one is retried for about 2 s, then this throws.
+ * than 10 s whose holder pid no longer runs is stale and taken over; a held one is retried for
+ * about 2 s, then this throws. The lock is removed at the end only while it is still this
+ * holder's file.
  */
 export function withPolicyLock<T>(
   dir: string,
@@ -216,15 +265,15 @@ export function withPolicyLock<T>(
       fd = openSync(lock, "wx", 0o600);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      let mtimeMs: number | undefined;
+      let st: { ino: number; mtimeMs: number };
       try {
-        mtimeMs = statSync(lock).mtimeMs;
+        st = statSync(lock);
       } catch {
         // Released between the open and the stat: try again at once.
         continue;
       }
-      if (now() - mtimeMs >= POLICY_LOCK_STALE_MS) {
-        rmSync(lock, { force: true });
+      if (now() - st.mtimeMs >= POLICY_LOCK_STALE_MS && !holderAlive(lock)) {
+        takeOver(lock, st);
         continue;
       }
       if (Date.now() >= deadline) {
@@ -236,15 +285,25 @@ export function withPolicyLock<T>(
       sleepSync(POLICY_LOCK_RETRY_MS);
       continue;
     }
+    let ino: number;
     try {
       writeSync(fd, String(process.pid));
-    } finally {
+      ino = fstatSync(fd).ino;
+    } catch (e) {
       closeSync(fd);
+      rmSync(lock, { force: true });
+      throw e;
     }
     try {
       return fn();
     } finally {
-      rmSync(lock, { force: true });
+      try {
+        // Another process may have taken the lock over meanwhile: leave its file alone.
+        if (statSync(lock).ino === ino) rmSync(lock, { force: true });
+      } catch {
+        // Already gone.
+      }
+      closeSync(fd);
     }
   }
 }

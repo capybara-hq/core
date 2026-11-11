@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { covers } from "./policy.js";
 import type { Policy } from "./state.js";
@@ -33,13 +34,30 @@ export function parseNetworkViolation(
   if (m === null) return undefined;
   const target = m[1] as string;
   const reason = m[2] as string;
-  const hp = target.startsWith("[")
-    ? /^\[([^\]]+)\]:(\d+)$/.exec(target)
-    : /^([^:]+):(\d+)$/.exec(target);
-  if (hp === null) return undefined;
-  const port = Number(hp[2]);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) return undefined;
-  return { host: (hp[1] as string).toLowerCase(), port, reason };
+  let host: string;
+  let portText: string;
+  const bracketed = /^\[([^\]]+)\]:(\d+)$/.exec(target);
+  if (bracketed !== null) {
+    host = bracketed[1] as string;
+    portText = bracketed[2] as string;
+  } else {
+    // The SOCKS path writes IPv6 unbracketed: the port follows the last colon.
+    const at = target.lastIndexOf(":");
+    if (at <= 0) return undefined;
+    host = target.slice(0, at);
+    portText = target.slice(at + 1);
+    if (host.includes(":") && isIP(host) !== 6) return undefined;
+  }
+  if (!/^\d+$/.test(portText)) return undefined;
+  const port = Number(portText);
+  if (port > 65535) return undefined;
+  return { host: normalizeHost(host), port, reason };
+}
+
+/** Lowercase, without the trailing dot of a fully qualified name. */
+function normalizeHost(host: string): string {
+  const h = host.toLowerCase();
+  return h.endsWith(".") ? h.slice(0, -1) : h;
 }
 
 function admittedBy(list: readonly string[], host: string): boolean {
@@ -72,7 +90,7 @@ export function classifyHost(
   limits: Limits,
   policy: NetworkPolicy,
 ): BlockedLayer {
-  const h = host.toLowerCase();
+  const h = normalizeHost(host);
   if (isAddress(h, reason)) return "address";
   if (!orgAllows(h, limits)) return "org";
   if (!deviceAllows(h, policy)) return "device";
@@ -138,7 +156,7 @@ export function denyReason(
   limits: Limits | undefined,
   policy: NetworkPolicy,
 ): string {
-  const h = host.toLowerCase();
+  const h = normalizeHost(host);
   let layer: BlockedLayer;
   if (limits !== undefined) layer = classifyHost(h, "", limits, policy);
   else if (isAddress(h, "")) layer = "address";

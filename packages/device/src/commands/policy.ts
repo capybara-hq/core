@@ -54,10 +54,13 @@ function edit(
   values: string[],
   out: (line: string) => void,
 ): string[] {
+  // Domains compare ignoring case (a hand-edited file may hold any spelling).
+  const norm = key === "allowedDomains" ? (v: string) => v.toLowerCase() : (v: string) => v;
+  const has = (list: readonly string[], v: string) => list.some((x) => norm(x) === norm(v));
   if (action === "add") {
     const next = [...current];
     for (const v of values) {
-      if (next.includes(v)) out(`${v} is already in ${key}.`);
+      if (has(next, v)) out(`${v} is already in ${key}.`);
       else {
         next.push(v);
         out(`Added ${v} to ${key}.`);
@@ -65,10 +68,9 @@ function edit(
     }
     return next;
   }
-  const drop = new Set(values);
   for (const v of values)
-    out(current.includes(v) ? `Removed ${v} from ${key}.` : `${v} is not in ${key}.`);
-  return current.filter((v) => !drop.has(v));
+    out(has(current, v) ? `Removed ${v} from ${key}.` : `${v} is not in ${key}.`);
+  return current.filter((x) => !has(values, x));
 }
 
 /**
@@ -124,7 +126,13 @@ export function policyCommand(
         throw new Error(`${action} works on ${LIST_KEYS.join(" and ")} only; use set for ${key}`);
       }
       const listKey = key as ListKey;
-      const values = listKey === "allowedDomains" ? domains(value) : list(value);
+      // Only additions are validated: any entry already in the file can be removed.
+      const values =
+        listKey !== "allowedDomains"
+          ? list(value)
+          : action === "add"
+            ? domains(value)
+            : list(value).map((d) => d.toLowerCase());
       if (values.length === 0) throw new Error(`${action} needs at least one value`);
       change = (p, say) => ({ ...p, [listKey]: edit(p[listKey], action, listKey, values, say) });
     }

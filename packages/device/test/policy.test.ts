@@ -190,6 +190,27 @@ describe("policy command", () => {
     expect(out.join("\n")).not.toMatch(/Restart/i);
   });
 
+  it("add and remove compare domains ignoring case; remove takes any spelling", () => {
+    writeFileSync(
+      policyPath(dir),
+      JSON.stringify({ ...DEFAULT_POLICY, allowedDomains: ["Mixed.COM", "10.0.0.5"] }),
+    );
+    out.length = 0;
+    expect(
+      run({ command: "policy", action: "add", key: "allowedDomains", value: "mixed.com" }),
+    ).toBe(0);
+    expect(out.join("\n")).toMatch(/already/);
+    expect(readPolicy(dir).allowedDomains).toEqual(["Mixed.COM", "10.0.0.5"]);
+    // A hand-written entry add would refuse can still be removed.
+    expect(
+      run({ command: "policy", action: "remove", key: "allowedDomains", value: " 10.0.0.5 " }),
+    ).toBe(0);
+    expect(
+      run({ command: "policy", action: "remove", key: "allowedDomains", value: "MIXED.com" }),
+    ).toBe(0);
+    expect(readPolicy(dir).allowedDomains).toEqual([]);
+  });
+
   it("add refuses an invalid host and leaves the file alone", () => {
     expect(
       run({ command: "policy", action: "add", key: "allowedDomains", value: "10.0.0.5" }),

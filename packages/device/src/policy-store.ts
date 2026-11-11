@@ -20,6 +20,8 @@ function versionOf(file: string): string {
 export class PolicyStore {
   private policy: Policy;
   private version: string;
+  /** The broken version last reported, so each one is reported once. */
+  private reportedBad: string | undefined;
   private readonly file: string;
   private readonly err: (line: string) => void;
 
@@ -42,11 +44,16 @@ export class PolicyStore {
   current(): Policy {
     const version = versionOf(this.file);
     if (version === this.version) return this.policy;
-    this.version = version;
     try {
       this.policy = readPolicyFile(this.dir).policy;
+      // Advanced only on a good read: a broken version is retried until it is fixed.
+      this.version = version;
+      this.reportedBad = undefined;
     } catch (e) {
-      this.err(`${(e as Error).message}; keeping the last valid policy until the file is fixed`);
+      if (this.reportedBad !== version) {
+        this.reportedBad = version;
+        this.err(`${(e as Error).message}; keeping the last valid policy until the file is fixed`);
+      }
     }
     return this.policy;
   }

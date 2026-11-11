@@ -14,6 +14,7 @@ const sbx = vi.hoisted(() => {
     violations: new Map<string, string[]>(),
     /** The violations the next wrapped command will have. */
     pending: undefined as string[] | undefined,
+    throwOnLookup: false,
     lookups: [] as string[],
   };
   return state;
@@ -46,6 +47,7 @@ vi.mock("@anthropic-ai/sandbox-runtime", () => ({
     getSandboxViolationStore: () => ({
       getViolationsForCommand: (id: string) => {
         sbx.lookups.push(id);
+        if (sbx.throwOnLookup) throw new Error("store broke");
         return (sbx.violations.get(id) ?? []).map((line) => ({ line }));
       },
     }),
@@ -183,6 +185,20 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       "- files.slack.com:443: not in the organization's network allowlist.",
     );
     await ex.dispose();
+  });
+
+  it("a failure while explaining refusals still resolves the command", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    sbx.throwOnLookup = true;
+    try {
+      const r = await ex.exec(execArgs("echo err >&2; exit 3"), never);
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr).toBe("err\n");
+    } finally {
+      sbx.throwOnLookup = false;
+      await ex.dispose();
+    }
   });
 
   it("adds nothing without network violations", async () => {

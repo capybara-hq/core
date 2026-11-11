@@ -86,7 +86,9 @@ lift it:
 - 10.0.0.5:22: a private or local address; commands can never reach it.
 ```
 
-The trailer is part of the command's output, so the agent reads it too.
+The trailer is part of the command's output, so the agent reads it too. It comes after the
+output the deployment asked for (`maxOutputBytes`), so stderr can exceed that cap by the trailer's
+lines (at most 21).
 
 Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -70,6 +71,19 @@ describe("PolicyStore", () => {
     expect(errors).toHaveLength(2);
     writePolicy(dir, withDomains(["c.com"]));
     expect(store.current().allowedDomains).toEqual(["c.com"]);
+  });
+
+  it("a bad version reported once is reported again when it comes back later", () => {
+    writePolicy(dir, withDomains(["a.com"]));
+    const errors: string[] = [];
+    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
+    writeFileSync(policyPath(dir), "{nope");
+    store.current();
+    store.current();
+    expect(errors).toHaveLength(1);
+    // Fixing the file with the version it had before still applies it.
+    writePolicy(dir, withDomains(["b.com"]));
+    expect(store.current().allowedDomains).toEqual(["b.com"]);
   });
 
   it("a deleted file means the defaults", () => {
@@ -156,8 +170,52 @@ describe("withPolicyLock", () => {
     expect(readFileSync(policyLockPath(dir), "utf8")).toBe("123");
   });
 
+  it("never takes over a lock whose holder is alive, however old", () => {
+    writeFileSync(policyLockPath(dir), String(process.pid));
+    const lockAt = statSync(policyLockPath(dir)).mtimeMs;
+    expect(() => withPolicyLock(dir, () => 0, { waitMs: 0, now: () => lockAt + 60_000 })).toThrow(
+      /another capybara-device/,
+    );
+    expect(existsSync(policyLockPath(dir))).toBe(true);
+  });
+
+  it("a holder whose lock was taken over leaves the new holder's lock alone", () => {
+    withPolicyLock(dir, () => {
+      // Another process judged this lock stale and took it over.
+      rmSync(policyLockPath(dir));
+      writeFileSync(policyLockPath(dir), "other");
+    });
+    expect(readFileSync(policyLockPath(dir), "utf8")).toBe("other");
+  });
+
+  it("serializes writers in separate processes: no update is lost", async () => {
+    const script = join(dir, "writer.ts");
+    const store = join(import.meta.dirname, "../src/policy-store.ts");
+    writeFileSync(
+      script,
+      `import { PolicyStore } from ${JSON.stringify(store)};
+const [, , d, who] = process.argv;
+const s = new PolicyStore(d as string);
+for (let i = 0; i < 15; i++) {
+  s.update((p) => ({ ...p, allowedDomains: [...p.allowedDomains, \`h\${i}.\${who}.com\`] }));
+}
+`,
+    );
+    const tsx = join(import.meta.dirname, "../../../node_modules/.bin/tsx");
+    const run = (who: string) =>
+      new Promise<number | null>((resolve) => {
+        const c = spawn(tsx, [script, dir, who], { stdio: "inherit" });
+        c.on("exit", (code) => resolve(code));
+      });
+    expect(await Promise.all(["a", "b", "c", "d"].map(run))).toEqual([0, 0, 0, 0]);
+    const all = readPolicy(dir).allowedDomains;
+    expect(all).toHaveLength(60);
+    expect(new Set(all).size).toBe(60);
+  }, 60_000);
+
   it("takes over a lock older than 10 s", () => {
-    writeFileSync(policyLockPath(dir), "123");
+    // A pid no process has.
+    writeFileSync(policyLockPath(dir), "2147483646");
     const lockAt = statSync(policyLockPath(dir)).mtimeMs;
     expect(() => withPolicyLock(dir, () => 0, { waitMs: 0, now: () => lockAt + 9_000 })).toThrow();
     expect(withPolicyLock(dir, () => "ran", { now: () => lockAt + 10_500 })).toBe("ran");

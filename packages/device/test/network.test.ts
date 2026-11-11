@@ -46,6 +46,19 @@ describe("parseNetworkViolation (sandbox-runtime 0.0.81 line format)", () => {
     ).toBe("capybara: a.com is not in this device's allowed domains");
   });
 
+  it("parses an unbracketed IPv6 host from the SOCKS path", () => {
+    expect(
+      parseNetworkViolation(
+        "deny network-outbound 0:0:0:0:0:0:0:1:443 (host is not on the allow list)",
+      ),
+    ).toEqual({ host: "0:0:0:0:0:0:0:1", port: 443, reason: "host is not on the allow list" });
+    expect(parseNetworkViolation("deny network-outbound a:b:443 (x)")).toBeUndefined();
+  });
+
+  it("drops a trailing dot from the host", () => {
+    expect(parseNetworkViolation("deny network-outbound a.com.:443 (x)")?.host).toBe("a.com");
+  });
+
   it("ignores socks tunnel, file and malformed lines", () => {
     expect(parseNetworkViolation("deny socks-tunnel a.com:443 (blocked)")).toBeUndefined();
     expect(parseNetworkViolation("deny file-read-data /Users/x/.ssh/id_rsa")).toBeUndefined();
@@ -115,6 +128,12 @@ describe("classifyHost", () => {
     expect(
       classifyHost("a.com", notListed, limits("allowlist", ["a.com"]), policy(["a.com"])),
     ).toBe("unknown");
+  });
+
+  it("a trailing dot does not hide the layer", () => {
+    expect(classifyHost("a.com.", "x", limits("allowlist", ["a.com"]), policy(["b.com"]))).toBe(
+      "device",
+    );
   });
 
   it("matching ignores case", () => {
