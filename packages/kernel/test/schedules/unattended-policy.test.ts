@@ -27,6 +27,7 @@ import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedule
 import {
   UNATTENDED_ASK_ERROR,
   UNATTENDED_CONNECTION_ERROR,
+  UNATTENDED_FIXED_ASK_ERROR,
   UNATTENDED_QUESTION_ERROR,
 } from "../../src/schedules/unattended.js";
 import type { ApprovalsService } from "../../src/tools/approvals.service.js";
@@ -513,14 +514,18 @@ describe("unattended runs (spec §7)", () => {
     await runCalls([{ id: "a1", name: "SkillWrite", input: {} }], { runId: attendedRun });
     expect(calls).toEqual(["SkillWrite"]);
     calls = [];
-    // unattended: an ask outside the grants, even with a grant
+    // unattended: a fixed ask, even with a grant; not a missing grant (none can cover it)
     await grant(SKILL_WRITE);
     const { evs } = await runCalls([{ id: "c1", name: "SkillWrite", input: {} }]);
     expect(calls).toEqual([]);
     expect(resultsOf(evs).at(-1)).toMatchObject({
       isError: true,
-      content: UNATTENDED_ASK_ERROR("SkillWrite"),
+      content: UNATTENDED_FIXED_ASK_ERROR("SkillWrite"),
     });
+    expect(UNATTENDED_FIXED_ASK_ERROR("X")).toBe(
+      "X always needs a person's approval, which a scheduled run cannot ask for; state what you wanted to do in your final answer.",
+    );
+    expect(await missingGrants()).toEqual([]);
   });
 
   it("fixed-ask tool is never covered", async () => {
@@ -529,9 +534,9 @@ describe("unattended runs (spec §7)", () => {
     expect(calls).toEqual([]);
     expect(resultsOf(evs)[0]).toMatchObject({
       isError: true,
-      content: UNATTENDED_ASK_ERROR(FIXED.key),
+      content: UNATTENDED_FIXED_ASK_ERROR(FIXED.key),
     });
-    expect(await missingGrants()).toEqual([FIXED.key]);
+    expect(await missingGrants()).toEqual([]);
   });
 
   it("stale spec hash is a missing grant", async () => {

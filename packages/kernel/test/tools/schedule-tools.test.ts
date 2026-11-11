@@ -11,10 +11,15 @@ import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { ScheduledTask } from "../../src/schedules/types.js";
-import { UNATTENDED_ASK_ERROR } from "../../src/schedules/unattended.js";
+import { UNATTENDED_FIXED_ASK_ERROR } from "../../src/schedules/unattended.js";
 import { SCHEDULE_TOOL_NAMES } from "../../src/tools/builtin-names.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
-import { notYoursText, scheduleWords } from "../../src/tools/builtins/schedules.js";
+import {
+  cardChangedText,
+  NOT_A_MEMBER_TEXT,
+  notYoursText,
+  scheduleWords,
+} from "../../src/tools/builtins/schedules.js";
 import { createDecidePolicy } from "../../src/tools/policy.js";
 import {
   type BuiltinCallContext,
@@ -333,8 +338,7 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       }),
     });
     expect(await decide(create, definition, await ctx(create, "fail"))).toEqual({
-      refused: UNATTENDED_ASK_ERROR("ScheduleCreate"),
-      missingGrant: "ScheduleCreate",
+      refused: UNATTENDED_FIXED_ASK_ERROR("ScheduleCreate"),
     });
     // wait mode and attended runs: a fixed ask, never a grant
     expect(await decide(create, definition, await ctx(create, "wait"))).toMatchObject({
@@ -349,8 +353,8 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       ...(await ctx(update, "fail")),
       callPolicy: await policyOf("ScheduleUpdate", upd, aliceId, conv),
     };
-    expect(await decide(update, definition, updCtx)).toMatchObject({
-      refused: UNATTENDED_ASK_ERROR("ScheduleUpdate"),
+    expect(await decide(update, definition, updCtx)).toEqual({
+      refused: UNATTENDED_FIXED_ASK_ERROR("ScheduleUpdate"),
     });
   });
 
@@ -408,6 +412,66 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       remember: false,
       denyReason: notYoursText(bobs.id),
     });
+  });
+
+  it("a target that changed after the approval refuses the call", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const input = { name: "Later", prompt: "Look again.", runAt: "2099-01-01T15:00", mode: "here" };
+    await postMessage(alice, orgId, conv, `tool:ScheduleCreate:${JSON.stringify(input)}`);
+    const asked = await waitFor(
+      async () => ofType(await eventsOf(db, conv), "approval_requested")[0],
+      20_000,
+      "approval_requested",
+    );
+    // the card said "this conversation"; the conversation becomes a DM thread before approval
+    await seedDm(conv, aliceId);
+    const ok = await alice({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${asked.payload.approvalId}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const result = ofType(await eventsOf(db, conv), "tool_result").at(-1)?.payload;
+    expect(result).toMatchObject({
+      toolKey: "ScheduleCreate",
+      isError: true,
+      content: cardChangedText("ScheduleCreate"),
+    });
+    expect(await tasksOf(aliceId)).toEqual([]);
+  });
+
+  it("the update card shows the new prompt and the kept tools", async () => {
+    const task = await dailyTask(aliceId);
+    const conv = await createConv(alice, orgId, agentId);
+    const p = await policyOf(
+      "ScheduleUpdate",
+      { id: task.id, prompt: "Only the headlines." },
+      aliceId,
+      conv,
+    );
+    expect(p.summary).toEqual({
+      zh: "修改定时任务「Digest」：新提示词「Only the headlines.」；预先批准的工具：CurrentTime（不变）",
+      en: 'Change the scheduled task "Digest": new prompt "Only the headlines."; approved tools: CurrentTime (unchanged)',
+    });
+    const long = "x".repeat(400);
+    const q = await policyOf("ScheduleUpdate", { id: task.id, prompt: long }, aliceId, conv);
+    expect(q.summary?.en).toContain(`new prompt "${"x".repeat(299)}…"`);
+  });
+
+  it("a person who left the org cannot list or delete", async () => {
+    const task = await dailyTask(aliceId);
+    const conv = await createConv(alice, orgId, agentId);
+    await sql`DELETE FROM capybara.memberships WHERE org_id = ${orgId} AND account_id = ${aliceId}`.execute(
+      raw,
+    );
+    expect(await refusal(tool("ScheduleList").run({}, callCtx(aliceId, conv)))).toBe(
+      NOT_A_MEMBER_TEXT,
+    );
+    expect(await refusal(tool("ScheduleDelete").run({ id: task.id }, callCtx(aliceId, conv)))).toBe(
+      NOT_A_MEMBER_TEXT,
+    );
+    expect(await store.getTask(db, orgId, task.id)).not.toBeNull();
   });
 
   it("ScheduleList lists only the person's own tasks", async () => {

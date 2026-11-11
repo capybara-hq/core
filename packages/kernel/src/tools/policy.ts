@@ -6,6 +6,7 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import { findTaskGrant } from "../schedules/store.js";
 import {
   UNATTENDED_ASK_ERROR,
+  UNATTENDED_FIXED_ASK_ERROR,
   UNATTENDED_QUESTION_ERROR,
   unattendedRules,
 } from "../schedules/unattended.js";
@@ -338,6 +339,8 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     }
     // an ask outside the grants in an unattended run, `fail` mode: no approval (spec §7)
     if (unattended?.unattendedAsk === "fail") {
+      // a fixed ask is never covered by a grant: refused, and not recorded as a missing grant
+      if (fixedAsk) return { refused: UNATTENDED_FIXED_ASK_ERROR(policyKey) };
       return { refused: UNATTENDED_ASK_ERROR(policyKey), missingGrant: policyKey };
     }
     const ask: AskRequest = {

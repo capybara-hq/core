@@ -79,6 +79,8 @@ export interface ScheduleToolsDeps {
 const NAME_MAX = 200;
 const PROMPT_MAX = 20_000;
 const TOOLS_MAX = 50;
+/** How much of a new prompt an update's card shows. */
+const PROMPT_SHOWN = 300;
 
 const TOOL_KEYS_SCHEMA = {
   type: "array",
@@ -265,6 +267,12 @@ export const SCHEDULES_UNAVAILABLE_TEXT =
   "Scheduled tasks are not available on this server; ask the user to manage the task on the scheduled tasks page instead.";
 export const SCHEDULES_OFF_TEXT =
   "Scheduled tasks are turned off in this organization; ask an org admin to turn them on.";
+
+/** The card recomputed at run time differs from the one the person approved. */
+export const cardChangedText = (tool: string): string =>
+  `The task's time zone, target, tools or current settings changed after the user approved this ${tool} call, so nothing was changed; call ${tool} again so the user can approve the current version.`;
+export const NOT_A_MEMBER_TEXT =
+  "The user is no longer a member of this organization, so their scheduled tasks cannot be managed here; ask them to check their membership.";
 
 /** No task with that id is the person's own (missing, deleted, or another member's). */
 export const notYoursText = (id: string): string =>
@@ -459,11 +467,14 @@ const withZone = (t: TriggerInput, timeZone: string): ScheduleTrigger =>
     : { kind: "once", at: t.at, timeZone };
 
 /** The fixed ask of a create or update: every call asks, only "once", with the kernel's card. */
+/** A card as stored on the approval (the same clipping at ask time and at run time). */
+const cardOf = (w: Words): Words => ({ zh: clip(w.zh, 1000), en: clip(w.en, 1000) });
+
 const ask = (key: string, summary: Words): CallPolicy => ({
   key,
   policy: "ask",
   remember: false,
-  summary: { zh: clip(summary.zh, 1000), en: clip(summary.en, 1000) },
+  summary: cardOf(summary),
 });
 
 const deny = (key: string, denyReason: string): CallPolicy => ({
@@ -530,7 +541,11 @@ export class ScheduleUpdates {
 
 /** The four schedule builtins. */
 export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
-  /** The service, or a refusal (the tools are hidden then too: {@link unavailable}). */
+  /**
+   * The service, or a refusal (the tools are hidden then too: {@link unavailable}). Defensive:
+   * `SchedulesModule` is reachable on every role (through ChannelsModule / KernelModule), so the
+   * lookup is expected to succeed; the path stays for an application built without it.
+   */
   const service = async (): Promise<ScheduleService> => {
     const s = await deps.service();
     if (s === null) throw new ToolError(SCHEDULES_UNAVAILABLE_TEXT);
@@ -549,6 +564,43 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     return (await enabled) ? null : SCHEDULES_OFF_TEXT;
   };
 
+  /**
+   * The card the person approved for this call (`approvals.summary` of the call's latest
+   * approved attempt); undefined when the call has no approval (a direct call outside the
+   * pipeline: the pipeline never runs a fixed ask without one).
+   */
+  async function approvedCard(ctx: BuiltinCallContext): Promise<Words | null | undefined> {
+    if (ctx.runId === undefined) return undefined;
+    const row = await deps
+      .db()
+      .selectFrom("approvals")
+      .select("summary")
+      .where("run_id", "=", ctx.runId)
+      .where("call_id", "=", ctx.callId)
+      .where("status", "=", "approved")
+      .orderBy("attempt", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row === undefined ? undefined : row.summary;
+  }
+
+  /** Refuses the run when the card it would show now differs from the approved one. */
+  async function sameAsApproved(ctx: BuiltinCallContext, tool: string, now: Words) {
+    const shown = await approvedCard(ctx);
+    if (shown === undefined) return;
+    const c = cardOf(now);
+    if (shown === null || shown.zh !== c.zh || shown.en !== c.en) {
+      throw new ToolError(cardChangedText(tool));
+    }
+  }
+
+  /** The person's live role, refused when they are no longer a member. */
+  async function liveRole(ctx: BuiltinCallContext): Promise<OrgRole> {
+    const role = await roleOf(deps.db(), ctx.orgId, ctx.accountId);
+    if (role === null) throw new ToolError(NOT_A_MEMBER_TEXT);
+    return role;
+  }
+
   /** Runs a service call, turning its refusals into actionable tool errors. */
   async function call<T>(fn: () => Promise<T>, ctx: { id?: string; zone?: string }): Promise<T> {
     try {
@@ -561,6 +613,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
 
   // ---- ScheduleCreate ----
 
+  type CreatePlan = Awaited<ReturnType<typeof createPlan>>;
+
   async function createPlan(input: CreateInput, ctx: CallPolicyContext | BuiltinCallContext) {
     const trigger = triggerOf(input);
     const zone = await deps.timeZoneOf(ctx.orgId, ctx.conversationId);
@@ -569,6 +623,17 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
         ? await hereTarget(deps.db(), ctx.orgId, ctx.accountId, ctx.conversationId)
         : { mode: "new" };
     return { trigger, zone, target, tools: uniqueSorted(input.approvedTools ?? []) };
+  }
+
+  function createCard(input: CreateInput, p: CreatePlan, conversationId: string): Words {
+    const when = scheduleWords(withZone(p.trigger as TriggerInput, p.zone));
+    const where = targetWords(p.target, conversationId);
+    const tools = toolsWords(p.tools);
+    const name = clip(input.name, NAME_MAX);
+    return {
+      zh: `创建定时任务「${name}」：${when.zh}；运行位置：${where.zh}；预先批准的工具：${tools.zh}`,
+      en: `Create the scheduled task "${name}": ${when.en}; runs in ${where.en}; approved tools: ${tools.en}`,
+    };
   }
 
   const create: BuiltinTool = {
@@ -583,14 +648,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
         return deny(key, ONE_TRIGGER_TEXT);
       }
       const p = await createPlan(parsed.data, ctx);
-      const when = scheduleWords(withZone(p.trigger as TriggerInput, p.zone));
-      const where = targetWords(p.target, ctx.conversationId);
-      const tools = toolsWords(p.tools);
-      const name = clip(parsed.data.name, NAME_MAX);
-      return ask(key, {
-        zh: `创建定时任务「${name}」：${when.zh}；运行位置：${where.zh}；预先批准的工具：${tools.zh}`,
-        en: `Create the scheduled task "${name}": ${when.en}; runs in ${where.en}; approved tools: ${tools.en}`,
-      });
+      return ask(key, createCard(parsed.data, p, ctx.conversationId));
     },
     async run(raw, ctx) {
       const parsed = CreateInput.safeParse(raw);
@@ -601,6 +659,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       if (p.trigger === undefined || (input.cron !== undefined && input.runAt !== undefined)) {
         throw new ToolError(ONE_TRIGGER_TEXT);
       }
+      // the zone and target are recomputed now: they must be the ones the person approved
+      await sameAsApproved(ctx, BUILTIN.ScheduleCreate, createCard(input, p, ctx.conversationId));
       const trigger = p.trigger;
       const task = await call(
         () =>
@@ -652,7 +712,7 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     input: UpdateInput,
     task: ScheduledTask,
     grants: readonly string[],
-    ctx: CallPolicyContext,
+    ctx: Pick<CallPolicyContext, "orgId" | "accountId" | "conversationId">,
   ): Promise<Words> {
     const zh: string[] = [];
     const en: string[] = [];
@@ -661,8 +721,9 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       en.push(`name "${clip(task.name, 80)}" → "${clip(input.name, 80)}"`);
     }
     if (input.prompt !== undefined && input.prompt.trim() !== task.prompt) {
-      zh.push("提示词已修改");
-      en.push("new prompt");
+      const shown = clip(input.prompt, PROMPT_SHOWN);
+      zh.push(`新提示词「${shown}」`);
+      en.push(`new prompt "${shown}"`);
     }
     const trigger = triggerOf(input);
     if (trigger !== undefined) {
@@ -702,6 +763,11 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       const dEn = delta.length > 0 ? ` (${delta.map((d) => d.en).join("; ")})` : " (unchanged)";
       zh.push(`预先批准的工具：${all.zh}${dZh}`);
       en.push(`approved tools: ${all.en}${dEn}`);
+    } else {
+      // the tools the task keeps are part of what the person approves
+      const kept = toolsWords(grants);
+      zh.push(`预先批准的工具：${kept.zh}（不变）`);
+      en.push(`approved tools: ${kept.en} (unchanged)`);
     }
     const name = clip(task.name, 80);
     const none = { zh: "没有改动", en: "no changes" };
@@ -748,6 +814,11 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       const svc = await service();
       const task = await ownTask(ctx.orgId, ctx.accountId, input.id);
       if (task === null) throw new ToolError(notYoursText(input.id));
+      await sameAsApproved(
+        ctx,
+        BUILTIN.ScheduleUpdate,
+        await updateCard(input, task, await grantKeys(task.id), ctx),
+      );
       const patch: UpdateTaskInput = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.prompt !== undefined) patch.prompt = input.prompt;
@@ -798,11 +869,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
     unavailable,
     async run(_raw, ctx) {
       const svc = await service();
-      const role = await roleOf(deps.db(), ctx.orgId, ctx.accountId);
-      const tasks = await call(
-        () => svc.list(ctx.orgId, { accountId: ctx.accountId, role: role ?? "member" }),
-        {},
-      );
+      const role = await liveRole(ctx);
+      const tasks = await call(() => svc.list(ctx.orgId, { accountId: ctx.accountId, role }), {});
       if (tasks.length === 0) {
         return {
           content: [
@@ -856,11 +924,8 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
       // only the person's own task, even for an org admin (who may delete others' on the page)
       const task = await ownTask(ctx.orgId, ctx.accountId, id);
       if (task === null) throw new ToolError(notYoursText(id));
-      const role = await roleOf(deps.db(), ctx.orgId, ctx.accountId);
-      await call(
-        () => svc.remove(ctx.orgId, { accountId: ctx.accountId, role: role ?? "member" }, task.id),
-        { id },
-      );
+      const role = await liveRole(ctx);
+      await call(() => svc.remove(ctx.orgId, { accountId: ctx.accountId, role }, task.id), { id });
       return {
         content: [{ type: "text", text: `Deleted scheduled task "${task.name}" (id ${task.id}).` }],
         display: display(`已删除定时任务「${task.name}」`, `Deleted scheduled task "${task.name}"`),

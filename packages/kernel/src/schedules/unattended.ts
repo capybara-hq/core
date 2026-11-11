@@ -77,6 +77,14 @@ export async function scheduledTaskRunAt(
 export const UNATTENDED_ASK_ERROR = (tool: string) =>
   `This scheduled run cannot ask for approval; the task's owner can add ${tool} to the task's approved tools.`;
 
+/**
+ * The result of a fixed ask (R3, `requiresUserInteraction`, `SkillWrite` unattended, a per-call
+ * policy that never remembers) in an unattended run, `fail` mode: no grant can ever cover it, so
+ * it is not a missing grant either.
+ */
+export const UNATTENDED_FIXED_ASK_ERROR = (tool: string) =>
+  `${tool} always needs a person's approval, which a scheduled run cannot ask for; state what you wanted to do in your final answer.`;
+
 /** The result of `AskUserQuestion` (or any other input request) in an unattended run, `fail` mode. */
 export const UNATTENDED_QUESTION_ERROR =
   "No one is present in this scheduled run; decide with the information you have, or state the open question in your final answer.";
