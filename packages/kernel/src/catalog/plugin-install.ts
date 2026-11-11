@@ -1567,8 +1567,8 @@ export class PluginInstaller {
   /**
    * Uninstall (the plugin's component actions, see `requiredActions`, re-checked under the org row
    * lock, one transaction). Removes only components with created=true:
-   * - a skill is kept when an agent selects it (used_by_agents) or another plugin install in this
-   *   org uses it too (used_by_other_install);
+   * - a skill is kept when an agent names it (an inline sub-agent template's `skills`;
+   *   used_by_agents) or another plugin install in this org uses it too (used_by_other_install);
    * - a connector is kept when an agent references it (used_by_agents);
    * - an extension is kept when another plugin install uses it too (used_by_other_install), a
    *   connector still uses a connector it provides (used_by_connectors), or another enabled
