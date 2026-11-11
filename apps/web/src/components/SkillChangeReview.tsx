@@ -117,8 +117,8 @@ function FileDiff({
 }
 
 /**
- * A skill change card in the inbox: agent, requester, version, description, open the conversation,
- * and each file's plain-text diff against the current version. The detail (file texts and the
+ * A skill change card in the inbox: agent, requester, version, description, open the conversation
+ * (for the requester only: it is their conversation), and each file's plain-text diff against the current version. The detail (file texts and the
  * current version) comes from the query cache (the layout prefetched the first item's on a first
  * load), else it is read when the card is shown (`GET /skill-changes/:id`); a refusal or failure
  * is the files' error.
@@ -144,7 +144,9 @@ function SkillChangeCard({
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const current = detail?.current ?? null;
-  const conversationPath = change.conversationPath;
+  const { me } = useSession();
+  // the proposing conversation is the requester's own: anyone else would land on a 404
+  const conversationPath = change.requestedBy === me.account.id ? change.conversationPath : null;
   return (
     <div data-skill-change-id={change.id}>
       <Card

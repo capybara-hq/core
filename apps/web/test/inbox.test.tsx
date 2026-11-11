@@ -307,13 +307,30 @@ describe("收件箱：技能变更", () => {
       });
       expect(within(row).getByRole("button", { name: m.inbox.skillChange.approve })).toBeTruthy();
       expect(within(row).getByRole("button", { name: m.inbox.skillChange.reject })).toBeTruthy();
-      // 打开发起对话
-      await userEvent
-        .setup()
-        .click(within(card).getByRole("button", { name: m.inbox.openConversation }));
-      expect(router.push).toHaveBeenCalledWith("/chat/c9");
+      // the proposing conversation is the requester's: an admin reviewing it gets no link
+      expect(within(card).queryByRole("button", { name: m.inbox.openConversation })).toBeNull();
     },
   );
+
+  it("the requester sees a link to the proposing conversation", async () => {
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([], [skillChange("sc1", { requestedBy: "a1" })])),
+      [DETAIL]: () => json(200, { skillChange: detail({ requestedBy: "a1" }) }),
+    });
+    const table = await screen.findByRole("table", { name: en.inbox.listLabel });
+    await userEvent
+      .setup()
+      .click(within(table).getByText("notes-style", { selector: ".cb-cell-title-name" }));
+    const card = await vi.waitFor(() => {
+      const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;
+      if (!el) throw new Error("no card");
+      return el;
+    });
+    await userEvent
+      .setup()
+      .click(within(card).getByRole("button", { name: en.inbox.openConversation }));
+    expect(router.push).toHaveBeenCalledWith("/chat/c9");
+  });
 
   it("批准：POST decide 后重读列表、顶栏待处理数刷新", async () => {
     let changes = [skillChange("sc1")];
