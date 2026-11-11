@@ -25,7 +25,10 @@ import { SkillsService } from "./skills.service.js";
 
 export type { CancelledDrafts } from "./conversation-catalog.js";
 
-/** The cap on file contents read for a detail (drafts are <= 1 MB; with headroom). */
+/**
+ * The cap on file contents read for one detail (a package may hold up to 50 MB; the inbox shows
+ * text for review, so files past the cap read as no content).
+ */
 const DETAIL_MAX_BYTES = 2 * 1024 * 1024;
 /** The most skill changes one inbox read returns. */
 export const SKILL_CHANGES_LIST_MAX = 100;
@@ -559,8 +562,10 @@ export class SkillChangesService {
 }
 
 /**
- * 按清单顺序读文件文本，共用读取额度 `budget`（超出、对象缺失、存储出错时该文件内容为 null）。
- * `store` 为 undefined 表示不读（如草稿已删除）。
+ * Reads the files' text in manifest order, sharing the read budget `budget`. A file's content is
+ * null past the budget, when its object is missing, on a storage error, and for a binary file
+ * (not valid UTF-8, or holding a NUL byte), so the inbox never shows garbage. `store` undefined
+ * means nothing is read (e.g. the draft is deleted).
  */
 async function readTexts(
   store: ReturnType<StorageService["kernel"]> | undefined,
@@ -575,8 +580,10 @@ async function readTexts(
       try {
         const got = await store.get(`${prefix}${f.path}`);
         if (got) {
-          content = await new Response(got.body).text();
+          const bytes = await new Response(got.body).arrayBuffer();
           budget.left -= f.size;
+          const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          content = text.includes("\u0000") ? null : text;
         }
       } catch {
         content = null;

@@ -237,6 +237,26 @@ describe("sharing an agent skill", () => {
     expect(await list()).toMatchObject([{ name: "notes", sharePending: false }]);
   });
 
+  it("the request detail shows text files and no content for a binary file", async () => {
+    const agentId = await createAgent(env.mem);
+    const zip = new Uint8Array(
+      makeZip([
+        { name: "SKILL.md", data: "---\nname: notes\ndescription: Take notes.\n---\nSteps.\n" },
+        {
+          name: "logo.png",
+          data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x00, 0xc3]),
+        },
+      ]),
+    );
+    const own = await svc.register(actor(agentId, env.memId), zip);
+    const out = await svc.share(actor(agentId, env.memId), own.skillId);
+    if (out.kind !== "requested") throw new Error("expected a request");
+    const detail = await changes.get(env.orgId, out.requestId, env.bossId);
+    const byPath = Object.fromEntries(detail.files.map((f) => [f.path, f.content]));
+    expect(byPath["SKILL.md"]).toContain("Steps.");
+    expect(byPath["logo.png"]).toBeNull();
+  });
+
   it("an org admin owner shares at once", async () => {
     const agentId = await createAgent(env.boss);
     const own = await svc.register(actor(agentId, env.bossId), zipOf("notes"));
