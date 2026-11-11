@@ -43,14 +43,16 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]`, `start`, `stop`, `drain`, `policy [show|set <key> <value>]` and
-`service install|uninstall`.
+`status [--json]`, `start`, `stop`, `drain`,
+`policy [show | set <key> <value> | add|remove <key> <value>]` and `service install|uninstall`.
 
 State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the
 deployment's reconnect grace and frame limit: a result larger than the frame limit is answered
 with an error instead) and `policy.json` (a file with wrong field types stops `start` with an
-error naming it).
+error naming it; once running, the program re-reads the file when it changes, and a broken edit
+keeps the last valid policy and logs one error). Changes made with `capybara-device policy` take
+`policy.json.lock`, so two writers never lose an update; keys this version does not know are kept.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`.
 
@@ -63,8 +65,28 @@ network at all. Only you edit the policy, the platform can never widen it:
 
 ```bash
 capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
-capybara-device policy show   # changes apply at the next start
+capybara-device policy add allowedDomains files.slack.com
+capybara-device policy remove allowedDomains files.slack.com
+capybara-device policy show
 ```
+
+Changes apply at the next command; a running program does not need a restart. `add` and `remove`
+work on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name
+(optionally `*.` for subdomains, never the apex), never an IP address or an internal name.
+
+When a command is refused a domain, the program says why. Clients that print the proxy's answer
+show a reason such as `capybara: files.slack.com is not in this device's allowed domains`, and
+after the command its stderr ends with a trailer naming each refused host (at most 20) and who can
+lift it:
+
+```text
+[capybara-device] Network access was blocked:
+- files.slack.com:443: not in this device's allowed domains. Only the device owner can allow it (capybara-device policy add allowedDomains files.slack.com, or the device page).
+- api.foo.com:443: not in the organization's network allowlist. Only an organization admin can add it.
+- 10.0.0.5:22: a private or local address; commands can never reach it.
+```
+
+The trailer is part of the command's output, so the agent reads it too.
 
 Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.
