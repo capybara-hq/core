@@ -566,7 +566,8 @@ export class ScheduledTasksService {
       set.add(g.tool_key);
       granted.set(g.task_id, set);
     }
-    let role: OrgRole | null | undefined;
+    let loaded = false;
+    let role: OrgRole | null = null;
     const gated = new Map<string, Promise<Map<string, OrgRole>>>();
     for (const task of tasks) {
       if (task.status === "paused" && task.pauseReason !== null && task.pauseReason !== "creator") {
@@ -590,7 +591,10 @@ export class ScheduledTasksService {
       if (missing.length === 0) continue;
       let needsRole: string[] = [];
       if (missing.some((k) => !k.startsWith("connection:"))) {
-        if (role === undefined) role = await this.roleOrNull(orgId, accountId);
+        if (!loaded) {
+          role = await this.roleOrNull(orgId, accountId);
+          loaded = true;
+        }
         const lookup =
           gated.get(task.agentId) ?? this.requiredRoles(orgId, accountId, task.agentId);
         gated.set(task.agentId, lookup);
