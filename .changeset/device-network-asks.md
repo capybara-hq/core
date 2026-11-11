@@ -9,4 +9,5 @@ operation adds or removes allowed domains and switches `network` (narrowing alwa
 host validated, written under the lock); a run's or task's granted hosts join a command's list
 within the organization's egress. In OS mode exec results report the refused hosts; the hello
 announces `networkReport` / `policyOp` and a summary of the local policy. The local command log
-records each change from the deployment, refused attempts and each command's grants.
+records each change from the deployment, refused attempts and each command's grants. A
+Docker-mode device refuses widening from the deployment (it cannot limit single domains).

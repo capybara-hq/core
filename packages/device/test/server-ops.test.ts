@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import { DeviceOpError } from "../src/exec/types.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { REMOTE_GRANTS_OFF_MESSAGE, runOp, serveOp } from "../src/server-ops.js";
+import {
+  DOCKER_WIDENING_MESSAGE,
+  REMOTE_GRANTS_OFF_MESSAGE,
+  runOp,
+  serveOp,
+} from "../src/server-ops.js";
 import {
   DEFAULT_POLICY,
   type Policy,
@@ -165,6 +170,45 @@ describe("the policy op", () => {
         "capybara-device policy add allowedDomains <host>",
     );
     expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+  });
+
+  it("in docker mode refuses every widening: the container cannot limit single domains", async () => {
+    seed({ allowedDomains: ["a.com", "b.com"], network: "open" });
+    const docker = new FakeExecutor();
+    (docker as { mode: string }).mode = "docker";
+    const before = readFileSync(policyPath(dir), "utf8");
+    for (const args of [
+      { add: ["c.com"] },
+      { network: "open" },
+      { add: ["c.com"], remove: ["a.com"] },
+    ]) {
+      const { res, detail } = await serveOp(docker, r("policy", { source, ...args }), never, {
+        policy: store,
+      });
+      expect(res).toEqual({
+        type: "res",
+        id: "x",
+        ok: false,
+        error: { kind: "policy", message: DOCKER_WIDENING_MESSAGE },
+      });
+      expect(detail).toMatch(/^policy refused /);
+    }
+    expect(DOCKER_WIDENING_MESSAGE).toBe(
+      "This device runs commands in Docker mode, which cannot limit network access per domain; " +
+        "switch the device to OS mode to allow single domains.",
+    );
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+    // Narrowing still applies.
+    const { res } = await serveOp(
+      docker,
+      r("policy", { source, remove: ["a.com"], network: "allowlist" }),
+      never,
+      { policy: store },
+    );
+    expect(res).toMatchObject({
+      ok: true,
+      result: { policy: { network: "allowlist", allowedDomains: ["b.com"] } },
+    });
   });
 
   it("under remoteGrants off always applies narrowing", async () => {

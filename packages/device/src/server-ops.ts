@@ -30,6 +30,14 @@ export const REMOTE_GRANTS_OFF_MESSAGE =
   "This device does not accept network changes from the deployment; allow it locally: " +
   "capybara-device policy add allowedDomains <host>";
 
+/**
+ * The refusal of a widening `policy` op in Docker mode: the container has either no network or the
+ * whole internet, so one allowed domain would open everything.
+ */
+export const DOCKER_WIDENING_MESSAGE =
+  "This device runs commands in Docker mode, which cannot limit network access per domain; " +
+  "switch the device to OS mode to allow single domains.";
+
 /** The local-log line for a finished request; `detail` is its audit line, if any. */
 export function logEntryFor(
   req: KernelReq,
@@ -102,13 +110,14 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
 }
 
 /**
- * Applies a `policy` op to the local policy: refuses widening (`add`, `network: "open"`) unless
- * `remoteGrants` is `owner`, as the file says under the lock; always applies narrowing; validates
+ * Applies a `policy` op to the local policy: refuses widening (`add`, `network: "open"`) in
+ * Docker mode and unless `remoteGrants` is `owner`, as the file says under the lock; always applies narrowing; validates
  * every host; idempotent. Returns the result and the local audit line.
  */
 function applyPolicyOp(
   store: PolicyStore,
   args: DevicePolicyArgs,
+  mode: Executor["mode"],
 ): { result: { policy: DeviceLocalPolicySummary }; detail: string } {
   const source = (args.source ?? {}) as Partial<DevicePolicyArgs["source"]>;
   const fromApproval = source.approvalId !== undefined;
@@ -131,10 +140,12 @@ function applyPolicyOp(
     `via ${clean(source.via, 10)}`;
   const approval = fromApproval ? `, approval ${clean(source.approvalId, 100)}` : "";
   const what = parts.length > 0 ? parts.join("; ") : "unchanged";
+  const refused = `policy refused ${what} ${by}${approval}`;
+  if (widens && mode === "docker") throw new PolicyRefused(DOCKER_WIDENING_MESSAGE, refused);
   const next = store.update((p) => {
     // Judged against the file as it is now, inside the lock: a local `remoteGrants off` wins.
     if (widens && p.remoteGrants !== "owner") {
-      throw new PolicyRefused(REMOTE_GRANTS_OFF_MESSAGE, `policy refused ${what} ${by}${approval}`);
+      throw new PolicyRefused(REMOTE_GRANTS_OFF_MESSAGE, refused);
     }
     const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
     const present = new Set(kept.map((d) => d.toLowerCase()));
@@ -190,7 +201,11 @@ export async function serveOp(
           },
         };
       }
-      const { result, detail } = applyPolicyOp(ctx.policy, req.args as DevicePolicyArgs);
+      const { result, detail } = applyPolicyOp(
+        ctx.policy,
+        req.args as DevicePolicyArgs,
+        executor.mode,
+      );
       return { res: ok(result), detail };
     }
     if ((await executor.ensureRoot()) === "gone") {

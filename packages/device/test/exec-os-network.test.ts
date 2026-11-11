@@ -286,7 +286,40 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
     await ex.dispose();
   });
 
-  it("network open with an org that is open: no list, the ask callback allows public hosts", async () => {
+  it("network open with an org that is open: public hosts only while such a command runs", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    const ask = sbx.initialize.mock.calls[0]?.[1] as (p: {
+      host: string;
+      port: number;
+    }) => Promise<unknown>;
+    const denied = { allow: false };
+    policy = { ...policy, network: "open" };
+    const open = { ...LIMITS, egress: "open" as const, allowHosts: [] };
+    // No open command running: denied.
+    expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
+    const running = ex.exec(execArgs("sleep 0.5", { limits: open }), never);
+    await new Promise((r) => setTimeout(r, 150));
+    // The runtime refuses "*" in a per-command list: it is never registered.
+    expect(sbx.registered.every((x) => !x.allowedDomains.includes("*"))).toBe(true);
+    expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
+    expect(await ask({ host: "Anything.Example.org.", port: 443 })).toBe(true);
+    // Addresses and internal names stay refused.
+    for (const host of ["10.0.0.5", "127.0.0.1", "intranet", "printer.local", "::1"]) {
+      expect(await ask({ host, port: 443 }), host).toMatchObject(denied);
+    }
+    // Narrowing applies at once, also to the running command.
+    policy = { ...policy, network: "allowlist" };
+    expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
+    policy = { ...policy, network: "open" };
+    expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
+    await running;
+    // The command ended: nothing open runs any more.
+    expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
+    await ex.dispose();
+  });
+
+  it("a command under an org allowlist or the file helper never opens the callback", async () => {
     const ex = await make();
     await ex.ensureRoot();
     const ask = sbx.initialize.mock.calls[0]?.[1] as (p: {
@@ -294,21 +327,11 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       port: number;
     }) => Promise<unknown>;
     policy = { ...policy, network: "open" };
-    const open = { ...LIMITS, egress: "open" as const, allowHosts: [] };
-    await ex.exec(execArgs("true", { limits: open }), never);
-    // The runtime refuses "*" in a per-command list: it is never registered.
-    expect(sbx.registered.every((x) => !x.allowedDomains.includes("*"))).toBe(true);
-    expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
-    expect(await ask({ host: "Anything.Example.org.", port: 443 })).toBe(true);
-    // Addresses and internal names stay refused.
-    for (const host of ["10.0.0.5", "127.0.0.1", "intranet", "printer.local", "::1"]) {
-      expect(await ask({ host, port: 443 }), host).toMatchObject({ allow: false });
-    }
-    // Narrowing applies at once: back to allowlist, or a later command under an org list.
-    policy = { ...policy, network: "allowlist" };
+    const running = ex.exec(execArgs("sleep 0.5"), never);
+    await new Promise((r) => setTimeout(r, 150));
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
-    policy = { ...policy, network: "open" };
-    await ex.exec(execArgs("true"), never);
+    await running;
+    await ex.writeFile(join(ex.roots.workspace, "a.txt"), Buffer.from("hi"));
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
     await ex.dispose();
   });

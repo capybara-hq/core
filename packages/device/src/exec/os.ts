@@ -140,6 +140,11 @@ export class OsExecutor implements Executor {
    * org, so these stand for the org's egress when it explains a refusal.
    */
   private lastLimits: Pick<SandboxLimits, "egress" | "allowHosts"> | undefined;
+  /**
+   * Commands spawned while nothing narrowed them (policy `open`, their limits `open`) and still
+   * running. The ask callback allows any public name only while one runs.
+   */
+  private readonly openCommands = new Set<string>();
 
   constructor(private readonly opts: OsExecutorOptions) {
     const dir = resolve(opts.dir);
@@ -164,17 +169,19 @@ export class OsExecutor implements Executor {
   }
 
   /**
-   * The sandbox's ask callback, reached only for a host no list allows. When the device's policy
-   * is `open` and the org's egress (of the latest command) is `open` too, it allows any public
-   * name: sandbox-runtime refuses `*` in a per-command list, so this is how such a command reaches
-   * any host. The callback has no command id, so it judges the policy and limits now; narrowing
-   * either takes effect at once, also for commands already running. Otherwise it refuses, with a
-   * reason clients that print the proxy's status phrase show (spec §9.1).
+   * The sandbox's ask callback, reached only for a host no list allows. sandbox-runtime refuses `*`
+   * in a per-command list, so a command that may reach any host (device policy `open`, its limits
+   * `open`) is allowed here: a public name is allowed while such a command runs and the policy
+   * and latest limits still say so (narrowing takes effect at once). The callback has no command
+   * id, so a concurrent command of the same device may ride along meanwhile; the file helper never
+   * opens it. Otherwise it refuses, with a reason clients that print the proxy's status phrase
+   * show (spec §9.1).
    */
   readonly askCallback: SandboxAskCallback = async ({ host }) => {
     const policy = this.opts.policy();
     const limits = this.lastLimits;
     if (
+      this.openCommands.size > 0 &&
       limits !== undefined &&
       effectiveEgress(policy, limits).includes(ANY_HOST) &&
       isPublicName(host)
@@ -309,13 +316,15 @@ export class OsExecutor implements Executor {
       ...policy,
       allowedDomains: [...policy.allowedDomains, ...grantedHosts(policy, args.limits, args.grants)],
     };
+    const egress = effectiveEgress(policy, args.limits, args.grants);
     const { child, commandId } = await this.spawnSandboxed(args.command, {
       cwd,
       ...(args.env !== undefined && { env: args.env }),
       tag: args.tag,
-      egress: effectiveEgress(policy, args.limits, args.grants),
+      egress,
       signal,
     });
+    if (egress.includes(ANY_HOST)) this.openCommands.add(commandId);
     return new Promise<ExecResult>((resolvePromise, reject) => {
       const cap = new OutputCap(args.maxOutputBytes);
       let timedOut = false;
@@ -347,6 +356,7 @@ export class OsExecutor implements Executor {
           group.exited = true;
           group.onKill = undefined;
         }
+        this.openCommands.delete(commandId);
         SandboxManager.unregisterCommandNetworkLists(commandId);
         SandboxManager.cleanupAfterCommand();
       };

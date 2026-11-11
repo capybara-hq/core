@@ -100,7 +100,10 @@ with a summary of its local policy: `network`, `allowedDomains` and `remoteGrant
 `network` in `policy.json` is `allowlist` (default) or `open`. Under `open` the local policy stops
 narrowing: a command may reach exactly what the organization allows (its allowlist; any public host
 when the organization's egress is open; nothing when it is none). Loopback, private addresses and
-internal names stay refused. With nothing narrowing it, a command can upload files to any outside
+internal names stay refused. When the organization is open too, the program lets a command reach
+any public host only while a command started that way is running (the sandbox runtime cannot list
+"any host" per command, so it is allowed process-wide meanwhile; turning `network` back to
+`allowlist` takes effect at once). With nothing narrowing it, a command can upload files to any outside
 site the organization allows, and prompt injection can make an agent do that: turn it on only on
 your own development machine, with agents and material you trust.
 
@@ -130,8 +133,17 @@ and so is a refused attempt and the grants a command was given:
 {"op":"exec","detail":"grants run run_789 by acc_123: files.slack.com",...}
 ```
 
-Docker mode has no per-host view: it reports no refused hosts and ignores grants, but applies the
-`policy` operation to `policy.json` like OS mode.
+Docker mode has no per-domain allowlist (a container has either no network or the whole
+internet), so a Docker-mode device refuses every widening from the deployment ("This device runs
+commands in Docker mode, which cannot limit network access per domain; switch the device to OS mode
+to allow single domains."), reports no refused hosts and ignores grants; narrowing still applies.
+`capybara-device policy add allowedDomains` on a Docker-mode device warns that any allowed domain
+opens the whole internet.
+
+Limit to know: commands of one device run as the same user, and the sandbox runtime ties a
+command's list (including its run grants) to the proxy credentials it hands that command. Another
+command running at the same time on the same device could reuse them, so a run's grants may be
+usable by a concurrent command of another run on that device: same owner, same device.
 
 Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.

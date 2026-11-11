@@ -12,7 +12,7 @@ import {
   implicitWritePaths,
   srtConfig,
 } from "../src/policy.js";
-import { DEFAULT_POLICY, policyPath, readPolicy } from "../src/state.js";
+import { DEFAULT_POLICY, policyPath, readPolicy, writeCredential } from "../src/state.js";
 
 const limits = (egress: SandboxLimits["egress"], allowHosts: string[] = []): SandboxLimits => ({
   cpu: 1,
@@ -196,6 +196,35 @@ describe("policy command", () => {
     expect(run({ command: "policy", action: "show" })).toBe(0);
     expect(JSON.parse(out[0] ?? "")).toEqual(DEFAULT_POLICY);
     expect(out[1]).toMatch(/cpu and memoryMb are not enforced.*no local credentials/);
+  });
+
+  it("allowing a domain on a docker-mode device warns that it opens all network", () => {
+    const docker = {
+      url: "http://x.test",
+      connectUrl: "ws://x.test/device/connect",
+      credential: "cap_dev_x",
+      orgId: "o",
+      deviceId: "d",
+      dir: "/w",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1024,
+    };
+    writeCredential(dir, { ...docker, mode: "docker" });
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      0,
+    );
+    expect(out.join("\n")).toMatch(/Docker mode.*whole internet/);
+    out.length = 0;
+    expect(
+      run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
+    expect(out.join("\n")).not.toMatch(/Docker mode/);
+    writeCredential(dir, { ...docker, mode: "os" });
+    out.length = 0;
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      0,
+    );
+    expect(out.join("\n")).not.toMatch(/Docker mode/);
   });
 
   it("show prints network and remoteGrants", () => {

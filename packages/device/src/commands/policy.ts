@@ -1,7 +1,7 @@
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { PolicyStore } from "../policy-store.js";
-import { type Policy, policyPath } from "../state.js";
+import { type Policy, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
@@ -30,6 +30,21 @@ function ceiling(key: string, value: string): number | null {
     throw new Error(`${key} must be a positive number or none, got "${value}"`);
   }
   return n;
+}
+
+/** Shown when a docker-mode device is given an allowed domain. */
+export const DOCKER_NETWORK_NOTE =
+  "Note: this device runs commands in Docker mode, which cannot limit network access per " +
+  "domain: while any domain is allowed (and the organization allows network), commands reach " +
+  "the whole internet. Use OS mode to allow single domains.";
+
+/** Whether this machine is logged in in Docker mode (false when unknown). */
+function dockerMode(stateDir: string): boolean {
+  try {
+    return readCredential(stateDir)?.mode === "docker";
+  } catch {
+    return false;
+  }
 }
 
 /** The keys `add` and `remove` work on: the list fields. */
@@ -150,6 +165,9 @@ export function policyCommand(
   }
   for (const l of lines) out(l);
   out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next command.`);
+  if (key === "allowedDomains" && action !== "remove" && dockerMode(stateDir)) {
+    if (store.current().allowedDomains.length > 0) out(DOCKER_NETWORK_NOTE);
+  }
   if (key !== "allowedDomains") out(NOT_ENFORCED_NOTE);
   return 0;
 }
