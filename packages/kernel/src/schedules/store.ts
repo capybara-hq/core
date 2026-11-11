@@ -312,13 +312,22 @@ export class ScheduledTaskStore {
     return row ? toRun(row) : null;
   }
 
-  /** The task's latest run still `pending` or `running` (the overlap check); null when none. */
-  async latestNonTerminalRun(t: KernelSchemaDb, taskId: string): Promise<TaskRun | null> {
-    const row = await t
+  /**
+   * The task's latest run still `pending` or `running` (the overlap check), other than `exceptId`
+   * (the run being fired); null when none.
+   */
+  async latestNonTerminalRun(
+    t: KernelSchemaDb,
+    taskId: string,
+    exceptId?: string,
+  ): Promise<TaskRun | null> {
+    let q = t
       .selectFrom("scheduled_task_runs")
       .selectAll()
       .where("task_id", "=", taskId)
-      .where("status", "in", NON_TERMINAL)
+      .where("status", "in", NON_TERMINAL);
+    if (exceptId !== undefined) q = q.where("id", "!=", exceptId);
+    const row = await q
       .orderBy("scheduled_for", "desc")
       .orderBy("id", "desc")
       .limit(1)
@@ -326,13 +335,17 @@ export class ScheduledTaskStore {
     return row ? toRun(row) : null;
   }
 
-  /** Runs of the org fired at or after `since` (the `maxRunsPerHour` count; trial runs included). */
+  /**
+   * Runs of the org fired at or after `since` (the `maxRunsPerHour` count; trial runs included,
+   * skipped runs not: a run whose queued message a person removed was never run).
+   */
   async countFiredSince(t: KernelSchemaDb, orgId: string, since: Date): Promise<number> {
     const row = await t
       .selectFrom("scheduled_task_runs")
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
       .where("fired_at", ">=", since)
+      .where("status", "!=", "skipped")
       .executeTakeFirstOrThrow();
     return Number(row.n);
   }

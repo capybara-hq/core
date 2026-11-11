@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { CHANNEL_EXTENSION_POINT, type Channel } from "@capybara-hq/plugin-sdk";
+import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
+import type { Queue } from "bullmq";
 import { AgentLookup, type AgentView } from "../agents/agent-lookup.js";
 import { ConversationAccess } from "../conversations/access.js";
 import { readMessageContext } from "../conversations/message-context.js";
@@ -10,11 +11,13 @@ import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { isTimeZone } from "../time-zone.js";
 import { BUILTIN } from "../tools/builtin-names.js";
 import { isFixedAsk } from "../tools/policy.js";
@@ -27,6 +30,8 @@ import {
   scheduleNotFound,
   targetInvalid,
 } from "./errors.js";
+import { schedFireJob } from "./job-ids.js";
+import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
 import type {
@@ -161,6 +166,8 @@ export class ScheduledTasksService {
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
     @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "forAgent">,
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
+    /** "Run now" enqueues the fire job (consumed by the worker role). */
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
   ) {}
 
   @Transactional()
@@ -500,28 +507,48 @@ export class ScheduledTasksService {
     reason: SchedulePauseReason,
     by: string | null,
   ): Promise<void> {
-    const row = await t
-      .updateTable("scheduled_tasks")
-      .set({
-        status: "paused",
-        pause_reason: reason,
-        paused_by: by,
-        next_run_at: null,
-        updated_at: sql`now()`,
-      })
-      .where("id", "=", taskId)
-      .where("status", "=", "active")
-      .where("deleted_at", "is", null)
-      .returning(["org_id", "account_id"])
-      .executeTakeFirst();
-    if (!row) return;
-    await audit(t, {
-      actorAccountId: by,
-      orgId: row.org_id,
-      action: "schedule.paused",
-      target: taskId,
-      detail: { reason, creator: row.account_id },
+    await pauseTaskIn(t, taskId, reason, by);
+  }
+
+  /**
+   * "Run now" (spec §6), creator only: a task run for the request time, outside the schedule (no
+   * unique-key conflict with a tick, and `next_run_at` does not move), fired at once through the
+   * fire job after the commit. `trial`: an attended trial run whose approvals become the task's
+   * grants (§7). Counted in the rate limit like any run. An ended task cannot run.
+   */
+  @Transactional()
+  async runNow(
+    orgId: string,
+    accountId: string,
+    id: string,
+    opts: { trial: boolean },
+  ): Promise<TaskRun> {
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
+    const t = this.db.db;
+    const task = await this.lockOwn(orgId, accountId, role, id);
+    if (task.status === "ended") throw new ApiError("conflict", "This scheduled task has ended");
+    const settings = await readScheduleSettings(t, this.config, orgId);
+    if (!settings.enabled) throw scheduleDisabled();
+    const run = await this.store.insertRun(t, {
+      id: randomUUID(),
+      taskId: task.id,
+      orgId,
+      scheduledFor: new Date(),
+      trial: opts.trial,
     });
+    if (!run) throw new ApiError("conflict", "The task is being run; retry");
+    await audit(t, {
+      actorAccountId: accountId,
+      orgId,
+      action: "schedule.run_now",
+      target: task.id,
+      detail: { taskRunId: run.id, trial: opts.trial },
+    });
+    const job = schedFireJob(run.id);
+    afterCommit(async () => {
+      await this.maintenance.add(job.name, job.data, job.opts);
+    });
+    return run;
   }
 
   /** The live role of a member of the org; not a member → `schedule.not_found`. */

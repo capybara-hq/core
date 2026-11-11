@@ -5,6 +5,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
+import { releaseQueuedTaskRunIn } from "../schedules/run-tracker.js";
 import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
 import type { QuestionRecord } from "../tools/questions.service.js";
 import {
@@ -282,12 +283,14 @@ export class ConversationQueue {
     const t = this.db.db;
     const cur = await t
       .selectFrom("conversation_queue")
-      .select(["attachments", "files", "content", "skill"])
+      .select(["attachments", "files", "content", "skill", "schedule"])
       .where("id", "=", itemId)
       .where("conversation_id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
     if (!cur) throw itemNotFound();
+    // a person's words now: the task's run for this item will not happen (scheduled tasks §6)
+    await releaseQueuedTaskRunIn(t, cur.schedule);
     const skill = cur.skill as QueuedSkill | null;
     checkText(
       text,
@@ -337,9 +340,11 @@ export class ConversationQueue {
       .deleteFrom("conversation_queue")
       .where("id", "=", itemId)
       .where("conversation_id", "=", conversationId)
-      .returning("id")
+      .returning(["id", "schedule"])
       .executeTakeFirst();
     if (!gone) throw itemNotFound();
+    // a task's queued message deleted by a person: its run is skipped (scheduled tasks §6)
+    await releaseQueuedTaskRunIn(t, gone.schedule);
     await unpauseIfEmpty(t, conversationId);
   }
 
@@ -408,7 +413,8 @@ export class ConversationQueue {
       .executeTakeFirst();
     if (!row) throw itemNotFound();
     const sent = await alreadySent(t, conversationId, row.client_message_id);
-    // sent by a person: their message, not the task's
+    // sent by a person: their message, not the task's, whose run is skipped
+    await releaseQueuedTaskRunIn(t, row.schedule);
     const out = await appendQueuedIn(t, this.eventLog, conversationId, { ...row, schedule: null });
     await unpauseIfEmpty(t, conversationId);
     // sent during the run, the item is the author's message like a direct send: it skips the

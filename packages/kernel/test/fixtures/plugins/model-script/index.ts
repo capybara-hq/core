@@ -31,6 +31,7 @@ import { z } from "zod";
  * opened it ({@link openBarrier}) (in this process; `barrier timeout` after `timeoutMs`), which
  * proves that requests run concurrently or holds one until the test lets it go.
  * `usage` overrides fields of the reported usage (default 10 input and 5 output tokens).
+ * `fail` makes the request fail with a `ModelError` of that kind (after the barrier, if any).
  */
 const When = z.object({
   systemIncludes: z.string().optional(),
@@ -42,6 +43,7 @@ const When = z.object({
 
 const Reply = z.object({
   text: z.string().optional(),
+  fail: z.enum(["invalid_request", "auth"]).optional(),
   toolCalls: z.array(z.object({ name: z.string(), input: z.unknown() })).optional(),
   barrier: z
     .object({
@@ -248,6 +250,7 @@ export default defineExtension({
           if (signal.aborted) throw new ModelError("aborted", "Request aborted");
           text = "barrier timeout";
         }
+        if (reply.fail !== undefined) throw new ModelError(reply.fail, `Scripted ${reply.fail}`);
         const ids = agentIds(req);
         const calls = (reply.toolCalls ?? []).map((c) => ({
           type: "tool_call" as const,

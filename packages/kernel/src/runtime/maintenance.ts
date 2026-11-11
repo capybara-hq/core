@@ -22,6 +22,8 @@ import {
 } from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
+import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
+import { SCHED_FIRE_JOB, type SchedFireJobData } from "../schedules/job-ids.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -41,7 +43,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` and
  * `sandbox-reset-files` → {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
  * {@link DirectorySync}, `bg-wake` → {@link RunQueue.ensureRun}, `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link OwnedPluginCleanup}, `sched-fire` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -57,6 +59,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
+    @Inject(ScheduledTaskFirer) private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
@@ -113,6 +116,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case OWNED_PLUGIN_CLEANUP_JOB:
         await this.ownedCleanup.run((job.data as OwnedPluginCleanupData).itemId);
         return;
+      // one task run of a scheduled task (scheduled tasks spec §6)
+      case SCHED_FIRE_JOB:
+        await this.scheduledTasks.fire((job.data as SchedFireJobData).taskRunId);
+        return;
       default:
         if (await this.scheduled.runNow(job.name)) return;
         this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
@@ -146,6 +153,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     OrgsModule,
     // the removed org plugins' cleanup and its daily sweep (worker-only through this module)
     OwnedPluginCleanupModule,
+    // the scheduled task fire job and the scanner (worker-only through this module)
+    ScheduledTaskFireModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
