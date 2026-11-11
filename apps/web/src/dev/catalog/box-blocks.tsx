@@ -527,7 +527,7 @@ function checkListBlocks(): ReactNode {
             <Stack gap={4}>
               <LiveCheckList title="内置" rows={[GUIDE]} />
               <Text variant="small" tone="faint">
-                内置技能对每个智能体都生效，无需选择：模型按需加载。
+                内置技能对每个智能体都开启，不能关闭：模型按需加载。
               </Text>
             </Stack>
           </Stack>

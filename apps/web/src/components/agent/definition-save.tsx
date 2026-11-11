@@ -38,7 +38,7 @@ export interface DefinitionSave {
  * One definition section's save (agent profile design §3.2): `PATCH …/agents/:id` with the
  * section's definition and the version its first edit was made on, so a save over someone
  * else's newer version is a 409 with a reload, never a silent overwrite. A save invalidates the
- * agents list and the agent; it resolves once the agent was read again.
+ * agents list, the agent and the skill details; it resolves once the agent was read again.
  */
 export function useDefinitionSave(): DefinitionSave {
   const qc = useQueryClient();
@@ -50,7 +50,12 @@ export function useDefinitionSave(): DefinitionSave {
   const mutation = useAppMutation({
     fn: (input: { definition: AgentDefinitionSave; expectedVersion: number }) =>
       updateAgent(orgId, agent.id, input),
-    invalidates: () => [keys.org(orgId).agents(), keys.org(orgId).agent(agent.id)],
+    // a skill detail counts the agents that turn it off
+    invalidates: () => [
+      keys.org(orgId).agents(),
+      keys.org(orgId).agent(agent.id),
+      keys.org(orgId).skillAll(),
+    ],
   });
   const clear = () => {
     setBase(null);

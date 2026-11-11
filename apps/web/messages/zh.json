@@ -136,7 +136,6 @@
       "usage_unavailable": "用量统计耗时过长，请稍后重试。"
     },
     "agent": {
-      "pinned_invalid": "置顶技能无法保存：最多置顶 3 个已选中的技能，且它们的 SKILL.md 合计不超过 32 KB。",
       "subagents_invalid": "子智能体设置无法保存：请检查所列的模板、名称、工具、技能与智能体，且智能体类型最多 20 个。",
       "not_found": "智能体不存在或你无权访问。",
       "model_unavailable": "所选模型不可用。",
