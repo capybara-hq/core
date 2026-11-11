@@ -231,8 +231,29 @@ if (!(signal in constants.signals) || !m || argv.length < 2) {
   process.exit(125);
 }
 const ms = Number(m[1]) * { "": 1, s: 1, m: 60, h: 3600, d: 86400 }[m[2]] * 1000;
+// Like GNU timeout (without --foreground), a termination signal it receives goes on to its command
+// and to its whole process group. Without this, a pkill whose process list was read before the
+// command (or a process the command started) existed killed only what it had listed and left the
+// rest running in the session until the stop's grace period ran out. Installed before the spawn:
+// a signal that arrives first ends the shim before it starts anything.
+let child;
+let passedOn = false;
+for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.on(s, () => {
+    if (child === undefined) process.exit(128 + constants.signals[s]);
+    // the group signal reaches this shim too: pass it on once
+    if (passedOn) return;
+    passedOn = true;
+    try {
+      child.kill(s);
+    } catch {}
+    try {
+      process.kill(0, s);
+    } catch {}
+  });
+}
 // not detached: the command stays in this process group, so in the caller's session
-const child = spawn(argv[1], argv.slice(2), { stdio: "inherit" });
+child = spawn(argv[1], argv.slice(2), { stdio: "inherit" });
 let timedOut = false;
 child.on("error", (e) => {
   process.stderr.write("timeout: failed to run command " + argv[1] + ": " + e.message + "\\n");
