@@ -9,6 +9,7 @@ import type {
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { NetworkGrants, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets, sameRoots } from "./targets.js";
 
@@ -73,6 +74,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(NetworkGrants) private readonly grants: Pick<NetworkGrants, "forExec">,
   ) {}
 
   async createFileSystem(args: {
@@ -146,16 +148,26 @@ export class LocalDeviceProvider implements SandboxProvider {
     await this.relay.call(h.id, "killTagged", { tags }, { deadlineMs: OP_DEADLINE_MS, signal });
   }
 
+  /**
+   * Runs the command on the machine with the org's limits now (ruling R27) and, for a command of a
+   * run, the hosts the kernel allows that run beyond the local policy (network ask-to-allow spec
+   * §6.3; sent only when there are some). The device's report of refused hosts is re-layered
+   * against the limits this exec carried: the kernel never takes the device's word that the org
+   * allows a host (spec §4.1).
+   */
   async exec(h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]): Promise<ExecResult> {
     const { signal, ...rest } = args;
     signal.throwIfAborted();
-    const limits = await this.currentLimits(h.id);
+    const { orgId, limits } = await this.currentLimits(h.id);
+    const runId = rest.actor?.runId;
+    const grants = runId !== undefined ? await this.grants.forExec({ orgId, runId }) : undefined;
     signal.throwIfAborted();
+    let result: ExecResult;
     try {
-      return await this.relay.call(
+      result = await this.relay.call(
         h.id,
         "exec",
-        { ...rest, limits },
+        { ...rest, limits, ...(grants !== undefined && { grants }) },
         { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal },
       );
     } catch (e) {
@@ -166,6 +178,8 @@ export class LocalDeviceProvider implements SandboxProvider {
       }
       throw e;
     }
+    if (result.network?.blocked === undefined) return result;
+    return { ...result, network: { blocked: relayer(result.network.blocked, limits) } };
   }
 
   async readFile(
@@ -210,10 +224,10 @@ export class LocalDeviceProvider implements SandboxProvider {
     return this.relay.call(h.id, "stat", { path }, { deadlineMs: OP_DEADLINE_MS, signal });
   }
 
-  /** The org's effective limits now (ruling R27); a deleted device is not found. */
-  private async currentLimits(deviceId: string): Promise<SandboxLimits> {
+  /** The device's org and its effective limits now (ruling R27); a deleted device is not found. */
+  private async currentLimits(deviceId: string): Promise<{ orgId: string; limits: SandboxLimits }> {
     const orgId = await this.targets.orgOf(deviceId);
     if (orgId === null) throw deviceNotFound();
-    return this.sandbox.orgLimits(orgId);
+    return { orgId, limits: await this.sandbox.orgLimits(orgId) };
   }
 }

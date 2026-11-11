@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { ExtensionContext, KernelReq, SandboxLimits } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceExecGrants,
+  ExtensionContext,
+  KernelReq,
+  SandboxLimits,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +20,7 @@ import {
   LocalDeviceProvider,
   maxReadBytes,
 } from "../../src/local-devices/local-device-provider.js";
+import type { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import type { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
@@ -52,11 +58,19 @@ let orgLimits: SandboxLimits;
 let machineRoots: typeof ROOTS | null;
 let orgOfEnv: string | null;
 let maxFrameBytes: number;
+/** What `NetworkGrants.forExec` answers, and the calls it got. */
+let runGrants: DeviceExecGrants | undefined;
+let grantCalls: { orgId: string; runId: string }[];
+/** What the machine's exec answers. */
+let execResult: Record<string, unknown>;
 beforeEach(() => {
   orgLimits = LIMITS;
   machineRoots = ROOTS;
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
+  runGrants = undefined;
+  grantCalls = [];
+  execResult = EXEC_RESULT;
 });
 const EXEC_RESULT = { exitCode: 0, stdout: "ok", stderr: "", truncated: false, timedOut: false };
 const signal = () => AbortSignal.timeout(30_000);
@@ -76,7 +90,7 @@ function machine(): (req: KernelReq) => Answer {
       case "create":
         return { ok: true, result: { roots: ROOTS } };
       case "exec":
-        return { ok: true, result: EXEC_RESULT };
+        return { ok: true, result: execResult };
       case "writeFile":
         files.set(a.path as string, a.dataB64 as string);
         return { ok: true, result: null };
@@ -122,6 +136,12 @@ beforeAll(async () => {
     {
       get: () => ({ devices: { local: { maxFrameBytes } } }),
     } as unknown as KernelConfigService,
+    {
+      forExec: async (input) => {
+        grantCalls.push(input);
+        return runGrants;
+      },
+    } as Pick<NetworkGrants, "forExec">,
   );
 }, 120_000);
 afterAll(async () => {
@@ -294,6 +314,78 @@ describe("LocalDeviceProvider", () => {
     expect((h.frames[1] as KernelReq).args).toMatchObject({
       limits: { egress: "none", allowHosts: [] },
     });
+    await h.disconnect();
+  });
+
+  it("a run's exec carries its grants; none without hosts or without a run (P-D3)", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
+    const base = { command: "ls", timeoutMs: 1000, maxOutputBytes: 10, tag: "t" };
+    // no run: NetworkGrants is not asked, no grants are sent
+    await provider.exec(handle, {
+      ...base,
+      actor: { accountId: "a", conversationId: "c" },
+      signal: signal(),
+    });
+    expect(grantCalls).toEqual([]);
+    expect((h.frames[0] as KernelReq).args).not.toHaveProperty("grants");
+    // a run without grants: asked with the device's org, nothing sent
+    const actor = { accountId: "a", conversationId: "c", runId: "run-1" };
+    await provider.exec(handle, { ...base, actor, signal: signal() });
+    expect(grantCalls).toEqual([{ orgId: "org-1", runId: "run-1" }]);
+    expect((h.frames[1] as KernelReq).args).not.toHaveProperty("grants");
+    expect((h.frames[1] as KernelReq).args).toMatchObject({ actor });
+    // a run with grants: they travel with the exec
+    runGrants = {
+      hosts: ["files.slack.com"],
+      source: { kind: "run", id: "root-run", accountId: "owner" },
+    };
+    await provider.exec(handle, { ...base, actor, signal: signal() });
+    expect((h.frames[2] as KernelReq).args).toMatchObject({ grants: runGrants, limits: LIMITS });
+    await h.disconnect();
+  });
+
+  it("re-layers the device's refused hosts against the limits the exec carried (spec §4.1)", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
+    execResult = {
+      ...EXEC_RESULT,
+      network: {
+        blocked: [
+          // the org allows it: the device's word stands
+          { host: "example.com", port: 443, layer: "device" },
+          // the device claims the org allows it; the org does not
+          { host: "evil.example.net", port: 443, layer: "device" },
+          { host: "other.org", port: 80, layer: "org" },
+        ],
+      },
+    };
+    const r = await provider.exec(handle, {
+      command: "curl",
+      timeoutMs: 1000,
+      maxOutputBytes: 10,
+      tag: "t",
+      actor: { accountId: "a", conversationId: "c" },
+      signal: signal(),
+    });
+    expect(r.network?.blocked).toEqual([
+      { host: "example.com", port: 443, layer: "device" },
+      { host: "evil.example.net", port: 443, layer: "org" },
+      { host: "other.org", port: 80, layer: "org" },
+    ]);
+    // the org closes its egress before the next exec: every device-layer host is the org's
+    orgLimits = { ...LIMITS, egress: "none", allowHosts: [] };
+    const r2 = await provider.exec(handle, {
+      command: "curl",
+      timeoutMs: 1000,
+      maxOutputBytes: 10,
+      tag: "t",
+      actor: { accountId: "a", conversationId: "c" },
+      signal: signal(),
+    });
+    expect(r2.network?.blocked.map((b) => b.layer)).toEqual(["org", "org", "org"]);
     await h.disconnect();
   });
 

@@ -536,7 +536,12 @@ export async function inSandbox<T>(
         deviceId,
         // a sub-agent is told when another holder rebuilt the shared instance (final review m5)
         holderConversationId: ctx.conversationId,
-        actor: { accountId: ctx.accountId, conversationId: ctx.conversationId },
+        // the run routes its network grants to a connected device (network ask-to-allow P-D3)
+        actor: {
+          accountId: ctx.accountId,
+          conversationId: ctx.conversationId,
+          ...(ctx.runId !== undefined && { runId: ctx.runId }),
+        },
       },
       async (h, p, info, signal) => {
         const s: SandboxSession = { deviceId, h, roots: info.roots, p, signal };
