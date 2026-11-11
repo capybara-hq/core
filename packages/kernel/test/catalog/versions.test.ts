@@ -156,7 +156,10 @@ describe("stored packages (skills default-on)", () => {
     const tgz = await pluginTgz({
       manifest: {
         name: "old-pins",
-        skills: [{ path: "./skills/a", pinned: true }, { path: "./skills/b", pinned: false }],
+        skills: [
+          { path: "./skills/a", pinned: true },
+          { path: "./skills/b", pinned: false },
+        ],
       } as Partial<PluginManifest> & { name: string },
       files: { "skills/a/SKILL.md": SKILL_MD("a"), "skills/b/SKILL.md": SKILL_MD("b") },
     });
