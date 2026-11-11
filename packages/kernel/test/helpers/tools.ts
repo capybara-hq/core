@@ -123,7 +123,7 @@ export interface PipelineTestDeps {
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
-  approvals: Pick<ApprovalsService, "request" | "forCall">;
+  approvals: Pick<ApprovalsService, "request" | "forCall" | "networkForCall" | "requestNetwork">;
   questions: Pick<QuestionsService, "ask" | "forCall">;
   config: () => unknown;
   log: Logger;

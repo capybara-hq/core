@@ -3,12 +3,17 @@ import {
   connectorToolKey,
   type LocalizedName,
   parseToolKey,
+  type ToolDisplay,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
-import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
+import {
+  NETWORK_ASK_MAX_HOSTS,
+  NETWORK_HOST_MAX_CHARS,
+  type ToolView,
+} from "../conversations/events.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -57,8 +62,18 @@ export interface NetworkAskDetail {
   hosts: { host: string; port: number }[];
   command: string;
   description: string | null;
-  /** The formatted `tool_result` of the command (≤ 16 KB; larger output already archived). */
-  result: { content: string; isError: boolean };
+  /**
+   * The formatted `tool_result` of the command (≤ 16 KB; larger output already archived), and the
+   * display-only fields the pipeline writes with it when the ask settles.
+   */
+  result: {
+    content: string;
+    isError: boolean;
+    outputId?: string;
+    contentTypes?: string[];
+    display?: ToolDisplay;
+    view?: ToolView;
+  };
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
   /** What took effect: a run grant, the device's policy, or a run grant because the device did not apply it. */

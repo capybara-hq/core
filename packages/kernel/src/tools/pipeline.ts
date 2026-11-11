@@ -5,6 +5,7 @@ import {
   type InputForm,
   type InputRequired,
   type Logger,
+  type NetworkBlockedHost,
   parseToolKey,
   type ToolDisplay,
   ToolError,
@@ -27,6 +28,8 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { DevicePolicyService } from "../local-devices/device-policy.service.js";
+import { NetworkGrants } from "../local-devices/network-grants.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
@@ -56,7 +59,12 @@ import {
   unattendedRunOf,
 } from "../schedules/unattended.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
-import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
+import {
+  type ApprovalRecord,
+  type ApprovalScope,
+  ApprovalsService,
+  type NetworkAskDetail,
+} from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
@@ -68,6 +76,15 @@ import { type ConnectorAuth, CredentialMissing, Credentials } from "./credential
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import { type LegacyScope, legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
+import {
+  blockedEventHosts,
+  clipKept,
+  NETWORK_ASK_KEPT_MAX_BYTES,
+  networkBlockedIdemKey,
+  planNetworkAsk,
+  settledNetworkNotes,
+  withNetworkNotes,
+} from "./network-asks.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy, type GrantKind } from "./policy.js";
@@ -308,8 +325,11 @@ interface PipelineDeps {
   readonly credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   readonly breaker: Pick<Breaker, "check" | "failure" | "success">;
   readonly outputs: Pick<ToolOutputs, "save" | "load">;
-  /** 策略为 `ask` 时建审批；续跑时读该调用的审批结果。 */
-  readonly approvals: Pick<ApprovalsService, "request" | "forCall">;
+  /** 策略为 `ask` 时建审批；续跑时读该调用的审批结果。 A refused network host: a network ask. */
+  readonly approvals: Pick<
+    ApprovalsService,
+    "request" | "forCall" | "networkForCall" | "requestNetwork"
+  >;
   /** 处理函数返回 `input_required` 时建输入请求；续跑时读该调用的各轮输入请求。 */
   readonly questions: Pick<QuestionsService, "ask" | "forCall">;
   readonly log: Logger;
@@ -348,6 +368,17 @@ interface PipelineDeps {
    * it, their calls reach the builtins' guards, which refuse them.
    */
   readonly messages: Pick<SubagentMessages, "toChild" | "toParent"> | undefined;
+  /**
+   * What a command's refused network hosts need (network ask-to-allow spec §6.2): the run tree's
+   * network asks and the device's features and policy summary. Without them (hand-built test
+   * pipelines) a report only writes `network_blocked`.
+   */
+  readonly network:
+    | {
+        grants: Pick<NetworkGrants, "runState">;
+        devices: Pick<DevicePolicyService, "summary">;
+      }
+    | undefined;
 }
 
 /** The sub-agent dispatch the pipeline calls (`SubagentsService.dispatch`). */
@@ -482,6 +513,35 @@ function withNotes(result: unknown, notes: readonly string[]): unknown {
 
 type Resolved = AgentTools;
 
+/** A network ask's kept display fields, written with its result when the ask settles. */
+const keptExtras = (kept: NetworkAskDetail["result"] | undefined) => ({
+  ...(kept?.outputId !== undefined && { outputId: kept.outputId }),
+  ...(kept?.contentTypes !== undefined && { contentTypes: kept.contentTypes }),
+  ...(kept?.display !== undefined && { display: kept.display }),
+  ...(kept?.view !== undefined && { view: kept.view }),
+});
+
+/** A builtin result's kernel-internal network report (see `BuiltinResult.networkReport`). */
+function networkReportOf(
+  result: unknown,
+): { deviceId: string; blocked: NetworkBlockedHost[] } | undefined {
+  const r = (result as { networkReport?: unknown } | null)?.networkReport as
+    | { deviceId?: unknown; blocked?: unknown }
+    | undefined;
+  if (r === undefined || typeof r.deviceId !== "string" || !Array.isArray(r.blocked)) {
+    return undefined;
+  }
+  const blocked = r.blocked.filter(
+    (b): b is NetworkBlockedHost =>
+      typeof b === "object" &&
+      b !== null &&
+      typeof (b as NetworkBlockedHost).host === "string" &&
+      typeof (b as NetworkBlockedHost).port === "number" &&
+      ["device", "org", "address", "unknown"].includes((b as NetworkBlockedHost).layer),
+  );
+  return blocked.length === 0 ? undefined : { deviceId: r.deviceId, blocked };
+}
+
 /** 审批的等待时长（小时，四舍五入，至少 1）。 */
 const approvalHours = (a: ApprovalRecord): number =>
   Math.max(
@@ -523,7 +583,8 @@ export class ToolPipeline {
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
     @Inject(ToolOutputs) outputs: Pick<ToolOutputs, "save" | "load">,
-    @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "request" | "forCall">,
+    @Inject(ApprovalsService)
+    approvals: Pick<ApprovalsService, "request" | "forCall" | "networkForCall" | "requestNetwork">,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "ask" | "forCall">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) log: Logger,
@@ -534,6 +595,8 @@ export class ToolPipeline {
     @Inject(OrgToolSwitches) switches: Pick<OrgToolSwitches, "isToolOff">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Optional() @Inject(TOOL_PIPELINE_HOOKS) hooks?: ToolPipelineHooks,
+    @Optional() @Inject(NetworkGrants) networkGrants?: Pick<NetworkGrants, "runState">,
+    @Optional() @Inject(DevicePolicyService) devicePolicy?: Pick<DevicePolicyService, "summary">,
   ) {
     this.deps = {
       get db() {
@@ -570,6 +633,10 @@ export class ToolPipeline {
         return subagents ? { dispatch: (a: DispatchArgs) => subagents.dispatch(a) } : undefined;
       },
       messages,
+      network:
+        networkGrants && devicePolicy
+          ? { grants: networkGrants, devices: devicePolicy }
+          : undefined,
     };
     const decide = hooks?.decidePolicy;
     // the default policy reads live, on the context's handle
@@ -677,6 +744,21 @@ export class ToolPipeline {
       idem.started(ctx.runId, call.id, attempt),
     );
     if (started?.type === "tool_call_started") {
+      // a command that ran and was refused a network host waits for the device owner (network
+      // ask-to-allow spec §6.2, P-D2): pending → wait on; settled → its kept result and the
+      // outcome's note (the command is never run again; its tool.called was audited when it ran)
+      const ask = await this.deps.approvals.networkForCall(ctx.runId, call.id);
+      if (ask !== null) {
+        const notes = settledNetworkNotes(ask, approvalHours(ask));
+        if (notes === null) return approvalWait(ask);
+        const kept = ask.detail?.result;
+        await this.writeResult(ctx, call.id, call.name, {
+          ...keptExtras(kept),
+          content: withNetworkNotes(kept?.content ?? UNKNOWN_RESULT_TEXT, notes),
+          isError: kept?.isError ?? true,
+        });
+        return undefined;
+      }
       // 确实开始执行过：照样审计 tool.called（耗时未知）；放行依据只认批准了所执行定义的审批记录
       const key = started.payload.toolKey;
       const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
@@ -1105,12 +1187,50 @@ export class ToolPipeline {
             },
           ]
         : [];
+    const callAudit: CallAudit = {
+      durationMs,
+      connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
+      authorization,
+    };
+    // a foreground command refused network hosts (network ask-to-allow spec §6.2): display-only
+    // `network_blocked` before the result, then an ask to the device owner (the run waits; the
+    // result is written when the ask settles) or notes after the output
+    const report =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? networkReportOf(outcome.result)
+        : undefined;
+    let content = spilled.content;
+    if (report !== undefined) {
+      const handled = await this.networkBlocked(ctx, call.id, outKey, input, report, callAudit, {
+        text: rendered.text,
+        content: spilled.content,
+        isError: rendered.isError,
+        ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
+        ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
+        ...(display !== undefined && { display }),
+        ...(view !== undefined && { view }),
+      });
+      if (handled.kind === "wait") {
+        if (hooks && hookBase) {
+          fireObserve(
+            hooks,
+            "tool.postExecute",
+            { ...hookBase, isError: rendered.isError, content: handled.content, durationMs },
+            ctx.signal,
+            this.deps.log,
+          );
+        }
+        return handled.wait;
+      }
+      if (handled.event !== null) pre.push(handled.event);
+      content = withNetworkNotes(content, handled.notes);
+    }
     await this.writeResult(
       ctx,
       call.id,
       outKey,
       {
-        content: spilled.content,
+        content,
         isError: rendered.isError,
         ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
@@ -1120,11 +1240,7 @@ export class ToolPipeline {
         ...(card !== undefined && { card }),
       },
       pre,
-      {
-        durationMs,
-        connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
-        authorization,
-      },
+      callAudit,
     );
     // a sub-agent that needs a personal connection: mirrored in the root conversation of its tree
     // for display (sub-agents spec §9, agent map spec §7; not a wait, the child got the connect
@@ -1141,12 +1257,118 @@ export class ToolPipeline {
       fireObserve(
         hooks,
         "tool.postExecute",
-        { ...hookBase, isError: rendered.isError, content: spilled.content, durationMs },
+        { ...hookBase, isError: rendered.isError, content, durationMs },
         ctx.signal,
         this.deps.log,
       );
     }
     return undefined;
+  }
+
+  /**
+   * A foreground command's refused network hosts (network ask-to-allow spec §6.2, §6.8, §8.3):
+   * the `network_blocked` event, the missing grants of an unattended run, and either notes for the
+   * result written now, or (device-layer hosts worth asking) `network_blocked` and the call's
+   * `tool.called` audit written now, the result kept in a network ask to the device's owner and
+   * the run's wait. The kept result is the formatted one (≤ 16 KB: larger output is archived)
+   * followed by the notes written now; it is written with the decision's note when the ask
+   * settles (P-D2).
+   */
+  private async networkBlocked(
+    ctx: ToolStepContext,
+    callId: string,
+    toolKey: string,
+    input: unknown,
+    report: { deviceId: string; blocked: NetworkBlockedHost[] },
+    callAudit: CallAudit,
+    result: NetworkAskDetail["result"] & { text: string },
+  ): Promise<
+    | { kind: "wait"; wait: WaitingFor; content: string }
+    | { kind: "write"; event: AppendEvent | null; notes: string[] }
+  > {
+    const hosts = blockedEventHosts(report.blocked);
+    if (hosts.length === 0) return { kind: "write", event: null, notes: [] };
+    const event: AppendEvent = {
+      type: "network_blocked",
+      runId: ctx.runId,
+      idemKey: networkBlockedIdemKey(ctx.runId, callId),
+      payload: { step: ctx.step, callId, hosts },
+    };
+    const network = this.deps.network;
+    if (network === undefined) return { kind: "write", event, notes: [] };
+    const device = await network.devices.summary(report.deviceId);
+    const run = hosts.some((h) => h.layer === "device")
+      ? await network.grants.runState(ctx.runId)
+      : null;
+    const plan = planNetworkAsk(hosts, run, { device, unattended: ctx.unattended });
+    if (ctx.unattended != null) {
+      for (const key of plan.missingGrants) {
+        await appendMissingGrant(this.deps.db, ctx.unattended.taskRunId, key);
+      }
+    }
+    if (plan.ask.length === 0) return { kind: "write", event, notes: plan.notes };
+    // the device's owner is the only person who may decide (spec §5.2)
+    const owner = await this.deps.db
+      .selectFrom("devices")
+      .select("owner_account_id")
+      .where("id", "=", report.deviceId)
+      .where("org_id", "=", ctx.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (owner === undefined) return { kind: "write", event, notes: plan.notes };
+
+    let { content, outputId } = result;
+    if (Buffer.byteLength(content, "utf8") > NETWORK_ASK_KEPT_MAX_BYTES && outputId === undefined) {
+      // output under the spill threshold but over what an ask keeps: archive it after all
+      const spilled = await spillIfLarge(
+        result.text,
+        { spillChars: 0, previewChars: this.config.get().tools.outputPreviewChars },
+        (c) =>
+          this.deps.outputs.save({
+            orgId: ctx.orgId,
+            conversationId: ctx.conversationId,
+            callId,
+            content: c,
+          }),
+      );
+      content = spilled.content;
+      outputId = spilled.outputId;
+    }
+    const { text: _text, ...rest } = result;
+    const kept: NetworkAskDetail["result"] = {
+      ...rest,
+      content: withNetworkNotes(clipKept(content), plan.notes),
+      ...(outputId !== undefined && { outputId }),
+    };
+    // the command ran: network_blocked and its tool.called now, the result once the ask settles
+    const written = await this.writeResultIn(
+      ctx,
+      callId,
+      toolKey,
+      { isError: result.isError },
+      [event],
+      callAudit,
+      [],
+    );
+    await this.deps.eventLog.notify(ctx.conversationId, Math.max(...written.map((e) => e.seq)));
+    const given = (input ?? {}) as { command?: unknown; description?: unknown };
+    const ask = await this.deps.approvals.requestNetwork({
+      orgId: ctx.orgId,
+      conversationId: ctx.conversationId,
+      runId: ctx.runId,
+      step: ctx.step,
+      callId,
+      requestedFor: owner.owner_account_id,
+      detail: {
+        deviceId: report.deviceId,
+        hosts: plan.ask,
+        command: typeof given.command === "string" ? clipText(given.command, 2000) : "",
+        description: typeof given.description === "string" ? given.description : null,
+        result: kept,
+      },
+      scopes: plan.scopes,
+    });
+    return { kind: "wait", wait: approvalWait(ask), content: kept.content };
   }
 
   /** Appends a sub-agent's connect card to its root conversation ({@link rootSurfaceOf}). */
