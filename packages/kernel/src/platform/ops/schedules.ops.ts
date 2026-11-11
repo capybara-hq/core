@@ -179,7 +179,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.create",
         description:
-          "Create a scheduled task: an agent runs the prompt on a 5-field cron (or once at a local date-time) as you, unattended. The task's time zone is yours; timeZone is only the fallback when you have none set. mode: new (a conversation per run), conversation (post into one conversation) or chat (an IM chat). model is { provider, model } like an agent definition's. grants pre-approve tools the unattended run may use. The person confirms every creation; it is never remembered.",
+          "Create a scheduled task: an agent runs the prompt on a 5-field cron (or once at a local date-time) as you, unattended. The task's time zone is yours; timeZone is only the fallback when you have none set. mode: new (a conversation per run), conversation (post into one conversation) or chat (an IM chat). model ({ provider, model } like an agent definition's), effort and deviceId are for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron task ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use. The person confirms every creation; it is never remembered.",
         input: CreateBody,
         example: {
           agentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
@@ -228,7 +228,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.update",
         description:
-          "Change one of your own scheduled tasks (name, prompt, schedule, time zone, target, model, effort, device, expiry; null clears an optional field). Only the creator can; an org admin can pause it instead. The person confirms every change; it is never remembered. Takes the id from schedules.list.",
+          "Change one of your own scheduled tasks (name, prompt, schedule, time zone, target, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron task takes the org's default expiry when set). model, effort and deviceId are for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. The person confirms every change; it is never remembered. Takes the id from schedules.list.",
         input: UpdateBody.extend({ scheduleId: Id }).strict(),
         example: { scheduleId: EXAMPLE_ID, prompt: "Summarize the last two days." },
         authz: { orgAction: "schedules.use" },

@@ -276,13 +276,14 @@ export class ScheduledTaskFirer {
       localTime: localTimeOf(run.scheduledFor, task.trigger.timeZone),
     };
     const internal = { schedule: marker, timeZoneOverride: task.trigger.timeZone };
-    const model = task.model ?? undefined;
-    const pick = {
-      ...(model !== undefined && { model }),
-      ...(task.effort !== null && { effort: task.effort }),
-    };
     try {
       if (plan.mode === "new") {
+        // model and effort are a new-conversation task's only (spec §4): a conversation or chat
+        // task runs with that conversation's selection, never switching it for a person
+        const pick = {
+          ...(task.model !== null && { model: task.model }),
+          ...(task.effort !== null && { effort: task.effort }),
+        };
         const out = await this.conversations.createWithMessage(
           task.orgId,
           task.accountId,
@@ -308,7 +309,7 @@ export class ScheduledTaskFirer {
         task.orgId,
         conversationId,
         task.accountId,
-        { text: task.prompt, clientMessageId: scheduledClientMessageId(run.id), ...pick },
+        { text: task.prompt, clientMessageId: scheduledClientMessageId(run.id) },
         internal,
       );
     } catch (e) {
@@ -363,7 +364,8 @@ export class ScheduledTaskFirer {
           task.orgId,
           task.accountId,
           task.agentId,
-          task.deviceId === null ? { im: true } : { deviceId: task.deviceId },
+          // a chat task takes no device (new mode only): an IM conversation's default
+          { im: true },
         );
         await t
           .updateTable("conversations")
@@ -406,7 +408,8 @@ export class ScheduledTaskFirer {
       task.orgId,
       task.accountId,
       task.agentId,
-      task.deviceId === null ? { im: true } : { deviceId: task.deviceId },
+      // a chat task takes no device (new mode only): an IM conversation's default
+      { im: true },
     );
     await t
       .updateTable("conversations")

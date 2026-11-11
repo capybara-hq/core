@@ -567,6 +567,80 @@ describe("ScheduledTasksService", () => {
     expect(await codeOf(svc.resume(orgId, me(aliceId), t.id))).toBe("forbidden");
   });
 
+  it("model, effort and device are for new-conversation tasks only, and must resolve", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const fake1 = { provider: "model-fake", model: "fake-1" };
+    const inConv = daily({ mode: "conversation", conversationId: conv });
+    // a conversation or chat task runs with that conversation's selection and device
+    for (const over of [{ model: fake1 }, { effort: "high" }, { deviceId: randomUUID() }]) {
+      expect(await codeOf(svc.create(orgId, aliceId, { ...inConv, ...over }))).toBe(
+        "validation_failed",
+      );
+    }
+    // a new-conversation task: the model must resolve and offer the effort
+    expect(
+      await codeOf(
+        svc.create(orgId, aliceId, daily({ model: { provider: "model-fake", model: "nope" } })),
+      ),
+    ).toBe("agent.model_unavailable");
+    expect(await codeOf(svc.create(orgId, aliceId, daily({ effort: "xhigh" })))).toBe(
+      "validation_failed",
+    );
+    const t = await svc.create(orgId, aliceId, daily({ model: fake1, effort: "high" }));
+    expect(t).toMatchObject({ model: fake1, effort: "high" });
+    expect(await codeOf(svc.update(orgId, aliceId, t.id, { effort: "xhigh" }))).toBe(
+      "validation_failed",
+    );
+    // switching to a conversation clears them; setting them there is refused
+    const moved = await svc.update(orgId, aliceId, t.id, {
+      mode: "conversation",
+      conversationId: conv,
+    });
+    expect(moved).toMatchObject({ mode: "conversation", model: null, effort: null });
+    expect(await codeOf(svc.update(orgId, aliceId, t.id, { model: fake1 }))).toBe(
+      "validation_failed",
+    );
+    expect(await codeOf(svc.update(orgId, aliceId, t.id, { effort: "low" }))).toBe(
+      "validation_failed",
+    );
+    // clearing is always fine
+    expect(
+      (await svc.update(orgId, aliceId, t.id, { model: null, effort: null })).model,
+    ).toBeNull();
+  });
+
+  it("update with a null expiry falls back to the org default for a cron task", async () => {
+    const t = await svc.create(orgId, aliceId, daily());
+    expect(t.expiresAt).toBeNull();
+    await setSchedules({ defaultExpiryDays: 7 });
+    const before = Date.now();
+    const u = await svc.update(orgId, aliceId, t.id, { expiresAt: null });
+    const ms = (u.expiresAt?.getTime() ?? 0) - before;
+    expect(ms).toBeGreaterThanOrEqual(7 * 86_400_000 - 1000);
+    expect(ms).toBeLessThan(7 * 86_400_000 + 60_000);
+    // a one-off task has no default expiry
+    const once = await svc.create(
+      orgId,
+      aliceId,
+      daily({ trigger: { kind: "once", at: "2030-01-01T09:00" } }),
+    );
+    expect((await svc.update(orgId, aliceId, once.id, { expiresAt: null })).expiresAt).toBeNull();
+  });
+
+  it("a creator demoted to guest still lists, pauses and deletes their own tasks", async () => {
+    const t = await svc.create(orgId, aliceId, daily());
+    await db
+      .updateTable("memberships")
+      .set({ role: "guest" })
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", aliceId)
+      .execute();
+    expect((await svc.list(orgId, me(aliceId))).map((x) => x.id)).toEqual([t.id]);
+    expect((await svc.pause(orgId, me(aliceId), t.id)).status).toBe("paused");
+    await svc.remove(orgId, me(aliceId), t.id);
+    expect(await svc.list(orgId, me(aliceId))).toEqual([]);
+  });
+
   it("pauseFor pauses an active task once, with the reason", async () => {
     const t = await svc.create(orgId, aliceId, daily());
     await svc.pauseFor(db, t.id, "agent_gone", null);

@@ -19,6 +19,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { ProviderRegistry } from "../runtime/providers.js";
 import { isTimeZone } from "../time-zone.js";
 import { BUILTIN } from "../tools/builtin-names.js";
 import { isFixedAsk } from "../tools/policy.js";
@@ -86,6 +87,10 @@ export interface CreateTaskInput {
   conversationId?: string;
   /** `chat` mode only. */
   chat?: ScheduleChat;
+  /**
+   * `new` mode only (a conversation or chat task runs with that conversation's selection and
+   * device): the model, which must resolve for the org, and an effort it declares.
+   */
   model?: ModelRef;
   effort?: string;
   deviceId?: string;
@@ -97,7 +102,10 @@ export interface CreateTaskInput {
   grants?: GrantInput[];
 }
 
-/** Fields to change; `null` clears an optional one. Grants change through their own methods. */
+/**
+ * Fields to change; `null` clears an optional one (`expiresAt: null` is the org's default expiry
+ * for a cron task, as on create). Grants change through their own methods.
+ */
 export interface UpdateTaskInput {
   agentId?: string;
   name?: string;
@@ -270,6 +278,8 @@ export class ScheduledTasksService {
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
     @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "forAgent">,
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
+    /** A task's model must resolve for the org and declare its effort (as a message's switch). */
+    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     /** "Run now" enqueues the fire job (consumed by the worker role). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
   ) {}
@@ -319,13 +329,13 @@ export class ScheduledTasksService {
       chat: input.chat ?? null,
     };
     await this.checkTarget(orgId, accountId, agent.id, target);
-    if (input.deviceId !== undefined) await this.checkDevice(orgId, accountId, input.deviceId);
-    const expiresAt =
-      input.expiresAt != null
-        ? checkExpiry(input.expiresAt, now)
-        : trigger.kind === "cron" && settings.defaultExpiryDays !== null
-          ? new Date(now.getTime() + settings.defaultExpiryDays * DAY_MS)
-          : null;
+    const pick = {
+      model: input.model ?? null,
+      effort: input.effort ?? null,
+      deviceId: input.deviceId ?? null,
+    };
+    await this.checkPick(orgId, accountId, agent, target.mode, pick);
+    const expiresAt = expiryOf(input.expiresAt ?? null, trigger, now, settings);
     const grants = await this.resolveGrants(orgId, role, agent, settings, input.grants ?? []);
     const id = randomUUID();
     const jitter = jitterForGap(id, gap);
@@ -338,9 +348,7 @@ export class ScheduledTasksService {
       prompt,
       trigger,
       ...target,
-      model: input.model ?? null,
-      effort: input.effort ?? null,
-      deviceId: input.deviceId ?? null,
+      ...pick,
       status: "active",
       nextRunAt: fireAt(trigger, now, jitter),
       jitterSeconds: jitter,
@@ -383,8 +391,10 @@ export class ScheduledTasksService {
     }
 
     const agentId = patch.agentId ?? task.agentId;
+    let newAgent: AgentView | undefined;
     if (patch.agentId !== undefined && patch.agentId !== task.agentId) {
       const agent = await this.agents.get(orgId, patch.agentId, accountId);
+      newAgent = agent;
       changes.agentId = agent.id;
       // the grants were approved for the old agent's tools: each must hold for the new agent
       // too (refused, so the creator sees which), and takes the new agent's definition
@@ -432,13 +442,41 @@ export class ScheduledTasksService {
         changes.nextRunAt = fireAt(trigger, now, changes.jitterSeconds);
       }
     }
-    if (patch.model !== undefined) changes.model = patch.model;
-    if (patch.effort !== undefined) changes.effort = patch.effort;
-    if (patch.deviceId !== undefined) {
-      if (patch.deviceId !== null) await this.checkDevice(orgId, accountId, patch.deviceId);
-      changes.deviceId = patch.deviceId;
+    // model, effort and device: `new` mode only (leaving it clears them), checked when they or
+    // the agent change
+    const pick =
+      target.mode === "new"
+        ? {
+            model: patch.model !== undefined ? patch.model : task.model,
+            effort: patch.effort !== undefined ? patch.effort : task.effort,
+            deviceId: patch.deviceId !== undefined ? patch.deviceId : task.deviceId,
+          }
+        : {
+            model: patch.model ?? null,
+            effort: patch.effort ?? null,
+            deviceId: patch.deviceId ?? null,
+          };
+    const pickChanged =
+      patch.model !== undefined ||
+      patch.effort !== undefined ||
+      patch.deviceId !== undefined ||
+      targetChanged;
+    if (pickChanged) {
+      await this.checkPick(
+        orgId,
+        accountId,
+        newAgent ?? (await this.agents.get(orgId, agentId, accountId)),
+        target.mode,
+        pick,
+        patch.deviceId !== undefined,
+      );
+      if (pick.model !== task.model) changes.model = pick.model;
+      if (pick.effort !== task.effort) changes.effort = pick.effort;
+      if (pick.deviceId !== task.deviceId) changes.deviceId = pick.deviceId;
     }
-    if (patch.expiresAt !== undefined) changes.expiresAt = checkExpiry(patch.expiresAt, now);
+    if (patch.expiresAt !== undefined) {
+      changes.expiresAt = expiryOf(patch.expiresAt, changes.trigger ?? task.trigger, now, settings);
+    }
 
     const updated = (await this.store.updateTask(t, task.id, changes)) ?? task;
     await audit(t, {
@@ -1099,6 +1137,48 @@ export class ScheduledTasksService {
     return (entry?.impl as Channel | undefined)?.features;
   }
 
+  /**
+   * A task's model, effort and device (spec §4): `new` mode only, since a conversation or chat
+   * task runs with that conversation's selection and device (a task must not switch a person's
+   * conversation for their later turns), so another mode refuses them (`validation_failed`).
+   * The model must resolve for the org (`agent.model_unavailable`, as a message's switch) and
+   * declare the effort (`validation_failed`); the device must be one of the creator's
+   * (`checkDevice`, when `deviceChanged`).
+   */
+  private async checkPick(
+    orgId: string,
+    accountId: string,
+    agent: AgentView,
+    mode: ScheduleMode,
+    pick: { model: ModelRef | null; effort: string | null; deviceId: string | null },
+    deviceChanged = true,
+  ): Promise<void> {
+    if (mode !== "new") {
+      if (pick.model !== null || pick.effort !== null || pick.deviceId !== null) {
+        throw new ApiError(
+          "validation_failed",
+          "Only a task that starts new conversations takes a model, effort or device; a conversation or chat task runs with that conversation's",
+        );
+      }
+      return;
+    }
+    if (pick.model !== null || pick.effort !== null) {
+      const { info } = await this.providers.resolve(orgId, pick.model ?? agent.definition.model);
+      if (pick.effort !== null) {
+        const knob = info.parameters.find((p) => p.key === "effort");
+        const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
+        if (!values.includes(pick.effort)) {
+          throw new ApiError("validation_failed", "Request validation failed", [
+            { path: "effort", message: `The model does not offer effort "${pick.effort}"` },
+          ]);
+        }
+      }
+    }
+    if (pick.deviceId !== null && deviceChanged) {
+      await this.checkDevice(orgId, accountId, pick.deviceId);
+    }
+  }
+
   /** The device is one of the creator's live personal devices in the org. */
   private async checkDevice(orgId: string, accountId: string, deviceId: string): Promise<void> {
     const row = await this.db
@@ -1209,6 +1289,23 @@ function checkTrigger(
 function fireAt(t: ScheduleTrigger, now: Date, jitter: number): Date | null {
   const tick = nextTick(t, now);
   return tick === null ? null : new Date(tick.getTime() + jitter * 1000);
+}
+
+/**
+ * A task's expiry: an explicit one must lie in the future; null (not given) is now + the org's
+ * `defaultExpiryDays` for a cron task when the org sets one, else never. The same on create and
+ * update, so a creator cannot clear the org's expiry policy by sending null.
+ */
+function expiryOf(
+  v: Date | null,
+  trigger: ScheduleTrigger,
+  now: Date,
+  settings: EffectiveScheduleSettings,
+): Date | null {
+  if (v !== null) return checkExpiry(v, now);
+  return trigger.kind === "cron" && settings.defaultExpiryDays !== null
+    ? new Date(now.getTime() + settings.defaultExpiryDays * DAY_MS)
+    : null;
 }
 
 /** An expiry must lie in the future; null = never. */

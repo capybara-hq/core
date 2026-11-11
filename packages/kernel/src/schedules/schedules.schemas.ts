@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ModelRef } from "../agents/definition.js";
+import type { ModelRef } from "../agents/definition.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { IanaTimeZone } from "../time-zone.js";
@@ -29,15 +29,13 @@ export const ScheduleChatInput = z
   })
   .strict();
 
-/** A model pick: the same `{ provider, model }` an agent's definition uses (strings bounded). */
-export const ScheduleModel = ModelRef.strict().refine(
-  (m) =>
-    m.provider.length >= 1 &&
-    m.provider.length <= 100 &&
-    m.model.length >= 1 &&
-    m.model.length <= 200,
-  "provider is 1-100 and model 1-200 characters",
-);
+/**
+ * A model pick: the same `{ provider, model }` an agent's definition uses, its strings bounded on
+ * the fields (so the JSON schema shows the bounds). `new` mode only.
+ */
+export const ScheduleModel = z
+  .object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })
+  .strict() satisfies z.ZodType<ModelRef>;
 
 export const ScheduleEffort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 
@@ -64,6 +62,7 @@ export const ScheduleCreateBody = z
     mode: Mode,
     conversationId: Id.optional(),
     chat: ScheduleChatInput.optional(),
+    /** `new` mode only, as `effort` and `deviceId` (a conversation or chat task uses its own). */
     model: ScheduleModel.optional(),
     effort: ScheduleEffort.optional(),
     deviceId: Id.optional(),
@@ -83,9 +82,11 @@ export const ScheduleUpdateBody = z
     mode: Mode.optional(),
     conversationId: Id.nullable().optional(),
     chat: ScheduleChatInput.nullable().optional(),
+    /** `new` mode only; switching to another mode clears them. */
     model: ScheduleModel.nullable().optional(),
     effort: ScheduleEffort.nullable().optional(),
     deviceId: Id.nullable().optional(),
+    /** Null: the org's default expiry for a cron task (as on create), else never. */
     expiresAt: ExpiresAt.nullable().optional(),
   })
   .strict();

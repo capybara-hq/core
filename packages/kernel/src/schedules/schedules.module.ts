@@ -5,6 +5,7 @@ import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { ProvidersModule } from "../runtime/providers.js";
 import { ScheduleToolsPort } from "../tools/builtins/schedules.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { ScheduledTasksService } from "./scheduled-tasks.service.js";
@@ -25,6 +26,8 @@ import { ScheduledTaskStoreModule } from "./store.module.js";
     ConversationAccessModule,
     ExtensionRegistryModule,
     ToolsModule,
+    // a new-conversation task's model must resolve for the org
+    ProvidersModule,
     // "run now" enqueues the fire job
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
