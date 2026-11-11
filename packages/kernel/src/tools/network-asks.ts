@@ -104,6 +104,14 @@ export const addressLayerNote = (hosts: readonly string[]) =>
     ? `[network] ${list(hosts)} is a private or local address, which commands can never reach.`
     : `[network] ${list(hosts)} are private or local addresses, which commands can never reach.`;
 
+/**
+ * An unattended run (spec §8.1): the task approves the host, yet the device refused it: the device
+ * takes no network grants from the deployment (`remoteGrants` off, or a program too old for them).
+ * Not asked, not a missing grant: only the device's owner can allow it locally.
+ */
+export const taskGrantIgnoredNote = (hosts: readonly string[]) =>
+  `${blockedLead(hosts)} The scheduled task approves ${pron(hosts)}, but this device does not accept the task's network grants. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)}.`;
+
 /** An unattended run in `fail` mode (spec §8.3): no ask, the creator can add a task grant. */
 export const unattendedNetworkNote = (hosts: readonly string[]) =>
   `[network] ${list(hosts)} ${one(hosts) ? "is" : "are"} blocked on this device and this scheduled run cannot ask for network access. The task's owner can add ${pron(hosts)} to the task's approved domains. Continue without ${pron(hosts)}.`;
@@ -155,9 +163,10 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  * - `address` and `org` layers: a note each (in an unattended run an `org` host is a missing grant);
  *   `unknown`: nothing (the device's trailer explains);
  * - `device` layer on a program without `policyOp`: nothing (no ask, the trailer explains);
- * - refused earlier in the run tree: the denied note; allowed in the run tree yet still refused: a
- *   note that the device ignores grants; an unattended run in `fail` mode: its note and a missing
- *   grant;
+ * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
+ *   the device ignores the task's grants (never asked, never a missing grant);
+ * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
+ *   and a missing grant;
  * - the rest is asked, unless another ask of the run tree is pending or the run made
  *   {@link MAX_NETWORK_ASKS_PER_RUN} asks (a note each).
  */
@@ -171,6 +180,7 @@ export function planNetworkAsk(
   const refused: string[] = [];
   const localOnly: string[] = [];
   const unattended: string[] = [];
+  const taskIgnored: string[] = [];
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
   // a machine that reports blocked hosts and takes policy changes (Docker mode has no report)
@@ -189,7 +199,8 @@ export function planNetworkAsk(
       // relayer already made an invalid name an address; a wildcard is never asked
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
         address.push(b.host);
-      } else if (run?.refused.has(b.host)) refused.push(b.host);
+      } else if (run?.taskGranted?.has(b.host)) taskIgnored.push(b.host);
+      else if (run?.refused.has(b.host)) refused.push(b.host);
       else if (unattendedFails(ctx.unattended)) {
         unattended.push(b.host);
         missingGrants.push(networkGrantKey(b.host));
@@ -200,6 +211,7 @@ export function planNetworkAsk(
   const notes: string[] = [];
   if (refused.length > 0) notes.push(deniedNote(refused));
   if (localOnly.length > 0) notes.push(localOnlyNote(localOnly));
+  if (taskIgnored.length > 0) notes.push(taskGrantIgnoredNote(taskIgnored));
   if (unattended.length > 0) notes.push(unattendedNetworkNote(unattended));
   let ask: { host: string; port: number }[] = [];
   if (candidates.length > 0) {

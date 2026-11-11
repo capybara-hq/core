@@ -99,8 +99,19 @@ export function approvalsFor(
       apply: async () => {
         throw new Error("DevicePolicyService is not available in this test");
       },
+      summary: async () => null,
     },
     undefined as never,
+    // no sandbox config here: an org's egress is open (a trial's network grants are kept)
+    {
+      orgLimits: async () => ({
+        cpu: 1,
+        memoryMb: 512,
+        diskMb: 1024,
+        egress: "open" as const,
+        allowHosts: [],
+      }),
+    },
   );
 }
 

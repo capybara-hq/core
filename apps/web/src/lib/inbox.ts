@@ -32,10 +32,17 @@ export interface ScheduleAttention {
   reason: SchedulePauseReason | "missing_grants" | "failed";
   /** Who paused it (an admin's pause names the admin); else null. */
   pausedBy: { id: string; name: string } | null;
-  /** `missing_grants`: the refused tool keys, or `connection:<slug>` (connect that connector). */
+  /**
+   * `missing_grants`: the refused tool keys, `connection:<slug>` (connect that connector), or
+   * `network:<host>` (a domain the run was refused).
+   */
   missing: string[];
   /** The part of `missing` I can't approve up front (the tool needs a role I lack). */
   needsRole: string[];
+  /** The `network:<host>` keys of `missing` outside the org's allowlist: only an org admin can add them. */
+  needsAdmin: string[];
+  /** `missing` has domains and the task's device takes no network grants (`remoteGrants` off). */
+  deviceRefuses: boolean;
   /** `failed`: the run's error; else null. */
   error: string | null;
 }

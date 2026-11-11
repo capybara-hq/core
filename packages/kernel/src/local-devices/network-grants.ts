@@ -8,9 +8,13 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
+import { taskGrantsRunOf } from "../schedules/unattended.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
+
+/** The key prefix of a scheduled task's network grant (`schedules/grant-rules.ts`). */
+const NETWORK_KEY_PREFIX = "network:";
 
 /** The statuses of a run that has not ended: its run grants still apply. */
 const LIVE_RUN = ["queued", "running", "waiting"] as const;
@@ -28,6 +32,11 @@ export interface NetworkRunState {
   asks: number;
   /** A network ask of the run tree is still pending (at most one at a time). */
   pending: boolean;
+  /**
+   * Hosts the scheduled task the run serves approves on this device (spec §8.1; unattended runs
+   * only, read only with a `deviceId`): never asked about nor recorded as missing. Absent: none.
+   */
+  taskGranted?: Set<string>;
 }
 
 /** An exact host a grant may carry: no wildcard, valid. */
@@ -62,7 +71,8 @@ function askedOf(detail: unknown): string[] {
  * from PG for every exec, so a grant decided on one replica reaches a command on any other. A run
  * tree is the runs of one budget window (`runs.budget_run_id` lineage): a sub-agent's run sees the
  * root's grants, another run tree never does. The hosts a decision allowed are its
- * `detail.grantedHosts`; a decision without them grants nothing.
+ * `detail.grantedHosts`; a decision without them grants nothing. In an unattended run of a
+ * scheduled task, the task's `network:<host>` grants (spec §8.1) join them.
  */
 @Injectable()
 export class NetworkGrants {
@@ -72,15 +82,23 @@ export class NetworkGrants {
    * Hosts allowed for this exec on `deviceId`: the run tree's once-approved network asks in
    * `orgId` about that device, while the tree's root run has not ended (a grant ends with its run;
    * a later run of the same budget window does not inherit it), with the root run as their source
-   * and the latest decider as its account; undefined when none. The device applies them only when
-   * its owner allows remote grants and only within the org's limits.
+   * and the latest decider as its account; and in an unattended run of a scheduled task, the
+   * task's network grants (spec §8.1) when the device is its creator's, with the task as their
+   * source and the creator as its account. Both together are one grant: the hosts of both, the
+   * task as the source. Undefined when none. The device applies them only when its owner allows
+   * remote grants and only within the org's limits.
    */
   async forExec(input: {
     orgId: string;
     runId: string;
     deviceId: string;
   }): Promise<DeviceExecGrants | undefined> {
-    return (await this.runGrants(input)) ?? (await this.taskGrants(input));
+    const run = await this.runGrants(input);
+    const task = await this.taskGrants(input);
+    if (task === undefined) return run;
+    if (run === undefined) return task;
+    const hosts = [...new Set([...task.hosts, ...run.hosts])].slice(0, MAX_GRANT_HOSTS);
+    return { hosts, source: task.source };
   }
 
   /**
@@ -89,6 +107,7 @@ export class NetworkGrants {
    * host allowed on one device is not allowed on another); the cap and the pending ask count all.
    */
   async runState(runId: string, deviceId?: string): Promise<NetworkRunState> {
+    const task = deviceId === undefined ? undefined : await this.taskGrants({ runId, deviceId });
     const root = await budgetRunOf(this.db.db, runId);
     const rows = await this.db
       .selectFrom("approvals")
@@ -117,6 +136,7 @@ export class NetworkGrants {
         for (const h of askedOf(r.detail)) state.refused.add(h);
       }
     }
+    if (task !== undefined) state.taskGranted = new Set(task.hosts);
     return state;
   }
 
@@ -154,15 +174,43 @@ export class NetworkGrants {
   }
 
   /**
-   * A scheduled task's network grants for an unattended run (spec §8.1): the second source of
-   * exec grants, filled by the task grants of phase 2; none yet.
+   * A scheduled task's network grants for an unattended run (spec §8.1): the task's
+   * `network:<host>` grants when the run serves a task run that is no trial run and no person
+   * joined (`taskGrantsRunOf`, inherited by its sub-agents), the task is of `orgId` (when given)
+   * and `deviceId` is a live device of the task's org owned by the task's creator (a creator
+   * approves domains for their own devices only). Exact valid hosts only.
    */
-  private async taskGrants(_input: {
-    orgId: string;
+  private async taskGrants(input: {
+    orgId?: string;
     runId: string;
     deviceId: string;
   }): Promise<DeviceExecGrants | undefined> {
-    return undefined;
+    const task = await taskGrantsRunOf(this.db.db, input.runId);
+    if (task === null || (input.orgId !== undefined && task.orgId !== input.orgId)) {
+      return undefined;
+    }
+    const device = await this.db
+      .selectFrom("devices")
+      .select("id")
+      .where("id", "=", input.deviceId)
+      .where("org_id", "=", task.orgId)
+      .where("owner_account_id", "=", task.accountId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (device === undefined) return undefined;
+    const rows = await this.db
+      .selectFrom("scheduled_task_grants")
+      .select("tool_key")
+      .where("task_id", "=", task.taskId)
+      .where("tool_key", "like", `${NETWORK_KEY_PREFIX}%`)
+      .orderBy("tool_key")
+      .execute();
+    const hosts = rows
+      .map((r) => r.tool_key.slice(NETWORK_KEY_PREFIX.length))
+      .filter(exactHost)
+      .slice(0, MAX_GRANT_HOSTS);
+    if (hosts.length === 0) return undefined;
+    return { hosts, source: { kind: "task", id: task.taskId, accountId: task.accountId } };
   }
 
   /** The runs of the tree whose budget run is `root`. */
