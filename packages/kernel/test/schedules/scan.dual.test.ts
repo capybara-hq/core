@@ -19,7 +19,7 @@ import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, sleep, waitFor } from "../helpers/runs.js";
+import { PW, waitFor } from "../helpers/runs.js";
 
 /**
  * Scheduled tasks spec §6, §13 on two replicas (Task 6): both replicas scan at once (the scan's
@@ -133,14 +133,30 @@ async function task(over: Partial<ScheduledTaskInsert>): Promise<ScheduledTask> 
   });
 }
 
-/** Many scans at once, spread over both replicas' maintenance workers. */
-async function scanEverywhere(n = 12): Promise<void> {
+/**
+ * Many scans at once, spread over both replicas' maintenance workers; resolves to their job ids
+ * ({@link scansDone} waits for them).
+ */
+async function scanEverywhere(n = 12): Promise<string[]> {
   const tag = randomUUID().slice(0, 8);
-  await Promise.all(
-    Array.from({ length: n }, (_, i) =>
-      maint.add(SCHED_SCAN_JOB, {}, { jobId: `scan-${tag}-${i}`, removeOnComplete: true }),
-    ),
+  const ids = Array.from({ length: n }, (_, i) => `scan-${tag}-${i}`);
+  await Promise.all(ids.map((jobId) => maint.add(SCHED_SCAN_JOB, {}, { jobId })));
+  return ids;
+}
+
+/** Waits until every scan job of `ids` completed (none failed), then removes them. */
+async function scansDone(ids: string[]): Promise<void> {
+  await waitFor(
+    async () => {
+      const states = await Promise.all(ids.map((id) => maint.getJobState(id)));
+      expect(states.filter((x) => x === "failed")).toEqual([]);
+      return states.every((x) => x === "completed");
+    },
+    30_000,
+    "the scans done",
+    50,
   );
+  await Promise.all(ids.map((id) => maint.remove(id)));
 }
 
 const settledRuns = (taskId: string, n: number) =>
@@ -164,11 +180,10 @@ describe("scheduled task scan on two replicas", { timeout: 120_000 }, () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
     const tick = new Date(Math.floor(Date.now() / FIVE_MIN) * FIVE_MIN);
     const t = await task({ nextRunAt: tick });
-    await scanEverywhere();
+    const first = await scanEverywhere();
     const runs = await settledRuns(t.id, 1);
-    // later scans on either replica change nothing
-    await scanEverywhere();
-    await sleep(2_000);
+    // later scans on either replica change nothing (every scan of both rounds done)
+    await scansDone([...first, ...(await scanEverywhere())]);
     const after = await store.listRuns(db, t.id, 50);
     expect(after).toHaveLength(1);
     expect(runs[0]).toMatchObject({ status: "completed", scheduledFor: tick });
@@ -190,10 +205,9 @@ describe("scheduled task scan on two replicas", { timeout: 120_000 }, () => {
       trigger: { kind: "cron", expr: "0 * * * *", timeZone: "UTC" },
       nextRunAt: new Date(hour - 3 * HOUR),
     });
-    await scanEverywhere();
+    const first = await scanEverywhere();
     const runs = await settledRuns(t.id, 2);
-    await scanEverywhere();
-    await sleep(2_000);
+    await scansDone([...first, ...(await scanEverywhere())]);
     expect(await store.listRuns(db, t.id, 50)).toHaveLength(2);
     const [fired, skipped] = runs;
     expect(fired).toMatchObject({ status: "completed", scheduledFor: new Date(hour) });
