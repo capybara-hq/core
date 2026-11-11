@@ -15,30 +15,44 @@ import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
 import { SCHED_SCAN_JOB, schedFireJob } from "./job-ids.js";
+import { pauseTaskIn } from "./pause.js";
+import { ScheduledTaskRunTracker } from "./run-tracker.js";
 import { dueTicks, nextTick } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
 import type { ScheduledTask } from "./types.js";
 
-/** Due tasks locked per transaction. */
-const BATCH = 100;
-/** Batches per scan; what is left waits for the next minute. */
-const MAX_BATCHES = 20;
+/** Due tasks per scan; what is left waits for the next minute. */
+const MAX_TASKS = 2000;
 /** A pending task run never fired this long after its tick: its fire job is enqueued again. */
 const REPAIR_AFTER_MS = 10 * 60_000;
 /** ... and this long after its tick it is given up (`skipped`, `missed`). */
 const GIVE_UP_AFTER_MS = 60 * 60_000;
 const REPAIR_BATCH = 100;
 
+/** A due task's advance failed (its transaction rolled back); the scan pauses it. */
+class TaskScanFailed extends Error {
+  constructor(
+    readonly taskId: string,
+    cause: unknown,
+  ) {
+    super(`scheduled task ${taskId} cannot be advanced`, { cause });
+  }
+}
+
 /**
- * The scheduled task scanner (spec §6), once a minute across replicas. In batches, each one
- * transaction, it locks due tasks (`FOR UPDATE SKIP LOCKED`, so replicas share the work and never
- * take the same task) and for each one: records the ticks missed outside the org's
- * `catchUpWindowMinutes` as one `skipped` run (`missed`), inserts the run of the latest tick in
- * the window (the unique `(task_id, scheduled_for)` key makes a second insert a no-op), moves
- * `next_run_at` to the next tick plus the task's jitter (or ends a `once` task, or one past its
- * `expires_at`), and after the commit enqueues `sched-fire-<taskRunId>`. Then it repairs lost fire
- * jobs: a run still `pending` and unfired long after its tick is enqueued again, and given up an
- * hour after it.
+ * The scheduled task scanner (spec §6), once a minute across replicas. Each due task in its own
+ * transaction, locked with `FOR UPDATE SKIP LOCKED` (replicas share the work and never take the
+ * same task): the ticks missed outside the org's `catchUpWindowMinutes` become one `skipped` run
+ * (`missed`, at the first missed tick), the latest tick in the window gets its run (the unique
+ * `(task_id, scheduled_for)` key makes a second insert a no-op), `next_run_at` moves to the next
+ * tick plus the task's jitter (or a `once` task ends, or one past its `expires_at`), and after the
+ * commit `sched-fire-<taskRunId>` is enqueued. A task whose advance throws (a stored trigger that
+ * cannot be evaluated) is paused (`invalid_schedule`) instead of failing the scan.
+ *
+ * Then the repair: a run still `pending` and unfired 10 minutes after its tick has its fire job
+ * enqueued again, and is given up (`skipped`, `missed`) after an hour; a run fired an hour ago and
+ * still `pending` (its start failed for good) goes through the run tracker's check, which links,
+ * settles or releases it, so a `once` task's last run never stays pending.
  */
 @Injectable()
 export class ScheduledTaskScanJob {
@@ -47,6 +61,8 @@ export class ScheduledTaskScanJob {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ScheduledTaskStore) private readonly store: ScheduledTaskStore,
+    @Inject(ScheduledTaskRunTracker)
+    private readonly tracker: Pick<ScheduledTaskRunTracker, "inFlightIn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -63,33 +79,60 @@ export class ScheduledTaskScanJob {
 
   /** One scan as of `now` (tests pass their own); returns how many due tasks it handled. */
   async scanAt(now: Date): Promise<number> {
+    const settings = new Map<string, EffectiveScheduleSettings>();
     let total = 0;
-    for (let i = 0; i < MAX_BATCHES; i++) {
-      const n = await this.scanBatch(now);
-      total += n;
-      if (n < BATCH) break;
+    for (; total < MAX_TASKS; total++) {
+      try {
+        if (!(await this.scanOne(now, settings))) break;
+      } catch (err) {
+        if (!(err instanceof TaskScanFailed)) throw err;
+        // one task that cannot be advanced must not hold the others back every minute
+        this.log.error("scheduled task cannot be advanced; paused", {
+          taskId: err.taskId,
+          err: err.cause,
+        });
+        await this.quarantine(err.taskId);
+      }
     }
     await this.repair(now);
     return total;
   }
 
+  /**
+   * One due task in its own transaction (a task whose advance fails rolls back alone, so it
+   * cannot block the others): locked with `SKIP LOCKED`, so replicas take different tasks. False
+   * when no task is due.
+   */
   @Transactional()
-  private async scanBatch(now: Date): Promise<number> {
+  private async scanOne(
+    now: Date,
+    settings: Map<string, EffectiveScheduleSettings>,
+  ): Promise<boolean> {
     const t = this.db;
-    const due = await this.store.lockDue(t, now, BATCH);
-    const settings = new Map<string, EffectiveScheduleSettings>();
-    const fire: string[] = [];
-    for (const task of due) {
+    const [task] = await this.store.lockDue(t, now, 1);
+    if (!task) return false;
+    let fired: string | null;
+    try {
       let s = settings.get(task.orgId);
       if (s === undefined) {
         s = await readScheduleSettings(t, this.config, task.orgId);
         settings.set(task.orgId, s);
       }
-      const id = await this.advance(t, task, now, s.catchUpWindowMinutes);
-      if (id !== null) fire.push(id);
+      fired = await this.advance(t, task, now, s.catchUpWindowMinutes);
+    } catch (err) {
+      throw new TaskScanFailed(task.id, err);
     }
-    if (fire.length > 0) afterCommit(() => this.enqueue(fire));
-    return due.length;
+    if (fired !== null) {
+      const id = fired;
+      afterCommit(() => this.enqueue([id]));
+    }
+    return true;
+  }
+
+  /** A task the scan cannot advance stops being due: paused with `invalid_schedule`. */
+  @Transactional()
+  private async quarantine(taskId: string): Promise<void> {
+    await pauseTaskIn(this.db, taskId, "invalid_schedule", null);
   }
 
   /** One due task (see the class); returns the id of the run to fire, if any. */
@@ -111,12 +154,10 @@ export class ScheduledTaskScanJob {
       catchUpWindowMinutes,
     );
     const expires = task.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
-    const missed = ticks.missed.filter((x) => x.getTime() <= expires);
     const fireAt = ticks.fire !== null && ticks.fire.getTime() <= expires ? ticks.fire : null;
-    const first = missed[0];
-    const last = missed.at(-1);
-    if (first !== undefined && last !== undefined) {
-      const skipped = await this.store.insertRun(t, {
+    const first = ticks.firstMissed;
+    if (first !== null && first.getTime() <= expires) {
+      await this.store.insertRun(t, {
         id: randomUUID(),
         taskId: task.id,
         orgId: task.orgId,
@@ -125,11 +166,6 @@ export class ScheduledTaskScanJob {
         status: "skipped",
         skipReason: "missed",
       });
-      if (skipped && missed.length > 1) {
-        await this.store.updateRun(t, skipped.id, {
-          error: `${missed.length} scheduled times were missed, ${first.toISOString()} to ${last.toISOString()}`,
-        });
-      }
     }
     let fired: string | null = null;
     if (fireAt !== null) {
@@ -192,5 +228,22 @@ export class ScheduledTaskScanJob {
         .execute();
     }
     await this.enqueue(retry);
+    const started = await this.db
+      .selectFrom("scheduled_task_runs")
+      .select("id")
+      .where("status", "=", "pending")
+      .where("fired_at", "<", new Date(now.getTime() - GIVE_UP_AFTER_MS))
+      .orderBy("scheduled_for")
+      .limit(REPAIR_BATCH)
+      .execute();
+    for (const r of started) await this.recheck(r.id, now);
+  }
+
+  /** A started run still pending long after: the tracker links, settles or releases it. */
+  @Transactional()
+  private async recheck(taskRunId: string, now: Date): Promise<void> {
+    const run = await this.store.updateRun(this.db, taskRunId, {});
+    // inFlightIn takes the task row before the run (the one lock order)
+    if (run?.status === "pending") await this.tracker.inFlightIn(run, now);
   }
 }

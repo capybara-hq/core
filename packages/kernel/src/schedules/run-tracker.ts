@@ -65,6 +65,14 @@ export class ScheduledTaskRunTracker {
       .executeTakeFirst();
     const taskRunId = run?.scheduled_task_run_id;
     if (taskRunId == null) return;
+    const owner = await this.db
+      .selectFrom("scheduled_task_runs")
+      .select("task_id")
+      .where("id", "=", taskRunId)
+      .executeTakeFirst();
+    if (!owner) return;
+    // lock order task row → task run, as the fire job's claim takes them (no lock cycle)
+    await lockTaskRow(this.db, owner.task_id);
     const tr = await this.db
       .selectFrom("scheduled_task_runs")
       .select(["id", "task_id", "org_id", "trial", "status", "run_id"])
@@ -86,6 +94,7 @@ export class ScheduledTaskRunTracker {
   @Transactional({ propagation: "mandatory" })
   async inFlightIn(prev: TaskRun, now: Date = new Date()): Promise<boolean> {
     const t = this.db;
+    await lockTaskRow(t, prev.taskId);
     const tr = await t
       .selectFrom("scheduled_task_runs")
       .selectAll()
@@ -164,7 +173,7 @@ export class ScheduledTaskRunTracker {
     if (now.getTime() - firedAt.getTime() < START_GRACE_MS) return true;
     await t
       .updateTable("scheduled_task_runs")
-      .set({ status: "skipped", skip_reason: "removed" })
+      .set({ status: "skipped", skip_reason: "removed", fired_at: null })
       .where("id", "=", tr.id)
       .where("status", "=", "pending")
       .execute();
@@ -261,11 +270,25 @@ export async function releaseQueuedTaskRunIn(t: KernelSchemaDb, schedule: unknow
   if (typeof taskRunId !== "string") return;
   await t
     .updateTable("scheduled_task_runs")
-    .set({ status: "skipped", skip_reason: "removed" })
+    .set({ status: "skipped", skip_reason: "removed", fired_at: null })
     .where("id", "=", taskRunId)
     .where("status", "=", "pending")
     .where("run_id", "is", null)
     .execute();
+}
+
+/**
+ * Locks a task's row (deleted or not) in the caller's transaction. Every path that locks a task
+ * run and the task takes the task row first: the fire job's claim, the run tracker, the scan's
+ * repair (a run finishing while the next tick's claim checks overlap must not deadlock).
+ */
+export async function lockTaskRow(t: KernelSchemaDb, taskId: string): Promise<void> {
+  await t
+    .selectFrom("scheduled_tasks")
+    .select("id")
+    .where("id", "=", taskId)
+    .forUpdate()
+    .executeTakeFirst();
 }
 
 /** The run tracker alone: the runtime (`RunFinish`) imports it without the schedules service. */

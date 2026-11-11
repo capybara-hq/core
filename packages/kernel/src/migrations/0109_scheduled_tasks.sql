@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
   device_id text,
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'ended')),
   pause_reason text CHECK (pause_reason IN ('creator', 'admin', 'failures', 'creator_inactive',
-    'agent_gone', 'target_gone', 'conversation_gone', 'org_disabled', 'expired')),
+    'agent_gone', 'target_gone', 'conversation_gone', 'org_disabled', 'expired',
+    'invalid_schedule')),
   paused_by text,
   -- null when not active; jitter included
   next_run_at timestamptz,
@@ -56,7 +57,7 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
     CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
   skip_reason text CHECK (skip_reason IN ('missed', 'overlap', 'rate_limited', 'queue_paused',
     'removed', 'device_offline', 'creator_inactive', 'agent_gone', 'target_gone',
-    'conversation_gone', 'org_disabled')),
+    'conversation_gone', 'org_disabled', 'unsupported_target', 'task_deleted')),
   error text,
   -- tool keys refused for lack of a grant (§7)
   missing_grants jsonb NOT NULL DEFAULT '[]'::jsonb
@@ -65,6 +66,9 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
 -- the exactly-once guard: one scheduled run per tick (trial runs are free of it)
 CREATE UNIQUE INDEX IF NOT EXISTS scheduled_task_runs_tick_uq ON scheduled_task_runs (task_id, scheduled_for)
   WHERE NOT trial;
+-- the scanner's repair of lost fire jobs (pending runs never fired)
+CREATE INDEX IF NOT EXISTS scheduled_task_runs_pending_idx ON scheduled_task_runs (scheduled_for)
+  WHERE status = 'pending';
 -- a task's history and its latest run
 CREATE INDEX IF NOT EXISTS scheduled_task_runs_task_idx ON scheduled_task_runs (task_id, scheduled_for DESC);
 -- the org's maxRunsPerHour count

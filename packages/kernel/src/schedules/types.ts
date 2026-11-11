@@ -30,7 +30,9 @@ export type SchedulePauseReason =
   | "target_gone"
   | "conversation_gone"
   | "org_disabled"
-  | "expired";
+  | "expired"
+  /** The stored trigger cannot be evaluated (the scanner stops selecting the task). */
+  | "invalid_schedule";
 
 export type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
@@ -45,7 +47,11 @@ export type TaskRunSkipReason =
   | "agent_gone"
   | "target_gone"
   | "conversation_gone"
-  | "org_disabled";
+  | "org_disabled"
+  /** A target this version cannot fire into (a group chat until group threads land). */
+  | "unsupported_target"
+  /** The task was deleted after the run was recorded. */
+  | "task_deleted";
 
 /** A task as the kernel reads it: the columns of `capybara.scheduled_tasks`, camel-cased. */
 export interface ScheduledTask {

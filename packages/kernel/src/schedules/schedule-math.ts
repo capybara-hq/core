@@ -5,8 +5,6 @@ import type { ScheduleTrigger } from "./types.js";
 /** Spec §5: how many upcoming fire times the minimum-interval check looks at. */
 const GAP_SAMPLE = 50;
 const JITTER_CAP_SECONDS = 300;
-/** Cap on the ticks enumerated before the catch-up window (a 5-minute task is ~288 a day). */
-const MAX_OLD_TICKS = 5000;
 const LOCAL_AT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 export type TriggerError =
@@ -208,38 +206,49 @@ export function jitterForGap(taskId: string, gap: number | null): number {
 }
 
 /**
- * The ticks in (lastTick, now]. `fire` is the latest one when it lies inside the catch-up window,
- * else null (spec §6 step 1). `missed` lists the others, oldest first, and is exact unless the
- * outage is long: at most the first 5000 ticks after `lastTick` are listed, then the ticks inside
- * the window, so enumeration stays bounded and the in-window tick is never lost. Callers record
- * `missed` as one skipped run, so a non-empty list is what matters.
+ * The ticks in (lastTick, now], without walking them (spec §6 step 1): `fire` is the latest one
+ * when it lies inside the catch-up window, else null; `firstMissed` is the earliest of the others
+ * (every tick but `fire`), which the scanner records as one skipped run, or null when there are
+ * none. The latest tick is found by widening a window back from `now` (1 minute, doubling) until
+ * it holds a tick, then stepping forward inside it, so a month-long outage costs a handful of tick
+ * computations, not thousands.
  */
 export function dueTicks(
   t: ScheduleTrigger,
   lastTick: Date,
   now: Date,
   catchUpWindowMinutes: number,
-): { fire: Date | null; missed: Date[] } {
-  const windowStart = now.getTime() - catchUpWindowMinutes * 60000;
-  const ticks: Date[] = [];
-  let cursor = lastTick;
-  let old = 0;
-  let jumped = false;
-  const tickAfter = ticker(t);
-  for (let guard = 0; guard < 2 * MAX_OLD_TICKS + 10000; guard++) {
-    const next = tickAfter(cursor);
-    if (!next || next.getTime() > now.getTime()) break;
-    ticks.push(next);
-    cursor = next;
-    if (!jumped && next.getTime() < windowStart && ++old >= MAX_OLD_TICKS) {
-      jumped = true;
-      // Skip the middle of a very long outage; resume at the window so `fire` is found.
-      if (cursor.getTime() < windowStart - 1) cursor = new Date(windowStart - 1);
+): { fire: Date | null; firstMissed: Date | null } {
+  const next = ticker(t);
+  const end = now.getTime();
+  const first = next(lastTick);
+  if (!first || first.getTime() > end) return { fire: null, firstMissed: null };
+  const latest = latestTick(next, lastTick.getTime(), end) ?? first;
+  const fire = latest.getTime() >= end - catchUpWindowMinutes * 60000 ? latest : null;
+  const missed = fire === null || first.getTime() < fire.getTime();
+  return { fire, firstMissed: missed ? first : null };
+}
+
+/** The latest tick in (lastMs, endMs]; null when there is none. */
+function latestTick(
+  next: (after: Date) => Date | null,
+  lastMs: number,
+  endMs: number,
+): Date | null {
+  let from: Date | null = null;
+  for (let span = 60_000; ; span *= 2) {
+    const lo = Math.max(endMs - span, lastMs);
+    const tick = next(new Date(lo));
+    if (tick && tick.getTime() <= endMs) {
+      from = tick;
+      break;
     }
+    if (lo === lastMs) return null;
   }
-  const latest = ticks.at(-1);
-  if (!latest) return { fire: null, missed: [] };
-  return latest.getTime() >= windowStart
-    ? { fire: latest, missed: ticks.slice(0, -1) }
-    : { fire: null, missed: ticks };
+  let latest = from;
+  for (;;) {
+    const n = next(latest);
+    if (!n || n.getTime() > endMs) return latest;
+    latest = n;
+  }
 }

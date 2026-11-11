@@ -26,7 +26,7 @@ import { RunControl } from "../runtime/run-control.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
 import { pauseTaskIn } from "./pause.js";
-import { ScheduledTaskRunTracker, ScheduledTaskTrackerModule } from "./run-tracker.js";
+import { lockTaskRow, ScheduledTaskRunTracker, ScheduledTaskTrackerModule } from "./run-tracker.js";
 import { ScheduledTaskScanJob } from "./scan.job.js";
 import { ScheduledTaskStore } from "./store.js";
 import { ScheduledTaskStoreModule } from "./store.module.js";
@@ -165,6 +165,14 @@ export class ScheduledTaskFirer {
     const t = this.db;
     // the org row first, as every task write does (ScheduledTasksService): no lock cycle
     if ((await this.orgLock.tryLock(orgId)) === undefined) return null;
+    const owner = await t
+      .selectFrom("scheduled_task_runs")
+      .select("task_id")
+      .where("id", "=", taskRunId)
+      .executeTakeFirst();
+    if (!owner) return null;
+    // lock order org → task row → task runs, as the run tracker and the service take them
+    await lockTaskRow(t, owner.task_id);
     const row = await t
       .selectFrom("scheduled_task_runs")
       .select("id")
@@ -173,12 +181,12 @@ export class ScheduledTaskFirer {
       .executeTakeFirst();
     const run = row ? await this.store.updateRun(t, taskRunId, {}) : null;
     if (run?.status !== "pending") return null;
-    const task = await this.store.lockTask(t, orgId, run.taskId);
+    const task = await this.store.getTask(t, orgId, run.taskId);
     if (!task) {
       await this.store.updateRun(t, run.id, {
         status: "skipped",
+        skipReason: "task_deleted",
         firedAt: null,
-        error: "The task was deleted",
       });
       return null;
     }
@@ -223,8 +231,9 @@ export class ScheduledTaskFirer {
         return skip("target_gone");
       }
       if (chat.chatType === "group") {
-        // scheduled tasks plan Task 8: a group run starts its own thread at its first post
-        throw new Error("scheduled task group chat targets are not implemented yet (Task 8)");
+        // scheduled tasks plan Task 8: a group run will start its own thread at its first post;
+        // until then the run is skipped without pausing the task
+        return skip("unsupported_target");
       }
       const threadKey = await this.dmThreadKey(conn, chat.chatId, task.accountId);
       if (threadKey === undefined) return skip("target_gone");
@@ -466,10 +475,11 @@ export class ScheduledTaskFirer {
   }
 
   /**
-   * The DM thread key of the creator in `chatId` (the key inbound uses, `dm:<externalId>`): their
-   * external ids on the connection's identity source (`<plugin>:<tenant>`), the one this chat
-   * already has a thread of first; without one (no tenant yet), the key of their latest DM thread
-   * row in the chat. Undefined when neither exists.
+   * The DM thread key of the creator in `chatId` (the key inbound uses, `dm:<externalId>`), from
+   * their external ids on the connection's identity source (`<plugin>:<tenant>`): the id whose
+   * thread row in this chat is the newest (archived rows count); when none has a row there, the
+   * smallest id (deterministic). Without an identity (no tenant yet), the key of their newest DM
+   * thread row in the chat. Undefined when neither exists.
    */
   private async dmThreadKey(
     conn: { id: string; plugin: string; tenantId: string | null },
@@ -495,7 +505,8 @@ export class ScheduledTaskFirer {
         .orderBy("external_id")
         .execute();
       const keys = ids.map((r) => `dm:${r.external_id}`);
-      const inChat = keys.find((key) => used.includes(key));
+      // several ids on the source: the one with the newest thread row in this chat
+      const inChat = used.find((key) => keys.includes(key));
       if (inChat !== undefined) return inChat;
       if (keys[0] !== undefined) return keys[0];
     }

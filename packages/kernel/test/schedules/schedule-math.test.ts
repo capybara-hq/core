@@ -65,7 +65,7 @@ describe("schedule math", () => {
       new Date("2026-03-09T00:00:00Z"),
       100000,
     );
-    expect([gap.fire, ...gap.missed].filter(Boolean)).toHaveLength(0);
+    expect(gap).toEqual({ fire: null, firstMissed: null });
     // 2026-11-01: 01:00-02:00 happens twice.
     const rep = dueTicks(
       cron("30 1 * * *", "America/New_York"),
@@ -73,7 +73,7 @@ describe("schedule math", () => {
       new Date("2026-11-02T00:00:00Z"),
       100000,
     );
-    expect([rep.fire, ...rep.missed].filter(Boolean)).toHaveLength(1);
+    expect(rep.firstMissed).toBeNull();
     expect(rep.fire?.toISOString()).toBe("2026-11-01T05:30:00.000Z");
   });
 
@@ -110,7 +110,7 @@ describe("schedule math", () => {
     expect(jitterForGap("x", null)).toBe(0);
   });
 
-  it("dueTicks after a 3 h outage on an hourly task fires the latest and reports 2 missed", () => {
+  it("dueTicks after a 3 h outage on an hourly task fires the latest and reports the first missed", () => {
     const r = dueTicks(
       cron("0 * * * *"),
       new Date("2026-06-01T00:00:00Z"),
@@ -118,10 +118,7 @@ describe("schedule math", () => {
       60,
     );
     expect(r.fire?.toISOString()).toBe("2026-06-01T03:00:00.000Z");
-    expect(r.missed.map((d) => d.toISOString())).toEqual([
-      "2026-06-01T01:00:00.000Z",
-      "2026-06-01T02:00:00.000Z",
-    ]);
+    expect(r.firstMissed?.toISOString()).toBe("2026-06-01T01:00:00.000Z");
   });
 
   it("dueTicks drops a tick older than the window", () => {
@@ -132,16 +129,32 @@ describe("schedule math", () => {
       30,
     );
     expect(r.fire).toBeNull();
-    expect(r.missed.map((d) => d.toISOString())).toEqual(["2026-06-01T01:00:00.000Z"]);
+    expect(r.firstMissed).toEqual(new Date("2026-06-01T01:00:00.000Z"));
   });
 
   it("dueTicks after a 30 day outage on */5 still fires the latest in-window tick", () => {
     const n = new Date("2026-06-30T12:03:00Z");
+    const started = performance.now();
     const r = dueTicks(cron("*/5 * * * *"), new Date("2026-05-31T12:00:00Z"), n, 60);
+    // no walk over the ~8600 old ticks
+    expect(performance.now() - started).toBeLessThan(100);
     expect(r.fire?.toISOString()).toBe("2026-06-30T12:00:00.000Z");
-    expect(r.missed.length).toBeGreaterThan(0);
-    const fireMs = r.fire?.getTime() ?? 0;
-    expect(r.missed.every((d) => d.getTime() < fireMs)).toBe(true);
+    expect(r.firstMissed).toEqual(new Date("2026-05-31T12:05:00.000Z"));
+  });
+
+  it("dueTicks: no tick due, and a once task due inside and outside the window", () => {
+    const r = dueTicks(cron("0 9 * * *"), new Date("2026-06-01T09:00:00Z"), now, 60);
+    expect(r).toEqual({ fire: null, firstMissed: null });
+    const once: ScheduleTrigger = { kind: "once", at: "2026-06-01T08:30:00", timeZone: "UTC" };
+    const lastTick = new Date("2026-06-01T08:29:59Z");
+    expect(dueTicks(once, lastTick, new Date("2026-06-01T09:00:00Z"), 60)).toEqual({
+      fire: new Date("2026-06-01T08:30:00Z"),
+      firstMissed: null,
+    });
+    expect(dueTicks(once, lastTick, new Date("2026-06-01T10:00:00Z"), 60)).toEqual({
+      fire: null,
+      firstMissed: new Date("2026-06-01T08:30:00Z"),
+    });
   });
 
   it("a once time inside a DST gap fires at the first instant after the gap", () => {

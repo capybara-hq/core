@@ -217,6 +217,45 @@ const setSchedules = (patch: Record<string, unknown>) =>
 /** The latest 5-minute tick at or before `at`. */
 const tickAt = (at: number) => new Date(Math.floor(at / FIVE_MIN) * FIVE_MIN);
 
+/** The owner's live DM thread with the bot (an inbound message makes one when there is none). */
+async function liveDmThread(messageId: string): Promise<string> {
+  im.push(connId, dm(messageId, "u-owner", `hi ${messageId}`));
+  const thread = await waitFor(
+    async () =>
+      db
+        .selectFrom("channel_threads")
+        .select("conversation_id")
+        .where("connection_id", "=", connId)
+        .where("thread_key", "=", "dm:u-owner")
+        .where("archived_at", "is", null)
+        .executeTakeFirst(),
+    10_000,
+    "dm thread",
+  );
+  const live = thread.conversation_id;
+  await waitFor(
+    async () =>
+      (await userMessages(live)).some((m) => {
+        const c = m.payload.content[0];
+        return c?.type === "text" && c.text === `hi ${messageId}`;
+      }),
+    10_000,
+    "inbound message",
+  );
+  await waitFor(async () => (await runsOf(db, live)).every((r) => r.status === "completed"));
+  return live;
+}
+
+const dmTask = (name: string) =>
+  svc().create(orgId, ownerId, {
+    agentId,
+    name,
+    prompt: "dm tick",
+    trigger: { kind: "cron", expr: "0 9 * * *" },
+    mode: "chat",
+    chat: { connectionId: connId, chatId: "dm-u-owner", chatType: "dm" },
+  });
+
 describe("scanning and firing", { timeout: 60_000 }, () => {
   it("new mode creates one conversation per tick", async () => {
     const t = await task();
@@ -316,9 +355,9 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     await store.updateRun(db, fired.id, { status: "completed", firedAt: new Date() });
     const n = await store.countFiredSince(db, orgId, hourAgo());
     expect(n).toBeGreaterThanOrEqual(1);
-    // a skipped row does not count, even one with fired_at (a removed queued item)
+    // a skipped row does not count
     const skipped = await pendingRun(other, { scheduledFor: new Date(Date.now() - 3 * FIVE_MIN) });
-    await store.updateRun(db, skipped.id, { status: "skipped", firedAt: new Date() });
+    await store.updateRun(db, skipped.id, { status: "skipped", skipReason: "overlap" });
     expect(await store.countFiredSince(db, orgId, hourAgo())).toBe(n);
     await setSchedules({ maxRunsPerHour: n });
     try {
@@ -402,7 +441,11 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
       if (action === "remove") await queue.remove(orgId, conv, ownerId, item.id);
       if (action === "edit") await queue.edit(orgId, conv, ownerId, item.id, "my own words");
       if (action === "sendNow") await queue.sendNow(orgId, conv, ownerId, item.id);
-      expect(await runOf(r1.id)).toMatchObject({ status: "skipped", skipReason: "removed" });
+      expect(await runOf(r1.id)).toMatchObject({
+        status: "skipped",
+        skipReason: "removed",
+        firedAt: null,
+      });
 
       const r2 = await pendingRun(t);
       await firer().fire(r2.id);
@@ -430,34 +473,17 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     });
     const r = await pendingRun(t);
     await firer().fire(r.id);
-    expect(await runOf(ghost.id)).toMatchObject({ status: "skipped", skipReason: "removed" });
+    expect(await runOf(ghost.id)).toMatchObject({
+      status: "skipped",
+      skipReason: "removed",
+      firedAt: null,
+    });
     expect((await settled(r.id)).status).toBe("completed");
   });
 
   it("dm chat reuses the live thread", async () => {
-    im.push(connId, dm("m-live-1", "u-owner", "hi there"));
-    const thread = await waitFor(
-      async () =>
-        db
-          .selectFrom("channel_threads")
-          .select("conversation_id")
-          .where("connection_id", "=", connId)
-          .where("thread_key", "=", "dm:u-owner")
-          .where("archived_at", "is", null)
-          .executeTakeFirst(),
-      10_000,
-      "dm thread",
-    );
-    const live = thread.conversation_id;
-    await waitFor(async () => (await runsOf(db, live)).every((r) => r.status === "completed"));
-    const t = await svc().create(orgId, ownerId, {
-      agentId,
-      name: "DM digest",
-      prompt: "dm tick",
-      trigger: { kind: "cron", expr: "0 9 * * *" },
-      mode: "chat",
-      chat: { connectionId: connId, chatId: "dm-u-owner", chatType: "dm" },
-    });
+    const live = await liveDmThread("m-live-1");
+    const t = await dmTask("DM digest");
     const r = await pendingRun(t);
     await firer().fire(r.id);
     const done = await settled(r.id);
@@ -473,16 +499,8 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
   });
 
   it("dm chat after /new creates and binds a new conversation, and a later inbound reply lands in it", async () => {
-    const t = (await svc().list(orgId, { accountId: ownerId, role: "owner" })).find(
-      (x) => x.name === "DM digest",
-    ) as ScheduledTask;
-    const before = await db
-      .selectFrom("channel_threads")
-      .select("conversation_id")
-      .where("connection_id", "=", connId)
-      .where("thread_key", "=", "dm:u-owner")
-      .where("archived_at", "is", null)
-      .executeTakeFirstOrThrow();
+    const beforeConv = await liveDmThread("m-new-0");
+    const t = await dmTask("DM after new");
     im.push(connId, dm("m-new-1", "u-owner", "/new"));
     await waitFor(
       async () =>
@@ -501,7 +519,7 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     const done = await settled(r.id);
     expect(done.status).toBe("completed");
     const created = done.conversationId as string;
-    expect(created).not.toBe(before.conversation_id);
+    expect(created).not.toBe(beforeConv);
     expect(await conversationsOf(t.id)).toEqual([{ id: created, create_request_id: null }]);
     const bound = await db
       .selectFrom("channel_threads")
@@ -580,5 +598,95 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     expect(trial.trial).toBe(true);
     expect((await settled(trial.id)).status).toBe("completed");
     expect((await taskOf(created.id)).nextRunAt?.getTime()).toBe(created.nextRunAt?.getTime());
+  });
+
+  it("a run ending while the next tick's claim checks overlap settles without a deadlock", async () => {
+    for (let i = 0; i < 4; i++) {
+      const name = `race-${i}`;
+      scriptRules([
+        {
+          when: { lastUserIncludes: `HOLD-${name}` },
+          reply: { fail: "invalid_request", barrier: { name, count: 99, timeoutMs: 30_000 } },
+        },
+      ]);
+      const t = await task({ prompt: `HOLD-${name}` });
+      const r1 = await pendingRun(t, { scheduledFor: new Date(Date.now() - FIVE_MIN) });
+      await firer().fire(r1.id);
+      await waitFor(async () => (await runOf(r1.id)).status === "running", 10_000, "run 1");
+      const r2 = await pendingRun(t);
+      // the failing run's terminal write (task row → task run) races the claim's overlap check
+      await Promise.all([
+        (async () => {
+          await new Promise((r) => setTimeout(r, i * 3));
+          openBarrier(name);
+        })(),
+        firer().fire(r2.id),
+        firer().fire(r2.id),
+      ]);
+      const done1 = await settled(r1.id);
+      expect(done1.status).toBe("failed");
+      const r2now = await runOf(r2.id);
+      if (r2now.status === "skipped") expect(r2now.skipReason).toBe("overlap");
+      else expect((await settled(r2.id)).status).toBe("failed");
+    }
+    scriptRules([]);
+  });
+
+  it("a task the scan cannot advance is paused and does not hold the others back", async () => {
+    const bad = await task({ nextRunAt: new Date(Date.now() - 60_000) });
+    // a stored trigger the schedule math cannot read
+    await sql`UPDATE capybara.scheduled_tasks SET trigger = '{"what": 1}'::jsonb
+      WHERE id = ${bad.id}`.execute(raw);
+    const good = await task({ nextRunAt: tickAt(Date.now()) });
+    await scanner().scanAt(new Date());
+    expect(await taskOf(bad.id)).toMatchObject({
+      status: "paused",
+      pauseReason: "invalid_schedule",
+      nextRunAt: null,
+    });
+    const [run] = await store.listRuns(db, good.id, 10);
+    expect(run).toBeDefined();
+    expect((await settled(run?.id as string)).status).toBe("completed");
+  });
+
+  it("a group chat target is skipped without pausing until group threads land", async () => {
+    const t = await task({
+      mode: "chat",
+      chat: { connectionId: connId, chatId: "grp-1", chatType: "group" },
+    });
+    const r = await pendingRun(t);
+    await firer().fire(r.id);
+    expect(await runOf(r.id)).toMatchObject({
+      status: "skipped",
+      skipReason: "unsupported_target",
+      firedAt: null,
+    });
+    expect((await taskOf(t.id)).status).toBe("active");
+  });
+
+  it("a run of a deleted task is skipped with task_deleted", async () => {
+    const t = await task();
+    const r = await pendingRun(t);
+    await store.softDelete(db, t.id);
+    await firer().fire(r.id);
+    expect(await runOf(r.id)).toMatchObject({
+      status: "skipped",
+      skipReason: "task_deleted",
+      firedAt: null,
+    });
+  });
+
+  it("the scan releases a run whose start failed for good (an ended once task)", async () => {
+    const t = await task({ status: "ended", nextRunAt: null });
+    const stuck = await pendingRun(t, {
+      scheduledFor: new Date(Date.now() - 2 * 3600_000),
+      firedAt: new Date(Date.now() - 2 * 3600_000),
+    });
+    await scanner().scanAt(new Date());
+    expect(await runOf(stuck.id)).toMatchObject({
+      status: "skipped",
+      skipReason: "removed",
+      firedAt: null,
+    });
   });
 });
