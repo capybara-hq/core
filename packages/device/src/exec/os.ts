@@ -89,7 +89,8 @@ function pidAlive(pid: number): boolean {
 export interface OsExecutorOptions {
   /** The device directory (from login). */
   dir: string;
-  policy: Policy;
+  /** The local policy now (read at each command, so a change applies without a restart). */
+  policy: () => Policy;
   /** The home whose secret paths are denied (default: the user's home). */
   home?: string;
   /** More paths commands may not read (this program's state directory). */
@@ -131,7 +132,7 @@ export class OsExecutor implements Executor {
 
   /** The configuration the sandbox is initialized with (no domains: those are per command). */
   config(): SandboxRuntimeConfig {
-    return srtConfig(this.opts.policy, this.roots, [], {
+    return srtConfig(this.opts.policy(), this.roots, [], {
       ...(this.opts.home !== undefined && { home: this.opts.home }),
       ...(this.opts.denyRead !== undefined && { denyRead: this.opts.denyRead }),
     });
@@ -252,7 +253,7 @@ export class OsExecutor implements Executor {
       cwd,
       ...(args.env !== undefined && { env: args.env }),
       tag: args.tag,
-      egress: effectiveEgress(this.opts.policy, args.limits),
+      egress: effectiveEgress(this.opts.policy(), args.limits),
       signal,
     });
     return new Promise<ExecResult>((resolvePromise, reject) => {

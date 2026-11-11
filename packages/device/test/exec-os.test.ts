@@ -49,7 +49,7 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
     base = tmp("device-os-");
     dir = join(base, "env");
     mkdirSync(dir);
-    ex = new OsExecutor({ dir, policy: DEFAULT_POLICY });
+    ex = new OsExecutor({ dir, policy: () => DEFAULT_POLICY });
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
 
@@ -71,7 +71,7 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
     expect(await ex.ensureRoot()).toBe("gone");
     expect(existsSync(dir)).toBe(false);
     // A fresh process (new executor) finds the directory missing too.
-    expect(await new OsExecutor({ dir, policy: DEFAULT_POLICY }).ensureRoot()).toBe("gone");
+    expect(await new OsExecutor({ dir, policy: () => DEFAULT_POLICY }).ensureRoot()).toBe("gone");
   });
 
   it("a root removed under a marked directory is gone, never recreated empty", async () => {
@@ -81,7 +81,7 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
       expect(await ex.ensureRoot()).toBe("gone");
       expect(existsSync(join(dir, root))).toBe(false);
       // A fresh process sees the marker and the missing root: still gone.
-      expect(await new OsExecutor({ dir, policy: DEFAULT_POLICY }).ensureRoot()).toBe("gone");
+      expect(await new OsExecutor({ dir, policy: () => DEFAULT_POLICY }).ensureRoot()).toBe("gone");
       mkdirSync(join(dir, root));
     }
   });
@@ -212,7 +212,10 @@ describe.skipIf(!availability.ok)(
       mkdirSync(dir);
       ex = await createOsExecutor({
         dir,
-        policy: { ...DEFAULT_POLICY, allowedDomains: ["one.example.com", "two.example.com"] },
+        policy: () => ({
+          ...DEFAULT_POLICY,
+          allowedDomains: ["one.example.com", "two.example.com"],
+        }),
         home: fakeHome,
         denyRead: [state],
       });
@@ -524,7 +527,7 @@ describe.skipIf(!availability.ok || process.platform !== "linux")(
     beforeAll(async () => {
       base = tmp("device-ns-");
       mkdirSync(join(base, "env"));
-      ex = await createOsExecutor({ dir: join(base, "env"), policy: DEFAULT_POLICY });
+      ex = await createOsExecutor({ dir: join(base, "env"), policy: () => DEFAULT_POLICY });
       await ex.ensureRoot();
     }, 60_000);
     afterAll(async () => {

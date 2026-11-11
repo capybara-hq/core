@@ -167,7 +167,11 @@ export interface DockerExecutorOptions {
   /** The device directory (from login). */
   dir: string;
   deviceId: string;
-  policy: Policy;
+  /**
+   * The local policy now. The network decision reads it at each command; cpu and memory apply
+   * when the container is next created.
+   */
+  policy: () => Policy;
 }
 
 interface Waiter {
@@ -262,7 +266,7 @@ export class DockerExecutor implements Executor {
 
   /** Every `docker run` flag of the container except its name and spec label. */
   private runArgs(): string[] {
-    const { policy } = this.opts;
+    const policy = this.opts.policy();
     return [
       "--init",
       "--read-only",
@@ -496,7 +500,7 @@ export class DockerExecutor implements Executor {
       if (!ENV_NAME_RE.test(k))
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
     }
-    const open = effectiveEgress(this.opts.policy, args.limits).length > 0;
+    const open = effectiveEgress(this.opts.policy(), args.limits).length > 0;
     await this.acquire(open, signal);
     try {
       signal.throwIfAborted();

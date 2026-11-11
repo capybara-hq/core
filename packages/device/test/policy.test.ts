@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
@@ -155,6 +155,74 @@ describe("policy command", () => {
     ).toBe(2);
     expect(err.join("\n")).toMatch(/https:\/\/a\.com/);
     expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
+  });
+
+  it("set says the running program applies it at the next command, never to restart", () => {
+    expect(run({ command: "policy", action: "set", key: "cpu", value: "2" })).toBe(0);
+    const text = out.join("\n");
+    expect(text).not.toMatch(/Restart/i);
+    expect(text).toMatch(/applies it at the next command/);
+  });
+
+  it("add and remove allowedDomains: validated, lowercased, deduped, idempotent", () => {
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "A.com" })).toBe(
+      0,
+    );
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "*.b.com" })).toBe(
+      0,
+    );
+    expect(readPolicy(dir).allowedDomains).toEqual(["a.com", "*.b.com"]);
+    out.length = 0;
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      0,
+    );
+    expect(out.join("\n")).toMatch(/already/);
+    expect(readPolicy(dir).allowedDomains).toEqual(["a.com", "*.b.com"]);
+    expect(
+      run({ command: "policy", action: "remove", key: "allowedDomains", value: "A.COM" }),
+    ).toBe(0);
+    expect(readPolicy(dir).allowedDomains).toEqual(["*.b.com"]);
+    out.length = 0;
+    expect(
+      run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
+    expect(out.join("\n")).toMatch(/not in allowedDomains/);
+    expect(out.join("\n")).not.toMatch(/Restart/i);
+  });
+
+  it("add refuses an invalid host and leaves the file alone", () => {
+    expect(
+      run({ command: "policy", action: "add", key: "allowedDomains", value: "10.0.0.5" }),
+    ).toBe(2);
+    expect(err.join("\n")).toMatch(/10\.0\.0\.5/);
+    expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
+  });
+
+  it("add and remove work on allowCredentials and refuse other keys", () => {
+    expect(run({ command: "policy", action: "add", key: "allowCredentials", value: "gh" })).toBe(0);
+    expect(readPolicy(dir).allowCredentials).toEqual(["gh"]);
+    expect(run({ command: "policy", action: "remove", key: "allowCredentials", value: "gh" })).toBe(
+      0,
+    );
+    expect(readPolicy(dir).allowCredentials).toEqual([]);
+    expect(run({ command: "policy", action: "add", key: "cpu", value: "2" })).toBe(2);
+    expect(err.join("\n")).toMatch(/allowedDomains/);
+  });
+
+  it("a change keeps keys this version does not know", () => {
+    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, futureKey: "x" }));
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      0,
+    );
+    expect(JSON.parse(readFileSync(policyPath(dir), "utf8")).futureKey).toBe("x");
+  });
+
+  it("a change refuses to overwrite an unreadable file", () => {
+    writeFileSync(policyPath(dir), "{nope");
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      1,
+    );
+    expect(readFileSync(policyPath(dir), "utf8")).toBe("{nope");
   });
 
   it("show reports an unreadable policy file instead of throwing", () => {

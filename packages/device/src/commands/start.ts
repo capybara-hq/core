@@ -2,13 +2,17 @@ import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import type { Executor } from "../exec/types.js";
 import { readRunningPid, removePid, writePid } from "../pid.js";
+import { PolicyStore } from "../policy-store.js";
 import { rotateServiceLog } from "../service/launchd.js";
-import { type Credential, type Policy, readCredential, readPolicy } from "../state.js";
+import { type Credential, readCredential } from "../state.js";
 
 export interface StartDeps {
   stateDir: string;
-  /** Builds the executor for the credential's mode (the OS and Docker executors). */
-  createExecutor?: (cred: Credential, policy: Policy) => Promise<Executor> | Executor;
+  /**
+   * Builds the executor for the credential's mode (the OS and Docker executors). The store
+   * follows policy.json, so executors read the policy at each command.
+   */
+  createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
   out: (line: string) => void;
   err: (line: string) => void;
   /** The process whose signals stop and drain the program. */
@@ -63,7 +67,8 @@ export async function start(deps: StartDeps): Promise<number> {
   try {
     let executor: Executor;
     try {
-      executor = await deps.createExecutor(cred, readPolicy(stateDir));
+      // An invalid policy.json stops the start; later, a broken edit keeps the last good policy.
+      executor = await deps.createExecutor(cred, new PolicyStore(stateDir, { err }));
     } catch (e) {
       err(`Cannot start: ${(e as Error).message}`);
       return 1;

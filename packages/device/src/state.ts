@@ -1,12 +1,15 @@
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -60,6 +63,11 @@ export function credentialPath(dir: string): string {
 
 export function policyPath(dir: string): string {
   return join(dir, "policy.json");
+}
+
+/** The lock file that serializes read-modify-writes of policy.json across processes. */
+export function policyLockPath(dir: string): string {
+  return join(dir, "policy.json.lock");
 }
 
 /** The default working directory of a device: `~/capybara-device/<deviceId>`. */
@@ -127,10 +135,20 @@ const isStringList = (v: unknown): v is string[] =>
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
 
+const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
+
 /** The local policy (defaults when absent). Throws, naming the file, on bad JSON or field types. */
 export function readPolicy(dir: string): Policy {
+  return readPolicyFile(dir).policy;
+}
+
+/**
+ * The local policy plus the file's keys this version does not know (kept on every write, so an
+ * older program never drops a newer one's settings). Throws like {@link readPolicy}.
+ */
+export function readPolicyFile(dir: string): { policy: Policy; extra: Record<string, unknown> } {
   const file = policyPath(dir);
-  if (!existsSync(file)) return { ...DEFAULT_POLICY };
+  if (!existsSync(file)) return { policy: { ...DEFAULT_POLICY }, extra: {} };
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
@@ -147,14 +165,86 @@ export function readPolicy(dir: string): Policy {
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) if (!POLICY_KEYS.includes(k)) extra[k] = v;
   return {
-    allowedDomains: policy.allowedDomains,
-    allowCredentials: policy.allowCredentials,
-    cpu: policy.cpu,
-    memoryMb: policy.memoryMb,
+    policy: {
+      allowedDomains: policy.allowedDomains,
+      allowCredentials: policy.allowCredentials,
+      cpu: policy.cpu,
+      memoryMb: policy.memoryMb,
+    },
+    extra,
   };
 }
 
-export function writePolicy(dir: string, policy: Policy): void {
-  writePrivate(policyPath(dir), `${JSON.stringify(policy, null, 2)}\n`);
+/** Writes policy.json atomically (owner-only); `extra` are unknown keys to keep. */
+export function writePolicy(
+  dir: string,
+  policy: Policy,
+  extra: Record<string, unknown> = {},
+): void {
+  writePrivate(policyPath(dir), `${JSON.stringify({ ...extra, ...policy }, null, 2)}\n`);
+}
+
+/** A lock file older than this is left over by a crashed process and is taken over. */
+const POLICY_LOCK_STALE_MS = 10_000;
+const POLICY_LOCK_WAIT_MS = 2_000;
+const POLICY_LOCK_RETRY_MS = 25;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Runs `fn` holding policy.json.lock (created with O_EXCL), so a read-modify-write of the policy
+ * by this program and a concurrent `capybara-device policy` never loses an update. A lock older
+ * than 10 s is stale and taken over; a held one is retried for about 2 s, then this throws.
+ */
+export function withPolicyLock<T>(
+  dir: string,
+  fn: () => T,
+  opts: { waitMs?: number; now?: () => number } = {},
+): T {
+  const lock = policyLockPath(dir);
+  const now = opts.now ?? Date.now;
+  const deadline = Date.now() + (opts.waitMs ?? POLICY_LOCK_WAIT_MS);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (;;) {
+    let fd: number;
+    try {
+      fd = openSync(lock, "wx", 0o600);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      let mtimeMs: number | undefined;
+      try {
+        mtimeMs = statSync(lock).mtimeMs;
+      } catch {
+        // Released between the open and the stat: try again at once.
+        continue;
+      }
+      if (now() - mtimeMs >= POLICY_LOCK_STALE_MS) {
+        rmSync(lock, { force: true });
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `${lock} is held by another capybara-device process; try again in a moment ` +
+            `(delete the file if no other capybara-device is running)`,
+        );
+      }
+      sleepSync(POLICY_LOCK_RETRY_MS);
+      continue;
+    }
+    try {
+      writeSync(fd, String(process.pid));
+    } finally {
+      closeSync(fd);
+    }
+    try {
+      return fn();
+    } finally {
+      rmSync(lock, { force: true });
+    }
+  }
 }

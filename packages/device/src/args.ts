@@ -11,7 +11,7 @@ export type Command =
   | { command: "stop" }
   | { command: "drain" }
   | { command: "policy"; action: "show" }
-  | { command: "policy"; action: "set"; key: string; value: string }
+  | { command: "policy"; action: "set" | "add" | "remove"; key: string; value: string }
   | { command: "service"; action: "install" | "uninstall" }
   | { command: "help" };
 
@@ -25,6 +25,9 @@ export const USAGE = `Usage:
   capybara-device drain           Finish running commands, accept no new ones, then stop
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
+                                  Replace one field (applies at the next command)
+  capybara-device policy add|remove allowedDomains <host>
+                                  Allow or stop allowing a domain (applies at the next command)
   capybara-device service install|uninstall
                                   Run at login as a user service`;
 
@@ -86,10 +89,15 @@ export function parseCommandLine(argv: string[]): Command {
       if (action === undefined || (action === "show" && key === undefined && extra.length === 0)) {
         return { command: "policy", action: "show" };
       }
-      if (action === "set" && key !== undefined && value !== undefined && extra.length === 0) {
-        return { command: "policy", action: "set", key, value };
+      if (
+        (action === "set" || action === "add" || action === "remove") &&
+        key !== undefined &&
+        value !== undefined &&
+        extra.length === 0
+      ) {
+        return { command: "policy", action, key, value };
       }
-      throw new UsageError("usage: policy [show | set <key> <value>]");
+      throw new UsageError("usage: policy [show | set <key> <value> | add|remove <key> <value>]");
     }
     case "service": {
       const { positionals } = parse(rest, {});
