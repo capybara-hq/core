@@ -28,7 +28,7 @@
 - **P-D1 Policy summary lives on `device_machines`, not `devices`.** The hello is stored per machine (`MachinesService.recordHello`); the spec's `devices.local_policy` becomes `device_machines.local_policy jsonb` + `device_machines.features text[]`. The device view reads the active machine's row, so a new machine starts with its own summary.
 - **P-D2 The pipeline settles the ask, not a second handler call.** The spec (§6.2.4) has the kernel call `Bash` again with `call.resume`. Since `Bash` would only return the kept text plus a note, the pipeline does it itself: the approval's `detail.result` holds the formatted `tool_result` (≤ 16 KB, output already archived by the formatter), and on settle the pipeline writes it with the note. Same model-visible outcome, no re-run, no new handler contract.
 - **P-D3 Run grants reach the device provider through `SandboxActor.runId`** (new optional field, SDK). `LocalDeviceProvider.exec` asks `NetworkGrants.forExec(...)` and adds `grants` to `DeviceExecArgs`. Cloud providers ignore `runId`.
-- **P-D4 Approvals get `kind`, `detail` and a kind-aware unique index** `(run_id, call_id, kind, attempt)`; `forCall` (tool approvals) filters `kind = 'tool'`, `networkForCall` filters `kind = 'network'`. Status gains `skipped`.
+- **P-D4 Approvals get `kind` and `detail`; the unique index stays `(run_id, call_id, attempt)`.** A network ask takes the next attempt after the call's tool approvals (it is only asked after the command ran, so no tool approval can follow it); dropping the index would break `ON CONFLICT` on replicas still running the previous version. `forCall` (tool approvals) filters `kind = 'tool'`, `networkForCall` filters `kind = 'network'`. Status gains `skipped`.
 - **P-D5 The decision body gains `hosts?: string[]`** (the checked subset of a network ask; absent = all). Unchecked hosts count as denied.
 - **P-D6 Org-layer requests reuse `catalog_requests`** with kind `network_allowlist`, `item_id` null and `detail jsonb` (`{ hosts, note, conversationId, agentId }`), filed by a new member route; approving merges the hosts into the org's `sandboxEgress.allowHosts`.
 - **P-D7 Scheduled task network grants reuse `scheduled_task_grants`** with `tool_key = 'network:<host>'`, `spec_hash = 'network'`, `connector_id` null: no migration.
@@ -191,14 +191,12 @@ state: "pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped";
 ```sql
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'tool';
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS detail jsonb;
--- kind check, status check widened with 'skipped' (drop + re-add, like 0108)
-CREATE UNIQUE INDEX IF NOT EXISTS approvals_run_call_kind_attempt_uniq ON approvals (run_id, call_id, kind, attempt);
-DROP INDEX IF EXISTS approvals_run_call_attempt_uniq;  -- exemption comment: replaced by the kind-aware index above
+-- kind check, status check widened with 'skipped' (drop + re-add, like 0108); unique index unchanged (P-D4)
 CREATE INDEX IF NOT EXISTS approvals_network_run_idx ON approvals (run_id) WHERE kind = 'network';
 ALTER TABLE device_machines ADD COLUMN IF NOT EXISTS local_policy jsonb;
 ALTER TABLE device_machines ADD COLUMN IF NOT EXISTS features text[] NOT NULL DEFAULT '{}';
 ```
-- [ ] Follow `writing-migrations` (exemption comment for the drop, idempotent). Update `ON CONFLICT (run_id, call_id, attempt)` in `approvals.service.ts` `requestIn` to the new columns in the same commit (P1.2 owns that one line).
+- [ ] Follow `writing-migrations` (idempotent). `ApprovalsTable.kind` / `.detail`, `DeviceMachinesTable.features` / `.local_policy`, status `skipped` in the Kysely types.
 - [ ] `pnpm exec vitest run packages/kernel/test/migrations` and the approvals tests pass; commit `feat(kernel): approval kinds and device policy summaries (migration 0114)`.
 
 ### Task P1.3: Device — report, hello, `policy` op, `remoteGrants`, run grants (TRUST BOUNDARY)
