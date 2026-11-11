@@ -82,6 +82,7 @@ export const pluginScopeChangeKeys = (orgId: string | null): (readonly unknown[]
     d.adminOverview(),
     d.adminInbox(),
     d.adminInboxCount(),
+    d.platformAuditAll(),
     ...(orgId === null ? [] : pluginChangeKeys(orgId)),
   ];
 };

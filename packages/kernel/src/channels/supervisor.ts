@@ -348,6 +348,11 @@ export class ChannelSupervisor {
     return out;
   }
 
+  /** How many long connections this process holds now (replica presence reports it). */
+  heldCount(): number {
+    return this.held.size;
+  }
+
   private heldOf(plugin: string): number {
     let n = 0;
     for (const h of this.held.values()) if (h.plugin === plugin) n++;

@@ -299,15 +299,17 @@ describe("checkWebUi", () => {
         .map((x) => [x.rule, x.line, x.message.split(":")[0]]);
     it("flags a box inside a box: direct, through components, imports, re-exports and attributes", () =>
       expect(at()).toEqual([
-        ["web-ui-box-in-box", 35, "<Card> inside <FormSection>"],
-        ["web-ui-box-in-box", 38, "<PurposeCard> (draws Card) inside <Card>"],
-        ["web-ui-box-in-box", 41, "<Notice> (draws ObjectList) inside <Sheet>"],
-        ["web-ui-box-in-box", 44, "<DataTable> inside <FormSection>"],
-        ["web-ui-box-in-box", 45, "<Table> (draws a DataTable) inside <FormSection>"],
-        ["web-ui-box-in-box", 48, "<CodeBlock> (framed) inside <Card>"],
-        ["web-ui-box-in-box", 51, "<FilePicker> inside <Card>"],
-        ["web-ui-box-in-box", 54, "<ReNotice> (draws ObjectList) inside <Card>"],
-        ["web-ui-box-in-box", 56, "<Card> inside <Card>"],
+        ["web-ui-box-in-box", 37, "<Card> inside <FormSection>"],
+        ["web-ui-box-in-box", 40, "<PurposeCard> (draws Card) inside <Card>"],
+        ["web-ui-box-in-box", 43, "<Notice> (draws ObjectList) inside <Sheet>"],
+        ["web-ui-box-in-box", 46, "<DataTable> inside <FormSection>"],
+        ["web-ui-box-in-box", 47, "<Table> (draws a DataTable) inside <FormSection>"],
+        ["web-ui-box-in-box", 50, "<CodeBlock> (framed) inside <Card>"],
+        ["web-ui-box-in-box", 53, "<FilePicker> inside <Card>"],
+        ["web-ui-box-in-box", 56, "<ReNotice> (draws ObjectList) inside <Card>"],
+        ["web-ui-box-in-box", 58, "<Card> inside <Card>"],
+        ["web-ui-box-in-box", 60, "<StatCards> inside <OverviewSection>"],
+        ["web-ui-box-in-box", 63, "<OverviewSection> inside <Card>"],
       ]));
     it("follows identifiers and calls: a const (a .map result), a helper, hook render functions, renamed children and slot props", () =>
       expect(at([], "follow.tsx")).toEqual([
@@ -376,7 +378,7 @@ describe("checkWebUi", () => {
       const f = run("box-in-box", [], [], [entry("Card", 1)]).filter((x) =>
         x.message.includes("allows 1"),
       );
-      expect(f.map((x) => x.line)).toEqual([35, 56]);
+      expect(f.map((x) => x.line)).toEqual([37, 58]);
       expect(f[0]?.message).toContain('(pending "components/boxes.tsx" <Card> allows 1, found 2)');
     });
     it("web-ui-box-stale-pending: fewer findings than max say lower max, none say remove", () => {

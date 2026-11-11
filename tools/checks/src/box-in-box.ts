@@ -39,6 +39,7 @@ const OUTER = new Set([
   "DangerZone",
   "ObjectList",
   "AgentMapDialog",
+  "OverviewSection",
 ]);
 /**
  * Overlays: drawn in a portal, so what they hold is not inside the box around them. An overlay
@@ -74,6 +75,7 @@ const BOXED = new Set([
   "FilePicker",
   "CardGrid",
   "ObjectCard",
+  "OverviewSection",
 ]);
 /**
  * Grids of boxes on the page ground (CardGrid, spec §6.34): the grid itself is judged where it is
@@ -109,6 +111,7 @@ const FIX: Readonly<Record<string, string>> = {
   DataTable: "a `flush` FormSection (the table runs to the card's edges, unframed)",
   CardGrid: "the CardGrid on the page ground, or an ItemList of ItemListItem rows inside the box",
   ObjectCard: "an ItemListItem row (the ObjectCard belongs in a CardGrid on the page ground)",
+  OverviewSection: "the OverviewSection on the page ground (it is the section's Card)",
 };
 
 /**

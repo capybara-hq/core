@@ -40,7 +40,6 @@ export const PurposeParams = z.object({ purpose: z.string().min(1).max(100) });
 export const AdminOrgParams = z.object({ orgId: z.string().min(1).max(100) });
 
 export const ADMIN_ROUTES: readonly RouteSchemas[] = [
-  { route: "GET /api/v1/admin/overview" },
   { route: "GET /api/v1/admin/accounts", query: AccountListQuery },
   { route: "POST /api/v1/admin/accounts", body: CreateAccountBody },
   {

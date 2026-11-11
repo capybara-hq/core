@@ -222,6 +222,8 @@ export const ERROR_CODES = {
   "plugin.upgrade_failed": 502,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
+  /** The admin overview's seven-day usage aggregate ran past its statement timeout (spec §5.5). */
+  "admin.usage_unavailable": 503,
   "agent.not_found": 404,
   "agent.version_conflict": 409,
   /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */

@@ -27,7 +27,8 @@ const tokens = JSON.parse(
 const tables = parseSizeTables(spec);
 const lists = parseStateLists(spec);
 
-const COLOR_PROPS = /(^|-)color$/;
+// `fill` and `stroke` paint SVG marks (charts): colors too, not lengths.
+const COLOR_PROPS = /(^|-)color$|^(fill|stroke)$/;
 
 // Completeness (A plan Task 12, B plan Task 22): every component with a state list in the design
 // spec has passed side-by-side acceptance (UI refresh B's components included).

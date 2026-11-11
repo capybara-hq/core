@@ -9,6 +9,7 @@ import { usePlatformPages } from "./extension-ui/ExtensionSlot";
 export const ADMIN_PAGES = [
   { id: "overview", href: "/admin" },
   { id: "inbox", href: "/admin/inbox" },
+  { id: "audit", href: "/admin/audit" },
   { id: "accounts", href: "/admin/accounts" },
   { id: "orgs", href: "/admin/orgs" },
   { id: "plugins", href: "/admin/plugins" },
@@ -60,8 +61,8 @@ export function useAdminExtensionPages(enabled = true): AdminExtensionPage[] {
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * The admin console's (super admins) navigation: overview, the inbox, accounts, orgs, plugins (its
- * tabs hold the marketplaces and the pending confirmations), extensions, the platform skills,
+ * The admin console's (super admins) navigation: overview, the inbox, the audit log, accounts,
+ * orgs, plugins (its tabs hold the marketplaces and the pending confirmations), extensions, the platform skills,
  * agents and connectors (each with a 模板 tab), and themes, models, deployment settings, then a 扩展 group
  * of the extensions' platform pages (hidden when there are none). It feeds the sidebar's admin
  * context only; admin pages carry no inner navigation. An org's own settings stay under

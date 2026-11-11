@@ -195,9 +195,10 @@ async function orgItem(req: Req, itemId: string) {
   ).items.find((i) => i.id === itemId);
 }
 
+/** Pending catalog requests as the admin overview counts them (the platform inbox by type). */
 async function overviewPending(): Promise<number> {
-  const r = await env.root({ method: "GET", url: "/api/v1/admin/overview" });
-  return (r.json() as { catalogRequestsPending: number }).catalogRequestsPending;
+  const r = await env.root({ method: "GET", url: "/api/v1/admin/inbox" });
+  return (r.json() as { byType: { catalog_request: number } }).byType.catalog_request;
 }
 
 const setShown = (itemId: string, shown: boolean) =>

@@ -622,16 +622,13 @@ export class TitleQueue {
   }
 }
 
+/** The title queue's registration (re-exported: the admin health reads its counts). */
+const TITLE_QUEUE_MODULE = QueueModule.registerQueue(TITLE_QUEUE);
+
 /** Conversation titles: the queue and the job (consumed on the worker role). */
 @Module({
-  imports: [
-    EventLogModule,
-    ModelsModule,
-    ExtensionsModule,
-    UsageReportModule,
-    QueueModule.registerQueue(TITLE_QUEUE),
-  ],
+  imports: [EventLogModule, ModelsModule, ExtensionsModule, UsageReportModule, TITLE_QUEUE_MODULE],
   providers: [TitleGenerator, TitleQueue],
-  exports: [TitleQueue],
+  exports: [TitleQueue, TITLE_QUEUE_MODULE],
 })
 export class TitlesModule {}

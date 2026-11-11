@@ -21,6 +21,11 @@ import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
 
 export { CatalogImportModule };
 
+/** The plugin scope sync's queue registration (re-exported: the admin health reads its counts). */
+const PLUGIN_SCOPE_QUEUE_MODULE = QueueModule.registerQueue(PLUGIN_SCOPE_QUEUE);
+/** This module's maintenance queue registration (re-exported for the admin health). */
+const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME);
+
 /**
  * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, org installs
  * with their dependencies, the platform plugin update (`PlatformPluginUpdater`), the admin's scope
@@ -39,10 +44,10 @@ export { CatalogImportModule };
     SkillsModule,
     ToolsModule,
     // the producer side of the plugin scope sync (`PluginScopeWorkersModule` consumes it)
-    QueueModule.registerQueue(PLUGIN_SCOPE_QUEUE),
+    PLUGIN_SCOPE_QUEUE_MODULE,
     // a removed org plugin's cleanup job (`OwnedItems`, `CatalogScopeService`; consumed by the
     // worker role's `MaintenanceProcessor`)
-    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+    MAINTENANCE_QUEUE_MODULE,
   ],
   providers: [
     CatalogRequestsService,
@@ -57,6 +62,8 @@ export { CatalogImportModule };
     OwnedItems,
   ],
   exports: [
+    PLUGIN_SCOPE_QUEUE_MODULE,
+    MAINTENANCE_QUEUE_MODULE,
     CatalogImportModule,
     CatalogRequestsService,
     PluginInstaller,

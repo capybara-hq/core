@@ -9,7 +9,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
@@ -17,6 +17,7 @@ import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -163,14 +164,18 @@ describe("registration and who may call", () => {
       "admin.agent-delete",
       "admin.agent-get",
       "admin.agents-list",
+      "admin.attention",
+      "admin.audit",
       "admin.connector-delete",
       "admin.connector-get",
       "admin.connector-set-status",
       "admin.connectors-list",
+      "admin.health",
       "admin.org-members",
       "admin.overview",
       "admin.settings",
       "admin.update-settings",
+      "admin.usage",
       "models.available",
       "models.catalog",
       "models.platform-list",
@@ -377,7 +382,16 @@ describe("orgs", () => {
 
 describe("admin and models", () => {
   it("reads the overview and settings, and changes a deployment setting", async () => {
-    expect(await run("admin.overview", {})).toMatchObject({ orgs: 2, accounts: 2 });
+    // the same numbers as GET /admin/overview, nothing else
+    const overview = await run("admin.overview", {});
+    expect(Object.keys(overview as object).sort()).toEqual([
+      "accounts",
+      "attentionTotal",
+      "orgs",
+      "partial",
+    ]);
+    expect(overview).toMatchObject({ orgs: 2, accounts: 2 });
+    expect((await root({ method: "GET", url: "/api/v1/admin/overview" })).json()).toEqual(overview);
     expect(await run("admin.settings", {})).toMatchObject({ orgCreation: "anyone" });
     const out = await run("admin.update-settings", { orgCreation: "super_admin" });
     expect(out).toMatchObject({ orgCreation: "super_admin" });
@@ -386,6 +400,104 @@ describe("admin and models", () => {
       via: "agent",
     });
     await run("admin.update-settings", { orgCreation: "anyone" });
+  });
+
+  it("admin.health answers what GET /admin/overview/health does", async () => {
+    const out = (await run("admin.health", {})) as Record<string, unknown>;
+    const res = (
+      await root({ method: "GET", url: "/api/v1/admin/overview/health" })
+    ).json() as Record<string, unknown>;
+    expect(Object.keys(out).sort()).toEqual(Object.keys(res).sort());
+    // live numbers may move between the two reads; the stable parts are equal
+    expect(out.kernel).toEqual(res.kernel);
+    expect(out.unavailable).toEqual([]);
+    expect(out.roles).toMatchObject({ api: 1, worker: 1 });
+    expect((out.queues as { name: string }[]).map((q) => q.name)).toEqual(
+      (res.queues as { name: string }[]).map((q) => q.name),
+    );
+  });
+
+  it("admin.usage answers what GET /admin/overview/usage does, from the route's schema", async () => {
+    const out = await run("admin.usage", { tz: "Asia/Shanghai" });
+    const res = await root({
+      method: "GET",
+      url: "/api/v1/admin/overview/usage?tz=Asia%2FShanghai",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    // the first read cached the week: the route serves the same answer
+    expect(out).toEqual(res.json());
+    expect((out as { days: unknown[] }).days).toHaveLength(7);
+    expect(op("admin.usage").description).toContain("estimate");
+    expect(op("admin.usage").description).toContain("eval replay runs included");
+  });
+
+  it("admin.attention reads compact rows with more and unavailable, never an error text", async () => {
+    const o = op("admin.attention");
+    expect(o.confirm).toBe("read");
+    expect(availability(o, facts("owner")).ok).toBe(false);
+    const spy = vi.spyOn(k.app.get(ProviderRegistry), "listWithStatus").mockResolvedValue([
+      {
+        provider: "model-x",
+        plugin: "model-x",
+        status: "error",
+        error: "upstream said sk-SECRET-123 is invalid",
+        models: [],
+      },
+    ]);
+    try {
+      const out = (await run("admin.attention", {})) as {
+        items: Record<string, unknown>[];
+        more: Record<string, number>;
+        unavailable: string[];
+      };
+      expect(Object.keys(out).sort()).toEqual(["items", "more", "unavailable"]);
+      expect(out.more).toEqual({ extensions: 0, updates: 0, providers: 0 });
+      expect(out.unavailable).toEqual([]);
+      const row = out.items.find((r) => r.kind === "provider");
+      expect(row).toEqual({
+        kind: "provider",
+        id: "model-x",
+        name: "model-x",
+        state: "error",
+        reason: "list_failed",
+        next: expect.stringContaining("/admin/extensions/model-x"),
+      });
+      for (const r of out.items) {
+        expect(Object.keys(r).sort()).toEqual(["id", "kind", "name", "next", "reason", "state"]);
+      }
+      expect(JSON.stringify(out)).not.toContain("sk-SECRET");
+      // a source that fails is named, its rows absent
+      spy.mockRejectedValue(new Error("boom sk-SECRET-123"));
+      const failed = (await run("admin.attention", {})) as typeof out;
+      expect(failed.unavailable).toEqual(["providers"]);
+      expect(failed.items.some((r) => r.kind === "provider")).toBe(false);
+      expect(JSON.stringify(failed)).not.toContain("sk-SECRET");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("admin.audit pages the platform-level audit log like GET /admin/audit, without detail", async () => {
+    const o = op("admin.audit");
+    expect(o.confirm).toBe("read");
+    expect(o.description).toContain("pass the returned next as params.after");
+    expect(availability(o, facts("owner")).ok).toBe(false);
+    const all = (await run("admin.audit", { limit: 100 })) as {
+      events: { id: string; action: string; viaAgent: boolean }[];
+      next: string | null;
+    };
+    // the deployment settings change through admin.update-settings above, by the agent
+    expect(all.events).toContainEqual(
+      expect.objectContaining({ action: "deployment.settings.updated", viaAgent: true }),
+    );
+    expect(JSON.stringify(all)).not.toContain('"detail"');
+    const one = (await run("admin.audit", { limit: 1 })) as typeof all;
+    expect(one.events).toEqual([all.events[0]]);
+    const after = (await run("admin.audit", { limit: 1, after: one.next })) as typeof all;
+    expect(after.events).toEqual([all.events[1]]);
+    // the same rows as the route
+    const http = await root({ method: "GET", url: "/api/v1/admin/audit?limit=100" });
+    expect(http.json()).toEqual(all);
   });
 
   it("admin.update-settings: theme.not_available says the default must be on in every org", () => {

@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
+import {
+  hydrateRouteWithCache,
+  renderRouteEmptyCache,
+  renderRouteWithCache,
+  testQueryClient,
+} from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
@@ -246,10 +251,95 @@ const ROUTES: Routes = {
       ],
       truncated: false,
       total: 2,
+      byType: {
+        catalog_request: 0,
+        permission_confirmation: 0,
+        scope_sync_failed: 1,
+        platform_migration: 1,
+        ownership_transferred: 0,
+        org_upload_pending: 0,
+      },
     }),
   "GET /api/v1/admin/inbox/count": () => json(200, { total: 2 }),
-  "GET /api/v1/admin/overview": () =>
-    json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 1, orgs: 2, accounts: 7 }),
+  "GET /api/v1/admin/overview": () => json(200, { orgs: 2, accounts: 7, attentionTotal: 3 }),
+  "GET /api/v1/admin/overview/attention": () =>
+    json(200, {
+      extensions: [],
+      updates: [
+        {
+          itemId: ITEM_ID,
+          name: "crm",
+          displayName: null,
+          icon: null,
+          version: "1.0.0",
+          marketplaceVersion: "1.1.0",
+          marketplaceId: "official",
+          marketplaceName: "Capybara Official",
+        },
+      ],
+      providers: [],
+      more: { extensions: 0, updates: 0, providers: 0 },
+      unavailable: [],
+    }),
+  "GET /api/v1/admin/overview/usage": () =>
+    json(200, {
+      from: "2026-11-03T16:00:00.000Z",
+      to: "2026-11-10T16:00:00.000Z",
+      tz: "Asia/Shanghai",
+      currency: "USD",
+      days: ["04", "05", "06", "07", "08", "09", "10"].map((d, i) => ({
+        date: `2026-11-${d}`,
+        runs: 10 + i,
+        tokens: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, embedding: 0 },
+        cost: 0.25,
+      })),
+      costPartial: false,
+      orgs: [{ orgId: "o1", name: "Acme", runs: 91, tokens: 8400, cost: 1.75 }],
+      otherOrgs: { count: 0, runs: 0, tokens: 0, cost: null },
+    }),
+  "GET /api/v1/admin/overview/health": () =>
+    json(200, {
+      kernel: { version: "0.1.0" },
+      replicas: [
+        {
+          id: "r1",
+          roles: ["api", "worker", "gateway"],
+          version: "0.1.0",
+          startedAt: T,
+          httpReplicaId: null,
+        },
+      ],
+      roles: { api: 1, worker: 1, gateway: 1 },
+      queues: [
+        {
+          name: "cap-kernel-runs",
+          waiting: 0,
+          active: 0,
+          delayed: 0,
+          failed: 0,
+          failedLastDay: 0,
+        },
+      ],
+      channels: { online: 0, offline: 0, webhook: 0, disabled: 0, error: 0 },
+      devices: { online: 0, local: 0 },
+      sandboxes: { running: 0, suspended: 0, byProvider: [] },
+      unavailable: [],
+    }),
+  "GET /api/v1/admin/audit": () =>
+    json(200, {
+      events: [
+        {
+          id: "5",
+          at: T,
+          actor: { id: "a1", name: "Grant", email: null },
+          viaToken: false,
+          viaAgent: false,
+          action: "marketplace.added",
+          target: "official",
+        },
+      ],
+      next: null,
+    }),
   "GET /api/v1/admin/accounts": () =>
     json(200, { accounts: [ACCOUNT("a1", "Grant"), ACCOUNT("a2", "Alice")], next: "a2" }),
   "GET /api/v1/admin/orgs": () =>
@@ -318,13 +408,107 @@ async function expectLoading(name: string, text: string) {
 }
 
 describe("first paint comes from the hydrated cache (no browser read)", () => {
-  it("/admin: a first render from the hydrated cache makes no browser read", async () => {
+  it("/admin: the numbers, the inbox counts and the audit events paint from the hydrated cache; only 待处理's lists and 运行状况 are read after mount", async () => {
+    const O = en.admin.overview;
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin", ROUTES);
     expect(screen.getByText("7")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
+    // the audit section is ready on the first paint
+    const audit = screen.getByText(O.audit.title).closest('[data-part="overview-section"]');
+    expect(audit?.hasAttribute("data-state")).toBe(false);
+    expect(within(audit as HTMLElement).getByText("Grant")).toBeTruthy();
+    // 待处理 draws its skeleton: its lists were not prefetched
+    const attention = screen
+      .getAllByText(O.attention.title)
+      .map((el) => el.closest('[data-part="overview-section"]'))
+      .find((el) => el !== null);
+    expect(attention?.getAttribute("data-state")).toBe("loading");
+    // so does 运行状况: not prefetched either (Redis and PG counts, polled in the page)
+    const health = screen
+      .getByText(O.health.title)
+      .closest('[data-part="overview-section"]') as HTMLElement;
+    expect(health.getAttribute("data-state")).toBe("loading");
+    expect(health.querySelector("[aria-busy='true']")).not.toBeNull();
+    // and 用量 (an aggregate over the week, may take seconds on a cold cache)
+    const usage = screen
+      .getByText(O.usage.title)
+      .closest('[data-part="overview-section"]') as HTMLElement;
+    expect(usage.getAttribute("data-state")).toBe("loading");
+    expect(usage.querySelector("[aria-busy='true']")).not.toBeNull();
     await settle();
-    expect(browser).toEqual([]);
+    // (the browser stub answers nothing here, so each read is retried once)
+    expect(new Set(browser.map((c) => new URL(c.url, "http://x").pathname))).toEqual(
+      new Set([
+        "/api/v1/admin/overview/attention",
+        "/api/v1/admin/overview/health",
+        "/api/v1/admin/overview/usage",
+      ]),
+    );
+  });
+
+  it("/admin: 待处理 shows its skeleton, then its lists (the inbox from the cache)", async () => {
+    const O = en.admin.overview.attention;
+    stubApi(ROUTES);
+    await renderRouteWithCache("/admin", ROUTES);
+    const box = () =>
+      screen
+        .getAllByText(O.title)
+        .map((el) => el.closest('[data-part="overview-section"]'))
+        .find((el): el is HTMLElement => el !== null) as HTMLElement;
+    expect(box().getAttribute("data-state")).toBe("loading");
+    expect(box().querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(await within(box()).findByText("v1.0.0 → v1.1.0")).toBeTruthy();
+    expect(within(box()).getByText(O.inboxTypes.scope_sync_failed)).toBeTruthy();
+    expect(within(box()).getByText(O.inboxTypes.platform_migration)).toBeTruthy();
+  });
+
+  it("/admin: 运行状况 shows its skeleton, then the replicas and queues", async () => {
+    const H = en.admin.overview.health;
+    stubApi(ROUTES);
+    await renderRouteWithCache("/admin", ROUTES);
+    const box = () =>
+      screen.getByText(H.title).closest('[data-part="overview-section"]') as HTMLElement;
+    expect(box().getAttribute("data-state")).toBe("loading");
+    expect(await within(box()).findByText(H.queues.runs)).toBeTruthy();
+    expect(within(box()).getByText("v0.1.0")).toBeTruthy();
+  });
+
+  it("/admin: 用量 shows its skeleton, then the chart and the ranking; 近 7 天运行 follows it", async () => {
+    const U = en.admin.overview.usage;
+    stubApi(ROUTES);
+    const { container } = await renderRouteWithCache("/admin", ROUTES);
+    const box = () =>
+      screen.getByText(U.title).closest('[data-part="overview-section"]') as HTMLElement;
+    expect(box().getAttribute("data-state")).toBe("loading");
+    const runs = within(
+      container.querySelector('[data-part="stat-cards"]') as HTMLElement,
+    ).getByText(en.admin.overview.metrics.runs7d).parentElement as HTMLElement;
+    expect(within(runs).getByText("—")).toBeTruthy();
+    expect(await within(box()).findByRole("table", { name: U.ranking.title })).toBeTruthy();
+    expect(box().querySelector('[data-part="trend-chart"]')).not.toBeNull();
+    expect(within(runs).getByText("91")).toBeTruthy();
+  });
+
+  it("/admin: a server in another zone than the browser: 用量 is read once, in the browser's zone", async () => {
+    const U = en.admin.overview.usage;
+    const browserZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const serverZone = browserZone === "Pacific/Kiritimati" ? "America/Adak" : "Pacific/Kiritimati";
+    const calls = stubApi(ROUTES);
+    const { container, errors, html, unmount } = await hydrateRouteWithCache("/admin", ROUTES, {
+      clock: { now: Date.now(), timeZone: serverZone },
+    });
+    // the server render draws the skeleton and the stat's dash (it does not know the reader's zone)
+    expect(html).toContain("—");
+    expect(errors).toEqual([]);
+    expect(
+      await within(container).findByRole("table", { name: U.ranking.title }, { timeout: 3000 }),
+    ).toBeTruthy();
+    const usage = calls
+      .map((c) => new URL(c.url, "http://x"))
+      .filter((u) => u.pathname === "/api/v1/admin/overview/usage");
+    expect(usage.map((u) => u.searchParams.get("tz"))).toEqual([browserZone]);
+    unmount();
   });
 
   it("/admin/accounts: a first render from the hydrated cache makes no browser read (load more when there is a next)", async () => {
@@ -378,11 +562,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin: while the numbers load the note stays and the numbers are stat slots", async () => {
+  it("/admin: while the numbers load the sections and the footnote stay and the numbers are four stat slots", async () => {
     const { release } = await renderHeld("/admin", "GET /api/v1/admin/overview");
     await expectLoading("OverviewPage", "7");
-    expect(screen.getByText(en.admin.overview.noConversations)).toBeTruthy();
+    expect(screen.getByText(en.admin.overview.footnote)).toBeTruthy();
     expect(document.querySelectorAll('[data-part="stat-card"]')).toHaveLength(4);
+    expect(await screen.findByText("Grant")).toBeTruthy();
     await release();
   });
 
@@ -516,10 +701,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await client.prefetchQuery({
       queryKey: ["deployment", "adminOverview"],
       queryFn: () => ({
-        extensionsNeedingAction: 0,
-        catalogRequestsPending: 0,
         orgs: 0,
         accounts: 0,
+        attentionTotal: 0,
       }),
     });
     const u = userEvent.setup();
@@ -832,10 +1016,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await client.prefetchQuery({
       queryKey: ["deployment", "adminOverview"],
       queryFn: () => ({
-        extensionsNeedingAction: 0,
-        catalogRequestsPending: 1,
         orgs: 0,
         accounts: 0,
+        attentionTotal: 1,
       }),
     });
     await userEvent

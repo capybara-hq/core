@@ -540,6 +540,17 @@ export class LocalDeviceGateway {
     conn.start();
   }
 
+  /**
+   * How many devices this process holds the connection of (replica presence reports it): only
+   * sockets past the hello that hold their device's lease, so a socket still claiming or being
+   * replaced by a newer one does not count a device twice.
+   */
+  connectionCount(): number {
+    let n = 0;
+    for (const c of this.connections) if (c.state === "holding") n++;
+    return n;
+  }
+
   /** @internal a connection that ended. */
   forget(conn: DeviceConnection): void {
     this.connections.delete(conn);
