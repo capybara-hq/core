@@ -77,7 +77,9 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, MODEL_SCRIPT, CHAN_TG, TOOLS_COUNT],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
-        channels: { scanIntervalMs: 100, leaseTtlMs: 2000 },
+        // one replica, no takeover: a lease long enough that a stalled event loop does not
+        // lose it and drop the long connection (2 s did under load)
+        channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
       },
     ),
   );

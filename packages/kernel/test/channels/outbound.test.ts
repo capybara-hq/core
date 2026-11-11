@@ -89,7 +89,9 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, CHAN_MINI, CHAN_NOEDIT, CHAN_SLOWEDIT, CHAN_PLAIN, MEM_CONNECTOR],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
-        channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: IDLE_MS },
+        // one replica, no takeover: a lease long enough that a stalled event loop does not
+        // lose it and drop the long connection (2 s did under load)
+        channels: { scanIntervalMs: 100, leaseTtlMs: 10_000, deliveryIdleMs: IDLE_MS },
         // fake-idle：流式输出停顿 400ms 即判超时（构造流式中途失败的运行）
         extensionConfig: {
           "model-fake": {
