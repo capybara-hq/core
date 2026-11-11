@@ -3377,6 +3377,78 @@
         },
         "retry": "重试"
       },
+      "health": {
+        "title": "运行状况",
+        "failed": "无法加载运行状况。",
+        "unavailable": "暂时无法读取",
+        "stale": "最近一次刷新失败，显示的是 <time></time> 的数据。",
+        "retry": "重试",
+        "groups": {
+          "kernel": "内核",
+          "queues": "队列",
+          "connections": "连接"
+        },
+        "kernel": {
+          "version": "版本",
+          "replicas": "副本",
+          "mixedVersions": "副本版本不一致（滚动升级中？）",
+          "replicaList": "副本列表（{n}）"
+        },
+        "roles": {
+          "api": "api（接口）",
+          "worker": "worker（后台任务）",
+          "gateway": "gateway（长连接）"
+        },
+        "noReplicas": {
+          "api": "没有在线的 api：接口无法访问",
+          "worker": "没有在线的 worker：运行不会开始",
+          "gateway": "没有在线的 gateway：渠道长连接不会建立"
+        },
+        "replicaColumns": {
+          "id": "副本",
+          "roles": "角色",
+          "version": "版本",
+          "startedAt": "启动于"
+        },
+        "queueColumns": {
+          "name": "队列",
+          "waiting": "等待",
+          "active": "进行中",
+          "delayed": "延迟",
+          "failedLastDay": "24 小时内失败"
+        },
+        "queues": {
+          "runs": "运行",
+          "subagentRuns": "子智能体运行",
+          "channels": "渠道",
+          "maintenance": "维护",
+          "pluginScope": "插件范围同步",
+          "titles": "会话标题",
+          "usageReport": "用量上报",
+          "evals": "评测"
+        },
+        "connections": {
+          "channels": "渠道",
+          "devices": "设备",
+          "sandboxes": "沙箱",
+          "byProvider": "按供应商"
+        },
+        "channelParts": {
+          "online": "在线",
+          "offline": "离线",
+          "webhook": "Webhook",
+          "disabled": "已停用",
+          "error": "出错"
+        },
+        "deviceParts": {
+          "online": "在线",
+          "local": "本地"
+        },
+        "sandboxParts": {
+          "running": "运行中",
+          "suspended": "已挂起"
+        }
+      },
       "audit": {
         "title": "最近的平台操作",
         "viewAll": "查看全部",

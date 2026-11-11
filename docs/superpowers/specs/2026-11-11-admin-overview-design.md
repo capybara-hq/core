@@ -83,7 +83,7 @@ inside a part are headings and hairlines, which is what "one box is enough" asks
 | Queue backlog and failures | The kernel queues are fixed names (`cap-kernel-runs`, `cap-kernel-subagent-runs`, `cap-kernel-channels`, `cap-kernel-maintenance`, `cap-kernel-plugin-scope`, `cap-kernel-titles`, `cap-kernel-usage-report`, `cap-kernel-evals`); no route reads them. Jobs keep `removeOnFail: 5000` (`infra/queue/queue.module.ts`). | new read (§5.2) |
 | Channel connections | PG `channel_connections.status` (`active` / `disabled` / `error`) and `inbound_mode`; a long connection is held while the lease `capk:channel-lease:<id>` exists (`channels/supervisor.ts`) | online count (§5.1, §5.2) |
 | Devices online | A local device is online while a replica holds `capk:device-lease:<deviceId>` (`DevicesService`, `local-devices/keys.ts`); `LocalDeviceGateway` keeps its connections in a per-process `Set` | online count (§5.1) |
-| Running sandbox instances | PG `device_instances.status` (`running` / `suspended`), partial indexes `environment_instances_running_idx` / `_live_idx` (migration 0088, table renamed in 0105) | none |
+| Running sandbox instances | PG `device_instances.status` (`running` / `suspended`), partial indexes `device_instances_running_idx` / `device_instances_live_idx` (migration 0088, table and indexes renamed in 0105) | none |
 
 ### 4.3 Part 3: 用量
 
@@ -132,8 +132,9 @@ minimal multi-replica-safe mechanism follows the gateway heartbeat already in pr
 - `replicaId` is the process's existing id (`ReplicaStatusStore.replicaId`, the one the gateway
   heartbeat and extension status rows use), so the three views name a replica the same way.
 - `startedAt` = when the process finished its start (the presence start).
-- `channelsHeld` = the supervisor's held connections; `devicesConnected` = the size of
-  `LocalDeviceGateway`'s connection set (through `GatewayRole`; 0 without the gateway role). Both are per-process facts the process reports about
+- `channelsHeld` = the supervisor's held connections; `devicesConnected` = the
+  `LocalDeviceGateway` connections that hold their device's lease (through `GatewayRole`; 0
+  without the gateway role; the health answer clamps the sum to the local devices). Both are per-process facts the process reports about
   itself; summing them over live replicas gives the online counts without scanning lease keys.
 - A graceful stop `ZREM`s and `DEL`s its own entry; a crash ages out in ≤ 45 s.
 - Read: `ZRANGEBYSCORE capk:replicas (now − 45 s) +inf` then one pipelined `HGETALL` per live member.
@@ -242,10 +243,11 @@ table written by a `@LockedCron` job; not built now (YAGNI, measured first) **(d
 ### 5.5 Errors
 
 New codes in `ERROR_CODES`: `admin.usage_unavailable` (503, the aggregate timed out). The health
-route degrades per source instead of failing: a Redis failure (no answer within 3 s) gives
+route degrades per source instead of failing: a Redis failure (a connection not ready, or no
+answer within 3 s) gives
 `replicas`, `roles`, `queues`, `channels.online` / `.offline` and `devices.online` null with
 `unavailable: ["redis"]`, so PG-backed numbers still show; a PG failure symmetrically nulls the
-channel, device and sandbox numbers with `unavailable: ["database"]`. Attention degrades per list the same way (`unavailable: ["providers"]`).
+channel, device and sandbox numbers with `unavailable: ["database"]` (also bounded by 3 s). Attention degrades per list the same way (`unavailable: ["providers"]`).
 
 ## 6. The four parts in the page
 

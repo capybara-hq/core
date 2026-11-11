@@ -1,6 +1,7 @@
 import {
   type DeploymentSettingsPatch,
   getAdminAttention,
+  getAdminHealth,
   getAdminOverview,
   getDeploymentSettings,
   listAdminAccounts,
@@ -46,6 +47,14 @@ export const adminAttentionQuery = () =>
     fn: () => getAdminAttention(),
     freshness: "deployment",
   });
+
+/**
+ * The overview's 运行状况 (replicas by role, queues, connections). Moves on its own, so `live`;
+ * the section polls it every 30 s while the page shows. Not prefetched: its section draws its
+ * own skeleton.
+ */
+export const adminHealthQuery = () =>
+  defineQuery({ key: d().adminHealth(), fn: () => getAdminHealth(), freshness: "live" });
 
 /**
  * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. Its

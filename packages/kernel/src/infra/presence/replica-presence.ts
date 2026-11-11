@@ -27,7 +27,7 @@ export interface LiveReplica {
   roles: ReplicaRole[];
   /** `KERNEL_VERSION` of the process. */
   version: string;
-  /** When the process finished its start (ISO 8601). */
+  /** When the process's start sequence was done, before it listens (ISO 8601). */
   startedAt: string;
   /** The configured `http.replicaId` (the `x-capybara-replica` header), null when unset. */
   httpReplicaId: string | null;

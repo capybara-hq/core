@@ -9,6 +9,7 @@ import { AdminHealthService, KERNEL_QUEUE_NAMES } from "../../src/admin/health.s
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { TITLE_QUEUE } from "../../src/conversations/titles.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { PRESENCE_INTERVAL_MS } from "../../src/infra/presence/replica-presence.js";
 import { bullConnectionOptions } from "../../src/infra/queue/redis-connection.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
@@ -117,6 +118,10 @@ describe("AdminHealthService.read", () => {
     await seedInstance(orgId, "sandbox-docker", "suspended");
     await seedInstance(orgId, "sandbox-e2b", "running");
     await seedInstance(orgId, "sandbox-e2b", "destroyed");
+    // a deleted org's running instance is not counted
+    const gone = await seedConversation(db());
+    await seedInstance(gone.orgId, "sandbox-docker", "running");
+    await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${gone.orgId}`.execute(db());
 
     vi.spyOn(k.app.get(ChannelSupervisor), "heldCount").mockReturnValue(2);
     vi.spyOn(k.app.get(LocalDeviceGateway), "connectionCount").mockReturnValue(1);
@@ -214,6 +219,31 @@ describe("AdminHealthService.read", () => {
         names.filter((n) => n === name),
         name,
       ).toHaveLength(1);
+    }
+  });
+
+  it("the database failing: its numbers are null, the Redis numbers stay", async () => {
+    const svc = k.app.get(AdminHealthService);
+    const spy = vi.spyOn(k.app.get(KernelDb), "db", "get").mockImplementation(() => {
+      throw new Error("database down");
+    });
+    try {
+      const h = await svc.read();
+      expect(h.unavailable).toEqual(["database"]);
+      expect(h.channels).toEqual({
+        online: 2,
+        offline: null,
+        webhook: null,
+        disabled: null,
+        error: null,
+      });
+      expect(h.devices).toEqual({ online: 1, local: null });
+      expect(h.sandboxes).toBeNull();
+      expect(h.replicas).toHaveLength(1);
+      expect(h.roles).toEqual({ api: 1, worker: 0, gateway: 1 });
+      expect(h.queues).toHaveLength(KERNEL_QUEUE_NAMES.length);
+    } finally {
+      spy.mockRestore();
     }
   });
 
