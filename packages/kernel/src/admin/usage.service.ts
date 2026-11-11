@@ -5,7 +5,7 @@ import { SettingsService } from "../identity/settings.js";
 import { CacheService } from "../infra/cache/cache.service.js";
 import { Cacheable } from "../infra/cache/cacheable.decorator.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { runOutsideTransaction, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { costOf, PricesService, type PriceTable, priceKey } from "../models/prices.js";
 
@@ -29,6 +29,10 @@ export const USAGE_CACHE_TTL = 300;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10_000;
 /** SQLSTATE `query_canceled`: what `statement_timeout` raises. */
 const QUERY_CANCELED = "57014";
+/** SQLSTATE `invalid_parameter_value`: a zone `Intl` knows but PG's tzdata does not. */
+const INVALID_PARAMETER_VALUE = "22023";
+
+const sqlState = (err: unknown): unknown => (err as { code?: unknown } | null)?.code;
 
 /** Tokens of one day; the four chat kinds do not overlap (plugin-sdk `ModelUsage`). */
 export interface UsageTokens {
@@ -175,12 +179,18 @@ export class AdminUsageService {
   }
 
   /**
-   * The week ending today in `tz` (an IANA zone the caller validated, `IanaTimeZone`). Throws
-   * `admin.usage_unavailable` (503) when the aggregate ran past its statement timeout.
+   * The week ending today in `tz` (an IANA zone the caller validated, `IanaTimeZone`; normalized to
+   * its canonical spelling, which the answer echoes and the cache key holds). Throws
+   * `admin.usage_unavailable` (503) when the aggregate ran past its statement timeout, and
+   * `validation_failed` (400) for a zone PG does not know.
+   *
+   * Never call it inside a transaction: it leaves the caller's context on purpose (inside one,
+   * `@Cacheable` would be bypassed and the read-only transaction would hold a second connection).
    */
   async week(tz: string): Promise<AdminUsageWeek> {
-    const firstDay = addDays(dateIn(tz, this.now()), -(USAGE_WINDOW_DAYS - 1));
-    return this.cachedWeek(tz, firstDay);
+    const zone = new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
+    const firstDay = addDays(dateIn(zone, this.now()), -(USAGE_WINDOW_DAYS - 1));
+    return runOutsideTransaction(() => this.cachedWeek(zone, firstDay));
   }
 
   /** The cache key holds the zone and the first day: a new day starts a new entry. */
@@ -189,10 +199,16 @@ export class AdminUsageService {
     try {
       return await this.aggregate(tz, firstDay);
     } catch (err) {
-      if ((err as { code?: unknown } | null)?.code === QUERY_CANCELED) {
+      if (sqlState(err) === QUERY_CANCELED) {
         throw new ApiError(
           "admin.usage_unavailable",
           "The usage aggregate took too long; try again later",
+        );
+      }
+      if (sqlState(err) === INVALID_PARAMETER_VALUE) {
+        throw new ApiError(
+          "validation_failed",
+          `Unknown time zone ${tz}; pass an IANA time zone name, such as Asia/Shanghai`,
         );
       }
       throw err;
@@ -257,6 +273,11 @@ export class AdminUsageService {
  * driver turns them into local-time dates).
  */
 export function usageQueries(tz: string, from: Date, to: Date) {
+  // a malformed payload value (a string, null) counts 0 and a fraction is rounded, so one bad
+  // event cannot fail the aggregate for its 7 days
+  const tokenSum = (field: string) =>
+    sql<string>`coalesce(sum(CASE WHEN jsonb_typeof(e.payload->${sql.lit(field)}) = 'number'
+      THEN round((e.payload->>${sql.lit(field)})::numeric) END), 0)`;
   const day = (col: string) =>
     sql<string>`to_char((${sql.ref(col)} AT TIME ZONE ${tz})::date, 'YYYY-MM-DD')`;
   return {
@@ -265,10 +286,10 @@ export function usageQueries(tz: string, from: Date, to: Date) {
       SELECT ${day("e.created_at")} AS day, c.org_id,
              coalesce(e.payload->>'provider', '') AS provider,
              coalesce(e.payload->>'model', '') AS model,
-             coalesce(sum((e.payload->>'inputTokens')::bigint), 0) AS input,
-             coalesce(sum((e.payload->>'outputTokens')::bigint), 0) AS output,
-             coalesce(sum((e.payload->>'cacheReadTokens')::bigint), 0) AS cache_read,
-             coalesce(sum((e.payload->>'cacheWriteTokens')::bigint), 0) AS cache_write
+             ${tokenSum("inputTokens")} AS input,
+             ${tokenSum("outputTokens")} AS output,
+             ${tokenSum("cacheReadTokens")} AS cache_read,
+             ${tokenSum("cacheWriteTokens")} AS cache_write
       FROM capybara.conversation_events e
       JOIN capybara.conversations c ON c.id = e.conversation_id
       WHERE e.type = 'usage' AND e.created_at >= ${from} AND e.created_at < ${to}

@@ -357,6 +357,8 @@ describe("AdminUsageService.week", () => {
   it("a statement timeout is admin.usage_unavailable (503), not cached", async () => {
     await seedTwoOrgs();
     const svc = replica({ statementTimeoutMs: 300 });
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the protected inner query
+    const q = vi.spyOn(svc as any, "aggregate");
     // another session holds runs exclusively: the runs query waits past the statement timeout
     let release!: () => void;
     const held = new Promise<void>((r) => {
@@ -381,9 +383,62 @@ describe("AdminUsageService.week", () => {
       release();
       await holder;
     }
-    // nothing was cached: the next call computes the answer
-    const week: AdminUsageWeek = await svc.week("UTC");
+    // nothing was cached: another replica sharing the Redis computes the answer itself
+    const other = replica();
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the protected inner query
+    const q2 = vi.spyOn(other as any, "aggregate");
+    const week: AdminUsageWeek = await other.week("UTC");
     expect(week.days).toHaveLength(7);
+    expect(q).toHaveBeenCalledTimes(1);
+    expect(q2).toHaveBeenCalledTimes(1);
+  });
+
+  it("a zone PG does not know is validation_failed (400)", async () => {
+    const svc = replica();
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the protected inner query
+    vi.spyOn(svc as any, "aggregate").mockRejectedValueOnce(
+      Object.assign(new Error('time zone "X" not recognized'), { code: "22023" }),
+    );
+    const err = await svc.week("UTC").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("validation_failed");
+    expect((err as ApiError).status).toBe(400);
+  });
+
+  it("normalizes the zone's spelling for the answer and the cache key", async () => {
+    await seedTwoOrgs();
+    const svc = replica();
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the protected inner query
+    const q = vi.spyOn(svc as any, "aggregate");
+    const week = await svc.week("asia/shanghai");
+    expect(week.tz).toBe("Asia/Shanghai");
+    await svc.week("Asia/Shanghai");
+    expect(q).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts malformed token values as 0 and rounds fractions instead of failing", async () => {
+    const { conv } = await seedOrg("org-a", "Alpha");
+    for (const inputTokens of [1.5, "x", null, "12"]) {
+      const payload = { step: 1, provider: "fake", model: "m1", inputTokens, outputTokens: 1 };
+      await sql`INSERT INTO capybara.conversation_events (conversation_id, seq, type, payload, created_at)
+        VALUES (${conv}, ${++seq}, 'usage', ${JSON.stringify(payload)}::jsonb,
+          '2026-11-10T10:00:00Z')`.execute(raw);
+    }
+    const week = await replica().week("UTC");
+    const day = week.days.find((d) => d.date === "2026-11-10");
+    // 1.5 rounds to 2; the string, the null and the numeric string count 0
+    expect(day?.tokens).toEqual(tok({ input: 2, output: 4 }));
+  });
+
+  it("leaves a caller's transaction: still served from the cache, on its own connection", async () => {
+    await seedTwoOrgs();
+    const svc = replica();
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the protected inner query
+    const q = vi.spyOn(svc as any, "aggregate");
+    const first = await svc.week("UTC");
+    const inside = await handlesFor(raw).txHost.run(() => svc.week("UTC"));
+    expect(inside).toEqual(first);
+    expect(q).toHaveBeenCalledTimes(1);
   });
 
   it("other database errors propagate unchanged", async () => {

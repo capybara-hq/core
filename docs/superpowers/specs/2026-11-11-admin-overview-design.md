@@ -229,6 +229,12 @@ caller's. The cached answer carries the prices and currency of when it was compu
 change shows within 300 s. Eval runs here are the full-run replay runs (they live in `runs`, in
 `kind = 'eval'` conversations); step replays and the judge write no `usage` event and are not
 counted.
+A malformed token value in a `usage` payload (a string, null) counts 0 and a fraction is rounded,
+so one bad event cannot fail the week. `tz` is normalized (`Intl` canonical name) before it is
+echoed and keyed; a zone PG's tzdata does not know (SQLSTATE 22023) is `validation_failed` (400).
+`week()` leaves any caller transaction (`runOutsideTransaction`), so the cache always applies. Each
+statement is bounded, not the whole transaction: `transaction_timeout` needs PostgreSQL 17 and the
+kernel supports 15.
 
 If 7-day scans of `conversation_events` become slow at scale, the follow-up is a daily rollup
 table written by a `@LockedCron` job; not built now (YAGNI, measured first) **(designer's call)**.
@@ -408,8 +414,10 @@ TrendChart({
     format(n: number): string;         // axis max and tooltip
   }[];
   current?: number;                    // index drawn in accent (today)
-  extra?(i: number): ReactNode;        // more tooltip lines (估算费用)
+  extra?(i: number): ReactNode;        // more tooltip lines (估算费用), a hidden-table column too
+  extraLabel?: string;                 // that column's header
   empty?: string;                      // the zero-state line
+  defaultActive?: number;              // the point shown before any pointer or key (reference)
 })
 ```
 
