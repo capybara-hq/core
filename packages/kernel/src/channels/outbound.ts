@@ -979,7 +979,10 @@ class Delivery {
 
   /**
    * Sends into the delivery target. A scheduled group run's first post is its thread's root: once
-   * the platform has it, the thread is bound to its id and later posts go into that thread.
+   * the platform has it, the thread is bound to its id and later posts go into that thread. The
+   * bind comes before the lease check: the root is posted, so it is recorded even when the lease
+   * was lost meanwhile (the bind is conditional on still pending, so a holder that bound first
+   * keeps its thread), and a retry never posts a second root.
    */
   private async send(
     message: OutboundMessage,
@@ -987,9 +990,9 @@ class Delivery {
   ): Promise<{ messageId: string }> {
     const sent = await this.s.send(this.target, message, idempotencyKey, this.locale);
     if (this.threadPending) {
-      if (this.lease.lost) throw new DeliveryLostError();
       this.target = await this.d.writes.bindThreadIn(this.conversationId, sent.messageId);
       this.threadPending = false;
+      if (this.lease.lost) throw new DeliveryLostError();
     }
     return sent;
   }
