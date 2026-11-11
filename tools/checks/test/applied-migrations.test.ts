@@ -37,6 +37,24 @@ describe("checkAppliedMigrations (git diff --name-status output)", () => {
     ]);
   });
 
+  it("a listed renumber with unchanged content passes; changed content or an unlisted one does not", () => {
+    const listed = {
+      from: "packages/kernel/src/migrations/0009_x.sql",
+      to: "packages/kernel/src/migrations/0011_x.sql",
+      reason: "test",
+    };
+    const line = (status: string, to = listed.to) => `${status}\t${listed.from}\t${to}`;
+    expect(checkAppliedMigrations(line("R100"), [listed])).toEqual([]);
+    expect(checkAppliedMigrations(line("R095"), [listed]).map((f) => f.file)).toEqual([
+      listed.from,
+    ]);
+    const other = "packages/kernel/src/migrations/0012_x.sql";
+    expect(checkAppliedMigrations(line("R100", other), [listed]).map((f) => f.file)).toEqual([
+      listed.from,
+    ]);
+    expect(checkAppliedMigrations(line("R100"), []).map((f) => f.file)).toEqual([listed.from]);
+  });
+
   it("a plugin deleted as a whole (its plugin.json deleted too) takes its migrations along", () => {
     const out = [
       "D\tplugins/gone/.capybara-plugin/plugin.json",

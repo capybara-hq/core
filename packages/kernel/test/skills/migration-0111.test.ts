@@ -9,12 +9,12 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0109_agent_skill_sharing.sql (skill authoring via the Platform tool): skills gain
+ * 0111_agent_skill_sharing.sql (skill authoring via the Platform tool): skills gain
  * `origin_agent_id` and `maintainer_account_id` (an agent skill shared with the org),
  * skill_change_requests gain `kind`, and the pending R4 owner-approved changes are cancelled.
- * Migrates to the migration before it, seeds a pending and an approved request, then runs 0109.
+ * Migrates to the migration before it, seeds a pending and an approved request, then runs 0111.
  */
-const FILE = "0109_agent_skill_sharing.sql";
+const FILE = "0111_agent_skill_sharing.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -63,7 +63,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0109_agent_skill_sharing", () => {
+describe("0111_agent_skill_sharing", () => {
   it("adds skills.origin_agent_id, skills.maintainer_account_id and skill_change_requests.kind", async () => {
     const cols = await sql<{
       table_name: string;
