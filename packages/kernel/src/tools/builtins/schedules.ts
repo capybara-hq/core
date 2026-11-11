@@ -486,10 +486,10 @@ const withZone = (t: TriggerInput, timeZone: string): ScheduleTrigger =>
     ? { kind: "cron", expr: t.expr, timeZone }
     : { kind: "once", at: t.at, timeZone };
 
-/** The fixed ask of a create or update: every call asks, only "once", with the kernel's card. */
 /** A card as stored on the approval (the same clipping at ask time and at run time). */
 const cardOf = (w: Words): Words => ({ zh: clip(w.zh, 1000), en: clip(w.en, 1000) });
 
+/** The fixed ask of a create or update: every call asks, only "once", with the kernel's card. */
 const ask = (key: string, summary: Words): CallPolicy => ({
   key,
   policy: "ask",

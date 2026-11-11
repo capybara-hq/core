@@ -102,3 +102,7 @@ ALTER TABLE conversation_queue ADD COLUMN IF NOT EXISTS schedule jsonb;
 -- A group chat run's delivery whose thread is not bound yet (§8): the account its thread row gets
 -- once outbound has the run's first post (thread key = that message's id); null afterwards.
 ALTER TABLE channel_deliveries ADD COLUMN IF NOT EXISTS pending_thread_account_id text;
+-- The chats a person can point a chat task at (`GET …/schedules/chat-targets`) and the fire's
+-- thread checks read their thread rows by account; anonymous visitors' rows (no account) never.
+CREATE INDEX IF NOT EXISTS channel_threads_account_idx ON channel_threads (account_id, connection_id)
+  WHERE account_id IS NOT NULL;

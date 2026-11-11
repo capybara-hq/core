@@ -306,27 +306,31 @@ describe("a message skips the pending question", { timeout: 60_000 }, () => {
         },
       },
     ]);
-    const agentId = await createAgent({ model: { provider: "model-script", model: "script-1" } });
-    const convId = await createConv(reqA, orgId, agentId);
-    await postMessage(reqA, orgId, convId, "ask while held");
-    await waitFor(
-      async () =>
-        ((
-          globalThis as { __modelScript?: { barriers: Map<string, { arrived: number }> } }
-        ).__modelScript?.barriers.get("asking")?.arrived ?? 0) >= 1,
-      30_000,
-      "the asking step streams",
-    );
-    const msgSeq = await postMessage(reqA, orgId, convId, "echo:early");
-    openBarrier("asking");
-    const { questionIds } = await waiting(convId);
-    const asked = ofType(await eventsOf(db, convId), "question_asked")[0];
-    expect(asked?.seq).toBeGreaterThan(msgSeq);
-    expect((await questionRow(questionIds[0] as string)).status).toBe("pending");
-    const ok = await answer(reqA, questionIds[0] as string, { answer: { q0: "Postgres" } });
-    expect(ok.statusCode, ok.body).toBe(200);
-    await waitForTerminal(db, convId, 1);
-    scriptRules([]);
+    try {
+      const agentId = await createAgent({ model: { provider: "model-script", model: "script-1" } });
+      const convId = await createConv(reqA, orgId, agentId);
+      await postMessage(reqA, orgId, convId, "ask while held");
+      await waitFor(
+        async () =>
+          ((
+            globalThis as { __modelScript?: { barriers: Map<string, { arrived: number }> } }
+          ).__modelScript?.barriers.get("asking")?.arrived ?? 0) >= 1,
+        30_000,
+        "the asking step streams",
+      );
+      const msgSeq = await postMessage(reqA, orgId, convId, "echo:early");
+      openBarrier("asking");
+      const { questionIds } = await waiting(convId);
+      const asked = ofType(await eventsOf(db, convId), "question_asked")[0];
+      expect(asked?.seq).toBeGreaterThan(msgSeq);
+      expect((await questionRow(questionIds[0] as string)).status).toBe("pending");
+      const ok = await answer(reqA, questionIds[0] as string, { answer: { q0: "Postgres" } });
+      expect(ok.statusCode, ok.body).toBe(200);
+      await waitForTerminal(db, convId, 1);
+    } finally {
+      // the next tests must not inherit the held reply, even when this one failed
+      scriptRules([]);
+    }
   });
 
   it("two questions in one step: the calls run in order, so a message skips the pending one; the next is asked after it and waits (log order)", async () => {
