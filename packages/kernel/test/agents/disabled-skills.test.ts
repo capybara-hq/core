@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { canonicalDisabledSkills } from "../../src/agents/definition.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { truncateTables } from "../helpers/db.js";
@@ -196,6 +197,13 @@ describe("disabledSkills", { timeout: 60_000 }, () => {
     expect(r.json().agent.definition.disabledSkills).toEqual([
       { kind: "plugin", plugin: "kit", skills: "all" },
     ]);
+  });
+
+  it("the canonical form sorts plugin entries, so the order they were given in never matters", () => {
+    const a = { kind: "plugin" as const, plugin: "a-kit", skills: ["x"] };
+    const z = { kind: "plugin" as const, plugin: "z-kit", skills: "all" as const };
+    expect(canonicalDisabledSkills([z, a])).toEqual([a, z]);
+    expect(canonicalDisabledSkills([a, z])).toEqual(canonicalDisabledSkills([z, a]));
   });
 
   it("refuses an unknown plugin or name, a plugin skill by id and an unknown skill id, at their index", async () => {

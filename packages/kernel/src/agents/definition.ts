@@ -137,7 +137,7 @@ export function skillDisabled(
 }
 
 /**
- * `disabled` in its canonical form: one entry per plugin (in first-seen order, `"all"` absorbing
+ * `disabled` in its canonical form: one entry per plugin (sorted by plugin, `"all"` absorbing
  * names, names deduplicated and sorted, an empty list dropped), then the skill entries deduplicated
  * and sorted by id. Saving stores this form, so two lists that turn off the same skills compare
  * equal.
@@ -166,7 +166,9 @@ export function canonicalDisabledSkills(disabled: readonly DisabledSkillRef[]): 
     }
   }
   return [
-    ...plugins.filter((p) => p.skills === "all" || p.skills.length > 0),
+    ...plugins
+      .filter((p) => p.skills === "all" || p.skills.length > 0)
+      .sort((a, b) => (a.plugin < b.plugin ? -1 : a.plugin > b.plugin ? 1 : 0)),
     ...[...ids].sort().map((skillId) => ({ kind: "skill" as const, skillId })),
   ];
 }
