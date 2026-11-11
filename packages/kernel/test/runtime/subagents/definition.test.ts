@@ -609,6 +609,72 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     ]);
   });
 
+  it("plugin template: a builtin plugin's skill is pinned only when the parent selects it", async () => {
+    const itemId = randomUUID();
+    const guide = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: `core-${n}`,
+        package_name: `@acme/plugin-core-${n}`,
+        publisher: "Acme",
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+        builtin: true,
+        scope: "all",
+      })
+      .execute();
+    await db
+      .insertInto("platform_skills")
+      .values({
+        id: guide,
+        catalog_item_id: itemId,
+        plugin_name: `core-${n}`,
+        name: "skill-guide",
+        description: "d",
+        current_version: 1,
+        scope_mode: "follow",
+        scope: "optional",
+      })
+      .execute();
+    await db
+      .insertInto("platform_skill_versions")
+      .values({
+        skill_id: guide,
+        version: 1,
+        manifest: JSON.stringify({
+          name: "skill-guide",
+          description: "d",
+          files: [{ path: "SKILL.md", size: 100, sha256: "0".repeat(64) }],
+        }),
+        object_prefix: `platform/skills/${guide}/1/`,
+        catalog_version: "1.0.0",
+      })
+      .execute();
+    try {
+      const t = await template("implementer", {
+        skills: ["skill-guide"],
+        selectedSkills: ["skill-guide"],
+      });
+      // every agent has it, but a pin needs a selection
+      const r = await eff(def({ subagents: { templates: [t] } }), "implementer");
+      expect(r.definition.skills?.pinned ?? []).toEqual([]);
+      expect(r.warnings).toEqual([
+        'The skill "skill-guide" was not pinned: the agent does not select it.',
+      ]);
+      const selected = def({ skills: { orgSkills: [guide] }, subagents: { templates: [t] } });
+      const r2 = await eff(selected, "implementer");
+      expect(r2.definition.skills).toEqual({ orgSkills: [guide], pinned: [guide] });
+      expect(r2.warnings).toEqual([]);
+    } finally {
+      await db.deleteFrom("platform_skill_versions").where("skill_id", "=", guide).execute();
+      await db.deleteFrom("platform_skills").where("id", "=", guide).execute();
+      await db.deleteFrom("catalog_items").where("id", "=", itemId).execute();
+    }
+  });
+
   describe("model tiers", () => {
     const map = (tier: string, model = FAKE2, params: Record<string, unknown> = {}) =>
       k.app

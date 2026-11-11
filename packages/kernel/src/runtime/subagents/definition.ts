@@ -19,7 +19,7 @@ import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
-import { selectedSkills } from "../../skills/usable.js";
+import { builtinSkillIds, selectedSkills } from "../../skills/usable.js";
 import { AGENT_TOOL, CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
 import type { RosterEntry } from "./roster.js";
@@ -138,7 +138,9 @@ interface SkillRow {
  * within the pinned limits (spec §5.3): inline templates name skill ids, plugin templates skill
  * names (`<name>` or `<plugin>:<name>`). A name that matches more than one selected skill picks, in
  * this order, the skill from the template's own plugin, the agent's own skill, the org skill (ties
- * by id), with a warning. Dropped ones get a warning.
+ * by id), with a warning. Dropped ones get a warning. A builtin plugin's skill the parent does not
+ * select is available to `selected` but never pinned (like `agent.pinned_invalid` and inline
+ * templates: a pin needs a selection).
  */
 async function pinnedFor(
   db: KernelSchemaDb,
@@ -163,18 +165,22 @@ async function pinnedFor(
     plugin: r.plugin,
     bytes: r.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0,
   }));
+  // builtin skills every agent has without selecting them: never pinnable unless selected
+  const chosen = new Set(a.parent.skills?.orgSkills ?? []);
+  const auto = new Set((await builtinSkillIds(db, a.orgId)).filter((id) => !chosen.has(id)));
+  const pinnable = rows.filter((r) => !auto.has(r.id));
   const pinned: string[] = [];
   const warnings: string[] = [];
   const own = byName?.plugin;
   const rank = (r: SkillRow) =>
     own !== undefined && r.plugin === own ? 0 : r.scope === "agent" ? 1 : 2;
-  const match = (ref: string): SkillRow | undefined => {
-    if (byName === null) return rows.find((r) => r.id === ref);
+  const match = (ref: string, among: readonly SkillRow[] = rows): SkillRow | undefined => {
+    if (byName === null) return among.find((r) => r.id === ref);
     const i = ref.indexOf(":");
     const found =
       i < 0
-        ? rows.filter((r) => r.name === ref)
-        : rows.filter((r) => r.name === ref.slice(i + 1) && r.plugin === ref.slice(0, i));
+        ? among.filter((r) => r.name === ref)
+        : among.filter((r) => r.name === ref.slice(i + 1) && r.plugin === ref.slice(0, i));
     // rows are ordered by id, and the sort is stable: ties keep that order
     const [first, ...rest] = found.sort((x, y) => rank(x) - rank(y));
     if (first && rest.length > 0) {
@@ -189,7 +195,7 @@ async function pinnedFor(
   };
   let total = 0;
   for (const ref of refs) {
-    const r = match(ref);
+    const r = match(ref, pinnable);
     if (!r) {
       warnings.push(`The skill "${ref}" was not pinned: the agent does not select it.`);
       continue;

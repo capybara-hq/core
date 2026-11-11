@@ -602,8 +602,10 @@
       "skillTag": {
         "manual": "手动",
         "fork": "子智能体",
-        "platform": "平台"
+        "platform": "平台",
+        "builtin": "内置"
       },
+      "builtinHint": "内置技能对每个智能体都生效，无需选择：模型按需加载。",
       "manualHint": "手动技能不在模型的技能目录里：由人在会话里用 / 调用。",
       "manualNotPinnable": "手动技能不能置顶。",
       "pinnedManualOnly": "{name} 已改为手动技能：运行时不会置顶它。请取消置顶。",

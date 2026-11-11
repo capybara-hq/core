@@ -602,8 +602,10 @@
       "skillTag": {
         "manual": "manual",
         "fork": "sub-agent",
-        "platform": "Platform"
+        "platform": "Platform",
+        "builtin": "Built-in"
       },
+      "builtinHint": "Built-in skills are included for every agent without being selected: the model loads them when needed.",
       "manualHint": "A manual skill is not in the model's skills catalog: people invoke it with / in a conversation.",
       "manualNotPinnable": "Manual skills cannot be pinned.",
       "pinnedManualOnly": "{name} is now manual-only: runs leave it out of the pinned skills. Unpin it.",
