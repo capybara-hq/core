@@ -2280,7 +2280,6 @@ export interface PluginSetupGuide {
 // @public
 export interface PluginSkillRef {
     path: string;
-    pinned?: boolean;
 }
 
 // @public
