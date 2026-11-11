@@ -1186,7 +1186,8 @@ export class SkillsService {
     ).length;
   }
 
-  private async detail(orgId: string, skillId: string): Promise<SkillDetail> {
+  /** The skill's detail without `agentsOff` (no agents scan; for names and checks). */
+  async detail(orgId: string, skillId: string): Promise<SkillDetail> {
     const link = await this.db
       .selectFrom("skills")
       .select("platform_skill_id")
