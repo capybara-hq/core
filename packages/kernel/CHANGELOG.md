@@ -1,5 +1,38 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.20
+
+### Minor Changes
+
+- fc9cbe6: Agents author skills with files and the Platform tool; SkillWrite removed
+
+### Patch Changes
+
+- 0d0e6fa: Super admin pages for every org's agents and connectors
+- 8f3f685: Admin overview health for super admins: every kernel process now reports its presence (roles,
+  version, start time) in Redis every 15 s, and the new `GET /admin/overview/health` (with the
+  read-only Platform operation `admin.health`) answers the live replicas by role, the kernel queue
+  counts with failures in the last 24 hours, and channel, device and sandbox counts
+- 3c16bf9: Admin overview reads for super admins: `GET /admin/overview` now answers
+  `{ orgs, accounts, attentionTotal }`, `GET /admin/inbox` adds `byType`, and the new
+  `GET /admin/overview/attention` and `GET /admin/audit` (platform-level audit log, migration 0109)
+  come with the read-only Platform operations `admin.attention` and `admin.audit`
+- 38e6432: Admin overview usage for super admins: the new `GET /admin/overview/usage?tz=` (with the read-only
+  Platform operation `admin.usage`) answers runs, tokens and estimated cost per calendar day in the
+  reader's zone over the last 7 days, and the 10 orgs that used the most tokens; cached 300 s for
+  every replica, 503 `admin.usage_unavailable` when the database takes over 10 s. Migration 0110
+  builds two plain indexes (`runs (created_at)`, `model_usage (occurred_at)`): on a large `runs`
+  table, writes to it wait while the index builds
+- 2b8bdfe: Background task output says why it cannot be read live (`unavailable` / 409 `details`: starting,
+  not started, device offline, suspended, rebuilt, output missing, no access), naming the device or
+  the sandbox; the panel never draws an empty output box; "N completed" opens the list of finished
+  tasks; the right panel's full screen maximises it inside the page instead of the browser.
+- 86d9528: The org extension tools list answers an empty list for an extension that runs but registers no
+  tools (a channel, a model provider) instead of 404, so its settings no longer show 「无法读取工具」.
+- 3756b00: The permission review's 密钥 group names each secret field with its level (`deployment:appSecret`,
+  `org:appSecret`) like the config group, so a secret declared at both levels is no longer one name
+  listed twice (which also broke the web list's keys).
+
 ## 0.1.0-rc.19
 
 ### Patch Changes

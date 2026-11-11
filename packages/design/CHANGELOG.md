@@ -1,5 +1,12 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.6
+
+### Patch Changes
+
+- 0dea20f: OverviewSection: one section of an overview page with its own loading, error and ready state
+- 1c8fd12: TrendChart: a time series as stacked panels on one shared x-axis (crosshair, tooltip, keyboard, hidden table), and formatCompact for large numbers (en 3.4M, zh 340万)
+
 ## 0.2.0-rc.5
 
 ### Patch Changes

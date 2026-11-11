@@ -1,5 +1,35 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.21
+
+### Minor Changes
+
+- fc9cbe6: Agents author skills with files and the Platform tool; SkillWrite removed
+
+### Patch Changes
+
+- 0d0e6fa: Super admin pages for every org's agents and connectors
+- ac0d1f4: The admin console overview shows 运行状况 between 待处理 and the recent platform actions: the
+  kernel version and live replicas by role (a role with none says what stops, mixed versions warn,
+  the replicas folded in a table), the kernel queues with failures in the last 24 hours, and channel,
+  device and sandbox counts; read every 30 s while the page is visible, and a source the kernel
+  cannot read says so without blanking the rest.
+- 7f2143f: The admin console overview shows 用量 · 近 7 天: runs and tokens per day in the reader's time zone
+  with estimated costs, the 7-day total and the top organizations, plus a 近 7 天运行 number in the header
+- c6cfd67: The admin console overview shows what waits (the inbox by type, extensions, plugin updates and
+  model providers needing a look) and the recent platform-level actions, each section loading and
+  failing on its own; a new `/admin/audit` page lists the platform audit log, and the platform inbox
+  can be filtered by type (`?type=`).
+- 2b8bdfe: Background task output says why it cannot be read live (`unavailable` / 409 `details`: starting,
+  not started, device offline, suspended, rebuilt, output missing, no access), naming the device or
+  the sandbox; the panel never draws an empty output box; "N completed" opens the list of finished
+  tasks; the right panel's full screen maximises it inside the page instead of the browser.
+- 787c318: The shell's `data-cap-state` carries `sign-in=new` from the server render on the first workspace
+  document of a sign-in, so plugin CSS can cover the page until a boot screen takes over.
+- Updated dependencies [0dea20f]
+- Updated dependencies [1c8fd12]
+  - @capybara-hq/design@0.2.0-rc.6
+
 ## 0.1.0-rc.20
 
 ### Patch Changes
