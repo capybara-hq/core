@@ -55,19 +55,39 @@ import { clip, display } from "./sandbox/common.js";
  *   (`run_context`, else the org's, else UTC).
  */
 
-/** The task service as the tools use it (resolved at call time; null when not loaded here). */
+/** The task service as the tools use it (bound at start; null when not loaded here). */
 export type ScheduleService = Pick<
   ScheduledTasksService,
   "create" | "update" | "list" | "remove" | "addGrants" | "removeGrant"
 >;
+
+/**
+ * Where the schedule tools find the task service: a registration port. `SchedulesModule` imports
+ * `ToolsModule` (its grants resolve the agent's tools through `ToolRegistry`, which lists these
+ * builtins), so the service cannot be injected into the builtins; `SchedulesModule` binds it here
+ * from `onModuleInit` instead, as the domain operations register into `PlatformOperations`. Null
+ * until bound (an application without `SchedulesModule`).
+ */
+@Injectable()
+export class ScheduleToolsPort {
+  private service: ScheduleService | null = null;
+
+  bind(service: ScheduleService): void {
+    this.service = service;
+  }
+
+  get(): ScheduleService | null {
+    return this.service;
+  }
+}
 
 export interface ScheduleToolsDeps {
   /** The kernel-schema handle of the current context. */
   db: () => KernelSchemaDb;
   config: Pick<KernelConfigService, "get">;
   store: Pick<ScheduledTaskStore, "getTask" | "listGrants">;
-  /** The task service, or null when this replica does not load it. */
-  service: () => Promise<ScheduleService | null>;
+  /** The task service, or null when this application does not load it. */
+  service: () => ScheduleService | null;
   /** `ScheduleUpdate`'s write (its field change and grant changes commit together). */
   updates: Pick<ScheduleUpdates, "apply">;
   /** The conversation's zone: its latest `run_context`, else the org's, else UTC. */
@@ -544,17 +564,17 @@ export function scheduleTools(deps: ScheduleToolsDeps): BuiltinTool[] {
   /**
    * The service, or a refusal (the tools are hidden then too: {@link unavailable}). Defensive:
    * `SchedulesModule` is reachable on every role (through ChannelsModule / KernelModule), so the
-   * lookup is expected to succeed; the path stays for an application built without it.
+   * port is expected to be bound; the path stays for an application built without it.
    */
   const service = async (): Promise<ScheduleService> => {
-    const s = await deps.service();
+    const s = deps.service();
     if (s === null) throw new ToolError(SCHEDULES_UNAVAILABLE_TEXT);
     return s;
   };
 
   /** Not loaded on this replica, or turned off in the org: one read per listing. */
   const unavailable = async (scope: ToolListingScope): Promise<string | null> => {
-    if ((await deps.service()) === null) return SCHEDULES_UNAVAILABLE_TEXT;
+    if (deps.service() === null) return SCHEDULES_UNAVAILABLE_TEXT;
     const memoKey = "schedules:enabled";
     let enabled = scope.memo?.get(memoKey) as Promise<boolean> | undefined;
     if (enabled === undefined) {

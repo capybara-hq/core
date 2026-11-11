@@ -1,6 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import { ModuleRef } from "@nestjs/core";
 import { BackgroundTaskFinisher } from "../../background/finish.js";
 import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
@@ -35,7 +34,7 @@ import { platformTool } from "./platform.js";
 import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
-import { type ScheduleService, ScheduleUpdates, scheduleTools } from "./schedules.js";
+import { ScheduleToolsPort, ScheduleUpdates, scheduleTools } from "./schedules.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillLoadTool } from "./skill-load.js";
 import { skillWriteTool } from "./skill-write.js";
@@ -80,12 +79,8 @@ export class BuiltinTools {
     @Inject(ScheduledTaskStore) scheduleStore: ScheduledTaskStore,
     /** `ScheduleUpdate`'s write: its field change and grant changes in one transaction. */
     @Inject(ScheduleUpdates) scheduleUpdates: ScheduleUpdates,
-    /**
-     * Resolves `ScheduledTasksService` at call time: `SchedulesModule` imports this module (its
-     * grants resolve the agent's tools through `ToolRegistry`, which lists these builtins), so the
-     * service cannot be injected here without a provider cycle.
-     */
-    @Inject(ModuleRef) moduleRef: ModuleRef,
+    /** The task service, bound by `SchedulesModule` at start (a registration port: no cycle). */
+    @Inject(ScheduleToolsPort) schedulePort: ScheduleToolsPort,
     /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
     @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
   ) {
@@ -159,31 +154,12 @@ export class BuiltinTools {
         db: () => db.db,
         config,
         store: scheduleStore,
-        service: () => this.scheduleService(moduleRef),
+        service: () => schedulePort.get(),
         updates: scheduleUpdates,
         timeZoneOf: (orgId, conversationId) => conversationTimeZone(db.db, orgId, conversationId),
         now: now ?? Date.now,
       }),
     ];
-  }
-
-  /** The resolved task service (one per application, kept once found). */
-  private schedules: ScheduleService | null = null;
-
-  /**
-   * `ScheduledTasksService`, looked up in the whole application at call time (see the
-   * constructor); null when this application does not load `SchedulesModule`. The class is
-   * imported when first needed: its module imports the tool registry, which imports this one.
-   */
-  private async scheduleService(moduleRef: ModuleRef): Promise<ScheduleService | null> {
-    if (this.schedules !== null) return this.schedules;
-    const { ScheduledTasksService } = await import("../../schedules/scheduled-tasks.service.js");
-    try {
-      this.schedules = moduleRef.get(ScheduledTasksService, { strict: false });
-    } catch {
-      return null;
-    }
-    return this.schedules;
   }
 
   /** The builtin tools, in a fixed order. */

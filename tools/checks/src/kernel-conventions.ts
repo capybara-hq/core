@@ -295,15 +295,6 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "never a cron or a queue consumer",
   },
   {
-    rule: "kc-late-binding",
-    path: "packages/kernel/src/tools/builtins/builtin-tools.ts",
-    within: "scheduleService",
-    reason:
-      "the schedule tools call ScheduledTasksService, whose grants resolve an agent's tools " +
-      "through ToolRegistry, which lists these builtins: a provider cycle (SchedulesModule " +
-      "imports ToolsModule), so the service is looked up at call time (scheduled tasks spec §11)",
-  },
-  {
     rule: "kc-ported-header",
     path: "packages/kernel/src/infra/schedule/locked-cron.decorator.ts",
     reason:
