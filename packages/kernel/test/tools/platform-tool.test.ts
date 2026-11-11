@@ -25,10 +25,10 @@ import type {
 
 const ran: { id: string; input: unknown; agentId: string }[] = [];
 let failWith: unknown = null;
-/** What `skills.create`'s precheck does: pass, fail on a taken name, hang, or throw. */
+/** What `skills.fixture-create`'s precheck does: pass, fail on a taken name, hang, or throw. */
 let precheckMode: "pass" | "taken" | "hang" | "throw" | "keyed" = "pass";
 let precheckSignal: AbortSignal | null = null;
-/** The `errorRole` each step of `skills.create` was handed (deferred Task 3 item c). */
+/** The `errorRole` each step of `skills.fixture-create` was handed (deferred Task 3 item c). */
 let seenRoles: Record<string, unknown> = {};
 
 /** A next step that differs by role (spec §14.5 item 7). */
@@ -83,7 +83,7 @@ const neverOp = defineOperation({
 });
 
 const orgOp = defineOperation({
-  id: "skills.create",
+  id: "skills.fixture-create",
   description: "Create an org skill from a name and a body.",
   input: z.object({ name: z.string().min(1).max(64), body: z.string().max(10_000) }),
   example: { name: "weekly-report", body: "# Weekly report" },
@@ -122,7 +122,7 @@ const orgOp = defineOperation({
   },
   run: async (input, ctx) => {
     seenRoles.run = ctx.errorRole;
-    ran.push({ id: "skills.create", input, agentId: ctx.agentId });
+    ran.push({ id: "skills.fixture-create", input, agentId: ctx.agentId });
     if (failWith !== null) throw failWith;
     return { name: input.name };
   },
@@ -311,7 +311,7 @@ describe("browse, search, describe, read", () => {
     const out = await run({ action: "browse", domain: "skills" });
     expect(out.operations).toEqual([
       {
-        id: "skills.create",
+        id: "skills.fixture-create",
         description: "Create an org skill from a name and a body.",
         kind: "write",
         params: "name, body",
@@ -354,9 +354,9 @@ describe("browse, search, describe, read", () => {
   });
 
   it("describe returns the input schema, the example, the class and the availability", async () => {
-    const out = await run({ action: "describe", operation: "skills.create" });
+    const out = await run({ action: "describe", operation: "skills.fixture-create" });
     expect(out).toMatchObject({
-      id: "skills.create",
+      id: "skills.fixture-create",
       description: orgOp.description,
       kind: "write",
       confirm: "org",
@@ -410,21 +410,21 @@ describe("call", () => {
   it("invalid params are a tool error naming describe, and nothing runs (Review Focus 1)", async () => {
     const msg = await toolError({
       action: "call",
-      operation: "skills.create",
+      operation: "skills.fixture-create",
       params: { name: 3 },
     });
-    expect(msg).toContain("Invalid params for skills.create");
+    expect(msg).toContain("Invalid params for skills.fixture-create");
     expect(msg).toContain("describe");
     expect(ran).toEqual([]);
   });
 
   it("re-checks availability with fresh facts right before running (Review Focus 3)", async () => {
-    const input = { action: "call", operation: "skills.create", params: orgOp.example };
+    const input = { action: "call", operation: "skills.fixture-create", params: orgOp.example };
     expect((await policy(input))?.policy).toBe("ask");
     // removed from the org between the confirmation and the run
     facts = { ...ADMIN, role: null };
     const msg = await toolError(input);
-    expect(msg).toContain("skills.create is unavailable");
+    expect(msg).toContain("skills.fixture-create is unavailable");
     expect(msg).toContain("not a member");
     expect(ran).toEqual([]);
   });
@@ -433,7 +433,7 @@ describe("call", () => {
     failWith = new ApiError("skill.name_exists", "A skill with this name already exists");
     const msg = await toolError({
       action: "call",
-      operation: "skills.create",
+      operation: "skills.fixture-create",
       params: orgOp.example,
     });
     expect(msg).toBe(
@@ -442,7 +442,11 @@ describe("call", () => {
     // a code the operation does not declare gets the generic step
     failWith = new ApiError("forbidden", "No");
     expect(
-      await toolError({ action: "call", operation: "skills.create", params: orgOp.example }),
+      await toolError({
+        action: "call",
+        operation: "skills.fixture-create",
+        params: orgOp.example,
+      }),
     ).toBe(`forbidden: No. ${OPERATION_ERROR_NEXT}`);
   });
 
@@ -462,7 +466,7 @@ describe("call", () => {
   });
 
   it("a precheck that passes, then a service refusal after the approval, names the next step (Review Focus 2)", async () => {
-    const input = { action: "call", operation: "skills.create", params: orgOp.example };
+    const input = { action: "call", operation: "skills.fixture-create", params: orgOp.example };
     expect((await policy(input))?.policy).toBe("ask");
     // the name was taken while the card waited
     failWith = new ApiError("skill.name_exists", "A skill with this name already exists");
@@ -474,7 +478,7 @@ describe("call", () => {
   it("an unexpected error is rethrown for the pipeline to log", async () => {
     failWith = new Error("boom");
     await expect(
-      tool.run({ action: "call", operation: "skills.create", params: orgOp.example }, ctx),
+      tool.run({ action: "call", operation: "skills.fixture-create", params: orgOp.example }, ctx),
     ).rejects.toThrow("boom");
   });
 });
@@ -482,15 +486,15 @@ describe("call", () => {
 describe("callPolicy", () => {
   it("is null for every action but call (the tool's default allow)", async () => {
     for (const action of ["browse", "search", "describe", "read"]) {
-      expect(await policy({ action, operation: "skills.create" })).toBeNull();
+      expect(await policy({ action, operation: "skills.fixture-create" })).toBeNull();
     }
   });
 
   it("an org operation asks, is never remembered and carries the kernel's summary", async () => {
     expect(
-      await policy({ action: "call", operation: "skills.create", params: orgOp.example }),
+      await policy({ action: "call", operation: "skills.fixture-create", params: orgOp.example }),
     ).toEqual({
-      key: "Platform:skills.create",
+      key: "Platform:skills.fixture-create",
       policy: "ask",
       remember: false,
       summary: { zh: "创建组织技能 weekly-report", en: "Create the org skill weekly-report" },
@@ -530,9 +534,17 @@ describe("callPolicy", () => {
 
   it("an unavailable operation is denied with its reason", async () => {
     facts = { ...ADMIN, role: "member" };
-    const p = await policy({ action: "call", operation: "skills.create", params: orgOp.example });
-    expect(p).toMatchObject({ key: "Platform:skills.create", policy: "deny", remember: false });
-    expect(p?.denyReason).toContain("skills.create is unavailable");
+    const p = await policy({
+      action: "call",
+      operation: "skills.fixture-create",
+      params: orgOp.example,
+    });
+    expect(p).toMatchObject({
+      key: "Platform:skills.fixture-create",
+      policy: "deny",
+      remember: false,
+    });
+    expect(p?.denyReason).toContain("skills.fixture-create is unavailable");
     expect(p?.denyReason).toContain("admin");
   });
 
@@ -545,8 +557,12 @@ describe("callPolicy", () => {
     const missing = await policy({ action: "call" });
     expect(missing).toMatchObject({ key: "Platform:unknown", policy: "deny" });
     expect(missing?.denyReason).toContain('"operation"');
-    const invalid = await policy({ action: "call", operation: "skills.create", params: {} });
-    expect(invalid).toMatchObject({ key: "Platform:skills.create", policy: "deny" });
+    const invalid = await policy({
+      action: "call",
+      operation: "skills.fixture-create",
+      params: {},
+    });
+    expect(invalid).toMatchObject({ key: "Platform:skills.fixture-create", policy: "deny" });
     expect(invalid?.denyReason).toContain("describe");
   });
 });
@@ -594,16 +610,20 @@ describe("callPolicy: target-dependent class, async summaries, output references
   it("a write whose params hold an output reference is denied: the content goes inline", async () => {
     const input = {
       action: "call",
-      operation: "skills.create",
+      operation: "skills.fixture-create",
       params: { name: "weekly-report", body: "# resolved text" },
     };
     const raw = {
       action: "call",
-      operation: "skills.create",
+      operation: "skills.fixture-create",
       params: { name: "weekly-report", body: { $output: "out-1" } },
     };
     const p = await tool.callPolicy?.(input, { ...policyCtx, rawInput: raw });
-    expect(p).toMatchObject({ key: "Platform:skills.create", policy: "deny", remember: false });
+    expect(p).toMatchObject({
+      key: "Platform:skills.fixture-create",
+      policy: "deny",
+      remember: false,
+    });
     expect(p?.denyReason).toContain('{"$output"');
     expect(p?.denyReason).toContain("inline");
     // a nested reference counts too; a read may take one
@@ -625,17 +645,17 @@ describe("callPolicy: target-dependent class, async summaries, output references
 });
 
 describe("callPolicy: precheck before the card", () => {
-  const input = { action: "call", operation: "skills.create", params: orgOp.example };
+  const input = { action: "call", operation: "skills.fixture-create", params: orgOp.example };
 
   it("a write whose precheck fails is denied with the reason and the next step: no card", async () => {
     precheckMode = "taken";
     const p = await policy(input);
     expect(p).toEqual({
-      key: "Platform:skills.create",
+      key: "Platform:skills.fixture-create",
       policy: "deny",
       remember: false,
       denyReason:
-        'Operation skills.create cannot run now: skill.name_exists: A skill named "weekly-report" already exists in this organization. Pick another name, or read it with skills.get.',
+        'Operation skills.fixture-create cannot run now: skill.name_exists: A skill named "weekly-report" already exists in this organization. Pick another name, or read it with skills.get.',
     });
     expect(ran).toEqual([]);
   });
@@ -643,7 +663,7 @@ describe("callPolicy: precheck before the card", () => {
   it("runs after availability: an unavailable operation is denied without a precheck", async () => {
     precheckMode = "taken";
     facts = { ...ADMIN, role: "member" };
-    expect((await policy(input))?.denyReason).toContain("skills.create is unavailable");
+    expect((await policy(input))?.denyReason).toContain("skills.fixture-create is unavailable");
     expect(precheckSignal).toBeNull();
   });
 
@@ -674,7 +694,7 @@ describe("callPolicy: precheck before the card", () => {
     precheckMode = "keyed";
     facts = { ...ADMIN, isSuperAdmin: true };
     expect((await policy(input))?.denyReason).toBe(
-      'Operation skills.create cannot run now: catalog.not_deployed: The extension of "weekly-report" is not running. Fix weekly-report in the admin console.',
+      'Operation skills.fixture-create cannot run now: catalog.not_deployed: The extension of "weekly-report" is not running. Fix weekly-report in the admin console.',
     );
     // an org admin falls back to the member's step, never up to the admin console
     facts = ADMIN;
@@ -687,7 +707,7 @@ describe("callPolicy: precheck before the card", () => {
     expect(logged).toEqual([
       expect.objectContaining({
         level: "warn",
-        fields: expect.objectContaining({ operation: "skills.create" }),
+        fields: expect.objectContaining({ operation: "skills.fixture-create" }),
       }),
     ]);
     logged = [];
@@ -696,7 +716,7 @@ describe("callPolicy: precheck before the card", () => {
     expect(logged).toEqual([
       expect.objectContaining({
         level: "debug",
-        fields: expect.objectContaining({ operation: "skills.create" }),
+        fields: expect.objectContaining({ operation: "skills.fixture-create" }),
       }),
     ]);
   });
