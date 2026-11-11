@@ -5541,7 +5541,6 @@
         "invalid_schedule": "已暂停：时间设置无法解析"
       }
     },
-    "noFailures": "正常",
     "noResult": "还没有运行",
     "failedInARow": "{n, plural, other {连续失败 # 次}}",
     "form": {
@@ -5577,7 +5576,7 @@
       "zone": "时区",
       "zoneCreate": "按你的时区（{zone}）运行；创建后可以修改。",
       "jitter": "实际会在设定时刻后几分钟内开始，避免同一分钟的任务同时启动。",
-      "expires": "{date} 结束",
+      "expires": "结束日期",
       "target": "运行结果去哪里",
       "targetHint": "每次运行把提示发到这里，回答也留在这里。",
       "mode": {
@@ -5592,7 +5591,6 @@
       "noConversations": "你和这个智能体还没有会话。",
       "pickConversation": "选择会话",
       "untitled": "未命名会话",
-      "chatOnlyFromChat": "要发到 IM 聊天，请在那个聊天里让智能体创建定时任务，聊天会自动设好。",
       "chatTarget": "聊天",
       "chatType": {
         "dm": "私聊",
@@ -5615,7 +5613,21 @@
       "addMissing": "加入预先批准的工具",
       "connect": "连接 {slug}",
       "readOnly": "这个任务属于 {name}。组织管理员可以暂停、恢复或删除它，但不能修改。",
-      "creatorUnknown": "其他成员"
+      "creatorUnknown": "其他成员",
+      "chatAgentFixed": "聊天任务使用该聊天所属渠道连接的智能体。",
+      "minInterval": "本组织的任务最短每 {n} 分钟运行一次。",
+      "expiresHelp": "任务在这一天之后结束。留空表示一直运行。",
+      "noChats": "要发到 IM 聊天，请先在那里给智能体的机器人发一条消息，聊天就会出现在这里。",
+      "chatOption": "{name}（{type}）",
+      "pickChat": "选择聊天",
+      "stale": "批准已过期",
+      "refusal": {
+        "forbidden": "组织禁止使用",
+        "not_grantable": "不能预先批准",
+        "not_available": "智能体目前没有这个工具",
+        "needs_role": "需要你没有的角色",
+        "fixed_ask": "总是需要人确认"
+      }
     },
     "runs": {
       "title": "运行记录",
@@ -5678,7 +5690,11 @@
       "toolAdded": "已为任务批准该工具",
       "toolRemoved": "已移除工具"
     },
-    "startedBy": "由定时任务 <link>{name}</link> 发起"
+    "startedBy": "由定时任务 <link>{name}</link> 发起",
+    "turnedOff": "本组织已关闭定时任务：任务不会运行，也不能新建。",
+    "startedByGone": "由一个已不存在的定时任务发起",
+    "panelTitle": "定时任务",
+    "nextRunAt": "下次运行 {at}"
   },
   "scheduleSettings": {
     "title": "定时任务",

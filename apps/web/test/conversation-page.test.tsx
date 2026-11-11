@@ -1916,22 +1916,27 @@ describe("run rows (spec §6.16.23)", () => {
   });
 });
 
-describe("a conversation a scheduled task started", () => {
-  const marker = {
-    taskId: "s1",
-    taskRunId: "tr1",
-    scheduledFor: "2026-11-11T01:00:00.000Z",
-    trial: false,
-    taskName: "Daily report",
-    localTime: "2026-11-11 09:00",
-  };
+describe("scheduled tasks on the conversation page", () => {
+  const SCHED = "/api/v1/orgs/o1/schedules";
+  const task = (over: Record<string, unknown> = {}) => ({
+    id: "s1",
+    name: "Daily report",
+    status: "active",
+    pauseReason: null,
+    nextRunAt: "2026-11-12T01:00:00.000Z",
+    ...over,
+  });
+
+  afterEach(() => window.history.replaceState(null, "", "/"));
 
   it.each(["zh", "en"] as const)(
-    "says which task started it and links to the task (%s)",
+    "a conversation a task started names it and links to it (%s)",
     async (locale) => {
       api({
-        [`GET ${BASE}/events`]: () =>
-          json(200, { events: [userMsg(1, "Summarize.", { schedule: marker })] }),
+        [`GET ${BASE}`]: () => json(200, CONV("c1", { scheduledTaskId: "s1" })),
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "Summarize.")] }),
+        [`GET ${SCHED}/s1`]: () => json(200, { task: task() }),
+        [`GET ${SCHED}`]: () => json(200, { items: [] }),
       });
       await renderChat(locale);
       const link = await screen.findByRole("link", { name: "Daily report" });
@@ -1940,19 +1945,44 @@ describe("a conversation a scheduled task started", () => {
         /<link>\{name\}<\/link>/,
         "Daily report",
       );
-      expect(link.closest("span")?.parentElement?.textContent).toContain(words);
+      expect(link.parentElement?.textContent).toContain(words);
     },
   );
 
-  it("a person's conversation, or one a task only posts into later, says nothing", async () => {
+  it("a task since deleted is named without a link; a person's conversation says nothing", async () => {
     api({
-      [`GET ${BASE}/events`]: () =>
-        json(200, {
-          events: [userMsg(1, "hi"), userMsg(2, "Summarize.", { schedule: marker })],
-        }),
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { scheduledTaskId: "gone" })),
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${SCHED}/gone`]: () =>
+        json(404, { error: { code: "schedule.not_found", message: "Scheduled task not found" } }),
+      [`GET ${SCHED}`]: () => json(200, { items: [] }),
+    });
+    await renderChat("en");
+    expect(await screen.findByText(en.schedules.startedByGone)).toBeTruthy();
+    cleanup();
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${SCHED}`]: () => json(200, { items: [] }),
     });
     await renderChat("en");
     await screen.findByText("hi");
+    expect(screen.queryByText(en.schedules.startedByGone)).toBeNull();
     expect(screen.queryByRole("link", { name: "Daily report" })).toBeNull();
+  });
+
+  it("the properties panel lists the tasks that post into it", async () => {
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    const browser = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${SCHED}`]: () => json(200, { items: [task({ name: "Weekly sync" })] }),
+    });
+    const { calls } = await renderChat("en");
+    const list = await screen.findByRole("list", { name: en.schedules.panelTitle });
+    const link = within(list).getByRole("link", { name: "Weekly sync" });
+    expect(link.getAttribute("href")).toBe("/schedules/s1");
+    expect(list.textContent).toContain("Next run");
+    // read with the first paint on the server, not again in the browser
+    expect(calls.some((c) => c.url === `${SCHED}?conversationId=c1`)).toBe(true);
+    expect(browser.some((c) => c.url.startsWith(SCHED))).toBe(false);
   });
 });

@@ -4,12 +4,16 @@ import {
   ContextSection as ContextBlock,
   FilesSection as FilesBlock,
   formatBytes,
+  formatDateTime,
+  ItemList,
   PropertiesPanel,
+  PropertySection,
   typeBadge,
+  useTimeZone,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useRef } from "react";
+import { useContext, useEffect, useMemo, useRef } from "react";
 import type {
   BackgroundTaskView,
   ConversationEvent,
@@ -19,16 +23,20 @@ import type {
 } from "../../lib/conversations";
 import { deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
+import { myRole, roleAtLeast } from "../../lib/members";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   connectorsQuery,
   conversationDeviceQuery,
   conversationQuery,
 } from "../../lib/query/conversation";
+import { conversationSchedulesQuery } from "../../lib/query/schedules";
+import { scheduleState } from "../../lib/schedules";
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
 import type { UiOpen } from "../../lib/ui";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
+import { SessionContext } from "../shell/session";
 import { useDeviceName } from "../use-device-name";
 import { BackgroundSection } from "./BackgroundSection";
 
@@ -288,6 +296,45 @@ export function PropertiesSections({
         />
       ) : null}
       {after("background")}
+      <SchedulesSection orgId={orgId} conversationId={conversationId} />
     </PropertiesPanel>
+  );
+}
+
+/**
+ * My scheduled tasks that post into this conversation (a `conversation` task, or a `chat` task of
+ * the chat it belongs to; scheduled tasks spec §10): each task's name, linking to it, and its next
+ * run. Shown only when there is one; members up (a guest has no tasks).
+ */
+export function SchedulesSection({
+  orgId,
+  conversationId,
+}: {
+  orgId: string;
+  conversationId: string;
+}) {
+  const t = useTranslations("schedules");
+  const timeZone = useTimeZone();
+  const me = useContext(SessionContext)?.me;
+  const member = me !== undefined && roleAtLeast(myRole(me), "member");
+  const q = conversationSchedulesQuery(orgId, conversationId);
+  const items = useQuery({ ...q, enabled: member, retryOnMount: retryOnMountOf(q.queryKey) }).data
+    ?.items;
+  if (items === undefined || items.length === 0) return null;
+  return (
+    <PropertySection title={t("panelTitle")} value={String(items.length)}>
+      <ItemList
+        label={t("panelTitle")}
+        rows={items.map((task) => ({
+          id: task.id,
+          title: task.name,
+          href: `/schedules/${encodeURIComponent(task.id)}`,
+          meta:
+            task.nextRunAt === null
+              ? t(`state.${scheduleState(task)}`)
+              : t("nextRunAt", { at: formatDateTime(task.nextRunAt, "full", timeZone) }),
+        }))}
+      />
+    </PropertySection>
   );
 }

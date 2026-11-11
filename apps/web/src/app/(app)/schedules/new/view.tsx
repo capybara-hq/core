@@ -1,6 +1,6 @@
 "use client";
 
-import { FormPage, FormSection, useToast } from "@capybara-hq/design";
+import { Callout, FormPage, FormSection, useTimeZone, useToast } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -26,6 +26,7 @@ import { modelsQuery } from "../../../../lib/query/conversation";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
+import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { browserTimeZone, createSchedule } from "../../../../lib/schedules";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -83,10 +84,15 @@ function NewScheduleForm({
   const [draft, setDraft] = useState<ScheduleDraft>(() => emptyDraft(list[0]?.id ?? ""));
   const [grants, setGrants] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const agent = list.find((a) => a.id === draft.agentId);
-  const grantable = useGrantableTools(orgId, agent);
+  const zone = useTimeZone() ?? "UTC";
+  const tools = useGrantableTools(orgId, draft.agentId);
+  const settingsQ = orgSettingsQuery(orgId);
+  const settings = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data
+    ?.settings.scheduledTasks;
+  // Turned off by the org: the form shows, read-only, under the notice
+  const off = settings?.enabled === false;
   const create = useAppMutation({
-    fn: () => createSchedule(orgId, createBodyOf(draft, grants, browserTimeZone())),
+    fn: () => createSchedule(orgId, createBodyOf(draft, grants, browserTimeZone(), zone)),
     invalidates: () => [keys.org(orgId).schedulesAll()],
   });
   const unsaved = [draft.name, draft.prompt].filter((v) => v.trim() !== "").length + grants.length;
@@ -111,6 +117,7 @@ function NewScheduleForm({
       header={{
         path: [...scope, { label: "schedules", href: "/schedules" }, { label: "new" }],
         title: t("form.createTitle"),
+        ...(off ? { notice: <Callout tone="warn">{t("turnedOff")}</Callout> } : {}),
       }}
       actionRow={{
         unsaved,
@@ -119,7 +126,7 @@ function NewScheduleForm({
           label: t("form.create"),
           onSelect: () => void submit(),
           loading: create.isPending,
-          disabled: create.isPending || !valid,
+          disabled: create.isPending || !valid || off,
         },
       }}
     >
@@ -146,11 +153,14 @@ function NewScheduleForm({
             setDraft={setDraft}
             agents={list}
             providers={providers}
+            readOnly={off}
+            {...(settings !== undefined ? { minIntervalMinutes: settings.minIntervalMinutes } : {})}
           />
           <ApprovedToolsSection
-            granted={grants}
-            options={grantable}
+            granted={grants.map((toolKey) => ({ toolKey }))}
+            tools={tools}
             refused={[]}
+            readOnly={off}
             onAdd={(k) => setGrants((g) => (g.includes(k) ? g : [...g, k]))}
             onRemove={(k) => setGrants((g) => g.filter((x) => x !== k))}
           />

@@ -52,6 +52,7 @@ import {
   scheduleQuery,
   scheduleRunsQuery,
 } from "../../../../lib/query/schedules";
+import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import {
   addScheduleGrants,
@@ -137,8 +138,9 @@ function Schedule({
   const task = read.data.task;
   return (
     <ScheduleForm
-      // a saved change starts the draft over from the answer
-      key={task.updatedAt}
+      // one draft per task: a refetch (after a pause, say) keeps unsaved edits; this form's own
+      // save starts the draft over from the answer
+      key={task.id}
       orgId={orgId}
       task={task}
       agents={agents.agents}
@@ -199,11 +201,13 @@ function ScheduleForm({
     fn: (toolKey: string) => removeScheduleGrant(orgId, task.id, toolKey),
     invalidates: () => [keys.org(orgId).scheduleGrants(task.id)],
   });
-  const agent = agents.find((a) => a.id === draft.agentId);
-  const grantable = useGrantableTools(orgId, agent);
+  const tools = useGrantableTools(orgId, readOnly ? "" : draft.agentId);
+  const settingsQ = orgSettingsQuery(orgId);
+  const minInterval = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) })
+    .data?.settings.scheduledTasks?.minIntervalMinutes;
   const unsaved = readOnly ? 0 : changedCount(saved, draft);
   const valid = draftValid(draft);
-  const granted = (grants?.items ?? []).map((g) => g.toolKey);
+  const granted = grants?.items ?? [];
   // What the latest runs were refused and the task still lacks
   const refused = [...new Set((runs.data?.items ?? []).flatMap((r) => r.missingGrants))];
 
@@ -219,7 +223,8 @@ function ScheduleForm({
     if (!valid || unsaved === 0) return;
     setError(null);
     try {
-      await save.mutateAsync(undefined);
+      const { task: next } = await save.mutateAsync(undefined);
+      setDraft(draftOf(next));
       toast.success(t("actions.saved"));
     } catch (e) {
       setError(errorMessage(e));
@@ -305,10 +310,11 @@ function ScheduleForm({
           providers={providers}
           existing={task}
           readOnly={readOnly}
+          {...(minInterval !== undefined ? { minIntervalMinutes: minInterval } : {})}
         />
         <ApprovedToolsSection
           granted={granted}
-          options={grantable}
+          tools={tools}
           refused={refused}
           readOnly={readOnly}
           pending={addGrant.isPending || removeGrant.isPending}

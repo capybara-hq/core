@@ -18,8 +18,9 @@ import { agentsQuery } from "../../../lib/query/agents";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { schedulesQuery } from "../../../lib/query/schedules";
+import { orgSettingsQuery } from "../../../lib/query/settings";
 import { useWorkspace } from "../../../lib/query/workspace";
-import type { ScheduledTask } from "../../../lib/schedules";
+import type { ScheduledTaskListItem } from "../../../lib/schedules";
 import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
@@ -44,11 +45,15 @@ function Schedules({ orgId }: { orgId: string }) {
   const errorMessage = useErrorMessage();
   const when = useScheduleWords();
   const actions = useScheduleActions(orgId);
-  const [deleting, setDeleting] = useState<ScheduledTask | null>(null);
+  const [deleting, setDeleting] = useState<ScheduledTaskListItem | null>(null);
   const list = usePageQuery(schedulesQuery(orgId));
   const agentsQ = agentsQuery(orgId);
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data;
   // Agent names are display only: the id shows when they can't be read.
+  const settingsQ = orgSettingsQuery(orgId);
+  const off =
+    useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data?.settings
+      .scheduledTasks?.enabled === false;
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
   const columns = scheduleColumns(t, when, agentName);
@@ -75,6 +80,7 @@ function Schedules({ orgId }: { orgId: string }) {
     <>
       <ListPage
         header={header}
+        {...(off ? { callout: { tone: "warn" as const, children: t("turnedOff") } } : {})}
         {...(tasks.length === 0
           ? {
               empty: {
@@ -85,7 +91,7 @@ function Schedules({ orgId }: { orgId: string }) {
             }
           : {})}
       >
-        <DataTable<ScheduledTask>
+        <DataTable<ScheduledTaskListItem>
           label={t("listLabel")}
           columns={columns}
           rows={tasks}

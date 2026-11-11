@@ -63,6 +63,22 @@ export const keys = {
       schedule: (id: string): readonly unknown[] => [...all, "schedule", id],
       scheduleRuns: (id: string): readonly unknown[] => [...all, "schedule", id, "runs"],
       scheduleGrants: (id: string): readonly unknown[] => [...all, "schedule", id, "grants"],
+      /** The chats a `chat` task of mine can post into. */
+      scheduleChatTargets: (): readonly unknown[] => [...all, "schedules", "chatTargets"],
+      /** An agent's tools as a task's grant picker offers them. */
+      scheduleGrantable: (agentId: string): readonly unknown[] => [
+        ...all,
+        "schedules",
+        "grantable",
+        agentId,
+      ],
+      /** My tasks that post into a conversation (its side panel). */
+      conversationSchedules: (conversationId: string): readonly unknown[] => [
+        ...all,
+        "schedules",
+        "conversation",
+        conversationId,
+      ],
       /** My conversations with an agent that a task can post into. */
       scheduleTargets: (agentId: string): readonly unknown[] => [
         ...all,

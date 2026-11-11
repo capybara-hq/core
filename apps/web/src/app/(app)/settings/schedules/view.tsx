@@ -29,7 +29,6 @@ import { useRouter } from "../../../../i18n/navigation";
 import {
   type OrgSettingsPatch,
   type OrgSettingsResponse,
-  parseHostList,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { agentsQuery } from "../../../../lib/query/agents";
@@ -42,8 +41,9 @@ import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import {
   SCHEDULE_SETTINGS_DEFAULTS,
-  type ScheduledTask,
+  type ScheduledTaskListItem,
   type ScheduledTasksSettings,
+  splitToolKeys,
 } from "../../../../lib/schedules";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
@@ -148,7 +148,7 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   const expiryText =
     draft.expiry ?? (saved.defaultExpiryDays === null ? "" : String(saved.defaultExpiryDays));
   const forbiddenText = draft.forbidden ?? saved.forbiddenTools.join("\n");
-  const forbidden = parseHostList(forbiddenText);
+  const forbidden = splitToolKeys(forbiddenText);
   const invalid = new Set<string>(COUNTS.filter((k) => count(countText(k)) === null));
   const expiry = expiryText.trim() === "" ? null : count(expiryText);
   if (expiryText.trim() !== "" && expiry === null) invalid.add("defaultExpiryDays");
@@ -282,7 +282,7 @@ function AllTasks({ orgId }: { orgId: string }) {
   const when = useScheduleWords();
   const actions = useScheduleActions(orgId);
   const names = useMemberNames(orgId);
-  const [deleting, setDeleting] = useState<ScheduledTask | null>(null);
+  const [deleting, setDeleting] = useState<ScheduledTaskListItem | null>(null);
   const tasksQ = schedulesQuery(orgId, "all");
   const tasks = useQuery({ ...tasksQ, retryOnMount: retryOnMountOf(tasksQ.queryKey) });
   const agentsQ = agentsQuery(orgId);
@@ -296,7 +296,7 @@ function AllTasks({ orgId }: { orgId: string }) {
     {
       key: "creator",
       header: ts("columns.creator"),
-      cell: (s: ScheduledTask) => people[s.accountId] ?? s.accountId,
+      cell: (s: ScheduledTaskListItem) => people[s.accountId] ?? s.accountId,
     },
     ...base.slice(1),
   ];
@@ -310,7 +310,7 @@ function AllTasks({ orgId }: { orgId: string }) {
   };
   return (
     <FormSection id="schedules-tasks" title={t("tasks")} description={t("tasksHint")} flush>
-      <DataTable<ScheduledTask>
+      <DataTable<ScheduledTaskListItem>
         label={t("tasks")}
         columns={columns}
         rows={tasks.data?.items ?? []}

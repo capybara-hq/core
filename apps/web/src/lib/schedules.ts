@@ -1,6 +1,5 @@
 import { apiFetch } from "./api";
-import type { ConversationEvent, ModelRef } from "./conversations";
-import { fromStart } from "./conversations";
+import type { ModelRef } from "./conversations";
 
 /**
  * The kernel's scheduled tasks API (`packages/kernel/src/schedules/schedules.controller.ts`,
@@ -87,6 +86,47 @@ export interface ScheduledTask {
   updatedAt: string;
 }
 
+/** The latest settled non-trial run of a task, as the list carries it. */
+export interface TaskLastRun {
+  status: "completed" | "failed" | "skipped";
+  skipReason: TaskRunSkipReason | null;
+  /** When it fired (its tick for a skipped one). */
+  at: string;
+}
+
+/** A task in a list, with its latest settled run. */
+export type ScheduledTaskListItem = ScheduledTask & { lastRun: TaskLastRun | null };
+
+/** A chat a `chat` task can post into (`GET …/schedules/chat-targets`). */
+export interface ChatTarget {
+  connectionId: string;
+  connectionName: string;
+  plugin: string;
+  /** The connection's agent: the task's agent. */
+  agentId: string;
+  chatId: string;
+  chatType: "dm" | "group";
+  label: string;
+}
+
+/** Why a tool can't be approved in advance (kernel `GrantRefusalCode`). */
+export type GrantRefusal =
+  | "forbidden"
+  | "not_grantable"
+  | "not_available"
+  | "needs_role"
+  | "fixed_ask";
+
+/** One of an agent's tools as the grant picker offers it (`GET …/schedules/grantable-tools`). */
+export interface GrantableTool {
+  key: string;
+  title: string | null;
+  source: "builtin" | "plugin" | "connector";
+  connectorId: string | null;
+  grantable: boolean;
+  reason: GrantRefusal | null;
+}
+
 export interface TaskRun {
   id: string;
   taskId: string;
@@ -106,6 +146,8 @@ export interface ScheduledTaskGrant {
   toolKey: string;
   specHash: string;
   connectorId: string | null;
+  /** The tool changed since it was approved: the approval no longer applies (spec §7). */
+  stale?: boolean;
 }
 
 /** When a task fires, before the zone is fixed (the create / patch body's `trigger`). */
@@ -123,6 +165,7 @@ export interface ScheduleCreateBody {
   chat?: ScheduleChat;
   model?: ModelRef;
   effort?: ScheduleEffort;
+  expiresAt?: string | null;
   grants?: { toolKey: string }[];
 }
 
@@ -137,6 +180,7 @@ export interface ScheduleUpdateBody {
   chat?: ScheduleChat | null;
   model?: ModelRef | null;
   effort?: ScheduleEffort | null;
+  expiresAt?: string | null;
 }
 
 /** The org's scheduled-tasks settings (`orgs.settings.scheduledTasks`, spec §9). */
@@ -174,7 +218,21 @@ const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.strin
 
 /** My tasks; `all`: every task of the org (org admins). */
 export const listSchedules = (orgId: string, all = false) =>
-  apiFetch<{ items: ScheduledTask[] }>(`${base(orgId)}${all ? "?all=true" : ""}`);
+  apiFetch<{ items: ScheduledTaskListItem[] }>(`${base(orgId)}${all ? "?all=true" : ""}`);
+
+/** My tasks that post into a conversation (its side panel). */
+export const listConversationSchedules = (orgId: string, conversationId: string) =>
+  apiFetch<{ items: ScheduledTaskListItem[] }>(
+    `${base(orgId)}?conversationId=${enc(conversationId)}`,
+  );
+
+/** The chats a `chat` task of mine can post into. */
+export const listChatTargets = (orgId: string) =>
+  apiFetch<{ items: ChatTarget[] }>(`${base(orgId)}/chat-targets`);
+
+/** An agent's tools, each grantable in advance or why not. */
+export const listGrantableTools = (orgId: string, agentId: string) =>
+  apiFetch<{ items: GrantableTool[] }>(`${base(orgId)}/grantable-tools?agentId=${enc(agentId)}`);
 
 export const getSchedule = (orgId: string, id: string) =>
   apiFetch<{ task: ScheduledTask }>(one(orgId, id));
@@ -233,6 +291,11 @@ export type SchedulePreset =
   | { kind: "custom"; expr: string };
 
 export type PresetKind = SchedulePreset["kind"];
+
+/** The minutes the hourly preset offers; another minute reads as a custom cron. */
+export const HOURLY_MINUTES: readonly number[] = [0, 5, 10, 15, 20, 30, 45];
+/** The days the monthly preset offers (every month has them); later days read as custom. */
+export const MONTH_DAYS = 28;
 export const PRESET_KINDS: readonly PresetKind[] = [
   "hourly",
   "daily",
@@ -266,7 +329,14 @@ export function presetOf(trigger: ScheduleTrigger | TriggerInput): SchedulePrese
   if (f.length === 5) {
     const [mi = "", h = "", dom = "", mon = "", dow = ""] = f;
     const minute = num(mi, 0, 59);
-    if (minute !== null && h === "*" && dom === "*" && mon === "*" && dow === "*") {
+    if (
+      minute !== null &&
+      HOURLY_MINUTES.includes(minute) &&
+      h === "*" &&
+      dom === "*" &&
+      mon === "*" &&
+      dow === "*"
+    ) {
       return { kind: "hourly", minute };
     }
     const time = timeOf(mi, h);
@@ -275,7 +345,7 @@ export function presetOf(trigger: ScheduleTrigger | TriggerInput): SchedulePrese
       if (dom === "*" && dow === "1-5") return { kind: "weekdays", time };
       const day = num(dow, 0, 7);
       if (dom === "*" && day !== null) return { kind: "weekly", day: day % 7, time };
-      const date = num(dom, 1, 31);
+      const date = num(dom, 1, MONTH_DAYS);
       if (date !== null && dow === "*") return { kind: "monthly", day: date, time };
     }
   }
@@ -383,20 +453,62 @@ export function browserTimeZone(): string | undefined {
   }
 }
 
-/**
- * The task a conversation was started by, from its first message's schedule marker (a `new`-mode
- * task's conversation); null when the log's start is not loaded or a person started it.
- */
-export function startedByTask(
-  events: readonly ConversationEvent[],
-): { taskId: string; name: string } | null {
-  if (!fromStart(events)) return null;
-  const first = events.find((e) => e.type === "user_message");
-  if (first?.type !== "user_message") return null;
-  const s = first.payload.schedule;
-  return s === undefined ? null : { taskId: s.taskId, name: s.taskName };
-}
-
 /** `connection:<slug>`: a personal connector the run needed and the creator has not connected. */
 export const connectionOf = (key: string): string | null =>
   key.startsWith("connection:") ? key.slice("connection:".length) : null;
+
+/** A chat target's value in a select (and back). */
+export const chatKey = (c: Pick<ScheduleChat, "connectionId" | "chatId" | "chatType">): string =>
+  `${c.connectionId}\n${c.chatId}\n${c.chatType}`;
+
+/** Tool keys typed one per line (commas and spaces split too), trimmed, without repeats. */
+export function splitToolKeys(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .split(/[\s,]+/)
+        .map((k) => k.trim())
+        .filter((k) => k !== ""),
+    ),
+  ];
+}
+
+/** `YYYY-MM-DD` of an instant in a zone (the date an expiry shows). */
+export function dateIn(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+/** The instant a task with an end date `YYYY-MM-DD` ends: the end of that day in its zone. */
+export function endOfDayIn(date: string, timeZone: string): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const guess = Date.UTC(y, m - 1, d, 23, 59, 59);
+  // the zone's offset at that moment: its wall clock read back as UTC, minus the instant
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+      .formatToParts(new Date(guess))
+      .map((p) => [p.type, p.value]),
+  );
+  const wall = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return new Date(guess - (wall - guess)).toISOString();
+}

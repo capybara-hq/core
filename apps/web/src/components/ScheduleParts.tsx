@@ -21,6 +21,7 @@ import {
   resumeSchedule,
   runSchedule,
   type ScheduledTask,
+  type ScheduledTaskListItem,
   type ScheduleTrigger,
   scheduleState,
   scheduleWords,
@@ -156,7 +157,7 @@ export function scheduleColumns(
   t: ScheduleT,
   when: ReturnType<typeof useScheduleWords>,
   agentName: (id: string) => string,
-): Column<ScheduledTask>[] {
+): Column<ScheduledTaskListItem>[] {
   return [
     { key: "name", header: t("columns.name"), cell: (s) => <CellTitle title={s.name} /> },
     { key: "agent", header: t("columns.agent"), cell: (s) => agentName(s.agentId) },
@@ -178,12 +179,26 @@ export function scheduleColumns(
       key: "last",
       header: t("columns.lastResult"),
       fit: true,
-      cell: (s) =>
-        s.consecutiveFailures > 0 ? (
-          <StatusMark status="failed" label={t("failedInARow", { n: s.consecutiveFailures })} />
-        ) : (
-          <Text tone="muted">{t("noFailures")}</Text>
-        ),
+      cell: (s) => {
+        const r = s.lastRun;
+        if (r === null) return <Text tone="muted">{t("noResult")}</Text>;
+        const label =
+          r.status === "skipped" && r.skipReason !== null
+            ? t(`runs.skip.${r.skipReason}`)
+            : t(`runs.status.${r.status}`);
+        const failed =
+          r.status === "failed" && s.consecutiveFailures > 1
+            ? t("failedInARow", { n: s.consecutiveFailures })
+            : label;
+        return (
+          <StatusMark
+            status={
+              r.status === "completed" ? "success" : r.status === "failed" ? "failed" : "cancelled"
+            }
+            label={failed}
+          />
+        );
+      },
     },
   ];
 }

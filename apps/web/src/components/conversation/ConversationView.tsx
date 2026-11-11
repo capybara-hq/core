@@ -19,7 +19,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "../../i18n/navigation";
 import { avatarValue } from "../../lib/agents";
-import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import type { ModelRef } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -31,9 +31,9 @@ import {
 } from "../../lib/query/conversation";
 import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
+import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
-import { startedByTask } from "../../lib/schedules";
 import {
   type AgentsSummary,
   dispatchedAny,
@@ -430,7 +430,7 @@ export function useConversationPage(
     },
     thread: (
       <>
-        <StartedBy events={conv.events} />
+        <StartedBy orgId={orgId} taskId={conv.conversation?.scheduledTaskId ?? null} />
         <Thread
           orgId={orgId}
           conversationId={conversationId}
@@ -557,21 +557,33 @@ export function useConversationPage(
 }
 
 /**
- * A conversation a scheduled task started (its first message carries the task's marker): "Started
- * by the scheduled task <name>", linking to the task (scheduled tasks spec §10). Nothing while the
- * log's start is not loaded.
+ * A conversation a scheduled task started (`conversation.scheduledTaskId`): "Started by the
+ * scheduled task <name>", linking to the task (scheduled tasks spec §10); the task's name is read
+ * through the cache, and a task I can no longer read (deleted) is named without a link.
  */
-function StartedBy({ events }: { events: readonly ConversationEvent[] }) {
+function StartedBy({ orgId, taskId }: { orgId: string; taskId: string | null }) {
   const t = useTranslations("schedules");
-  const task = startedByTask(events);
-  if (task === null) return null;
+  const q = scheduleQuery(orgId, taskId ?? "");
+  const task = useQuery({
+    ...q,
+    enabled: taskId !== null,
+    retry: false,
+    retryOnMount: retryOnMountOf(q.queryKey),
+  });
+  if (taskId === null) return null;
+  if (task.data === undefined) {
+    return task.error ? (
+      <Text variant="small" tone="muted">
+        {t("startedByGone")}
+      </Text>
+    ) : null;
+  }
+  const name = task.data.task.name;
   return (
     <Text variant="small" tone="muted">
       {t.rich("startedBy", {
-        name: task.name,
-        link: (chunks) => (
-          <Link href={`/schedules/${encodeURIComponent(task.taskId)}`}>{chunks}</Link>
-        ),
+        name,
+        link: (chunks) => <Link href={`/schedules/${encodeURIComponent(taskId)}`}>{chunks}</Link>,
       })}
     </Text>
   );

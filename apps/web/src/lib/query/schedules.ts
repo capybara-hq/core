@@ -1,5 +1,13 @@
 import { listConversations } from "../conversations";
-import { getSchedule, listScheduleGrants, listScheduleRuns, listSchedules } from "../schedules";
+import {
+  getSchedule,
+  listChatTargets,
+  listConversationSchedules,
+  listGrantableTools,
+  listScheduleGrants,
+  listScheduleRuns,
+  listSchedules,
+} from "../schedules";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -40,5 +48,29 @@ export const scheduleTargetsQuery = (orgId: string, agentId: string) =>
   defineQuery({
     key: keys.org(orgId).scheduleTargets(agentId),
     fn: () => listConversations(orgId, { agentId, limit: 50 }),
+    freshness: "live",
+  });
+
+/** The chats a `chat` task of mine can post into (the task form's chat picker). */
+export const chatTargetsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).scheduleChatTargets(),
+    fn: () => listChatTargets(orgId),
+    freshness: "live",
+  });
+
+/** An agent's tools, each grantable in advance or why not (the approved-tools picker). */
+export const grantableToolsQuery = (orgId: string, agentId: string) =>
+  defineQuery({
+    key: keys.org(orgId).scheduleGrantable(agentId),
+    fn: () => listGrantableTools(orgId, agentId),
+    freshness: "orgConfig",
+  });
+
+/** My tasks that post into a conversation (the properties panel's 定时任务 section). */
+export const conversationSchedulesQuery = (orgId: string, conversationId: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversationSchedules(conversationId),
+    fn: () => listConversationSchedules(orgId, conversationId),
     freshness: "live",
   });

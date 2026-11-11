@@ -77,6 +77,7 @@ const task = (over: Record<string, unknown> = {}) => ({
   jitterSeconds: 12,
   expiresAt: null,
   consecutiveFailures: 0,
+  lastRun: null,
   createdAt: T,
   updatedAt: T,
   ...over,
@@ -100,6 +101,27 @@ const run = (over: Record<string, unknown> = {}) => ({
 
 const ok = (body: unknown) => () => json(200, body);
 
+const tool = (key: string, over: Record<string, unknown> = {}) => ({
+  key,
+  title: null,
+  source: "builtin",
+  connectorId: null,
+  grantable: true,
+  reason: null,
+  ...over,
+});
+const TOOLS = [
+  tool("WebSearch", { title: "Web search" }),
+  tool("Bash"),
+  tool("mcp__crm__delete", {
+    source: "connector",
+    connectorId: "c9",
+    grantable: false,
+    reason: "needs_role",
+  }),
+  tool("SkillWrite", { grantable: false, reason: "not_grantable" }),
+];
+
 /** What the task pages read besides the task itself. */
 const common = {
   [`GET ${ORG}/agents`]: ok({ agents: [AGENT] }),
@@ -110,7 +132,22 @@ const common = {
       { account: { id: "a2", displayName: "Mei", email: null }, role: "member", joinedAt: T },
     ],
   }),
-  [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),
+  [`GET ${BASE}/chat-targets`]: ok({
+    items: [
+      {
+        connectionId: "cn1",
+        connectionName: "Lark bot",
+        plugin: "lark",
+        agentId: "ag2",
+        chatId: "oc_1",
+        chatType: "dm",
+        label: "Lark bot",
+      },
+    ],
+  }),
+  [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
+  [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
+  [`GET ${ORG}/settings`]: ok({ settings: { toolSearch: "on" } }),
 };
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
@@ -137,6 +174,7 @@ describe("/schedules (my scheduled tasks)", () => {
           pauseReason: "failures",
           nextRunAt: null,
           consecutiveFailures: 5,
+          lastRun: { status: "failed", skipReason: null, at: T },
         }),
       ],
     }),
@@ -157,6 +195,7 @@ describe("/schedules (my scheduled tasks)", () => {
     expect(second.getByText("Every Monday at 08:30 (UTC)")).toBeTruthy();
     expect(second.getByText(E.state.paused.failures)).toBeTruthy();
     expect(second.getByText("Failed 5 times in a row")).toBeTruthy();
+    expect(first.getByText(E.noResult)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -247,7 +286,8 @@ describe("/schedules/new", () => {
       E.form.presets.weekdays,
       user,
     );
-    await pickOption(screen.getByRole("combobox", { name: E.form.addTool }), "WebSearch", user);
+    // only the grantable tools are offered, by title
+    await pickOption(screen.getByRole("combobox", { name: E.form.addTool }), "Web search", user);
     await user.click(screen.getByRole("button", { name: E.form.add }));
     await user.click(screen.getByRole("button", { name: E.form.create }));
     const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE)) as Record<
@@ -264,6 +304,50 @@ describe("/schedules/new", () => {
     });
     expect(typeof body.timeZone).toBe("string");
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/schedules/s9"));
+  });
+
+  it("a chat target fixes the agent to its connection's and goes in the body", async () => {
+    resetNavigation("/schedules/new");
+    const calls = stubApi({
+      ...common,
+      [`GET ${ORG}/agents`]: ok({
+        agents: [AGENT, { ...AGENT, id: "ag2", definition: { ...AGENT.definition, name: "Bot" } }],
+      }),
+      [`POST ${BASE}`]: () => json(201, { task: task({ id: "s9" }) }),
+      [`GET ${BASE}`]: ok({ items: [] }),
+    });
+    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: E.form.name }), "Chat brief");
+    await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Go.");
+    await user.click(screen.getByRole("radio", { name: new RegExp(`^${E.form.mode.chat}`) }));
+    await pickOption(
+      screen.getByRole("combobox", { name: E.form.chatTarget }),
+      "Lark bot (Direct message)",
+      user,
+    );
+    expect(screen.getByRole("combobox", { name: E.form.agent }).textContent).toContain("Bot");
+    await user.click(screen.getByRole("button", { name: E.form.create }));
+    expect(bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE))).toMatchObject({
+      agentId: "ag2",
+      mode: "chat",
+      chat: { connectionId: "cn1", chatId: "oc_1", chatType: "dm" },
+    });
+  });
+
+  it("turned off by the org: a notice and a form that can't create", async () => {
+    resetNavigation("/schedules/new");
+    stubApi({
+      ...common,
+      [`GET ${ORG}/settings`]: ok({
+        settings: { toolSearch: "on", scheduledTasks: { enabled: false, minIntervalMinutes: 60 } },
+      }),
+    });
+    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    expect(screen.getByText(E.turnedOff)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: E.form.name })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: E.form.create })).toHaveProperty("disabled", true);
+    expect(screen.getByText(E.form.minInterval.replace("{n}", "60"))).toBeTruthy();
   });
 
   it("a guest sees the no-access state", async () => {
@@ -287,11 +371,11 @@ describe("/schedules/[id]", () => {
           conversationId: null,
           firedAt: null,
         }),
-        run({ id: "r3", missingGrants: ["Bash", "connection:github"] }),
+        run({ id: "r3", missingGrants: ["Bash", "mcp__crm__delete", "connection:github"] }),
       ],
     }),
     [`GET ${BASE}/s1/grants`]: ok({
-      items: [{ toolKey: "WebSearch", specHash: "h", connectorId: null }],
+      items: [{ toolKey: "WebSearch", specHash: "h", connectorId: null, stale: true }],
     }),
   });
 
@@ -305,16 +389,18 @@ describe("/schedules/[id]", () => {
     expect((screen.getByRole("textbox", { name: E.form.name }) as HTMLInputElement).value).toBe(
       "Daily report",
     );
-    expect(screen.getByRole("list", { name: E.form.toolsLabel }).textContent).toContain(
-      "WebSearch",
-    );
-    // the refused tools the task still lacks: add one, connect the connector
+    const granted = screen.getByRole("list", { name: E.form.toolsLabel });
+    expect(granted.textContent).toContain("Web search");
+    // the tool changed since it was approved
+    expect(within(granted).getByText(E.form.stale)).toBeTruthy();
+    // the refused tools the task still lacks: add one, say why another can't be, connect
     const missing = within(screen.getByRole("list", { name: E.form.missingTitle }));
-    expect(missing.getByRole("button", { name: E.form.addMissing })).toBeTruthy();
+    expect(missing.getAllByRole("button", { name: E.form.addMissing })).toHaveLength(1);
+    expect(missing.getByText(E.form.refusal.needs_role)).toBeTruthy();
     expect(missing.getByRole("link", { name: "Connect github" })).toBeTruthy();
     const runs = within(screen.getByRole("table", { name: E.runs.label }));
     expect(runs.getByText(E.runs.skip.overlap)).toBeTruthy();
-    expect(runs.getByText("Refused: Bash, connection:github")).toBeTruthy();
+    expect(runs.getByText("Refused: Bash, mcp__crm__delete, connection:github")).toBeTruthy();
     await settle();
     expect(browser.map((c) => c.url)).toEqual([]);
   });
@@ -408,6 +494,68 @@ describe("/schedules/[id]", () => {
     await user.click(within(dialog).getByRole("button", { name: E.actions.delete }));
     expect(calls.some((c) => c.method === "DELETE" && c.url === `${BASE}/s1`)).toBe(true);
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/schedules"));
+  });
+
+  it("a pause refetch keeps unsaved edits; the form's own save starts over", async () => {
+    let state: Record<string, unknown> = {};
+    const calls = stubApi({
+      ...routes(),
+      [`GET ${BASE}/s1`]: () => json(200, { task: task(state) }),
+      [`POST ${BASE}/s1/pause`]: () => {
+        state = { status: "paused", pauseReason: "creator", updatedAt: "2026-11-11T09:00:00Z" };
+        return json(200, { task: task(state) });
+      },
+      [`PATCH ${BASE}/s1`]: (c) => {
+        state = { ...state, ...(bodyOf(c) as object), updatedAt: "2026-11-11T10:00:00Z" };
+        return json(200, { task: task(state) });
+      },
+      [`GET ${BASE}`]: ok({ items: [] }),
+      [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
+      [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
+    });
+    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    const user = userEvent.setup();
+    const name = screen.getByRole("textbox", { name: E.form.name });
+    await user.clear(name);
+    await user.type(name, "Unsaved name");
+    await user.click(screen.getByRole("button", { name: E.actions.pause }));
+    expect(await screen.findByRole("button", { name: E.actions.resume })).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET" && c.url === `${BASE}/s1`).length).toBe(1),
+    );
+    expect((screen.getByRole("textbox", { name: E.form.name }) as HTMLInputElement).value).toBe(
+      "Unsaved name",
+    );
+    await user.click(within(actionRow() as HTMLElement).getByRole("button", { name: E.form.save }));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ name: "Unsaved name" });
+    // saved: the draft starts over from the answer, nothing left to save
+    await vi.waitFor(() =>
+      expect(
+        within(actionRow() as HTMLElement).getByRole("button", { name: E.form.save }),
+      ).toHaveProperty("disabled", true),
+    );
+    expect((screen.getByRole("textbox", { name: E.form.name }) as HTMLInputElement).value).toBe(
+      "Unsaved name",
+    );
+  });
+
+  it("an end date is saved as the end of that day in the task zone", async () => {
+    const calls = stubApi({
+      ...routes(),
+      [`PATCH ${BASE}/s1`]: (c) =>
+        json(200, { task: task({ ...(bodyOf(c) as object), updatedAt: "2026-11-11T09:00:00Z" }) }),
+      [`GET ${BASE}`]: ok({ items: [] }),
+      [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
+      [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
+    });
+    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    const user = userEvent.setup();
+    const end = screen.getByLabelText(new RegExp(`^${E.form.expires}`)) as HTMLInputElement;
+    await user.type(end, "2026-12-31");
+    await user.click(within(actionRow() as HTMLElement).getByRole("button", { name: E.form.save }));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      expiresAt: "2026-12-31T15:59:59.000Z",
+    });
   });
 
   it("an org admin on another member's task: read-only, pause in the action row, no run", async () => {

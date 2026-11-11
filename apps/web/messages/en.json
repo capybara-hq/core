@@ -5553,7 +5553,6 @@
         "invalid_schedule": "Paused: the schedule can't be read"
       }
     },
-    "noFailures": "OK",
     "noResult": "No runs yet",
     "failedInARow": "{n, plural, one {Failed once} other {Failed # times in a row}}",
     "form": {
@@ -5589,7 +5588,7 @@
       "zone": "Time zone",
       "zoneCreate": "Runs in your time zone ({zone}); you can change it after creating the task.",
       "jitter": "Runs within a few minutes of the time, so tasks set for the same minute don't all start at once.",
-      "expires": "Ends {date}",
+      "expires": "End date",
       "target": "Where runs go",
       "targetHint": "Each run posts the prompt here, and the answer stays there.",
       "mode": {
@@ -5604,7 +5603,6 @@
       "noConversations": "You have no conversation with this agent yet.",
       "pickConversation": "Choose a conversation",
       "untitled": "Untitled conversation",
-      "chatOnlyFromChat": "To post into an IM chat, ask the agent in that chat to schedule the task: the chat is then set for you.",
       "chatTarget": "Chat",
       "chatType": {
         "dm": "Direct message",
@@ -5627,7 +5625,21 @@
       "addMissing": "Add to approved tools",
       "connect": "Connect {slug}",
       "readOnly": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
-      "creatorUnknown": "another member"
+      "creatorUnknown": "another member",
+      "chatAgentFixed": "A chat task uses the agent of the chat's connection.",
+      "minInterval": "This organization runs a task at most once every {n} minutes.",
+      "expiresHelp": "The task ends after this day. Leave empty to keep it running.",
+      "noChats": "To post into an IM chat, message the agent's bot there once; the chat then shows here.",
+      "chatOption": "{name} ({type})",
+      "pickChat": "Choose a chat",
+      "stale": "Approval out of date",
+      "refusal": {
+        "forbidden": "Forbidden by the organization",
+        "not_grantable": "Can't be approved in advance",
+        "not_available": "Not one of the agent's tools now",
+        "needs_role": "Needs a role you don't have",
+        "fixed_ask": "Always asks a person"
+      }
     },
     "runs": {
       "title": "Run history",
@@ -5690,7 +5702,11 @@
       "toolAdded": "Tool approved for the task",
       "toolRemoved": "Tool removed"
     },
-    "startedBy": "Started by the scheduled task <link>{name}</link>"
+    "startedBy": "Started by the scheduled task <link>{name}</link>",
+    "turnedOff": "Scheduled tasks are turned off in this organization: no task runs, and none can be created.",
+    "startedByGone": "Started by a scheduled task that no longer exists",
+    "panelTitle": "Scheduled tasks",
+    "nextRunAt": "Next run {at}"
   },
   "scheduleSettings": {
     "title": "Scheduled tasks",

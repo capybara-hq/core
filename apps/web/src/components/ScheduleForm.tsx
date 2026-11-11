@@ -6,7 +6,6 @@ import {
   FormSection,
   Input,
   ItemList,
-  KeyValue,
   LinkButton,
   RadioGroup,
   Select,
@@ -19,14 +18,24 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { timeZoneOptions } from "../lib/account-preferences";
-import { type Agent, BUILTIN_TOOLS, type ProviderModels } from "../lib/agents";
+import type { Agent, ProviderModels } from "../lib/agents";
 import { labelLocale } from "../lib/extension-label";
 import { decodeModel, encodeModel, pickerOptions } from "../lib/models";
-import { extensionToolsQuery } from "../lib/query/agents";
 import { retryOnMountOf } from "../lib/query/client";
-import { scheduleTargetsQuery } from "../lib/query/schedules";
 import {
+  chatTargetsQuery,
+  grantableToolsQuery,
+  scheduleTargetsQuery,
+} from "../lib/query/schedules";
+import {
+  type ChatTarget,
+  chatKey,
   connectionOf,
+  dateIn,
+  endOfDayIn,
+  type GrantableTool,
+  HOURLY_MINUTES,
+  MONTH_DAYS,
   PRESET_KINDS,
   type PresetKind,
   presetOf,
@@ -35,6 +44,7 @@ import {
   type ScheduleChat,
   type ScheduleCreateBody,
   type ScheduledTask,
+  type ScheduledTaskGrant,
   type ScheduleEffort,
   type ScheduleMode,
   type SchedulePreset,
@@ -59,6 +69,8 @@ export interface ScheduleDraft {
   model: string;
   /** "" = the agent's effort. */
   effort: string;
+  /** The end date `YYYY-MM-DD` in the task's zone; "" = never (or the org's default on create). */
+  expires: string;
 }
 
 export const emptyDraft = (agentId: string): ScheduleDraft => ({
@@ -72,6 +84,7 @@ export const emptyDraft = (agentId: string): ScheduleDraft => ({
   chat: null,
   model: "",
   effort: "",
+  expires: "",
 });
 
 export const draftOf = (task: ScheduledTask): ScheduleDraft => ({
@@ -85,6 +98,7 @@ export const draftOf = (task: ScheduledTask): ScheduleDraft => ({
   chat: task.chat,
   model: task.model === null ? "" : encodeModel(task.model),
   effort: task.effort ?? "",
+  expires: task.expiresAt === null ? "" : dateIn(task.expiresAt, task.trigger.timeZone),
 });
 
 /** Whether the draft can be sent (the kernel checks the rest: cron, interval, target). */
@@ -101,6 +115,8 @@ export function createBodyOf(
   d: ScheduleDraft,
   grants: string[],
   timeZone: string | undefined,
+  /** The zone the end date is read in (the creator's). */
+  displayZone: string,
 ): ScheduleCreateBody {
   const model = d.model === "" ? null : decodeModel(d.model);
   return {
@@ -114,6 +130,7 @@ export function createBodyOf(
     ...(d.mode === "chat" && d.chat !== null ? { chat: d.chat } : {}),
     ...(model !== null ? { model } : {}),
     ...(d.effort !== "" ? { effort: d.effort as ScheduleEffort } : {}),
+    ...(d.expires !== "" ? { expiresAt: endOfDayIn(d.expires, displayZone) } : {}),
     ...(grants.length > 0 ? { grants: grants.map((toolKey) => ({ toolKey })) } : {}),
   };
 }
@@ -139,6 +156,10 @@ export function patchOf(saved: ScheduleDraft, d: ScheduleDraft): ScheduleUpdateB
   if (d.model !== saved.model) p.model = d.model === "" ? null : decodeModel(d.model);
   if (d.effort !== saved.effort) {
     p.effort = d.effort === "" ? null : (d.effort as ScheduleEffort);
+  }
+  if (d.expires !== saved.expires) {
+    const zone = d.timeZone ?? saved.timeZone ?? "UTC";
+    p.expiresAt = d.expires === "" ? null : endOfDayIn(d.expires, zone);
   }
   return p;
 }
@@ -170,6 +191,7 @@ export function ScheduleFormSections({
   providers,
   existing,
   readOnly = false,
+  minIntervalMinutes,
 }: {
   orgId: string;
   draft: ScheduleDraft;
@@ -179,6 +201,8 @@ export function ScheduleFormSections({
   /** The saved task (edit): its zone, chat and expiry show. */
   existing?: ScheduledTask;
   readOnly?: boolean;
+  /** The org's shortest interval between runs (the schedule section's hint). */
+  minIntervalMinutes?: number;
 }) {
   const t = useTranslations("schedules.form");
   const tw = useTranslations("schedules");
@@ -200,11 +224,16 @@ export function ScheduleFormSections({
   }
   const p = draft.preset;
   const setPreset = (preset: SchedulePreset) => set("preset", preset);
-  const modes: ScheduleMode[] = [
-    "new",
-    "conversation",
-    ...(draft.chat !== null ? ["chat" as const] : []),
-  ];
+  const targetsQ = chatTargetsQuery(orgId);
+  const targets = useQuery({
+    ...targetsQ,
+    enabled: !readOnly,
+    retryOnMount: retryOnMountOf(targetsQ.queryKey),
+  }).data?.items;
+  const offerChat = draft.chat !== null || (targets?.length ?? 0) > 0;
+  const modes: ScheduleMode[] = ["new", "conversation", ...(offerChat ? ["chat" as const] : [])];
+  // A chat task's agent is its connection's
+  const agentFixed = draft.mode === "chat";
   return (
     <>
       <FormSection id="basic" title={t("basic")} description={t("basicHint")}>
@@ -220,11 +249,12 @@ export function ScheduleFormSections({
           <Field
             label={t("agent")}
             required
+            {...(agentFixed ? { help: t("chatAgentFixed") } : {})}
             {...(agents.length === 0 ? { error: t("noAgents") } : {})}
           >
             <Select
               value={draft.agentId}
-              disabled={readOnly || agentOptions.length === 0}
+              disabled={readOnly || agentFixed || agentOptions.length === 0}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, agentId: e.target.value, conversationId: "" }))
               }
@@ -258,7 +288,7 @@ export function ScheduleFormSections({
                 value={String(p.minute)}
                 disabled={readOnly}
                 onChange={(e) => setPreset({ kind: "hourly", minute: Number(e.target.value) })}
-                options={[0, 5, 10, 15, 20, 30, 45].map((m) => ({
+                options={HOURLY_MINUTES.map((m) => ({
                   value: String(m),
                   label: `:${String(m).padStart(2, "0")}`,
                 }))}
@@ -284,7 +314,7 @@ export function ScheduleFormSections({
                 value={String(p.day)}
                 disabled={readOnly}
                 onChange={(e) => setPreset({ ...p, day: Number(e.target.value) })}
-                options={Array.from({ length: 28 }, (_, i) => ({
+                options={Array.from({ length: MONTH_DAYS }, (_, i) => ({
                   value: String(i + 1),
                   label: String(i + 1),
                 }))}
@@ -341,6 +371,22 @@ export function ScheduleFormSections({
               {t("jitter")}
             </Text>
           )}
+          {p.kind !== "once" && minIntervalMinutes !== undefined && (
+            <Text variant="small" tone="muted">
+              {t("minInterval", { n: minIntervalMinutes })}
+            </Text>
+          )}
+          {p.kind !== "once" && (
+            <Field label={t("expires")} optional help={t("expiresHelp")}>
+              <Input
+                type="date"
+                name="expires"
+                value={draft.expires}
+                disabled={readOnly}
+                onChange={(e) => set("expires", e.target.value)}
+              />
+            </Field>
+          )}
         </Stack>
       </FormSection>
       <FormSection id="target" title={t("target")} description={t("targetHint")}>
@@ -366,18 +412,24 @@ export function ScheduleFormSections({
               onChange={(v) => set("conversationId", v)}
             />
           )}
-          {draft.mode === "chat" && draft.chat !== null && (
-            <KeyValue
-              keyWidth="10ch"
-              rows={[
-                { k: t("chatTarget"), v: t(`chatType.${draft.chat.chatType}`) },
-                { k: "ID", v: draft.chat.chatId },
-              ]}
+          {draft.mode === "chat" && (
+            <TargetChat
+              targets={targets}
+              value={draft.chat}
+              disabled={readOnly}
+              onChange={(c) =>
+                setDraft((d) => ({
+                  ...d,
+                  chat: { connectionId: c.connectionId, chatId: c.chatId, chatType: c.chatType },
+                  agentId: c.agentId,
+                  conversationId: "",
+                }))
+              }
             />
           )}
-          {draft.chat === null && (
+          {!offerChat && !readOnly && targets !== undefined && (
             <Text variant="small" tone="muted">
-              {t("chatOnlyFromChat")}
+              {t("noChats")}
             </Text>
           )}
         </Stack>
@@ -450,45 +502,72 @@ function TargetConversation({
   );
 }
 
-/** Tools a task never approves up front: they need no approval, or never take a grant. */
-const NOT_GRANTABLE = new Set(["AskUserQuestion", "ReadToolOutput", "CurrentTime", "ScheduleList"]);
-
-/**
- * The tools a task can approve up front: the agent's builtins and the tools of the extensions on in
- * the org, less what the agent turned off (connector tools come in through a trial run or a refused
- * run's list).
- */
-export function useGrantableTools(orgId: string, agent: Agent | undefined): string[] {
-  const q = extensionToolsQuery(orgId);
-  const ext = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data;
-  const off = agent?.definition.disabledTools ?? [];
-  const offBuiltin = new Set(off.flatMap((r) => (r.kind === "builtin" ? [r.name] : [])));
-  const builtins = BUILTIN_TOOLS.filter((n) => !NOT_GRANTABLE.has(n) && !offBuiltin.has(n));
-  const extTools = (ext?.extensions ?? []).flatMap((e) => {
-    const entry = off.find((r) => r.kind === "plugin" && r.plugin === e.plugin);
-    const offTools = entry?.kind === "plugin" ? entry.tools : [];
-    if (offTools === "all") return [];
-    return e.tools.filter((x) => !offTools.includes(x.name)).map((x) => x.key);
-  });
-  return [...builtins, ...extTools];
+/** The chat a `chat`-mode task posts into: one of my DMs or groups (`GET …/chat-targets`). */
+function TargetChat({
+  targets,
+  value,
+  disabled,
+  onChange,
+}: {
+  targets: ChatTarget[] | undefined;
+  value: ScheduleChat | null;
+  disabled: boolean;
+  onChange(c: ChatTarget): void;
+}) {
+  const t = useTranslations("schedules.form");
+  const list = targets ?? [];
+  const label = (c: ChatTarget) =>
+    t("chatOption", { name: c.label, type: t(`chatType.${c.chatType}`) });
+  const options = list.map((c) => ({ value: chatKey(c), label: label(c) }));
+  if (value !== null && !options.some((o) => o.value === chatKey(value))) {
+    options.unshift({
+      value: chatKey(value),
+      label: t("chatOption", { name: value.chatId, type: t(`chatType.${value.chatType}`) }),
+    });
+  }
+  return (
+    <Field label={t("chatTarget")} required>
+      <Select
+        value={value === null ? "" : chatKey(value)}
+        disabled={disabled || list.length === 0}
+        onChange={(e) => {
+          const c = list.find((x) => chatKey(x) === e.target.value);
+          if (c) onChange(c);
+        }}
+        options={[{ value: "", label: t("pickChat") }, ...options]}
+      />
+    </Field>
+  );
 }
 
 /**
- * The approved tools (spec §7): the granted ones with 移除, a picker to add one, and what the latest
- * runs were refused (加入预先批准的工具, or 连接 for a personal connector). `onAdd` / `onRemove` are
- * the create form's draft or the saved task's grant routes.
+ * The agent's tools as the grant picker offers them (`GET …/grantable-tools`), each grantable or
+ * why not by the kernel's rule; undefined while they load.
+ */
+export function useGrantableTools(orgId: string, agentId: string): GrantableTool[] | undefined {
+  const q = grantableToolsQuery(orgId, agentId);
+  return useQuery({ ...q, enabled: agentId !== "", retryOnMount: retryOnMountOf(q.queryKey) }).data
+    ?.items;
+}
+
+/**
+ * The approved tools (spec §7): the granted ones with 移除 (an out-of-date one says so), a picker of
+ * the agent's grantable tools, and what the latest runs were refused: 加入预先批准的工具 when it can
+ * be, why not otherwise (needs a role, forbidden, always asks), or 连接 for a personal connector.
+ * `onAdd` / `onRemove` are the create form's draft or the saved task's grant routes.
  */
 export function ApprovedToolsSection({
   granted,
-  options,
+  tools,
   refused,
   readOnly = false,
   pending = false,
   onAdd,
   onRemove,
 }: {
-  granted: string[];
-  options: string[];
+  granted: Pick<ScheduledTaskGrant, "toolKey" | "stale">[];
+  /** The agent's tools with their flags; undefined while they load. */
+  tools: GrantableTool[] | undefined;
   refused: string[];
   readOnly?: boolean;
   pending?: boolean;
@@ -497,22 +576,31 @@ export function ApprovedToolsSection({
 }) {
   const t = useTranslations("schedules.form");
   const [pick, setPick] = useState("");
-  const open = options.filter((k) => !granted.includes(k));
-  const missing = refused.filter((k) => !granted.includes(k));
+  const keys = granted.map((g) => g.toolKey);
+  const byKey = new Map((tools ?? []).map((x) => [x.key, x]));
+  const name = (k: string) => byKey.get(k)?.title ?? k;
+  const open = (tools ?? []).filter((x) => x.grantable && !keys.includes(x.key));
+  const missing = refused.filter((k) => !keys.includes(k));
+  const why = (k: string): string | null => {
+    const tool = byKey.get(k);
+    if (tool === undefined) return tools === undefined ? null : t("refusal.not_available");
+    return tool.grantable ? null : t(`refusal.${tool.reason ?? "not_available"}`);
+  };
   return (
     <FormSection id="tools" title={t("tools")} description={t("toolsHint")}>
       <Stack gap={12}>
         <ItemList
           label={t("toolsLabel")}
           empty={t("toolsEmpty")}
-          rows={granted.map((k) => ({
-            id: k,
-            title: k,
+          rows={granted.map((g) => ({
+            id: g.toolKey,
+            title: name(g.toolKey),
+            ...(g.stale === true ? { status: { label: t("stale"), tone: "accent" as const } } : {}),
             ...(readOnly
               ? {}
               : {
                   actions: (
-                    <Button density="dense" disabled={pending} onClick={() => onRemove(k)}>
+                    <Button density="dense" disabled={pending} onClick={() => onRemove(g.toolKey)}>
                       {t("remove")}
                     </Button>
                   ),
@@ -527,7 +615,7 @@ export function ApprovedToolsSection({
                 onChange={(e) => setPick(e.target.value)}
                 options={[
                   { value: "", label: t("pickTool") },
-                  ...open.map((k) => ({ value: k, label: k })),
+                  ...open.map((x) => ({ value: x.key, label: x.title ?? x.key })),
                 ]}
               />
             </Field>
@@ -547,10 +635,12 @@ export function ApprovedToolsSection({
             label={t("missingTitle")}
             rows={missing.map((k) => {
               const slug = connectionOf(k);
+              const refusal = slug === null ? why(k) : null;
               return {
                 id: k,
-                title: slug ?? k,
-                ...(readOnly
+                title: slug ?? name(k),
+                ...(refusal !== null ? { status: { label: refusal } } : {}),
+                ...(readOnly || refusal !== null || (slug === null && tools === undefined)
                   ? {}
                   : {
                       actions:

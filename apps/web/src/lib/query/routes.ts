@@ -91,6 +91,9 @@ import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import {
+  chatTargetsQuery,
+  conversationSchedulesQuery,
+  grantableToolsQuery,
   scheduleGrantsQuery,
   scheduleQuery,
   scheduleRunsQuery,
@@ -702,10 +705,12 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/chat/[conversationId]",
-    queries: ({ orgId, params }) => {
+    queries: ({ orgId, params, me }) => {
       const id = params.conversationId;
       if (orgId === null || id === undefined) return [];
       return [
+        // members up: my tasks posting into it (the properties panel's 定时任务 section)
+        ...(atLeast(me, "member") ? [q(conversationSchedulesQuery(orgId, id))] : []),
         q(conversationQuery(orgId, id)),
         q(eventsQuery(orgId, id)),
         q(agentsQuery(orgId)),
@@ -726,9 +731,13 @@ export const ROUTES: readonly RouteEntry[] = [
       const row = qc.getQueryData<Conversation>(conversationQuery(orgId, id).queryKey);
       if (events === undefined || row === undefined) return;
       await Promise.all(
-        conversationFollowUps(orgId, id, events, row, me?.account.id).map((o) =>
-          qc.prefetchQuery({ ...o, retry: false }),
-        ),
+        [
+          ...conversationFollowUps(orgId, id, events, row, me?.account.id),
+          // the task that started it, named above the thread
+          ...(row.scheduledTaskId != null && atLeast(me, "member")
+            ? [q(scheduleQuery(orgId, row.scheduledTaskId))]
+            : []),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
   },
@@ -1065,20 +1074,33 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/schedules",
-    // Members up (guests get no access): my tasks and the agents that name them (a section).
+    // Members up (guests get no access): my tasks, the agents that name them and the org's
+    // settings (turned off; sections).
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
-        : [q(schedulesQuery(orgId)), q(agentsQuery(orgId))],
+        : [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))],
   },
   {
     pattern: "/schedules/new",
-    // Members up: the agents to pick, the models of the model picker and the extension tools of
-    // the approved-tools picker.
+    // Members up: the agents to pick, the models, my chats (the chat picker) and the org's
+    // settings (turned off, the shortest interval); then the first agent's grantable tools.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
-        : [q(agentsQuery(orgId)), q(modelsQuery(orgId)), q(extensionToolsQuery(orgId))],
+        : [
+            q(agentsQuery(orgId)),
+            q(modelsQuery(orgId)),
+            q(chatTargetsQuery(orgId)),
+            q(orgSettingsQuery(orgId)),
+          ],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me }, qc) => {
+      if (orgId === null || !atLeast(me, "member")) return;
+      const first = qc.getQueryData<{ agents: Agent[] }>(agentsQuery(orgId).queryKey)?.agents[0];
+      if (first === undefined) return;
+      await qc.prefetchQuery({ ...grantableToolsQuery(orgId, first.id), retry: false });
+    },
   },
   {
     pattern: "/schedules/[id]",
@@ -1094,17 +1116,26 @@ export const ROUTES: readonly RouteEntry[] = [
             q(agentsQuery(orgId)),
             q(modelsQuery(orgId)),
             q(membersQuery(orgId)),
-            q(extensionToolsQuery(orgId)),
+            q(orgSettingsQuery(orgId)),
           ],
-    // A conversation task's target picker: my conversations with the task's agent.
+    // Mine: the agent's grantable tools, my chats, and for a conversation task the target
+    // picker's conversations (my conversations with the task's agent).
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
     then: async ({ orgId, me, params }, qc) => {
-      if (orgId === null || params.id === undefined || !atLeast(me, "member")) return;
-      const task = qc.getQueryData<{ task: { agentId: string; mode: string } }>(
-        scheduleQuery(orgId, params.id).queryKey,
-      )?.task;
-      if (task?.mode !== "conversation") return;
-      await qc.prefetchQuery({ ...scheduleTargetsQuery(orgId, task.agentId), retry: false });
+      if (orgId === null || params.id === undefined || !atLeast(me, "member") || me === null) {
+        return;
+      }
+      const task = qc.getQueryData<{
+        task: { agentId: string; mode: string; accountId: string };
+      }>(scheduleQuery(orgId, params.id).queryKey)?.task;
+      if (task === undefined || task.accountId !== me.account.id) return;
+      await Promise.all(
+        [
+          q(grantableToolsQuery(orgId, task.agentId)),
+          q(chatTargetsQuery(orgId)),
+          ...(task.mode === "conversation" ? [q(scheduleTargetsQuery(orgId, task.agentId))] : []),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
+      );
     },
   },
   {
