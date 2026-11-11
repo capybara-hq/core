@@ -3479,6 +3479,7 @@
         "cost": "Est. cost",
         "empty": "No runs in the last 7 days.",
         "total": "7-day total: Runs {runs} · Tokens {tokens} · Est. cost {cost}",
+        "totalPartial": "{total} <link></link>",
         "costPartial": "(some models have no price and are not counted)",
         "ranking": {
           "title": "Top organizations",

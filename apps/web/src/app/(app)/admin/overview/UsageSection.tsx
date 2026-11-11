@@ -10,10 +10,10 @@ import {
   Text,
   TextLink,
   TrendChart,
-  useTimeZone,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
+import { useSyncExternalStore } from "react";
 import type { AdminUsageDay, AdminUsageOrg, AdminUsageWeek } from "../../../../lib/admin";
 import { adminUsageQuery } from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
@@ -24,22 +24,32 @@ type T = ReturnType<typeof useTranslations<"admin.overview.usage">>;
 /** Counts as the overview formats them (grouped digits in both locales, spec §8.2). */
 const count = (n: number) => n.toLocaleString("en-US");
 
-/** The process's zone: what a render without a known zone (no server clock) counts days in. */
-const processZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
+let browserZone: string | undefined;
+/** The browser's zone (read once). */
+const localZone = (): string => {
+  browserZone ??= new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return browserZone;
+};
+const never = () => () => {};
 
 /**
- * The reader's zone the usage week is read in (spec §8.3): the server's in the server render and
- * the hydration, the browser's afterwards. The key holds it, so the header and the section share
- * one read.
+ * The reader's zone the usage week is read in (spec §8.3): the browser's, null in the server
+ * render and the hydration. Unlike `useTimeZone()` it never gives the server's zone, so a reader
+ * in another zone than the server reads the week once, in their own zone. The key holds it, so
+ * the header and the section share one read.
  */
-export function useUsageZone(): string {
-  return useTimeZone() ?? processZone();
+export function useUsageZone(): string | null {
+  return useSyncExternalStore(never, localZone, () => null);
 }
 
-/** The overview's 用量 read in the reader's zone (the section and the header's 近 7 天运行). */
+/**
+ * The overview's 用量 read in the reader's zone (the section and the header's 近 7 天运行): not
+ * read until the browser's zone is known (the skeleton and a dash until then).
+ */
 export function useAdminUsage() {
-  const q = adminUsageQuery(useUsageZone());
-  return useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const zone = useUsageZone();
+  const q = adminUsageQuery(zone ?? "");
+  return useQuery({ ...q, enabled: zone !== null, retryOnMount: retryOnMountOf(q.queryKey) });
 }
 
 /** A day's tokens: the five kinds summed (the chart's one Token measure, spec §6.3). */
@@ -50,13 +60,13 @@ const dayTokens = (d: AdminUsageDay) =>
 export const weekRuns = (week: AdminUsageWeek) => week.days.reduce((n, d) => n + d.runs, 0);
 
 /**
- * The week's estimated cost: the priced days summed; null when no day had a priced token but some
- * day used tokens (never shown as 0).
+ * The week's estimated cost: the priced days summed; null when the week used tokens and none of
+ * the days that used them had a price (never shown as 0; a day without tokens costs 0).
  */
 function weekCost(week: AdminUsageWeek): number | null {
-  const priced = week.days.filter((d) => d.cost !== null);
-  if (priced.length === 0) return null;
-  return priced.reduce((n, d) => n + (d.cost ?? 0), 0);
+  const used = week.days.filter((d) => dayTokens(d) > 0);
+  if (used.length > 0 && used.every((d) => d.cost === null)) return null;
+  return week.days.reduce((n, d) => n + (d.cost ?? 0), 0);
 }
 
 /** An amount in the answer's currency with 2 decimals (an unknown code: the code and the number). */
@@ -161,8 +171,12 @@ function UsageWeek({ week, t }: { week: AdminUsageWeek; t: T }) {
           empty={t("empty")}
         />
         <Text variant="prose" tone="muted">
-          {total}
-          {week.costPartial ? <TextLink href="/admin/models">{t("costPartial")}</TextLink> : null}
+          {week.costPartial
+            ? t.rich("totalPartial", {
+                total,
+                link: () => <TextLink href="/admin/models">{t("costPartial")}</TextLink>,
+              })
+            : total}
         </Text>
       </Stack>
       {rows.length > 0 ? (

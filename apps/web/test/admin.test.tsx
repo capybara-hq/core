@@ -900,7 +900,7 @@ describe("/admin 概览（OverviewPage）", () => {
         USAGE_DATES.map((d) => d.slice(5)),
       );
       // today (the last day) is the current point
-      expect(rows[6]?.[0]).not.toBe("11-10");
+      expect(rows[6]?.[0]).toBe(locale === "zh" ? "11-10（当前）" : "11-10 (current)");
       expect(rows.map((r) => r[1])).toEqual(USAGE_RUNS.map(String));
       expect(rows.map((r) => r[2])).toEqual(USAGE_TOKENS.map((n) => formatCompact(n, locale)));
       expect(rows.map((r) => r[3])).toEqual(
@@ -938,36 +938,92 @@ describe("/admin 概览（OverviewPage）", () => {
     ).toBeTruthy();
   });
 
-  it("用量：费用为 null 时写「未定价」而不是 0；部分未定价时合计行后的说明链接到模型页", async () => {
+  it.each(LOCALES)(
+    "用量：费用为 null 时写「未定价」而不是 0；部分未定价时合计行后的说明链接到模型页（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/usage": () =>
+            json(200, {
+              ...USAGE,
+              days: USAGE.days.map((d, i) => (i === 5 ? { ...d, cost: null } : d)),
+              costPartial: true,
+            }),
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      const rows = chartRows(box);
+      expect(rows[5]?.[3]).toBe(u.unpriced);
+      expect(rows[3]?.[3]).toBe(fill(u.estimate, { cost: money(locale, 0) }));
+      // the total counts only the priced days, and says so (a space before the note in en)
+      const note = within(box).getByRole("link", { name: u.costPartial });
+      expect(note.getAttribute("href")).toBe("/admin/models");
+      const total = fill(u.total, {
+        runs: 812,
+        tokens: formatCompact(21_700_000, locale),
+        cost: money(locale, 78.4 - 20),
+      });
+      expect(note.closest('[data-variant="prose"]')?.textContent).toBe(
+        `${total}${locale === "zh" ? "" : " "}${u.costPartial}`,
+      );
+      // an org without priced tokens is 未定价 too
+      const ranking = within(box).getByRole("table", { name: u.ranking.title });
+      const beta = within(ranking).getByText("Beta").closest("tr") as HTMLElement;
+      expect(within(beta).getByText(u.unpriced)).toBeTruthy();
+      expect(within(beta).queryByText(money(locale, 0))).toBeNull();
+    },
+  );
+
+  it.each(LOCALES)(
+    "用量：一周都未定价时合计写「未定价」；其他组织未定价时也是（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/usage": () =>
+            json(200, {
+              ...USAGE,
+              days: USAGE.days.map((d) => ({ ...d, cost: d.runs === 0 ? 0 : null })),
+              costPartial: true,
+              otherOrgs: { ...USAGE.otherOrgs, cost: null },
+            }),
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      const note = within(box).getByRole("link", { name: u.costPartial });
+      const line = note.closest('[data-variant="prose"]')?.textContent ?? "";
+      expect(
+        line.startsWith(
+          fill(u.total, {
+            runs: 812,
+            tokens: formatCompact(21_700_000, locale),
+            cost: u.unpriced,
+          }),
+        ),
+      ).toBe(true);
+      const ranking = within(box).getByRole("table", { name: u.ranking.title });
+      const others = locale === "zh" ? "其他 3 个组织" : "3 other organizations";
+      const row = within(ranking).getByText(others).closest("tr") as HTMLElement;
+      expect(within(row).getByText(u.unpriced)).toBeTruthy();
+    },
+  );
+
+  it("用量：币种代码不合法时写成代码加两位小数", async () => {
     const u = zh.admin.overview.usage;
     stubApi(
       overviewRoutes({
-        "GET /api/v1/admin/overview/usage": () =>
-          json(200, {
-            ...USAGE,
-            days: USAGE.days.map((d, i) => (i === 5 ? { ...d, cost: null } : d)),
-            costPartial: true,
-          }),
+        "GET /api/v1/admin/overview/usage": () => json(200, { ...USAGE, currency: "EURO" }),
       }),
     );
     await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
     const box = await usageBox(u.title);
-    const rows = chartRows(box);
-    expect(rows[5]?.[3]).toBe(u.unpriced);
-    expect(rows[3]?.[3]).toBe(fill(u.estimate, { cost: "¥0.00" }));
-    // the total counts only the priced days, and says so
     expect(
-      within(box).getByText(
-        fill(u.total, { runs: 812, tokens: "2170万", cost: money("zh", 78.4 - 20) }),
-      ),
+      within(box).getByText(fill(u.total, { runs: 812, tokens: "2170万", cost: "EURO 78.40" })),
     ).toBeTruthy();
-    const note = within(box).getByRole("link", { name: u.costPartial });
-    expect(note.getAttribute("href")).toBe("/admin/models");
-    // an org without priced tokens is 未定价 too
-    const ranking = within(box).getByRole("table", { name: u.ranking.title });
-    const beta = within(ranking).getByText("Beta").closest("tr") as HTMLElement;
-    expect(within(beta).getByText(u.unpriced)).toBeTruthy();
-    expect(within(beta).queryByText("¥0.00")).toBeNull();
+    expect(chartRows(box)[6]?.[3]).toBe(fill(u.estimate, { cost: "EURO 12.30" }));
   });
 
   it.each(LOCALES)(

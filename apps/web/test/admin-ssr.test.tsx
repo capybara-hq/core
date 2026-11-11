@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
+import {
+  hydrateRouteWithCache,
+  renderRouteEmptyCache,
+  renderRouteWithCache,
+  testQueryClient,
+} from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
@@ -483,6 +488,27 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(await within(box()).findByRole("table", { name: U.ranking.title })).toBeTruthy();
     expect(box().querySelector('[data-part="trend-chart"]')).not.toBeNull();
     expect(within(runs).getByText("91")).toBeTruthy();
+  });
+
+  it("/admin: a server in another zone than the browser: 用量 is read once, in the browser's zone", async () => {
+    const U = en.admin.overview.usage;
+    const browserZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const serverZone = browserZone === "Pacific/Kiritimati" ? "America/Adak" : "Pacific/Kiritimati";
+    const calls = stubApi(ROUTES);
+    const { container, errors, html, unmount } = await hydrateRouteWithCache("/admin", ROUTES, {
+      clock: { now: Date.now(), timeZone: serverZone },
+    });
+    // the server render draws the skeleton and the stat's dash (it does not know the reader's zone)
+    expect(html).toContain("—");
+    expect(errors).toEqual([]);
+    expect(
+      await within(container).findByRole("table", { name: U.ranking.title }, { timeout: 3000 }),
+    ).toBeTruthy();
+    const usage = calls
+      .map((c) => new URL(c.url, "http://x"))
+      .filter((u) => u.pathname === "/api/v1/admin/overview/usage");
+    expect(usage.map((u) => u.searchParams.get("tz"))).toEqual([browserZone]);
+    unmount();
   });
 
   it("/admin/accounts: a first render from the hydrated cache makes no browser read (load more when there is a next)", async () => {

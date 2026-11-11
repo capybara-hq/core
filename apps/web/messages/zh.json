@@ -3467,6 +3467,7 @@
         "cost": "估算费用",
         "empty": "近 7 天没有运行。",
         "total": "7 天合计：运行 {runs} · Token {tokens} · 估算费用 {cost}",
+        "totalPartial": "{total}<link></link>",
         "costPartial": "（部分模型未设置价格，未计入）",
         "ranking": {
           "title": "组织排行",
