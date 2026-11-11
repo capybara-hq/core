@@ -6,6 +6,7 @@ import { EventLogModule } from "../conversations/event-log.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
+import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { PlatformModule } from "../platform/platform.module.js";
@@ -57,6 +58,8 @@ import { ToolRegistry } from "./registry.js";
     // the builtin sandbox and skill tools run in the conversation's device
     SandboxModule,
     DevicesModule,
+    // 「这台设备一直允许」 changes the device's local policy (network asks)
+    LocalDevicesModule,
     // `Bash` with run_in_background records its task; TaskOutput / TaskStop finish and stop it
     BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see

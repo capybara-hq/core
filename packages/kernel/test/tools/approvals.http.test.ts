@@ -719,3 +719,162 @@ describe("Review Focus 1：两个副本并发处理同一审批", () => {
     expect(calls[0]).toMatchObject({ id: a.id, status: "approved" });
   });
 });
+
+describe("network asks: only the device owner decides, in a signed-in session", () => {
+  const KEPT = { content: "curl: (56) CONNECT tunnel failed, response 403", isError: true };
+
+  /** A network ask of the initiator's device (the initiator owns it). */
+  const ask = (scopes: ("once" | "always")[] = ["once", "always"]) =>
+    svc().requestNetwork({
+      orgId,
+      conversationId,
+      runId,
+      step: 1,
+      callId: `c-${randomUUID().slice(0, 8)}`,
+      requestedFor: initiator.account.id,
+      detail: {
+        deviceId: randomUUID(),
+        hosts: [
+          { host: "files.slack.com", port: 443 },
+          { host: "api.github.com", port: 443 },
+        ],
+        command: "curl https://files.slack.com/x",
+        description: "Download the file",
+        result: KEPT,
+      },
+      scopes,
+    });
+
+  const status = async (id: string) =>
+    (
+      await db
+        .selectFrom("approvals")
+        .select("status")
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow()
+    ).status;
+
+  it("another member, an org admin and the org owner → 403 approval.not_yours naming the owner", async () => {
+    const a = await ask();
+    const ownerSession = await login("owner");
+    for (const u of [other.req, admin.req, ownerSession.req]) {
+      const res = await u({
+        method: "POST",
+        url: `${base()}/${a.id}/decision`,
+        payload: { decision: "approve" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toMatchObject({
+        error: {
+          code: "approval.not_yours",
+          message: "Only ini can allow network access on this device.",
+        },
+      });
+    }
+    expect(await status(a.id)).toBe("pending");
+  });
+
+  it("the owner's personal access token → 403 auth.session_required; a service token → 403", async () => {
+    const a = await ask();
+    const pat = await tokens.createPersonal(initiator.account.id, { name: "cli" });
+    const viaPat = await ka.http.inject({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      headers: { authorization: `Bearer ${pat.token}`, "x-capybara-csrf": "1" },
+      payload: { decision: "approve" },
+    });
+    expect(viaPat.statusCode, viaPat.body).toBe(403);
+    expect(errCode(viaPat)).toBe("auth.session_required");
+    const { token } = await tokens.createService(orgId, {
+      name: "bot",
+      role: "admin",
+      createdBy: owner.id,
+    });
+    const viaService = await ka.http.inject({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      headers: { authorization: `Bearer ${token}`, "x-capybara-csrf": "1" },
+      payload: { decision: "approve" },
+    });
+    expect(viaService.statusCode).toBe(403);
+    expect(await status(a.id)).toBe("pending");
+  });
+
+  it("hosts: a subset of those asked; another host → 400; with deny → 400; session → 409", async () => {
+    const a = await ask();
+    const decide = (payload: Record<string, unknown>) =>
+      initiator.req({ method: "POST", url: `${base()}/${a.id}/decision`, payload });
+    const unknown = await decide({ decision: "approve", hosts: ["evil.example.com"] });
+    expect(unknown.statusCode).toBe(400);
+    expect(errCode(unknown)).toBe("validation_failed");
+    const withDeny = await decide({ decision: "deny", hosts: ["files.slack.com"] });
+    expect(withDeny.statusCode).toBe(400);
+    const session = await decide({ decision: "approve", scope: "session" });
+    expect(session.statusCode).toBe(409);
+    expect(errCode(session)).toBe("approval.scope_not_allowed");
+    expect(await status(a.id)).toBe("pending");
+
+    // decided on the second replica
+    const ok = await initiator.reqB({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "approve", hosts: ["api.github.com"] },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const approval = (ok.json() as { approval: { detail: Record<string, unknown> } }).approval;
+    expect(approval).toMatchObject({
+      status: "approved",
+      scope: "once",
+      kind: "network",
+      detail: { grantedHosts: ["api.github.com"], outcome: "once" },
+    });
+    expect(approval.detail).not.toHaveProperty("result");
+  });
+
+  it("a tool approval takes no hosts", async () => {
+    const a = await request();
+    const res = await initiator.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "approve", hosts: ["files.slack.com"] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(errCode(res)).toBe("validation_failed");
+  });
+
+  it("list and detail show the owner the ask's kind and detail, never the kept command result", async () => {
+    const a = await ask(["once"]);
+    const list = await initiator.req({ method: "GET", url: `${base()}?status=pending` });
+    const [item] = (list.json() as { approvals: Record<string, unknown>[] }).approvals;
+    expect(item).toMatchObject({
+      id: a.id,
+      kind: "network",
+      toolKey: "Bash",
+      scopes: ["once"],
+      detail: {
+        deviceId: a.detail?.deviceId,
+        hosts: [
+          { host: "files.slack.com", port: 443 },
+          { host: "api.github.com", port: 443 },
+        ],
+        command: "curl https://files.slack.com/x",
+        description: "Download the file",
+      },
+    });
+    expect(item?.detail).not.toHaveProperty("result");
+    const one = await initiator.req({ method: "GET", url: `${base()}/${a.id}` });
+    expect((one.json() as { approval: { detail: unknown } }).approval.detail).not.toHaveProperty(
+      "result",
+    );
+    // a tool approval has no detail
+    const t = await request();
+    const tool = await initiator.req({ method: "GET", url: `${base()}/${t.id}` });
+    expect((tool.json() as { approval: unknown }).approval).toMatchObject({
+      kind: "tool",
+      detail: null,
+    });
+    // nobody else sees it
+    expect(ids(await other.req({ method: "GET", url: base() }))).toEqual([]);
+    expect(ids(await admin.req({ method: "GET", url: base() }))).toEqual([]);
+  });
+});

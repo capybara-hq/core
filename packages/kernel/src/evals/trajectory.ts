@@ -49,7 +49,7 @@ export interface TrajectoryToolCall {
   approval: {
     approvalId: string;
     requestedAt: string;
-    decision: "approved" | "denied" | "expired" | "cancelled" | null;
+    decision: "approved" | "denied" | "expired" | "cancelled" | "skipped" | null;
     scope?: "once" | "session" | "always";
     byAccountId: string | null;
     decidedAt: string | null;

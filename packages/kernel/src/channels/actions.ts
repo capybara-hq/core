@@ -46,6 +46,8 @@ const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "question.already_answered": "alreadyHandled",
   validation_failed: "invalidAction",
   "approval.scope_not_allowed": "invalidAction",
+  // a network ask clicked by someone other than the device's owner
+  "approval.not_yours": "cannotHandle",
 };
 
 /**
@@ -146,10 +148,14 @@ export class ChannelCardActions {
     try {
       if (a.cardKind === "approval" && (a.action === "approve" || a.action === "deny")) {
         const scope = anonymous ? "once" : a.scope;
-        await this.deps.approvals.decide(row.orgId, a.cardId, who.accountId, {
-          decision: a.action,
-          ...(scope !== undefined && { scope }),
-        });
+        await this.deps.approvals.decide(
+          row.orgId,
+          a.cardId,
+          who.accountId,
+          { decision: a.action, ...(scope !== undefined && { scope }) },
+          undefined,
+          "im",
+        );
       } else if (a.cardKind === "question" && a.action === "answer") {
         await this.deps.questions.answer(a.cardId, who.accountId, a.answer ?? {}, row.orgId);
       } else {
