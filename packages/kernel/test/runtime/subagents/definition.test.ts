@@ -19,6 +19,7 @@ import {
   stricterPolicies,
 } from "../../../src/runtime/subagents/definition.js";
 import { checkOrgAgent } from "../../../src/runtime/subagents/org-agents.js";
+import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
 import {
   findType,
   type RosterEntry,
@@ -421,6 +422,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     });
     expect(r.template).toEqual({ source: "general" });
     expect(r.maxSteps).toBe(30);
+    expect(r.preamble).toBe(SUBAGENT_PREAMBLE);
     expect(r.warnings).toEqual([]);
     expect(r.model).toEqual(FAKE1);
     expect(r.tierFallback).toBe(false);
@@ -547,11 +549,86 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.definition.instructions).toBe("Body of implementer v2.");
     expect(r.definition.name).toBe("Lead › superpowers:implementer");
     expect(r.definition.subagentTools).toEqual({ allow: ["ReadToolOutput"], deny: REMOVED });
-    // nothing is pinned any more (skills default-on spec §8); the child has the parent's catalog
+    // nothing is pinned (skills default-on spec §6.1): the child has the parent's catalog and is
+    // told to load the template's skills first; a name it does not have is a warning
     expect(r.definition.skills).toBeUndefined();
     expect(r.definition.disabledSkills).toEqual([]);
     expect(tdd).toBeDefined();
+    expect(r.preamble).toBe(
+      `${SUBAGENT_PREAMBLE}\n\nBefore you start, load these skills with Skill: test-driven-development.`,
+    );
+    expect(r.warnings).toEqual([
+      'The skill "superpowers:missing" is not among the sub-agent\'s skills, so it is not asked to load it.',
+    ]);
     expect(r.maxSteps).toBe(12);
+  });
+
+  it("plugin template skills: catalog names in the template's order, plugin refs checked, no limits", async () => {
+    await skill("brainstorming", 100, undefined, "superpowers");
+    await skill("writing-plans", 100, undefined, "superpowers");
+    await skill("big", 40_000);
+    await skill("debugging", 100, undefined, "other");
+    const t = await template("planner", {
+      skills: ["writing-plans", "superpowers:brainstorming", "big", "superpowers:debugging"],
+    });
+    const r = await eff(def({ subagents: { templates: [t] } }), "planner");
+    // no 3-skill or 32 KB limit any more; `superpowers:debugging` names another plugin's skill
+    expect(r.preamble).toBe(
+      `${SUBAGENT_PREAMBLE}\n\nBefore you start, load these skills with Skill: writing-plans, brainstorming, big.`,
+    );
+    expect(r.warnings).toEqual([
+      'The skill "superpowers:debugging" is not among the sub-agent\'s skills, so it is not asked to load it.',
+    ]);
+  });
+
+  it("plugin template disallowedSkills narrow the parent's skills; the skills it turns off are not loaded", async () => {
+    await skill("brainstorming", 100, undefined, "superpowers");
+    await skill("writing-plans", 100, undefined, "superpowers");
+    await skill("lint", 100, undefined, "tools");
+    const notes = await skill("notes");
+    const t = await template("narrow", {
+      skills: ["brainstorming", "notes", "lint"],
+      disallowedSkills: ["superpowers:brainstorming", "tools:*", "notes", "gone-skill"],
+    });
+    const parent = def({
+      subagents: { templates: [t] },
+      disabledSkills: [{ kind: "plugin", plugin: "superpowers", skills: ["writing-plans"] }],
+    });
+    const r = await eff(parent, "narrow");
+    // the parent's list plus the template's (narrowing only); an unresolved bare name is dropped
+    expect(r.definition.disabledSkills).toEqual([
+      { kind: "plugin", plugin: "superpowers", skills: ["brainstorming", "writing-plans"] },
+      { kind: "plugin", plugin: "tools", skills: "all" },
+      { kind: "skill", skillId: notes },
+    ]);
+    expect(r.preamble).toBe(SUBAGENT_PREAMBLE);
+    expect(r.warnings).toEqual(
+      ["brainstorming", "notes", "lint"].map(
+        (n) =>
+          `The skill "${n}" is not among the sub-agent's skills, so it is not asked to load it.`,
+      ),
+    );
+    expect(AgentDefinitionSchema.parse(r.definition)).toEqual(r.definition);
+  });
+
+  it("inline template skills are ids: the line names them as the catalog lists them", async () => {
+    const a = await skill("alpha");
+    const own = await skill("beta", 100, parentAgentId);
+    const off = await skill("gamma");
+    const parent = def({
+      disabledSkills: [{ kind: "skill", skillId: off }],
+      subagents: { inline: [inline("scout", { skills: [own, a, off] })] },
+    });
+    const r = await eff(parent, "scout");
+    expect(r.preamble).toBe(
+      `${SUBAGENT_PREAMBLE}\n\nBefore you start, load these skills with Skill: beta, alpha.`,
+    );
+    expect(r.warnings).toEqual([
+      `The skill "${off}" is not among the sub-agent's skills, so it is not asked to load it.`,
+    ]);
+    // general-purpose never gets the line
+    const g = await eff(parent, "general-purpose");
+    expect(g.preamble).toBe(SUBAGENT_PREAMBLE);
   });
 
   describe("model tiers", () => {

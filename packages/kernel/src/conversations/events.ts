@@ -853,7 +853,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * by default also carry `skills.orgSkills` / `skills.pinned` (skills default-on spec §4).
        */
       definition: LoggedAgentDefinition,
-      /** `SUBAGENT_PREAMBLE` at dispatch time. */
+      /**
+       * `SUBAGENT_PREAMBLE` at dispatch time; since skills were on by default, followed by the line
+       * naming a template's skills the child loads first (skills default-on spec §6.1).
+       */
       preamble: z.string(),
       maxSteps: z.number().int().positive(),
       warnings: z.array(z.string()).optional(),
