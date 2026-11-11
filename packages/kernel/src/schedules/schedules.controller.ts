@@ -61,8 +61,10 @@ import type { ScheduledTask, ScheduledTaskGrant, TaskRun } from "./types.js";
 export class SchedulesController {
   constructor(@Inject(ScheduledTasksService) private readonly tasks: ScheduledTasksService) {}
 
+  // org.read: a creator demoted to guest still lists their own tasks (to pause or delete them);
+  // `all` is the service's admin check
   @Get()
-  @OrgAction("schedules.use")
+  @OrgAction("org.read")
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,

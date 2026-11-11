@@ -206,9 +206,11 @@ describe("schedules API", () => {
     expect(codeOf(res)).toBe("schedule.forbidden");
   });
 
-  it("a guest gets 403 except pause and delete of a task it created before being demoted", async () => {
+  it("a guest gets 403 except list, pause and delete of a task it created before being demoted", async () => {
+    // a guest lists only their own tasks: none
     let res = await guest({ method: "GET", url: base() });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ items: [] });
     res = await guest({ method: "POST", url: base(), payload: body() });
     expect(res.statusCode).toBe(403);
 
@@ -221,6 +223,12 @@ describe("schedules API", () => {
     res = await alice({ method: "PATCH", url: `${base()}/${t.id}`, payload: { name: "x" } });
     expect(res.statusCode).toBe(403);
     res = await alice({ method: "POST", url: `${base()}/${t.id}/resume` });
+    expect(res.statusCode).toBe(403);
+    // the demoted creator still sees their task, to pause or delete it
+    res = await alice({ method: "GET", url: base() });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { items: { id: string }[] }).items.map((x) => x.id)).toEqual([t.id]);
+    res = await alice({ method: "GET", url: `${base()}?all=true` });
     expect(res.statusCode).toBe(403);
     res = await alice({ method: "POST", url: `${base()}/${t.id}/pause` });
     expect(res.statusCode, res.body).toBe(200);
@@ -290,6 +298,7 @@ describe("schedules API", () => {
       "schedules.update",
       "schedules.delete",
       "schedules.run",
+      "schedules.resume",
       "schedules.grants-add",
       "schedules.grants-remove",
     ]) {
@@ -304,5 +313,6 @@ describe("schedules API", () => {
       expect(ops.get(id), id).toMatchObject({ confirm: "read" });
     }
     expect(ops.get("schedules.pause")?.authz).toEqual({ orgAction: "org.read" });
+    expect(ops.get("schedules.list")?.authz).toEqual({ orgAction: "org.read" });
   });
 });

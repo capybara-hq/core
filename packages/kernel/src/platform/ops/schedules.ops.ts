@@ -69,9 +69,9 @@ const runRow = (r: TaskRun) => ({
  * Scheduled-task operations of the `Platform` tool (scheduled tasks spec §10): the same service
  * as the HTTP routes. Writes are `personal`. Creating or changing a task and its approved tools
  * are never remembered (`rememberable: false`): an approval, remembered or granted to a task,
- * must never let an unattended run create or widen a task. Delete is never remembered either.
- * Pause and delete are `org.read` like their routes: a creator demoted to guest can still stop
- * their own tasks (the service decides by ownership).
+ * must never let an unattended run create or widen a task. Delete, run and resume are never
+ * remembered either. List, pause and delete are `org.read` like their routes: a creator demoted
+ * to guest can still see and stop their own tasks (the service decides by ownership).
  */
 @Injectable()
 export class SchedulesOperations implements OnModuleInit {
@@ -101,7 +101,8 @@ export class SchedulesOperations implements OnModuleInit {
           "List your scheduled tasks: one compact row each (name, agent, status and why it is paused, schedule with its time zone, where runs post, next run, last settled run). all=true lists every task of the org and needs the org admin role; conversationId keeps the tasks that post into that conversation.",
         input: ListQuery,
         example: {},
-        authz: { orgAction: "schedules.use" },
+        // a creator demoted to guest still lists their own tasks (to pause or delete them)
+        authz: { orgAction: "org.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/schedules"],
         confirm: "read",
         errors: [
@@ -317,13 +318,15 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.resume",
         description:
-          "Resume a paused scheduled task: the next run is computed from now (missed ticks are not caught up). An ended task cannot be resumed. Takes the id from schedules.list.",
+          "Resume a paused scheduled task: the next run is computed from now (missed ticks are not caught up). An ended task cannot be resumed. The person confirms every resume; it is never remembered. Takes the id from schedules.list.",
         input: TaskId,
         example: { scheduleId: EXAMPLE_ID },
         authz: { orgAction: "schedules.use" },
         mirrors: ["POST /api/v1/orgs/:orgId/schedules/:id/resume"],
         renames: { scheduleId: "id" },
         confirm: "personal",
+        // a remembered resume would let an unattended run restart a task a person stopped
+        rememberable: false,
         errors: [
           {
             code: "schedule.not_found",
