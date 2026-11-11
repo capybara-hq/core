@@ -96,6 +96,10 @@ function canConnect(port: number): Promise<boolean> {
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  // Apply the kernel migrations once here: otherwise the first test to start a kernel pays for
+  // the whole migration run inside its 5 s budget. "start runs the kernel migrations" checks
+  // that on a database of its own.
+  await migrateAll(cfg());
 });
 afterAll(async () => {
   await Promise.all(kernels.map((k) => k.close()));
@@ -118,16 +122,21 @@ describe("HTTP 健康检查", () => {
     expect(text).not.toContain("redis://");
   });
 
-  it("start 运行内核迁移（capybara schema）", async () => {
-    const k = await kernel(cfg());
-    await k.start();
-    const c = new pg.Client({ connectionString: pgc.url });
-    await c.connect();
+  // Applying every kernel migration to an empty database is this test's subject; it takes a few
+  // seconds alone and more on a loaded machine.
+  it("start runs the kernel migrations (capybara schema)", { timeout: 60_000 }, async () => {
+    const fresh = await startTestPostgres();
+    const c = new pg.Client({ connectionString: fresh.url });
     try {
+      const k = await kernel(cfg({ db: { url: fresh.url, poolMax: 3 } }));
+      await k.start();
+      await c.connect();
       const r = await c.query("select name from capybara._migrations order by name");
       expect(r.rows.map((x) => x.name)).toContain("0001_init.sql");
+      await k.close();
     } finally {
-      await c.end();
+      await c.end().catch(() => {});
+      await fresh.stop();
     }
   });
 
