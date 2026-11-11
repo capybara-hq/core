@@ -425,6 +425,142 @@
   fill: var(--cb-muted);
 }
 
+/* TrendChart (spec §6.8): small multiples, one panel per measure, one shared x-axis. */
+.cb-trend {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.cb-trend:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-trend-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-trend-panels {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-trend-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cb-space-2);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-trend-title {
+  color: var(--cb-muted);
+}
+.cb-trend-latest {
+  color: var(--cb-ink);
+}
+.cb-trend-plot {
+  display: block;
+  overflow: visible;
+}
+.cb-trend-baseline {
+  stroke: var(--cb-line);
+  stroke-width: 1px;
+}
+.cb-trend-max {
+  fill: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-small-size);
+}
+.cb-trend-segment {
+  stroke: var(--cb-muted);
+  stroke-width: 2px;
+  stroke-linecap: square;
+}
+.cb-trend-point {
+  fill: var(--cb-muted);
+}
+.cb-trend-segment[data-kind="current"] {
+  stroke: var(--cb-accent);
+}
+.cb-trend-point[data-kind="current"] {
+  fill: var(--cb-accent);
+}
+.cb-trend-crosshair {
+  stroke: var(--cb-line-strong);
+  stroke-width: 1px;
+}
+/* Full-height columns over every panel: the pointer aims at a date, never at a 2 px line. */
+.cb-trend-hits {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+.cb-trend-tip {
+  position: absolute;
+  top: 0;
+  z-index: var(--cb-z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel);
+  box-shadow: var(--cb-shadow-1);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.cb-trend-tip-current,
+.cb-trend-tip-label,
+.cb-trend-tip-extra {
+  color: var(--cb-muted);
+}
+.cb-trend-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+}
+.cb-trend-x {
+  display: grid;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-trend-x-label {
+  overflow: hidden;
+  text-align: center;
+  white-space: nowrap;
+}
+@media (forced-colors: active) {
+  .cb-trend-segment,
+  .cb-trend-baseline,
+  .cb-trend-crosshair {
+    stroke: CanvasText;
+  }
+  .cb-trend-point {
+    fill: CanvasText;
+  }
+  .cb-trend-segment[data-kind="current"] {
+    stroke: Highlight;
+  }
+  .cb-trend-point[data-kind="current"] {
+    fill: Highlight;
+  }
+  .cb-trend-max {
+    fill: CanvasText;
+  }
+}
+
 /* DateTime (spec §2.2): mono, tabular figures, relative age in the tooltip. */
 .cb-datetime {
   font-family: var(--cb-font);

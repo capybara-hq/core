@@ -1003,6 +1003,33 @@ States: `skills`, `filtered`
 - Mini trend Sparkline (inside tables): 12 square bars 4px wide, `muted`.
 - The `fail` in a bar chart is a subset of `value` (the total): the bar height = the total, and the failure count is drawn as blocks at the top of the bar.
 - Axis labels small faint; no grid lines.
+- **TrendChart** (`TrendChart({ label, x, panels, current?, extra?, empty? })`, `panels` `{ id, label, values: (number | null)[], format(n) }[]`; admin overview design §10.1, decision D1): a time series as **small multiples**, one panel per measure, stacked, sharing the x positions (`x`, the dates) and their labels under the last panel. Each panel has its own scale; there is never a second y-scale on one plot (the eye would compare slopes the scales made up), and the API has no prop for one. A panel is its title (`small` `muted`, left; it names the one series, so there is no legend) and its latest value (the `current` point's, else the last one's; `small` `ink`, right) over the plot, 96 high at `default` and 72 at `dense` (§2.5 density from `DensityContext`): a 2 px polyline in `muted`, a 6 px square marker per value (`crispEdges`), the `current` point and the segment into it in `accent` (the text role of §2.3: the period happening now), a 1 px `line` baseline at zero, and as the y-axis only the panel's max (formatted) at the top-left in `small` `faint`; no grid lines. A `null` value is a gap: no marker, no segment across it. When no value of any panel is above zero the chart draws its flat zero state (the points on the baseline, no max) with the `empty` line (`small` `muted`) above it. The x positions are full-height columns over every panel: hovering one (or tapping it on a touch screen, where it stays after the finger lifts) draws one crosshair (1 px `line-strong`) through every panel and one tooltip (the `panel` ground, a `line-strong` border, `shadow-1`, `radius.sm`, `small`) beside it on the side with more room, holding the date (marked 当前 / current at `current`), each panel's formatted value (the label `muted`, the value `ink`) and `extra(i)` (估算 ¥12.30). The chart is one focusable group (`role="group"` named `label`, the 2 px `accent` focus outline): focus shows the current point, ←/→ move it, Home/End jump, Esc hides, and the tooltip's text is mirrored in a polite live region. Each panel's plot is `role="img"` with a summary from the design i18n (「运行：最高 11-06 的 132，最新 11-11 的 64」, 「Token：全部为 0」); a visually hidden table holds every value (the row of `current` marked), so neither the tooltip nor color gates a value. Under `forced-colors` the strokes and markers are `CanvasText` and the current ones `Highlight`. It fills its container's width (the x positions are percentages; a 390 phone holds seven dates). `formatCompact(n, locale)` (en `3.4M`, zh `340万`) formats large measures such as tokens.
+
+<!-- states: trend-chart -->
+States: `default`, `hover`, `current`, `empty`, `gap`, `phone`
+
+<!-- size-table: trend-chart -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| trend-chart-plot | default | height | 96 |
+| trend-chart-title | default | color | color.muted |
+| trend-chart-title | default | font-size | type.small |
+| trend-chart-latest | default | color | color.ink |
+| trend-chart-point | default | width | 6 |
+| trend-chart-point | default | fill | color.muted |
+| trend-chart-segment | default | stroke | color.muted |
+| trend-chart-baseline | default | stroke | color.line |
+| trend-chart-max | default | fill | color.faint |
+| trend-chart-x | default | color | color.faint |
+| trend-chart-x | default | font-size | type.small |
+| trend-chart-point[data-kind=current] | current | fill | color.accent |
+| trend-chart-segment[data-kind=current] | current | stroke | color.accent |
+| trend-chart-crosshair | hover | stroke | color.line-strong |
+| trend-chart-tooltip | hover | background-color | color.panel |
+| trend-chart-tooltip | hover | border-top-color | color.line-strong |
+| trend-chart-tooltip | hover | font-size | type.small |
+| trend-chart-empty | empty | color | color.muted |
+| trend-chart-plot | phone | height | 96 |
 
 ### 6.9 Conversation timeline and plugin view building blocks
 

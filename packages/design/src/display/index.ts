@@ -66,6 +66,7 @@ export { type DurationOptions, formatDuration } from "./duration";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
+export { formatCompact } from "./format";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { type GuideBlock, GuideDocument, type GuideDocumentProps } from "./guide-document";
 export {
@@ -121,4 +122,5 @@ export {
   type ThemeSwatchProps,
 } from "./theme-swatch";
 export { Tooltip } from "./tooltip";
+export { TrendChart, type TrendChartPanel, type TrendChartProps } from "./trend-chart";
 export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";
