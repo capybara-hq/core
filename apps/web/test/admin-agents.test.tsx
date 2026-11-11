@@ -61,6 +61,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   needsReassignment: true,
   visibility: "private",
   createdFrom: { templateId: "t1", name: "research-kit" },
+  skillsOff: 2,
   updatedAt: T,
   ...over,
 });
@@ -77,6 +78,7 @@ const ROWS = [
     needsReassignment: false,
     visibility: "members",
     createdFrom: null,
+    skillsOff: 0,
   }),
 ];
 const DETAIL = {
@@ -92,7 +94,7 @@ const DETAIL = {
     model: { provider: "openai-compatible", model: "deepseek-chat" },
     fallback: null,
     modelParams: { effort: "high" },
-    skills: { orgSkills: ["s1", "s2"] },
+    disabledSkills: [{ kind: "plugin", plugin: "docs", skills: "all" }],
     subagents: { general: true, agents: [{ agentId: "ag2", as: "writer", description: "Writes" }] },
     pendingConnectors: [{ key: "gh", label: "GitHub", source: { template: "ct1" } }],
   },
@@ -168,6 +170,8 @@ describe("/admin/agents", () => {
     expect(within(first).getByText(A.needsReassignment)).toBeTruthy();
     expect(within(first).getByText(A.visibility.private)).toBeTruthy();
     expect(within(first).getByText("research-kit")).toBeTruthy();
+    // how many skills on in its org it turns off
+    expect(within(first).getByText("2")).toBeTruthy();
     expect(first.querySelector("time")).not.toBeNull();
     // the avatar: a preset as itself, an upload (org-scoped) as the initial
     expect(first.querySelector('[data-part="avatar"]')?.getAttribute("data-kind")).toBe("preset");
@@ -301,6 +305,8 @@ describe("/admin/agents/[id]", () => {
     expect(screen.getByText(A.needsReassignment)).toBeTruthy();
     expect(screen.getByText(A.visibility.private)).toBeTruthy();
     expect(screen.getByText("research-kit")).toBeTruthy();
+    expect(screen.getByText(A.detail.facts.skillsOff)).toBeTruthy();
+    expect(zh.adminItems.agents.detail.facts.skillsOff).toBe("关闭的技能");
     // the skills and connectors by name: a scope word, a status word
     const skills = screen.getByRole("list", { name: A.detail.sections.skills });
     const skillRows = within(skills).getAllByRole("listitem");

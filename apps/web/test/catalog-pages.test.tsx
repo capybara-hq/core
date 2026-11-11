@@ -450,6 +450,75 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(bodyOf(calls.filter((c) => c.method === "PUT")[0])).toEqual({ enabled: false });
   });
 
+  it("停用 of a plugin with skills says every agent loses them: confirmed first without an install, in the preview with one", async () => {
+    const p = zh.plugins;
+    const skill = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+      id,
+      scope: "org",
+      agentId: null,
+      name,
+      description: "",
+      currentVersion: 1,
+      createdBy: "a1",
+      createdAt: "2026-11-07T00:00:00.000Z",
+      updatedAt: "2026-11-07T00:00:00.000Z",
+      origin: "platform",
+      plugin: "superpowers",
+      ...over,
+    });
+    const skills = [
+      skill("s1", "brainstorming"),
+      skill("s2", "writing-plans"),
+      skill("s3", "csv", { plugin: "other" }),
+      skill("s4", "guide", { builtin: true }),
+    ];
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, { items: [orgItem({ name: "superpowers", state: "on", installed: null })] }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, { item: orgItem({ name: "superpowers", state: "off" }) }),
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "superpowers")).getByRole("button", { name: RAW_MORE.zh }));
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("它的 2 个技能将从所有智能体中移除。")).toBeTruthy();
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: p.switchOff.confirm }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "PUT")[0])).toEqual({ enabled: false }),
+    );
+    cleanup();
+    vi.unstubAllGlobals();
+
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              name: "superpowers",
+              state: "on",
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+            }),
+          ],
+        }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () => json(200, { preview: PREVIEW, confirm: "h1" }),
+    });
+    await renderPlugins({ locale: "zh" });
+    const again = await screen.findByRole("list", { name: p.title });
+    await user.click(
+      within(rowOf(again, "superpowers")).getByRole("button", { name: RAW_MORE.zh }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const preview = await screen.findByRole("dialog");
+    expect(within(preview).getByText("它的 2 个技能将从所有智能体中移除。")).toBeTruthy();
+    expect(within(preview).getByRole("list", { name: p.switchOff.removed })).toBeTruthy();
+  });
+
   it("members see the rows without switch actions; 申请启用 only on an optional plugin that is off", async () => {
     const p = en.plugins;
     const calls = stubApi({
@@ -3240,7 +3309,6 @@ const CLAUDE_REVIEW = {
       body: "# Using superpowers",
       path: "skills/using-superpowers",
       files: 3,
-      suggestPinned: true,
     },
     {
       name: "brainstorming",
@@ -3248,7 +3316,6 @@ const CLAUDE_REVIEW = {
       body: "# Brainstorming\n\nAsk questions first.",
       path: "skills/brainstorming",
       files: 1,
-      suggestPinned: false,
     },
   ],
   translation: {
@@ -3421,84 +3488,53 @@ describe("phase B: Claude Code plugins on the import review", () => {
     expect(within(warnings).getByText(tr.groupNone)).toBeTruthy();
   });
 
-  it("suggest pinned checkboxes are sent as pinnedSuggestions on confirm", async () => {
-    const tr = en.catalog.admin.review.translation;
+  it("no pinned suggestions: the review offers none and the confirm never sends pinnedSuggestions", async () => {
     const calls = stage(CLAUDE_REVIEW);
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
-    // no SessionStart hook: the suggestion is collapsed
-    const toggle = await screen.findByRole("button", {
-      name: fill(tr.pinnedTitle, { n: 1, total: 2 }),
-    });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await user.click(toggle);
-    const using = screen.getByRole("checkbox", {
-      name: fill(tr.suggestPinned, { name: "using-superpowers" }),
-    }) as HTMLInputElement;
-    expect(using.checked).toBe(true);
-    await user.click(using);
-    await user.click(
-      screen.getByRole("checkbox", { name: fill(tr.suggestPinned, { name: "brainstorming" }) }),
-    );
+    await screen.findByRole("region", { name: en.catalog.components.skills });
+    expect(screen.queryByRole("checkbox", { name: /using-superpowers|brainstorming/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
       reviewHash: "h1",
       scope: "optional",
-      pinnedSuggestions: ["brainstorming"],
     });
   });
 
-  it("confirming the plugin's own suggestion unchanged omits pinnedSuggestions; unticking every suggested skill sends [] (batch-3 m1)", async () => {
-    const tr = en.catalog.admin.review.translation;
-    const confirmWith = async (untick: boolean) => {
-      const calls = stage(CLAUDE_REVIEW);
-      await renderRouteWithCache(importPath(), lastStubRoutes());
-      const user = userEvent.setup();
-      const toggle = await screen.findByRole("button", {
-        name: fill(tr.pinnedTitle, { n: 1, total: 2 }),
-      });
-      if (untick) {
-        await user.click(toggle);
-        await user.click(
-          screen.getByRole("checkbox", {
-            name: fill(tr.suggestPinned, { name: "using-superpowers" }),
-          }),
-        );
-      }
-      await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
-      await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
-      const body = bodyOf(calls.find((x) => x.url.endsWith("/confirm")));
-      cleanup();
-      vi.unstubAllGlobals();
-      resetNavigation("/");
-      return body;
-    };
-    expect(await confirmWith(false)).toEqual({ reviewHash: "h1", scope: "optional" });
-    expect(await confirmWith(true)).toEqual({
-      reviewHash: "h1",
-      scope: "optional",
-      pinnedSuggestions: [],
-    });
-  });
-
-  it("with a SessionStart hook the pinned suggestion is open and shows the hint", async () => {
+  it("a SessionStart hook reads as the session_start_hook warning; a stored session_start_pin_hint still reads", async () => {
     const tr = en.catalog.admin.review.translation;
     stage({
       ...CLAUDE_REVIEW,
-      translation: { ...CLAUDE_REVIEW.translation, sessionStart: true },
+      translation: {
+        ...CLAUDE_REVIEW.translation,
+        sessionStart: true,
+        items: [
+          ...CLAUDE_REVIEW.translation.items,
+          {
+            group: "warnings",
+            component: "hook",
+            name: "SessionStart",
+            path: "hooks/hooks.json",
+            code: "session_start_hook",
+          },
+          {
+            group: "warnings",
+            component: "hook",
+            name: "SessionStart",
+            path: "hooks/hooks.json",
+            code: "session_start_pin_hint",
+          },
+        ],
+      },
     });
     await renderRouteWithCache(importPath(), lastStubRoutes());
-    const toggle = await screen.findByRole("button", {
-      name: fill(tr.pinnedTitle, { n: 1, total: 2 }),
-    });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText(tr.sessionStartHint)).toBeTruthy();
-    expect(
-      screen.getByRole("checkbox", { name: fill(tr.suggestPinned, { name: "brainstorming" }) }),
-    ).toBeTruthy();
+    expect(await screen.findByText(new RegExp(escapeRe(tr.codes.session_start_hook)))).toBeTruthy();
+    expect(screen.getByText(new RegExp(escapeRe(tr.codes.session_start_pin_hint)))).toBeTruthy();
+    expect(tr.codes.session_start_hook).toBe(
+      "In Claude Code this plugin runs a SessionStart hook, which usually adds instructions (often one of its skills) at the start of every session. Capybara does not run hooks. The plugin's skills are in every agent's catalog; if an agent must always follow what the hook adds, put its gist in the agent's instructions.",
+    );
   });
 
   it("each skill's SKILL.md and the license are collapsed and expandable", async () => {
@@ -3535,16 +3571,13 @@ describe("phase B: Claude Code plugins on the import review", () => {
     expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
   });
 
-  it("a native plugin review shows no translation section but still offers the pinned suggestion", async () => {
+  it("a native plugin review shows no translation section", async () => {
     const tr = en.catalog.admin.review.translation;
     stage({ ...REVIEW, extension: undefined, sensitive: false, format: "capybara" });
     await renderRouteWithCache(importPath(), lastStubRoutes());
     await screen.findByRole("region", { name: en.catalog.components.skills });
     expect(screen.queryByRole("region", { name: tr.title })).toBeNull();
     expect(screen.queryByText(tr.formatClaude)).toBeNull();
-    expect(
-      screen.getByRole("button", { name: fill(tr.pinnedTitle, { n: 0, total: 1 }) }),
-    ).toBeTruthy();
   });
 
   it("every TranslationCode, detail key and MarketplaceSkipReason has zh and en text with its placeholders", () => {
