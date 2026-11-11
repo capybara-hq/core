@@ -182,7 +182,8 @@ async function seedOrgSkill(
   return { id, prefix };
 }
 
-async function agentWith(org: string, orgSkills: string[], pinned?: string[]): Promise<string> {
+/** An agent of `org`; every skill on in the org is on for it (skills default-on spec §3). */
+async function agentWith(org: string): Promise<string> {
   const r = await root({
     method: "POST",
     url: `/api/v1/orgs/${org}/agents`,
@@ -192,7 +193,6 @@ async function agentWith(org: string, orgSkills: string[], pinned?: string[]): P
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
         disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
-        skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
       },
       visibility: "org",
     },
@@ -255,10 +255,10 @@ const showToOthers = (kind: "skill" | "agent_template", id: string) =>
     payload: { shownToOthers: true },
   });
 
-/** `report` at version 3 in org A, used and pinned by agent X with one run done. */
+/** `report` at version 3 in org A, used by agent X with one run done. */
 async function reportInA() {
   const skill = await seedOrgSkill(orgA, "report", ["Report v1.", "Report v2.", "Report v3."]);
-  const agentX = await agentWith(orgA, [skill.id], [skill.id]);
+  const agentX = await agentWith(orgA);
   const convX = await createConv(root, orgA, agentX);
   await say(orgA, convX, 1);
   return { ...skill, agentX, convX };
@@ -306,7 +306,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
     ]);
 
     // an agent's own skill
-    const agentId = await agentWith(orgA, []);
+    const agentId = await agentWith(orgA);
     const agentSkill = await seedOrgSkill(orgA, "agent-own", ["Agent own."], {
       scope: "agent",
       agentId,
@@ -414,7 +414,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
       current_version: 3,
     });
 
-    // agent X: same id, version, source and pinned body; no new snapshot, so no notice
+    // agent X: same id, version and source; no new snapshot, so no notice
     const before = await catalogs(r.convX);
     expect(before).toHaveLength(1);
     await say(orgA, r.convX, 2);
@@ -423,13 +423,10 @@ describe("promote on share", { timeout: 120_000 }, () => {
     expect(after[0]?.payload.skills).toEqual([
       expect.objectContaining({ id: r.id, version: 3, source: r.prefix }),
     ]);
-    expect(after[0]?.payload.pinned).toEqual([
-      expect.objectContaining({ id: r.id, version: 3, source: r.prefix, body: "Report v3." }),
-    ]);
     expect(JSON.stringify(await eventsOf(db, r.convX))).not.toContain("Updated skills");
 
-    // org B's agent selects the platform id and loads the same body
-    const agentB = await agentWith(orgB, [r.platformId]);
+    // org B's agent has the platform skill on and loads the same body
+    const agentB = await agentWith(orgB);
     const convB = await createConv(root, orgB, agentB);
     const loaded = await call(orgB, convB, "Skill", { skill: "report" }, 1);
     expect(loaded.isError, loaded.content).toBe(false);
@@ -474,7 +471,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
 
   it("owner updates reach both", async () => {
     const r = await promotedReport();
-    const agentB = await agentWith(orgB, [r.platformId]);
+    const agentB = await agentWith(orgB);
     const convB = await createConv(root, orgB, agentB);
     await say(orgB, convB, 1);
 
@@ -598,7 +595,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
 
   it("owner deletes a shared skill", async () => {
     const r = await promotedReport();
-    const agentB = await agentWith(orgB, [r.platformId]);
+    const agentB = await agentWith(orgB);
 
     const preview = await root({
       method: "GET",
@@ -608,7 +605,8 @@ describe("promote on share", { timeout: 120_000 }, () => {
     expect(preview.json()).toEqual({
       outcome: "transferred",
       orgs: [{ id: orgB, name: "B" }],
-      agents: [{ id: r.agentX, name: "Skilled" }],
+      // agent X has it on, but only an agent that names it uses it (skills default-on spec §11)
+      agents: [],
     });
 
     const del = await root({ method: "DELETE", url: `/api/v1/orgs/${orgA}/skills/${r.id}` });

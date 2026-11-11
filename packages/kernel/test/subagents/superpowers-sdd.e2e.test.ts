@@ -53,6 +53,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 import { subagentFinishes } from "../helpers/subagents.js";
 
 /**
@@ -286,13 +287,15 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
               name,
             })),
           ),
-          skills: {
-            orgSkills: [
+          disabledSkills: await onlySkills(
+            db,
+            orgId,
+            [
               "subagent-driven-development",
               "requesting-code-review",
               "dispatching-parallel-agents",
             ].map(skillId),
-          },
+          ),
           subagents: { templates: [reviewer?.id as string] },
         },
         visibility: "org",

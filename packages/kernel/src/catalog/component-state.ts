@@ -389,7 +389,10 @@ export interface DefinitionRefs {
    * one of `orgConnectors` it does not turn off as a whole.
    */
   connectors: Set<string>;
-  /** `skills.orgSkills`, `skills.pinned` and the inline sub-agent templates' `skills`. */
+  /**
+   * The skills the agent names: the inline sub-agent templates' `skills`. Having a skill on by
+   * default is not using it (skills default-on spec §11), so a plugin update can remove it.
+   */
   skills: Set<string>;
   /** `subagents.templates`. */
   templates: Set<string>;
@@ -405,7 +408,6 @@ export function definitionRefs(
 ): DefinitionRefs {
   const def = definition as {
     disabledTools?: unknown[];
-    skills?: { orgSkills?: unknown[]; pinned?: unknown[] };
     subagents?: { templates?: unknown[]; inline?: { skills?: unknown[] }[] };
   } | null;
   const connectors = new Set<string>();
@@ -422,8 +424,6 @@ export function definitionRefs(
   const strings = (xs: unknown, into: Set<string>) => {
     if (Array.isArray(xs)) for (const x of xs) if (typeof x === "string") into.add(x);
   };
-  strings(def?.skills?.orgSkills, skills);
-  strings(def?.skills?.pinned, skills);
   const inline = def?.subagents?.inline;
   if (Array.isArray(inline)) for (const t of inline) strings(t?.skills, skills);
   strings(def?.subagents?.templates, templates);

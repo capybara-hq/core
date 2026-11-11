@@ -534,6 +534,7 @@ describe("connectors and extensions", () => {
         name: "With connector",
         instructions: "Use the docs.",
         model: { provider: "model-fake", model: "fake-1" },
+        disabledSkills: [],
         disabledTools: builtinsOff("Platform"),
         toolPolicies: {},
         fallback: null,

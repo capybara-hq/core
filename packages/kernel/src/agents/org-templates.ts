@@ -341,9 +341,10 @@ export async function templateFromAgent(
     return { policies: Object.fromEntries(list.map((p) => [p.tool, p.policy] as const)) };
   };
 
-  // Skills: ids -> names (pinned -> `skills`, the other selected ones -> `selectedSkills`)
-  const pinned = def.skills?.pinned ?? [];
-  const selected = def.skills?.orgSkills ?? [];
+  // Skills: nothing is selected or pinned any more (skills default-on spec §6.2; Task 3 of the
+  // plan writes `disallowedSkills`)
+  const pinned: string[] = [];
+  const selected: string[] = [];
   const inlineSkillIds = (def.subagents?.inline ?? []).flatMap((t) => t.skills ?? []);
   const byId = await skillVersionsById(db, orgId, [...pinned, ...selected, ...inlineSkillIds]);
   const agentSkillNames = new Map(

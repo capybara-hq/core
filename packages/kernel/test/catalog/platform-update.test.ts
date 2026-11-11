@@ -113,8 +113,11 @@ const platformSkill = (name: string) =>
     .where("name", "=", name)
     .executeTakeFirstOrThrow();
 
-/** An org agent of org1 selecting these skills (ids as in its definition). */
-async function agentUsing(orgSkills: string[]): Promise<string> {
+/**
+ * An org agent of org1 using these skills (ids as in its definition): it names them in an inline
+ * sub-agent template (skills default-on spec §11).
+ */
+async function agentUsing(skillIds: string[]): Promise<string> {
   const r = await env.boss({
     method: "POST",
     url: `/api/v1/orgs/${env.orgId}/agents`,
@@ -123,7 +126,11 @@ async function agentUsing(orgSkills: string[]): Promise<string> {
         name: "Skilled",
         instructions: "x",
         model: { provider: "model-fake", model: "fake-1" },
-        skills: { orgSkills },
+        subagents: {
+          inline: [
+            { name: "helper", description: "Helps.", instructions: "Help.", skills: [...skillIds] },
+          ],
+        },
       },
       visibility: "org",
     },

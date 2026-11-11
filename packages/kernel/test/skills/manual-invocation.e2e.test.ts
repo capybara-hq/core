@@ -44,7 +44,7 @@ import {
 /**
  * Phase D acceptance (plan Task 12), end to end on one kernel: a super admin imports the
  * `commands-demo` Claude Code plugin (a checked-in fixture on a local fake git server, no network)
- * and an org installs it; an agent selects all its skills. The model's catalog lists the command
+ * and an org installs it; an agent has all its skills. The model's catalog lists the command
  * `fix-issue` and the forked `review`, never the manual-only `manual-script`; the model loads
  * `fix-issue` with `args: "123"`; the person invokes `/fix-issue 123` inline,
  * `/manual-script` (the model then copies its script to the sandbox) and the forked `/review src`
@@ -217,7 +217,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     state.itemId = confirmed.json().item.id as string;
   });
 
-  it("the org installs it; an agent selects all its skills and the code-reviewer template", async () => {
+  it("the org installs it; an agent has all its skills and the code-reviewer template", async () => {
     const installed = await admin({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/catalog/${state.itemId}/install`,
@@ -249,7 +249,6 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
           model: SCRIPT,
           // a sandbox tool: Skill copies a skill's files only for an agent that can run them
           disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
-          skills: { orgSkills: skills.map((s) => s.id) },
           subagents: { templates: templates.map((t) => t.id) },
         },
         visibility: "org",

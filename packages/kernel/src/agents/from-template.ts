@@ -11,12 +11,10 @@ import {
   extensionToolKey,
   type ModelParameter,
   parseToolKey,
-  SKILL_ENTRY_FILE,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { connectorTemplateState } from "../catalog/component-state.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { invocationOf, PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { type SkillVersionRow, usableSkillVersions } from "../skills/usable.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import {
@@ -479,13 +477,8 @@ export async function planFromTemplate(
 
   // skills: by name against the org's usable skills (P4-5); every name gets its item
   const usable = await usableSkillVersions(db, orgId);
-  const orgSkills: string[] = [];
-  const select = (id: string) => {
-    if (!orgSkills.includes(id)) orgSkills.push(id);
-  };
-  const pinned: string[] = [];
-  let pinnedBytes = 0;
-  const preloaded = new Set(t.skills ?? []);
+  // skills default-on (spec §6.2): a skill the org has is on for the new agent; nothing is
+  // selected or pinned (the template report is reworked by Task 3 of the plan)
   const skillNames = [...new Set([...(t.skills ?? []), ...(t.selectedSkills ?? [])])];
   for (const name of skillNames) {
     const s = skillByName(usable, name, row.plugin);
@@ -493,28 +486,7 @@ export async function planFromTemplate(
       item("skill", name, "unavailable", "not_found");
       continue;
     }
-    select(s.id);
-    if (!preloaded.has(name)) {
-      item("skill", name, "carried", pinned.includes(s.id) ? "pinned" : undefined);
-      continue;
-    }
-    if (pinned.includes(s.id)) {
-      item("skill", name, "carried", "pinned");
-      continue;
-    }
-    const bytes = s.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
-    if (!invocationOf(s.manifest).model) {
-      item("skill", name, "carried", "not_pinned_manual_only");
-    } else if (
-      pinned.length >= PINNED_SKILLS_LIMITS.count ||
-      pinnedBytes + bytes > PINNED_SKILLS_LIMITS.totalBytes
-    ) {
-      item("skill", name, "carried", "not_pinned_too_large");
-    } else {
-      pinned.push(s.id);
-      pinnedBytes += bytes;
-      item("skill", name, "carried", "pinned");
-    }
+    item("skill", name, "carried");
   }
 
   // connectors (P4-5, P4-6)
@@ -685,8 +657,7 @@ export async function planFromTemplate(
           continue;
         }
         if (!skillIds.includes(s.id)) skillIds.push(s.id);
-        if (!orgSkills.includes(s.id)) {
-          select(s.id);
+        if (!items.some((i) => i.kind === "skill" && i.name === name)) {
           item("skill", name, "carried", "subagent");
         }
       }
@@ -765,9 +736,7 @@ export async function planFromTemplate(
     fallbackParams: {},
     disabledTools: canonicalDisabledTools(disabled),
     toolPolicies,
-    ...((orgSkills.length > 0 || pinned.length > 0) && {
-      skills: { orgSkills, ...(pinned.length > 0 && { pinned }) },
-    }),
+    disabledSkills: [],
     ...(subagents !== undefined && { subagents }),
     ...(pendingConnectors.length > 0 && { pendingConnectors }),
   };

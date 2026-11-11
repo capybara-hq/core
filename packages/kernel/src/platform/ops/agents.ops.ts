@@ -44,11 +44,6 @@ const Def = AgentCreateDefinition.shape;
 const Short = z.string().min(1).max(200);
 
 const Model = Def.model.extend({ provider: Short, model: Short }).strict();
-const RouteSkills = Def.skills.unwrap();
-/** `writePolicy` stays the web's; `orgSkills` is required here (the route defaults it to []). */
-const Skills = RouteSkills.pick({ pinned: true })
-  .extend({ orgSkills: RouteSkills.shape.orgSkills.unwrap() })
-  .strict();
 
 /**
  * Whether `next` sets an `allow` that `current` does not have (decision 2026-11-09: `allow` on a
@@ -75,7 +70,8 @@ const Fields = {
    */
   disabledTools: Def.disabledTools.unwrap(),
   toolPolicies: z.record(Short, Def.toolPolicies.unwrap().valueType),
-  skills: Skills,
+  /** Skills turned off (skills default-on spec §4); `skills.writePolicy` stays the web's. */
+  disabledSkills: Def.disabledSkills.unwrap(),
   subagents: Def.subagents.unwrap(),
 };
 
@@ -238,7 +234,7 @@ export class AgentsOperations implements OnModuleInit {
                 model: Fields.model,
                 disabledTools: Fields.disabledTools.optional(),
                 toolPolicies: Fields.toolPolicies.optional(),
-                skills: Fields.skills.optional(),
+                disabledSkills: Fields.disabledSkills.optional(),
                 subagents: Fields.subagents.optional(),
               })
               .strict(),
@@ -276,7 +272,7 @@ export class AgentsOperations implements OnModuleInit {
             model: d.model,
             ...(d.disabledTools !== undefined && { disabledTools: d.disabledTools }),
             ...(d.toolPolicies !== undefined && { toolPolicies: d.toolPolicies }),
-            ...(d.skills !== undefined && { skills: d.skills }),
+            ...(d.disabledSkills !== undefined && { disabledSkills: d.disabledSkills }),
             ...(d.subagents !== undefined && { subagents: d.subagents }),
           });
           return this.agents.create(
@@ -305,7 +301,7 @@ export class AgentsOperations implements OnModuleInit {
             model: Fields.model.optional(),
             disabledTools: Fields.disabledTools.optional(),
             toolPolicies: Fields.toolPolicies.optional(),
-            skills: Fields.skills.optional(),
+            disabledSkills: Fields.disabledSkills.optional(),
             subagents: Fields.subagents.optional(),
           })
           .strict(),
@@ -327,7 +323,7 @@ export class AgentsOperations implements OnModuleInit {
           model: "definition.model",
           disabledTools: "definition.disabledTools",
           toolPolicies: "definition.toolPolicies",
-          skills: "definition.skills",
+          disabledSkills: "definition.disabledSkills",
           subagents: "definition.subagents",
         },
         confirm: "personal",
@@ -367,7 +363,7 @@ export class AgentsOperations implements OnModuleInit {
             ...(patch.model !== undefined && { model: patch.model as ModelRef }),
             ...(patch.disabledTools !== undefined && { disabledTools: patch.disabledTools }),
             ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
-            ...(patch.skills !== undefined && { skills: patch.skills }),
+            ...(patch.disabledSkills !== undefined && { disabledSkills: patch.disabledSkills }),
             ...(patch.subagents !== undefined && { subagents: patch.subagents }),
           };
           return this.agents.update(

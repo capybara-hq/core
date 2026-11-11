@@ -37,6 +37,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 
 /**
  * Phase D Task 8 (spec §9): `/name args` in IM channels. After the extension strips the bot
@@ -178,7 +179,7 @@ beforeAll(async () => {
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
         disabledTools: builtinsOff(),
-        skills: { orgSkills: Object.values(skillIds) },
+        disabledSkills: await onlySkills(db, orgId, Object.values(skillIds)),
       },
       visibility: "org",
     },

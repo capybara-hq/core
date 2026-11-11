@@ -390,7 +390,8 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       modelParams: { effort: "low" },
       fallback: FAKE2,
       fallbackParams: { effort: "high" },
-      skills: { orgSkills: [s], pinned: [s], writePolicy: "ask" },
+      disabledSkills: [{ kind: "skill", skillId: s }],
+      skills: { writePolicy: "ask" },
       subagents: { inline: [inline("scout")] },
     });
     const r = await eff(parent, "general-purpose");
@@ -414,7 +415,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       disabledTools: parentOff,
       subagentTools: { deny: REMOVED },
       toolPolicies: { Bash: "ask", Write: "deny" },
-      skills: { orgSkills: [s] },
+      // the parent's catalog: what it turns off (skills default-on §6.1)
+      disabledSkills: [{ kind: "skill", skillId: s }],
+      skills: { writePolicy: "ask" },
       subagents: { inline: [inline("scout")] },
     });
     expect(r.template).toEqual({ source: "general" });
@@ -498,33 +501,6 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.maxSteps).toBe(5);
   });
 
-  it("pinned = the template's skills the parent selects, within 3 and 32 KB, with warnings", async () => {
-    const a = await skill("alpha", 20_000);
-    const b = await skill("beta", 20_000);
-    const c = await skill("gamma", 100);
-    const unselected = await skill("delta", 100);
-    const own = await skill("own", 100, parentAgentId);
-    const parent = def({
-      skills: { orgSkills: [a, b, c] },
-      subagents: {
-        inline: [
-          inline("scout", { skills: [a, b, c] }),
-          inline("helper", { skills: [unselected, own] }),
-        ],
-      },
-    });
-    const scout = await eff(parent, "scout");
-    expect(scout.definition.skills).toEqual({ orgSkills: [a, b, c], pinned: [a, c] });
-    expect(scout.warnings).toEqual([
-      'The skill "beta" was not pinned: pinned skills are limited to 32 KB in total.',
-    ]);
-    const helper = await eff(parent, "helper");
-    expect(helper.definition.skills).toEqual({ orgSkills: [a, b, c], pinned: [own] });
-    expect(helper.warnings).toEqual([
-      `The skill "${unselected}" was not pinned: the agent does not select it.`,
-    ]);
-  });
-
   it("a template allowlist or deny key under a connector stays a key: a later tool never slips past", async () => {
     const parent = def({
       subagents: {
@@ -556,27 +532,6 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     ).toEqual({ a: "ask", d: "deny" });
   });
 
-  it("a bare skill name prefers the template's plugin, then the agent's own skill, with a warning", async () => {
-    const own = await skill("brainstorming", 100, parentAgentId);
-    const sp = await skill("brainstorming", 100, undefined, "superpowers");
-    const t = await template("implementer", { skills: ["brainstorming"] });
-    const parent = def({ skills: { orgSkills: [sp] }, subagents: { templates: [t] } });
-    const r = await eff(parent, "implementer");
-    expect(r.definition.skills?.pinned).toEqual([sp]);
-    expect(r.warnings).toEqual([
-      'The skill name "brainstorming" matches more than one selected skill; the one from the plugin superpowers was pinned.',
-    ]);
-
-    await db.updateTable("skills").set({ deleted_at: new Date() }).where("id", "=", sp).execute();
-    const other = await skill("brainstorming", 100, undefined, "other");
-    const parent2 = def({ skills: { orgSkills: [other] }, subagents: { templates: [t] } });
-    const r2 = await eff(parent2, "implementer");
-    expect(r2.definition.skills?.pinned).toEqual([own]);
-    expect(r2.warnings).toEqual([
-      'The skill name "brainstorming" matches more than one selected skill; the agent\'s own skill was pinned.',
-    ]);
-  });
-
   it("plugin template: current version, skills by name, template reference", async () => {
     const tdd = await skill("test-driven-development");
     const t = await template("implementer", {
@@ -586,7 +541,6 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     });
     const parent = def({
       disabledTools: parentOff,
-      skills: { orgSkills: [tdd] },
       subagents: { templates: [t] },
     });
     const r = await eff(parent, "implementer");
@@ -594,92 +548,11 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.definition.instructions).toBe("Body of implementer v2.");
     expect(r.definition.name).toBe("Lead › superpowers:implementer");
     expect(r.definition.subagentTools).toEqual({ allow: ["ReadToolOutput"], deny: REMOVED });
-    expect(r.definition.skills).toEqual({ orgSkills: [tdd], pinned: [tdd] });
-    expect(r.warnings).toEqual([
-      'The skill "superpowers:missing" was not pinned: the agent does not select it.',
-    ]);
+    // nothing is pinned any more (skills default-on spec §8); the child has the parent's catalog
+    expect(r.definition.skills).toBeUndefined();
+    expect(r.definition.disabledSkills).toEqual([]);
+    expect(tdd).toBeDefined();
     expect(r.maxSteps).toBe(12);
-  });
-
-  it("plugin template: selectedSkills are resolved like skills but never pinned (P4-2)", async () => {
-    const tdd = await skill("test-driven-development");
-    const pdf = await skill("pdf-tools");
-    const t = await template("implementer", {
-      skills: ["test-driven-development"],
-      selectedSkills: ["pdf-tools", "superpowers:missing", "test-driven-development"],
-    });
-    const parent = def({ skills: { orgSkills: [tdd, pdf] }, subagents: { templates: [t] } });
-    const r = await eff(parent, "implementer");
-    expect(r.definition.skills).toEqual({ orgSkills: [tdd, pdf], pinned: [tdd] });
-    expect(r.warnings).toEqual([
-      'The skill "superpowers:missing" is not available: the agent does not select it.',
-    ]);
-  });
-
-  it("plugin template: a builtin plugin's skill is pinned only when the parent selects it", async () => {
-    const itemId = randomUUID();
-    const guide = randomUUID();
-    await db
-      .insertInto("catalog_items")
-      .values({
-        id: itemId,
-        name: `core-${n}`,
-        package_name: `@acme/plugin-core-${n}`,
-        publisher: "Acme",
-        description: "d",
-        latest_version: "1.0.0",
-        policy: "allow",
-        builtin: true,
-        scope: "all",
-      })
-      .execute();
-    await db
-      .insertInto("platform_skills")
-      .values({
-        id: guide,
-        catalog_item_id: itemId,
-        plugin_name: `core-${n}`,
-        name: "skill-guide",
-        description: "d",
-        current_version: 1,
-        scope_mode: "follow",
-        scope: "optional",
-      })
-      .execute();
-    await db
-      .insertInto("platform_skill_versions")
-      .values({
-        skill_id: guide,
-        version: 1,
-        manifest: JSON.stringify({
-          name: "skill-guide",
-          description: "d",
-          files: [{ path: "SKILL.md", size: 100, sha256: "0".repeat(64) }],
-        }),
-        object_prefix: `platform/skills/${guide}/1/`,
-        catalog_version: "1.0.0",
-      })
-      .execute();
-    try {
-      const t = await template("implementer", {
-        skills: ["skill-guide"],
-        selectedSkills: ["skill-guide"],
-      });
-      // every agent has it, but a pin needs a selection
-      const r = await eff(def({ subagents: { templates: [t] } }), "implementer");
-      expect(r.definition.skills?.pinned ?? []).toEqual([]);
-      expect(r.warnings).toEqual([
-        'The skill "skill-guide" was not pinned: the agent does not select it.',
-      ]);
-      const selected = def({ skills: { orgSkills: [guide] }, subagents: { templates: [t] } });
-      const r2 = await eff(selected, "implementer");
-      expect(r2.definition.skills).toEqual({ orgSkills: [guide], pinned: [guide] });
-      expect(r2.warnings).toEqual([]);
-    } finally {
-      await db.deleteFrom("platform_skill_versions").where("skill_id", "=", guide).execute();
-      await db.deleteFrom("platform_skills").where("id", "=", guide).execute();
-      await db.deleteFrom("catalog_items").where("id", "=", itemId).execute();
-    }
   });
 
   describe("model tiers", () => {
@@ -860,7 +733,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         modelParams: { effort: "medium" },
         disabledTools: ownOff,
         toolPolicies: { mcp__jira__create: "ask", Bash: "deny" },
-        skills: { orgSkills: [s], pinned: [s] },
+        disabledSkills: [{ kind: "skill", skillId: s }],
         subagents: { dispatchable: true },
       });
       const a = await orgAgent(agentDef, 3);
@@ -942,12 +815,14 @@ describe("follow-up narrowing (final review I1)", () => {
   it("turns off what either the frozen or the current version turns off (it can lose tools, never gain them)", () => {
     const n = narrowFollowUp(
       {
+        disabledSkills: [{ kind: "skill", skillId: "s1" }],
         disabledTools: [
           { kind: "builtin", name: "Write" },
           { kind: "connector", connectorId: "c2", tools: ["a"] },
         ],
       },
       {
+        disabledSkills: [{ kind: "plugin", plugin: "superpowers", skills: ["tdd"] }],
         disabledTools: [
           { kind: "connector", connectorId: "c2", tools: ["c"] },
           { kind: "plugin", plugin: "todo", tools: "all" },
@@ -962,20 +837,10 @@ describe("follow-up narrowing (final review I1)", () => {
         { kind: "plugin", plugin: "todo", tools: "all" },
         { kind: "connector", connectorId: "c1", tools: "all" },
       ],
-    });
-  });
-
-  it("drops deselected org skills and the pinned ids among them; the agent's own pinned stay", () => {
-    const n = narrowFollowUp(
-      { disabledTools: [], skills: { orgSkills: ["o1", "o2"], pinned: ["o1", "own", "o2"] } },
-      { disabledTools: [], skills: { orgSkills: ["o2", "o3"] } },
-    );
-    expect(n).toEqual({
-      disabledTools: [],
-      skills: { orgSkills: ["o2"], pinned: ["own", "o2"] },
-    });
-    expect(narrowFollowUp({ disabledTools: [] }, { disabledTools: [] })).toEqual({
-      disabledTools: [],
+      disabledSkills: [
+        { kind: "plugin", plugin: "superpowers", skills: ["tdd"] },
+        { kind: "skill", skillId: "s1" },
+      ],
     });
   });
 
@@ -985,15 +850,18 @@ describe("follow-up narrowing (final review I1)", () => {
       instructions: "frozen",
       model: { provider: "p", model: "m" },
       disabledTools: [{ kind: "builtin", name: "Bash" }],
-      skills: { orgSkills: ["o1"], writePolicy: "ask" },
+      skills: { writePolicy: "ask" },
     });
     expect(childRunDefinition(frozen, undefined)).toBe(frozen);
     const off = [{ kind: "builtin" as const, name: "Read" }];
-    const run = childRunDefinition(frozen, { disabledTools: off, skills: { orgSkills: [] } });
+    const skillsOff = [{ kind: "skill" as const, skillId: "s1" }];
+    const run = childRunDefinition(frozen, { disabledTools: off, disabledSkills: skillsOff });
     expect(run).toMatchObject({ instructions: "frozen", disabledTools: off });
-    expect(run.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
-    // a narrowing logged before tools were on by default narrows only the skills
+    expect(run.disabledSkills).toEqual(skillsOff);
+    expect(run.skills).toEqual({ writePolicy: "ask" });
+    // a narrowing logged before tools and skills were on by default narrows nothing of them
     const old = childRunDefinition(frozen, { skills: { orgSkills: [] } });
     expect(old.disabledTools).toEqual(frozen.disabledTools);
+    expect(old.disabledSkills).toEqual([]);
   });
 });

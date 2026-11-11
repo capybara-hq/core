@@ -281,7 +281,6 @@ describe("AdminAgents", () => {
       await agents.create(f.orgA, f.memberA.id, {
         definition: def({
           name: "Skilled",
-          skills: { orgSkills: [live, gone] },
           disabledTools: [
             // one tool of two off: still listed
             { kind: "connector", connectorId: github, tools: ["prs"] },

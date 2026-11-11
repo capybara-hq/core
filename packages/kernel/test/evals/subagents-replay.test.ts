@@ -681,7 +681,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
     ).toBe(false);
   });
 
-  it("a general child: another parent version that drops general or changes orgSkills is a change", async () => {
+  it("a general child: another parent version that drops general or changes disabledSkills is a change", async () => {
     const child = await fourthChild();
     const info = await modelInfo();
     const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
@@ -699,7 +699,9 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
       }).drift;
     expect(at({ name: "Renamed" })).toEqual([]);
     expect(at({ subagents: { general: false } })).toEqual(["subagent_changed"]);
-    expect(at({ skills: { orgSkills: ["sk-1"] } })).toEqual(["subagent_changed"]);
+    expect(at({ disabledSkills: [{ kind: "skill", skillId: "sk-1" }] })).toEqual([
+      "subagent_changed",
+    ]);
   });
 });
 
@@ -787,7 +789,6 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
           instructions: INSTRUCTIONS,
           model: SCRIPT,
           disabledTools: builtinsOff(),
-          skills: { orgSkills: [skillId] },
         },
         visibility: "org",
       },

@@ -383,17 +383,17 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
     return (r.json() as Uploaded).skill.id;
   }
 
-  const agentBody = (orgSkills: string[]) => ({
+  const agentBody = (off: string[]) => ({
     definition: {
       name: "Helper",
       model: { provider: "model-fake", model: "fake-1" },
       disabledTools: builtinsOff(),
-      skills: { orgSkills },
+      disabledSkills: off.map((skillId) => ({ kind: "skill", skillId })),
     },
     visibility: "org",
   });
 
-  it("agent 定义引用组织技能：保存时校验存在且未删除，作为新版本保存", async () => {
+  it("an agent's disabledSkills name skills of the org that exist; kept entries are not checked again", async () => {
     const s1 = await skill("one");
     const s2 = await skill("two");
     const created = await admin({
@@ -403,7 +403,9 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
     });
     expect(created.statusCode, created.body).toBe(201);
     const agent = created.json().agent as { id: string; currentVersion: number };
-    expect(created.json().agent.definition.skills).toEqual({ orgSkills: [s1] });
+    expect(created.json().agent.definition.disabledSkills).toEqual([
+      { kind: "skill", skillId: s1 },
+    ]);
 
     const upd = await admin({
       method: "PATCH",
@@ -421,16 +423,18 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
     expect(unknown.statusCode).toBe(400);
     expect(unknown.json().error).toMatchObject({
       code: "validation_failed",
-      details: [{ path: "skills.orgSkills.0" }],
+      details: [{ path: "disabledSkills.0" }],
     });
+    // a duplicate is folded into one entry
     const dup = await admin({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/agents`,
       payload: agentBody([s1, s1]),
     });
-    expect(dup.statusCode).toBe(400);
+    expect(dup.statusCode, dup.body).toBe(201);
+    expect(dup.json().agent.definition.disabledSkills).toEqual([{ kind: "skill", skillId: s1 }]);
 
-    // 其他组织的技能不能引用
+    // another org's skills are not this org's
     const otherOrg = await createOrg(admin, "Other");
     const foreign = await admin({
       method: "POST",
@@ -441,7 +445,7 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
 
     const del = await admin({ method: "DELETE", url: `/api/v1/orgs/${orgId}/skills/${s2}` });
     expect(del.statusCode).toBe(204);
-    // 当前版本已引用的技能被删：只改提示词照常保存（运行时由 T14 忽略已删除的技能）
+    // a skill the current version turns off is deleted: a prompt-only edit still saves
     const promptOnly = await admin({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
@@ -449,7 +453,7 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
     });
     expect(promptOnly.statusCode, promptOnly.body).toBe(200);
     expect(promptOnly.json().agent.currentVersion).toBe(3);
-    // 新加一个已删除的技能仍被拒
+    // a newly added deleted skill is refused
     const s3 = await skill("three");
     await admin({ method: "DELETE", url: `/api/v1/orgs/${orgId}/skills/${s3}` });
     const addDeleted = await admin({
@@ -458,33 +462,11 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
       payload: { definition: agentBody([s1, s2, s3]).definition },
     });
     expect(addDeleted.statusCode).toBe(400);
+    const sorted = [s1, s2, s3].sort();
     expect(addDeleted.json().error.details).toEqual([
-      expect.objectContaining({ path: "skills.orgSkills.2" }),
+      expect.objectContaining({ path: `disabledSkills.${sorted.indexOf(s3)}` }),
     ]);
-    // 新加别的组织的技能也被拒
-    const foreignSkill = await (async () => {
-      const r = await admin({
-        method: "POST",
-        url: `/api/v1/orgs/${otherOrg}/skills/uploads`,
-        payload: { name: "f.zip", size: zipOf("foreign").byteLength },
-      });
-      const c = r.json() as Created;
-      await putToStore(c, zipOf("foreign"), "application/zip");
-      const made = await admin({
-        method: "POST",
-        url: `/api/v1/orgs/${otherOrg}/skills`,
-        payload: { uploadId: c.id },
-      });
-      expect(made.statusCode, made.body).toBe(201);
-      return (made.json() as Uploaded).skill.id;
-    })();
-    const addForeign = await admin({
-      method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
-      payload: { definition: agentBody([s1, foreignSkill]).definition },
-    });
-    expect(addForeign.statusCode).toBe(400);
-    // 新建 agent 时严格核对：引用已删除的技能被拒
+    // a new agent is checked strictly: a deleted skill is refused
     const createDeleted = await admin({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/agents`,

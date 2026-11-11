@@ -29,7 +29,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
-import { pinnedFailureText, SkillsCatalogService } from "../skills/catalog.js";
+import { SkillsCatalogService } from "../skills/catalog.js";
 import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
@@ -681,41 +681,16 @@ export class RunWorker {
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
       }
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
-      try {
-        await this.skillsCatalog.record(
-          {
-            orgId: conv.org_id,
-            agentId: conv.agent_id,
-            conversationId,
-            runId,
-            agent,
-          },
-          { log: this.log },
-        );
-      } catch (e) {
-        // Pinned skill bodies could not be read (Decision 9), or the pinned skills kept changing
-        // while they were read (`conflict`): fail before any model request. A transient failure
-        // or a conflict is fixed by sending again; a permanent one names the skill for the owner
-        // (`SkillsCatalogService.record` already logged it at error). Other errors take the generic path.
-        if (
-          !(e instanceof ApiError) ||
-          (e.code !== "storage.unavailable" && e.code !== "conflict")
-        ) {
-          throw e;
-        }
-        this.log.warn("skills catalog not recorded at run start", {
+      await this.skillsCatalog.record(
+        {
+          orgId: conv.org_id,
+          agentId: conv.agent_id,
           conversationId,
           runId,
-          code: e.code,
-          err: e,
-        });
-        const message = e.code === "conflict" ? e.message : pinnedFailureText(e);
-        await this.finish(conversationId, runId, "failed", null, {
-          type: "run_failed",
-          payload: { error: { code: e.code, message } },
-        });
-        return "finished";
-      }
+          agent,
+        },
+        { log: this.log },
+      );
       // run context (spec §5): after the catalog, before the run is running, so before any
       // compaction and model call; a retried run start finds its event or no change
       await this.runContext.record({

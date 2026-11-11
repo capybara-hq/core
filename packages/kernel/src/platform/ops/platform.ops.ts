@@ -140,10 +140,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
             ...(unavailable.length > 0 && { unavailableTools: unavailable }),
             disabledTools: d.disabledTools ?? [],
             toolPolicies: d.toolPolicies,
-            skills: {
-              orgSkills: d.skills?.orgSkills ?? [],
-              pinned: d.skills?.pinned ?? [],
-            },
+            disabledSkills: d.disabledSkills ?? [],
             subagents: d.subagents ?? null,
             sandbox: sandbox ? { enabled: true, egress: egress.egress } : { enabled: false },
             profile: {

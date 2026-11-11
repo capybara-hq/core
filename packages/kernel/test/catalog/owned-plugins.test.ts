@@ -168,7 +168,14 @@ async function agentUsingSkill(orgId: string, itemId: string, name: string): Pro
     .values({
       agent_id: agentId,
       version: 1,
-      definition: JSON.stringify({ name, skills: { orgSkills: [skill.id] } }),
+      definition: JSON.stringify({
+        name,
+        subagents: {
+          inline: [
+            { name: "helper", description: "Helps.", instructions: "Help.", skills: [skill.id] },
+          ],
+        },
+      }),
       created_by: env.rootId,
     })
     .execute();

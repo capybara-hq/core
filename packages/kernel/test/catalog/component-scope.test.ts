@@ -71,6 +71,10 @@ const sw = (orgId: string, req: OrgEnv["boss"], id: string, body: Record<string,
     payload: body,
   });
 
+/**
+ * An agent that uses `skillId`: it names it in an inline sub-agent template (an agent has every
+ * skill on by default, which is not use; skills default-on spec §11).
+ */
 async function agentUsing(skillId: string): Promise<string> {
   const r = await env.boss({
     method: "POST",
@@ -80,7 +84,11 @@ async function agentUsing(skillId: string): Promise<string> {
         name: "Skilled",
         instructions: "x",
         model: { provider: "model-fake", model: "fake-1" },
-        skills: { orgSkills: [skillId] },
+        subagents: {
+          inline: [
+            { name: "helper", description: "Helps.", instructions: "Help.", skills: [skillId] },
+          ],
+        },
       },
       visibility: "org",
     },
@@ -479,13 +487,21 @@ describe("agent save checks", { timeout: 60_000 }, () => {
             name: "Skilled",
             instructions: "x",
             model: { provider: "model-fake", model: "fake-1" },
-            skills: { orgSkills: [id] },
+            subagents: {
+              inline: [
+                { name: "helper", description: "Helps.", instructions: "Help.", skills: [id] },
+              ],
+            },
           },
           visibility: "org",
         },
       });
+      // not one of the agent's skills: an inline sub-agent template cannot name it
       expect(r.statusCode, r.body).toBe(400);
-      expect(r.json().error.code).toBe("validation_failed");
+      expect(r.json().error).toMatchObject({
+        code: "agent.subagents_invalid",
+        details: [{ reason: "skill_not_available" }],
+      });
     }
   });
 });

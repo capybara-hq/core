@@ -157,7 +157,7 @@ async function connector(
   return id;
 }
 
-/** An org skill (`manual`: manual-only, never pinned). */
+/** An org skill (`manual`: manual-only). */
 async function orgSkill(
   name: string,
   o: { manual?: boolean; itemId?: string; bytes?: number } = {},
@@ -326,8 +326,9 @@ describe("creating an agent from a template", () => {
       ["Agent", "carried", "subagents"],
     ]);
     expect(pick(p, "skill")).toEqual([
-      ["pdf", "carried", "pinned"],
-      ["manual", "carried", "not_pinned_manual_only"],
+      // nothing is pinned any more (skills default-on spec §8)
+      ["pdf", "carried", null],
+      ["manual", "carried", null],
       ["sheets", "carried", null],
       ["missing-skill", "unavailable", "not_found"],
       ["review-notes", "carried", "subagent"],
@@ -372,10 +373,10 @@ describe("creating an agent from a template", () => {
     // policies only for the agent's tools; Read was disallowed, the nope plugin is unavailable;
     // the connector entry's policy lands on the bound connector's key
     expect(d.toolPolicies).toEqual({ Bash: "ask", mcp__one__delete_all: "deny" });
-    expect(d.skills).toEqual({
-      orgSkills: [pinnedSkill, manualSkill, selectedSkill, inlineSkill],
-      pinned: [pinnedSkill],
-    });
+    // every skill the org has is on: nothing is selected or pinned (skills default-on spec §3)
+    expect(d.skills).toBeUndefined();
+    expect(d.disabledSkills).toEqual([]);
+    expect([pinnedSkill, manualSkill, selectedSkill, inlineSkill]).toHaveLength(4);
     expect(d.subagents).toEqual({
       templates: [reviewer],
       inline: [
@@ -995,18 +996,19 @@ describe("creating an agent from a template", () => {
     expect(g.agent.definition.disabledTools).toEqual(builtinsOff("Read", "Agent"));
   });
 
-  it("gives every name of one skill its item and leaves an oversized one unpinned", async () => {
+  it("gives every name of one skill its item; nothing is pinned, an oversized one included", async () => {
     const itemId = await catalogItem("crm");
     const pdf = await orgSkill("pdf", { itemId });
     const big = await orgSkill("big", { bytes: 40_000 });
     const id = await platformTemplate(tpl({ skills: ["pdf", "big"], selectedSkills: ["crm:pdf"] }));
     const { agent, preview: p } = await createOk(env.mem, id);
     expect(pick(p, "skill")).toEqual([
-      ["pdf", "carried", "pinned"],
-      ["big", "carried", "not_pinned_too_large"],
-      ["crm:pdf", "carried", "pinned"],
+      ["pdf", "carried", null],
+      ["big", "carried", null],
+      ["crm:pdf", "carried", null],
     ]);
-    expect(agent.definition.skills).toEqual({ orgSkills: [pdf, big], pinned: [pdf] });
+    expect(agent.definition.skills).toBeUndefined();
+    expect([pdf, big]).toHaveLength(2);
   });
 
   it("404s another org's unshared org template", async () => {
@@ -1267,7 +1269,7 @@ describe("creating an agent from a template", () => {
         mcp__kit__search: "ask",
         mcp__wiki__find: "deny",
       },
-      skills: { orgSkills: [pdf, sheets, notes], pinned: [pdf] },
+      disabledSkills: [],
       subagents: {
         general: false,
         templates: [reviewer],
@@ -1336,8 +1338,9 @@ describe("creating an agent from a template", () => {
       "plugin__fake-tools-ui__write": "deny",
       mcp__kit__search: "ask",
     });
-    // pinned and selected skills
-    expect(d.skills).toEqual({ orgSkills: [pdf, sheets, notes], pinned: [pdf] });
+    // skills: nothing turned off (skills default-on spec §6.2)
+    expect(d.disabledSkills).toEqual([]);
+    expect([pdf, sheets, notes]).toHaveLength(3);
     // the hand-configured connector comes back as a need, with its policy and no secret
     expect(d.pendingConnectors).toEqual([
       {

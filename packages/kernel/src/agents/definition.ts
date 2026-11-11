@@ -103,6 +103,75 @@ export function canonicalDisabledTools(disabled: readonly DisabledToolRef[]): Di
 }
 
 /**
+ * A skill an agent turns off (skills default-on spec §4): a plugin's skills by name, or `"all"` to
+ * turn the plugin off as a unit (skills it gains later included); a skill without a plugin (the
+ * org's own, shared or promoted ones) by id, since its name may change under the same id.
+ */
+export const DisabledSkillRef = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("plugin"),
+      plugin: z.string().min(1).max(200),
+      skills: z.union([z.literal("all"), z.array(z.string().min(1).max(64)).min(1).max(500)]),
+    })
+    .strict(),
+  z.object({ kind: z.literal("skill"), skillId: z.string().min(1).max(100) }).strict(),
+]);
+export type DisabledSkillRef = z.output<typeof DisabledSkillRef>;
+
+/**
+ * Is a skill turned off by `disabled`? `plugin` and `name` match a plugin entry; `ids` (the
+ * skill's id and, for a linked or promoted copy, the platform skill it serves) a skill entry.
+ */
+export function skillDisabled(
+  disabled: readonly DisabledSkillRef[] | undefined,
+  skill: { plugin: string | null; name: string; ids: readonly string[] },
+): boolean {
+  return (disabled ?? []).some((r) =>
+    r.kind === "plugin"
+      ? skill.plugin !== null &&
+        r.plugin === skill.plugin &&
+        (r.skills === "all" || r.skills.includes(skill.name))
+      : skill.ids.includes(r.skillId),
+  );
+}
+
+/**
+ * `disabled` in its canonical form: one entry per plugin (in first-seen order, `"all"` absorbing
+ * names, names deduplicated and sorted, an empty list dropped), then the skill entries deduplicated
+ * and sorted by id. Saving stores this form, so two lists that turn off the same skills compare
+ * equal.
+ */
+export function canonicalDisabledSkills(disabled: readonly DisabledSkillRef[]): DisabledSkillRef[] {
+  const plugins: Extract<DisabledSkillRef, { kind: "plugin" }>[] = [];
+  const ids = new Set<string>();
+  for (const r of disabled) {
+    if (r.kind === "skill") {
+      ids.add(r.skillId);
+      continue;
+    }
+    const names = r.skills;
+    const prev = plugins.find((x) => x.plugin === r.plugin);
+    if (prev) {
+      prev.skills =
+        prev.skills === "all" || names === "all"
+          ? "all"
+          : [...new Set([...prev.skills, ...names])].sort();
+    } else {
+      plugins.push({
+        kind: "plugin",
+        plugin: r.plugin,
+        skills: names === "all" ? "all" : [...new Set(names)].sort(),
+      });
+    }
+  }
+  return [
+    ...plugins.filter((p) => p.skills === "all" || p.skills.length > 0),
+    ...[...ids].sort().map((skillId) => ({ kind: "skill" as const, skillId })),
+  ];
+}
+
+/**
  * A sub-agent's tool filter by tool key (tools default-on spec §4): written only into a child's
  * effective definition at dispatch (never accepted on save). `deny` removes keys (the child-removed
  * tools, `Agent` at the depth limit, a template's `disallowedTools`); `allow`, when set, keeps only
@@ -122,8 +191,8 @@ export const SUBAGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
  * A sub-agent template written in the agent definition (phase C, spec §5.2): the fields of a
- * plugin agent template (`AgentTemplate`, spec §16.1), with `skills` as skill ids (org skills the
- * agent selects, or the agent's own) instead of names. Names and selections are checked on save
+ * plugin agent template (`AgentTemplate`, spec §16.1), with `skills` as skill ids (skills the agent
+ * has, skills default-on spec §6.1) instead of names. Names and skills are checked on save
  * (`agent.subagents_invalid`); the schema only bounds the input.
  */
 export const InlineAgentTemplate = z
@@ -266,25 +335,19 @@ export const AgentDefinitionSchema = z.object({
    */
   toolPolicies: z.record(z.string(), z.enum(["allow", "ask", "deny"])).default({}),
   /**
-   * 技能（M5 T13）：`orgSkills` 是引用的组织技能 id（保存时校验属于本组织且未删除，不可重复）。
-   * agent 自己的技能（`scope=agent`）自动对它生效，不进定义。可省略（较早保存的定义也没有），按空处理；
-   * 不给默认值：没用技能的定义保存前后不变，不会因此多出一个版本。
+   * The skills this agent turns off (skills default-on spec §4); every other skill on in the org
+   * is on for it, and its own and shared skills always are. Saved in canonical form
+   * ({@link canonicalDisabledSkills}); checked on save.
+   */
+  disabledSkills: z.array(DisabledSkillRef).max(500).default([]),
+  /**
    * `writePolicy`: whether registering a skill on a private agent (`agents.register-skill`) needs
-   * the person's confirmation; absent means `allow` (not stored in the definition). On a shared
-   * agent a registration is always confirmed at the org level.
+   * the person's confirmation; absent means `allow`. On a shared agent a registration is always
+   * confirmed at the org level. No default: definitions without it gain no version.
    */
   skills: z
     .object({
-      orgSkills: z.array(z.string().min(1).max(100)).max(100).default([]),
       writePolicy: z.enum(["allow", "ask"]).optional(),
-      /**
-       * Pinned skills (phase B, spec §9.1): ids of selected org skills or of the agent's own
-       * skills, whose bodies apply throughout every conversation, in this order. At most
-       * `PINNED_SKILLS_LIMITS.count` (checked with the other rules by `assertPinnedSkills`, as
-       * `agent.pinned_invalid`; the schema only bounds the input). No default: definitions
-       * without it are unchanged.
-       */
-      pinned: z.array(z.string().min(1).max(100)).max(100).optional(),
     })
     .strict()
     .optional(),
@@ -546,8 +609,10 @@ function normalizeToolRef(v: unknown): unknown {
  * current keys ({@link normalizeToolKeys}: builtins always, `<x>__<tool>` keys with `scope`), and
  * a definition from before tools were on by default (an enabled `tools` list, history only: the
  * migration rewrote stored versions) reads as nothing turned off, which is what the migration
- * writes (tools default-on spec §2, §3). Other fields are kept; without old forms the same object
- * is returned.
+ * writes (tools default-on spec §2, §3). Likewise a definition from before skills were on by
+ * default (`skills.orgSkills` / `skills.pinned`) reads as no skill turned off (skills default-on
+ * spec §4; migration 0116 rewrote stored versions). Other fields are kept; without old forms the
+ * same object is returned.
  */
 export function normalizeStoredDefinition(def: unknown, scope?: LegacyScope): AgentDefinition {
   let d = def as Record<string, unknown>;
@@ -562,6 +627,14 @@ export function normalizeStoredDefinition(def: unknown, scope?: LegacyScope): Ag
   } else if (!Array.isArray(d.disabledTools)) {
     d = { ...d, disabledTools: [] };
   }
+  // before skills were on by default (skills default-on spec §4, §5): selected and pinned skills
+  // read as nothing turned off, which is what migration 0116 writes
+  if (isRecord(d.skills) && ("orgSkills" in d.skills || "pinned" in d.skills)) {
+    const { orgSkills: _o, pinned: _p, ...keep } = d.skills;
+    const { skills: _s, ...rest } = d;
+    d = Object.keys(keep).length > 0 ? { ...rest, skills: keep } : rest;
+  }
+  if (!Array.isArray(d.disabledSkills)) d = { ...d, disabledSkills: [] };
   return d as AgentDefinition;
 }
 

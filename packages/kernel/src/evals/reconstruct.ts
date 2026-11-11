@@ -25,10 +25,30 @@ import {
 } from "../runtime/context/build.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
-import { PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { AGENT_TOOL } from "../tools/builtin-names.js";
 import { canonicalJson } from "./recorded-tools.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
+
+/** The pinned-skill limit of the old definitions (skills default-on spec §8: pinning is gone). */
+const OLD_PINNED_MAX = 3;
+
+/**
+ * The selected and pinned skills a definition from before skills were on by default carries,
+ * read raw (`normalizeStoredDefinition` drops them). Interim until the replay redefinition of
+ * `pinned_changed` (skills default-on spec §9).
+ */
+const legacySkills = (d: unknown): { orgSkills: string[]; pinned: string[] } => {
+  const skills =
+    typeof d === "object" && d !== null ? (d as { skills?: unknown }).skills : undefined;
+  const list = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  return typeof skills === "object" && skills !== null
+    ? {
+        orgSkills: list((skills as { orgSkills?: unknown }).orgSkills),
+        pinned: list((skills as { pinned?: unknown }).pinned),
+      }
+    : { orgSkills: [], pinned: [] };
+};
 
 /**
  * 由用例快照还原某次模型请求（单步回放的基础，D2 / C5）。与运行时共用 {@link assembleModelRequest}，
@@ -256,18 +276,19 @@ export function reconstructRequest(
   // definition is missing. The stub of definition_missing has no pins, so it is skipped then.
   if (!baseline && started === undefined && !drift.has("definition_missing")) {
     const norm = (ids: readonly string[] | undefined) =>
-      [...new Set(ids ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
+      [...new Set(ids ?? [])].slice(0, OLD_PINNED_MAX);
     const origDef = s.definitions[String(origVersion)];
     let recorded: string[];
     if (origDef) {
-      recorded = norm(normalizeStoredDefinition(origDef).skills?.pinned);
+      recorded = norm(legacySkills(origDef).pinned);
     } else {
       const snap = inputEvents(all, call)
         .filter((e) => e.type === "skills_catalog")
         .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
       recorded = (snap?.payload.pinned ?? []).map((p) => p.id);
     }
-    const wanted = norm(agent.skills?.pinned);
+    // the candidate's own pins, read raw (a stored version normalized drops them)
+    const wanted = norm(legacySkills(opts.definition ?? stored ?? agent).pinned);
     if (recorded.length !== wanted.length || recorded.some((id, i) => wanted[i] !== id)) {
       drift.add("pinned_changed");
     }
@@ -388,7 +409,7 @@ const sameTemplate = (logged: SubagentStarted["template"], t: SubagentTemplateRe
     (logged.platformTemplateId ?? null) === (t.platformTemplateId ?? null));
 
 const pinsOf = (d: AgentDefinition): string[] =>
-  [...new Set(d.skills?.pinned ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
+  [...new Set(legacySkills(d).pinned)].slice(0, OLD_PINNED_MAX);
 
 /**
  * A sub-agent's tools without template narrowing (general and org agents), as compared: its
@@ -421,7 +442,7 @@ const hasAgent = (d: AgentDefinition): boolean =>
 const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
   canonicalJson({
     disabledTools: canonicalDisabledTools(d.disabledTools ?? []),
-    orgSkills: d.skills?.orgSkills ?? [],
+    disabledSkills: d.disabledSkills ?? [],
     listed:
       started.template.source === "general"
         ? d.subagents?.general !== false

@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { escapeLike } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { selectedSkills } from "../skills/usable.js";
+import { agentSkills } from "../skills/usable.js";
 import { AgentLookup, type AgentVisibility } from "./agent-lookup.js";
 import type { AgentDefinition, DisabledToolRef } from "./definition.js";
 import type { AgentAvatar } from "./profile.js";
@@ -109,10 +109,10 @@ export class AdminAgents {
         .executeTakeFirstOrThrow(),
     ]);
     const [skills, connectors] = await Promise.all([
-      selectedSkills(this.db.db, {
+      agentSkills(this.db.db, {
         orgId: row.org_id,
         agentId,
-        orgSkills: view.definition.skills?.orgSkills ?? [],
+        disabledSkills: view.definition.disabledSkills ?? [],
       }),
       this.connectorsOf(row.org_id, view.definition.disabledTools),
     ]);

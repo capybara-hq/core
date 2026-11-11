@@ -430,8 +430,8 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       model: "standard",
       modelRef: "model-fake/fake-1",
       effort: "high",
-      skills: ["report"],
-      selectedSkills: ["charts", "style"],
+      // an agent's selected and pinned skills from before skills were on by default carry
+      // nothing into a template (skills default-on spec §6.2)
       connectors: [
         { template: platformTpl, policies: { search: "ask" } },
         {
@@ -490,7 +490,6 @@ describe("org agent templates", { timeout: 120_000 }, () => {
     });
     expect(body.omitted).toEqual(
       expect.arrayContaining([
-        { kind: "skill", name: "own-notes", id: own, reason: "agent_skill" },
         { kind: "connector", name: "Inline", id: openapi, reason: "no_endpoint" },
         {
           kind: "subagent_template",
@@ -505,7 +504,8 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         { kind: "subagent_inline", name: "helper", field: "effort", reason: "unsupported_field" },
       ]),
     );
-    expect(body.omitted).toHaveLength(7);
+    expect(body.omitted).toHaveLength(6);
+    expect(own).toBeTruthy();
 
     // no credential, header or secret query ever enters the stored template
     const stored = await db

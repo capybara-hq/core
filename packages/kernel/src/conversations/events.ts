@@ -12,7 +12,12 @@ import {
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { AgentDefinitionSchema, DisabledToolRef, ModelRef } from "../agents/definition.js";
+import {
+  AgentDefinitionSchema,
+  DisabledSkillRef,
+  DisabledToolRef,
+  ModelRef,
+} from "../agents/definition.js";
 import { ORG_ROLES } from "../orgs/roles.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import {
@@ -284,6 +289,22 @@ const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
   z.object({ type: z.literal(type), payload });
 
 /**
+ * An agent definition frozen into a log (`subagent_started`): the current schema, with the
+ * selected and pinned skills of older logs still accepted (skills default-on spec §4: history
+ * keeps the old fields; new definitions never carry them).
+ */
+const LoggedAgentDefinition = AgentDefinitionSchema.extend({
+  skills: z
+    .object({
+      writePolicy: z.enum(["allow", "ask"]).optional(),
+      orgSkills: z.array(z.string()).optional(),
+      pinned: z.array(z.string()).optional(),
+    })
+    .strict()
+    .optional(),
+});
+
+/**
  * 会话事件（`type` + `payload`）的判别联合。事件日志只追加，写入前用它校验 payload；
  * 读出时按写入时的形状原样返回。
  */
@@ -366,8 +387,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           kind: z.enum(["task", "message"]).optional(),
           /**
            * A follow-up (`resume`, final review I1): the frozen and the current version's
-           * turned-off tools together, and the frozen org skills intersected with the current
-           * ones (`narrowFollowUp`); the child's run uses these instead of the frozen ones.
+           * turned-off tools and skills together (`narrowFollowUp`; older logs: the frozen org
+           * skills intersected with the current ones); the child's run uses these instead of the
+           * frozen ones.
            * Absent on a first dispatch and in older logs; logs from before tools were on by
            * default carry an enabled `tools` list instead of `disabledTools` (read as no tool
            * narrowing).
@@ -375,6 +397,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           narrowed: z
             .object({
               disabledTools: z.array(DisabledToolRef).optional(),
+              /**
+               * Skills default-on (spec §6.1): the frozen and the current version's turned-off
+               * skills together. Logs from before carry `skills` (`orgSkills` / `pinned`) instead.
+               */
+              disabledSkills: z.array(DisabledSkillRef).optional(),
               skills: z
                 .object({ orgSkills: z.array(z.string()), pinned: z.array(z.string()).optional() })
                 .optional(),
@@ -821,8 +848,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           .object({ id: z.string(), version: z.number().int(), name: z.string() })
           .optional(),
       }),
-      /** The effective (narrowed) definition, frozen at dispatch. */
-      definition: AgentDefinitionSchema,
+      /**
+       * The effective (narrowed) definition, frozen at dispatch. Logs from before skills were on
+       * by default also carry `skills.orgSkills` / `skills.pinned` (skills default-on spec §4).
+       */
+      definition: LoggedAgentDefinition,
       /** `SUBAGENT_PREAMBLE` at dispatch time. */
       preamble: z.string(),
       maxSteps: z.number().int().positive(),

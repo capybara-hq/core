@@ -96,6 +96,7 @@ const agentDef: AgentDefinition = {
   fallback: null,
   modelParams: {},
   fallbackParams: {},
+  disabledSkills: [],
   disabledTools: builtinsOff(),
   toolPolicies: {},
 };
