@@ -132,6 +132,9 @@
       "already_completed": "Setup has already been completed.",
       "token_invalid": "The setup token is missing or invalid."
     },
+    "admin": {
+      "usage_unavailable": "The usage figures took too long to compute. Try again in a moment."
+    },
     "agent": {
       "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
       "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
@@ -3346,9 +3349,10 @@
       "metrics": {
         "attention": "Needs attention",
         "orgs": "Organizations",
-        "accounts": "Accounts"
+        "accounts": "Accounts",
+        "runs7d": "Runs, last 7 days"
       },
-      "footnote": "Super admins cannot read conversations.",
+      "footnote": "Super admins cannot read conversations; the usage above holds totals only.",
       "attention": {
         "title": "Needs attention",
         "empty": "Nothing needs attention.",
@@ -3386,10 +3390,105 @@
         },
         "retry": "Retry"
       },
+      "health": {
+        "title": "Health",
+        "failed": "Could not load health.",
+        "unavailable": "Unavailable right now",
+        "stale": "The last refresh failed; showing the data from <time></time>.",
+        "retry": "Retry",
+        "groups": {
+          "kernel": "Kernel",
+          "queues": "Queues",
+          "connections": "Connections"
+        },
+        "kernel": {
+          "version": "Version",
+          "replicas": "Replicas",
+          "mixedVersions": "Replicas report different versions (rolling upgrade?)",
+          "replicaList": "Replicas ({n})"
+        },
+        "roles": {
+          "api": "api",
+          "worker": "worker",
+          "gateway": "gateway"
+        },
+        "noReplicas": {
+          "api": "No api replica online: the API cannot be reached",
+          "worker": "No worker replica online: runs will not start",
+          "gateway": "No gateway replica online: channel long connections will not be held"
+        },
+        "replicaColumns": {
+          "id": "Replica",
+          "roles": "Roles",
+          "version": "Version",
+          "startedAt": "Started"
+        },
+        "queueColumns": {
+          "name": "Queue",
+          "waiting": "Waiting",
+          "active": "Active",
+          "delayed": "Delayed",
+          "failedLastDay": "Failed in 24 h"
+        },
+        "queues": {
+          "runs": "Runs",
+          "subagentRuns": "Sub-agent runs",
+          "channels": "Channels",
+          "maintenance": "Maintenance",
+          "pluginScope": "Plugin scope sync",
+          "titles": "Titles",
+          "usageReport": "Usage reports",
+          "evals": "Evals"
+        },
+        "connections": {
+          "channels": "Channels",
+          "devices": "Devices",
+          "sandboxes": "Sandboxes",
+          "byProvider": "By provider"
+        },
+        "channelParts": {
+          "online": "Online",
+          "offline": "Offline",
+          "webhook": "Webhook",
+          "disabled": "Disabled",
+          "error": "Error"
+        },
+        "deviceParts": {
+          "online": "Online",
+          "local": "Local"
+        },
+        "sandboxParts": {
+          "running": "Running",
+          "suspended": "Suspended"
+        }
+      },
       "audit": {
         "title": "Recent platform activity",
         "viewAll": "View all",
         "failed": "Could not load platform activity."
+      },
+      "usage": {
+        "title": "Usage · last 7 days",
+        "estimated": "Costs are estimates",
+        "failed": "Could not load usage.",
+        "chart": "Usage over the last 7 days",
+        "runs": "Runs",
+        "tokens": "Tokens",
+        "estimate": "est. {cost}",
+        "unpriced": "Not priced",
+        "cost": "Est. cost",
+        "empty": "No runs in the last 7 days.",
+        "total": "7-day total: Runs {runs} · Tokens {tokens} · Est. cost {cost}",
+        "totalPartial": "{total} <link></link>",
+        "costPartial": "(some models have no price and are not counted)",
+        "ranking": {
+          "title": "Top organizations",
+          "org": "Organization",
+          "runs": "Runs",
+          "tokens": "Tokens",
+          "cost": "Est. cost",
+          "others": "{n, plural, one {# other organization} other {# other organizations}}"
+        }
       },
       "partial": "The number needing attention leaves out sources that could not be read."
     },

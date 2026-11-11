@@ -170,10 +170,12 @@ describe("registration and who may call", () => {
       "admin.connector-get",
       "admin.connector-set-status",
       "admin.connectors-list",
+      "admin.health",
       "admin.org-members",
       "admin.overview",
       "admin.settings",
       "admin.update-settings",
+      "admin.usage",
       "models.available",
       "models.catalog",
       "models.platform-list",
@@ -398,6 +400,35 @@ describe("admin and models", () => {
       via: "agent",
     });
     await run("admin.update-settings", { orgCreation: "anyone" });
+  });
+
+  it("admin.health answers what GET /admin/overview/health does", async () => {
+    const out = (await run("admin.health", {})) as Record<string, unknown>;
+    const res = (
+      await root({ method: "GET", url: "/api/v1/admin/overview/health" })
+    ).json() as Record<string, unknown>;
+    expect(Object.keys(out).sort()).toEqual(Object.keys(res).sort());
+    // live numbers may move between the two reads; the stable parts are equal
+    expect(out.kernel).toEqual(res.kernel);
+    expect(out.unavailable).toEqual([]);
+    expect(out.roles).toMatchObject({ api: 1, worker: 1 });
+    expect((out.queues as { name: string }[]).map((q) => q.name)).toEqual(
+      (res.queues as { name: string }[]).map((q) => q.name),
+    );
+  });
+
+  it("admin.usage answers what GET /admin/overview/usage does, from the route's schema", async () => {
+    const out = await run("admin.usage", { tz: "Asia/Shanghai" });
+    const res = await root({
+      method: "GET",
+      url: "/api/v1/admin/overview/usage?tz=Asia%2FShanghai",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    // the first read cached the week: the route serves the same answer
+    expect(out).toEqual(res.json());
+    expect((out as { days: unknown[] }).days).toHaveLength(7);
+    expect(op("admin.usage").description).toContain("estimate");
+    expect(op("admin.usage").description).toContain("eval replay runs included");
   });
 
   it("admin.attention reads compact rows with more and unavailable, never an error text", async () => {

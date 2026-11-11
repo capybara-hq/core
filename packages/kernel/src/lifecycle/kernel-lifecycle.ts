@@ -40,6 +40,7 @@ import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
+import { ReplicaPresence } from "../infra/presence/replica-presence.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
@@ -139,6 +140,8 @@ export class KernelLifecycle
     @Inject(TitleQueue) private readonly titles: TitleQueue,
     @Inject(ChannelJobs) private readonly channelJobs: ChannelJobs,
     @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
+    // this process's presence beat, on every role (admin overview spec §5.1)
+    @Inject(ReplicaPresence) private readonly presence: ReplicaPresence,
     // The role modules' parts: a role module is imported only when `roles` names it, so each is
     // present exactly when its role is (checked at the start)
     @Optional() @Inject(WorkerRole) private readonly worker?: WorkerRole,
@@ -284,6 +287,12 @@ export class KernelLifecycle
         (err) => this.log.error("config watch error", { error: err.message }),
       );
     }
+    // Last: the process says it is alive (in its roles) only once its start went through
+    this.presence.start({
+      replicaId: this.replicaStatus.replicaId,
+      channelsHeld: () => gateway?.channelsHeld() ?? 0,
+      devicesConnected: () => gateway?.devicesConnected() ?? 0,
+    });
   }
 
   /**
@@ -408,6 +417,8 @@ export class KernelLifecycle
     // Extension requests in progress (SSE and other long requests end on req.signal) are aborted
     // first, otherwise they would use up the http phase
     this.httpApp?.abortPluginRequests();
+    // Leave the replica presence first: the admin console stops counting this process at once
+    await within("presence", this.presence.stop(), 1_000);
     // Scheduled jobs (worker role): no new tick, the runs in progress get the stop signal; awaited
     // in the runs phase (before the extension host closes: a job may call an extension)
     const { worker, gateway } = this;

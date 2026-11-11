@@ -273,6 +273,8 @@ describe("超级管理员端点", () => {
     { method: "PUT", url: "/api/v1/admin/settings" },
     { method: "GET", url: "/api/v1/admin/overview" },
     { method: "GET", url: "/api/v1/admin/overview/attention" },
+    { method: "GET", url: "/api/v1/admin/overview/health" },
+    { method: "GET", url: "/api/v1/admin/overview/usage?tz=UTC" },
     { method: "GET", url: "/api/v1/admin/audit" },
     { method: "GET", url: "/api/v1/admin/models" },
   ] as const;

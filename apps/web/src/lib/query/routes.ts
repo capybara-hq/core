@@ -240,7 +240,8 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/admin",
     // Super admins (no org needed): the numbers, the inbox (待处理's counts by type) and the
     // newest platform audit events, all PG reads. The other 待处理 lists are not prefetched: they
-    // may wait on a provider's model list, and their section draws its own skeleton.
+    // may wait on a provider's model list; nor is 运行状况 (Redis and PG counts, polled): each
+    // section draws its own skeleton.
     queries: ({ me }) =>
       superAdmin(me)
         ? [q(adminOverviewQuery()), q(adminInboxQuery()), q(platformAuditQuery())]

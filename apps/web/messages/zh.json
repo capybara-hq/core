@@ -132,6 +132,9 @@
       "already_completed": "系统已完成初始化。",
       "token_invalid": "初始化令牌缺失或错误。"
     },
+    "admin": {
+      "usage_unavailable": "用量统计耗时过长，请稍后重试。"
+    },
     "agent": {
       "pinned_invalid": "置顶技能无法保存：最多置顶 3 个已选中的技能，且它们的 SKILL.md 合计不超过 32 KB。",
       "subagents_invalid": "子智能体设置无法保存：请检查所列的模板、名称、工具、技能与智能体，且智能体类型最多 20 个。",
@@ -3334,9 +3337,10 @@
       "metrics": {
         "attention": "待处理",
         "orgs": "组织",
-        "accounts": "账号"
+        "accounts": "账号",
+        "runs7d": "近 7 天运行"
       },
-      "footnote": "超级管理员不能查看会话内容。",
+      "footnote": "超级管理员不能查看会话内容；以上用量只含汇总数字。",
       "attention": {
         "title": "待处理",
         "empty": "没有需要处理的事项。",
@@ -3374,10 +3378,105 @@
         },
         "retry": "重试"
       },
+      "health": {
+        "title": "运行状况",
+        "failed": "无法加载运行状况。",
+        "unavailable": "暂时无法读取",
+        "stale": "最近一次刷新失败，显示的是 <time></time> 的数据。",
+        "retry": "重试",
+        "groups": {
+          "kernel": "内核",
+          "queues": "队列",
+          "connections": "连接"
+        },
+        "kernel": {
+          "version": "版本",
+          "replicas": "副本",
+          "mixedVersions": "副本版本不一致（滚动升级中？）",
+          "replicaList": "副本列表（{n}）"
+        },
+        "roles": {
+          "api": "api（接口）",
+          "worker": "worker（后台任务）",
+          "gateway": "gateway（长连接）"
+        },
+        "noReplicas": {
+          "api": "没有在线的 api：接口无法访问",
+          "worker": "没有在线的 worker：运行不会开始",
+          "gateway": "没有在线的 gateway：渠道长连接不会建立"
+        },
+        "replicaColumns": {
+          "id": "副本",
+          "roles": "角色",
+          "version": "版本",
+          "startedAt": "启动于"
+        },
+        "queueColumns": {
+          "name": "队列",
+          "waiting": "等待",
+          "active": "进行中",
+          "delayed": "延迟",
+          "failedLastDay": "24 小时内失败"
+        },
+        "queues": {
+          "runs": "运行",
+          "subagentRuns": "子智能体运行",
+          "channels": "渠道",
+          "maintenance": "维护",
+          "pluginScope": "插件范围同步",
+          "titles": "会话标题",
+          "usageReport": "用量上报",
+          "evals": "评测"
+        },
+        "connections": {
+          "channels": "渠道",
+          "devices": "设备",
+          "sandboxes": "沙箱",
+          "byProvider": "按供应商"
+        },
+        "channelParts": {
+          "online": "在线",
+          "offline": "离线",
+          "webhook": "Webhook",
+          "disabled": "已停用",
+          "error": "出错"
+        },
+        "deviceParts": {
+          "online": "在线",
+          "local": "本地"
+        },
+        "sandboxParts": {
+          "running": "运行中",
+          "suspended": "已挂起"
+        }
+      },
       "audit": {
         "title": "最近的平台操作",
         "viewAll": "查看全部",
         "failed": "无法加载平台操作。"
+      },
+      "usage": {
+        "title": "用量 · 近 7 天",
+        "estimated": "费用为估算",
+        "failed": "无法加载用量。",
+        "chart": "近 7 天用量",
+        "runs": "运行",
+        "tokens": "Token",
+        "estimate": "估算 {cost}",
+        "unpriced": "未定价",
+        "cost": "估算费用",
+        "empty": "近 7 天没有运行。",
+        "total": "7 天合计：运行 {runs} · Token {tokens} · 估算费用 {cost}",
+        "totalPartial": "{total}<link></link>",
+        "costPartial": "（部分模型未设置价格，未计入）",
+        "ranking": {
+          "title": "组织排行",
+          "org": "组织",
+          "runs": "运行",
+          "tokens": "Token",
+          "cost": "估算费用",
+          "others": "其他 {n} 个组织"
+        }
       },
       "partial": "待处理的数字不含暂时无法读取的来源。"
     },

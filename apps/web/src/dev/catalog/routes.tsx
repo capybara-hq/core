@@ -134,6 +134,8 @@ export const REFERENCE_COMPONENTS = [
   "card-grid",
   // one section of an overview page in its own state (admin overview design §10.2)
   "overview-section",
+  // the usage chart: two panels on one x-axis, never a second y-scale (admin overview design §10.1)
+  "trend-chart",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
   // theme picker card (themes spec §10)

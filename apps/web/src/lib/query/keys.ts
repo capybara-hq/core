@@ -429,6 +429,10 @@ export const keys = {
        * numbers (an extension or plugin change) reads the lists again too.
        */
       adminAttention: (): readonly unknown[] => [...all, "adminOverview", "attention"],
+      /** The admin overview's 运行状况 (polled while the page shows). */
+      adminHealth: (): readonly unknown[] => [...all, "adminHealth"],
+      /** The admin overview's 用量 in the reader's zone (the days are calendar days in it). */
+      adminUsage: (tz: string): readonly unknown[] => [...all, "adminUsage", tz],
       /** Every page of the platform audit log (an invalidation prefix). */
       platformAuditAll: (): readonly unknown[] => [...all, "platformAudit"],
       /** A page of the platform audit log: the newest (`after: ""`) or the one after a cursor. */

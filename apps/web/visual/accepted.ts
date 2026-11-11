@@ -154,6 +154,10 @@ export const ACCEPTED: string[] = [
   // size table in place; the reference PNGs and the side-by-side review wait for the
   // reference-update and visual-update workflows
   "overview-section",
+  // the usage chart, two panels on one x-axis (admin overview design §10.1): blocks and size table
+  // in place; the reference PNGs, the maintainer sign-off and the side-by-side review wait for
+  // the reference-update and visual-update workflows
+  "trend-chart",
 ];
 
 /**

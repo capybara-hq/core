@@ -1,3 +1,4 @@
+import { formatCompact } from "@capybara-hq/design";
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,6 +7,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { activeNavOf } from "../src/components/shell/nav";
 import { Catalog } from "../src/dev/catalog";
+import { adminUsageQuery } from "../src/lib/query/admin";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -122,12 +124,99 @@ const AUDIT = {
   ],
   next: null,
 };
+const QUEUE_NAMES = [
+  "cap-kernel-runs",
+  "cap-kernel-subagent-runs",
+  "cap-kernel-channels",
+  "cap-kernel-maintenance",
+  "cap-kernel-plugin-scope",
+  "cap-kernel-titles",
+  "cap-kernel-usage-report",
+  "cap-kernel-evals",
+];
+const HEALTH = {
+  kernel: { version: "0.1.0" },
+  replicas: [
+    { id: "r-api-1", roles: ["api"], version: "0.1.0", startedAt: OV_T, httpReplicaId: null },
+    { id: "r-api-2", roles: ["api"], version: "0.1.0", startedAt: OV_T, httpReplicaId: "b" },
+    {
+      id: "r-bg-1",
+      roles: ["worker", "gateway"],
+      version: "0.1.0",
+      startedAt: OV_T,
+      httpReplicaId: null,
+    },
+  ],
+  roles: { api: 2, worker: 1, gateway: 1 },
+  queues: QUEUE_NAMES.map((name, i) => ({
+    name,
+    waiting: i === 0 ? 3 : 0,
+    active: i === 0 ? 1 : 0,
+    delayed: i === 2 ? 5 : 0,
+    failed: i === 0 ? 4 : i === 2 ? 9 : 0,
+    failedLastDay: i === 0 ? 2 : 0,
+  })),
+  channels: { online: 5, offline: 1, webhook: 2, disabled: 1, error: 0 },
+  devices: { online: 3, local: 7 },
+  sandboxes: {
+    running: 4,
+    suspended: 2,
+    byProvider: [
+      { provider: "sandbox-docker", running: 3 },
+      { provider: "sandbox-e2b", running: 1 },
+    ],
+  },
+  unavailable: [],
+};
+/** The five token kinds of a day summing to `n` (the chart's Token is their sum). */
+const tok = (n: number) =>
+  n === 0
+    ? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, embedding: 0 }
+    : { input: n - 4000, output: 1000, cacheRead: 1000, cacheWrite: 1000, embedding: 1000 };
+const USAGE_DATES = [
+  "2026-11-04",
+  "2026-11-05",
+  "2026-11-06",
+  "2026-11-07",
+  "2026-11-08",
+  "2026-11-09",
+  "2026-11-10",
+];
+const USAGE_RUNS = [100, 120, 90, 0, 140, 234, 128];
+const USAGE_TOKENS = [3_000_000, 3_500_000, 2_800_000, 0, 4_000_000, 5_000_000, 3_400_000];
+const USAGE_COSTS = [10.5, 12, 9.6, 0, 14, 20, 12.3];
+const USAGE = {
+  from: "2026-11-03T16:00:00.000Z",
+  to: "2026-11-10T16:00:00.000Z",
+  tz: "Asia/Shanghai",
+  currency: "CNY",
+  days: USAGE_DATES.map((date, i) => ({
+    date,
+    runs: USAGE_RUNS[i],
+    tokens: tok(USAGE_TOKENS[i] as number),
+    cost: USAGE_COSTS[i],
+  })),
+  costPartial: false,
+  orgs: [
+    { orgId: "o1", name: "Acme", runs: 600, tokens: 15_000_000, cost: 55.2 },
+    { orgId: "o2", name: "Beta", runs: 200, tokens: 6_650_000, cost: null },
+  ],
+  otherOrgs: { count: 3, runs: 12, tokens: 50_000, cost: 0.5 },
+};
+const EMPTY_USAGE = {
+  ...USAGE,
+  days: USAGE_DATES.map((date) => ({ date, runs: 0, tokens: tok(0), cost: 0 })),
+  orgs: [],
+  otherOrgs: { count: 0, runs: 0, tokens: 0, cost: null },
+};
 const overviewRoutes = (over: Record<string, () => Response> = {}) => ({
   "GET /api/v1/admin/overview": () => json(200, { orgs: 2, accounts: 7, attentionTotal: 12 }),
   "GET /api/v1/admin/inbox": () => json(200, OV_INBOX),
   "GET /api/v1/admin/inbox/count": () => json(200, { total: 6 }),
   "GET /api/v1/admin/overview/attention": () => json(200, ATTENTION),
   "GET /api/v1/admin/audit": () => json(200, AUDIT),
+  "GET /api/v1/admin/overview/health": () => json(200, HEALTH),
+  "GET /api/v1/admin/overview/usage": () => json(200, USAGE),
   ...over,
 });
 /** The section titled `title` (an OverviewSection is the section's Card). */
@@ -155,7 +244,7 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(metric(a.overview.metrics.attention).getByText("12")).toBeTruthy();
     expect(metric(a.overview.metrics.orgs).getByText("2")).toBeTruthy();
     expect(metric(a.overview.metrics.accounts).getByText("7")).toBeTruthy();
-    expect(container.querySelectorAll('[data-part="stat-card"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-part="stat-card"]')).toHaveLength(4);
     const statLink = (label: string) =>
       within(metrics).getByText(label).closest("a")?.getAttribute("href");
     expect(statLink(a.overview.metrics.attention)).toBe("/admin/inbox");
@@ -424,9 +513,614 @@ describe("/admin 概览（OverviewPage）", () => {
     const o = zh.admin.overview;
     expect(await screen.findByText("v1.2.0 → v1.3.0")).toBeTruthy();
     expect(section(o.audit.title).hasAttribute("data-state")).toBe(false);
+    expect(section(o.health.title).hasAttribute("data-state")).toBe(false);
+    expect(within(section(o.health.title)).getByText(o.health.queues.runs)).toBeTruthy();
+    expect(section(o.usage.title).hasAttribute("data-state")).toBe(false);
+    expect(
+      within(section(o.usage.title)).getByRole("table", { name: o.usage.ranking.title }),
+    ).toBeTruthy();
     expect(screen.getByText(o.footnote)).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(calls).toEqual([]);
+  });
+
+  /** The 运行状况 section once loaded. */
+  const healthBox = async (title: string) =>
+    vi.waitFor(
+      () => {
+        const s = section(title);
+        if (s.hasAttribute("data-state")) throw new Error("not ready");
+        return s;
+      },
+      { timeout: 3000 },
+    );
+  /** The value of a key-value row by its key. */
+  const kvValue = (box: HTMLElement, key: string) =>
+    within(box)
+      .getByText(key, { selector: "dt" })
+      .closest('[data-part="key-value-row"]')
+      ?.querySelector("dd") as HTMLElement;
+
+  it.each(LOCALES)(
+    "运行状况：版本、副本按角色、队列（可读名称与 24 小时内失败）、连接数字（%s）",
+    async (locale) => {
+      const h = msgs[locale].admin.overview.health;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await healthBox(h.title);
+      for (const g of Object.values(h.groups)) {
+        expect(within(box).getByText(g, { selector: "[data-part=subsection-title]" })).toBeTruthy();
+      }
+      expect(kvValue(box, h.kernel.version).textContent).toBe("v0.1.0");
+      expect(kvValue(box, h.kernel.replicas).textContent).toBe(
+        `${h.roles.api} 2 · ${h.roles.worker} 1 · ${h.roles.gateway} 1`,
+      );
+      // every role has a replica, every replica the same version: no fail or warn line
+      expect(within(box).queryByText(h.noReplicas.worker)).toBeNull();
+      expect(within(box).queryByText(h.kernel.mixedVersions)).toBeNull();
+      // the queues: readable names in the kernel's order, counts, failures in the last day in fail
+      const table = within(box).getByRole("table", { name: h.groups.queues });
+      for (const c of Object.values(h.queueColumns)) {
+        expect(within(table).getByRole("columnheader", { name: c })).toBeTruthy();
+      }
+      const names = within(table)
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => (r.querySelector("td") as HTMLElement).textContent);
+      expect(names).toEqual(Object.values(h.queues));
+      const cells = (name: string) =>
+        [
+          ...(within(table).getByText(name).closest("tr") as HTMLElement).querySelectorAll("td"),
+        ].map((td) => td.textContent);
+      expect(cells(h.queues.runs)).toEqual([h.queues.runs, "3", "1", "0", "2"]);
+      expect(cells(h.queues.channels)).toEqual([h.queues.channels, "0", "0", "5", "0"]);
+      const runsRow = within(table).getByText(h.queues.runs).closest("tr") as HTMLElement;
+      const failed = within(runsRow).getByText("2");
+      expect(failed.getAttribute("data-tone")).toBe("fail");
+      const channelsRow = within(table).getByText(h.queues.channels).closest("tr") as HTMLElement;
+      const none = [...channelsRow.querySelectorAll("td")].at(-1) as HTMLElement;
+      expect(none.querySelector('[data-tone="fail"]')).toBeNull();
+      // the connections
+      const c = h.channelParts;
+      expect(kvValue(box, h.connections.channels).textContent).toBe(
+        `${c.online} 5 · ${c.offline} 1 · ${c.webhook} 2 · ${c.disabled} 1 · ${c.error} 0`,
+      );
+      expect(kvValue(box, h.connections.devices).textContent).toBe(
+        `${h.deviceParts.online} 3 / ${h.deviceParts.local} 7`,
+      );
+      expect(kvValue(box, h.connections.sandboxes).textContent).toBe(
+        `${h.sandboxParts.running} 4 · ${h.sandboxParts.suspended} 2`,
+      );
+      expect(kvValue(box, h.connections.byProvider).textContent).toBe(
+        "sandbox-docker 3 · sandbox-e2b 1",
+      );
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("运行状况：副本列表默认折叠，展开后列出副本、角色、版本与启动时间", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    expect(within(box).queryByRole("table", { name: h.kernel.replicas })).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(box).getByRole("button", { name: fill(h.kernel.replicaList, { n: 3 }) }));
+    const table = within(box).getByRole("table", { name: h.kernel.replicas });
+    for (const c of Object.values(h.replicaColumns)) {
+      expect(within(table).getByRole("columnheader", { name: c })).toBeTruthy();
+    }
+    const row = within(table).getByText("r-bg-1").closest("tr") as HTMLElement;
+    expect(within(row).getByText("worker · gateway")).toBeTruthy();
+    expect(within(row).getByText("v0.1.0")).toBeTruthy();
+    expect(row.querySelector("time")).not.toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("运行状况：没有在线的 worker 与 gateway 时是失败行；副本版本不一致时提醒", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () =>
+          json(200, {
+            ...HEALTH,
+            replicas: [
+              { ...HEALTH.replicas[0], version: "0.1.0" },
+              { ...HEALTH.replicas[1], version: "0.2.0" },
+            ],
+            roles: { api: 2, worker: 0, gateway: 0 },
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    const worker = within(box).getByText(h.noReplicas.worker);
+    expect(worker.getAttribute("data-tone")).toBe("fail");
+    expect(within(box).getByText(h.noReplicas.gateway).getAttribute("data-tone")).toBe("fail");
+    expect(within(box).queryByText(h.noReplicas.api)).toBeNull();
+    // the zero counts in the roles line are fail too
+    const roles = kvValue(box, h.kernel.replicas);
+    expect(roles.textContent).toBe(`${h.roles.api} 2 · ${h.roles.worker} 0 · ${h.roles.gateway} 0`);
+    expect(roles.querySelectorAll('[data-tone="fail"]')).toHaveLength(2);
+    expect(within(box).getByText(h.kernel.mixedVersions).getAttribute("data-tone")).toBe("warn");
+  });
+
+  it("运行状况：Redis 读不到时，副本、队列与在线数显示「暂时无法读取」，PG 的数字照常", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () =>
+          json(200, {
+            ...HEALTH,
+            replicas: null,
+            roles: null,
+            queues: null,
+            channels: { ...HEALTH.channels, online: null, offline: null },
+            devices: { online: null, local: 7 },
+            unavailable: ["redis"],
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    const muted = (el: HTMLElement) =>
+      [...el.querySelectorAll('[data-tone="muted"]')].map((x) => x.textContent);
+    expect(muted(kvValue(box, h.kernel.replicas))).toEqual([h.unavailable]);
+    expect(within(box).queryByRole("table", { name: h.groups.queues })).toBeNull();
+    expect(within(box).queryByRole("button", { name: /副本列表/ })).toBeNull();
+    const c = h.channelParts;
+    expect(kvValue(box, h.connections.channels).textContent).toBe(
+      `${c.online} ${h.unavailable} · ${c.offline} ${h.unavailable} · ${c.webhook} 2 · ${c.disabled} 1 · ${c.error} 0`,
+    );
+    expect(muted(kvValue(box, h.connections.devices))).toEqual([h.unavailable]);
+    expect(kvValue(box, h.connections.sandboxes).textContent).toBe(
+      `${h.sandboxParts.running} 4 · ${h.sandboxParts.suspended} 2`,
+    );
+    // the queue group says so in place of its table
+    expect(within(box).getAllByText(h.unavailable).length).toBeGreaterThanOrEqual(5);
+    expect(kvValue(box, h.kernel.version).textContent).toBe("v0.1.0");
+  });
+
+  it("运行状况：PG 读不到时，渠道、设备、沙箱显示「暂时无法读取」", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () =>
+          json(200, {
+            ...HEALTH,
+            channels: { online: 5, offline: null, webhook: null, disabled: null, error: null },
+            devices: { online: 3, local: null },
+            sandboxes: null,
+            unavailable: ["database"],
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    expect(kvValue(box, h.connections.sandboxes).textContent).toBe(h.unavailable);
+    expect(within(box).queryByText(h.connections.byProvider)).toBeNull();
+    expect(kvValue(box, h.connections.devices).textContent).toBe(
+      `${h.deviceParts.online} 3 / ${h.deviceParts.local} ${h.unavailable}`,
+    );
+    expect(within(box).getByRole("table", { name: h.groups.queues })).toBeTruthy();
+  });
+
+  it("运行状况：页面可见时每 30 秒重读一次", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const h = zh.admin.overview.health;
+      const calls = stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+      await healthBox(h.title);
+      const reads = () =>
+        calls.filter((c) => new URL(c.url, "http://x").pathname === "/api/v1/admin/overview/health")
+          .length;
+      const before = reads();
+      expect(before).toBe(1);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(reads()).toBe(before);
+      await vi.advanceTimersByTimeAsync(5_500);
+      await vi.waitFor(() => expect(reads()).toBe(before + 1));
+      await vi.advanceTimersByTimeAsync(30_500);
+      await vi.waitFor(() => expect(reads()).toBe(before + 2));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("运行状况：页面不可见时不轮询，回到可见后照常", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const visibility = (state: "hidden" | "visible") => {
+      Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+    try {
+      const h = zh.admin.overview.health;
+      const calls = stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+      await healthBox(h.title);
+      const reads = () =>
+        calls.filter((c) => new URL(c.url, "http://x").pathname === "/api/v1/admin/overview/health")
+          .length;
+      expect(reads()).toBe(1);
+      visibility("hidden");
+      await vi.advanceTimersByTimeAsync(95_000);
+      expect(reads()).toBe(1);
+      visibility("visible");
+      await vi.advanceTimersByTimeAsync(31_000);
+      await vi.waitFor(() => expect(reads()).toBeGreaterThan(1));
+    } finally {
+      Reflect.deleteProperty(document, "visibilityState");
+      vi.useRealTimers();
+    }
+  });
+
+  it("运行状况：轮询失败时保留数字，提示数据读取于何时，重试后提示消失", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const h = zh.admin.overview.health;
+      let failing = false;
+      stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/health": () => (failing ? boom() : json(200, HEALTH)),
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+      const box = await healthBox(h.title);
+      const [before, after] = h.stale.split("<time></time>") as [string, string];
+      const staleLine = () =>
+        within(section(h.title)).queryByText((_, el) => {
+          const text = el?.textContent ?? "";
+          return (
+            el?.getAttribute("data-tone") === "warn" &&
+            text.startsWith(before) &&
+            text.endsWith(after)
+          );
+        });
+      expect(staleLine()).toBeNull();
+      failing = true;
+      await vi.advanceTimersByTimeAsync(30_500);
+      // the client retries a failed read once before giving up
+      await vi.advanceTimersByTimeAsync(5_000);
+      const line = await vi.waitFor(() => {
+        const l = staleLine();
+        if (l === null) throw new Error("no stale line yet");
+        return l;
+      });
+      expect(line.querySelector("time")).not.toBeNull();
+      // the numbers stay
+      expect(within(box).getByText("v0.1.0")).toBeTruthy();
+      expect(within(section(h.title)).queryByRole("alert")).toBeNull();
+      failing = false;
+      within(section(h.title)).getByRole("button", { name: h.retry }).click();
+      await vi.waitFor(() => expect(staleLine()).toBeNull());
+      expect(within(section(h.title)).queryByRole("button", { name: h.retry })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("运行状况读取失败：只有这个区块出错，重试只重读它；其余区块照常", async () => {
+    const o = zh.admin.overview;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () => (failing ? boom() : json(200, HEALTH)),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const alert = await vi.waitFor(() => within(section(o.health.title)).getByRole("alert"), {
+      timeout: 3000,
+    });
+    expect(within(alert).getByText(o.health.failed)).toBeTruthy();
+    expect(within(await metricsOf(container)).getByText("12")).toBeTruthy();
+    expect(await within(section(o.attention.title)).findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    expect(within(section(o.audit.title)).getByText("Grant")).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    const box = await healthBox(o.health.title);
+    expect(within(box).getByText("v0.1.0")).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/overview/health"]);
+  });
+
+  it("the sections stack in order: 待处理, 运行状况, 用量, 最近的平台操作", async () => {
+    const o = zh.admin.overview;
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    await healthBox(o.health.title);
+    const follows = (a: HTMLElement, b: HTMLElement) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(section(o.attention.title), section(o.health.title))).toBe(true);
+    expect(follows(section(o.health.title), section(o.usage.title))).toBe(true);
+    expect(follows(section(o.usage.title), section(o.audit.title))).toBe(true);
+  });
+
+  it("the /dev/ui overview does not poll the health (no kernel behind the catalog)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const calls = stubApi({});
+      renderPage(<Catalog route="pages/admin-overview" />, { locale: "zh" });
+      expect(await screen.findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(65_000);
+      expect(calls).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** The 用量 section once loaded. */
+  const usageBox = async (title: string) =>
+    vi.waitFor(
+      () => {
+        const s = section(title);
+        if (s === undefined || s.hasAttribute("data-state")) throw new Error("not ready");
+        return s;
+      },
+      { timeout: 3000 },
+    );
+  const money = (locale: string, n: number) =>
+    new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: "CNY",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n);
+  /** The chart's visually hidden table: one row per day, its cells as text. */
+  const chartRows = (box: HTMLElement) =>
+    [...box.querySelectorAll('[data-part="trend-chart"] table tbody tr')].map((tr) =>
+      [...tr.children].map((c) => c.textContent ?? ""),
+    );
+  const usageCalls = (calls: { url: string }[]) =>
+    calls.filter((c) => new URL(c.url, "http://x").pathname === "/api/v1/admin/overview/usage");
+
+  it.each(LOCALES)(
+    "用量：两个面板（运行、Token）来自应答，日期 MM-DD，今天为当前点，每个费用都带估算（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      // the head says the costs are estimates
+      expect(within(box).getByText(u.estimated).getAttribute("data-tone")).toBe("muted");
+      const chart = box.querySelector('[data-part="trend-chart"]') as HTMLElement;
+      expect(chart.getAttribute("aria-label")).toBe(u.chart);
+      const titles = [...chart.querySelectorAll('[data-part="trend-chart-title"]')].map(
+        (el) => el.textContent,
+      );
+      expect(titles).toEqual([u.runs, u.tokens]);
+      const header = [...chart.querySelectorAll("table thead th")].map((th) => th.textContent);
+      expect(header.slice(1)).toEqual([u.runs, u.tokens, u.cost]);
+      const rows = chartRows(box);
+      expect(rows).toHaveLength(7);
+      expect(rows.map((r) => (r[0] as string).slice(0, 5))).toEqual(
+        USAGE_DATES.map((d) => d.slice(5)),
+      );
+      // today (the last day) is the current point
+      expect(rows[6]?.[0]).toBe(locale === "zh" ? "11-10（当前）" : "11-10 (current)");
+      expect(rows.map((r) => r[1])).toEqual(USAGE_RUNS.map(String));
+      expect(rows.map((r) => r[2])).toEqual(USAGE_TOKENS.map((n) => formatCompact(n, locale)));
+      expect(rows.map((r) => r[3])).toEqual(
+        USAGE_COSTS.map((c) => fill(u.estimate, { cost: money(locale, c) })),
+      );
+      expect(
+        chart.querySelector('[data-part="trend-chart-point"][data-kind="current"]'),
+      ).not.toBeNull();
+      expect(
+        chart
+          .querySelector('[data-part="trend-chart-point"][data-kind="current"]')
+          ?.getAttribute("data-index"),
+      ).toBe("6");
+      // the 7-day total line
+      expect(
+        within(box).getByText(
+          fill(u.total, {
+            runs: 812,
+            tokens: formatCompact(21_700_000, locale),
+            cost: money(locale, 78.4),
+          }),
+        ),
+      ).toBeTruthy();
+      expect(within(box).queryByText(u.costPartial)).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("用量：zh 合计行写作「7 天合计：运行 812 · Token 2170万 · 估算费用 ¥78.40」", async () => {
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await usageBox(zh.admin.overview.usage.title);
+    expect(
+      within(box).getByText("7 天合计：运行 812 · Token 2170万 · 估算费用 ¥78.40"),
+    ).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "用量：费用为 null 时写「未定价」而不是 0；部分未定价时合计行后的说明链接到模型页（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/usage": () =>
+            json(200, {
+              ...USAGE,
+              days: USAGE.days.map((d, i) => (i === 5 ? { ...d, cost: null } : d)),
+              costPartial: true,
+            }),
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      const rows = chartRows(box);
+      expect(rows[5]?.[3]).toBe(u.unpriced);
+      expect(rows[3]?.[3]).toBe(fill(u.estimate, { cost: money(locale, 0) }));
+      // the total counts only the priced days, and says so (a space before the note in en)
+      const note = within(box).getByRole("link", { name: u.costPartial });
+      expect(note.getAttribute("href")).toBe("/admin/models");
+      const total = fill(u.total, {
+        runs: 812,
+        tokens: formatCompact(21_700_000, locale),
+        cost: money(locale, 78.4 - 20),
+      });
+      expect(note.closest('[data-variant="prose"]')?.textContent).toBe(
+        `${total}${locale === "zh" ? "" : " "}${u.costPartial}`,
+      );
+      // an org without priced tokens is 未定价 too
+      const ranking = within(box).getByRole("table", { name: u.ranking.title });
+      const beta = within(ranking).getByText("Beta").closest("tr") as HTMLElement;
+      expect(within(beta).getByText(u.unpriced)).toBeTruthy();
+      expect(within(beta).queryByText(money(locale, 0))).toBeNull();
+    },
+  );
+
+  it.each(LOCALES)(
+    "用量：一周都未定价时合计写「未定价」；其他组织未定价时也是（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/usage": () =>
+            json(200, {
+              ...USAGE,
+              days: USAGE.days.map((d) => ({ ...d, cost: d.runs === 0 ? 0 : null })),
+              costPartial: true,
+              otherOrgs: { ...USAGE.otherOrgs, cost: null },
+            }),
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      const note = within(box).getByRole("link", { name: u.costPartial });
+      const line = note.closest('[data-variant="prose"]')?.textContent ?? "";
+      expect(
+        line.startsWith(
+          fill(u.total, {
+            runs: 812,
+            tokens: formatCompact(21_700_000, locale),
+            cost: u.unpriced,
+          }),
+        ),
+      ).toBe(true);
+      const ranking = within(box).getByRole("table", { name: u.ranking.title });
+      const others = locale === "zh" ? "其他 3 个组织" : "3 other organizations";
+      const row = within(ranking).getByText(others).closest("tr") as HTMLElement;
+      expect(within(row).getByText(u.unpriced)).toBeTruthy();
+    },
+  );
+
+  it("用量：币种代码不合法时写成代码加两位小数", async () => {
+    const u = zh.admin.overview.usage;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/usage": () => json(200, { ...USAGE, currency: "EURO" }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await usageBox(u.title);
+    expect(
+      within(box).getByText(fill(u.total, { runs: 812, tokens: "2170万", cost: "EURO 78.40" })),
+    ).toBeTruthy();
+    expect(chartRows(box)[6]?.[3]).toBe(fill(u.estimate, { cost: "EURO 12.30" }));
+  });
+
+  it.each(LOCALES)(
+    "用量：组织排行（组织链接到组织页、运行、Token、估算费用）与其他（%s）",
+    async (locale) => {
+      const u = msgs[locale].admin.overview.usage;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await usageBox(u.title);
+      expect(within(box).getByText(u.ranking.title)).toBeTruthy();
+      const ranking = within(box).getByRole("table", { name: u.ranking.title });
+      const headers = within(ranking)
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent);
+      expect(headers).toEqual([u.ranking.org, u.ranking.runs, u.ranking.tokens, u.ranking.cost]);
+      const acme = within(ranking).getByRole("link", { name: "Acme" });
+      expect(acme.getAttribute("href")).toBe("/admin/orgs");
+      const row = (name: string) => within(ranking).getByText(name).closest("tr") as HTMLElement;
+      expect(within(row("Acme")).getByText("600")).toBeTruthy();
+      expect(within(row("Acme")).getByText(formatCompact(15_000_000, locale))).toBeTruthy();
+      expect(within(row("Acme")).getByText(money(locale, 55.2))).toBeTruthy();
+      const others = locale === "zh" ? "其他 3 个组织" : "3 other organizations";
+      expect(within(row(others)).getByText("12")).toBeTruthy();
+      expect(within(row(others)).getByText(formatCompact(50_000, locale))).toBeTruthy();
+      expect(within(row(others)).getByText(money(locale, 0.5))).toBeTruthy();
+      expect(within(ranking).queryByRole("link", { name: others })).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("用量：近 7 天没有运行时图表是零状态，没有组织排行", async () => {
+    const u = zh.admin.overview.usage;
+    stubApi(overviewRoutes({ "GET /api/v1/admin/overview/usage": () => json(200, EMPTY_USAGE) }));
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await usageBox(u.title);
+    const chart = box.querySelector('[data-part="trend-chart"]') as HTMLElement;
+    expect(chart.getAttribute("data-state")).toBe("empty");
+    expect(within(box).getByText(u.empty)).toBeTruthy();
+    expect(within(box).queryByText(u.ranking.title)).toBeNull();
+  });
+
+  it("用量读取失败（503）：只有这个区块出错，重试只重读它；其余区块与前三个数字照常", async () => {
+    const o = zh.admin.overview;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/usage": () =>
+          failing
+            ? json(503, { error: { code: "admin.usage_unavailable", message: "slow" } })
+            : json(200, USAGE),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const alert = await vi.waitFor(() => within(section(o.usage.title)).getByRole("alert"), {
+      timeout: 3000,
+    });
+    expect(within(alert).getByText(o.usage.failed)).toBeTruthy();
+    const metrics = await metricsOf(container);
+    expect(within(metrics).getByText("12")).toBeTruthy();
+    // the 4th number has no answer: a dash, never a blocked header
+    const runs = within(metrics).getByText(o.metrics.runs7d).parentElement as HTMLElement;
+    expect(within(runs).getByText("—")).toBeTruthy();
+    expect(await within(section(o.attention.title)).findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    expect(within(await healthBox(o.health.title)).getByText("v0.1.0")).toBeTruthy();
+    expect(within(section(o.audit.title)).getByText("Grant")).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    const box = await usageBox(o.usage.title);
+    expect(within(box).getByRole("table", { name: o.usage.ranking.title })).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/overview/usage"]);
+    expect(within(runs).getByText("812")).toBeTruthy();
+  });
+
+  it("用量：请求带读者的时区，查询键含时区", async () => {
+    const calls = stubApi(overviewRoutes());
+    const { client } = await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    await usageBox(zh.admin.overview.usage.title);
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const urls = usageCalls(calls).map((c) => new URL(c.url, "http://x"));
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.searchParams.get("tz") === zone)).toBe(true);
+    expect(client.getQueryData(adminUsageQuery(zone).queryKey)).toEqual(USAGE);
+    expect(adminUsageQuery("Asia/Shanghai").queryKey).not.toEqual(
+      adminUsageQuery("Europe/Berlin").queryKey,
+    );
+  });
+
+  it.each(LOCALES)("第四个数字：近 7 天运行来自用量（%s）", async (locale) => {
+    const a = msgs[locale].admin;
+    stubApi(overviewRoutes());
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+    const metrics = await metricsOf(container);
+    const runs = within(metrics).getByText(a.overview.metrics.runs7d).parentElement as HTMLElement;
+    expect(await within(runs).findByText("812")).toBeTruthy();
   });
 
   it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {

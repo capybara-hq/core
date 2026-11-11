@@ -2,8 +2,11 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { DeploymentSettingsBody, PurposeParams } from "../../admin/admin.schemas.js";
 import { AuditListQuery } from "../../admin/audit.schemas.js";
+import { AdminHealthService } from "../../admin/health.service.js";
+import { UsageQuery } from "../../admin/overview.schemas.js";
 import { type AdminAttention, AdminOverviewService } from "../../admin/overview.service.js";
 import { PlatformAuditService } from "../../admin/platform-audit.service.js";
+import { AdminUsageService } from "../../admin/usage.service.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import { ExtensionRegistry } from "../../extensions/registry.js";
@@ -100,6 +103,8 @@ export class AdminOperations implements OnModuleInit {
     @Inject(ThemesService) private readonly themes: ThemesService,
     @Inject(PlatformAuditService) private readonly audit: PlatformAuditService,
     @Inject(AdminOverviewService) private readonly overview: AdminOverviewService,
+    @Inject(AdminHealthService) private readonly health: AdminHealthService,
+    @Inject(AdminUsageService) private readonly usage: AdminUsageService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -131,6 +136,34 @@ export class AdminOperations implements OnModuleInit {
         mirrors: ["GET /api/v1/admin/overview/attention"],
         confirm: "read",
         run: async () => attentionRows(await this.overview.attention()),
+      }),
+      defineOperation({
+        id: "admin.health",
+        description:
+          'How the platform runs right now (super admin), to answer "is the worker up, is the run queue backing up": kernel.version; replicas (live kernel processes: id, roles, version, startedAt) and roles (live replicas per role: api serves requests, worker runs conversations and jobs, gateway holds channel and device connections; 0 workers means no run starts); queues (per kernel queue, e.g. cap-kernel-runs: waiting, active, delayed, failed and failedLastDay, counts only); channels (online, offline: active long connections no replica holds, webhook, disabled, error); devices (online / local); sandboxes (running, suspended, running per provider). unavailable names a source that did not answer (redis or database); its numbers are then null. Failure details are in the kernel logs, not here.',
+        input: z.object({}).strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/overview/health"],
+        confirm: "read",
+        run: () => this.health.read(),
+      }),
+      defineOperation({
+        id: "admin.usage",
+        description:
+          "What the platform used over the last 7 days (super admin): today and the 6 days before, as calendar days in tz (an IANA zone such as Asia/Shanghai; use the person's own zone). days has one entry per day, oldest first: runs (every run, sub-agent and eval replay runs included), tokens (input, output, cacheRead, cacheWrite of every model call, and embedding) and cost. cost is an estimate from the model prices the super admin entered (models.prices), in currency; it is null when tokens were used and none of them had a price, and costPartial is true when some tokens had no price (the costs then count only the priced ones). orgs lists the 10 orgs that used the most tokens (runs, tokens, cost each); otherOrgs sums the rest (count, runs, tokens, cost). Totals only: never per account, agent or conversation. The answer may be up to 5 minutes old. admin.usage_unavailable means the database took too long: try again later.",
+        input: UsageQuery.strict(),
+        example: { tz: "Asia/Shanghai" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/overview/usage"],
+        confirm: "read",
+        errors: [
+          {
+            code: "admin.usage_unavailable",
+            next: "The usage numbers took too long to compute; try again in a few minutes.",
+          },
+        ],
+        run: (input) => this.usage.week(input.tz),
       }),
       defineOperation({
         id: "admin.audit",

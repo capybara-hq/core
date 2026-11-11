@@ -1,7 +1,9 @@
 import {
   type DeploymentSettingsPatch,
   getAdminAttention,
+  getAdminHealth,
   getAdminOverview,
+  getAdminUsage,
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
@@ -46,6 +48,22 @@ export const adminAttentionQuery = () =>
     fn: () => getAdminAttention(),
     freshness: "deployment",
   });
+
+/**
+ * The overview's 运行状况 (replicas by role, queues, connections). Moves on its own, so `live`;
+ * the section polls it every 30 s while the page shows. Not prefetched: its section draws its
+ * own skeleton.
+ */
+export const adminHealthQuery = () =>
+  defineQuery({ key: d().adminHealth(), fn: () => getAdminHealth(), freshness: "live" });
+
+/**
+ * The overview's 用量 (runs, tokens and estimated cost per day, the org ranking) in the reader's
+ * zone `tz`, which the key holds. Not prefetched: the kernel may take seconds on a cold cache, so
+ * its section draws its own skeleton; the header's 近 7 天运行 reads the same query.
+ */
+export const adminUsageQuery = (tz: string) =>
+  defineQuery({ key: d().adminUsage(tz), fn: () => getAdminUsage(tz), freshness: "deployment" });
 
 /**
  * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. Its
