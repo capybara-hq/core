@@ -20,6 +20,7 @@ import {
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent, ProviderModels } from "../../../../lib/agents";
+import { preferencesQuery } from "../../../../lib/query/account";
 import { agentsQuery } from "../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { modelsQuery } from "../../../../lib/query/conversation";
@@ -43,10 +44,10 @@ export default function NewScheduleView() {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <NewSchedule orgId={ws.orgId} />;
+  return <NewSchedule orgId={ws.orgId} accountId={ws.me.account.id} />;
 }
 
-function NewSchedule({ orgId }: { orgId: string }) {
+function NewSchedule({ orgId, accountId }: { orgId: string; accountId: string }) {
   const read = usePageQuery(agentsQuery(orgId));
   const modelsQ = modelsQuery(orgId);
   const models = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data;
@@ -57,6 +58,7 @@ function NewSchedule({ orgId }: { orgId: string }) {
     <NewScheduleForm
       key={agents === null ? "loading" : "ready"}
       orgId={orgId}
+      accountId={accountId}
       agents={agents}
       providers={models?.providers ?? []}
     />
@@ -65,10 +67,12 @@ function NewSchedule({ orgId }: { orgId: string }) {
 
 function NewScheduleForm({
   orgId,
+  accountId,
   agents,
   providers,
 }: {
   orgId: string;
+  accountId: string;
   /** `null` while the agents load. */
   agents: Agent[] | null;
   providers: ProviderModels[];
@@ -84,7 +88,13 @@ function NewScheduleForm({
   const [draft, setDraft] = useState<ScheduleDraft>(() => emptyDraft(list[0]?.id ?? ""));
   const [grants, setGrants] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const zone = useTimeZone() ?? "UTC";
+  // The zone the task takes, as the kernel picks it: my account's, else the browser's (the end
+  // date is the end of that day there)
+  const prefsQ = preferencesQuery(accountId);
+  const accountZone = useQuery({ ...prefsQ, retryOnMount: retryOnMountOf(prefsQ.queryKey) }).data
+    ?.timeZone;
+  const browserZone = useTimeZone();
+  const zone = accountZone ?? browserZone ?? "UTC";
   const tools = useGrantableTools(orgId, draft.agentId);
   const settingsQ = orgSettingsQuery(orgId);
   const settings = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data
@@ -154,6 +164,7 @@ function NewScheduleForm({
             agents={list}
             providers={providers}
             readOnly={off}
+            createZone={zone}
             {...(settings !== undefined ? { minIntervalMinutes: settings.minIntervalMinutes } : {})}
           />
           <ApprovedToolsSection

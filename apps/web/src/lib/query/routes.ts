@@ -1083,16 +1083,18 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/schedules/new",
-    // Members up: the agents to pick, the models, my chats (the chat picker) and the org's
-    // settings (turned off, the shortest interval); then the first agent's grantable tools.
+    // Members up: the agents to pick, the models, my chats (the chat picker), the org's settings
+    // (turned off, the shortest interval) and my preferences (the zone the task takes, which the
+    // end date is read in); then the first agent's grantable tools.
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member")
+      orgId === null || me === null || !atLeast(me, "member")
         ? []
         : [
             q(agentsQuery(orgId)),
             q(modelsQuery(orgId)),
             q(chatTargetsQuery(orgId)),
             q(orgSettingsQuery(orgId)),
+            q(preferencesQuery(me.account.id)),
           ],
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
     then: async ({ orgId, me }, qc) => {

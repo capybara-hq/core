@@ -5609,7 +5609,7 @@
         "group": "Group"
       },
       "model": "Model",
-      "modelHint": "Leave them on the agent's defaults unless the task needs something else.",
+      "modelHint": "Leave them on the agent's defaults unless the task needs something else. Only a task that starts new conversations has its own; one that posts into a conversation or chat uses that conversation's.",
       "modelLabel": "Model",
       "effort": "Reasoning effort",
       "agentDefault": "Agent default",
@@ -5628,7 +5628,7 @@
       "creatorUnknown": "another member",
       "chatAgentFixed": "A chat task uses the agent of the chat's connection.",
       "minInterval": "This organization runs a task at most once every {n} minutes.",
-      "expiresHelp": "The task ends after this day. Leave empty to keep it running.",
+      "expiresHelp": "The task ends after this day. Leave empty to keep it running, unless the organization sets a default end; then it ends that many days from now.",
       "noChats": "To post into an IM chat, message the agent's bot there once; the chat then shows here.",
       "chatOption": "{name} ({type})",
       "pickChat": "Choose a chat",

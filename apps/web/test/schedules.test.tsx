@@ -148,6 +148,8 @@ const common = {
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
   [`GET ${ORG}/settings`]: ok({ settings: { toolSearch: "on" } }),
+  // my preferences: no zone of my own (the browser's applies)
+  "GET /api/v1/me/preferences": ok({ timeZone: null }),
 };
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
@@ -327,12 +329,64 @@ describe("/schedules/new", () => {
       user,
     );
     expect(screen.getByRole("combobox", { name: E.form.agent }).textContent).toContain("Bot");
+    // a chat task runs with its conversation's model: no model section
+    expect(screen.queryByRole("combobox", { name: E.form.modelLabel })).toBeNull();
     await user.click(screen.getByRole("button", { name: E.form.create }));
-    expect(bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE))).toMatchObject({
+    const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
       agentId: "ag2",
       mode: "chat",
       chat: { connectionId: "cn1", chatId: "oc_1", chatType: "dm" },
     });
+    expect(body).not.toHaveProperty("model");
+    expect(body).not.toHaveProperty("effort");
+  });
+
+  it("the end date is the end of that day in my account's zone; a one-off sends none", async () => {
+    resetNavigation("/schedules/new");
+    const calls = stubApi({
+      ...common,
+      "GET /api/v1/me/preferences": ok({ timeZone: "America/New_York" }),
+      [`POST ${BASE}`]: () => json(201, { task: task({ id: "s9" }) }),
+      [`GET ${BASE}`]: ok({ items: [] }),
+    });
+    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    expect(screen.getByText(E.form.zoneCreate.replace("{zone}", "America/New_York"))).toBeTruthy();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: E.form.name }), "Brief");
+    await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Go.");
+    await user.type(
+      screen.getByLabelText(new RegExp(`^${E.form.expires}`)) as HTMLInputElement,
+      "2026-12-31",
+    );
+    await user.click(screen.getByRole("button", { name: E.form.create }));
+    const posts = () => calls.filter((c) => c.method === "POST" && c.url === BASE);
+    // 23:59:59 in New York (EST), whatever the browser's zone
+    expect(bodyOf(posts()[0])).toMatchObject({ expiresAt: "2027-01-01T04:59:59.000Z" });
+
+    // the same draft as a one-off: no end date goes out
+    resetNavigation("/schedules/new");
+    cleanup();
+    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    await user.type(screen.getByRole("textbox", { name: E.form.name }), "Once");
+    await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Go.");
+    await user.type(
+      screen.getByLabelText(new RegExp(`^${E.form.expires}`)) as HTMLInputElement,
+      "2026-12-31",
+    );
+    await pickOption(
+      screen.getByRole("combobox", { name: E.form.preset }),
+      E.form.presets.once,
+      user,
+    );
+    await user.type(screen.getByLabelText(new RegExp(`^${E.form.at}`)), "2030-01-01T09:00");
+    await user.click(screen.getByRole("button", { name: E.form.create }));
+    const once = bodyOf(posts()[1]) as Record<string, unknown>;
+    expect(once).toMatchObject({ trigger: { kind: "once" } });
+    expect(once).not.toHaveProperty("expiresAt");
   });
 
   it("turned off by the org: a notice and a form that can't create", async () => {

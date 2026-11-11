@@ -65,9 +65,9 @@ export interface ScheduleDraft {
   conversationId: string;
   /** Kept as it is: a chat is set from the chat itself (through the agent's tools). */
   chat: ScheduleChat | null;
-  /** `encodeModel` of the pick; "" = the agent's model. */
+  /** `encodeModel` of the pick; "" = the agent's model. `new` mode only. */
   model: string;
-  /** "" = the agent's effort. */
+  /** "" = the agent's effort. `new` mode only. */
   effort: string;
   /** The end date `YYYY-MM-DD` in the task's zone; "" = never (or the org's default on create). */
   expires: string;
@@ -128,9 +128,13 @@ export function createBodyOf(
     mode: d.mode,
     ...(d.mode === "conversation" ? { conversationId: d.conversationId } : {}),
     ...(d.mode === "chat" && d.chat !== null ? { chat: d.chat } : {}),
-    ...(model !== null ? { model } : {}),
-    ...(d.effort !== "" ? { effort: d.effort as ScheduleEffort } : {}),
-    ...(d.expires !== "" ? { expiresAt: endOfDayIn(d.expires, displayZone) } : {}),
+    // model and effort: a new-conversation task's only (another runs with its conversation's)
+    ...(d.mode === "new" && model !== null ? { model } : {}),
+    ...(d.mode === "new" && d.effort !== "" ? { effort: d.effort as ScheduleEffort } : {}),
+    // an end date is a recurring task's (a one-off one has none)
+    ...(d.expires !== "" && d.preset.kind !== "once"
+      ? { expiresAt: endOfDayIn(d.expires, displayZone) }
+      : {}),
     ...(grants.length > 0 ? { grants: grants.map((toolKey) => ({ toolKey })) } : {}),
   };
 }
@@ -153,11 +157,14 @@ export function patchOf(saved: ScheduleDraft, d: ScheduleDraft): ScheduleUpdateB
   // Leaving a mode clears its target
   if (d.mode !== saved.mode && saved.mode === "conversation") p.conversationId = null;
   if (d.mode !== saved.mode && saved.mode === "chat") p.chat = null;
-  if (d.model !== saved.model) p.model = d.model === "" ? null : decodeModel(d.model);
-  if (d.effort !== saved.effort) {
-    p.effort = d.effort === "" ? null : (d.effort as ScheduleEffort);
+  // model and effort: `new` mode only (leaving it, the kernel clears them)
+  if (d.mode === "new") {
+    if (d.model !== saved.model) p.model = d.model === "" ? null : decodeModel(d.model);
+    if (d.effort !== saved.effort) {
+      p.effort = d.effort === "" ? null : (d.effort as ScheduleEffort);
+    }
   }
-  if (d.expires !== saved.expires) {
+  if (d.expires !== saved.expires && d.preset.kind !== "once") {
     const zone = d.timeZone ?? saved.timeZone ?? "UTC";
     p.expiresAt = d.expires === "" ? null : endOfDayIn(d.expires, zone);
   }
@@ -192,6 +199,7 @@ export function ScheduleFormSections({
   existing,
   readOnly = false,
   minIntervalMinutes,
+  createZone,
 }: {
   orgId: string;
   draft: ScheduleDraft;
@@ -203,6 +211,8 @@ export function ScheduleFormSections({
   readOnly?: boolean;
   /** The org's shortest interval between runs (the schedule section's hint). */
   minIntervalMinutes?: number;
+  /** A new task: the zone it will take (my account's, else the browser's). */
+  createZone?: string;
 }) {
   const t = useTranslations("schedules.form");
   const tw = useTranslations("schedules");
@@ -353,7 +363,7 @@ export function ScheduleFormSections({
           )}
           {existing === undefined ? (
             <Text variant="small" tone="muted">
-              {t("zoneCreate", { zone: zone ?? "UTC" })}
+              {t("zoneCreate", { zone: createZone ?? zone ?? "UTC" })}
             </Text>
           ) : (
             <Field label={t("zone")}>
@@ -434,31 +444,33 @@ export function ScheduleFormSections({
           )}
         </Stack>
       </FormSection>
-      <FormSection id="model" title={t("model")} description={t("modelHint")}>
-        <Stack gap={12}>
-          <Field label={t("modelLabel")}>
-            <Select
-              name="model"
-              value={draft.model}
-              disabled={readOnly}
-              onChange={(e) => set("model", e.target.value)}
-              options={modelOptions}
-            />
-          </Field>
-          <Field label={t("effort")}>
-            <Select
-              name="effort"
-              value={draft.effort}
-              disabled={readOnly}
-              onChange={(e) => set("effort", e.target.value)}
-              options={[
-                { value: "", label: t("agentDefault") },
-                ...SCHEDULE_EFFORTS.map((e) => ({ value: e, label: te(e) })),
-              ]}
-            />
-          </Field>
-        </Stack>
-      </FormSection>
+      {draft.mode === "new" && (
+        <FormSection id="model" title={t("model")} description={t("modelHint")}>
+          <Stack gap={12}>
+            <Field label={t("modelLabel")}>
+              <Select
+                name="model"
+                value={draft.model}
+                disabled={readOnly}
+                onChange={(e) => set("model", e.target.value)}
+                options={modelOptions}
+              />
+            </Field>
+            <Field label={t("effort")}>
+              <Select
+                name="effort"
+                value={draft.effort}
+                disabled={readOnly}
+                onChange={(e) => set("effort", e.target.value)}
+                options={[
+                  { value: "", label: t("agentDefault") },
+                  ...SCHEDULE_EFFORTS.map((e) => ({ value: e, label: te(e) })),
+                ]}
+              />
+            </Field>
+          </Stack>
+        </FormSection>
+      )}
     </>
   );
 }
