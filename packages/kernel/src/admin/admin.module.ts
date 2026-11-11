@@ -6,6 +6,7 @@ import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { InboxModule } from "../inbox/inbox.module.js";
+import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
@@ -15,10 +16,11 @@ import { AdminOverviewService } from "./overview.service.js";
 import { PlatformAuditService } from "./platform-audit.service.js";
 import { SetupService } from "./setup.service.js";
 import { SetupLockModule } from "./setup-lock.js";
+import { AdminUsageService } from "./usage.service.js";
 
 /**
  * Deployment administration: the setup wizard, the platform-level audit log and the admin overview
- * with its health read (its controllers are the api role's, `ApiModule`).
+ * with its health read and seven-day usage aggregate (its controllers are the api role's, `ApiModule`).
  */
 @Module({
   imports: [
@@ -36,8 +38,22 @@ import { SetupLockModule } from "./setup-lock.js";
     TitlesModule,
     UsageReportJobsModule,
     EvalsModule,
+    // the price table of the usage aggregate
+    ModelsModule,
   ],
-  providers: [SetupService, PlatformAuditService, AdminOverviewService, AdminHealthService],
-  exports: [SetupService, PlatformAuditService, AdminOverviewService, AdminHealthService],
+  providers: [
+    SetupService,
+    PlatformAuditService,
+    AdminOverviewService,
+    AdminHealthService,
+    AdminUsageService,
+  ],
+  exports: [
+    SetupService,
+    PlatformAuditService,
+    AdminOverviewService,
+    AdminHealthService,
+    AdminUsageService,
+  ],
 })
 export class AdminModule {}

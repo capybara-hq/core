@@ -132,6 +132,9 @@
       "already_completed": "Setup has already been completed.",
       "token_invalid": "The setup token is missing or invalid."
     },
+    "admin": {
+      "usage_unavailable": "The usage figures took too long to compute. Try again in a moment."
+    },
     "agent": {
       "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
       "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
