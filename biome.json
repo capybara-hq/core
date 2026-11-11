@@ -10,6 +10,7 @@
       "!.superpowers",
       "!packages/kernel/test/evals/fixtures/pre-tool-rename",
       "!packages/kernel/test/evals/fixtures/pre-background-subagents",
+      "!packages/kernel/test/evals/fixtures/pre-skills-default-on",
       "!pnpm-lock.yaml",
       "!docs",
       "!tools/checks/fixtures",
