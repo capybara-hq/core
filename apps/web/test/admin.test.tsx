@@ -122,12 +122,57 @@ const AUDIT = {
   ],
   next: null,
 };
+const QUEUE_NAMES = [
+  "cap-kernel-runs",
+  "cap-kernel-subagent-runs",
+  "cap-kernel-channels",
+  "cap-kernel-maintenance",
+  "cap-kernel-plugin-scope",
+  "cap-kernel-titles",
+  "cap-kernel-usage-report",
+  "cap-kernel-evals",
+];
+const HEALTH = {
+  kernel: { version: "0.1.0" },
+  replicas: [
+    { id: "r-api-1", roles: ["api"], version: "0.1.0", startedAt: OV_T, httpReplicaId: null },
+    { id: "r-api-2", roles: ["api"], version: "0.1.0", startedAt: OV_T, httpReplicaId: "b" },
+    {
+      id: "r-bg-1",
+      roles: ["worker", "gateway"],
+      version: "0.1.0",
+      startedAt: OV_T,
+      httpReplicaId: null,
+    },
+  ],
+  roles: { api: 2, worker: 1, gateway: 1 },
+  queues: QUEUE_NAMES.map((name, i) => ({
+    name,
+    waiting: i === 0 ? 3 : 0,
+    active: i === 0 ? 1 : 0,
+    delayed: i === 2 ? 5 : 0,
+    failed: i === 0 ? 4 : i === 2 ? 9 : 0,
+    failedLastDay: i === 0 ? 2 : 0,
+  })),
+  channels: { online: 5, offline: 1, webhook: 2, disabled: 1, error: 0 },
+  devices: { online: 3, local: 7 },
+  sandboxes: {
+    running: 4,
+    suspended: 2,
+    byProvider: [
+      { provider: "sandbox-docker", running: 3 },
+      { provider: "sandbox-e2b", running: 1 },
+    ],
+  },
+  unavailable: [],
+};
 const overviewRoutes = (over: Record<string, () => Response> = {}) => ({
   "GET /api/v1/admin/overview": () => json(200, { orgs: 2, accounts: 7, attentionTotal: 12 }),
   "GET /api/v1/admin/inbox": () => json(200, OV_INBOX),
   "GET /api/v1/admin/inbox/count": () => json(200, { total: 6 }),
   "GET /api/v1/admin/overview/attention": () => json(200, ATTENTION),
   "GET /api/v1/admin/audit": () => json(200, AUDIT),
+  "GET /api/v1/admin/overview/health": () => json(200, HEALTH),
   ...over,
 });
 /** The section titled `title` (an OverviewSection is the section's Card). */
@@ -424,9 +469,253 @@ describe("/admin 概览（OverviewPage）", () => {
     const o = zh.admin.overview;
     expect(await screen.findByText("v1.2.0 → v1.3.0")).toBeTruthy();
     expect(section(o.audit.title).hasAttribute("data-state")).toBe(false);
+    expect(section(o.health.title).hasAttribute("data-state")).toBe(false);
+    expect(within(section(o.health.title)).getByText(o.health.queues.runs)).toBeTruthy();
     expect(screen.getByText(o.footnote)).toBeTruthy();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(calls).toEqual([]);
+  });
+
+  /** The 运行状况 section once loaded. */
+  const healthBox = async (title: string) =>
+    vi.waitFor(
+      () => {
+        const s = section(title);
+        if (s.hasAttribute("data-state")) throw new Error("not ready");
+        return s;
+      },
+      { timeout: 3000 },
+    );
+  /** The value of a key-value row by its key. */
+  const kvValue = (box: HTMLElement, key: string) =>
+    within(box)
+      .getByText(key, { selector: "dt" })
+      .closest('[data-part="key-value-row"]')
+      ?.querySelector("dd") as HTMLElement;
+
+  it.each(LOCALES)(
+    "运行状况：版本、副本按角色、队列（可读名称与 24 小时内失败）、连接数字（%s）",
+    async (locale) => {
+      const h = msgs[locale].admin.overview.health;
+      stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const box = await healthBox(h.title);
+      for (const g of Object.values(h.groups)) {
+        expect(within(box).getByText(g, { selector: "[data-part=subsection-title]" })).toBeTruthy();
+      }
+      expect(kvValue(box, h.kernel.version).textContent).toBe("v0.1.0");
+      expect(kvValue(box, h.kernel.replicas).textContent).toBe(
+        `${h.roles.api} 2 · ${h.roles.worker} 1 · ${h.roles.gateway} 1`,
+      );
+      // every role has a replica, every replica the same version: no fail or warn line
+      expect(within(box).queryByText(h.noReplicas.worker)).toBeNull();
+      expect(within(box).queryByText(h.kernel.mixedVersions)).toBeNull();
+      // the queues: readable names in the kernel's order, counts, failures in the last day in fail
+      const table = within(box).getByRole("table", { name: h.groups.queues });
+      for (const c of Object.values(h.queueColumns)) {
+        expect(within(table).getByRole("columnheader", { name: c })).toBeTruthy();
+      }
+      const names = within(table)
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => (r.querySelector("td") as HTMLElement).textContent);
+      expect(names).toEqual(Object.values(h.queues));
+      const cells = (name: string) =>
+        [
+          ...(within(table).getByText(name).closest("tr") as HTMLElement).querySelectorAll("td"),
+        ].map((td) => td.textContent);
+      expect(cells(h.queues.runs)).toEqual([h.queues.runs, "3", "1", "0", "2"]);
+      expect(cells(h.queues.channels)).toEqual([h.queues.channels, "0", "0", "5", "0"]);
+      const runsRow = within(table).getByText(h.queues.runs).closest("tr") as HTMLElement;
+      const failed = within(runsRow).getByText("2");
+      expect(failed.getAttribute("data-tone")).toBe("fail");
+      const channelsRow = within(table).getByText(h.queues.channels).closest("tr") as HTMLElement;
+      const none = [...channelsRow.querySelectorAll("td")].at(-1) as HTMLElement;
+      expect(none.querySelector('[data-tone="fail"]')).toBeNull();
+      // the connections
+      const c = h.channelParts;
+      expect(kvValue(box, h.connections.channels).textContent).toBe(
+        `${c.online} 5 · ${c.offline} 1 · ${c.webhook} 2 · ${c.disabled} 1 · ${c.error} 0`,
+      );
+      expect(kvValue(box, h.connections.devices).textContent).toBe(
+        `${h.deviceParts.online} 3 / ${h.deviceParts.local} 7`,
+      );
+      expect(kvValue(box, h.connections.sandboxes).textContent).toBe(
+        `${h.sandboxParts.running} 4 · ${h.sandboxParts.suspended} 2`,
+      );
+      expect(kvValue(box, h.connections.byProvider).textContent).toBe(
+        "sandbox-docker 3 · sandbox-e2b 1",
+      );
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("运行状况：副本列表默认折叠，展开后列出副本、角色、版本与启动时间", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    expect(within(box).queryByRole("table", { name: h.kernel.replicas })).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(box).getByRole("button", { name: fill(h.kernel.replicaList, { n: 3 }) }));
+    const table = within(box).getByRole("table", { name: h.kernel.replicas });
+    for (const c of Object.values(h.replicaColumns)) {
+      expect(within(table).getByRole("columnheader", { name: c })).toBeTruthy();
+    }
+    const row = within(table).getByText("r-bg-1").closest("tr") as HTMLElement;
+    expect(within(row).getByText("worker · gateway")).toBeTruthy();
+    expect(within(row).getByText("v0.1.0")).toBeTruthy();
+    expect(row.querySelector("time")).not.toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("运行状况：没有在线的 worker 与 gateway 时是失败行；副本版本不一致时提醒", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () =>
+          json(200, {
+            ...HEALTH,
+            replicas: [
+              { ...HEALTH.replicas[0], version: "0.1.0" },
+              { ...HEALTH.replicas[1], version: "0.2.0" },
+            ],
+            roles: { api: 2, worker: 0, gateway: 0 },
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    const worker = within(box).getByText(h.noReplicas.worker);
+    expect(worker.getAttribute("data-tone")).toBe("fail");
+    expect(within(box).getByText(h.noReplicas.gateway).getAttribute("data-tone")).toBe("fail");
+    expect(within(box).queryByText(h.noReplicas.api)).toBeNull();
+    // the zero counts in the roles line are fail too
+    const roles = kvValue(box, h.kernel.replicas);
+    expect(roles.textContent).toBe(`${h.roles.api} 2 · ${h.roles.worker} 0 · ${h.roles.gateway} 0`);
+    expect(roles.querySelectorAll('[data-tone="fail"]')).toHaveLength(2);
+    expect(within(box).getByText(h.kernel.mixedVersions).getAttribute("data-tone")).toBe("warn");
+  });
+
+  it("运行状况：Redis 读不到时，副本、队列与在线数显示「暂时无法读取」，PG 的数字照常", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () =>
+          json(200, {
+            ...HEALTH,
+            replicas: null,
+            roles: null,
+            queues: null,
+            channels: { ...HEALTH.channels, online: null, offline: null },
+            devices: { online: null, local: 7 },
+            unavailable: ["redis"],
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    const muted = (el: HTMLElement) =>
+      [...el.querySelectorAll('[data-tone="muted"]')].map((x) => x.textContent);
+    expect(muted(kvValue(box, h.kernel.replicas))).toEqual([h.unavailable]);
+    expect(within(box).queryByRole("table", { name: h.groups.queues })).toBeNull();
+    expect(within(box).queryByRole("button", { name: /副本列表/ })).toBeNull();
+    const c = h.channelParts;
+    expect(kvValue(box, h.connections.channels).textContent).toBe(
+      `${c.online} ${h.unavailable} · ${c.offline} ${h.unavailable} · ${c.webhook} 2 · ${c.disabled} 1 · ${c.error} 0`,
+    );
+    expect(muted(kvValue(box, h.connections.devices))).toEqual([h.unavailable]);
+    expect(kvValue(box, h.connections.sandboxes).textContent).toBe(
+      `${h.sandboxParts.running} 4 · ${h.sandboxParts.suspended} 2`,
+    );
+    // the queue group says so in place of its table
+    expect(within(box).getAllByText(h.unavailable).length).toBeGreaterThanOrEqual(5);
+    expect(kvValue(box, h.kernel.version).textContent).toBe("v0.1.0");
+  });
+
+  it("运行状况：PG 读不到时，渠道、设备、沙箱显示「暂时无法读取」", async () => {
+    const h = zh.admin.overview.health;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () =>
+          json(200, {
+            ...HEALTH,
+            channels: { online: 5, offline: null, webhook: null, disabled: null, error: null },
+            devices: { online: 3, local: null },
+            sandboxes: null,
+            unavailable: ["database"],
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = await healthBox(h.title);
+    expect(kvValue(box, h.connections.sandboxes).textContent).toBe(h.unavailable);
+    expect(within(box).queryByText(h.connections.byProvider)).toBeNull();
+    expect(kvValue(box, h.connections.devices).textContent).toBe(
+      `${h.deviceParts.online} 3 / ${h.deviceParts.local} ${h.unavailable}`,
+    );
+    expect(within(box).getByRole("table", { name: h.groups.queues })).toBeTruthy();
+  });
+
+  it("运行状况：页面可见时每 30 秒重读一次", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const h = zh.admin.overview.health;
+      const calls = stubApi(overviewRoutes());
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+      await healthBox(h.title);
+      const reads = () =>
+        calls.filter((c) => new URL(c.url, "http://x").pathname === "/api/v1/admin/overview/health")
+          .length;
+      const before = reads();
+      expect(before).toBe(1);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(reads()).toBe(before);
+      await vi.advanceTimersByTimeAsync(5_500);
+      await vi.waitFor(() => expect(reads()).toBe(before + 1));
+      await vi.advanceTimersByTimeAsync(30_500);
+      await vi.waitFor(() => expect(reads()).toBe(before + 2));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("运行状况读取失败：只有这个区块出错，重试只重读它；其余区块照常", async () => {
+    const o = zh.admin.overview;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/health": () => (failing ? boom() : json(200, HEALTH)),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/admin", lastStubRoutes(), {
+      locale: "zh",
+    });
+    const alert = await vi.waitFor(() => within(section(o.health.title)).getByRole("alert"), {
+      timeout: 3000,
+    });
+    expect(within(alert).getByText(o.health.failed)).toBeTruthy();
+    expect(within(await metricsOf(container)).getByText("12")).toBeTruthy();
+    expect(await within(section(o.attention.title)).findByText("v1.2.0 → v1.3.0")).toBeTruthy();
+    expect(within(section(o.audit.title)).getByText("Grant")).toBeTruthy();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "重试" }));
+    const box = await healthBox(o.health.title);
+    expect(within(box).getByText("v0.1.0")).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/overview/health"]);
+  });
+
+  it("the sections stack in order: 待处理, 运行状况, 最近的平台操作", async () => {
+    const o = zh.admin.overview;
+    stubApi(overviewRoutes());
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    await healthBox(o.health.title);
+    const follows = (a: HTMLElement, b: HTMLElement) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(section(o.attention.title), section(o.health.title))).toBe(true);
+    expect(follows(section(o.health.title), section(o.audit.title))).toBe(true);
   });
 
   it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {

@@ -3386,6 +3386,76 @@
         },
         "retry": "Retry"
       },
+      "health": {
+        "title": "Health",
+        "failed": "Could not load health.",
+        "unavailable": "Unavailable right now",
+        "groups": {
+          "kernel": "Kernel",
+          "queues": "Queues",
+          "connections": "Connections"
+        },
+        "kernel": {
+          "version": "Version",
+          "replicas": "Replicas",
+          "mixedVersions": "Replicas report different versions (rolling upgrade?)",
+          "replicaList": "Replicas ({n})"
+        },
+        "roles": {
+          "api": "api",
+          "worker": "worker",
+          "gateway": "gateway"
+        },
+        "noReplicas": {
+          "api": "No api replica online: the API cannot be reached",
+          "worker": "No worker replica online: runs will not start",
+          "gateway": "No gateway replica online: channel long connections will not be held"
+        },
+        "replicaColumns": {
+          "id": "Replica",
+          "roles": "Roles",
+          "version": "Version",
+          "startedAt": "Started"
+        },
+        "queueColumns": {
+          "name": "Queue",
+          "waiting": "Waiting",
+          "active": "Active",
+          "delayed": "Delayed",
+          "failedLastDay": "Failed in 24 h"
+        },
+        "queues": {
+          "runs": "Runs",
+          "subagentRuns": "Sub-agent runs",
+          "channels": "Channels",
+          "maintenance": "Maintenance",
+          "pluginScope": "Plugin scope sync",
+          "titles": "Titles",
+          "usageReport": "Usage reports",
+          "evals": "Evals"
+        },
+        "connections": {
+          "channels": "Channels",
+          "devices": "Devices",
+          "sandboxes": "Sandboxes",
+          "byProvider": "By provider"
+        },
+        "channelParts": {
+          "online": "Online",
+          "offline": "Offline",
+          "webhook": "Webhook",
+          "disabled": "Disabled",
+          "error": "Error"
+        },
+        "deviceParts": {
+          "online": "Online",
+          "local": "Local"
+        },
+        "sandboxParts": {
+          "running": "Running",
+          "suspended": "Suspended"
+        }
+      },
       "audit": {
         "title": "Recent platform activity",
         "viewAll": "View all",

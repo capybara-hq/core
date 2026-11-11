@@ -276,6 +276,34 @@ const ROUTES: Routes = {
       more: { extensions: 0, updates: 0, providers: 0 },
       unavailable: [],
     }),
+  "GET /api/v1/admin/overview/health": () =>
+    json(200, {
+      kernel: { version: "0.1.0" },
+      replicas: [
+        {
+          id: "r1",
+          roles: ["api", "worker", "gateway"],
+          version: "0.1.0",
+          startedAt: T,
+          httpReplicaId: null,
+        },
+      ],
+      roles: { api: 1, worker: 1, gateway: 1 },
+      queues: [
+        {
+          name: "cap-kernel-runs",
+          waiting: 0,
+          active: 0,
+          delayed: 0,
+          failed: 0,
+          failedLastDay: 0,
+        },
+      ],
+      channels: { online: 0, offline: 0, webhook: 0, disabled: 0, error: 0 },
+      devices: { online: 0, local: 0 },
+      sandboxes: { running: 0, suspended: 0, byProvider: [] },
+      unavailable: [],
+    }),
   "GET /api/v1/admin/audit": () =>
     json(200, {
       events: [
@@ -359,7 +387,7 @@ async function expectLoading(name: string, text: string) {
 }
 
 describe("first paint comes from the hydrated cache (no browser read)", () => {
-  it("/admin: the numbers, the inbox counts and the audit events paint from the hydrated cache; only 待处理's lists are read after mount", async () => {
+  it("/admin: the numbers, the inbox counts and the audit events paint from the hydrated cache; only 待处理's lists and 运行状况 are read after mount", async () => {
     const O = en.admin.overview;
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin", ROUTES);
@@ -375,10 +403,16 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       .map((el) => el.closest('[data-part="overview-section"]'))
       .find((el) => el !== null);
     expect(attention?.getAttribute("data-state")).toBe("loading");
+    // so does 运行状况: not prefetched either (Redis and PG counts, polled in the page)
+    const health = screen
+      .getByText(O.health.title)
+      .closest('[data-part="overview-section"]') as HTMLElement;
+    expect(health.getAttribute("data-state")).toBe("loading");
+    expect(health.querySelector("[aria-busy='true']")).not.toBeNull();
     await settle();
-    // (the browser stub answers nothing here, so the one read is retried once)
+    // (the browser stub answers nothing here, so each read is retried once)
     expect(new Set(browser.map((c) => new URL(c.url, "http://x").pathname))).toEqual(
-      new Set(["/api/v1/admin/overview/attention"]),
+      new Set(["/api/v1/admin/overview/attention", "/api/v1/admin/overview/health"]),
     );
   });
 
@@ -396,6 +430,17 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(await within(box()).findByText("v1.0.0 → v1.1.0")).toBeTruthy();
     expect(within(box()).getByText(O.inboxTypes.scope_sync_failed)).toBeTruthy();
     expect(within(box()).getByText(O.inboxTypes.platform_migration)).toBeTruthy();
+  });
+
+  it("/admin: 运行状况 shows its skeleton, then the replicas and queues", async () => {
+    const H = en.admin.overview.health;
+    stubApi(ROUTES);
+    await renderRouteWithCache("/admin", ROUTES);
+    const box = () =>
+      screen.getByText(H.title).closest('[data-part="overview-section"]') as HTMLElement;
+    expect(box().getAttribute("data-state")).toBe("loading");
+    expect(await within(box()).findByText(H.queues.runs)).toBeTruthy();
+    expect(within(box()).getByText("v0.1.0")).toBeTruthy();
   });
 
   it("/admin/accounts: a first render from the hydrated cache makes no browser read (load more when there is a next)", async () => {

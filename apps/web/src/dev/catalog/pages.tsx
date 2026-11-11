@@ -5,10 +5,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import AdminOverviewView from "../../app/(app)/admin/view";
 import { ADMIN_PAGES } from "../../components/admin-nav";
-import type { AdminAttention, AdminOverview, PlatformAuditPage } from "../../lib/admin";
+import type {
+  AdminAttention,
+  AdminHealth,
+  AdminHealthQueue,
+  AdminOverview,
+  PlatformAuditPage,
+} from "../../lib/admin";
 import type { PlatformInboxView } from "../../lib/admin-inbox";
 import {
   adminAttentionQuery,
+  adminHealthQuery,
   adminInboxQuery,
   adminOverviewQuery,
   platformAuditQuery,
@@ -131,6 +138,53 @@ const AUDIT: PlatformAuditPage = {
   next: null,
 };
 
+const QUEUE = (name: string, over: Partial<AdminHealthQueue> = {}): AdminHealthQueue => ({
+  name,
+  waiting: 0,
+  active: 0,
+  delayed: 0,
+  failed: 0,
+  failedLastDay: 0,
+  ...over,
+});
+
+const HEALTH: AdminHealth = {
+  kernel: { version: "0.1.0" },
+  replicas: [
+    { id: "kernel-7f9c2", roles: ["api"], version: "0.1.0", startedAt: T, httpReplicaId: "a" },
+    { id: "kernel-1b04e", roles: ["api"], version: "0.1.0", startedAt: T, httpReplicaId: "b" },
+    {
+      id: "kernel-c55a1",
+      roles: ["worker", "gateway"],
+      version: "0.1.0",
+      startedAt: T,
+      httpReplicaId: null,
+    },
+  ],
+  roles: { api: 2, worker: 1, gateway: 1 },
+  queues: [
+    QUEUE("cap-kernel-runs", { waiting: 3, active: 2, failed: 4, failedLastDay: 2 }),
+    QUEUE("cap-kernel-subagent-runs", { active: 1 }),
+    QUEUE("cap-kernel-channels", { waiting: 1, delayed: 2 }),
+    QUEUE("cap-kernel-maintenance", { delayed: 6 }),
+    QUEUE("cap-kernel-plugin-scope"),
+    QUEUE("cap-kernel-titles"),
+    QUEUE("cap-kernel-usage-report", { delayed: 1 }),
+    QUEUE("cap-kernel-evals"),
+  ],
+  channels: { online: 5, offline: 1, webhook: 2, disabled: 1, error: 0 },
+  devices: { online: 3, local: 7 },
+  sandboxes: {
+    running: 4,
+    suspended: 2,
+    byProvider: [
+      { provider: "sandbox-docker", running: 3 },
+      { provider: "sandbox-e2b", running: 1 },
+    ],
+  },
+  unavailable: [],
+};
+
 /** A query cache holding the page's answers, never read again (no kernel behind the catalog). */
 function seeded(): QueryClient {
   const qc = new QueryClient({
@@ -140,6 +194,7 @@ function seeded(): QueryClient {
   qc.setQueryData(adminOverviewQuery().queryKey, OVERVIEW);
   qc.setQueryData(adminInboxQuery().queryKey, INBOX);
   qc.setQueryData(adminAttentionQuery().queryKey, ATTENTION);
+  qc.setQueryData(adminHealthQuery().queryKey, HEALTH);
   qc.setQueryData(platformAuditQuery().queryKey, AUDIT);
   return qc;
 }

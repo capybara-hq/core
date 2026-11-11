@@ -82,6 +82,66 @@ export interface AdminAttention {
   unavailable: AttentionSource[];
 }
 
+/** A kernel role (`roles` in the kernel config). */
+export type ReplicaRole = "api" | "worker" | "gateway";
+
+/** A live kernel replica (`GET /admin/overview/health`). */
+export interface AdminHealthReplica {
+  /** The process id. */
+  id: string;
+  roles: ReplicaRole[];
+  version: string;
+  startedAt: string;
+  /** The configured `http.replicaId`, null when unset. */
+  httpReplicaId: string | null;
+}
+
+/** One kernel queue: counts only, never job data or a failure text. */
+export interface AdminHealthQueue {
+  name: string;
+  waiting: number;
+  active: number;
+  delayed: number;
+  /** Failed jobs still kept (each queue keeps the last 5000). */
+  failed: number;
+  /** Of those, the ones that failed in the last 24 hours. */
+  failedLastDay: number;
+}
+
+/** A source the kernel could not read right now (its numbers are null). */
+export type AdminHealthSource = "redis" | "database";
+
+/**
+ * `GET /admin/overview/health` (kernel `admin/health.service.ts`): the kernel version, the live
+ * replicas and their roles, the kernel queues, and channel, device and sandbox counts. Each
+ * source degrades on its own: a number the kernel could not read is null, `unavailable` names
+ * the sources.
+ */
+export interface AdminHealth {
+  kernel: { version: string };
+  /** Live replicas, oldest start first. */
+  replicas: AdminHealthReplica[] | null;
+  /** Live replicas per role (a replica with several roles counts in each). */
+  roles: Record<ReplicaRole, number> | null;
+  /** The kernel queues in a fixed order. */
+  queues: AdminHealthQueue[] | null;
+  channels: {
+    online: number | null;
+    offline: number | null;
+    webhook: number | null;
+    disabled: number | null;
+    error: number | null;
+  };
+  devices: { online: number | null; local: number | null };
+  sandboxes: {
+    running: number;
+    suspended: number;
+    /** Running instances per provider (most first). */
+    byProvider: { provider: string; running: number }[];
+  } | null;
+  unavailable: AdminHealthSource[];
+}
+
 /**
  * One platform-level audit event (`GET /admin/audit`, org-less events only): who (null: the
  * kernel), whether through a personal token or their agent, the action and its target. Never the
@@ -232,6 +292,9 @@ export const getAdminOverview = () => apiFetch<AdminOverview>("/api/v1/admin/ove
 
 /** The overview's 待处理 lists (may wait on a provider's model list). */
 export const getAdminAttention = () => apiFetch<AdminAttention>("/api/v1/admin/overview/attention");
+
+/** The overview's 运行状况 (replicas, queues, connections; polled while the page shows). */
+export const getAdminHealth = () => apiFetch<AdminHealth>("/api/v1/admin/overview/health");
 
 /**
  * A page of the platform audit log: the newest (`after` omitted) or the one after a cursor. The
