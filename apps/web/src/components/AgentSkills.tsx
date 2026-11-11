@@ -4,10 +4,13 @@ import {
   Badge,
   Button,
   Checkbox,
+  CheckList,
   DangerConfirm,
   Dialog,
   EmptyState,
   FilePicker,
+  Icon,
+  Input,
   ItemList,
   ItemListItem,
   Stack,
@@ -36,16 +39,17 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * The org skills multi-select: one checkbox per skill (name · description), platform skills with a
- * "platform" tag. A selected id that is not in the library (the skill was deleted) shows as a
- * deleted skill and stays ticked; unticking removes it from the definition (the kernel checks only
- * newly added references on save, so keeping it is not an error).
+ * The org skills multi-select, grouped by where the skills come from ({@link SkillGroups}: each
+ * plugin, the org's own, the built-in ones), each group with its select-all box. A selected id
+ * that is not in the library (the skill was deleted) shows as a deleted skill and stays ticked;
+ * unticking removes it from the definition (the kernel checks only newly added references on
+ * save, so keeping it is not an error).
  * A platform skill is selected when the definition names it or one of the org copies linked to it
  * (`linkedIds`, older agents); those copy ids are never shown as deleted. Unticking it removes
  * every alias; ticking it adds the platform skill's own id. A builtin plugin's skill (`builtin`)
- * shows ticked and disabled: every agent has it without selecting it. A region of the skills card; with no
- * org skills the panel empty state, linking to the skills page when `skillsHref` is given (the
- * viewer can see it).
+ * shows ticked and locked: every agent has it without selecting it. A region of the skills card;
+ * with no org skills the panel empty state, linking to the skills page when `skillsHref` is
+ * given (the viewer can see it).
  */
 export function OrgSkillsPicker({
   skills,
@@ -66,9 +70,20 @@ export function OrgSkillsPicker({
   skillsHref?: string | undefined;
 }) {
   const t = useTranslations("agents.form");
-  const toggle = (s: SkillSummary, on: boolean) => {
-    const aliases = skillAliases(s);
-    onChange(on ? [...value, s.id] : value.filter((x) => !aliases.includes(x)));
+  /**
+   * Turns skills on or off for the agent (one row, or a group's select-all): on adds each one not
+   * yet selected by its own id; off removes every alias of each.
+   */
+  const toggleAll = (list: SkillSummary[], on: boolean) => {
+    if (on) {
+      const add = list
+        .filter((s) => !skillAliases(s).some((id) => value.includes(id)))
+        .map((s) => s.id);
+      onChange([...value, ...add]);
+    } else {
+      const drop = new Set(list.flatMap(skillAliases));
+      onChange(value.filter((x) => !drop.has(x)));
+    }
   };
   const known = new Set([...(skills ?? []).flatMap(skillAliases), ...alsoKnown]);
   const missing = skills === undefined ? [] : value.filter((id) => !known.has(id));
@@ -92,22 +107,12 @@ export function OrgSkillsPicker({
                 })}
           />
         )}
-        {(skills ?? []).map((s) => (
-          <Stack key={s.id} direction="row" gap={8} align="center">
-            <Checkbox
-              label={`${s.name} · ${s.description}`}
-              // a builtin plugin's skill: every agent has it, nothing to select
-              checked={s.builtin === true || skillAliases(s).some((id) => value.includes(id))}
-              disabled={s.builtin === true}
-              onChange={(on) => toggle(s, on)}
-            />
-            <SkillTags skill={s} />
-          </Stack>
-        ))}
-        {(skills ?? []).some((s) => s.builtin === true) && (
-          <Text variant="small" tone="faint">
-            {t("builtinHint")}
-          </Text>
+        {skills !== undefined && skills.length > 0 && (
+          <SkillGroups
+            skills={skills}
+            isChecked={(s) => skillAliases(s).some((id) => value.includes(id))}
+            onToggle={toggleAll}
+          />
         )}
         {(skills ?? []).some((s) => s.manual === true) && (
           <Text variant="small" tone="faint">
@@ -142,6 +147,118 @@ export function OrgSkillsPicker({
         )}
       </Stack>
     </Subsection>
+  );
+}
+
+/** From this many skills a skill list draws its filter field (as ToolPolicyList's, spec §6.36). */
+const SKILL_SEARCH_FROM = 8;
+
+export type SkillGroup = { id: string; title: string; skills: SkillSummary[] };
+
+/**
+ * The skills grouped by where they come from: one group per plugin (by its name), then the org's
+ * own skills, then the built-in ones (a builtin plugin's: every agent has them, nothing to select).
+ */
+export function skillGroupsOf(
+  skills: readonly SkillSummary[],
+  names: { org: string; builtin: string },
+): SkillGroup[] {
+  const plugins = new Map<string, SkillSummary[]>();
+  const own: SkillSummary[] = [];
+  const builtin: SkillSummary[] = [];
+  for (const s of skills) {
+    if (s.builtin === true) builtin.push(s);
+    else if (s.plugin) plugins.set(s.plugin, [...(plugins.get(s.plugin) ?? []), s]);
+    else own.push(s);
+  }
+  return [
+    ...[...plugins.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([plugin, list]) => ({ id: `plugin:${plugin}`, title: plugin, skills: list })),
+    ...(own.length > 0 ? [{ id: "org", title: names.org, skills: own }] : []),
+    ...(builtin.length > 0 ? [{ id: "builtin", title: names.builtin, skills: builtin }] : []),
+  ];
+}
+
+/**
+ * Skills to choose from (the agent page's 组织技能, a template's skills), one `CheckList` per
+ * group ({@link skillGroupsOf}): the group's checkbox turns all of its skills on or off for the
+ * agent (mixed, with the checked count), each row the name with its tags on the first line and the
+ * description as one cut line (the full text on hover). Built-in skills are ticked and locked,
+ * outside the counts, with the note that they need no selecting. With many skills a filter field
+ * narrows the rows by name and description; a group's select-all then acts on the rows it shows.
+ */
+export function SkillGroups({
+  skills,
+  isChecked,
+  onToggle,
+  disabled = false,
+}: {
+  skills: readonly SkillSummary[];
+  isChecked(s: SkillSummary): boolean;
+  /** Turns these skills on or off (a row, or a group's shown rows). */
+  onToggle(skills: SkillSummary[], on: boolean): void;
+  disabled?: boolean;
+}) {
+  const t = useTranslations("agents.form");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const matches = (s: SkillSummary) =>
+    q === "" || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+  const groups = skillGroupsOf(skills, {
+    org: t("skillGroupOrg"),
+    builtin: t("skillGroupBuiltin"),
+  })
+    .map((g) => ({ ...g, skills: g.skills.filter(matches) }))
+    .filter((g) => g.skills.length > 0);
+  return (
+    <Stack gap={12}>
+      {skills.length >= SKILL_SEARCH_FROM && (
+        <Input
+          type="search"
+          density="dense"
+          prefix={<Icon name="search" size={14} />}
+          placeholder={t("searchSkills")}
+          aria-label={t("searchSkills")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
+      {groups.length === 0 && <EmptyState size="panel" text={t("noSkillMatch")} />}
+      {groups.map((g) => {
+        const byId = new Map(g.skills.map((s) => [s.id, s]));
+        const pick = (ids: string[]) =>
+          ids.flatMap((id) => {
+            const s = byId.get(id);
+            return s === undefined ? [] : [s];
+          });
+        return (
+          <Stack key={g.id} gap={4}>
+            <CheckList
+              label={g.title}
+              title={g.title}
+              disabled={disabled}
+              rows={g.skills.map((s) => ({
+                id: s.id,
+                title: s.name,
+                marks: <SkillTags skill={s} />,
+                description: s.description,
+                // a builtin plugin's skill: every agent has it, nothing to select
+                checked: s.builtin === true || isChecked(s),
+                locked: s.builtin === true,
+              }))}
+              onCheck={(id, on) => onToggle(pick([id]), on)}
+              onCheckAll={(ids, on) => onToggle(pick(ids), on)}
+            />
+            {g.id === "builtin" && (
+              <Text variant="small" tone="faint">
+                {t("builtinHint")}
+              </Text>
+            )}
+          </Stack>
+        );
+      })}
+    </Stack>
   );
 }
 

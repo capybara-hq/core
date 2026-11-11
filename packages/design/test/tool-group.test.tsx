@@ -350,6 +350,35 @@ describe("ToolGroup (§6.16.8)", () => {
     ).toHaveLength(3);
   });
 
+  it("a guard refusal is counted apart in the header's own color, never as a failure", () => {
+    const rows = [
+      builtin("Read", { kind: "read", keyArg: "/w/a.py" }),
+      builtin("Edit", { kind: "edit", keyArg: "/w/a.py", guard: "modified" }),
+    ];
+    expect(summarizeTools(rows, "zh")).toBe("已读取 /w/a.py，已修改 /w/a.py（1 个已拦下）");
+    expect(summarizeTools(rows, "en")).toContain(" (1 blocked)");
+    const { container } = wrap(<ToolGroup rows={rows} />);
+    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+  });
+
+  it("a guarded row reads as done with the neutral word, no failure", () => {
+    const { container } = wrap(
+      <ToolRow row={builtin("Edit", { kind: "edit", keyArg: "/w/a.py", guard: "modified" })} />,
+    );
+    expect(container.querySelector('[data-part="guard-word"]')?.textContent).toBe(
+      " · 已拦下：需先重新读取",
+    );
+    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    cleanup();
+    const en = wrap(
+      <ToolRow row={builtin("Write", { kind: "edit", keyArg: "/w/b", guard: "not_read" })} />,
+      "en",
+    );
+    expect(en.container.querySelector('[data-part="guard-word"]')?.textContent).toBe(
+      " · Blocked: read the file first",
+    );
+  });
+
   it("a failed group marks the failures in fail", () => {
     const { container } = wrap(<ToolGroup rows={[row(), row({ status: "failed" })]} />);
     expect(container.querySelector('[data-part="fail-word"]')?.textContent).toBe("（1 个失败）");

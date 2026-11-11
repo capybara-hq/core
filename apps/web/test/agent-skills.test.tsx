@@ -610,11 +610,168 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
     const box = await within(group).findByRole("checkbox", { name: /skill-guide/ });
     expect(box).toHaveProperty("checked", true);
     expect(box).toHaveProperty("disabled", true);
-    expect(within(group).getAllByText(en.agents.form.skillTag.builtin)).toHaveLength(2);
+    // the badge on each row (the group's heading reads 「内置」 too)
+    expect(
+      within(group).getAllByText(en.agents.form.skillTag.builtin, {
+        selector: '[data-part="check-list-marks"] > *',
+      }),
+    ).toHaveLength(2);
     expect(within(group).getByText(en.agents.form.builtinHint)).toBeTruthy();
     const copy = within(group).getByRole("checkbox", { name: /core-notes/ });
     expect(copy).toHaveProperty("checked", true);
     expect(copy).toHaveProperty("disabled", true);
+  });
+});
+
+describe("org skills grouped by where they come from (acceptance: 15 Superpowers skills)", () => {
+  beforeEach(() => resetNavigation("/agents/ag1"));
+  const F = en.agents.form;
+  const SP = ["brainstorming", "systematic-debugging", "writing-plans", "using-superpowers"].concat(
+    Array.from({ length: 6 }, (_, i) => `sp-extra-${i}`),
+  );
+  const LONG =
+    "Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions";
+  const skills = [
+    ...SP.map((name, i) => ({
+      ...orgSkill(`sp${i}`, name),
+      description: name === "using-superpowers" ? LONG : `Use for ${name}.`,
+      origin: "platform",
+      plugin: "superpowers",
+    })),
+    { ...orgSkill("o1", "csv-report"), origin: "org", plugin: null },
+    { ...orgSkill("g1", "skill-guide"), origin: "platform", builtin: true, plugin: "skills-core" },
+  ];
+  const routes = (orgSkills: string[] = ["sp0"]) => ({
+    [`GET ${ORG}/agents/ag1`]: () =>
+      json(200, {
+        agent: agent({ definition: { ...agent().definition, skills: { orgSkills } } }),
+      }),
+    [`GET ${ORG}/models`]: () => json(200, MODELS),
+    [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+    [`GET ${ORG}/skills`]: () => json(200, { skills }),
+    [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
+  });
+  const selectAllOf = (group: string) => `Select all in ${group}`;
+  const countOf = (list: HTMLElement) =>
+    list.parentElement?.querySelector('[data-part="check-list-count"]')?.textContent;
+  const sentSkills = (calls: Parameters<typeof bodyOf>[0][]) =>
+    (
+      bodyOf(calls.find((c) => c?.method === "PATCH")) as {
+        definition: { skills: { orgSkills: string[]; pinned?: string[] } };
+      }
+    ).definition.skills;
+
+  it("one list per plugin, then the org's own, then the built-in ones; each with its group box and count", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const lists = await within(region).findAllByRole("list");
+    expect(lists.map((l) => l.getAttribute("aria-label"))).toEqual([
+      "superpowers",
+      F.skillGroupOrg,
+      F.skillGroupBuiltin,
+    ]);
+    const sp = within(region).getByRole("checkbox", { name: selectAllOf("superpowers") });
+    expect(sp.getAttribute("aria-checked")).toBe("mixed");
+    expect(countOf(lists[0] as HTMLElement)).toBe("1/10");
+    expect(
+      within(region)
+        .getByRole("checkbox", { name: selectAllOf(F.skillGroupOrg) })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
+    // built-in: always on, no group box, counted apart, with its note
+    expect(
+      within(region).queryByRole("checkbox", { name: selectAllOf(F.skillGroupBuiltin) }),
+    ).toBeNull();
+    expect(countOf(lists[2] as HTMLElement)).toBe("1");
+    const guide = within(region).getByRole("checkbox", { name: "skill-guide" });
+    expect(guide).toHaveProperty("checked", true);
+    expect(guide).toHaveProperty("disabled", true);
+    expect(within(region).getByText(F.builtinHint)).toBeTruthy();
+  });
+
+  it("a row: the name and its badges on the first line, the description a cut second line with the full text on hover", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const box = await within(region).findByRole("checkbox", { name: "using-superpowers" });
+    const row = box.closest('[data-part="check-list-row"]') as HTMLElement;
+    const line = row.querySelector('[data-part="check-list-line"]') as HTMLElement;
+    expect(line.contains(box)).toBe(true);
+    expect(within(line).getByText(F.skillTag.platform)).toBeTruthy();
+    const desc = row.querySelector('[data-part="check-list-description"]') as HTMLElement;
+    expect(line.contains(desc)).toBe(false);
+    expect(desc.textContent).toBe(LONG);
+    expect(desc.getAttribute("title")).toBe(LONG);
+    // the badge is not part of the name, nor glued to the description
+    expect(box.closest("label")?.textContent).toBe("using-superpowers");
+  });
+
+  it("the group box selects the whole plugin, then clears it; the built-in skill is never sent", async () => {
+    const calls = stubApi({
+      ...routes(),
+      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const sp = await within(region).findByRole("checkbox", { name: selectAllOf("superpowers") });
+    const user = userEvent.setup();
+    await user.click(sp);
+    expect(sp.getAttribute("aria-checked")).toBe("true");
+    expect(countOf(within(region).getAllByRole("list")[0] as HTMLElement)).toBe("10/10");
+    await user.click(screen.getByRole("button", { name: F.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const sent = sentSkills(calls);
+    expect(sent.orgSkills).toEqual(SP.map((_, i) => `sp${i}`));
+    expect(sent.orgSkills).not.toContain("g1");
+  });
+
+  it("the filter narrows by name and description; the group box acts on the rows it shows", async () => {
+    const calls = stubApi({
+      ...routes([]),
+      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const search = await within(region).findByRole("searchbox", { name: F.searchSkills });
+    const user = userEvent.setup();
+    // "clarifying" is only in using-superpowers' description
+    await user.type(search, "clarifying");
+    expect(within(region).getAllByRole("list")).toHaveLength(1);
+    expect(within(region).getByRole("checkbox", { name: "using-superpowers" })).toBeTruthy();
+    expect(within(region).queryByRole("checkbox", { name: "brainstorming" })).toBeNull();
+    await user.clear(search);
+    await user.type(search, "writing");
+    const sp = within(region).getByRole("checkbox", { name: selectAllOf("superpowers") });
+    expect(countOf(within(region).getAllByRole("list")[0] as HTMLElement)).toBe("0/1");
+    await user.click(sp);
+    await user.clear(search);
+    // only the shown row was selected: the whole group is mixed now
+    expect(
+      within(region)
+        .getByRole("checkbox", { name: selectAllOf("superpowers") })
+        .getAttribute("aria-checked"),
+    ).toBe("mixed");
+    await user.type(search, "nothing-matches-this");
+    expect(within(region).getByText(F.noSkillMatch)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: F.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(sentSkills(calls).orgSkills).toEqual(["sp2"]);
+  });
+
+  it("someone who may not change the agent never reaches the skill choices", async () => {
+    stubApi(routes());
+    await renderEditAgent({
+      section: "skills",
+      me: {
+        ...ME,
+        account: { ...ME.account, id: "someone-else", isSuperAdmin: false },
+        memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+      },
+    });
+    await screen.findByRole("heading", { level: 1, name: "Helper" });
+    expect(screen.queryByRole("region", { name: F.orgSkillsLabel })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Select all in/ })).toBeNull();
   });
 });
 

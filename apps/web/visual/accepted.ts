@@ -143,6 +143,10 @@ export const ACCEPTED: string[] = [
   // size table in place; the reference PNGs and the side-by-side review wait for the
   // reference-update and visual-update workflows
   "tool-policy-list",
+  // CheckList (spec §6.39, maintainer acceptance 2026-11-12): blocks and size table in place; the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "check-list",
   // the theme picker's card (themes spec §10, plan Task 11): blocks and size table in place; the
   // reference PNGs and the side-by-side review wait for the reference-update and visual-update
   // workflows

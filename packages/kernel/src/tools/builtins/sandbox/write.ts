@@ -16,7 +16,10 @@ import {
 } from "./common.js";
 import {
   assertReadAndUnchanged,
+  FileGuardError,
   fileStateOf,
+  guardResult,
+  keepGuardRefusal,
   normalizeSandboxPath,
   recordedFile,
 } from "./file-state.js";
@@ -76,7 +79,8 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
       const data = new TextEncoder().encode((input as WriteInput).content);
       checkPathShape((input as WriteInput).file_path, "file_path");
       let path = "";
-      const { value, notices } = await inSandbox(deps, ctx, ({ deviceId, h, roots, p, signal }) => {
+      // a read-before-write refusal is the guard working: a result with the guard view
+      const ran = await inSandbox(deps, ctx, ({ deviceId, h, roots, p, signal }) => {
         path = checkWritable((input as WriteInput).file_path, roots);
         // stat, read the previous content, write: one holder at a time per file
         return withPathLease(deps, { deviceId }, path, signal, async (signal) => {
@@ -105,8 +109,10 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
           await p.writeFile(h, path, data, signal);
           return { existed: st !== null, previous };
         });
-      });
-      const { existed, previous } = value;
+      }).catch(keepGuardRefusal);
+      if (ran instanceof FileGuardError) return guardResult(ran);
+      const { existed, previous } = ran.value;
+      const { notices } = ran;
       const text = `${existed ? "Overwrote" : "Created"} ${path} (${data.byteLength} bytes).`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

@@ -786,15 +786,15 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     const pinned = screen.getByRole("region", { name: sk.pinLabel });
     expect(within(pinned).getByText(sk.pinHint)).toBeTruthy();
     expect(within(pinned).getByText("1 / 3")).toBeTruthy();
-    await user.click(await screen.findByRole("checkbox", { name: "alpha · alpha skill" }));
-    await user.click(screen.getByRole("checkbox", { name: "beta · beta skill" }));
+    await user.click(await screen.findByRole("checkbox", { name: "alpha" }));
+    await user.click(screen.getByRole("checkbox", { name: "beta" }));
     await user.click(screen.getByRole("checkbox", { name: "Pin tone" }));
     await user.click(screen.getByRole("checkbox", { name: "Pin alpha" }));
     expect(within(pinned).getByText("3 / 3")).toBeTruthy();
     // three pinned: the fourth cannot be
     expect(screen.getByRole("checkbox", { name: "Pin beta" })).toHaveProperty("disabled", true);
     // unticking tone unpins it, which frees a place
-    await user.click(screen.getByRole("checkbox", { name: "tone · tone skill" }));
+    await user.click(screen.getByRole("checkbox", { name: "tone" }));
     expect(screen.queryByRole("checkbox", { name: "Pin tone" })).toBeNull();
     expect(screen.getByRole("checkbox", { name: "Pin beta" })).toHaveProperty("disabled", false);
     await save(user);
@@ -802,6 +802,52 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     const { definition } = lastPut(calls);
     expect(definition.skills).toEqual(["pricing", "alpha"]);
     expect(definition.selectedSkills).toEqual(["beta"]);
+  });
+
+  it("技能: grouped by plugin as on the agent page, the group box picks the plugin's names; built-in locked", async () => {
+    const r = live();
+    const skill = (name: string, over: Record<string, unknown> = {}) => ({
+      id: `s-${name}`,
+      scope: "org",
+      agentId: null,
+      name,
+      description: `${name} skill`,
+      currentVersion: 1,
+      createdBy: "a1",
+      createdAt: "2026-11-07T00:00:00.000Z",
+      updatedAt: "2026-11-07T00:00:00.000Z",
+      ...over,
+    });
+    r[`GET ${ORG}/skills`] = () =>
+      json(200, {
+        skills: [
+          skill("pricing"),
+          skill("tone"),
+          skill("alpha", { origin: "platform", plugin: "superpowers" }),
+          skill("beta", { origin: "platform", plugin: "superpowers" }),
+          skill("skill-guide", { origin: "platform", plugin: "skills-core", builtin: true }),
+        ],
+      });
+    const calls = stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=skills", r);
+    const user = userEvent.setup();
+    const sk = en.agents.templatePage.skills;
+    const region = await screen.findByRole("region", { name: sk.selectLabel });
+    const lists = await within(region).findAllByRole("list");
+    expect(lists.map((l) => l.getAttribute("aria-label"))).toEqual([
+      "superpowers",
+      en.agents.form.skillGroupOrg,
+      en.agents.form.skillGroupBuiltin,
+    ]);
+    const guide = within(region).getByRole("checkbox", { name: "skill-guide" });
+    expect(guide).toHaveProperty("disabled", true);
+    await user.click(within(region).getByRole("checkbox", { name: "Select all in superpowers" }));
+    await save(user);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    const { definition } = lastPut(calls);
+    // tone was selected before; the group adds both of its names
+    expect(definition.selectedSkills).toEqual(["tone", "alpha", "beta"]);
+    expect(JSON.stringify(definition)).not.toContain("skill-guide");
   });
 
   it("技能: no org skills is the panel empty state linking to the skills page; nothing picked, nothing to pin", async () => {

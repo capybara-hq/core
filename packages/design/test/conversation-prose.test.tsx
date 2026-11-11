@@ -95,6 +95,17 @@ describe("ThinkingRow (§6.16.5)", () => {
 });
 
 describe("UserBubble (§6.16.6)", () => {
+  it("an attachment-only message draws no empty bubble; whitespace counts as empty", () => {
+    const { container } = render(
+      <UserBubble text={"  \n"} attachments={<span data-testid="img">img</span>} />,
+    );
+    expect(screen.getByTestId("img")).toBeTruthy();
+    expect(container.querySelector('[data-part="bubble"]')).toBeNull();
+    cleanup();
+    const withSkill = render(<UserBubble text="" skill="/fix-issue" />);
+    expect(withSkill.container.querySelector('[data-part="bubble"]')).not.toBeNull();
+  });
+
   it("skill: the chip before the arguments in the bubble, details under it", () => {
     const { container } = wrap(
       <UserBubble text="123" skill="/fix-issue" details={<span data-testid="d">x</span>} />,

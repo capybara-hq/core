@@ -51,6 +51,7 @@ import { orgComponentsQuery } from "../../lib/query/components";
 import { modelsQuery } from "../../lib/query/conversation";
 import { skillsQuery } from "../../lib/query/skills";
 import { extensionToolKey, parseToolKey, toolDisplayName, toolTooltip } from "../../lib/tool-key";
+import { SkillGroups } from "../AgentSkills";
 import { sameJson } from "../agent/definition-parts";
 import { useSectionActionRow } from "../agent/definition-save";
 import { useInstructionFilesEditor } from "../agent/InstructionFilesEditor";
@@ -589,7 +590,7 @@ export function ToolsEdit() {
 
 /**
  * 技能: the skills by name (a template carries names, ruling P4-1): pick from the org's skills,
- * and preload (pin) up to 3 of the picked ones. A name the org does not have stays picked and is
+ * grouped by plugin with a select-all per group as on the agent page (`SkillGroups`), and preload (pin) up to 3 of the picked ones. A name the org does not have stays picked and is
  * marked (用它创建 leaves it out); unticking drops it. Two titled regions in the card, as on the
  * agent page: the org skills (the panel empty state, linking to the skills page for members) and
  * the pinned ones (the count against the limit at the heading's right; with nothing selected, one
@@ -615,11 +616,15 @@ export function SkillsEdit() {
     save.begin();
     draft.set(fn);
   };
-  const toggle = (name: string, on: boolean) =>
+  /** Selects or drops skills by name (a row, or a group's select-all); a dropped one is unpinned. */
+  const toggleNames = (names: string[], on: boolean) =>
     edit((cur) => ({
-      selected: on ? [...cur.selected, name] : cur.selected.filter((x) => x !== name),
-      pinned: on ? cur.pinned : cur.pinned.filter((x) => x !== name),
+      selected: on
+        ? [...cur.selected, ...names.filter((n) => !cur.selected.includes(n))]
+        : cur.selected.filter((x) => !names.includes(x)),
+      pinned: on ? cur.pinned : cur.pinned.filter((x) => !names.includes(x)),
     }));
+  const toggle = (name: string, on: boolean) => toggleNames([name], on);
   const tooMany = d.selected.length - d.pinned.length > TEMPLATE_LIMITS.selectedSkills;
   const unsaved = [
     !sameJson([...d.selected].sort(), [...saved.selected].sort()),
@@ -670,15 +675,19 @@ export function SkillsEdit() {
                 {t("skills.unreadable")}
               </Text>
             ) : null}
-            {org.map((s) => (
-              <Checkbox
-                key={s.id}
-                label={s.description === "" ? s.name : `${s.name} · ${s.description}`}
-                checked={d.selected.includes(s.name)}
+            {org.length > 0 ? (
+              <SkillGroups
+                skills={org}
+                isChecked={(s) => d.selected.includes(s.name)}
+                onToggle={(list, on) =>
+                  toggleNames(
+                    list.map((s) => s.name),
+                    on,
+                  )
+                }
                 disabled={save.pending}
-                onChange={(on) => toggle(s.name, on)}
               />
-            ))}
+            ) : null}
             {missing.map((name) => (
               <Checkbox
                 key={`missing:${name}`}

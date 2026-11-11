@@ -14,6 +14,12 @@ export type ToolKind =
   | "question"
   | "tool";
 
+/**
+ * Why a guard refused a done call (§6.16.9): `not_read`, the file was never read in the
+ * conversation; `modified`, it changed since. The guard working, not a failure.
+ */
+export type ToolGuard = "not_read" | "modified";
+
 /** What a call waits for from a person (§6.16.9): an approval, an answer or a connection. */
 export type ToolWaiting = "approval" | "input" | "connect";
 
@@ -27,6 +33,8 @@ export function verbGroup(kind: ToolKind): ToolVerbGroup {
 export type SummaryRow = {
   kind: ToolKind;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
+  /** A done call the read-before-write check refused (§6.16.9): counted apart, never failed. */
+  guard?: ToolGuard;
   /** The call waits for a person (only read while it runs). */
   waiting?: ToolWaiting;
   /** Who it waits for when that is not the viewer (a name or a role); absent = "you". */
@@ -113,6 +121,9 @@ export function summaryParts(rows: readonly SummaryRow[], locale: Locale): Summa
   const failed = rows.filter((r) => r.status === "failed").length;
   if (failed > 0)
     out.push({ text: fmt(m["tool.failedCount"], { n: failed }), tone: "fail", part: "fail-word" });
+  // refused by a guard: told apart in the header's own color, never as a failure
+  const guarded = rows.filter((r) => r.status === "done" && r.guard !== undefined).length;
+  if (guarded > 0) out.push({ text: fmt(m["tool.guardedCount"], { n: guarded }) });
   const edits = by.get("edit") ?? [];
   if (edits.some((r) => r.added !== undefined || r.removed !== undefined)) {
     const a = edits.reduce((n, r) => n + (r.added ?? 0), 0);

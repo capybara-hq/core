@@ -786,6 +786,8 @@
 .cb-check input:disabled + .cb-box {
   border-color: var(--cb-line);
   background: var(--cb-hover);
+  /* a checked box that cannot change (a built-in skill) still shows its check */
+  color: var(--cb-muted);
 }
 .cb-radios {
   display: flex;
@@ -1089,6 +1091,110 @@
 .cb-tool-policy[data-inset="flush"] > .cb-tool-policy-all,
 .cb-tool-policy[data-inset="flush"] > .cb-tool-policy-empty,
 .cb-tool-policy[data-inset="flush"] .cb-tool-policy-row {
+  padding-right: var(--cb-space-4);
+  padding-left: var(--cb-space-4);
+}
+
+/*
+ * CheckList (spec §6.39): a multi-select of named things, one row per choice split by line-soft:
+ * the checkbox, the name (ellipsis) and its marks (never shrunk or wrapped) on the first line, the
+ * description as one cut muted prose line under it, indented to the name. The head row names the
+ * group and selects all of it, with the n/m count at the right.
+ */
+.cb-check-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-check-list-all {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-check-list-all > .cb-check {
+  flex: 1;
+  min-width: 0;
+}
+.cb-check-list-group {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-check-list-all .cb-check-label {
+  min-width: 0;
+}
+.cb-check-list-count {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  font-variant-numeric: tabular-nums;
+}
+.cb-check-list-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-check-list-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--cb-space-1);
+  min-height: var(--cb-row-default);
+  padding: var(--cb-space-1) 0;
+}
+.cb-check-list-row + .cb-check-list-row {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-check-list-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-check-list-line > .cb-check {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.cb-check-list-line .cb-check-label {
+  min-width: 0;
+}
+.cb-check-list-title {
+  display: block;
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-check[data-disabled="true"] .cb-check-list-title {
+  color: var(--cb-muted);
+}
+.cb-check-list-marks {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  white-space: nowrap;
+}
+.cb-check-list-description {
+  display: block;
+  overflow: hidden;
+  padding-left: 22px;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-check-list[data-inset="flush"] > .cb-check-list-all,
+.cb-check-list[data-inset="flush"] .cb-check-list-row {
   padding-right: var(--cb-space-4);
   padding-left: var(--cb-space-4);
 }

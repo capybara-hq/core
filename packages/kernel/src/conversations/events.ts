@@ -147,9 +147,12 @@ const FileStateViewSchema = z.object({
 /**
  * Structured view of a builtin tool's result (UI refresh B, spec §5.5 / §5.9): display only, like
  * `display`. `command`: `Bash` (the model's `description`, the exit code, null when the
- * command was stopped, and whether it timed out; the web shows "Failed" for a non-zero exit even
- * though `isError` stays false); `edit`: `Edit` / `Write` (a capped line diff);
- * `read`: `Read` (the line range shown).
+ * command was stopped, and whether it timed out; a non-zero exit is information, not a failure:
+ * the web shows "Failed" only for a timeout or a stopped command, as `isError` does);
+ * `edit`: `Edit` / `Write` (a capped line diff); `read`: `Read` (the line range shown);
+ * `guard`: `Edit` / `Write` refused by the read-before-write check (`not_read`: the file was never
+ * read in the conversation, `modified`: it changed since). The result stays `isError: true` for
+ * the model; the web shows the refusal as a neutral outcome, not a failure.
  */
 export const ToolViewSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -189,6 +192,10 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     fromLine: count.optional(),
     toLine: count.optional(),
     file: FileStateViewSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("guard"),
+    reason: z.enum(["not_read", "modified"]),
   }),
 ]);
 export type ToolView = z.infer<typeof ToolViewSchema>;
