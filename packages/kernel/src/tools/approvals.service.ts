@@ -27,7 +27,13 @@ export { APPROVAL_DENY_REASON_MAX_CHARS } from "../conversations/events.js";
 /** `list` 一次最多返回的审批数（收件箱据此判断这个来源是否取满）。 */
 export const APPROVALS_LIST_MAX = 100;
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped";
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "skipped";
 export type ApprovalScope = "once" | "session" | "always";
 
 /** 一条审批记录。 */
