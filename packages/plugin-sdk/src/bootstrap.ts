@@ -16,11 +16,19 @@ import {
  * the official plugins are published: `path` is packed with `packages/plugin-tools`, which is
  * byte-reproducible, and `integrity` is that pack's sha512).
  *
+ * `required` and `builtin` are two different promises. A required entry is imported in the first
+ * pass, before the extensions load, and the start fails without it (so it can ship no skills or
+ * templates: those need object storage, which is not running then). A `builtin` entry is imported
+ * once the extensions have loaded (object storage available), so it may ship skills; its failure
+ * is logged and retried on the next start. Both give the plugin a builtin catalog item (scope
+ * `all`, on in every org, not switchable) and are imported again when missing. An entry is never
+ * both.
+ *
  * Objects are strict (unknown keys rejected, `$schema` allowed): the manifest ships with core, so
  * there is no older reader to stay compatible with and a misspelt key is a mistake. The committed
  * JSON Schema (`schemas/bootstrap.v1.schema.json`) is generated from {@link BootstrapManifestSchema}
  * by `pnpm gen:package-schemas`; the cross-field rules (unique names, `marketplace` required with an
- * npm entry) are decided only by {@link parseBootstrapManifest}.
+ * npm entry, not both `required` and `builtin`) are decided only by {@link parseBootstrapManifest}.
  */
 
 /** Manifest format version. */
@@ -40,6 +48,11 @@ export type BootstrapEntry =
       integrity: string;
       /** Enabled in every org and neither disableable nor uninstallable. */
       required: boolean;
+      /**
+       * Builtin but not required: imported after the extensions loaded (it may ship skills), its
+       * catalog item builtin; a failure does not stop the start. Never together with `required`.
+       */
+      builtin?: boolean;
     }
   | {
       name: string;
@@ -49,6 +62,7 @@ export type BootstrapEntry =
       version: string;
       integrity: string;
       required: boolean;
+      builtin?: boolean;
     };
 
 /** `bootstrap.json`. */
@@ -79,6 +93,7 @@ const common = {
     .string()
     .regex(SHA512_INTEGRITY_RE, { message: "integrity must be sha512-<86 base64 chars>==" }),
   required: z.boolean(),
+  builtin: z.boolean().optional(),
 };
 
 const entry = z.discriminatedUnion("source", [
@@ -120,6 +135,13 @@ const schema = z
         });
       }
       seen.add(e.name);
+      if (e.required && e.builtin === true) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["plugins", i, "builtin"],
+          message: "an entry is either required or builtin, not both",
+        });
+      }
     });
     if (m.marketplace === undefined && m.plugins.some((e) => e.source === "npm")) {
       ctx.addIssue({

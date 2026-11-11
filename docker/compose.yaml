@@ -185,12 +185,17 @@ services:
     # Root, so a 0600 password file owned by the host user is readable (compose bind-mounts
     # file secrets with their host owner and mode). init talks to PostgreSQL, to valkey (the
     # bootstrap step runs under the Redis lock lock:bootstrap that starting kernels share) and, on
-    # the first bootstrap, the npm registry.
+    # the first bootstrap, the npm registry; and the object store: the bootstrap's second pass
+    # loads object-store-s3 to store the skills of builtin entries (skills-core).
     user: "0"
     depends_on:
       postgres:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+      seaweedfs-s3:
         condition: service_healthy
     environment:
       <<: *kernel-env
@@ -339,7 +344,7 @@ services:
   # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#14c73d5c51415223326d89414d62b7278ad60745:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#050de1403662d2ba04cb96839b742aaa0166c00e:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -347,7 +352,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#14c73d5c51415223326d89414d62b7278ad60745:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#050de1403662d2ba04cb96839b742aaa0166c00e:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

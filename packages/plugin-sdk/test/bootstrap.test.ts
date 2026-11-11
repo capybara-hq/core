@@ -74,6 +74,17 @@ describe("parseBootstrapManifest", () => {
     ]);
   });
 
+  it("parses a builtin entry (not required)", () => {
+    const m = manifest([npm({ name: "skills-core", builtin: true })], { marketplace: MARKETPLACE });
+    expect(parseBootstrapManifest(m)).toEqual(m);
+  });
+
+  it("rejects an entry both builtin and required", () => {
+    expect(errorsOf(manifest([workspace({ builtin: true })]))).toEqual([
+      "plugins.0.builtin: an entry is either required or builtin, not both",
+    ]);
+  });
+
   const rejects: [string, unknown, RegExp][] = [
     [
       "bad integrity",
@@ -95,6 +106,7 @@ describe("parseBootstrapManifest", () => {
       /^plugins\.0\.npm: /,
     ],
     ["missing required", manifest([workspace({ required: undefined })]), /^plugins\.0\.required: /],
+    ["non-boolean builtin", manifest([workspace({ builtin: "yes" })]), /^plugins\.0\.builtin: /],
     ["unknown source", manifest([workspace({ source: "git" })]), /^plugins\.0\.source: /],
     [
       "npm entry with a path",
@@ -157,6 +169,7 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["bad integrity", manifest([workspace({ integrity: "sha512-abc" })])],
     ["unknown source", manifest([workspace({ source: "git" })])],
     ["unknown key", manifest([workspace({ extra: 1 })])],
+    ["builtin", manifest([workspace({ required: false, builtin: true })])],
     ["npm entry with a path", manifest([npm({ path: "plugins/x" })], { marketplace: MARKETPLACE })],
     ["schemaVersion 2", manifest([], { schemaVersion: 2 })],
   ];

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test for docker/kernel.Dockerfile: builds the capybara-api / capybara-worker /
-# capybara-gateway images, then against a throwaway PostgreSQL + Valkey network checks that
+# capybara-gateway images, then against a throwaway PostgreSQL + Valkey + SeaweedFS (S3) network checks that
 # `migrate`, `bootstrap` (the pinned packages downloaded from npm, installed once; a re-run does
 # nothing and needs no network), `admin create --if-none --password-file`, `extensions list`, BullMQ and `start` work,
 # that /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
@@ -20,6 +20,10 @@ ID="capybara-image-test-$$"
 NET="$ID"
 PG="$ID-pg"
 VALKEY="$ID-valkey"
+S3="$ID-s3"
+S3_IMAGE="chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+S3_KEY="image-test-key"
+S3_SECRET="image-test-secret-0123456789"
 MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
 STARTED=()
 
@@ -31,7 +35,7 @@ cleanup() {
       docker logs --tail 50 "$c" >&2 || true
     done
   fi
-  docker rm -f ${STARTED[@]+"${STARTED[@]}"} "$PG" "$VALKEY" >/dev/null 2>&1 || true
+  docker rm -f ${STARTED[@]+"${STARTED[@]}"} "$PG" "$VALKEY" "$S3" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   exit "$code"
 }
@@ -50,18 +54,30 @@ if [ "${SKIP_BUILD:-}" != "1" ]; then
   done
 fi
 
-echo "==> starting PostgreSQL and Valkey on network $NET"
+echo "==> starting PostgreSQL, Valkey and SeaweedFS on network $NET"
 docker network create "$NET" >/dev/null
 docker run -d --name "$PG" --network "$NET" \
   -e POSTGRES_USER=capybara -e POSTGRES_PASSWORD=capybara -e POSTGRES_DB=capybara \
   postgres:17 >/dev/null
 docker run -d --name "$VALKEY" --network "$NET" valkey/valkey:8 >/dev/null
+# The object store of the bootstrap plugin object-store-s3: the bootstrap's second pass stores the
+# skills of the builtin entries (skills-core) there
+S3_CONFIG="{\"identities\":[{\"name\":\"capybara\",\"credentials\":[{\"accessKey\":\"$S3_KEY\",\"secretKey\":\"$S3_SECRET\"}],\"actions\":[\"Admin\",\"Read\",\"List\",\"Tagging\",\"Write\"]}]}"
+docker run -d --name "$S3" --network "$NET" -e "S3_CONFIG=$S3_CONFIG" --entrypoint sh "$S3_IMAGE" -c \
+  'printf "%s" "$S3_CONFIG" > /tmp/s3.json && exec weed server -dir=/data -s3 -s3.port=8333 -s3.config=/tmp/s3.json' >/dev/null
 for _ in $(seq 1 60); do
   # pg_isready over TCP: the init phase only listens on the socket.
   if docker exec "$PG" pg_isready -h 127.0.0.1 -U capybara >/dev/null 2>&1; then break; fi
   sleep 1
 done
 docker exec "$PG" pg_isready -h 127.0.0.1 -U capybara >/dev/null || fail "PostgreSQL did not start"
+for _ in $(seq 1 60); do
+  if docker exec "$S3" wget -q -O /dev/null http://127.0.0.1:8333/healthz >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+docker exec "$S3" wget -q -O /dev/null http://127.0.0.1:8333/healthz || fail "SeaweedFS S3 did not start"
+docker exec "$S3" sh -c 'echo "s3.bucket.create -name capybara" | weed shell -master=127.0.0.1:9333' >/dev/null \
+  || fail "could not create the bucket"
 
 ENV_ARGS=(
   -e "CAPYBARA_DB__URL=postgres://capybara:capybara@$PG:5432/capybara"
@@ -69,6 +85,12 @@ ENV_ARGS=(
   -e "CAPYBARA_MASTER_KEY=$MASTER_KEY"
   # The official marketplace is on by default and on the internet: tests stay offline.
   -e "CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false"
+  -e "CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__ENDPOINT=http://$S3:8333"
+  -e "CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__REGION=us-east-1"
+  -e "CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__BUCKET=capybara"
+  -e "CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__FORCE_PATH_STYLE=true"
+  -e "CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__ACCESS_KEY_ID=$S3_KEY"
+  -e "CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__SECRET_ACCESS_KEY=$S3_SECRET"
 )
 # The bootstrap step downloads the pinned plugins (the only network access of this test)
 if [ -n "${CAPYBARA_PACKAGES__NPM_REGISTRY:-}" ]; then
@@ -104,6 +126,9 @@ OUT="$(run "$API_IMAGE" bootstrap)"
 echo "$OUT"
 echo "$OUT" | grep -q "openai-compatible $(pin openai-compatible): installed" || fail "bootstrap did not install openai-compatible"
 echo "$OUT" | grep -q "object-store-s3 $(pin object-store-s3): installed" || fail "bootstrap did not install object-store-s3"
+echo "$OUT" | grep -q "skills-core $(pin skills-core): imported into the catalog" || fail "bootstrap did not import skills-core"
+[ "$(psql "SELECT count(*) FROM capybara.catalog_items WHERE name = 'skills-core' AND builtin AND scope = 'all' AND deleted_at IS NULL")" = "1" ] \
+  || fail "skills-core is not a builtin catalog item"
 [ "$(psql "SELECT count(*) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "2" ] \
   || fail "expected two required, enabled bootstrap install records"
 [ "$(psql "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] || fail "expected one bootstrap run"

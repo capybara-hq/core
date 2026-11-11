@@ -160,6 +160,7 @@ export type BootstrapEntry = {
     version: string;
     integrity: string;
     required: boolean;
+    builtin?: boolean;
 } | {
     name: string;
     source: "workspace";
@@ -167,6 +168,7 @@ export type BootstrapEntry = {
     version: string;
     integrity: string;
     required: boolean;
+    builtin?: boolean;
 };
 
 // @public
