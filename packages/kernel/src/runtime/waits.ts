@@ -16,7 +16,11 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { ApprovalsService } from "../tools/approvals.service.js";
+import {
+  ApprovalsService,
+  NETWORK_ASK_CANCELLED_NOTE,
+  type NetworkAskDetail,
+} from "../tools/approvals.service.js";
 import {
   APPROVAL_CANCELLED_TEXT,
   INPUT_CANCELLED_TEXT,
@@ -98,6 +102,9 @@ const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
 
 /** Who may decide a sub-agent's approval, mirrored into the root's `subagent_waiting`. */
 type Approver = { requestedFor: string | null; approverRole: OrgRole | null };
+
+/** The `tool_result` a stopped run writes for a call that waited (default: an error). */
+type StoppedResult = { toolKey: string; text: string; isError?: boolean };
 
 /** The data of a wait timeout job; `subagents` waits also carry their run and step. */
 export interface WaitTimeoutData {
@@ -493,16 +500,30 @@ export class Waits implements OnApplicationShutdown {
     await this.questions.cancelPendingIn(runId);
     // 本运行全部审批 / 输入请求涉及的调用（不只刚取消的）：决定已提交、续跑尚未发生时被中止的调用同样没有结果，
     // 一并写取消说明（已有结果的按幂等键命中、不重复）。同一调用先审批后输入，后者覆盖前者。
-    const cancelled = new Map<string, { toolKey: string; text: string }>();
+    const cancelled = new Map<string, StoppedResult>();
     const steps = new Set<number>();
     const approvals = await t
       .selectFrom("approvals")
-      .select(["id", "call_id", "tool_key"])
+      .select(["id", "call_id", "tool_key", "kind", "detail"])
       .where("run_id", "=", runId)
       .orderBy("created_at")
+      .orderBy("attempt")
       .execute();
     for (const a of approvals) {
-      cancelled.set(a.call_id, { toolKey: a.tool_key, text: APPROVAL_CANCELLED_TEXT });
+      // a network ask's command already ran: its kept result, then why access stays blocked
+      // (network ask-to-allow spec §6.7)
+      const kept =
+        a.kind === "network" ? (a.detail as Pick<NetworkAskDetail, "result"> | null)?.result : null;
+      cancelled.set(
+        a.call_id,
+        kept
+          ? {
+              toolKey: a.tool_key,
+              text: `${kept.content}\n\n${NETWORK_ASK_CANCELLED_NOTE}`,
+              isError: kept.isError,
+            }
+          : { toolKey: a.tool_key, text: APPROVAL_CANCELLED_TEXT },
+      );
       const step = await this.approvalStep(t, conversationId, a.id);
       if (step !== null) steps.add(step);
     }
@@ -1270,7 +1291,7 @@ export class Waits implements OnApplicationShutdown {
     conversationId: string,
     runId: string,
     steps: number[],
-    cancelled: Map<string, { toolKey: string; text: string }>,
+    cancelled: Map<string, StoppedResult>,
     /** Calls whose result the caller writes itself (open `Agent` calls). */
     skip: ReadonlySet<string> = new Set(),
   ): Promise<AppendEvent[]> {
@@ -1295,7 +1316,7 @@ export class Waits implements OnApplicationShutdown {
             callId: b.id,
             toolKey: c?.toolKey ?? b.name ?? "",
             content: c?.text ?? RUN_STOPPED_TEXT,
-            isError: true,
+            isError: c?.isError ?? true,
           },
         });
       }

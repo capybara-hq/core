@@ -198,6 +198,7 @@
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
+      "not_yours": "Only the device owner can allow network access on this device.",
       "already_decided": "This approval has already been handled or has expired.",
       "scope_not_allowed": "This approval can only be allowed once."
     },
@@ -1706,7 +1707,8 @@
       "approved": "Approved",
       "denied": "Denied",
       "expired": "Expired",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "skipped": "Skipped"
     },
     "decidedBy": "Handled by {who}",
     "you": "you",
@@ -1722,6 +1724,9 @@
       "role": "A member with permission must approve",
       "org": "The org's policy asks for approval",
       "fixed": "This tool always asks for approval"
+    },
+    "network": {
+      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner."
     }
   },
   "question": {

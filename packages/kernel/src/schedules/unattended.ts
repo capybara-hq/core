@@ -119,6 +119,9 @@ export const UNATTENDED_ELICITATION_NOTE =
 /** The `missing_grants` entry of a personal connector the creator has not connected (§7). */
 export const connectionGrantKey = (connectorSlug: string) => `connection:${connectorSlug}`;
 
+/** The `missing_grants` entry of a refused network host (network ask-to-allow spec §8.1, §8.3). */
+export const networkGrantKey = (host: string) => `network:${host}`;
+
 /**
  * What the tool policy knows of the scheduled task run a kernel run serves (`PolicyContext`): the
  * task (its grants), the task run (its `missing_grants`), whether it is a trial run (attended), and

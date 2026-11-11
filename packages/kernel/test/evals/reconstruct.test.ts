@@ -20,6 +20,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import {
   reconstructRequest,
@@ -34,6 +35,8 @@ import {
 } from "../../src/evals/snapshot.js";
 import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { MachinesService } from "../../src/local-devices/machines.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
@@ -42,6 +45,7 @@ import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { allowedOnceNote } from "../../src/tools/network-asks.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -65,6 +69,7 @@ import {
   waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 
 /**
  * M6 T2：由日志快照还原模型请求（零漂移基线）。真实内核 + model-fake / model-looper + SeaweedFS，
@@ -117,7 +122,9 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        roles: ["api", "worker"],
+        // gateway: a connected device's network ask (network ask-to-allow P1.7)
+        roles: ["api", "worker", "gateway"],
+        sandbox: { limits: { egress: "allowlist", allowHosts: ["*.example.com"] } },
         extensions: [
           MODEL_FAKE,
           MODEL_LOOPER,
@@ -1520,6 +1527,105 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       });
     } finally {
       await enable(false);
+    }
+  });
+
+  it("a command refused a domain on a device: the network ask and its kept result + note: zero drift, network_blocked and the ask's hosts not in requests", async () => {
+    reset();
+    const { deviceId, credential, machineId } = await k.app.get(TransactionHost).run(async () => {
+      const { id } = await k.app.get(DevicesService).createLocal(orgId, ownerId, "Box");
+      const issued = await k.app.get(MachinesService).issue({
+        orgId,
+        deviceId: id,
+        accountId: ownerId,
+        name: "box",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.1.0",
+      });
+      return { deviceId: id, ...issued };
+    });
+    const machine = new FakeMachine(
+      `ws://127.0.0.1:${k.port}/device/connect`,
+      credential,
+      (req) => {
+        if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
+        if (req.op !== "exec") return { ok: true, result: null };
+        return {
+          ok: true,
+          result: {
+            exitCode: 56,
+            stdout: "",
+            stderr: "curl: (56) CONNECT tunnel failed, response 403\n",
+            truncated: false,
+            timedOut: false,
+            network: { blocked: [{ host: "files.example.com", port: 443, layer: "device" }] },
+          },
+        };
+      },
+      { hello: false },
+    );
+    try {
+      await machine.opened;
+      machine.send({
+        ...HELLO,
+        features: ["networkReport", "policyOp"],
+        policy: { network: "allowlist", allowedDomains: [], remoteGrants: "owner" },
+      });
+      await waitFor(
+        async () =>
+          (
+            await db
+              .selectFrom("device_machines")
+              .select("roots")
+              .where("id", "=", machineId)
+              .executeTakeFirst()
+          )?.roots != null,
+        10_000,
+        "hello recorded",
+      );
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-1" },
+        { tools: [{ kind: "builtin", name: "Bash" }] },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      await db
+        .updateTable("conversations")
+        .set({ device_id: deviceId })
+        .where("id", "=", conv)
+        .execute();
+      const bash = { command: "curl https://files.example.com/x", description: "Fetch" };
+      await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
+      const asked = await waitForEvent(db, conv, (e) => e.type === "approval_requested");
+      const approvalId = asked.type === "approval_requested" && asked.payload.approvalId;
+      const decided = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/approvals/${approvalId}/decision`,
+        payload: { decision: "approve", scope: "once" },
+      });
+      expect(decided.statusCode, decided.body).toBe(200);
+      await waitForTerminal(db, conv, 1, 30_000);
+      const events = await eventsOf(db, conv);
+      expect(events.some((e) => e.type === "network_blocked")).toBe(true);
+      const result = events.find((e) => e.type === "tool_result");
+      expect(result?.type === "tool_result" && result.payload.content).toContain(
+        allowedOnceNote(["files.example.com"]),
+      );
+      // the second request carries the call's tool_result with the note, nothing display-only
+      const last = JSON.stringify(sent.at(-1));
+      expect(last).toContain(allowedOnceNote(["files.example.com"]));
+      expect(last).not.toContain("network_blocked");
+      expect(last).not.toContain('"layer"');
+      expect(last).not.toContain('"hosts"');
+      const snap = await snapshotOf(conv);
+      await expectZeroDrift(conv, snap);
+      const [run] = buildTrajectory(toEvents(snap), new Map());
+      expect(run?.steps[0]?.toolCalls[0]).toMatchObject({
+        networkBlocked: [{ host: "files.example.com", port: 443, layer: "device" }],
+        approval: { approvalId, decision: "approved", scope: "once" },
+      });
+    } finally {
+      machine.close();
     }
   });
 });

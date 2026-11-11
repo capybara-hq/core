@@ -430,18 +430,22 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       // sandbox is obtained, so the time spent waiting for the lock and resuming is deducted
       let ms = askedMs;
       let workspace = DEFAULT_SANDBOX_ROOTS.workspace;
-      const { value: r, notices } = await inSandbox(deps, ctx, ({ h, roots, p, signal }) => {
+      // the device the command ran on (a refused network host is asked about there)
+      let deviceId = "";
+      const { value: r, notices } = await inSandbox(deps, ctx, (s) => {
         const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000) * 1000;
         ms = Math.max(1000, Math.min(askedMs, left));
-        workspace = roots.workspace;
-        return p.exec(h, {
+        workspace = s.roots.workspace;
+        deviceId = s.deviceId;
+        return s.p.exec(s.h, {
           command,
-          cwd: roots.workspace,
+          cwd: s.roots.workspace,
           timeoutMs: ms,
           maxOutputBytes: MAX_OUTPUT_BYTES,
-          signal,
+          signal: s.signal,
         });
       });
+      const blocked = r.network?.blocked ?? [];
       const seconds = ms / 1000;
       const clamped = ms < askedMs;
       const shown = clip(command, 120);
@@ -471,6 +475,8 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
                 `运行命令（退出码 ${r.exitCode}）：${shown}`,
                 `Ran command (exit ${r.exitCode}): ${shown}`,
               ),
+        // kernel-internal: the pipeline asks the device owner or writes notes (spec §6.2)
+        ...(blocked.length > 0 && deviceId !== "" && { networkReport: { deviceId, blocked } }),
       };
     },
   };

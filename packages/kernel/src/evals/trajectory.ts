@@ -49,7 +49,7 @@ export interface TrajectoryToolCall {
   approval: {
     approvalId: string;
     requestedAt: string;
-    decision: "approved" | "denied" | "expired" | "cancelled" | null;
+    decision: "approved" | "denied" | "expired" | "cancelled" | "skipped" | null;
     scope?: "once" | "session" | "always";
     byAccountId: string | null;
     decidedAt: string | null;
@@ -65,6 +65,11 @@ export interface TrajectoryToolCall {
   } | null;
   /** A `tool.preExecute` policy hook denied the call (it never started). */
   hookDenied?: TrajectoryHookDenial;
+  /**
+   * The network hosts the command was refused (`network_blocked`, display only; network
+   * ask-to-allow spec §6.5). A network ask about them is the call's `approval`.
+   */
+  networkBlocked?: EventPayload<"network_blocked">["hosts"];
   /**
    * An `Agent` call that dispatched (or resumed) a sub-agent (phase C, spec §15.4): the child
    * conversation (`subagentId`, whose trajectory the viewer links to), the run it started and that
@@ -273,6 +278,7 @@ function buildRun(
   const questions = new Map<string, Ev<"question_asked">>(); // callId → 最近一次
   const answers = new Map<string, Ev<"question_answered">>(); // questionId → 结果
   const toolDenials = new Map<string, Ev<"hook_denied">>(); // callId → denial
+  const networkBlocks = new Map<string, Ev<"network_blocked">>(); // callId → refused hosts
   const modelDenials = new Map<number, Ev<"hook_denied">>(); // step → denial
   const dispatches = new Map<string, Ev<"subagent_dispatched">>(); // callId → dispatch
   const childEnds = new Map<string, Ev<"subagent_finished">>(); // childRunId → end
@@ -335,6 +341,10 @@ function buildRun(
         break;
       case "subagent_finished":
         childEnds.set(e.payload.childRunId, e);
+        break;
+      case "network_blocked":
+        noteCall(e.payload.step, e.payload.callId);
+        networkBlocks.set(e.payload.callId, e);
         break;
       case "hook_denied":
         if (e.payload.callId !== undefined) {
@@ -406,8 +416,10 @@ function buildRun(
         const ans = q === undefined ? undefined : answers.get(q.payload.questionId);
         const denied = toolDenials.get(callId);
         const dispatch = dispatches.get(callId)?.payload;
+        const blocked = networkBlocks.get(callId)?.payload.hosts;
         return {
           ...(denied !== undefined && { hookDenied: denialOf(denied) }),
+          ...(blocked !== undefined && { networkBlocked: blocked }),
           ...(dispatch !== undefined && {
             subagent: {
               subagentId: dispatch.subagentId,

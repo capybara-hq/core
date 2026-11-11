@@ -562,7 +562,7 @@ export interface ApprovalsTable {
   input: Json<unknown>;
   requested_for: string | null;
   approver_role: string | null;
-  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled">;
+  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped">;
   scope: "once" | "session" | "always" | null;
   decided_by: string | null;
   decided_at: TsNullable;
@@ -584,6 +584,10 @@ export interface ApprovalsTable {
     ("once" | "session" | "always")[] | null | undefined,
     ("once" | "session" | "always")[] | null
   >;
+  /** 0114: what is asked: a tool call ('tool') or a refused network domain ('network'). */
+  kind: Generated<"tool" | "network">;
+  /** 0114: a network ask's hosts, command, kept result and outcome (null for tool approvals). */
+  detail: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0010_tools.sql：AskUserQuestion 提问。 */
@@ -1024,6 +1028,10 @@ export interface DeviceMachinesTable {
   last_seen_at: TsNullable;
   created_at: Ts;
   revoked_at: TsNullable;
+  /** 0114: the features the program reported in its hello (`networkReport`, `policyOp`). */
+  features: ColumnType<string[], string[] | undefined, string[]>;
+  /** 0114: the program's local network policy summary (hello, refreshed by each `policy` op). */
+  local_policy: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */

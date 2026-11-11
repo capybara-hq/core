@@ -6,7 +6,7 @@ import {
   parseToolKey,
 } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import type { ApprovalsService, ApprovalView } from "../tools/approvals.service.js";
+import type { ApprovalsService, ApprovalView, NetworkAskView } from "../tools/approvals.service.js";
 import { type ToolInfo, toolInfo } from "../tools/info.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
@@ -203,9 +203,48 @@ async function displayName(
   return r?.display_name || undefined;
 }
 
+/** What a network ask's card shows instead of a tool call (network ask-to-allow spec §6.4, §6.5). */
+export interface NetworkCardText {
+  title: string;
+  inputPreview: string;
+  scopeLabels: Partial<Record<"once" | "always", string>>;
+}
+
+/**
+ * A network ask's card text: the title names the host (or the number of hosts); the preview lists
+ * the hosts, then the command clipped to {@link CARD_SUMMARY_MAX} and, for several hosts, that the
+ * decision applies to all of them (an IM card has no per-host choice). Model-controlled values
+ * are redacted by `redact` (the connection's secret values); the description stays on the web.
+ */
+export function networkCardText(
+  detail: Pick<NetworkAskView, "hosts" | "command">,
+  locale: ChannelLocale,
+  redact: (s: string) => string = (s) => s,
+): NetworkCardText {
+  const hosts = [...new Set(detail.hosts.map((h) => redact(h.host)))];
+  const title =
+    hosts.length === 1
+      ? phrase("networkTitleOne", locale).replace("{host}", hosts[0] as string)
+      : phrase("networkTitleMany", locale).replace("{n}", String(hosts.length));
+  const command = cut(redact(detail.command.trim()), CARD_SUMMARY_MAX);
+  return {
+    title,
+    inputPreview: [
+      ...hosts,
+      ...(command !== "" ? ["", command] : []),
+      ...(hosts.length > 1 ? ["", phrase("networkAllHosts", locale)] : []),
+    ].join("\n"),
+    scopeLabels: {
+      once: phrase("networkAllowOnce", locale),
+      always: phrase("networkAllowAlways", locale),
+    },
+  };
+}
+
 /**
  * The approval card in the approval's current state; undefined when the approval does not exist.
- * A role escalation offers only "once". `webUrl` = `http.publicUrl` + the conversation path.
+ * A role escalation offers only "once". A network ask names its hosts and command and labels its
+ * scopes ({@link networkCardText}). `webUrl` = `http.publicUrl` + the conversation path.
  */
 export async function approvalCard(
   d: CardDeps,
@@ -217,21 +256,31 @@ export async function approvalCard(
   const v = await d.approvals.describe(approvalId);
   if (!v) return undefined;
   const decidedBy = await displayName(d.db, v.decidedBy);
+  const network =
+    v.kind === "network" && v.detail !== null ? networkCardText(v.detail, locale, redact) : null;
   const display =
-    v.summary === null
+    v.summary === null && network === null
       ? (await toolInfo({ db: d.db, registry: d.registry }, v.orgId, [v.toolKey]))[0]
       : undefined;
   return {
     kind: "approval",
     id: v.id,
-    title: phrase("approvalTitle", locale),
-    // the label carries the source, so no separate appName (renderers would repeat it)
-    toolName: approvalToolName(v, locale),
+    title: network?.title ?? phrase("approvalTitle", locale),
+    // the label carries the source, so no separate appName (renderers would repeat it); a
+    // network ask's command ran in Bash
+    toolName: network !== null ? "Bash" : approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
-    // the field keeps its contract name; it carries the call line, never the raw input
-    inputPreview: callSummary(v, display, locale, redact),
+    // the field keeps its contract name; it carries the call line (a network ask's hosts and
+    // command), never the raw input
+    inputPreview: network?.inputPreview ?? callSummary(v, display, locale, redact),
     // the scopes the approval allows (the kernel stores them for per-call policies)
     scopes: v.scopes,
+    // the labels of the scopes offered only
+    ...(network !== null && {
+      scopeLabels: Object.fromEntries(
+        Object.entries(network.scopeLabels).filter(([k]) => (v.scopes as string[]).includes(k)),
+      ),
+    }),
     expiresAt: v.expiresAt,
     state: v.status,
     ...(decidedBy !== undefined && { decidedBy }),

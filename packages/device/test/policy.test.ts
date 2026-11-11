@@ -8,10 +8,11 @@ import {
   DENIED_SECRET_PATHS,
   deniedSecretPaths,
   effectiveEgress,
+  grantedHosts,
   implicitWritePaths,
   srtConfig,
 } from "../src/policy.js";
-import { DEFAULT_POLICY, policyPath, readPolicy } from "../src/state.js";
+import { DEFAULT_POLICY, policyPath, readPolicy, writeCredential } from "../src/state.js";
 
 const limits = (egress: SandboxLimits["egress"], allowHosts: string[] = []): SandboxLimits => ({
   cpu: 1,
@@ -47,6 +48,74 @@ describe("effectiveEgress", () => {
   it("an empty policy allows nothing, whatever the cloud asks", () => {
     expect(effectiveEgress(policy([]), limits("open"))).toEqual([]);
     expect(effectiveEgress(policy([]), limits("allowlist", ["a.com"]))).toEqual([]);
+  });
+});
+
+describe("effectiveEgress: network open", () => {
+  const open = (allowedDomains: string[] = []) => ({
+    ...DEFAULT_POLICY,
+    allowedDomains,
+    network: "open" as const,
+  });
+
+  it("is exactly the org's egress: its list, any host, or nothing", () => {
+    expect(effectiveEgress(open(["x.com"]), limits("allowlist", ["A.com", "*.b.com"]))).toEqual([
+      "a.com",
+      "*.b.com",
+    ]);
+    // The runtime's per-command lists refuse "*": the executor turns it into an open command.
+    expect(effectiveEgress(open(), limits("open"))).toEqual(["*"]);
+    expect(effectiveEgress(open(["x.com"]), limits("none", ["a.com"]))).toEqual([]);
+  });
+});
+
+describe("effectiveEgress: grants", () => {
+  const grants = (...hosts: string[]) => ({
+    hosts,
+    source: { kind: "run" as const, id: "run1", accountId: "acc" },
+  });
+  const off = (allowedDomains: string[] = []) => ({
+    ...DEFAULT_POLICY,
+    allowedDomains,
+    remoteGrants: "off" as const,
+  });
+
+  it("adds granted hosts under remoteGrants owner, as far as the org allows", () => {
+    const p = policy(["a.com"]);
+    const l = limits("allowlist", ["a.com", "files.slack.com", "*.github.com"]);
+    expect(effectiveEgress(p, l, grants("files.slack.com", "api.github.com", "evil.com"))).toEqual([
+      "a.com",
+      "files.slack.com",
+      "api.github.com",
+    ]);
+    expect(effectiveEgress(p, limits("open"), grants("evil.com"))).toEqual(["a.com", "evil.com"]);
+    expect(effectiveEgress(p, limits("none"), grants("a.com", "b.com"))).toEqual([]);
+  });
+
+  it("are ignored under remoteGrants off", () => {
+    expect(effectiveEgress(off(["a.com"]), limits("open"), grants("b.com", "c.com"))).toEqual([
+      "a.com",
+    ]);
+    expect(grantedHosts(off(), limits("open"), grants("b.com"))).toEqual([]);
+  });
+
+  it("only valid exact hosts count: wildcards, addresses and junk are ignored", () => {
+    const g = grants("*.b.com", "10.0.0.1", "intranet", "x.local", "a b.com", "", "B.COM", "b.com");
+    expect(grantedHosts(policy([]), limits("open"), g)).toEqual(["b.com"]);
+    expect(effectiveEgress(policy([]), limits("open"), g)).toEqual(["b.com"]);
+  });
+
+  it("an org wildcard admits a granted subdomain, never the apex", () => {
+    const l = limits("allowlist", ["*.github.com"]);
+    expect(grantedHosts(policy([]), l, grants("github.com", "raw.github.com"))).toEqual([
+      "raw.github.com",
+    ]);
+  });
+
+  it("add nothing to a device that is already open", () => {
+    const p = { ...DEFAULT_POLICY, network: "open" as const };
+    expect(effectiveEgress(p, limits("open"), grants("b.com"))).toEqual(["*"]);
+    expect(effectiveEgress(p, limits("allowlist", ["b.com"]), grants("b.com"))).toEqual(["b.com"]);
   });
 });
 
@@ -127,6 +196,44 @@ describe("policy command", () => {
     expect(run({ command: "policy", action: "show" })).toBe(0);
     expect(JSON.parse(out[0] ?? "")).toEqual(DEFAULT_POLICY);
     expect(out[1]).toMatch(/cpu and memoryMb are not enforced.*no local credentials/);
+  });
+
+  it("allowing a domain on a docker-mode device warns that it opens all network", () => {
+    const docker = {
+      url: "http://x.test",
+      connectUrl: "ws://x.test/device/connect",
+      credential: "cap_dev_x",
+      orgId: "o",
+      deviceId: "d",
+      dir: "/w",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1024,
+    };
+    writeCredential(dir, { ...docker, mode: "docker" });
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      0,
+    );
+    expect(out.join("\n")).toMatch(/Docker mode.*whole internet/);
+    out.length = 0;
+    expect(
+      run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
+    expect(out.join("\n")).not.toMatch(/Docker mode/);
+    writeCredential(dir, { ...docker, mode: "os" });
+    out.length = 0;
+    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
+      0,
+    );
+    expect(out.join("\n")).not.toMatch(/Docker mode/);
+  });
+
+  it("show prints network and remoteGrants", () => {
+    writeFileSync(
+      policyPath(dir),
+      JSON.stringify({ ...DEFAULT_POLICY, network: "open", remoteGrants: "off" }),
+    );
+    expect(run({ command: "policy", action: "show" })).toBe(0);
+    expect(JSON.parse(out[0] ?? "")).toMatchObject({ network: "open", remoteGrants: "off" });
   });
 
   it("set allowedDomains stores the list; show prints it", () => {

@@ -1586,3 +1586,75 @@ describe("a question skipped by a message (reply while a question is pending, sp
     });
   });
 });
+
+describe("network asks (network ask spec §6.5)", () => {
+  const blocked = (seq: number, callId: string, hosts: unknown[]) =>
+    ev(seq, "network_blocked", { step: 0, callId, hosts });
+
+  it("org and address facts land under the group of the command; device and unknown hosts do not", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "Bash", input: { command: "curl https://api.foo.com" } },
+        { id: "b", name: "Bash", input: { command: "ls" } },
+      ]),
+      blocked(3, "a", [
+        { host: "files.slack.com", port: 443, layer: "device" },
+        { host: "api.foo.com", port: 443, layer: "org" },
+        { host: "10.0.0.5", port: 80, layer: "address" },
+        { host: "x.example", port: 443, layer: "unknown" },
+      ]),
+      result(4, "a", "Bash"),
+      result(5, "b", "Bash"),
+      calls(6, [], "Done."),
+    ];
+    const out = buildTimeline(events, [], INFO, "en");
+    expect(kinds(out)).toEqual(["user", "tools", "network-facts", "prose"]);
+    const facts = out[2];
+    expect(facts?.kind === "network-facts" && facts).toMatchObject({
+      callId: "a",
+      hosts: [
+        { host: "api.foo.com", layer: "org" },
+        { host: "10.0.0.5", layer: "address" },
+      ],
+    });
+  });
+
+  it("only device-layer hosts: no facts entry", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [{ id: "a", name: "Bash", input: { command: "curl x" } }]),
+      blocked(3, "a", [{ host: "files.slack.com", port: 443, layer: "device" }]),
+      result(4, "a", "Bash"),
+    ];
+    expect(kinds(buildTimeline(events, [], INFO, "en"))).toEqual(["user", "tools"]);
+  });
+
+  it("the approval carries the asked hosts; a skipped decision closes it", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [{ id: "a", name: "Bash", input: { command: "curl https://files.slack.com" } }]),
+      ev(3, "approval_requested", {
+        step: 0,
+        callId: "a",
+        approvalId: "ap1",
+        toolKey: "Bash",
+        expiresAt: "x",
+        network: { hosts: ["files.slack.com"] },
+      }),
+      ev(4, "approval_decided", {
+        approvalId: "ap1",
+        callId: "a",
+        decision: "skipped",
+        byAccountId: "a1",
+      }),
+    ];
+    const out = buildTimeline(events, [], INFO, "en");
+    const ap = out.find((e) => e.kind === "approval");
+    expect(ap?.kind === "approval" && ap.item).toMatchObject({
+      network: { hosts: ["files.slack.com"] },
+      input: { command: "curl https://files.slack.com" },
+      decided: { decision: "skipped" },
+    });
+  });
+});

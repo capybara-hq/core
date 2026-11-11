@@ -590,7 +590,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/approvals/:id/decision",
     category: "human-only",
     reason:
-      "Decides a tool permission approval; only the person decides (spec §6.4); reading what waits is approvals.waiting / approvals.get",
+      "Decides a tool permission approval or a network ask; only the person decides (spec §6.4); a person must decide network access on their own device; reading what waits is approvals.waiting / approvals.get",
   },
   {
     route: "GET /api/v1/orgs/:orgId/me/tool-grants",

@@ -1,10 +1,12 @@
 import { type JSX, type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
 import { Button } from "../controls/button";
 import { Input } from "../controls/inputs";
-import { Switch } from "../controls/toggles";
+import { Checkbox, Switch } from "../controls/toggles";
+import { Callout, type CalloutAction } from "../display/callout";
 import { initialOf } from "../display/initial";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import { registrableDomain } from "./registrable";
 import { fillCopy } from "./tool-copy";
 
 // Human-in-the-loop blocks (spec §6.16.11–§6.16.13): the pending approval (the only accent card),
@@ -19,12 +21,35 @@ export type ApprovalState =
   | { kind: "pending"; busy?: boolean }
   | {
       kind: "decided";
-      decision: "approved" | "denied" | "expired" | "cancelled";
+      /** `skipped`: the person sent a message instead of answering (network asks only). */
+      decision: "approved" | "denied" | "expired" | "cancelled" | "skipped";
       who: string;
       when: string;
       scope?: ApprovalScope;
       reason?: string;
+      /** A network ask: the hosts the decision covers (the checked ones when approved). */
+      hosts?: string[];
+      /**
+       * A network ask decided "always" that became "this time": the device was offline, or does
+       * not accept remote changes (refused, or a program without the feature).
+       */
+      fallback?: NetworkFallback;
     };
+
+export type NetworkFallback = "offline" | "refused" | "unsupported";
+
+/** A network ask (network ask spec §6.5): a command on a device was refused these hosts. */
+export type NetworkAsk = {
+  /** The device-layer hosts asked for (model-controlled: drawn as code, never markup). */
+  hosts: string[];
+  /** The refused command (model-controlled), clipped to {@link NETWORK_COMMAND_MAX} characters. */
+  command: string;
+  /** The command's description (model-controlled), when it had one. */
+  description?: string;
+};
+
+/** How much of a network ask's command the card shows. */
+export const NETWORK_COMMAND_MAX = 300;
 
 export type ApprovalBlockProps = {
   /** The tool as people read it: "<connector>: <title>", or the source and localized name. */
@@ -37,12 +62,23 @@ export type ApprovalBlockProps = {
   input: Record<string, unknown>;
   /** The tool's key arguments: shown first, in this order. */
   keyArgs?: string[];
-  /** The scopes the request allows; one approve button each. */
+  /** The scopes the request allows; one approve button each, the first is the primary one. */
   scopes: ApprovalScope[];
+  /** Button labels per scope in place of the defaults (a network ask has its own). */
+  scopeLabels?: Partial<Record<ApprovalScope, string>>;
+  /** A small line under a scope's button saying what it means. */
+  scopeHints?: Partial<Record<ApprovalScope, string>>;
   /** The rule that asked (shown on the right of the actions). */
   policy?: string;
+  /**
+   * A network ask instead of a tool call: the head names the hosts, the body the command, and
+   * with more than one host each has a checkbox (all checked); `tool`, `toolKey` and `input` are
+   * not shown.
+   */
+  network?: NetworkAsk;
   state: ApprovalState;
-  onApprove?(scope: ApprovalScope): void;
+  /** `hosts`: a network ask's checked hosts (every host when it has one). */
+  onApprove?(scope: ApprovalScope, hosts?: string[]): void;
   onDeny?(reason?: string): void;
   /** Start in the deny form with this reason (a restored draft). */
   defaultDeny?: { reason: string };
@@ -93,6 +129,10 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
   const inputId = useId();
   const s = p.state;
 
+  if (p.network) {
+    return <NetworkApproval {...p} network={p.network} />;
+  }
+
   if (s.kind === "decided") {
     const scope = s.scope ? t(`hitl.scope.${s.scope}`) : undefined;
     if (s.decision === "approved") {
@@ -111,9 +151,16 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     const lead =
       s.decision === "denied"
         ? fillCopy(t("hitl.deniedBy"), { who: s.who, tool: p.tool })
-        : fillCopy(t(s.decision === "expired" ? "hitl.expired" : "hitl.cancelled"), {
-            tool: p.tool,
-          });
+        : fillCopy(
+            t(
+              s.decision === "expired"
+                ? "hitl.expired"
+                : s.decision === "skipped"
+                  ? "hitl.skippedApproval"
+                  : "hitl.cancelled",
+            ),
+            { tool: p.tool },
+          );
     return (
       <div className="cb-tool-line" data-part="tool-line" data-decision={s.decision}>
         <Icon name="x" size={12} />
@@ -174,16 +221,19 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     );
   } else {
     actions = (
-      <div className="cb-hcard-actions">
+      <div
+        className="cb-hcard-actions"
+        data-hints={p.scopeHints && Object.keys(p.scopeHints).length > 0 ? "true" : undefined}
+      >
         {p.scopes.map((scope, i) => (
-          <Button
+          <ScopeChoice
             key={scope}
-            variant={i === 0 ? "primary" : "default"}
+            primary={i === 0}
             disabled={busy}
+            label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+            hint={p.scopeHints?.[scope]}
             onClick={() => p.onApprove?.(scope)}
-          >
-            {t(SCOPE_LABEL[scope])}
-          </Button>
+          />
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.denyEllipsis")}
@@ -251,6 +301,328 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       )}
       {actions}
+    </div>
+  );
+}
+
+/** One approve button; with a hint, the hint is a small line under it. */
+function ScopeChoice({
+  primary,
+  disabled,
+  label,
+  hint,
+  onClick,
+}: {
+  primary: boolean;
+  disabled: boolean;
+  label: string;
+  hint: ReactNode | undefined;
+  onClick(): void;
+}) {
+  const button = (
+    <Button variant={primary ? "primary" : "default"} disabled={disabled} onClick={onClick}>
+      {label}
+    </Button>
+  );
+  if (hint === undefined || hint === null || hint === "") return button;
+  return (
+    <span className="cb-hcard-choice" data-part="scope-choice">
+      {button}
+      <span className="cb-muted cb-small" data-part="scope-hint">
+        {hint}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * A fixed copy string with `{name}` placeholders filled with plain text and backtick pairs drawn
+ * as inline code. The template is split first, so a value is never read as markup.
+ */
+export function richCopy(tpl: string, vars: Record<string, string | number> = {}): ReactNode[] {
+  return tpl.split(/`([^`\n]+)`/).map((part, i) => {
+    const text = fillCopy(part, vars);
+    return i % 2 === 1 ? (
+      // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed string
+      <code key={i} className="cb-md-code" data-part="inline-code">
+        {text}
+      </code>
+    ) : (
+      text
+    );
+  });
+}
+
+/** The plain text of {@link richCopy} (an accessible name). */
+const plainCopy = (tpl: string, vars: Record<string, string | number> = {}) =>
+  fillCopy(tpl.replace(/`/g, ""), vars);
+
+/** A command clipped for the card. */
+export function clipCommand(command: string, max = NETWORK_COMMAND_MAX): string {
+  const chars = Array.from(command);
+  return chars.length <= max ? command : `${chars.slice(0, max - 1).join("")}…`;
+}
+
+/** One host: its registrable domain prominent, the full host in code style (spec §6.4). */
+function HostName({ host }: { host: string }) {
+  return (
+    <span className="cb-net-host" data-part="network-host">
+      <strong className="cb-hcard-strong" data-part="registrable">
+        {registrableDomain(host)}
+      </strong>
+      <code className="cb-md-code" data-part="inline-code">
+        {host}
+      </code>
+    </span>
+  );
+}
+
+const NETWORK_DECIDED = {
+  denied: "hitl.network.denied",
+  expired: "hitl.network.expired",
+  cancelled: "hitl.network.cancelled",
+  skipped: "hitl.network.skipped",
+} as const;
+
+/** The network variant of {@link ApprovalBlock} (network ask spec §6.5). */
+function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.Element {
+  const t = useDesignT();
+  const hosts = p.network.hosts;
+  const [checked, setChecked] = useState<string[]>(hosts);
+  const [denying, setDenying] = useState(p.defaultDeny !== undefined);
+  const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
+  const inputId = useId();
+  const s = p.state;
+
+  if (s.kind === "decided") {
+    const shown = s.hosts && s.hosts.length > 0 ? s.hosts : hosts;
+    const d = s.decision;
+    const approved = d === "approved";
+    const word =
+      d === "approved"
+        ? t(s.scope === "always" ? "hitl.network.allowedAlways" : "hitl.network.allowedOnce")
+        : t(NETWORK_DECIDED[d]);
+    // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
+    const who = s.decision === "expired" || s.decision === "cancelled" ? "" : s.who;
+    return (
+      <div
+        className="cb-tool-line"
+        data-part="tool-line"
+        data-decision={s.decision}
+        data-network="true"
+      >
+        <Icon name={approved ? "check" : "x"} size={12} />
+        <span className="cb-tool-label">
+          {word}{" "}
+          <span className="cb-faint" data-part="tool-key">
+            {[shown.join(", "), who].filter(Boolean).join(" · ")}
+          </span>
+          {s.fallback ? (
+            <span className="cb-muted" data-part="network-fallback">
+              {` · ${t(s.fallback === "offline" ? "hitl.network.fallbackOffline" : "hitl.network.fallbackRefused")}`}
+            </span>
+          ) : null}
+          {s.reason ? (
+            <span className="cb-muted">
+              {` · ${fillCopy(t("hitl.reasonQuote"), { reason: s.reason })}`}
+            </span>
+          ) : null}
+          {s.when ? <span className="cb-faint">{` · ${s.when}`}</span> : null}
+        </span>
+      </div>
+    );
+  }
+
+  const busy = s.busy === true;
+  const one = hosts.length === 1;
+  const titleTpl = one ? t("hitl.network.titleOne") : t("hitl.network.titleMany");
+  const vars = { host: hosts[0] ?? "", count: hosts.length };
+  const description = p.network.description?.trim();
+  const picked = one ? hosts : hosts.filter((h) => checked.includes(h));
+  const none = picked.length === 0;
+  const label = (scope: ApprovalScope) =>
+    p.scopeLabels?.[scope] ??
+    t(
+      scope === "always"
+        ? "hitl.network.always"
+        : scope === "once"
+          ? "hitl.network.once"
+          : SCOPE_LABEL[scope],
+    );
+  const hint = (scope: ApprovalScope): ReactNode =>
+    p.scopeHints?.[scope] ??
+    (scope === "once"
+      ? t("hitl.network.hintOnce")
+      : scope === "always"
+        ? richCopy(t("hitl.network.hintAlways"))
+        : undefined);
+  const remoteOff = !p.scopes.includes("always");
+
+  let actions: ReactNode;
+  if (denying) {
+    const trimmed = reason.trim();
+    actions = (
+      <div className="cb-hcard-deny">
+        <Input
+          id={inputId}
+          aria-label={t("hitl.denyReason")}
+          placeholder={t("hitl.denyPlaceholder")}
+          value={reason}
+          disabled={busy}
+          onChange={(e) => setReason(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              p.onDeny?.(trimmed === "" ? undefined : trimmed);
+            }
+          }}
+        />
+        <div className="cb-hcard-actions">
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={() => p.onDeny?.(trimmed === "" ? undefined : trimmed)}
+          >
+            {t("hitl.deny")}
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setDenying(false)}>
+            {t("hitl.cancel")}
+          </Button>
+          <span className="cb-hcard-note" data-part="card-note">
+            {t("hitl.denyNote")}
+          </span>
+        </div>
+      </div>
+    );
+  } else {
+    actions = (
+      <div className="cb-hcard-actions" data-hints="true">
+        {p.scopes.map((scope, i) => (
+          <ScopeChoice
+            key={scope}
+            primary={i === 0}
+            disabled={busy || none}
+            label={label(scope)}
+            hint={hint(scope)}
+            onClick={() => p.onApprove?.(scope, picked)}
+          />
+        ))}
+        <Button disabled={busy} onClick={() => setDenying(true)}>
+          {t("hitl.network.deny")}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset brings its own border and legend layout
+    <div
+      className="cb-hcard"
+      data-part="approval-block"
+      data-pending="true"
+      data-network="true"
+      role="group"
+      aria-label={plainCopy(titleTpl, vars)}
+    >
+      <div className="cb-hcard-head">
+        <span className="cb-hcard-dot" aria-hidden="true" />
+        <strong className="cb-hcard-strong" data-part="network-title">
+          {richCopy(titleTpl, vars)}
+        </strong>
+      </div>
+      <div data-part="network-body">
+        {description
+          ? fillCopy(t("hitl.network.body"), { description })
+          : t("hitl.network.bodyPlain")}
+      </div>
+      <pre className="cb-hcard-json" data-part="network-command">
+        {clipCommand(p.network.command)}
+      </pre>
+      {one ? (
+        <div className="cb-net-hosts">
+          <HostName host={hosts[0] ?? ""} />
+        </div>
+      ) : (
+        // biome-ignore lint/a11y/useSemanticElements: a fieldset brings its own border and legend layout
+        <div className="cb-net-hosts" role="group" aria-label={t("hitl.network.hosts")}>
+          {hosts.map((h) => (
+            <Checkbox
+              key={h}
+              aria-label={h}
+              checked={checked.includes(h)}
+              disabled={busy}
+              onChange={(on) =>
+                setChecked((cur) =>
+                  on ? hosts.filter((x) => x === h || cur.includes(x)) : cur.filter((x) => x !== h),
+                )
+              }
+              label={<HostName host={h} />}
+            />
+          ))}
+        </div>
+      )}
+      {actions}
+      {remoteOff && !denying ? (
+        <div className="cb-muted cb-small" data-part="network-remote-off">
+          {richCopy(t("hitl.network.remoteOff"), { host: one ? (hosts[0] ?? "") : "<host>" })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Network facts ───────────────────────────────────────────────────────────
+
+/** A host refused by a layer no card can lift: the org's allowlist, or a private address. */
+export type NetworkFact = { host: string; layer: "org" | "address" };
+
+export type NetworkBlockedFactsProps = {
+  hosts: NetworkFact[];
+  /**
+   * The org-layer action (phase 2: 「请管理员添加」 for a member, a settings link for an org admin);
+   * none in phase 1.
+   */
+  action?: CalloutAction;
+};
+
+/**
+ * What a command was refused that no one in the conversation can lift (network ask spec §6.5):
+ * hosts outside the org's network allowlist, and private or local addresses. Text only, under the
+ * command's row; device-layer hosts are the ask's, never listed here.
+ */
+export function NetworkBlockedFacts({
+  hosts,
+  action,
+}: NetworkBlockedFactsProps): JSX.Element | null {
+  const t = useDesignT();
+  const org = hosts.filter((h) => h.layer === "org");
+  const address = hosts.filter((h) => h.layer === "address");
+  if (org.length === 0 && address.length === 0) return null;
+  return (
+    <div className="cb-net-facts" data-part="network-facts">
+      {org.length > 0 ? (
+        <Callout tone="info" {...(action ? { action } : {})}>
+          {org.map((h) => (
+            <span key={h.host} className="cb-net-fact" data-part="network-fact" data-layer="org">
+              {richCopy(t("hitl.network.org"), { host: h.host })}
+            </span>
+          ))}
+        </Callout>
+      ) : null}
+      {address.length > 0 ? (
+        <Callout tone="info">
+          {address.map((h) => (
+            <span
+              key={h.host}
+              className="cb-net-fact"
+              data-part="network-fact"
+              data-layer="address"
+            >
+              {richCopy(t("hitl.network.address"), { host: h.host })}
+            </span>
+          ))}
+        </Callout>
+      ) : null}
     </div>
   );
 }

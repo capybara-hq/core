@@ -94,6 +94,13 @@ export function approvalsFor(
     h.txHost,
     new ScheduledTaskStore(),
     registry,
+    // no device here: deciding a network ask needs the kernel's DevicePolicyService
+    {
+      apply: async () => {
+        throw new Error("DevicePolicyService is not available in this test");
+      },
+    },
+    undefined as never,
   );
 }
 
@@ -116,7 +123,7 @@ export interface PipelineTestDeps {
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
-  approvals: Pick<ApprovalsService, "request" | "forCall">;
+  approvals: Pick<ApprovalsService, "request" | "forCall" | "networkForCall" | "requestNetwork">;
   questions: Pick<QuestionsService, "ask" | "forCall">;
   config: () => unknown;
   log: Logger;

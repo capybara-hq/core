@@ -1730,10 +1730,12 @@ States: `default`, `truncated`
 - **Summary**: a call that carries a kernel-rendered summary (a Platform operation: what it does, in the UI language, from the operation and its params) shows it as one `small` line between the head and the argument grid; the key and every argument stay on screen below it. The summary is a convenience, never a substitute for the arguments.
 - **Why the key and every argument**: a tool's title (and its `keyArgs`) come from extension or connector code and a connector's title can change without drift review (it is display only). The person approving must see what the model actually calls: the reviewed key and the full input, so a misleading title can at most mislabel a call whose key and arguments are on screen.
 - **Deny with a reason**: "拒绝…" swaps the actions for a reason input ("拒绝原因（选填，会告诉模型）" / "Reason (optional, the model sees it)"), "拒绝" / "Deny" (danger), "取消" / "Cancel" (ghost) and the note "原因会写入会话，模型能看到" / "The reason goes into the conversation; the model sees it".
-- **Decided**: collapses to a tool line that names the key too: approved — `check` 12, "<who> 批准了 <tool>" and " <key> · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " <key>" in `faint`, " · 「<reason>」" in `muted` and the time in `faint`.
+- **Decided**: collapses to a tool line that names the key too: approved — `check` 12, "<who> 批准了 <tool>" and " <key> · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " <key>" in `faint`, " · 「<reason>」" in `muted` and the time in `faint`. A request the person answered with a message reads "批准请求已跳过：<tool>" / "Approval request skipped: <tool>" (network asks only, below).
+- **Network ask** (network ask spec §6.5): a command on a device was refused network hosts by the device's own policy, and the device owner is asked. Same accent card, no tool, key or argument grid. Head: the `accent` dot and the title (600): one host "智能体想访问 `files.slack.com`，允许吗？" / "The agent wants to reach `files.slack.com`. Allow?", the host as inline code; n hosts "智能体想访问 n 个域名，允许吗？" / "The agent wants to reach n domains. Allow?". Body: "这条命令被这台设备的网络规则拦下了：<description>" / "This command was blocked by this device's network rules: <description>" (without a description the sentence ends there). The command read-only in code style (the full-input box of a tool approval), clipped to 300 characters with an ellipsis. Then the hosts, one per line: the registrable domain (600; e.g. **evil.io** in `files.slack.com.evil.io`, the last two labels, three under a known multi-label suffix such as `co.uk`, `com.cn`: a display aid, never a security decision) and the full host as inline code; with more than one host each line is a checkbox, all checked, and the decision covers the checked ones (none checked disables both allow buttons, Deny stays). Actions: "这次允许" / "Allow this time" (primary, always the first and focused one, never "always"), "这台设备一直允许" / "Always allow on this device" (default), each with a `small` `muted` hint under it — "到智能体这次回复结束为止有效" / "Until the agent finishes this reply"; "写入这台设备的本地策略，之后的命令都可以访问；可在设备页或用 `capybara-device policy` 撤销" / "Saved in this device's local policy for all later commands; undo on the device page or with `capybara-device policy`" — and "拒绝" / "Deny" (default), which opens the same reason form as a tool approval. A device that takes no remote changes offers only "这次允许" and says under the actions (`small` `muted`): "这台设备不接受远程修改；要一直允许，请在设备上运行 `capybara-device policy add allowedDomains <host>`". Host, command and description are model-controlled: always plain text or code, never markup.
+- **Network ask decided**: a tool line with `check` 12 (allowed) or `x` 12 and the word: "已允许（这次）" / "Allowed (this time)", "已允许（这台设备）" / "Allowed (this device)", "已拒绝" / "Denied", "已过期" / "Expired", "已跳过" / "Skipped" (the person sent a message instead of answering), "已取消" / "Cancelled"; then the hosts it covers (the granted ones when allowed) and who in `faint` (expired and cancelled name no one); an "always" the device took as "this time" adds " · 设备离线，已按这次允许" / " · The device is offline; allowed this time instead" or " · 设备不接受远程修改，已按这次允许" / " · The device does not accept remote changes; allowed this time instead" in `muted`; a denial's reason and the time as for tool approvals.
 
 <!-- states: approval-block -->
-States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`
+States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-always`, `network-fallback`, `network-denied`, `network-skipped`
 
 <!-- size-table: approval-block -->
 | Part | State | Property | Value |
@@ -1758,6 +1760,29 @@ States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`,
 | tool-key | approved | color | color.faint |
 | tool-line | denied | color | color.muted |
 | tool-key | denied | color | color.faint |
+| approval-block | network | border-top-color | color.accent |
+| button[data-variant=primary] | network | height | control.default |
+| scope-hint | network | font-size | type.small |
+| scope-hint | network | color | color.muted |
+| network-remote-off | network-once | color | color.muted |
+| tool-line | network-allowed | height | row.dense |
+| tool-key | network-allowed | color | color.faint |
+| tool-line | network-skipped | color | color.muted |
+
+#### 6.16.11a Network facts
+
+- What a command on a device was refused that no card in the conversation can lift (network ask spec §6.5), under the group that holds the command, from the display-only `network_blocked` event: hosts outside the org's network allowlist (`org` layer) and private or local addresses (`address` layer). Device-layer hosts are the network ask's, never listed here. One `info` Callout per layer, one sentence per host, the host as inline code: "`api.foo.com` 不在组织的网络白名单里，只有组织管理员能添加。" / "`api.foo.com` is not in the organization's network allowlist; only an org admin can add it."; "`10.0.0.5`：这个地址指向内网或本机，智能体的命令不能访问。" / "`10.0.0.5`: This address points to a private network or this machine; agent commands cannot reach it.". Text only for now; the org-layer Callout takes one action (a request to the org admins, a later phase).
+
+<!-- states: network-facts -->
+States: `org`, `address`
+
+<!-- size-table: network-facts -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| callout | org | background-color | color.panel |
+| network-fact | org | color | color.muted |
+| callout | address | background-color | color.panel |
+| network-fact | address | color | color.muted |
 
 #### 6.16.12 Question block
 

@@ -7,10 +7,11 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { releaseQueuedTaskRunIn } from "../schedules/run-tracker.js";
 import { notInvocable, type RenderedInvocation } from "../skills/invoke.js";
-import type { QuestionRecord } from "../tools/questions.service.js";
 import {
   ConversationsService,
   type InternalMessageOptions,
+  NO_REPLY_SKIPS,
+  type ReplySkips,
   type ResolvedExtra,
   type RunControl,
 } from "./conversations.service.js";
@@ -61,7 +62,7 @@ export class ConversationQueue {
       | "bindIn"
       | "checkPick"
       | "prepareQueuedSkill"
-      | "skipQuestionsIn"
+      | "skipWaitsIn"
       | "announceSkipped"
     >,
     /** Starts the conversation's next run (`ensureRun`). */
@@ -386,7 +387,7 @@ export class ConversationQueue {
     switched: boolean;
     unarchived: boolean;
     fresh: boolean;
-    skipped: QuestionRecord[];
+    skipped: ReplySkips;
     toSeq: number;
   }> {
     const t = this.db.db;
@@ -420,12 +421,12 @@ export class ConversationQueue {
     // sent during the run, the item is the author's message like a direct send: it skips the
     // pending questions they may answer (reply-while-question spec §4.2)
     const skips = sent
-      ? { records: [], toSeq: null }
-      : await this.conversations.skipQuestionsIn(conversationId, row.account_id, out.event.seq);
+      ? { skipped: NO_REPLY_SKIPS, toSeq: null }
+      : await this.conversations.skipWaitsIn(conversationId, row.account_id, out.event.seq);
     return {
       ...out,
       fresh: !sent,
-      skipped: skips.records,
+      skipped: skips.skipped,
       toSeq: Math.max(out.event.seq, skips.toSeq ?? 0),
     };
   }

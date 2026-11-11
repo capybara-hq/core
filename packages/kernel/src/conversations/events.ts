@@ -49,6 +49,10 @@ const ApproverFields = {
   approverRole: z.enum(ORG_ROLES).nullable().optional(),
 };
 
+/** The most hosts one network ask (and one `network_blocked` event) lists. */
+export const NETWORK_ASK_MAX_HOSTS = 20;
+/** The longest host name a network ask or `network_blocked` event carries. */
+export const NETWORK_HOST_MAX_CHARS = 255;
 /** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 /** 一条 `media_excluded` 事件最多的附件数。 */
@@ -635,16 +639,31 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       expiresAt: z.string(),
       /** Which rule asked (UI refresh B; display only, absent in older logs). */
       policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
+      /**
+       * A network ask (network ask-to-allow spec §6.1): the hosts the device owner is asked to
+       * allow. Display only, never model-visible: the model sees the call's `tool_result` only.
+       */
+      network: z
+        .object({
+          hosts: z
+            .array(z.string().min(1).max(NETWORK_HOST_MAX_CHARS))
+            .min(1)
+            .max(NETWORK_ASK_MAX_HOSTS),
+        })
+        .optional(),
       ...ApproverFields,
     }),
   ),
-  /** 审批已处理（批准 / 拒绝 / 超时 / 取消）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。 */
+  /**
+   * 审批已处理（批准 / 拒绝 / 超时 / 取消，或 `skipped`：网络询问被运行发起人的消息跳过，`byAccountId`
+   * 为消息作者）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。
+   */
   ev(
     "approval_decided",
     z.object({
       approvalId: z.string(),
       callId: z.string(),
-      decision: z.enum(["approved", "denied", "expired", "cancelled"]),
+      decision: z.enum(["approved", "denied", "expired", "cancelled", "skipped"]),
       scope: z.enum(["once", "session", "always"]).optional(),
       byAccountId: z.string().nullable(),
       /**
@@ -784,6 +803,29 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       step: count,
       attempt: count.optional(),
       callId: z.string().optional(),
+    }),
+  ),
+  /**
+   * The network refusals a command reported (network ask-to-allow spec §6.5), whether or not they
+   * raised an ask: the web draws the facts and the org-layer request under the command's row. Not
+   * model-visible: request building skips it; the model sees only the call's `tool_result` (the
+   * device's trailer and the kernel's note).
+   */
+  ev(
+    "network_blocked",
+    z.object({
+      step: count,
+      callId: z.string(),
+      hosts: z
+        .array(
+          z.object({
+            host: z.string().min(1).max(NETWORK_HOST_MAX_CHARS),
+            port: z.number().int().min(1).max(65535),
+            layer: z.enum(["device", "org", "address", "unknown"]),
+          }),
+        )
+        .min(1)
+        .max(NETWORK_ASK_MAX_HOSTS),
     }),
   ),
   /**

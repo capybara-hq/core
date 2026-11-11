@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { backoffMs, type Connection, type ConnectOptions, connect } from "../src/client.js";
 import { CommandLog } from "../src/command-log.js";
+import { PolicyStore } from "../src/policy-store.js";
 import type { Credential } from "../src/state.js";
+import { DEFAULT_POLICY, writePolicy } from "../src/state.js";
 import { execArgs, FakeExecutor, FakeKernel, OK_EXEC, ROOTS, req } from "./fake-kernel.js";
 
 let kernel: FakeKernel;
@@ -100,6 +102,65 @@ describe("client", () => {
     expect(byId.c.result).toBeNull();
     expect(byId.d.result).toBeNull();
     expect(byId.e.result).toEqual({ roots: ROOTS });
+  });
+
+  it("hello carries the features and the local policy; a policy op shows on the next hello", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
+    start({ policy: new PolicyStore(dir) });
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.features).toEqual(["networkReport", "policyOp"]);
+    expect(hello.policy).toEqual({
+      network: "allowlist",
+      allowedDomains: ["a.com"],
+      remoteGrants: "owner",
+    });
+    kernel.send(
+      0,
+      req("p1", "policy", {
+        add: ["files.slack.com"],
+        source: { approvalId: "apr_1", accountId: "acc_1", accountName: "Ada", via: "im" },
+      }),
+    );
+    const res = await kernel.waitFor("res", () => kernel.of("res")[0]);
+    expect(res).toMatchObject({
+      id: "p1",
+      ok: true,
+      result: { policy: { allowedDomains: ["a.com", "files.slack.com"] } },
+    });
+    const line = JSON.parse(readFileSync(join(dir, "commands.log"), "utf8").trim());
+    expect(line).toMatchObject({
+      op: "policy",
+      detail: "policy add files.slack.com by Ada (acc_1) via im, approval apr_1",
+    });
+    // A local edit meanwhile is reported too: the summary is read at each connect.
+    writePolicy(dir, {
+      ...DEFAULT_POLICY,
+      allowedDomains: ["a.com", "files.slack.com"],
+      remoteGrants: "off",
+    });
+    kernel.sockets[0]?.close(1001);
+    const again = await kernel.waitFor("reconnect", () => kernel.of("hello", 1)[0]);
+    expect(again.policy).toEqual({
+      network: "allowlist",
+      allowedDomains: ["a.com", "files.slack.com"],
+      remoteGrants: "off",
+    });
+  });
+
+  it("a docker-mode hello offers the policy op but no network report", async () => {
+    (exec as { mode: string }).mode = "docker";
+    start({ policy: new PolicyStore(dir) });
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.mode).toBe("docker");
+    expect(hello.features).toEqual(["policyOp"]);
+    expect(hello.policy).toMatchObject({ network: "allowlist", remoteGrants: "owner" });
+  });
+
+  it("without a policy store the hello offers no policy op and no summary", async () => {
+    start();
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.features).toEqual(["networkReport"]);
+    expect(hello.policy).toBeUndefined();
   });
 
   it("result produced while disconnected is sent after reconnect", async () => {

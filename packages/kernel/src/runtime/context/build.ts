@@ -841,6 +841,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // (and nothing for a denied model request), so request building skips it
       case "hook_denied":
         break;
+      // network_blocked is display-only (network ask-to-allow spec §6.6): the model sees the
+      // refusal in the command's tool_result (the device's trailer and the kernel's note)
+      case "network_blocked":
+        break;
       // model_switched is not model-visible either: its effect (model and params) is recorded in
       // each request's model_call (UI refresh B)
       case "model_switched":

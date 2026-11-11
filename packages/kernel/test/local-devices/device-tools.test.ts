@@ -343,6 +343,18 @@ describe("local devices through the sandbox tools", () => {
     }
   }, 60_000);
 
+  it("every exec names the call's run in its actor; no grants without approved asks (P-D3)", async () => {
+    const m = await member();
+    const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
+    const ctx = m.ctx();
+    await m.tool("Bash").run({ command: "true" }, ctx);
+    const exec = machine.frames.find((f) => f.type === "req" && f.op === "exec") as KernelReq;
+    expect(exec.args).toMatchObject({
+      actor: { accountId: m.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
+    });
+    expect(exec.args).not.toHaveProperty("grants");
+  }, 60_000);
+
   it("a revoked machine: its socket closes, the waiting call fails at once, the credential is refused", async () => {
     const m = await member();
     const { machine, dir, credential } = await signIn(m.deviceId, m.accountId, ROOTS_A);

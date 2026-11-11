@@ -3,6 +3,7 @@ import type {
   Connector,
   HookParentScope,
   InputRequired,
+  NetworkBlockedHost,
   ToolAnnotations,
   ToolCallContext,
   ToolResult,
@@ -119,6 +120,12 @@ export type BuiltinResult =
        * checking it against `ToolViewSchema`). Builtins only: extension tools cannot set it.
        */
       view?: ToolView;
+      /**
+       * Kernel-internal (never written to the log or sent to the model): the network hosts a
+       * foreground command on a device was refused (`Bash`; network ask-to-allow spec §6.2). The
+       * pipeline turns it into `network_blocked`, an ask to the device owner or notes.
+       */
+      networkReport?: { deviceId: string; blocked: NetworkBlockedHost[] };
     })
   | InputRequired;
 
