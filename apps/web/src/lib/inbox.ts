@@ -28,13 +28,16 @@ export type InboxItem =
 export interface ScheduleAttention {
   taskId: string;
   name: string;
-  reason: SchedulePauseReason | "missing_grants";
+  /** `failed`: its latest run failed (`error`); `missing_grants`: tools refused; else paused. */
+  reason: SchedulePauseReason | "missing_grants" | "failed";
   /** Who paused it (an admin's pause names the admin); else null. */
   pausedBy: { id: string; name: string } | null;
   /** `missing_grants`: the refused tool keys, or `connection:<slug>` (connect that connector). */
   missing: string[];
   /** The part of `missing` I can't approve up front (the tool needs a role I lack). */
   needsRole: string[];
+  /** `failed`: the run's error; else null. */
+  error: string | null;
 }
 
 /** Who owns an item (kernel `Owner`). */

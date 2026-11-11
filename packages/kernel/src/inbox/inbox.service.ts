@@ -64,8 +64,8 @@ export const INBOX_MAX_ITEMS = 100;
  * - `catalog_request_decided`: the current user's own requests in this org that were approved or
  *   rejected (with the reason), until dismissed (`POST catalog-requests/:id/dismiss`);
  * - `schedule_attention`: the current user's own scheduled task that needs them (spec §8): paused
- *   for any reason but their own pause, or its latest run was refused tools or connections; derived
- *   live, gone once the task is resumed or runs clean;
+ *   for any reason but their own pause, its latest run failed, or its latest run was refused tools
+ *   or connections; derived live, gone once the task is resumed or runs clean;
  * - the org notices (`skill_renamed`, `item_shared`, `shared_item_updated`, `upload_confirmed`,
  *   `upload_rejected`; `type` = the notice's kind): for org admins, until one dismisses it
  *   (`POST inbox/notices/:id/dismiss`).
@@ -83,7 +83,7 @@ export type InboxItem =
     }
   | {
       type: "schedule_attention";
-      /** `<taskId>:paused` or `<taskId>:grants`. */
+      /** `<taskId>:paused`, `<taskId>:failed` or `<taskId>:grants`. */
       id: string;
       createdAt: string;
       attention: ScheduleAttentionView;
@@ -166,7 +166,7 @@ export class InboxService {
       ...attention.map(
         ({ at, ...view }): InboxItem => ({
           type: "schedule_attention",
-          id: `${view.taskId}:${view.reason === "missing_grants" ? "grants" : "paused"}`,
+          id: `${view.taskId}:${view.reason === "missing_grants" ? "grants" : view.reason === "failed" ? "failed" : "paused"}`,
           createdAt: at.toISOString(),
           attention: view,
         }),

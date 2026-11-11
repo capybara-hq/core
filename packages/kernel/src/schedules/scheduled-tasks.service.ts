@@ -53,8 +53,11 @@ export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: 
 export interface ScheduleAttention {
   taskId: string;
   name: string;
-  /** `missing_grants`: the latest run was refused tools or connections the task lacks. */
-  reason: SchedulePauseReason | "missing_grants";
+  /**
+   * `missing_grants`: the latest run was refused tools or connections the task lacks; `failed`:
+   * the latest settled run of an active task failed (its start included); else the pause reason.
+   */
+  reason: SchedulePauseReason | "missing_grants" | "failed";
   /** The person who paused the task (`reason: "admin"` names the admin); else null. */
   pausedBy: { id: string; name: string } | null;
   /**
@@ -64,7 +67,9 @@ export interface ScheduleAttention {
   missing: string[];
   /** The subset of `missing` the creator cannot pre-approve (the tool needs a higher role). */
   needsRole: string[];
-  /** When the pause happened, or when the refused run fired. */
+  /** `failed` only: the run's error; else null. */
+  error: string | null;
+  /** When the pause happened, or when the refused or failed run was due. */
   at: Date;
 }
 
@@ -121,13 +126,9 @@ export interface UpdateTaskInput {
   expiresAt?: Date | null;
 }
 
-/**
- * Who acts on a task. `role` is what the caller saw; the service re-reads the live role inside
- * its transaction and decides by that one.
- */
+/** Who acts on a task: the service reads their live role itself and decides by that one. */
 export interface ScheduleActor {
   accountId: string;
-  role: OrgRole;
 }
 
 const RUNS_DEFAULT = 50;
@@ -811,7 +812,8 @@ export class ScheduledTasksService {
 
   /**
    * The creator's scheduled tasks that need attention (spec §8), derived live: a paused task whose
-   * reason is not `creator` (resuming clears it), and a task whose latest settled non-trial run was
+   * reason is not `creator` (resuming clears it), an active task whose latest settled non-trial
+   * run failed (the next good run clears it), and a task whose latest settled non-trial run was
    * refused tools or connections (a tool granted since drops out; the next clean run clears the
    * rest). Newest first.
    */
@@ -838,7 +840,7 @@ export class ScheduledTasksService {
     // the latest settled non-trial run of each task, and every grant of these tasks, in one query each
     const latest = await db
       .selectFrom("scheduled_task_runs")
-      .select(["task_id", "fired_at", "scheduled_for", "missing_grants"])
+      .select(["task_id", "fired_at", "scheduled_for", "missing_grants", "status", "error"])
       .distinctOn("task_id")
       .where("task_id", "in", ids)
       .where("trial", "=", false)
@@ -874,11 +876,25 @@ export class ScheduledTasksService {
               : { id: task.pausedBy, name: names.get(task.pausedBy) ?? "" },
           missing: [],
           needsRole: [],
+          error: null,
           at: task.updatedAt,
         });
       }
       const run = runs.get(task.id);
       if (!run) continue;
+      // an active task whose latest run failed (a paused one shows its pause instead)
+      if (run.status === "failed" && task.status === "active") {
+        out.push({
+          taskId: task.id,
+          name: task.name,
+          reason: "failed",
+          pausedBy: null,
+          missing: [],
+          needsRole: [],
+          error: run.error,
+          at: run.fired_at ?? new Date(run.scheduled_for),
+        });
+      }
       const have = granted.get(task.id);
       const missing = run.missing_grants.filter((k) => !have?.has(k));
       if (missing.length === 0) continue;
@@ -904,6 +920,7 @@ export class ScheduledTasksService {
         pausedBy: null,
         missing,
         needsRole,
+        error: null,
         at: run.fired_at ?? new Date(run.scheduled_for),
       });
     }

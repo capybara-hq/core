@@ -111,7 +111,7 @@ export class ScheduledTaskFirer {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ScheduledTaskStore) private readonly store: ScheduledTaskStore,
     @Inject(ScheduledTaskRunTracker)
-    private readonly tracker: Pick<ScheduledTaskRunTracker, "inFlightIn">,
+    private readonly tracker: Pick<ScheduledTaskRunTracker, "inFlightIn" | "failStartIn">,
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "tryLock">,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
@@ -333,7 +333,7 @@ export class ScheduledTaskFirer {
         taskRunId: run.id,
         code: e.code,
       });
-      await this.failStart(run.id, e.message);
+      await this.failStart(run.id, task.id, e.message);
     }
   }
 
@@ -439,15 +439,15 @@ export class ScheduledTaskFirer {
     await this.skipIn(this.db, runId, taskId, reason);
   }
 
-  /** The start was refused for another reason (a full queue, …): the run failed to start. */
+  /**
+   * The start was refused for another reason (a full queue, a model gone since the task was
+   * saved, …): the run failed, and counts toward the task's failures as a failed run does.
+   */
   @Transactional()
-  private async failStart(runId: string, message: string): Promise<void> {
-    await this.db
-      .updateTable("scheduled_task_runs")
-      .set({ status: "failed", error: message })
-      .where("id", "=", runId)
-      .where("status", "=", "pending")
-      .execute();
+  private async failStart(runId: string, taskId: string, message: string): Promise<void> {
+    // the one lock order: task row (its failure count, maybe paused), then the task run
+    await lockTaskRow(this.db, taskId);
+    await this.tracker.failStartIn(runId, message);
   }
 
   @Transactional()

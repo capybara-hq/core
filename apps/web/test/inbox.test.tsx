@@ -911,6 +911,7 @@ describe("inbox: my scheduled task needs me", () => {
           pausedBy: null,
           missing: ["Bash", "mcp__crm__delete", "connection:github"],
           needsRole: ["mcp__crm__delete"],
+          error: null,
           ...over,
         },
       },
@@ -972,5 +973,23 @@ describe("inbox: my scheduled task needs me", () => {
       (await screen.findAllByText(S.reason.admin.replace("{name}", "Mei"), { exact: false }))
         .length,
     ).toBeGreaterThan(0);
+  });
+  it("a failed latest run says so, with its error", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(
+          200,
+          attention({
+            reason: "failed",
+            missing: [],
+            needsRole: [],
+            error: "The model is not available",
+          }),
+        ),
+    });
+    expect((await screen.findAllByText(S.reason.failed, { exact: false })).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getByText("The model is not available")).toBeTruthy();
   });
 });

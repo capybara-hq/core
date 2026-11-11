@@ -195,6 +195,24 @@ export class ScheduledTaskRunTracker {
     return false;
   }
 
+  /**
+   * A pending task run whose start was refused (the fire job could not create or queue its
+   * message, for a reason that is not a lasting skip): it fails and counts against the task like
+   * a failed run (`consecutive_failures`, paused at the org's `pauseAfterFailures`), a trial run
+   * excepted. In the caller's transaction, which holds the task row.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async failStartIn(taskRunId: string, error: string): Promise<void> {
+    const tr = await this.db
+      .selectFrom("scheduled_task_runs")
+      .select(["id", "task_id", "org_id", "trial", "status"])
+      .where("id", "=", taskRunId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (tr?.status !== "pending") return;
+    await this.settle(tr, "failed", error);
+  }
+
   /** Writes the task run's end and the task's failure count (non-trial runs). */
   private async settle(tr: TaskRunRow, outcome: RunOutcome, error?: string): Promise<void> {
     const t = this.db;

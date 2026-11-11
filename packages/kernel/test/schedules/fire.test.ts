@@ -636,6 +636,49 @@ describe("scanning and firing", { timeout: 60_000 }, () => {
     scriptRules([]);
   });
 
+  it("start failures count toward the pause, and the inbox shows the failed run", async () => {
+    // a model gone since the task was saved: the start is refused (not a lasting skip)
+    const t = await task({ model: { provider: "model-script", model: "gone-model" } });
+    await setSchedules({ pauseAfterFailures: 2 });
+    try {
+      const r1 = await pendingRun(t, { scheduledFor: new Date(Date.now() - 2 * FIVE_MIN) });
+      await firer().fire(r1.id);
+      expect(await runOf(r1.id)).toMatchObject({ status: "failed" });
+      expect((await runOf(r1.id)).error).toBeTruthy();
+      expect(await taskOf(t.id)).toMatchObject({ status: "active", consecutiveFailures: 1 });
+      const [failed] = (await svc().attentionFor(orgId, ownerId)).filter((a) => a.taskId === t.id);
+      expect(failed).toMatchObject({ reason: "failed", error: (await runOf(r1.id)).error });
+
+      const r2 = await pendingRun(t, { scheduledFor: new Date(Date.now() - FIVE_MIN) });
+      await firer().fire(r2.id);
+      expect(await taskOf(t.id)).toMatchObject({
+        status: "paused",
+        pauseReason: "failures",
+        consecutiveFailures: 2,
+      });
+      // paused: the pause is the item (once), not the failed run too
+      expect(
+        (await svc().attentionFor(orgId, ownerId))
+          .filter((a) => a.taskId === t.id)
+          .map((a) => a.reason),
+      ).toEqual(["failures"]);
+      // a trial run's start failure does not count
+      await svc().resume(orgId, { accountId: ownerId }, t.id);
+      const trial = await store.insertRun(db, {
+        id: randomUUID(),
+        taskId: t.id,
+        orgId,
+        scheduledFor: new Date(),
+        trial: true,
+      });
+      await firer().fire(trial?.id as string);
+      expect(await runOf(trial?.id as string)).toMatchObject({ status: "failed" });
+      expect((await taskOf(t.id)).consecutiveFailures).toBe(0);
+    } finally {
+      await setSchedules({ pauseAfterFailures: 5 });
+    }
+  });
+
   it("run now does not move next_run_at", async () => {
     const created = await svc().create(orgId, ownerId, {
       agentId,

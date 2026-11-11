@@ -5736,6 +5736,7 @@
     "label": "定时任务",
     "reason": {
       "missing_grants": "最近一次运行中有工具未被预先批准而被拒绝",
+      "failed": "最近一次运行失败",
       "admin": "已被 {name} 暂停",
       "adminUnknown": "已被组织管理员暂停",
       "failures": "多次失败后已暂停",

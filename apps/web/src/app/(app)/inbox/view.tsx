@@ -605,6 +605,7 @@ function scheduleDetail({
       <Card title={a.name} actions={<StatusMark status="waiting" label={tsa("label")} />}>
         <Stack gap={12}>
           <Text variant="prose">{reason}</Text>
+          {a.error !== null && a.error !== undefined && <Text variant="prose">{a.error}</Text>}
           {a.missing.length > 0 && (
             <ItemList
               label={tsa("missing")}
