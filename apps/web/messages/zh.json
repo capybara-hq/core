@@ -3411,6 +3411,7 @@
         },
         "kernel": {
           "version": "版本",
+          "kernelVersion": "内核",
           "replicas": "副本",
           "mixedVersions": "副本版本不一致（滚动升级中？）",
           "replicaList": "副本列表（{n}）"

@@ -3423,6 +3423,7 @@
         },
         "kernel": {
           "version": "Version",
+          "kernelVersion": "Kernel",
           "replicas": "Replicas",
           "mixedVersions": "Replicas report different versions (rolling upgrade?)",
           "replicaList": "Replicas ({n})"

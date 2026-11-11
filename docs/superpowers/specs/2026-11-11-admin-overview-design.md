@@ -78,7 +78,8 @@ inside a part are headings and hairlines, which is what "one box is enough" asks
 
 | Item | Source today | Gap |
 |---|---|---|
-| Kernel version | `KERNEL_VERSION` (`packages/kernel/src/version.ts`) | none; per replica see below |
+| Product version (shown first) | the web app's version (the session's `version`, as the status bar shows it; released in step with `@capybara-hq/capybara`, changesets `fixed`), maintainer decision 2026-11-11 | none |
+| Kernel version (second row) | `KERNEL_VERSION` (`packages/kernel/src/version.ts`) | none; per replica see below |
 | Replicas by role | **Nothing tracks roles.** `extension_replica_status` (migration 0030, renamed 0041) has one row per (replica, extension) with `heartbeat_at`, refreshed on each extension reconcile (`ExtensionLifecycle.run`, `reconcileIntervalSeconds` 60 s, stale after 3 periods), but no role and no version, and its periodic trigger is a `@LockedInterval` that only runs while a worker is alive. The gateway writes `capk:gateway-replicas:<plugin>` ZSETs (`channels/supervisor.ts`), gateways only. | new: replica presence (§5.1) |
 | Queue backlog and failures | The kernel queues are fixed names (`cap-kernel-runs`, `cap-kernel-subagent-runs`, `cap-kernel-channels`, `cap-kernel-maintenance`, `cap-kernel-plugin-scope`, `cap-kernel-titles`, `cap-kernel-usage-report`, `cap-kernel-evals`); no route reads them. Jobs keep `removeOnFail: 5000` (`infra/queue/queue.module.ts`). | new read (§5.2) |
 | Channel connections | PG `channel_connections.status` (`active` / `disabled` / `error`) and `inbound_mode`; a long connection is held while the lease `capk:channel-lease:<id>` exists (`channels/supervisor.ts`) | online count (§5.1, §5.2) |
