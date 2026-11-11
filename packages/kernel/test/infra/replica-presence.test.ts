@@ -17,6 +17,7 @@ import {
   replicaKey,
 } from "../../src/infra/presence/replica-presence.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
+import type { KernelOverride } from "../../src/overrides.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 
@@ -103,7 +104,7 @@ describe("replica presence (short interval)", () => {
     [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
     redis = new Redis(rdc.url);
     const urls = { pg: pgc.url, redis: rdc.url };
-    const overrides = [{ provide: PRESENCE_INTERVAL_MS, useValue: INTERVAL }];
+    const overrides: KernelOverride[] = [{ provide: PRESENCE_INTERVAL_MS, useValue: INTERVAL }];
     a = await startKernel(runConfig(urls, { roles: ["api", "gateway"], extensions: [] }), {
       overrides,
     });
