@@ -39,6 +39,8 @@ import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js"
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
+import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
+import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
@@ -1667,6 +1669,71 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
       }
     }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+describe("reconstructRequest: scheduled tasks", { timeout: 120_000 }, () => {
+  it("a scheduled run reconstructs with zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:before the task");
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    // a task posting into this conversation with its own model and effort, fired as the scan does
+    const store = new ScheduledTaskStore();
+    const task = await store.insertTask(db, {
+      id: randomUUID(),
+      orgId,
+      accountId: ownerId,
+      agentId,
+      name: "Digest",
+      prompt: "echo:the daily digest",
+      trigger: { kind: "cron", expr: "0 9 * * *", timeZone: "UTC" },
+      mode: "conversation",
+      conversationId: conv,
+      chat: null,
+      model: { provider: "model-fake", model: "fake-v" },
+      effort: "high",
+      deviceId: null,
+      status: "active",
+      nextRunAt: new Date(Date.now() + 86_400_000),
+      jitterSeconds: 0,
+      expiresAt: null,
+    });
+    const run = await store.insertRun(db, {
+      id: randomUUID(),
+      taskId: task.id,
+      orgId,
+      scheduledFor: new Date(),
+      trial: false,
+    });
+    if (!run) throw new Error("tick taken");
+    await k.app.get(ScheduledTaskFirer).fire(run.id);
+    await waitForTerminal(db, conv, 2, 30_000);
+    // a person's message after the scheduled run
+    await postMessage(owner, orgId, conv, "echo:after the task");
+    await waitForTerminal(db, conv, 3, 30_000);
+
+    const events = await eventsOf(db, conv);
+    const scheduled = events.find(
+      (e) => e.type === "user_message" && e.payload.schedule !== undefined,
+    );
+    expect(scheduled?.type === "user_message" && scheduled.payload.schedule).toMatchObject({
+      taskId: task.id,
+      taskRunId: run.id,
+      trial: false,
+    });
+    const calls = modelCalls(events);
+    // the task's model is a switch like a person's (it stays for the next message)
+    expect(calls.map((c) => c.payload.model)).toEqual(["fake-1", "fake-v", "fake-v"]);
+    expect(calls[1]?.payload.request.params).toMatchObject({ effort: "high" });
+    // the marker is not model-visible
+    expect(JSON.stringify(sent)).not.toContain(run.id);
+    expect(JSON.stringify(sent)).not.toContain(task.id);
+    const runs = await runsOf(db, conv);
+    await expectZeroDrift(conv, await snapshotOf(conv, runs[1]?.id), 2);
+    await expectZeroDrift(conv, await snapshotOf(conv));
   });
 });
 

@@ -4,8 +4,9 @@ import { z } from "zod";
 /**
  * A minimal Telegram channel for kernel tests (not the official `telegram` plugin, which lives in
  * capybara-hq/plugins and core tests may not load): it sends plain text through the Bot API of
- * `startFakeTelegram` (`<apiUrl>/bot<token>/sendMessage`) and has no inbound (its long connection
- * only waits for the abort; tests seed the identities). Features: no cards, no edits, no threads.
+ * `startFakeTelegram` (`<apiUrl>/bot<token>/sendMessage`); its long connection polls `getUpdates`
+ * and hands private text messages to the kernel (confirming each only after `onEvent` resolves;
+ * tests seed the identities). Features: no cards, no edits, no threads.
  * Bot API errors map to `ChannelSendError` as the real plugin maps them: 401 `auth`, 403 and
  * "chat not found" `target_gone`, 429 / 5xx retryable, others `rejected`.
  */
@@ -21,6 +22,16 @@ interface BotReply {
   error_code?: number;
   description?: string;
   parameters?: { retry_after?: number };
+}
+
+interface TgUpdate {
+  update_id: number;
+  message?: {
+    message_id: number;
+    chat: { id: number; type: string };
+    from?: { id: number };
+    text?: string;
+  };
 }
 
 async function call(
@@ -64,9 +75,39 @@ const channel: Channel = {
       tenantId: String(me.id),
     };
   },
-  async connect({ signal }) {
-    if (signal.aborted) return;
-    await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()));
+  async connect({ config, onEvent, signal }) {
+    const c = config as Conn;
+    const tenantId = c.botToken.split(":")[0] ?? "";
+    let offset = 0;
+    while (!signal.aborted) {
+      let updates: TgUpdate[];
+      try {
+        updates = (await call(
+          c,
+          "getUpdates",
+          { offset, timeout: 1, allowed_updates: ["message"] },
+          signal,
+        )) as unknown as TgUpdate[];
+      } catch (e) {
+        if (signal.aborted) return;
+        // the kernel reconnects
+        throw e;
+      }
+      for (const u of updates) {
+        const m = u.message;
+        if (m?.chat.type === "private" && m.from !== undefined && typeof m.text === "string") {
+          await onEvent({
+            type: "message",
+            messageId: String(m.message_id),
+            target: { chatId: String(m.chat.id), chatType: "dm" },
+            sender: { externalId: String(m.from.id), tenantId },
+            text: m.text,
+            mentionsBot: false,
+          });
+        }
+        offset = u.update_id + 1;
+      }
+    }
   },
   async send({ config, target, message, signal }) {
     const sent = await call(
