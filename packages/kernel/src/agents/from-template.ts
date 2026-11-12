@@ -508,7 +508,7 @@ export async function planFromTemplate(
       } else item("tool", key, "unavailable", "unknown_tool");
     }
     if (describesSubagents) listed.add(AGENT_TOOL);
-    // `TaskOutput` / `TaskStop` follow `Bash`
+    // `TaskOutput` / `TaskStop` / `TaskList` follow `Bash`
     for (const name of AGENT_BUILTIN_NAMES) if (!listed.has(name)) offBuiltin(name);
   }
   for (const key of disallowed) {

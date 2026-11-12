@@ -6,6 +6,7 @@ import { sandboxEditTool } from "./edit.js";
 import { sandboxGlobTool } from "./glob.js";
 import { sandboxGrepTool } from "./grep.js";
 import { sandboxReadTool } from "./read.js";
+import { taskListTool } from "./task-list.js";
 import { taskOutputTool } from "./task-output.js";
 import { taskStopTool } from "./task-stop.js";
 import { sandboxWriteTool } from "./write.js";
@@ -36,7 +37,8 @@ export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
  * a provider for it. Allowed by default; with the org setting `sandboxToolPolicy` set to ask,
  * every one but Read / Glob / Grep needs approval (see policy.ts).
  * `TaskOutput` and `TaskStop` read and stop background `Bash` tasks through
- * `SandboxService.ifRunning` (never creating or resuming a sandbox); always allowed.
+ * `SandboxService.ifRunning` (never creating or resuming a sandbox); `TaskList` lists them and the
+ * conversation's sub-agents from PG; all three always allowed.
  */
 export function sandboxTools(deps: SandboxToolDeps): BuiltinTool[] {
   return [
@@ -49,5 +51,6 @@ export function sandboxTools(deps: SandboxToolDeps): BuiltinTool[] {
     sandboxDeliverTool(deps),
     taskOutputTool(deps),
     taskStopTool(deps),
+    taskListTool(deps),
   ];
 }

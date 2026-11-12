@@ -233,7 +233,7 @@ the same transaction as the business rows.
   appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
 
 **Background tasks** (spec `docs/superpowers/specs/2026-11-05-background-bash-design.md`; code `packages/kernel/src/background/*`,
-`tools/builtins/sandbox/{bash,task-output,task-stop}.ts`):
+`tools/builtins/sandbox/{bash,task-output,task-stop,task-list}.ts`):
 
 - `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
   per-root-conversation `XactLock`, `sid` null; the row records its `device_id`), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
@@ -245,6 +245,14 @@ the same transaction as the business rows.
   claims the task (`stopping_at`), sends SIGTERM to the session, SIGKILL after 5 s. Both are `defaultPolicy: "allow"`, offered whenever
   `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning` (see
   `.agents/skills/writing-sandbox-providers`). A conversation reads and stops only its own tasks.
+- `TaskList {status?: "running" | "all"}` (no required input; default `all`) lists the calling conversation's own tasks (owner
+  `conversation_id`, never a sub-agent's or another conversation's): running ones first (oldest first), then the
+  `TASK_LIST_FINISHED_LIMIT` (20) most recently finished, each with id, description, status (`running`, `completed`, `failed`,
+  `timed_out`, `stopped`, `lost`), elapsed time, exit code and output path; then a "Sub-agents" section with the sub-agents
+  it dispatched itself (`readChildAgents` in `conversations/agent-tree.ts`: live children with a dispatch row, never
+  grandchildren; agentId, description, latest run status, `aborted` shown as `stopped`), same cap. It reads PG only (statuses
+  are the poller's or a tool's last ones), is `readOnlyHint` + `defaultPolicy: "allow"`, a Bash companion like
+  `TaskOutput` / `TaskStop`, and `TaskOutput`'s not-found error points to it.
 - A finish (poll, `TaskOutput`, `TaskStop`, or a person's stop from the panel) is one conditional update from `running` plus the
   model-visible `background_task_finished` event (idempotency key `background_task_finished:<taskId>`) in the same transaction. A finish a
   tool result already showed the model is `reported: true` (one short line, never wakes); a person's stop is `stoppedBy: "person"` (never

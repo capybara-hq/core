@@ -3,6 +3,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { BackgroundTaskFinisher } from "../../background/finish.js";
 import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
+import { readChildAgents } from "../../conversations/agent-tree.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
 import { conversationAncestors } from "../../conversations/tree.js";
@@ -90,6 +91,7 @@ export class BuiltinTools {
       subagents: {
         inTree: async (root, id) =>
           id !== root && (await conversationAncestors(db.db, id)).includes(root),
+        childrenOf: (orgId, conversationId) => readChildAgents(db.db, orgId, conversationId),
       },
       attachments,
       storage,

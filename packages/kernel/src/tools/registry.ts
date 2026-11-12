@@ -330,7 +330,7 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  *
  * What is offered:
  * - builtins: every {@link AGENT_BUILTIN_NAMES} entry registered here that can run (`unavailable`
- *   says why not), `TaskOutput` / `TaskStop` with `Bash`, `Agent` while its roster is not empty;
+ *   says why not), `TaskOutput` / `TaskStop` / `TaskList` with `Bash`, `Agent` while its roster is not empty;
  * - extension tools: every tool registered by an extension loaded on this replica and enabled in
  *   the org (`extension_org_configs.enabled`; required bootstrap plugins are enabled in every org,
  *   `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
@@ -658,7 +658,8 @@ export class ToolRegistry {
         spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
       }
       add(builtinTool(b, spec));
-      // `TaskOutput` and `TaskStop` come with an available `Bash` (background Bash spec §2)
+      // `TaskOutput`, `TaskStop` and `TaskList` come with an available `Bash` (background Bash
+      // spec §2)
       if (name === BUILTIN.Bash) {
         for (const companion of BASH_COMPANION_TOOLS) {
           const c = this.builtins.find((x) => x.spec.name === companion);
@@ -867,7 +868,7 @@ export class ToolRegistry {
 
 /**
  * `tools` narrowed by a sub-agent's key filter (tools default-on spec §4): `deny` keys removed,
- * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` follow `Bash`, as they come with
+ * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` / `TaskList` follow `Bash`, as they come with
  * it. Without a filter the list is returned as it is.
  */
 export function filterSubagentTools(

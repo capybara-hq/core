@@ -478,9 +478,17 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     });
   });
 
-  it("the key filter narrows the resolved tools; TaskOutput / TaskStop follow Bash", () => {
+  it("the key filter narrows the resolved tools; TaskOutput / TaskStop / TaskList follow Bash", () => {
     const t = (key: string) => ({ key }) as ResolvedTool;
-    const all = ["Bash", "TaskOutput", "TaskStop", "Read", "Agent", "mcp__jira__search"].map(t);
+    const all = [
+      "Bash",
+      "TaskOutput",
+      "TaskStop",
+      "TaskList",
+      "Read",
+      "Agent",
+      "mcp__jira__search",
+    ].map(t);
     const keys = (f: Parameters<typeof filterSubagentTools>[1]) =>
       filterSubagentTools(all, f).map((x) => x.key);
     expect(keys(undefined)).toEqual(all.map((x) => x.key));
@@ -489,6 +497,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       "Bash",
       "TaskOutput",
       "TaskStop",
+      "TaskList",
       "mcp__jira__search",
     ]);
     expect(keys({ allow: [], deny: [] })).toEqual([]);
