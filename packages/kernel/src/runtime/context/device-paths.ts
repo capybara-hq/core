@@ -12,16 +12,22 @@ import type { ConversationEvent } from "../../conversations/events.js";
  * tiers have no `tier` / `isolation` and render as they always did.
  */
 
-/** The sandbox level a device's commands run at (spec §11.5). */
+/** The sandbox level a device's commands run at (spec §11.5), as the model is told it. */
 export interface DeviceSandboxLevel {
   tier: SandboxTier;
   isolation: "sandbox" | "none";
+  /** `none`: the org's or the platform's sandbox network is off (every tier). */
+  network?: "none" | undefined;
+  /** A local device's localhost and unix sockets, as its machine reported them (absent: cloud). */
+  localhost?: "on" | "off-proxy-detected" | "off" | undefined;
+  unixSockets?: "roots" | "all-masked" | "off" | undefined;
+  /** The call is in a scheduled run without a person: nobody can approve a domain. */
+  unattended?: true | undefined;
 }
 
-/** The payload of a `device_paths` event. */
-export interface DevicePathsPayload {
+/** The payload of a `device_paths` event; the level fields are absent on events before tiers. */
+export interface DevicePathsPayload extends Omit<DeviceSandboxLevel, "tier" | "isolation"> {
   roots: SandboxRoots;
-  /** Absent on events recorded before tiers. */
   tier?: SandboxTier | undefined;
   isolation?: "sandbox" | "none" | undefined;
 }
@@ -30,27 +36,91 @@ export interface DevicePathsPayload {
 const rootsText = (r: SandboxRoots): string =>
   `This device's directories: workspace ${r.workspace}, skills ${r.skills} (read only), temporary files ${r.tmp}. Use these paths in commands and tool calls.`;
 
+const TIER_NAMES: Record<SandboxTier, string> = {
+  strict: "strict",
+  dev: "development",
+  open: "open",
+};
+
+/** What a domain outside the reachable ones needs: the user's approval, unless nobody is there. */
+const otherDomains = (unattended: boolean): string =>
+  unattended
+    ? "approvals are not available in a scheduled run, so other domains stay blocked."
+    : "other domains need the user's approval.";
+
+/** Local servers and unix sockets in `dev` / `open` (a cloud instance has both). */
+function localText(level: DeviceSandboxLevel): string {
+  const { localhost, unixSockets } = level;
+  if (localhost === undefined || unixSockets === undefined) {
+    return "Local servers and unix sockets work.";
+  }
+  const servers =
+    localhost === "on"
+      ? "Local servers work"
+      : localhost === "off-proxy-detected"
+        ? "Local servers are blocked on this machine because a local proxy was detected (the user can allow them on the device)"
+        : "Local servers are blocked";
+  const sockets =
+    unixSockets === "roots"
+      ? "unix sockets work under the device's directories only"
+      : unixSockets === "all-masked"
+        ? "unix sockets work inside the device's container only"
+        : "unix sockets are blocked";
+  return `${servers}; ${sockets}.`;
+}
+
 /** The sandbox level line of a `device_paths` event (model-visible, English; spec §11.5). */
 export function sandboxLevelText(level: DeviceSandboxLevel): string {
   if (level.isolation === "none") {
     return "Sandbox level: open, without a sandbox. Commands run directly on the user's computer as the user, with their files, credentials and network; be careful with anything that deletes files or sends data out.";
   }
+  const head = `Sandbox level: ${TIER_NAMES[level.tier]}.`;
+  if (level.network === "none") {
+    return `${head} The network is switched off for this organization: no domain is reachable and approval requests cannot change that.`;
+  }
+  const unattended = level.unattended === true;
   switch (level.tier) {
     case "strict":
-      return "Sandbox level: strict. Only the organization's allowed domains are reachable; other domains need the user's approval.";
+      return `${head} Only the organization's allowed domains are reachable; ${otherDomains(unattended)}`;
     case "dev":
-      return "Sandbox level: development. Package registries and common developer hosts are reachable; other domains need the user's approval. Local servers and unix sockets work.";
+      return `${head} Package registries and common developer hosts are reachable; ${otherDomains(unattended)} ${localText(level)}`;
     case "open":
-      return "Sandbox level: open. Any public address is reachable. Local servers and unix sockets work.";
+      return `${head} Any public address is reachable. ${localText(level)}`;
   }
+}
+
+/** The level a payload records; undefined for an event recorded before tiers. */
+export function devicePathsLevel(p: DevicePathsPayload): DeviceSandboxLevel | undefined {
+  if (p.tier === undefined) return undefined;
+  return {
+    tier: p.tier,
+    isolation: p.isolation ?? "sandbox",
+    ...(p.network !== undefined && { network: p.network }),
+    ...(p.localhost !== undefined && { localhost: p.localhost }),
+    ...(p.unixSockets !== undefined && { unixSockets: p.unixSockets }),
+    ...(p.unattended === true && { unattended: true as const }),
+  };
 }
 
 /** The system message of a `device_paths` event (model-visible, English). */
 export function devicePathsText(p: DevicePathsPayload): string {
   const roots = rootsText(p.roots);
-  if (p.tier === undefined) return roots;
-  return `${roots}\n${sandboxLevelText({ tier: p.tier, isolation: p.isolation ?? "sandbox" })}`;
+  const level = devicePathsLevel(p);
+  return level === undefined ? roots : `${roots}\n${sandboxLevelText(level)}`;
 }
+
+/** The fields of a level, in a fixed order (absent ones left out). */
+const levelKey = (l: DeviceSandboxLevel | undefined): unknown[] =>
+  l === undefined
+    ? []
+    : [
+        l.tier,
+        l.isolation,
+        ...(l.network !== undefined ? [`network:${l.network}`] : []),
+        ...(l.localhost !== undefined ? [`localhost:${l.localhost}`] : []),
+        ...(l.unixSockets !== undefined ? [`unixSockets:${l.unixSockets}`] : []),
+        ...(l.unattended === true ? ["unattended"] : []),
+      ];
 
 /** Whether two sets of roots are the same paths. */
 export const sameRoots = (a: SandboxRoots, b: SandboxRoots): boolean =>
@@ -68,7 +138,7 @@ export const devicePathsIdemKey = (p: DevicePathsPayload, prevSeq: number): stri
         p.roots.workspace,
         p.roots.skills,
         p.roots.tmp,
-        ...(p.tier !== undefined ? [p.tier, p.isolation ?? "sandbox"] : []),
+        ...levelKey(devicePathsLevel(p)),
       ]),
     )
     .digest("hex")
@@ -95,14 +165,14 @@ export function devicePathsChange(
     latest &&
     sameRoots(latest.payload.roots, roots) &&
     (level === undefined ||
-      (latest.payload.tier === level.tier &&
-        (latest.payload.isolation ?? "sandbox") === level.isolation))
+      JSON.stringify(levelKey(devicePathsLevel(latest.payload))) ===
+        JSON.stringify(levelKey(level)))
   ) {
     return null;
   }
   const payload: DevicePathsPayload = {
     roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
-    ...(level !== undefined && { tier: level.tier, isolation: level.isolation }),
+    ...(level !== undefined && devicePathsLevel({ roots, ...level })),
   };
   return {
     type: "device_paths",

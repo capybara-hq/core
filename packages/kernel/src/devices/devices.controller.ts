@@ -34,7 +34,7 @@ import {
  * - `PATCH /:id { name?, tier? }` → `{ device }`: renames it and, for a cloud device, sets its
  *   sandbox tier (sandbox dev tiers spec §7.2; null follows the org's default). The tier is set in
  *   a web session only (an API token → 403 `auth.session_required`); above the org's or the
- *   platform's ceiling → 400 `device.tier_not_allowed`; a local device → 400
+ *   platform's ceiling → 400 `device.tier_not_allowed`; a local device → 409
  *   `device.tier_on_device` (its tier is its machine's: `POST /:id/policy { tier }`). Audited
  *   `device.tier_changed`;
  * - `DELETE /:id` → 202 (destroyed by a job after the response);

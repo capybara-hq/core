@@ -22,6 +22,7 @@ import {
 } from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import { UNSANDBOXED_NOT_ALLOWED_ERROR } from "../../../local-devices/local-device-provider.js";
 import { devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import {
@@ -30,6 +31,10 @@ import {
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../../../sandbox/unreachable.js";
+import {
+  UNATTENDED_OPEN_TIER_ERROR,
+  UNATTENDED_UNSANDBOXED_ERROR,
+} from "../../../schedules/unattended.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 
@@ -474,14 +479,7 @@ async function copyAttachments(
  * A device that runs commands without a sandbox the org does not allow (sandbox dev tiers spec
  * §4.3): the kernel's `device.unsandboxed_not_allowed` text plus what the model can do.
  */
-const UNSANDBOXED_TEXT =
-  "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`. Ask the user to do that, or to start a new conversation on another device.";
-/** The same, in a scheduled run without the task's `tier:open` grant (spec §11.4). */
-const UNATTENDED_UNSANDBOXED_TEXT =
-  "This device runs commands without a sandbox, which a scheduled run may use only when its task allows the open sandbox level; the task's owner can add tier:open to the task's approved tools, or the device's owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
-/** A scheduled run on a cloud device in the open tier without the task's `tier:open` grant. */
-const UNATTENDED_OPEN_TIER_TEXT =
-  "This device's sandbox level is open, which a scheduled run may use only when its task allows the open sandbox level; the task's owner can add tier:open to the task's approved tools, or lower the device's sandbox level.";
+const UNSANDBOXED_TEXT = `${UNSANDBOXED_NOT_ALLOWED_ERROR} Ask the user to do that, or to start a new conversation on another device.`;
 
 /**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
@@ -519,10 +517,10 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
     if (e.code === "device.unsandboxed_not_allowed" && detail?.reason === "unattended") {
-      return new ToolError(UNATTENDED_UNSANDBOXED_TEXT);
+      return new ToolError(UNATTENDED_UNSANDBOXED_ERROR);
     }
     if (e.code === "device.unsandboxed_not_allowed") return new ToolError(UNSANDBOXED_TEXT);
-    if (e.code === "device.tier_not_granted") return new ToolError(UNATTENDED_OPEN_TIER_TEXT);
+    if (e.code === "device.tier_not_granted") return new ToolError(UNATTENDED_OPEN_TIER_ERROR);
   }
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
@@ -600,7 +598,7 @@ async function recordDevicePaths(
   if (!deps.eventLog.latestOfType) return;
   const [latest, level] = await Promise.all([
     deps.eventLog.latestOfType(ctx.conversationId, "device_paths"),
-    deps.devices.sandboxLevel?.(ctx.orgId, deviceId) ?? null,
+    deps.devices.sandboxLevel?.(ctx.orgId, deviceId, ctx.runId) ?? null,
   ]);
   const change = devicePathsChange(latest, roots, ctx.runId, level ?? undefined);
   if (change) await deps.eventLog.append(ctx.conversationId, [change]);

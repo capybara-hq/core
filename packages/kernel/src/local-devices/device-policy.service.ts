@@ -15,6 +15,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
+import { localPolicyOf } from "./policy-summary.js";
 import { LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
@@ -130,7 +131,9 @@ export class DevicePolicyService {
 
   /**
    * Keeps the policy the machine wrote on its row and audits the change (`confirmed`); with no
-   * policy (the answer never came) only audits the attempt, unconfirmed.
+   * policy (the answer never came) only audits the attempt, unconfirmed. The detail's `isolation`
+   * is the one asked for, or the one the machine now reports when it changed (a tier change turns
+   * the sandbox back on).
    */
   @Transactional()
   private async record(input: {
@@ -142,7 +145,19 @@ export class DevicePolicyService {
     actorTokenId?: string;
     policy: DeviceLocalPolicySummary | null;
   }): Promise<void> {
+    // the isolation the machine reports now, when it differs from the stored one: a tier change
+    // turns an unsandboxed device's sandbox back on without asking for it (spec §5.4, §10.4)
+    let isolationNow: "sandbox" | "none" | undefined;
     if (input.policy !== null) {
+      const prev = await this.db
+        .selectFrom("device_machines")
+        .select("local_policy")
+        .where("id", "=", input.machineId)
+        .where("revoked_at", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      const before = localPolicyOf(prev?.local_policy)?.isolation ?? "sandbox";
+      if (input.policy.isolation !== before) isolationNow = input.policy.isolation;
       await this.db
         .updateTable("device_machines")
         .set({ local_policy: JSON.stringify(input.policy) })
@@ -162,7 +177,9 @@ export class DevicePolicyService {
         remove: change.remove ?? [],
         // only when set (null: follow the org's default); the device page lists the change
         ...(change.tier !== undefined && { tier: change.tier }),
-        ...(change.isolation !== undefined && { isolation: change.isolation }),
+        ...((isolationNow ?? change.isolation) !== undefined && {
+          isolation: isolationNow ?? change.isolation,
+        }),
         by: source.accountId,
         via: source.via,
         approvalId: source.approvalId ?? null,

@@ -300,6 +300,24 @@ describe("device_paths: full-run replay", () => {
     });
   }
 
+  it("a recorded level is copied by the replay, all its fields", async () => {
+    const level = { tier: "dev", isolation: "sandbox", network: "none", unattended: true } as const;
+    const s = snap();
+    (s.events[2] as { payload: unknown }).payload = { roots: ROOTS, ...level };
+    const recordings = recordedCalls(s);
+    expect(recordings[0]?.devicePaths).toEqual({ roots: ROOTS, ...level });
+    const log = memLog();
+    await pipelineFor(recordings, log, { 1: ["f"] }).runStep({
+      conversationId: "e",
+      runId: "r2",
+      step: 1,
+    } as never);
+    expect(log.appended[0]).toMatchObject({
+      type: "device_paths",
+      payload: { roots: ROOTS, ...level },
+    });
+  });
+
   it("a replayed call that matched copies the recorded device_paths event, never twice", async () => {
     const recordings = recordedCalls(snap());
     expect(recordings[0]?.devicePaths).toEqual({ roots: ROOTS });
@@ -393,6 +411,56 @@ describe("device_paths: the sandbox level (sandbox dev tiers spec §11.5)", () =
     expect(devicePathsText({ roots: ROOTS, tier: "dev", isolation: "sandbox" })).toBe(
       `${LINE}\n${DEV_LINE}`,
     );
+  });
+
+  it("says when the network is off, a scheduled run cannot ask, and what a local machine allows", () => {
+    expect(sandboxLevelText({ tier: "dev", isolation: "sandbox", network: "none" })).toBe(
+      "Sandbox level: development. The network is switched off for this organization: no domain is reachable and approval requests cannot change that.",
+    );
+    // without a sandbox, the user's own network: the switch does not apply
+    expect(sandboxLevelText({ tier: "open", isolation: "none", network: "none" })).toMatch(
+      /^Sandbox level: open, without a sandbox\./,
+    );
+    expect(sandboxLevelText({ tier: "strict", isolation: "sandbox", unattended: true })).toBe(
+      "Sandbox level: strict. Only the organization's allowed domains are reachable; approvals are not available in a scheduled run, so other domains stay blocked.",
+    );
+    expect(
+      sandboxLevelText({
+        tier: "dev",
+        isolation: "sandbox",
+        localhost: "off-proxy-detected",
+        unixSockets: "roots",
+        unattended: true,
+      }),
+    ).toBe(
+      "Sandbox level: development. Package registries and common developer hosts are reachable; approvals are not available in a scheduled run, so other domains stay blocked. Local servers are blocked on this machine because a local proxy was detected (the user can allow them on the device); unix sockets work under the device's directories only.",
+    );
+    expect(
+      sandboxLevelText({ tier: "open", isolation: "sandbox", localhost: "on", unixSockets: "off" }),
+    ).toBe(
+      "Sandbox level: open. Any public address is reachable. Local servers work; unix sockets are blocked.",
+    );
+  });
+
+  it("a change of the network or the local facts records a new event", async () => {
+    const t = memTools(ROOTS, { tier: "dev", isolation: "sandbox" });
+    const write = () =>
+      t
+        .tool("Write")
+        .run({ file_path: `${ROOTS.workspace}/x-${Math.random()}`, content: "x" }, t.ctx);
+    await write();
+    t.setLevel({ tier: "dev", isolation: "sandbox", network: "none" });
+    await write();
+    await write();
+    t.setLevel({ tier: "dev", isolation: "sandbox", localhost: "on", unixSockets: "roots" });
+    await write();
+    const paths = t.log.appended.filter((e) => e.type === "device_paths");
+    expect(paths.map((e) => e.payload)).toEqual([
+      { roots: ROOTS, tier: "dev", isolation: "sandbox" },
+      { roots: ROOTS, tier: "dev", isolation: "sandbox", network: "none" },
+      { roots: ROOTS, tier: "dev", isolation: "sandbox", localhost: "on", unixSockets: "roots" },
+    ]);
+    expect(new Set(paths.map((e) => e.idemKey)).size).toBe(3);
   });
 
   it("is recorded with the roots on the first call and again when the tier or isolation changes", async () => {

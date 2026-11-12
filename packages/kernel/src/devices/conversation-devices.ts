@@ -51,10 +51,15 @@ export class ConversationDevices {
 
   /**
    * The sandbox level a call in the device runs at now ({@link DevicesService.sandboxLevel}),
-   * recorded for the model in `device_paths` (sandbox dev tiers spec §11.5).
+   * recorded for the model in `device_paths` (sandbox dev tiers spec §11.5); `runId`: the calling
+   * run, whose scheduled-run cap applies.
    */
-  sandboxLevel(orgId: string, deviceId: string): Promise<DeviceSandboxLevel | null> {
-    return this.devices.sandboxLevel(orgId, deviceId);
+  sandboxLevel(
+    orgId: string,
+    deviceId: string,
+    runId?: string,
+  ): Promise<DeviceSandboxLevel | null> {
+    return this.devices.sandboxLevel(orgId, deviceId, runId);
   }
 
   /**

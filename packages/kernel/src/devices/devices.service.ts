@@ -3,6 +3,7 @@ import {
   type DeviceFeature,
   type DeviceLocalPolicySummary,
   type LocalizedName,
+  minTier,
   type SandboxLimits,
   type SandboxTier,
   tierAtMost,
@@ -30,6 +31,7 @@ import { SandboxJobs } from "../sandbox/jobs.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
+import { unattendedTierOf } from "../schedules/unattended.js";
 import {
   DeviceAccess,
   demotedProvider,
@@ -539,9 +541,21 @@ export class DevicesService {
 
   /**
    * The sandbox level a sandbox call in the device runs at now, for the model (`device_paths`,
-   * spec §11.5): see {@link sandboxStateOf}. Null when the device is not a live device of the org.
+   * spec §11.5): see {@link sandboxStateOf}, plus
+   * - `network: "none"` when the org's or the platform's sandbox network is off;
+   * - a cloud device whose new limits wait for a file reset: the tier and network its instance
+   *   still runs with (`limitsState(...).applied`);
+   * - a local device: its machine's localhost and unix socket facts; in a scheduled run without
+   *   a person (`runId`, {@link unattendedTierOf}) and without the task's `tier:open` grant its
+   *   tier is capped at `dev`, as the exec args cap it;
+   * - `unattended` in such a run: nobody can approve a domain.
+   * Null when the device is not a live device of the org.
    */
-  async sandboxLevel(orgId: string, deviceId: string): Promise<DeviceSandboxLevel | null> {
+  async sandboxLevel(
+    orgId: string,
+    deviceId: string,
+    runId?: string,
+  ): Promise<DeviceSandboxLevel | null> {
     const row = await this.db
       .selectFrom("devices as e")
       .leftJoin("device_machines as m", (j) =>
@@ -553,17 +567,38 @@ export class DevicesService {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return null;
-    const settings = await readOrgSettings(this.db.db, orgId);
-    const s = sandboxStateOf(
-      (tier) => effectiveSandboxPolicy(this.config.get().sandbox, settings, tier),
-      {
-        source: row.source,
-        tier: row.tier,
-        features: deviceFeaturesOf(row.features),
-        policy: localPolicyOf(row.local_policy),
-      },
-    );
-    return { tier: s.effectiveTier, isolation: s.isolation };
+    const [settings, unattended] = await Promise.all([
+      readOrgSettings(this.db.db, orgId),
+      runId === undefined ? null : unattendedTierOf(this.db.db, runId, deviceId),
+    ]);
+    const policyOf = (tier: SandboxTier | null) =>
+      effectiveSandboxPolicy(this.config.get().sandbox, settings, tier);
+    const summary = localPolicyOf(row.local_policy);
+    const s = sandboxStateOf(policyOf, {
+      source: row.source,
+      tier: row.tier,
+      features: deviceFeaturesOf(row.features),
+      policy: summary,
+    });
+    let tier = s.effectiveTier;
+    let networkOff = policyOf(s.tier).base.egress === "none";
+    if (row.source === "cloud") {
+      const state = await this.sandbox.limitsState({ orgId, deviceId });
+      if (state.pendingFilesReset && state.applied !== null) {
+        tier = state.applied.tier;
+        networkOff = state.applied.egress === "none";
+      }
+    } else if (unattended !== null && !unattended.openGranted) {
+      tier = minTier(tier, "dev");
+    }
+    return {
+      tier,
+      isolation: tier === "open" ? s.isolation : "sandbox",
+      ...(networkOff && { network: "none" as const }),
+      ...(row.source === "local" &&
+        summary !== null && { localhost: summary.localhost, unixSockets: summary.unixSockets }),
+      ...(unattended !== null && { unattended: true as const }),
+    };
   }
 
   /** Renames the device locked by {@link lockOwn} (`before`); see {@link rename}. */

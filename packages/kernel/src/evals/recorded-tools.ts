@@ -1,5 +1,9 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
-import { type DevicePathsPayload, devicePathsChange } from "../runtime/context/device-paths.js";
+import {
+  type DevicePathsPayload,
+  devicePathsChange,
+  devicePathsLevel,
+} from "../runtime/context/device-paths.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
 import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
 import {
@@ -192,10 +196,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       const e = own[next] as { seq: number; type: string; payload: unknown };
       if (e.type === "device_paths" && e.seq > a) {
         const p = e.payload as DevicePathsPayload;
-        current = {
-          roots: p.roots,
-          ...(p.tier !== undefined && { tier: p.tier, isolation: p.isolation ?? "sandbox" }),
-        };
+        current = { roots: p.roots, ...devicePathsLevel(p) };
       }
     }
     if (current !== undefined) pathsOf.set(a, current);
@@ -299,9 +300,7 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
               await eventLog.latestOfType(ctx.conversationId, "device_paths"),
               paths.roots,
               ctx.runId,
-              paths.tier === undefined
-                ? undefined
-                : { tier: paths.tier, isolation: paths.isolation ?? "sandbox" },
+              devicePathsLevel(paths),
             );
       await eventLog.append(ctx.conversationId, [
         ...(change ? [change] : []),

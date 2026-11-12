@@ -188,7 +188,8 @@ function applying(start: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
       allowedDomains: [...domains],
       ...(tier !== undefined && { tier }),
       effectiveTier: a.tier === undefined ? now.effectiveTier : (tier ?? "dev"),
-      ...(a.isolation !== undefined && { isolation: a.isolation }),
+      // any tier change turns the sandbox back on, as capybara-device does
+      ...((a.isolation !== undefined || a.tier !== undefined) && { isolation: "sandbox" as const }),
     };
     return { ok: true, result: { policy: now } };
   };
@@ -304,6 +305,21 @@ describe("POST /devices/:id/policy", () => {
       pendingNextUse: false,
       pendingFilesReset: false,
     });
+  });
+
+  it("a tier change that turns the sandbox back on records the isolation", async () => {
+    const d = await owned();
+    const unsandboxed = { ...POLICY, tier: "open" as const, isolation: "none" as const };
+    await connect(d, applying(unsandboxed), { ...FEATURES, policy: unsandboxed });
+    const res = await post(d.req, d.deviceId, { tier: "strict" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await auditsOf(d.deviceId)).map((a) => a.detail)).toEqual([
+      expect.objectContaining({ tier: "strict", isolation: "sandbox", confirmed: true }),
+    ]);
+    // a change that leaves the isolation as it was records none
+    const again = await post(d.req, d.deviceId, { remove: ["pypi.org"] });
+    expect(again.statusCode, again.body).toBe(200);
+    expect((await auditsOf(d.deviceId))[1]?.detail).not.toHaveProperty("isolation");
   });
 
   it("a tier above the org's ceiling → 400 device.tier_not_allowed; nothing is sent", async () => {
