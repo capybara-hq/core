@@ -14,8 +14,8 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { CommandLogEntry } from "./command-log.js";
-import { type ExecIsolation, execIsolation } from "./exec/switch.js";
-import { DeviceOpError, type Executor } from "./exec/types.js";
+import { execIsolation } from "./exec/switch.js";
+import { DeviceOpError, type ExecIsolation, type Executor } from "./exec/types.js";
 import { grantedHosts, type TierLimits, tierFacts } from "./policy.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
@@ -180,11 +180,11 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
  *
  * - `isolation`: only `"sandbox"` (narrowing) is ever applied; anything else is refused whatever
  *   `remoteGrants` says, so the deployment can never turn the sandbox off.
- * - Widening (`add`; a `tier` above the file's; `tier: null` when the file has one, since the
- *   org's default is not known here) applies only under `remoteGrants: "owner"`, read from the
+ * - Widening (`add`; a `tier` above the file's; `tier: null` when the file has strict or dev,
+ *   since the org's default is not known here) applies only under `remoteGrants: "owner"`, read from the
  *   file under the lock. Docker mode refuses `add` (its container cannot limit single domains).
- * - Narrowing always applies. A tier below `open` also turns the sandbox back on (an unsandboxed
- *   device needs `open`).
+ * - Narrowing always applies. Any tier change turns an unsandboxed device's sandbox back on (it
+ *   runs unsandboxed only on the owner's own local tier `open`).
  *
  * Every host is validated; the op is idempotent. Returns the result and the local audit line; a
  * refusal carries its audit line too ({@link PolicyRefused}).
@@ -229,11 +229,15 @@ function applyPolicyOp(
   if (add.length > 0 && facts.mode === "docker") {
     throw new PolicyRefused(DOCKER_WIDENING_MESSAGE, refused);
   }
+  // Docker mode takes a tier change under remoteGrants owner: raising it to dev does not open the
+  // container's network bridge (the dev hosts do not count there), only open does (spec §5.2).
   // A tier above the file's, or following the org's default (not known here) when the file has
   // a tier, may widen.
   const widensTier = (p: Policy): boolean => {
     if (nextTier === undefined || nextTier === "strict") return false;
-    if (nextTier === null) return p.tier !== undefined;
+    // The org's default is at most its ceiling, which is at most open: following it from open
+    // never widens. From strict or dev it may.
+    if (nextTier === null) return p.tier !== undefined && p.tier !== "open";
     return p.tier === undefined || !tierAtMost(nextTier, p.tier);
   };
   let sandboxBackOn = false;
@@ -248,9 +252,12 @@ function applyPolicyOp(
     const { tier: _old, ...rest } = p;
     const tier = nextTier === undefined ? p.tier : (nextTier ?? undefined);
     let isolation = rawIsolation === "sandbox" ? "sandbox" : p.isolation;
-    if (isolation === "none" && tier !== undefined && tier !== "open") {
+    // A device runs unsandboxed only on the owner's local tier `open`: any tier change from the
+    // deployment turns the sandbox back on, so the deployment is never the last step that makes
+    // (or keeps) a device unsandboxed.
+    if (isolation === "none" && nextTier !== undefined && tier !== p.tier) {
       isolation = "sandbox";
-      sandboxBackOn = rawIsolation === undefined;
+      sandboxBackOn = true;
     }
     return {
       ...rest,
@@ -259,7 +266,7 @@ function applyPolicyOp(
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
     };
   });
-  const also = sandboxBackOn ? "; isolation sandbox (tier below open)" : "";
+  const also = sandboxBackOn ? "; isolation sandbox (tier changed by the deployment)" : "";
   return {
     result: { policy: policySummary(next, facts) },
     detail: `policy ${what}${also} ${by}${approval}`,
@@ -270,12 +277,12 @@ function applyPolicyOp(
 function grantsDetail(
   executor: Executor,
   args: DeviceExecArgs,
-  ctx: OpContext,
+  policy: Policy | undefined,
 ): string | undefined {
-  if (executor.mode !== "os" || args.grants === undefined || ctx.policy === undefined) {
+  if (executor.mode !== "os" || args.grants === undefined || policy === undefined) {
     return undefined;
   }
-  const hosts = grantedHosts(ctx.policy.current(), args.limits, args.grants);
+  const hosts = grantedHosts(policy, args.limits, args.grants);
   if (hosts.length === 0) return undefined;
   const s = args.grants.source;
   return `grants ${clean(s.kind, 10)} ${clean(s.id, 100)} by ${clean(s.accountId, 100)}: ${hosts.join(", ")}`;
@@ -335,21 +342,26 @@ export async function serveOp(
         return { res: ok({ roots: executor.roots }) };
       case "exec": {
         const args = req.args as DeviceExecArgs;
-        if (ctx.seen !== undefined)
+        if (ctx.seen !== undefined) {
           ctx.seen.limits = {
             tier: args.limits.tier,
             ...(args.limits.defaultTier !== undefined && { defaultTier: args.limits.defaultTier }),
           };
-        // Judged just before the executor reads the same policy for the command's list and its
-        // isolation (the executor decides; this records the same decision).
-        const run = execIsolation(
-          ctx.policy?.current() ?? DEFAULT_POLICY,
-          args.limits,
-          executor.mode,
-        );
-        const detail = grantsDetail(executor, args, ctx);
+        }
+        // One decision per command, on one read of the policy: the executor runs it and the
+        // local log records it. Grants are judged on the same read.
+        const policy = ctx.policy?.current();
+        const run = execIsolation(policy ?? DEFAULT_POLICY, args.limits, executor.mode);
+        if (run.refusal !== undefined) {
+          return { ...errorAnswer(req, new DeviceOpError("policy", run.refusal)), run };
+        }
+        const detail = grantsDetail(executor, args, policy);
         try {
-          const res = ok(await executor.exec(args, signal));
+          const result =
+            policy !== undefined && executor.execDecided !== undefined
+              ? await executor.execDecided(args, signal, run, policy)
+              : await executor.exec(args, signal);
+          const res = ok(result);
           return detail === undefined ? { res, run } : { res, detail, run };
         } catch (e) {
           return { ...errorAnswer(req, e), run };

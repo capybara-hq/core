@@ -261,17 +261,48 @@ describe("the policy op", () => {
     expect(readPolicy(dir).isolation).toBe("sandbox");
   });
 
-  it("a tier below open turns the sandbox back on: running without one needs open", async () => {
-    seed({ tier: "open", isolation: "none", remoteGrants: "off" });
-    const { res, detail } = await policyOp({ tier: "dev" });
-    expect(res).toMatchObject({
-      ok: true,
-      result: { policy: { tier: "dev", isolation: "sandbox" } },
-    });
-    expect(detail).toBe(
-      "policy tier dev; isolation sandbox (tier below open) by Ada (acc_1) via web, approval apr_1",
-    );
-    expect(readPolicy(dir)).toMatchObject({ tier: "dev", isolation: "sandbox" });
+  it("any tier change from the deployment turns an unsandboxed device's sandbox back on", async () => {
+    for (const [from, to, remoteGrants] of [
+      ["open", "dev", "off"],
+      ["open", null, "off"],
+      ["dev", "open", "owner"],
+      [undefined, "open", "owner"],
+      ["strict", null, "owner"],
+    ] as const) {
+      seed({
+        ...(from !== undefined && { tier: from }),
+        isolation: "none",
+        remoteGrants,
+      });
+      const { res, detail } = await policyOp({ tier: to });
+      expect(res, `${from} -> ${to}`).toMatchObject({
+        ok: true,
+        result: { policy: { isolation: "sandbox" } },
+      });
+      expect(detail).toBe(
+        `policy tier ${to ?? "org default"}; isolation sandbox (tier changed by the deployment) ` +
+          "by Ada (acc_1) via web, approval apr_1",
+      );
+      expect(readPolicy(dir)).toMatchObject({ isolation: "sandbox" });
+      if (to === null) expect(readPolicy(dir).tier).toBeUndefined();
+      else expect(readPolicy(dir).tier).toBe(to);
+    }
+  });
+
+  it("the same tier, or no tier change, leaves an unsandboxed device alone", async () => {
+    seed({ tier: "open", isolation: "none" });
+    for (const args of [{ tier: "open" }, { add: ["b.com"] }, { remove: ["a.com"] }]) {
+      const { res } = await policyOp(args);
+      expect(res).toMatchObject({ ok: true, result: { policy: { isolation: "none" } } });
+    }
+    expect(readPolicy(dir)).toMatchObject({ tier: "open", isolation: "none" });
+  });
+
+  it("following the org's default from open is never widening", async () => {
+    seed({ tier: "open", remoteGrants: "off" });
+    const { res } = await policyOp({ tier: null });
+    expect(res).toMatchObject({ ok: true });
+    expect(readPolicy(dir).tier).toBeUndefined();
   });
 
   it("refuses an unknown tier with an audit line", async () => {
@@ -590,6 +621,26 @@ describe("tiers in the summary and the command log", () => {
     expect(policySummary(p, { mode: "docker", limits })).toMatchObject({ isolation: "sandbox" });
   });
 
+  it("the executor runs the decision the log records", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
+    const store = new PolicyStore(dir);
+    const ex = new FakeExecutor();
+    const seenBy: unknown[] = [];
+    (ex as { execDecided?: unknown }).execDecided = async (
+      _args: unknown,
+      _signal: AbortSignal,
+      how: unknown,
+      policy: unknown,
+    ) => {
+      seenBy.push({ how, policy });
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
+    };
+    const out = await serveOp(ex, r("exec", withTier("open")), never, { policy: store });
+    expect(out.run).toEqual({ tier: "open", isolation: "none" });
+    expect(seenBy).toEqual([{ how: out.run, policy: store.current() }]);
+    expect(ex.started).toEqual([]);
+  });
+
   it("every exec is logged with its tier and isolation", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
     const store = new PolicyStore(dir);
@@ -606,14 +657,16 @@ describe("tiers in the summary and the command log", () => {
     writePolicy(dir, DEFAULT_POLICY);
     const dflt = await serveOp(ex, r("exec", withTier("open", "dev")), never, { policy: store });
     expect(dflt.run).toEqual({ tier: "dev", isolation: "sandbox" });
-    // A refused exec is logged too.
+    // A refused exec is logged too, and the executor never sees it.
     writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
-    ex.exec = async () => {
-      throw new DeviceOpError("policy", "refused");
-    };
+    const before = ex.started.length;
     const refused = await serveOp(ex, r("exec", withTier("dev")), never, { policy: store });
-    expect(refused.res).toMatchObject({ ok: false, error: { kind: "policy" } });
+    expect(refused.res).toMatchObject({
+      ok: false,
+      error: { kind: "policy", message: expect.stringContaining("at most the dev tier") },
+    });
     expect(refused.run).toMatchObject({ tier: "dev", isolation: "none" });
+    expect(ex.started).toHaveLength(before);
     // Docker mode ignores isolation.
     const docker = new FakeExecutor();
     (docker as { mode: string }).mode = "docker";

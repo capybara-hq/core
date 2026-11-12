@@ -3,14 +3,20 @@ import { parseCommandLine, USAGE, UsageError } from "./args.js";
 import { drain } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
-import { confirmRisk, needsConfirmation, policyCommand, policyRisk } from "./commands/policy.js";
+import {
+  confirmRisk,
+  DOCKER_ISOLATION_REFUSED,
+  needsConfirmation,
+  policyCommand,
+  policyRisk,
+} from "./commands/policy.js";
 import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
 import type { Executor } from "./exec/types.js";
 import type { PolicyStore } from "./policy-store.js";
-import { type Credential, stateDir } from "./state.js";
+import { type Credential, readCredential, stateDir } from "./state.js";
 
 export interface CliEnv {
   env?: Record<string, string | undefined>;
@@ -49,7 +55,9 @@ export const DOCKER_ISOLATION_IGNORED =
 
 /** Logged when commands start or stop running without a sandbox. */
 export const UNSANDBOXED_ON = "Commands on this device now run without a sandbox (isolation none).";
-export const UNSANDBOXED_OFF = "Commands on this device run in the sandbox again.";
+export const UNSANDBOXED_OFF =
+  "Commands on this device run in the sandbox again; commands still running without one were " +
+  "stopped.";
 
 /**
  * The executor for the credential's mode; the program's state directory is unreadable to
@@ -84,6 +92,15 @@ function defaultCreateExecutor(stateDir: string, home: string, err: (line: strin
       err(i === "none" ? UNSANDBOXED_ON : UNSANDBOXED_OFF),
     );
   };
+}
+
+/** Whether this machine is logged in in Docker mode (false when unknown). */
+function dockerCredential(dir: string): boolean {
+  try {
+    return readCredential(dir)?.mode === "docker";
+  } catch {
+    return false;
+  }
 }
 
 /** Runs one command line and returns the exit code. */
@@ -137,6 +154,16 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
     case "drain":
       return drain(dir, out, err, io.kill);
     case "policy": {
+      // Docker mode: refused before any risk text or question (policyCommand refuses it too).
+      if (
+        cmd.action === "set" &&
+        cmd.key === "isolation" &&
+        cmd.value.trim().toLowerCase() === "none" &&
+        dockerCredential(dir)
+      ) {
+        err(DOCKER_ISOLATION_REFUSED);
+        return 2;
+      }
       // `set tier open` / `set isolation none` without --yes: ask on a terminal (after printing
       // the risk text); elsewhere policyCommand refuses them.
       if (needsConfirmation(cmd) && (io.stdinIsTTY ?? process.stdin.isTTY === true)) {

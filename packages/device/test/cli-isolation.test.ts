@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
-import { UNSANDBOXED_RISK_TEXT } from "../src/commands/policy.js";
-import { DEFAULT_POLICY, readPolicy, writePolicy } from "../src/state.js";
+import { DOCKER_ISOLATION_REFUSED, UNSANDBOXED_RISK_TEXT } from "../src/commands/policy.js";
+import { DEFAULT_POLICY, readPolicy, writeCredential, writePolicy } from "../src/state.js";
 
 describe("capybara-device policy set isolation none", () => {
   let home: string;
@@ -62,6 +62,25 @@ describe("capybara-device policy set isolation none", () => {
   it("turning the sandbox back on never asks", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
     expect(await cli(["set", "isolation", "sandbox"], { isTTY: true, answer: "n" })).toBe(0);
+    expect(asked).toEqual([]);
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+  });
+
+  it("in Docker mode is refused before any risk text or question", async () => {
+    writeCredential(dir, {
+      url: "http://x.test",
+      connectUrl: "ws://x.test/device/connect",
+      credential: "cap_dev_secret",
+      orgId: "o",
+      deviceId: "e1",
+      dir: join(home, "work"),
+      mode: "docker",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1024,
+    });
+    expect(await cli(["set", "isolation", "none"], { isTTY: true, answer: "y" })).toBe(2);
+    expect(err).toEqual([DOCKER_ISOLATION_REFUSED]);
+    expect(out).not.toContain(UNSANDBOXED_RISK_TEXT);
     expect(asked).toEqual([]);
     expect(readPolicy(dir).isolation).toBe("sandbox");
   });

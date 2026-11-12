@@ -11,11 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HostExecutor } from "../src/exec/host.js";
 import { findMarked } from "../src/exec/procs.js";
 import { osRoots } from "../src/exec/shared.js";
-import { execIsolation, SwitchingExecutor } from "../src/exec/switch.js";
+import { execIsolation, policyUnsandboxed, SwitchingExecutor } from "../src/exec/switch.js";
 import { DEFAULT_POLICY, type Policy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
@@ -244,20 +244,33 @@ describe("HostExecutor: commands without a sandbox", () => {
 
 describe("execIsolation: when a command runs without a sandbox", () => {
   const p = (over: Partial<Policy>): Policy => ({ ...DEFAULT_POLICY, ...over });
+  const NOT_SET =
+    "This device is set to run commands without a sandbox, but its tier is not set on this " +
+    "machine (it follows the organization's default); running without a sandbox needs tier " +
+    "open set on this machine. Run capybara-device policy set tier open, or turn the sandbox " +
+    "back on with capybara-device policy set isolation sandbox.";
 
-  it("only with isolation none, OS mode and tier open after the ceiling", () => {
+  it("only with isolation none, the local tier open, OS mode and open after the ceiling", () => {
     expect(execIsolation(p({ tier: "open", isolation: "none" }), { tier: "open" }, "os")).toEqual({
       tier: "open",
       isolation: "none",
     });
-    // The org's default counts when the owner chose no tier.
-    expect(
-      execIsolation(p({ isolation: "none" }), { tier: "open", defaultTier: "open" }, "os"),
-    ).toEqual({ tier: "open", isolation: "none" });
     expect(execIsolation(p({ tier: "open" }), { tier: "open" }, "os")).toEqual({
       tier: "open",
       isolation: "sandbox",
     });
+    expect(policyUnsandboxed(p({ tier: "open", isolation: "none" }))).toBe(true);
+    expect(policyUnsandboxed(p({ isolation: "none" }))).toBe(false);
+  });
+
+  it("the org's default never makes a device unsandboxed: no local tier is refused", () => {
+    // The deployment sends the default and the ceiling; neither is the owner's local choice.
+    expect(
+      execIsolation(p({ isolation: "none" }), { tier: "open", defaultTier: "open" }, "os"),
+    ).toEqual({ tier: "open", isolation: "none", refusal: NOT_SET });
+    expect(
+      execIsolation(p({ isolation: "none" }), { tier: "open", defaultTier: "dev" }, "os"),
+    ).toEqual({ tier: "dev", isolation: "none", refusal: NOT_SET });
   });
 
   it("Docker mode ignores isolation", () => {
@@ -269,7 +282,7 @@ describe("execIsolation: when a command runs without a sandbox", () => {
     ).toEqual({ tier: "dev", isolation: "sandbox" });
   });
 
-  it("refuses, naming why, when the tier is below open", () => {
+  it("refuses, naming why, when a tier is below open", () => {
     expect(execIsolation(p({ tier: "open", isolation: "none" }), { tier: "dev" }, "os")).toEqual({
       tier: "dev",
       isolation: "none",
@@ -278,14 +291,12 @@ describe("execIsolation: when a command runs without a sandbox", () => {
         "most the dev tier, and running without a sandbox needs tier open. The device's owner " +
         "can turn the sandbox back on with capybara-device policy set isolation sandbox.",
     });
-    expect(
-      execIsolation(p({ isolation: "none" }), { tier: "open", defaultTier: "dev" }, "os"),
-    ).toEqual({
+    expect(execIsolation(p({ tier: "dev", isolation: "none" }), { tier: "open" }, "os")).toEqual({
       tier: "dev",
       isolation: "none",
       refusal:
         "This device is set to run commands without a sandbox, but its tier is dev; running " +
-        "without a sandbox needs tier open. On this machine, run capybara-device policy set " +
+        "without a sandbox needs tier open set on this machine. Run capybara-device policy set " +
         "tier open, or turn the sandbox back on with capybara-device policy set isolation sandbox.",
     });
   });
@@ -300,6 +311,7 @@ describe("SwitchingExecutor", () => {
   let ex: SwitchingExecutor;
   const tierArgs = (tier: SandboxLimits["tier"], tag = "t1") =>
     execArgs("now", { tag, limits: { ...LIMITS, tier } });
+  const read = async () => Buffer.from((await ex.readFile("/f", 100))?.data ?? []).toString();
 
   const setup = () => {
     policy = { ...DEFAULT_POLICY };
@@ -315,27 +327,41 @@ describe("SwitchingExecutor", () => {
       (i) => switches.push(i),
     );
   };
+  afterEach(() => ex?.dispose());
 
-  it("runs in the sandbox by default and switches at the next command after a policy change", async () => {
+  it("follows the policy at once: commands, file operations and the switch notice", async () => {
     setup();
     expect(ex.mode).toBe("os");
     expect(ex.roots).toBe(sandboxed.roots);
     await ex.exec(tierArgs("open"), never);
     expect(sandboxed.started).toEqual(["now"]);
-    expect(Buffer.from((await ex.readFile("/f", 100))?.data ?? []).toString()).toBe("sandboxed");
+    expect(await read()).toBe("sandboxed");
     policy = { ...policy, tier: "open", isolation: "none" };
-    // File operations follow the last command: still sandboxed until one ran without.
-    expect(Buffer.from((await ex.readFile("/f", 100))?.data ?? []).toString()).toBe("sandboxed");
+    // File operations follow the policy now, not the last command.
+    expect(await read()).toBe("host");
+    expect(switches).toEqual(["none"]);
     await ex.exec(tierArgs("open"), never);
     expect(host.started).toEqual(["now"]);
-    expect(switches).toEqual(["none"]);
-    expect(Buffer.from((await ex.readFile("/f", 100))?.data ?? []).toString()).toBe("host");
-    // Turning the sandbox back on applies to file operations at once and to the next command.
-    policy = { ...policy, isolation: "sandbox" };
-    expect(Buffer.from((await ex.readFile("/f", 100))?.data ?? []).toString()).toBe("sandboxed");
-    await ex.exec(tierArgs("open"), never);
-    expect(sandboxed.started).toEqual(["now", "now"]);
+    // isolation none without the local tier open keeps file operations sandboxed.
+    policy = { ...DEFAULT_POLICY, isolation: "none" };
+    expect(await read()).toBe("sandboxed");
     expect(switches).toEqual(["none", "sandbox"]);
+  });
+
+  it("turning the sandbox back on kills the unsandboxed commands", async () => {
+    setup();
+    policy = { ...policy, tier: "open", isolation: "none" };
+    await ex.exec(tierArgs("open"), never);
+    expect(host.killed).toEqual([]);
+    policy = { ...policy, isolation: "sandbox" };
+    // The watch notices without another operation.
+    const until = Date.now() + 3000;
+    while (host.killed.length === 0 && Date.now() < until) await sleep(50);
+    expect(host.killed).toEqual([["*"]]);
+    expect(switches).toEqual(["none", "sandbox"]);
+    await ex.exec(tierArgs("open"), never);
+    expect(sandboxed.started).toEqual(["now"]);
+    expect(host.killed).toEqual([["*"]]);
   });
 
   it("refuses a command the policy wants unsandboxed below tier open, never runs it sandboxed", async () => {
@@ -347,6 +373,21 @@ describe("SwitchingExecutor", () => {
     });
     expect(sandboxed.started).toEqual([]);
     expect(host.started).toEqual([]);
+  });
+
+  it("execDecided runs the decision it is given", async () => {
+    setup();
+    policy = { ...policy, tier: "open", isolation: "none" };
+    await ex.execDecided(tierArgs("open"), never, { tier: "open", isolation: "none" }, policy);
+    expect(host.started).toEqual(["now"]);
+    await expect(
+      ex.execDecided(
+        tierArgs("dev"),
+        never,
+        { tier: "dev", isolation: "none", refusal: "no" },
+        policy,
+      ),
+    ).rejects.toMatchObject({ kind: "policy", message: "no" });
   });
 
   it("kills reach both executors' commands", async () => {

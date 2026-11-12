@@ -3,8 +3,19 @@ import type {
   DeviceExecArgs,
   ExecResult,
   SandboxRoots,
+  SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 import type { ProxyGuardResult } from "../proxy-guard.js";
+import type { Policy } from "../state.js";
+
+/** How one command runs: its tier and whether it runs in the sandbox (see `exec/switch.ts`). */
+export interface ExecIsolation {
+  tier: SandboxTier;
+  /** `none`: without a sandbox. */
+  isolation: "sandbox" | "none";
+  /** Set when the policy asks for no sandbox but the tiers do not allow it: the command is refused. */
+  refusal?: string;
+}
 
 /** What runs the operations on this machine: the OS sandbox (os) or a container (docker). */
 export interface Executor {
@@ -35,6 +46,16 @@ export interface Executor {
    * off for `dev` / `open`, spec §5.2.3). Absent: none found.
    */
   proxyGuard?(): ProxyGuardResult;
+  /**
+   * OS mode, an executor that can run without a sandbox: runs one command as `how` (decided by
+   * the caller on `policy`, and logged by it) says, instead of deciding again in {@link exec}.
+   */
+  execDecided?(
+    args: DeviceExecArgs,
+    signal: AbortSignal,
+    how: ExecIsolation,
+    policy: Policy,
+  ): Promise<ExecResult>;
 }
 
 /** An executor failure with a protocol error kind (default `error`). */

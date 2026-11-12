@@ -7,25 +7,27 @@ import type {
 import { deviceTier, type TierLimits } from "../policy.js";
 import type { ProxyGuardResult } from "../proxy-guard.js";
 import type { Policy } from "../state.js";
-import type { HostExecutor } from "./host.js";
-import { DeviceOpError, type Executor } from "./types.js";
+import { DeviceOpError, type ExecIsolation, type Executor } from "./types.js";
 
-/** How one command runs: its tier and whether it runs in the sandbox. */
-export interface ExecIsolation {
-  tier: SandboxTier;
-  /** `none`: without a sandbox ({@link HostExecutor}). */
-  isolation: "sandbox" | "none";
-  /** Set when the policy asks for no sandbox but the tier does not allow it: the command is refused. */
-  refusal?: string;
+export type { ExecIsolation } from "./types.js";
+
+/**
+ * Whether the local policy itself asks for no sandbox: `isolation: "none"` with the owner's own
+ * tier set to `open` on this machine. A tier the deployment supplies (the org's default) never
+ * counts, so the kernel can never be the last step that makes commands run unsandboxed.
+ */
+export function policyUnsandboxed(policy: Pick<Policy, "tier" | "isolation">): boolean {
+  return policy.isolation === "none" && policy.tier === "open";
 }
 
 /**
  * Decides how one command runs (spec §5.4). Without a sandbox only when the local policy says
- * `isolation: "none"`, the device runs in OS mode, and the command's tier (the owner's choice cut
- * to the org's ceiling) is `open`. When the policy says `none` but the tier is lower, the command
- * is refused, never run in the sandbox silently: the owner asked for no sandbox, and the kernel
- * refuses such a device in the same case (spec §4.3), so both sides say why. Docker mode ignores
- * `isolation` (its container is the isolation).
+ * `isolation: "none"` with its own tier `open` ({@link policyUnsandboxed}), the device runs in OS
+ * mode, and the command's tier (that choice cut to the org's ceiling) is `open`. When the policy
+ * says `none` but either tier is lower (or the local tier is not set), the command is refused,
+ * never run in the sandbox silently: the owner asked for no sandbox, and the kernel refuses such
+ * a device in the same case (spec §4.3), so both sides say why. Docker mode ignores `isolation`
+ * (its container is the isolation).
  */
 export function execIsolation(
   policy: Pick<Policy, "tier" | "isolation">,
@@ -34,23 +36,21 @@ export function execIsolation(
 ): ExecIsolation {
   const tier = deviceTier(policy, limits);
   if (mode !== "os" || policy.isolation !== "none") return { tier, isolation: "sandbox" };
-  if (tier === "open") return { tier, isolation: "none" };
-  return { tier, isolation: "none", refusal: unsandboxedRefusal(policy, limits, tier) };
+  if (policy.tier === "open" && tier === "open") return { tier, isolation: "none" };
+  return { tier, isolation: "none", refusal: unsandboxedRefusal(policy, tier) };
 }
 
 /** The refusal of a command the policy asks to run without a sandbox below tier `open`. */
-export function unsandboxedRefusal(
-  policy: Pick<Policy, "tier">,
-  limits: TierLimits,
-  tier: SandboxTier,
-): string {
-  const chosen = policy.tier ?? limits.defaultTier ?? "strict";
-  if (chosen !== "open") {
+export function unsandboxedRefusal(policy: Pick<Policy, "tier">, tier: SandboxTier): string {
+  if (policy.tier !== "open") {
+    const own =
+      policy.tier === undefined
+        ? "its tier is not set on this machine (it follows the organization's default)"
+        : `its tier is ${policy.tier}`;
     return (
-      `This device is set to run commands without a sandbox, but its tier is ${chosen}; ` +
-      "running without a sandbox needs tier open. On this machine, run " +
-      "capybara-device policy set tier open, or turn the sandbox back on with " +
-      "capybara-device policy set isolation sandbox."
+      `This device is set to run commands without a sandbox, but ${own}; running without a ` +
+      "sandbox needs tier open set on this machine. Run capybara-device policy set tier open, " +
+      "or turn the sandbox back on with capybara-device policy set isolation sandbox."
     );
   }
   return (
@@ -60,22 +60,29 @@ export function unsandboxedRefusal(
   );
 }
 
+/** How often the switching executor rereads the policy while it runs commands unsandboxed. */
+const WATCH_INTERVAL_MS = 1000;
+
 /**
  * The OS-mode executor the program serves: each command runs in the OS sandbox or, when
- * {@link execIsolation} says so, without one; the policy is read per command, so a change applies
- * at the next command. File operations use the host executor's direct IO (still confined to the
- * roots) while the last command ran unsandboxed and the policy still says `none`; otherwise the
- * sandboxed helper. Kills reach both executors' commands.
+ * {@link execIsolation} says so, without one; the policy is read per operation, so a change
+ * applies at once. File operations use the host executor's direct IO (still confined to the
+ * roots) while the policy asks for no sandbox ({@link policyUnsandboxed}); otherwise the
+ * sandboxed helper. When the policy turns the sandbox back on, every command still running
+ * without one (and what it left in the background) is killed; while unsandboxed, the policy is
+ * also checked every second so that happens without waiting for the next operation. Kills reach
+ * both executors' commands.
  */
 export class SwitchingExecutor implements Executor {
   readonly mode = "os" as const;
   readonly roots: SandboxRoots;
-  /** The last command ran without a sandbox. */
+  /** The policy asked for no sandbox when last checked. */
   private unsandboxed = false;
+  private watch: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly sandboxed: Executor,
-    /** Runs commands without a sandbox ({@link HostExecutor}). */
+    /** Runs commands without a sandbox (the `HostExecutor`). */
     private readonly host: Executor,
     private readonly policy: () => Policy,
     private readonly onSwitch?: (isolation: "sandbox" | "none") => void,
@@ -83,33 +90,63 @@ export class SwitchingExecutor implements Executor {
     this.roots = sandboxed.roots;
   }
 
+  /**
+   * Rereads the policy; on a change fires `onSwitch` and, when the sandbox came back on, kills
+   * the unsandboxed commands. Returns whether the policy asks for no sandbox now.
+   */
+  async sync(policy: Policy = this.policy()): Promise<boolean> {
+    const none = policyUnsandboxed(policy);
+    if (none === this.unsandboxed) return none;
+    this.unsandboxed = none;
+    if (none) {
+      this.watch ??= setInterval(() => void this.sync().catch(() => {}), WATCH_INTERVAL_MS);
+      this.watch.unref();
+    } else {
+      if (this.watch !== undefined) clearInterval(this.watch);
+      this.watch = undefined;
+    }
+    this.onSwitch?.(none ? "none" : "sandbox");
+    if (!none) await this.host.killAll();
+    return none;
+  }
+
   /** The executor for file operations now. */
-  private files(): Executor {
-    return this.unsandboxed && this.policy().isolation === "none" ? this.host : this.sandboxed;
+  private async files(): Promise<Executor> {
+    return (await this.sync()) ? this.host : this.sandboxed;
   }
 
   async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
     signal.throwIfAborted();
-    const how = execIsolation(this.policy(), args.limits, "os");
+    const policy = this.policy();
+    return this.execDecided(args, signal, execIsolation(policy, args.limits, "os"), policy);
+  }
+
+  /**
+   * Runs one command as `how` decided (the caller logs the same decision). The policy it was
+   * decided on is synced first, so a sandbox turned back on stops the unsandboxed commands.
+   */
+  async execDecided(
+    args: DeviceExecArgs,
+    signal: AbortSignal,
+    how: ExecIsolation,
+    policy: Policy = this.policy(),
+  ): Promise<ExecResult> {
+    signal.throwIfAborted();
+    await this.sync(policy);
     if (how.refusal !== undefined) throw new DeviceOpError("policy", how.refusal);
-    const none = how.isolation === "none";
-    if (none !== this.unsandboxed) {
-      this.unsandboxed = none;
-      this.onSwitch?.(how.isolation);
-    }
-    return (none ? this.host : this.sandboxed).exec(args, signal);
+    return (how.isolation === "none" ? this.host : this.sandboxed).exec(args, signal);
   }
 
-  readFile(path: string, maxBytes: number) {
-    return this.files().readFile(path, maxBytes);
+  async readFile(path: string, maxBytes: number) {
+    return (await this.files()).readFile(path, maxBytes);
   }
 
-  writeFile(path: string, data: Uint8Array): Promise<void> {
-    return this.files().writeFile(path, data);
+  async writeFile(path: string, data: Uint8Array): Promise<void> {
+    return (await this.files()).writeFile(path, data);
   }
 
-  stat(path: string) {
-    return this.files().stat(path);
+  async stat(path: string) {
+    return (await this.files()).stat(path);
   }
 
   async killTagged(tags: string[]): Promise<void> {
@@ -127,5 +164,11 @@ export class SwitchingExecutor implements Executor {
   /** The sandboxed executor's latest localhost proxy guard result (see `Executor`). */
   proxyGuard(): ProxyGuardResult {
     return this.sandboxed.proxyGuard?.() ?? { detected: false, reasons: [] };
+  }
+
+  /** Stops watching the policy. */
+  dispose(): void {
+    if (this.watch !== undefined) clearInterval(this.watch);
+    this.watch = undefined;
   }
 }
