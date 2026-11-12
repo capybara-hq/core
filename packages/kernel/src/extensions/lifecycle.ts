@@ -16,6 +16,7 @@ import {
 } from "./lifecycle-topics.js";
 import { PLUGINS_MIGRATED_TOPIC } from "./migrate-lock.js";
 import { ReplicaStatusStore } from "./sources.js";
+import { UsageSubscribers } from "./usage-subscribers.js";
 
 export {
   PLUGINS_CHANGED_TOPIC,
@@ -54,6 +55,9 @@ export class ExtensionLifecycle {
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** "Does any plugin subscribe to usage.report": its cached answer is cleared on PLUGINS_CHANGED. */
+    @Inject(UsageSubscribers)
+    private readonly usageSubscribers: Pick<UsageSubscribers, "invalidate">,
   ) {}
 
   /** 订阅三个主题（订阅失败只记 error：周期任务的消息同样收不到时，下次启动再来）。 */
@@ -69,6 +73,7 @@ export class ExtensionLifecycle {
     await on(PLUGINS_CHANGED_TOPIC, (p) => {
       // 安装 / 卸载改变了「部署已知」的插件名：路由闸门不等 TTL
       this.host.invalidateKnownNames();
+      this.usageSubscribers.invalidate();
       this.trigger(`changed:${pluginOf(p)}`);
     });
     await on(PLUGINS_RECONCILE_TOPIC, () => this.trigger("periodic"));

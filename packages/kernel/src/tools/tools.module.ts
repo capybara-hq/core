@@ -14,7 +14,6 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
-import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduledTaskStoreModule } from "../schedules/store.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
@@ -65,9 +64,8 @@ import { ToolRegistry } from "./registry.js";
     BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see
     ConversationAccessModule,
-    // the WebFetch extraction call: its purpose, usage report and step writes
+    // the WebFetch extraction call: its purpose and step writes (its usage report owed with them)
     ModelsModule,
-    UsageReportModule,
     StepLogModule,
     // a decision resumes its waiting run in the decision's transaction (`RunResume`)
     RunJobsModule,

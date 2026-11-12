@@ -88,6 +88,24 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `runtime/usage-report-jobs.ts` USAGE_REPORT_JOB: owed with the usage it reports (a `usage`
+  // event or a `model_usage` row) while some plugin subscribes, under `usageReportJobId` /
+  // `modelUsageJobId` (spec §8.1)
+  "usage-report": {
+    queue: "cap-kernel-usage-report",
+    idempotent:
+      "handlers are idempotent by eventId (the event's `<conversationId>/<seq>` or the model_usage row id), and the job's `pending` list keeps a retry from reaching plugins already served",
+    processedIn: "packages/kernel/src/runtime/run-processors.ts",
+    // first attempt plus 5 retries, 2 s doubling (F11); finished jobs kept a day so a re-add of the
+    // same id (a crash between the add and the row's delete) dedupes; failed ones a week; both
+    // capped by count (I-2: a long outage of a billing endpoint cannot grow Redis)
+    opts: {
+      attempts: 6,
+      backoff: { type: "exponential", delay: 2_000 },
+      removeOnComplete: { age: 24 * 3600, count: 100_000 },
+      removeOnFail: { age: 7 * 86_400, count: 100_000 },
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

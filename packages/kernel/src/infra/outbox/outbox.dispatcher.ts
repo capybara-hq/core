@@ -31,8 +31,9 @@ export const OUTBOX_REDIS_TIMEOUT_MS = 2000;
 export const OUTBOX_FAST_PATH_CONCURRENCY = 4;
 
 /**
- * Test seam (`KernelOverride`): returns true to make every queue add fail (a Redis outage) without
- * calling Redis. The kernel never provides it; the dispatcher defaults to "never fails".
+ * Test seam (`KernelOverride`): returns true to make the adds to the given queue fail (a Redis
+ * outage) without calling Redis. The kernel never provides it; the dispatcher defaults to "never
+ * fails".
  */
 export const OUTBOX_DISPATCH_FAILS = Symbol("OUTBOX_DISPATCH_FAILS");
 
@@ -122,7 +123,7 @@ export class OutboxDispatcher {
     @Inject(ModuleRef) private readonly moduleRef: Pick<ModuleRef, "get">,
     @Optional()
     @Inject(OUTBOX_DISPATCH_FAILS)
-    private readonly dispatchFails: () => boolean = () => false,
+    private readonly dispatchFails: (queue: KernelQueueName) => boolean = () => false,
   ) {}
 
   /** The queue instance its owner module registered, or undefined when no loaded module has it. */
@@ -251,7 +252,8 @@ export class OutboxDispatcher {
         continue;
       }
       try {
-        if (this.dispatchFails()) throw new Error("outbox dispatch failure (test seam)");
+        if (this.dispatchFails(name as KernelQueueName))
+          throw new Error("outbox dispatch failure (test seam)");
         const queue = queues.get(name as KernelQueueName);
         if (!queue) throw new Error(`"${name}" is not a kernel queue`);
         const left = deadline - Date.now();

@@ -15,7 +15,6 @@ import type { AgentLoop } from "./loop.js";
 import { ProviderRegistry } from "./providers.js";
 import { StepLog } from "./step-log.js";
 import { SubagentsService } from "./subagents/subagents.service.js";
-import { UsageReporter } from "./usage-report.js";
 
 /**
  * Builds the agent loop a run executes (default {@link LangGraphLoop}: its checkpoints live in the
@@ -56,7 +55,6 @@ export class RunSteps {
     @Inject(EventLog) eventLog: EventLog,
     @Inject(StepLog) stepLog: StepLog,
     @Inject(ProviderRegistry) registry: ProviderRegistry,
-    @Inject(UsageReporter) usageReport: UsageReporter,
     @Inject(ToolRegistry) tools: ToolRegistry,
     @Inject(KernelConfigService) config: KernelConfigService,
     @Inject(KERNEL_LOGGER) log: KernelLogger,
@@ -72,7 +70,6 @@ export class RunSteps {
       eventLog,
       stepLog,
       registry,
-      usageReport,
       tools,
       config,
       log,

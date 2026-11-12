@@ -1287,13 +1287,6 @@ export interface ExtensionReplicaStatusTable {
   heartbeat_at: Ts;
 }
 
-/** 0040: the usage.report sweeper's watermark (a single row, id = 1). */
-export interface UsageReportSweepTable {
-  id: ColumnType<number, number | undefined, never>;
-  watermark: Ts;
-  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
-}
-
 /** A model disabled on the platform (`org_id` null) or in one org (0089, spec B §5.3). */
 export interface ModelDisabledTable {
   org_id: string | null;
@@ -1314,7 +1307,7 @@ export interface ModelUsageTable {
   input_tokens: number;
   occurred_at: Ts;
   reported_at: TsNullable;
-  /** Set when the row's `usage.report` job gave up after its last attempt (the sweep skips it). */
+  /** Set when the row's `usage.report` job gave up after its last attempt. */
   report_failed_at: TsNullable;
 }
 
@@ -1456,7 +1449,6 @@ export interface KernelDatabase {
   extension_blobs: ExtensionBlobsTable;
   extension_installs: ExtensionInstallsTable;
   extension_replica_status: ExtensionReplicaStatusTable;
-  usage_report_sweep: UsageReportSweepTable;
   extension_name_owners: ExtensionNameOwnersTable;
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
   catalog_items: CatalogItemsTable;

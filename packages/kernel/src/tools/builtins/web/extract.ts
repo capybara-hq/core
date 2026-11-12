@@ -23,7 +23,6 @@ import {
 } from "../../../runtime/hook-calls.js";
 import { appendCounted } from "../../../runtime/model-call.js";
 import type { StepLog } from "../../../runtime/step-log.js";
-import type { UsageReporter } from "../../../runtime/usage-report.js";
 import type { BuiltinCallContext } from "../../registry.js";
 import { TRUNCATED_MARKER } from "./fetch.js";
 
@@ -86,13 +85,12 @@ type ModelHookBase = HookScope & {
 /** What {@link extractAnswer} needs. */
 export interface WebFetchExtractDeps {
   purposes: Pick<ModelPurposesService, "chat" | "chatLimits">;
-  eventLog: Pick<EventLog, "append" | "notify" | "latestOfType">;
-  stepLog: Pick<StepLog, "appendCounted" | "appendAudited">;
+  eventLog: Pick<EventLog, "notify" | "latestOfType">;
+  stepLog: Pick<StepLog, "appendCounted" | "appendReported" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
   /** Extension hooks (absent: none fire). */
   hooks?: HookRunner | undefined;
-  usageReport?: Pick<UsageReporter, "enqueue"> | undefined;
 }
 
 /**
@@ -277,7 +275,7 @@ export async function extractAnswer(
 
 /**
  * Appends the call's `usage` event (the tool call's run and step, `callId`; idempotent per call)
- * and queues its `usage.report`. A sub-agent's call also counts on its parent run's
+ * and owes its `usage.report` delivery in the same transaction. A sub-agent's call also counts on its parent run's
  * `subagent_tokens_used`, in the same transaction ({@link appendCounted}).
  */
 async function logUsage(
@@ -300,7 +298,7 @@ async function logUsage(
       callId: ctx.callId,
     },
   };
-  const written = await appendCounted(
+  await appendCounted(
     deps,
     {
       conversationId: ctx.conversationId,
@@ -309,8 +307,6 @@ async function logUsage(
     },
     [event],
   );
-  const usage = written.find((e) => e.type === "usage");
-  if (usage) void deps.usageReport?.enqueue(ctx.conversationId, usage.seq);
 }
 
 /**
