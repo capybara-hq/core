@@ -362,7 +362,11 @@ export function withPolicyLock<T>(
       } catch {
         // Already gone.
       }
-      closeSync(fd);
+      try {
+        closeSync(fd);
+      } catch {
+        // `fn` ran (a policy write may have happened): a failed close must not turn it into an error
+      }
     }
   }
 }

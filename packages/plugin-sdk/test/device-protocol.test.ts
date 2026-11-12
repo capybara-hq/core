@@ -451,6 +451,24 @@ describe("device protocol", () => {
       }
     });
 
+    it("hello recentOps keeps the last entry of a repeated op id", () => {
+      const h = parseDeviceFrame(
+        JSON.stringify({
+          ...hello,
+          recentOps: [
+            { opId: "a", outcome: "started" },
+            { opId: "b", outcome: "applied" },
+            { opId: "a", outcome: "refused" },
+          ],
+        }),
+        "device",
+      ) as DeviceHello;
+      expect(h.recentOps).toEqual([
+        { opId: "b", outcome: "applied" },
+        { opId: "a", outcome: "refused" },
+      ]);
+    });
+
     it("hello recentOps keeps valid entries and drops the rest, at most 100", () => {
       const parseHello = (o: unknown) =>
         parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;

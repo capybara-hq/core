@@ -12,3 +12,8 @@ three. `capybara-device` logs each policy op in `policy-ops.json` next to `polic
 before the change, then `applied` or `refused`; the last 100 kept), answers a repeated op id from
 that log without applying it again, and reports the log in every hello. The kernel sends its op id
 with each `policy` op.
+
+The SDK's hello parser keeps one `recentOps` entry per op id (the last one listed). `capybara-device`
+keeps a refusal's message in the log cut to 500 characters, never logs an applied op as refused
+when releasing the policy lock fails after the write, and keeps an op the log already says was
+applied as applied.

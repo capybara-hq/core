@@ -435,15 +435,20 @@ function opId(o: Record<string, unknown>): string {
 
 const OP_OUTCOMES: readonly DevicePolicyOpOutcome[] = ["applied", "refused", "started"];
 
-/** The valid entries of a hello's `recentOps`, the newest {@link MAX_RECENT_POLICY_OPS}. */
+/**
+ * The valid entries of a hello's `recentOps`, one per op id (the last listed), the newest
+ * {@link MAX_RECENT_POLICY_OPS}.
+ */
 function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
-  const out: DevicePolicyOpReport[] = [];
+  // one entry per op id: the last one listed (the newest outcome), where it is listed
+  const byId = new Map<string, DevicePolicyOpReport>();
   for (const e of v) {
     if (!isRecord(e) || !isPolicyOpId(e.opId)) continue;
     if (!OP_OUTCOMES.includes(e.outcome as DevicePolicyOpOutcome)) continue;
-    out.push({ opId: e.opId, outcome: e.outcome as DevicePolicyOpOutcome });
+    byId.delete(e.opId);
+    byId.set(e.opId, { opId: e.opId, outcome: e.outcome as DevicePolicyOpOutcome });
   }
-  return out.slice(-MAX_RECENT_POLICY_OPS);
+  return [...byId.values()].slice(-MAX_RECENT_POLICY_OPS);
 }
 
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */

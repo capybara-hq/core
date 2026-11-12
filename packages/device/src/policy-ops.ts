@@ -10,6 +10,9 @@ import { policyOpsPath, withPolicyLock, writePrivate } from "./state.js";
 /** The most `policy` op outcomes the log keeps; the oldest is dropped first. */
 export const MAX_LOGGED_POLICY_OPS = 100;
 
+/** The longest refusal message the log keeps (characters); a longer one is cut. */
+export const MAX_LOGGED_MESSAGE_LENGTH = 500;
+
 /**
  * One logged `policy` op: its id from the deployment, the outcome, and a refusal's message and
  * error kind (a repeated op is answered with them).
@@ -85,7 +88,13 @@ export class PolicyOpLog {
    * its entry and moves it last.
    */
   recordHeld(entry: Omit<PolicyOpRecord, "time">): void {
-    const next: PolicyOpRecord = { ...entry, time: new Date().toISOString() };
+    const next: PolicyOpRecord = {
+      ...entry,
+      ...(entry.message !== undefined && {
+        message: entry.message.slice(0, MAX_LOGGED_MESSAGE_LENGTH),
+      }),
+      time: new Date().toISOString(),
+    };
     const kept = this.entries().filter((e) => e.opId !== entry.opId);
     kept.push(next);
     writePrivate(this.file, `${JSON.stringify(kept.slice(-MAX_LOGGED_POLICY_OPS), null, 2)}\n`);

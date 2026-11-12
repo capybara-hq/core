@@ -329,15 +329,18 @@ function servePolicyOp(
     });
     return { res: { type: "res", id: req.id, ok: true, result }, detail };
   } catch (e) {
-    try {
-      store.ops.record({
-        opId,
-        outcome: "refused",
-        message: e instanceof Error ? e.message : String(e),
-        kind: e instanceof DeviceOpError ? e.kind : "error",
-      });
-    } catch {
-      // nothing was applied; the log keeps `started`
+    // an op the log already says was applied stays applied (the log reports what the file holds)
+    if (store.ops.get(opId)?.outcome !== "applied") {
+      try {
+        store.ops.record({
+          opId,
+          outcome: "refused",
+          message: e instanceof Error ? e.message : String(e),
+          kind: e instanceof DeviceOpError ? e.kind : "error",
+        });
+      } catch {
+        // nothing was applied; the log keeps `started`
+      }
     }
     throw e;
   }

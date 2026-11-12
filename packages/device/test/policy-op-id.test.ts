@@ -4,7 +4,11 @@ import { join } from "node:path";
 import type { KernelReq } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Connection, connect } from "../src/client.js";
-import { MAX_LOGGED_POLICY_OPS, PolicyOpLog } from "../src/policy-ops.js";
+import {
+  MAX_LOGGED_MESSAGE_LENGTH,
+  MAX_LOGGED_POLICY_OPS,
+  PolicyOpLog,
+} from "../src/policy-ops.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { REMOTE_GRANTS_OFF_MESSAGE, serveOp } from "../src/server-ops.js";
 import { DEFAULT_POLICY, policyOpsPath, policyPath, writePolicy } from "../src/state.js";
@@ -143,6 +147,13 @@ describe("policy ops by op id", () => {
     log.record({ opId: "op5", outcome: "refused", message: "no" });
     expect(log.entries().at(-1)).toMatchObject({ opId: "op5", outcome: "refused" });
     expect(log.entries()).toHaveLength(MAX_LOGGED_POLICY_OPS);
+  });
+
+  it("a refusal's message is logged cut to 500 characters", () => {
+    const log = new PolicyOpLog(dir);
+    log.record({ opId: "op1", outcome: "refused", message: "x".repeat(2_000) });
+    expect(MAX_LOGGED_MESSAGE_LENGTH).toBe(500);
+    expect(log.get("op1")?.message).toBe("x".repeat(500));
   });
 
   it("an unreadable log reads as empty and is replaced at the next op", async () => {
