@@ -18,6 +18,16 @@ export interface DeliverJobData {
   conversationId: string;
 }
 
+/** The catch-up job of a connection that can deliver again (re-enabled, credentials rotated). */
+export const RESUME_JOB = "channel-resume";
+/** Its job id: one per connection and update (`updated_at` in ms; no `:`). */
+export const resumeJobId = (connectionId: string, at: Date) =>
+  `channel-resume-${connectionId}-${at.getTime()}`;
+
+export interface ResumeJobData {
+  connectionId: string;
+}
+
 /**
  * Owes the conversation's delivery job for the log position `seq` in the transaction in context:
  * the caller knows the conversation has a channel target. Shares the job id of

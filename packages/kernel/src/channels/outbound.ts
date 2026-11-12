@@ -51,6 +51,8 @@ import {
   INBOUND_JOB,
   type InboundJobData,
   idempotencyKey,
+  RESUME_JOB,
+  type ResumeJobData,
 } from "./jobs.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
 import { insertThread } from "./threads.js";
@@ -270,7 +272,7 @@ export class ChannelOutbound {
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">,
     /** 入站任务的处理（worker 上执行 `ChannelInbound.handle`）；失败抛错由 BullMQ 重试。 */
     @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "handle">,
-    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "enqueue">,
+    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "enqueue" | "resumeConnection">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn" | "info">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -330,10 +332,17 @@ export class ChannelOutbound {
     throw new DelayedError();
   }
 
-  /** One job of the channel queue (the `@Processor` calls it): a delivery or an inbound event. */
+  /**
+   * One job of the channel queue (the `@Processor` calls it): a delivery, an inbound event or a
+   * connection's catch-up.
+   */
   async process(job: Job<ChannelJobData>, token: string | undefined): Promise<void> {
     if (this.stopping.signal.aborted) return this.requeue(job, token, 0);
     if (job.name === INBOUND_JOB) return this.processInbound(job as Job<InboundJobData>, token);
+    // a connection's catch-up: a failed add fails the job, which BullMQ retries
+    if (job.name === RESUME_JOB) {
+      return this.jobs.resumeConnection((job.data as ResumeJobData).connectionId);
+    }
     return this.deliver(job as Job<DeliverJobData>, token);
   }
 

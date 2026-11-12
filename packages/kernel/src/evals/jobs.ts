@@ -25,18 +25,21 @@ export interface EvalJobData {
  */
 @Injectable()
 export class EvalJobs {
-  constructor(@Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">) {}
+  constructor(@Inject(OutboxService) private readonly outbox: Pick<OutboxService, "addMany">) {}
 
-  /** Owes the case jobs in the caller's transaction (throws outside one). */
+  /**
+   * Owes the case jobs in the caller's transaction (throws outside one), in one insert: a set has
+   * up to `evals.maxCasesPerSet` cases, written while the start holds the org lock.
+   */
   async owe(jobs: readonly EvalJobData[]): Promise<void> {
-    for (const data of jobs) {
-      await this.outbox.add<EvalJobData>({
+    await this.outbox.addMany<EvalJobData>(
+      jobs.map((data) => ({
         queue: EVAL_QUEUE_NAME,
         name: EVAL_CASE_JOB,
         jobId: evalJobId(data.runId, data.caseId),
         data,
         orgId: data.orgId,
-      });
-    }
+      })),
+    );
   }
 }

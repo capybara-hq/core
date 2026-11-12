@@ -37,6 +37,35 @@ export const OUTBOX_FAST_PATH = Symbol("OUTBOX_FAST_PATH");
  */
 export const OUTBOX_STRICT_CONFLICTS = Symbol("OUTBOX_STRICT_CONFLICTS");
 
+/** Jobs per insert statement of {@link OutboxService.addMany} (6 parameters each). */
+const ADD_MANY_CHUNK = 1000;
+
+/** The row of `job` (throws on a job id with `:`). */
+function rowOf<T>(job: OutboxJob<T>) {
+  if (job.jobId.includes(":")) {
+    throw new Error(
+      `outbox job id "${job.jobId}" must not contain ":" (BullMQ uses it as its key separator); ` +
+        'join the id\'s parts with "-" instead',
+    );
+  }
+  return {
+    queue: job.queue,
+    job_name: job.name,
+    job_id: job.jobId,
+    data: JSON.stringify(job.data ?? null),
+    run_at: job.runAt ?? null,
+    org_id: job.orgId ?? null,
+  };
+}
+
+/**
+ * Only a job due now goes through the fast path (ruling R20): a delayed one (a backstop, a
+ * timeout) is claimed by the relay within its next tick and added with its remaining delay, so the
+ * commit's caller spends no claim transaction on work due in seconds or hours.
+ */
+const dueNow = (job: { runAt?: Date | undefined }) =>
+  job.runAt === undefined || job.runAt.getTime() <= Date.now();
+
 /**
  * The ids each open transaction inserted, keyed by its transaction store: lives only as long as
  * that transaction (a WeakMap entry, no state shared across requests).
@@ -68,33 +97,15 @@ export class OutboxService {
    */
   @Transactional({ propagation: "mandatory" })
   async add<T>(job: OutboxJob<T>): Promise<boolean> {
-    if (job.jobId.includes(":")) {
-      throw new Error(
-        `outbox job id "${job.jobId}" must not contain ":" (BullMQ uses it as its key separator); ` +
-          'join the id\'s parts with "-" instead',
-      );
-    }
     const json = JSON.stringify(job.data ?? null);
     const row = await this.db
       .insertInto("outbox")
-      .values({
-        queue: job.queue,
-        job_name: job.name,
-        job_id: job.jobId,
-        data: json,
-        run_at: job.runAt ?? null,
-        org_id: job.orgId ?? null,
-      })
+      .values(rowOf(job))
       .onConflict((oc) => oc.columns(["queue", "job_id"]).where("dead_at", "is", null).doNothing())
       .returning("id")
       .executeTakeFirst();
     if (row) {
-      // only a job due now goes through the fast path (ruling R20): a delayed one (a backstop, a
-      // timeout) is claimed by the relay within its next tick and added with its remaining delay,
-      // so the commit's caller spends no claim transaction on work due in seconds or hours
-      if (job.runAt === undefined || job.runAt.getTime() <= Date.now()) {
-        this.deliverAfterCommit(row.id);
-      }
+      if (dueNow(job)) this.deliverAfterCommit(row.id);
       return true;
     }
     const stored = await this.db
@@ -117,6 +128,32 @@ export class OutboxService {
       this.log.error(msg, fields);
     }
     return false;
+  }
+
+  /**
+   * {@link add} for many jobs in one multi-row insert per {@link ADD_MANY_CHUNK} jobs (an eval
+   * run's cases). A job whose (queue, jobId) is already owed is skipped without comparing its data.
+   * Returns how many rows it inserted.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async addMany<T>(jobs: readonly OutboxJob<T>[]): Promise<number> {
+    let inserted = 0;
+    for (let i = 0; i < jobs.length; i += ADD_MANY_CHUNK) {
+      const chunk = jobs.slice(i, i + ADD_MANY_CHUNK);
+      const rows = await this.db
+        .insertInto("outbox")
+        .values(chunk.map(rowOf))
+        .onConflict((oc) =>
+          oc.columns(["queue", "job_id"]).where("dead_at", "is", null).doNothing(),
+        )
+        .returning(["id", "run_at"])
+        .execute();
+      for (const r of rows) {
+        if (dueNow({ runAt: r.run_at ?? undefined })) this.deliverAfterCommit(r.id);
+      }
+      inserted += rows.length;
+    }
+    return inserted;
   }
 
   /** Collects `id` for its transaction; the first id registers the transaction's one hint. */

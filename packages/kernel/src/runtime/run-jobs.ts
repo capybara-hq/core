@@ -196,7 +196,9 @@ export class RunJobs {
    * ({@link bgWakeJobId}), so finishes inside one window share it; `retry` > 0 is a job that fired
    * before its window ended. The relay adds it with the remaining delay (a row due later skips the
    * fast path); `runAt` carries {@link WAKE_JOB_MARGIN_MS}, since the window is read on the
-   * database's clock and the delay runs on this process's and Redis's.
+   * database's clock and the delay runs on this process's and Redis's. Every `ensureRun` inside the
+   * window (each append that calls it) owes it again: a no-op while the row is pending, and once it
+   * was delivered a new row whose add BullMQ dedupes by the job id while the delayed job exists.
    */
   oweBgWake(
     conversationId: string,

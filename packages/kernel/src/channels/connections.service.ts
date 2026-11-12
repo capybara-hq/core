@@ -246,8 +246,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(REDIS) private readonly redis: Pick<Redis, "del">,
-    /** A connection that can deliver again catches up its conversations (`resumeConnection`). */
-    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "resumeConnection">,
+    /** A connection that can deliver again owes its conversations' catch-up (`oweResume`). */
+    @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "oweResume">,
     /** `channels.webhookBaseUrl`: without it webhook mode is unavailable. */
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KernelEvents) events: Pick<KernelEvents, "on">,
@@ -733,11 +733,6 @@ export class ChannelConnections implements OnApplicationShutdown {
     }
     // A mode switch also reconnects: the holder drops the long connection when going to webhook (F9)
     await this.changed(id, rotated !== undefined || patch.status !== undefined || modeChanged);
-    if ((rotated || patch.status === "active") && row.status === "active") {
-      await this.jobs
-        .resumeConnection(id)
-        .catch((err: unknown) => this.log.warn("cannot resume channel deliveries", { err }));
-    }
     return { channel: await this.viewOf(row), verifySkipped };
   }
 
@@ -789,6 +784,11 @@ export class ChannelConnections implements OnApplicationShutdown {
       .returning(COLUMNS)
       .executeTakeFirst();
     if (!updated) throw notFound();
+    // can deliver again (re-enabled, or new credentials while active): the conversations that fell
+    // behind meanwhile are caught up by a job owed here (transactional outbox spec §3.1)
+    if ((rotated || patch.status === "active") && updated.status === "active") {
+      await this.jobs.oweResume(id, orgId, updated.updated_at);
+    }
     await audit(this.db.db, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

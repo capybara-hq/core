@@ -26,6 +26,7 @@ import {
   ChannelJobs,
   DELIVER_JOB,
   INBOUND_JOB,
+  RESUME_JOB,
 } from "./jobs.js";
 import { ChannelOutbound, deliverBackoff } from "./outbound.js";
 import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
@@ -76,7 +77,7 @@ export class ChannelsModule {}
 
 /**
  * The consumer of `cap-kernel-channels`: deliveries (`DELIVER_JOB`, owed through the outbox or
- * hinted) and inbound jobs (`INBOUND_JOB`), both handled by {@link ChannelOutbound}.
+ * hinted), a connection's catch-up (`RESUME_JOB`, owed) and inbound jobs (`INBOUND_JOB`), all handled by {@link ChannelOutbound}.
  */
 @Injectable()
 export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
@@ -85,7 +86,7 @@ export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
   }
 
   process(job: Job<ChannelJobData>, token?: string): Promise<void> {
-    if (job.name !== DELIVER_JOB && job.name !== INBOUND_JOB) {
+    if (job.name !== DELIVER_JOB && job.name !== INBOUND_JOB && job.name !== RESUME_JOB) {
       return Promise.reject(new UnrecoverableError(`unknown channel job "${job.name}"`));
     }
     return runJob(CHANNEL_QUEUE_NAME, job, () => this.outbound.process(job, token));

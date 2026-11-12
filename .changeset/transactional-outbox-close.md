@@ -7,5 +7,7 @@ start owes one case job per case in the transaction that writes the run, so a cr
 start no longer leaves a run waiting for jobs that were never added (the "enqueue failed" path
 that marked such a run failed is gone). A background task finish or delivery inside a
 conversation's wake window owes the delayed `bg-wake` job in the transaction that found it, so the
-wake is no longer lost when the process dies or Redis is down. The eval queue's jobs are named
+wake is no longer lost when the process dies or Redis is down. A channel connection that is
+re-enabled, or gets new credentials while active, owes its catch-up (`channel-resume`) in the
+update's transaction, so the replies held back meanwhile are no longer left unsent by a crash. The eval queue's jobs are named
 `eval-case`.

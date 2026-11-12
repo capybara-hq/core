@@ -299,9 +299,9 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     path: "packages/kernel/src/channels/jobs.ts",
     within: "enqueue",
     reason:
-      "the delivery hint: run.started, a delivery job's own re-checks and a re-enabled " +
-      "connection's catch-up; every append to a conversation with a target owes its delivery " +
-      "through the outbox (oweDelivery), so a lost hint is re-derived by the next append",
+      "the delivery hint (run.started) and the adds of a job: a delivery's re-checks and the " +
+      "owed channel-resume job's catch-up, where a failed add fails the job and BullMQ retries " +
+      "it; every append to a conversation with a target owes its delivery (oweDelivery)",
   },
   {
     rule: "kc-enqueue-via-outbox",
@@ -324,8 +324,9 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     path: "packages/kernel/src/channels/outbound.ts",
     within: "followUp",
     reason:
-      "a delivery job's own re-check of events that arrived while it held the lock: a failed " +
-      "add fails the job, which BullMQ retries; those events' appends owe their own deliveries",
+      "a delivery job's own re-check of events that arrived while it held the lock (their own " +
+      "jobs ended at the lock): a failed add fails this job, and BullMQ re-runs a failed or " +
+      "stalled delivery job, which delivers them",
   },
   {
     rule: "kc-enqueue-via-outbox",

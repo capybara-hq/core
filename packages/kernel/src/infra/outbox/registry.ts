@@ -156,6 +156,23 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `channels/deliver-job.ts` RESUME_JOB: owed by the update that lets a connection deliver again
+  // (re-enabled, or credentials rotated while active), under `resumeJobId` (one per update)
+  "channel-resume": {
+    queue: "cap-kernel-channels",
+    idempotent:
+      "the catch-up re-reads which of the connection's conversations lag their log and adds their delivery jobs, and a delivery resumes from the delivered seq under a per-conversation lock, so a second catch-up sends nothing twice",
+    processedIn: "packages/kernel/src/channels/channels.module.ts",
+    // retried while PG or Redis is briefly unavailable; behind inbound jobs like a delivery;
+    // removed once done
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      priority: 10,
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `catalog/scope-sync.ts` SCOPE_ITEM_JOB: owed by every transaction that changes an item's
   // scope, disabled flag, list, owner or platform version, under `scopeItemJobId` (one per scope
   // version), and by a sync deferred on a replica that had not loaded the extension yet, under
