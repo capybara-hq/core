@@ -1,10 +1,11 @@
 # Sandbox development tiers
 
 - Date: 2026-11-12.
-- Status: draft for review. The direction (three tiers, the same on local devices and cloud
+- Status: approved (2026-11-12). The direction (three tiers, the same on local devices and cloud
   sandboxes, chosen per device / per org) is the maintainer's, 2026-11-12, marked **(decided)**.
-  Calls made here are marked **(designer's call)**; §14 holds the questions only the maintainer can
-  answer, each with a recommendation.
+  Calls made here are marked **(designer's call)**; the maintainer answered §14's eight questions as
+  recommended (2026-11-12), now recorded decisions. Plan:
+  `docs/superpowers/plans/2026-11-12-sandbox-dev-tiers.md`.
 - Amends: the environments spec `2026-11-07-environments-design.md` (§8.4 limits and egress, §13.6
   the program), the network ask-to-allow spec `2026-11-12-network-ask-to-allow-design.md` (§7
   「这台设备不限网络」 becomes the `open` tier), `SandboxLimits` and the device protocol
@@ -13,7 +14,7 @@
   `capybara-hq/plugins`: `sandbox-docker` (provider, image, egress proxy) and `sandbox-e2b`.
 - Supersedes the unmerged local commit `45c326a95` on `fix/acceptance` (device keys
   `allowLocalBinding` / `allowUnixSockets`, `MAC_CHROMIUM_TMPDIR`): its behaviour becomes part of the
-  `dev` tier (§5.2); see §14 Q8 for the sequencing.
+  `dev` tier (§5.2); §14 Q8 decides the sequencing.
 
 ## 1. Why
 
@@ -119,7 +120,7 @@ Anti-goals:
 |---|---|---|---|
 | Super admin | `sandbox.tiers.max` (deployment config, hot) | `strict` / `dev` / `open` | `dev` |
 | Super admin | `sandbox.tiers.default` | ≤ `max` | `dev` |
-| Super admin | `sandbox.tiers.allowUnsandboxed` | boolean | see §14 Q2 (recommended `true`) |
+| Super admin | `sandbox.tiers.allowUnsandboxed` | boolean | `true` (decided, §14 Q2) |
 | Super admin | `sandbox.limits.egress` | `none` / `allowlist` (the value `open` is removed: open egress is now the `open` tier) | `allowlist` |
 | Super admin | `sandbox.limits.allowHosts` (`L` default) | hosts | today's 8 hosts, unchanged |
 | Super admin | `sandbox.limits.devHosts` (`D`) | hosts, `validateAllowHost` | the preset of §5.2 |
@@ -274,7 +275,7 @@ credentials the sandbox does not hold).
   ports (7890, 7891, 7897, 1080, 1087, 8118, 9050, 9150) or the Docker TCP ports (2375, 2376). When
   one is found, `dev` runs **without** `allowLocalBinding` and `policy show` / the device page say
   why and how to override (`capybara-device policy set localhost allow`, a local-only key)
-  **(designer's call; §14 Q5)**. The real fix is a port filter in srt (§9).
+  **(decided, §14 Q5)**. The real fix is a port filter in srt (§9).
 - **Short socket directory (macOS).** The device creates `/private/tmp/cap-<dirKey8>` (mode 0700,
   writable, unix sockets allowed) and points `TMPDIR` and `MAC_CHROMIUM_TMPDIR` at it, which keeps
   Chromium's singleton socket under 104 bytes; `roots.tmp` (what the kernel's tools use) is
@@ -308,7 +309,7 @@ credentials the sandbox does not hold).
   list, private / loopback / link-local / metadata addresses still refused, HTTP + CONNECT + SOCKS5)
   by default; the old "attach to the shared bridge" behaviour stays available as the plugin setting
   `openEgress: "direct"` for trusted deployments, which also reaches the host and intranet
-  **(designer's call; §14 Q7)**. E2B: `allow_internet_access: true` (E2B checks no destination IP,
+  **(decided, §14 Q7)**. E2B: `allow_internet_access: true` (E2B checks no destination IP,
   as documented). Local OS mode: srt with `*` (the ask callback allows public names), as
   `network: "open"` today. Docker device mode: the bridge.
 - Everything of `dev` (caches, sockets, shm, image).
@@ -518,7 +519,7 @@ interface SandboxProvider {
 
 ## 8. The image (`plugins/sandbox-docker/image/Dockerfile`)
 
-**One image for every tier** **(designer's call; §14 Q6)**: what limits `strict` is the policy, not
+**One image for every tier** **(decided, §14 Q6)**: what limits `strict` is the policy, not
 missing binaries, and a device that changes tier must keep its toolchain ("same repo, same branch").
 Added to today's image:
 
@@ -640,7 +641,7 @@ A run without a person watching (`runs.scheduled_task_run_id` set) uses
 **min(effective tier, `dev`)** unless the task grants `tier:open` (a task grant collected like tool
 grants, by its creator on the task form, refused when the device or org cannot reach `open`); an
 unsandboxed device runs unattended only with the same grant, otherwise the run's sandbox tools fail
-with an actionable note and `missing_grants` records it **(designer's call; §14 Q4)**. Local
+with an actionable note and `missing_grants` records it **(decided, §14 Q4)**. Local
 devices get the cap in the exec args (`limits.tier`), so the device enforces it. A cloud device's
 tier is a property of its shared instance, so the cap cannot be applied per run: an unattended run
 on a cloud device whose effective tier is `open` without the grant fails its sandbox tools with the
@@ -685,9 +686,10 @@ kernel's `devHosts` merge already widens cloud allowlists in `dev`. Phase 1 touc
 boundaries (device widening, the unsandboxed gate) and is reviewed alone on the most capable model;
 the `haproxy.cfg` rules are unchanged (`ShmSize` is not filtered), so no cross-repo proxy change.
 
-## 14. Questions for the maintainer
+## 14. Decisions (maintainer, 2026-11-12)
 
-Ranked by how much the answer changes what gets built.
+The eight questions this section held were answered "as recommended"; the text below keeps each
+question with its answer.
 
 1. **How does the device page turn on unsandboxed?** The direction says "locally or on the device
    page with a risk confirmation" and "the kernel must never be able to switch it on remotely".
@@ -695,32 +697,32 @@ Ranked by how much the answer changes what gets built.
    shows the risk text and the exact local command with a copy button; nothing is sent; (B) a local
    key `remoteUnsandboxed: allow` (default off, set only locally) lets the page's switch work, like
    `remoteGrants`; (C) the page sends a request the program holds until confirmed on the machine
-   (needs an OS notification or a terminal). **Recommendation: A** (the kernel truly cannot enable
+   (needs an OS notification or a terminal). **Decided: A** (the kernel truly cannot enable
    it; B is a later, opt-in convenience).
-2. **Is unsandboxed allowed by default on the platform?** **Recommendation:**
+2. **Is unsandboxed allowed by default on the platform?** **Decided:**
    `sandbox.tiers.allowUnsandboxed` defaults to `true`, but it only works where the org ceiling is
    `open`, which the default (`dev`) is not; so an org admin's deliberate 开放 plus the owner's local
    `--yes` are both needed.
 3. **Existing devices and orgs move to `dev` on upgrade** (local loopback / sockets / dev hosts,
    cloud dev hosts, SOCKS and any port to allowed hosts), without the owners doing anything. The
    direction makes `dev` the default; this confirms it applies to existing devices too.
-   **Recommendation: yes**, with a one-time notice on the device page.
+   **Decided: yes**, with a one-time notice on the device page.
 4. **Unattended runs**: cap at `dev` unless the scheduled task grants `tier:open`, and run on an
-   unsandboxed device only with that grant. **Recommendation: yes** (no person watches a prompt
+   unsandboxed device only with that grant. **Decided: yes** (no person watches a prompt
    injection there).
 5. **macOS localhost reach in `dev`**: ship with the proxy guard (dev runs without local binding
    when a local proxy or Docker TCP port is detected; local override `localhost allow`), or keep
-   local binding off in `dev` until srt has a port filter. **Recommendation: ship with the guard**;
+   local binding off in `dev` until srt has a port filter. **Decided: ship with the guard**;
    carry a `pnpm patch` of srt only for the Chrome sysctls (§9 item 1) and send the rest upstream.
 6. **One image for every tier** (+400–600 MB for everyone, including strict deployments) or a
    separate dev image (two images to publish and pre-pull, E2B templates per tier, a toolchain that
-   changes with the tier). **Recommendation: one image.**
+   changes with the tier). **Decided: one image.**
 7. **Cloud `open` on Docker**: through the egress proxy (any public host and port, private and
    metadata addresses refused, proxy-aware clients only) by default, with the old direct bridge as
-   `openEgress: "direct"`. **Recommendation: yes**; direct TCP for libpq-style clients needs
+   `openEgress: "direct"`. **Decided: yes**; direct TCP for libpq-style clients needs
    `direct` or `socat`.
 8. **Commit `45c326a95`** (`allowLocalBinding` / `allowUnixSockets` as user keys, default true): its
-   keys are replaced by `tier` here. **Recommendation:** do not merge its keys; keep its executor
+   keys are replaced by `tier` here. **Decided:** do not merge its keys; keep its executor
    changes (`updateConfig`, `MAC_CHROMIUM_TMPDIR`) and fold them into phase 1, so no release ships
    keys that the next one removes.
 
