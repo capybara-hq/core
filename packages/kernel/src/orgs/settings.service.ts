@@ -1,10 +1,11 @@
 import {
+  SANDBOX_TIERS,
   type SandboxLimits,
   type SandboxTier,
   tierAtMost,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { z } from "zod";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -14,6 +15,8 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
@@ -291,6 +294,16 @@ export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promis
 const sandboxTierNotAllowed = (message: string): ApiError =>
   new ApiError("org.sandbox_tier_not_allowed", message);
 
+/** Whether a stored settings object holds a `sandboxTier` this version reads as `{ max: "strict" }`. */
+export function invalidStoredSandboxTier(raw: unknown): boolean {
+  const v = asObject(raw).sandboxTier;
+  return v !== undefined && !SandboxTierSettingSchema.safeParse(v).success;
+}
+
+/** A setting's tier for intent comparison: absent (follow the platform) ranks above every tier. */
+const intentRank = (t: SandboxTier | undefined): number =>
+  t === undefined ? SANDBOX_TIERS.length : SANDBOX_TIERS.indexOf(t);
+
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
 @Injectable()
 export class OrgSettingsService {
@@ -300,7 +313,18 @@ export class OrgSettingsService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** The deployment config (`sandboxEgress` may not exceed the deployment's). */
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
+
+  /** Parses stored settings, warning when an invalid `sandboxTier` narrows to `{ max: "strict" }`. */
+  private parseStored(orgId: string, raw: unknown): OrgSettings {
+    if (invalidStoredSandboxTier(raw)) {
+      this.log?.warn("org settings: stored sandboxTier is invalid; it reads as max strict", {
+        orgId,
+      });
+    }
+    return parseOrgSettings(raw);
+  }
 
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   deployment(): OrgSettingsDeployment {
@@ -338,7 +362,7 @@ export class OrgSettingsService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw new ApiError("org.not_found", "Organization not found");
-    return parseOrgSettings(row.settings);
+    return this.parseStored(orgId, row.settings);
   }
 
   /** The refusals of {@link update} that need no read of the org (the Platform tool's precheck). */
@@ -381,8 +405,11 @@ export class OrgSettingsService {
     actorTokenId?: string,
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
-    /** `tierOnlyNarrows`: refuse a `sandboxTier` change that widens the effective tiers. */
-    opts?: { tierOnlyNarrows?: boolean },
+    /**
+     * `onlyNarrows` (the Platform tool, API tokens): refuse a `sandboxTier` or `sandboxEgress`
+     * change that widens (see {@link assertOnlyNarrows}); only a person in a session widens.
+     */
+    opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettings> {
     this.check(patch);
     return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
@@ -394,22 +421,48 @@ export class OrgSettingsService {
   }
 
   /**
-   * Refuses a `sandboxTier` patch that would raise the org's effective ceiling or default, or
-   * allow unsandboxed devices where they were not (the Platform tool may only narrow, spec §7.2).
+   * Refuses a patch that widens the org's sandbox (sandbox dev tiers spec §2, §7.2: only a person
+   * widens it, never the Platform tool or an API token):
+   * - `sandboxTier`: the effective ceiling, default or unsandboxed switch rises, or a stored cap
+   *   loosens (an absent `max` / `default` follows the platform, so it ranks above every tier and
+   *   clearing a cap that equals today's platform value is a widening; an explicit
+   *   `allowUnsandboxed: false` stays false);
+   * - `sandboxEgress`: the base list grows: from none to anything else, or to hosts (the
+   *   deployment's when the org gives none) not all in the current list.
    */
-  assertTierNarrows(before: OrgSettings, patch: OrgSettingsPatch): void {
-    if (patch.sandboxTier === undefined) return;
-    const after = { ...before, sandboxTier: patch.sandboxTier ?? undefined };
-    const b = this.sandboxPolicy(before, null);
-    const a = this.sandboxPolicy(after, null);
-    if (
-      !tierAtMost(a.ceiling, b.ceiling) ||
-      !tierAtMost(a.defaultTier, b.defaultTier) ||
-      (a.allowUnsandboxed && !b.allowUnsandboxed)
-    ) {
-      throw sandboxTierNotAllowed(
-        "Raising the sandbox level needs a person in the organization settings.",
-      );
+  assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): void {
+    if (patch.sandboxTier !== undefined) {
+      const next = patch.sandboxTier ?? undefined;
+      const prev = before.sandboxTier;
+      const b = this.sandboxPolicy(before, null);
+      const a = this.sandboxPolicy({ ...before, sandboxTier: next }, null);
+      if (
+        !tierAtMost(a.ceiling, b.ceiling) ||
+        !tierAtMost(a.defaultTier, b.defaultTier) ||
+        (a.allowUnsandboxed && !b.allowUnsandboxed) ||
+        intentRank(next?.max) > intentRank(prev?.max) ||
+        intentRank(next?.default) > intentRank(prev?.default) ||
+        (prev?.allowUnsandboxed === false && next?.allowUnsandboxed !== false)
+      ) {
+        throw sandboxTierNotAllowed(
+          "Raising the sandbox level needs a person in the organization settings.",
+        );
+      }
+    }
+    if (patch.sandboxEgress !== undefined) {
+      const deploymentHosts = this.config.get().sandbox.limits.allowHosts;
+      const prev = before.sandboxEgress;
+      const next = patch.sandboxEgress ?? undefined;
+      const hostsOf = (e: typeof prev): string[] => e?.allowHosts ?? deploymentHosts;
+      const widens =
+        next?.mode !== "none" &&
+        (prev?.mode === "none" || !hostsOf(next).every((h) => hostsOf(prev).includes(h)));
+      if (widens) {
+        throw new ApiError(
+          "org.sandbox_egress_not_allowed",
+          "Widening the sandbox network needs a person in the organization settings.",
+        );
+      }
     }
   }
 
@@ -420,7 +473,7 @@ export class OrgSettingsService {
     actorAccountId: string,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
-    opts: { tierOnlyNarrows?: boolean } | undefined,
+    opts: { onlyNarrows?: boolean } | undefined,
   ): Promise<OrgSettings> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
     const row = await this.db
@@ -429,9 +482,11 @@ export class OrgSettingsService {
       .where("id", "=", orgId)
       .executeTakeFirstOrThrow();
     const stored = asObject(row.settings);
-    const before = parseOrgSettings(stored);
+    const before = this.parseStored(orgId, stored);
+    // again under the org lock: a hot config reload may have lowered the platform since
+    this.check(patch);
     // under the org lock, so the comparison is with the value the write replaces
-    if (opts?.tierOnlyNarrows) this.assertTierNarrows(before, patch);
+    if (opts?.onlyNarrows) this.assertOnlyNarrows(before, patch);
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)

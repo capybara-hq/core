@@ -1,6 +1,7 @@
 import type { SandboxTier } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { invalidStoredSandboxTier } from "../../src/orgs/settings.service.js";
 import {
   baseSandboxEgress,
   type DeploymentSandboxPolicy,
@@ -279,5 +280,14 @@ describe("effectiveSandboxPolicy", () => {
     expect(effectiveSandboxPolicy(deployment(), NO_ORG, null).allowUnsandboxed).toBe(false);
     // the device's own tier does not matter: the ceiling does
     expect(effectiveSandboxPolicy(open, NO_ORG, "strict").allowUnsandboxed).toBe(true);
+  });
+});
+
+describe("invalidStoredSandboxTier (the lenient read warns)", () => {
+  it("is true only for a stored sandboxTier this version cannot read", () => {
+    expect(invalidStoredSandboxTier({})).toBe(false);
+    expect(invalidStoredSandboxTier({ sandboxTier: { max: "dev" } })).toBe(false);
+    expect(invalidStoredSandboxTier({ sandboxTier: { max: "everything" } })).toBe(true);
+    expect(invalidStoredSandboxTier({ sandboxTier: "open" })).toBe(true);
   });
 });

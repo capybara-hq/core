@@ -49,7 +49,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.update",
         description:
-          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress, sandboxTier or wakeOnBackgroundTask so they follow the deployment again. sandboxTier ({ max, default, allowUnsandboxed }, replaced whole) may only lower the org's sandbox level here: a change that raises the highest or default tier, or allows unsandboxed devices, is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
+          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress, sandboxTier or wakeOnBackgroundTask so they follow the deployment again. sandboxTier ({ max, default, allowUnsandboxed }, replaced whole) and sandboxEgress may only narrow the org's sandbox here: raising or clearing a tier cap, allowing unsandboxed devices, or adding network hosts is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
         input: OrgSettingsPatchSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
           message: "give at least one setting",
         }),
@@ -60,7 +60,7 @@ export class OrgSettingsOperations implements OnModuleInit {
         errors: [
           {
             code: "org.sandbox_egress_not_allowed",
-            next: "This deployment disables sandbox network access, so the org can only set sandboxEgress to none; ask the super admin to change sandbox.limits.egress.",
+            next: "Through this tool the org's sandbox network may only be narrowed (no new hosts, not back from none); if the deployment disables sandbox network access, sandboxEgress can only be none. To widen it, ask an org admin to change it in the organization settings on the web.",
           },
           {
             code: "org.sandbox_tier_not_allowed",
@@ -78,7 +78,7 @@ export class OrgSettingsOperations implements OnModuleInit {
         precheck: (i, ctx) =>
           precheckBy(async () => {
             this.settings.check(i);
-            this.settings.assertTierNarrows(await this.settings.get(ctx.orgId), i);
+            this.settings.assertOnlyNarrows(await this.settings.get(ctx.orgId), i);
           }),
         summary: async (i, ctx) => {
           const { theme, ...rest } = i;
@@ -127,8 +127,8 @@ export class OrgSettingsOperations implements OnModuleInit {
             ctx.actorAccountId,
             undefined,
             viaAgent("org-settings.update", ctx),
-            // a person raises the sandbox level, never an agent (sandbox dev tiers spec §7.2)
-            { tierOnlyNarrows: true },
+            // a person widens the sandbox, never an agent (sandbox dev tiers spec §7.2)
+            { onlyNarrows: true },
           );
           const note =
             input.platformTool === undefined

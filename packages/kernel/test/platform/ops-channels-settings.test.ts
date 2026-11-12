@@ -292,6 +292,112 @@ describe("org settings", () => {
     expect(back.json().settings).not.toHaveProperty("sandboxTier");
   });
 
+  it("an explicit tier cap equal to the platform's cannot be cleared or loosened (it would widen with the platform later)", async () => {
+    const o = op("org-settings.update");
+    const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
+    const set = (sandboxTier: unknown) =>
+      owner({ method: "PATCH", url: `/api/v1/orgs/${orgId}/settings`, payload: { sandboxTier } });
+    // the platform is max dev, default dev, unsandboxed allowed
+    expect((await set({ max: "dev", default: "dev", allowUnsandboxed: false })).statusCode).toBe(
+      200,
+    );
+    for (const input of [
+      { sandboxTier: null },
+      { sandboxTier: {} },
+      { sandboxTier: { default: "dev", allowUnsandboxed: false } },
+      { sandboxTier: { max: "dev", allowUnsandboxed: false } },
+      { sandboxTier: { max: "dev", default: "dev" } },
+    ]) {
+      expect(await pre(input), JSON.stringify(input)).toMatchObject({
+        ok: false,
+        code: "org.sandbox_tier_not_allowed",
+      });
+      await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
+    }
+    // narrower stays fine
+    await run("org-settings.update", {
+      sandboxTier: { max: "dev", default: "strict", allowUnsandboxed: false },
+    });
+    expect((await set(null)).statusCode).toBe(200);
+  });
+
+  it("sandboxEgress changes only when they narrow the base list", async () => {
+    const o = op("org-settings.update");
+    const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
+    const set = (sandboxEgress: unknown) =>
+      owner({ method: "PATCH", url: `/api/v1/orgs/${orgId}/settings`, payload: { sandboxEgress } });
+    const refused = async (input: unknown) => {
+      expect(await pre(input), JSON.stringify(input)).toMatchObject({
+        ok: false,
+        code: "org.sandbox_egress_not_allowed",
+        message: "Widening the sandbox network needs a person in the organization settings.",
+      });
+      await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
+    };
+    // following the deployment: a subset or none narrows, a new host widens
+    await refused({ sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] } });
+    await run("org-settings.update", {
+      sandboxEgress: { mode: "allowlist", allowHosts: ["github.com"] },
+    });
+    // a stored list: back to the (wider) deployment list or another host widens
+    await refused({ sandboxEgress: null });
+    await refused({ sandboxEgress: { mode: "allowlist" } });
+    await refused({ sandboxEgress: { mode: "allowlist", allowHosts: ["github.com", "x.com"] } });
+    await run("org-settings.update", { sandboxEgress: { mode: "none" } });
+    // from none, anything else widens
+    await refused({ sandboxEgress: { mode: "allowlist", allowHosts: [] } });
+    await refused({ sandboxEgress: null });
+    expect(await pre({ sandboxEgress: { mode: "none" } })).toEqual({ ok: true });
+    expect((await set(null)).statusCode).toBe(200);
+  });
+
+  it("an API token may narrow the sandbox but not widen it; a session may", async () => {
+    const made = await owner({
+      method: "POST",
+      url: "/api/v1/me/tokens",
+      payload: { name: "cli" },
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const token = (made.json() as { token: string }).token;
+    const viaToken = (payload: unknown) =>
+      k.http.inject({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: payload as object,
+      });
+    const narrowed = await viaToken({ sandboxTier: { max: "strict" } });
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    const raised = await viaToken({ sandboxTier: null });
+    expect(raised.statusCode).toBe(400);
+    expect(raised.json().error.code).toBe("org.sandbox_tier_not_allowed");
+    const widened = await viaToken({
+      sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] },
+    });
+    expect(widened.statusCode).toBe(400);
+    expect(widened.json().error.code).toBe("org.sandbox_egress_not_allowed");
+    // a token still changes other settings
+    expect((await viaToken({ toolSearch: "on" })).statusCode).toBe(200);
+    const bySession = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: {
+        sandboxTier: null,
+        sandboxEgress: { mode: "allowlist", allowHosts: ["example.com"] },
+      },
+    });
+    expect(bySession.statusCode, bySession.body).toBe(200);
+    expect(
+      (
+        await owner({
+          method: "PATCH",
+          url: `/api/v1/orgs/${orgId}/settings`,
+          payload: { sandboxEgress: null },
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+
   it("turning platformTool off applies from the next call and tells the person", async () => {
     const o = op("org-settings.update");
     const input = o.input.parse({ platformTool: "off" });
