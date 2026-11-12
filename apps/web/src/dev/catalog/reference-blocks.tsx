@@ -78,6 +78,7 @@ import { COMMANDS } from "./fixtures";
 import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
 import { RefBlock } from "./ref-block";
+import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { SetupHomeBody, setupFrameProps } from "./templates/setup";
@@ -1329,5 +1330,6 @@ export const REFERENCE_BLOCKS = {
   ...CARD_GRID_BLOCKS,
   ...OVERVIEW_SECTION_BLOCKS,
   ...TREND_CHART_BLOCKS,
+  ...SCHEDULE_CALENDAR_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
 } as const;

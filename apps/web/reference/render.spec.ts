@@ -90,6 +90,8 @@ const PAGES = [
   "overview-section",
   // the usage chart: two panels on one x-axis (admin overview design §10.1)
   "trend-chart",
+  // the scheduled tasks calendar: week, month and the phone agenda (calendar design §11)
+  "schedule-calendar",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;
