@@ -342,7 +342,7 @@ export class ApprovalsService {
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ceilingLimits">,
-    /** A decision resumes its waiting run in the decision's transaction (`Waits.resumeIn`). */
+    /** A decision resumes its waiting run in the decision's transaction. */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
   ) {}
 
@@ -835,6 +835,8 @@ export class ApprovalsService {
     network?: NetworkDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     const t = this.db.db;
+    // lock order: the conversation, the approval, then the run (as a stop of the waiting run)
+    if (!(await this.lockConversationOf(id, orgId))) throw notFound();
     const locked = await t
       .selectFrom("approvals")
       .selectAll()
@@ -1197,6 +1199,7 @@ export class ApprovalsService {
     toSeq?: number;
   }> {
     const t = this.db.db;
+    if (!(await this.lockConversationOf(id))) return { outcome: "settled" as const };
     const locked = await t
       .selectFrom("approvals")
       .selectAll()
@@ -1258,10 +1261,23 @@ export class ApprovalsService {
     accountId: string,
   ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
     const t = this.db.db;
+    // the conversations first, in id order (lock order: conversation, then approval rows)
+    const convs = await this.lockConversations(
+      t
+        .selectFrom("approvals")
+        .select("conversation_id")
+        .where("org_id", "=", orgId)
+        .where("requested_for", "=", accountId)
+        .where("status", "=", "pending"),
+    );
+    // only the conversations locked above: an approval asked meanwhile in another one is left to
+    // the run's stop or the sweep, so no conversation is locked after a row
+    if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("approvals")
       .selectAll()
       .where("org_id", "=", orgId)
+      .where("conversation_id", "in", convs)
       .where("requested_for", "=", accountId)
       .where("status", "=", "pending")
       .orderBy("created_at")
@@ -1300,11 +1316,22 @@ export class ApprovalsService {
   ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
     const t = this.db.db;
     const tree = await this.subtreeOf(conversationId);
+    // the sub-agents' conversations with a pending ask first, in id order (lock order:
+    // conversation, then approval rows; the caller holds `conversationId`'s already)
+    const convs = await this.lockConversations(
+      t
+        .selectFrom("approvals")
+        .select("conversation_id")
+        .where("conversation_id", "in", tree)
+        .where("kind", "=", "network")
+        .where("status", "=", "pending"),
+    );
+    if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("approvals as a")
       .innerJoin("runs as r", "r.id", "a.run_id")
       .selectAll("a")
-      .where("a.conversation_id", "in", tree)
+      .where("a.conversation_id", "in", convs)
       .where("a.kind", "=", "network")
       .where("a.status", "=", "pending")
       .where(sql<boolean>`a.expires_at > now()`)
@@ -1330,6 +1357,44 @@ export class ApprovalsService {
     // each run resumes in the message's transaction, after every skipped row (lock order)
     for (const r of records) await this.resumes.resumeIn(r.runId, r.id);
     return { records, seqs };
+  }
+
+  /**
+   * Locks the conversation row of approval `id` (`SELECT … FOR UPDATE`; re-entrant with the lock
+   * `EventLog.appendIn` takes later). Every write to an approval row takes its conversation's lock
+   * first, then the approval row, then the run row, as the stop of a waiting run
+   * (`Waits.abortWaitingIn`) and the questions do, so no two of them can deadlock. False: no such
+   * approval (in `orgId`).
+   */
+  private async lockConversationOf(id: string, orgId?: string): Promise<boolean> {
+    const t = this.db.db;
+    let q = t.selectFrom("approvals").select("conversation_id").where("id", "=", id);
+    if (orgId !== undefined) q = q.where("org_id", "=", orgId);
+    const row = await q.executeTakeFirst();
+    if (!row) return false;
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", row.conversation_id)
+      .forUpdate()
+      .executeTakeFirst();
+    return true;
+  }
+
+  /** Locks, in id order, the conversations `ids` selects; returns their ids. */
+  private async lockConversations(ids: {
+    execute(): Promise<{ conversation_id: string }[]>;
+  }): Promise<string[]> {
+    const found = [...new Set((await ids.execute()).map((r) => r.conversation_id))];
+    if (found.length === 0) return [];
+    const rows = await this.db.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "in", found)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    return rows.map((r) => r.id);
   }
 
   /** `conversationId` and its sub-agents' conversations at any depth (at most 16 levels). */

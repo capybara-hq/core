@@ -112,7 +112,7 @@ export class QuestionsService {
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** An answer resumes its waiting run in the answer's transaction (`Waits.resumeIn`). */
+    /** An answer resumes its waiting run in the answer's transaction. */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
   ) {}
 

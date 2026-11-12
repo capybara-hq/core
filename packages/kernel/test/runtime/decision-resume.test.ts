@@ -189,6 +189,44 @@ const decide = (id: string) =>
     payload: { decision: "approve" },
   });
 
+/** Sessions of this database waiting for a lock (the requests a held lock blocks). */
+const lockWaiters = async () =>
+  Number(
+    (
+      await sql<{ n: string }>`SELECT count(*) AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`.execute(raw)
+    ).rows[0]?.n,
+  );
+
+/**
+ * Holds `lock` (a `SELECT … FOR UPDATE`) in an open transaction until the returned release is
+ * called; resolves once the lock is held.
+ */
+async function holdLock(
+  lock: (trx: typeof raw) => Promise<unknown>,
+): Promise<{ release: () => Promise<void> }> {
+  let open!: () => void;
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let held!: () => void;
+  const holding = new Promise<void>((r) => {
+    held = r;
+  });
+  const done = raw.transaction().execute(async (trx) => {
+    await lock(trx as unknown as typeof raw);
+    held();
+    await gate;
+  });
+  await holding;
+  return {
+    release: async () => {
+      open();
+      await done;
+    },
+  };
+}
+
 const resultsOf = (evs: ConversationEvent[]) =>
   evs.flatMap((e) => (e.type === "tool_result" ? [e.payload] : []));
 
@@ -345,5 +383,70 @@ describe("decisions resume their run in the decision's transaction", () => {
     expect(q.status).toBe("skipped");
     expect(await runStatus(runId)).toBe("queued");
     expect(await owedResumes(convId)).toEqual([{ job_id: resumeJobId(convId, waitId) }]);
+  });
+
+  it("a decision holding the run's lock while suspend waits for it: suspend still does not wait", async () => {
+    const convId = await createConv(req, orgId, agentId);
+    const { runId, waitId } = await startAndWait(convId, ECHO, "approval_requested");
+    await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
+      raw,
+    );
+    failing = true;
+    // the run row is held: the decision queues on it first, then the suspend's update behind it
+    const blocker = await holdLock((t) =>
+      sql`SELECT 1 FROM capybara.runs WHERE id = ${runId} FOR UPDATE`.execute(t),
+    );
+    const decision = decide(waitId);
+    await waitFor(async () => (await lockWaiters()) >= 1, 10_000, "decision blocked on the run");
+    const suspended = k.app.get(Waits).suspend(runId, convId, {
+      kind: "approval",
+      id: waitId,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    await waitFor(async () => (await lockWaiters()) >= 2, 10_000, "suspend blocked on the run");
+    await blocker.release();
+    expect((await decision).statusCode).toBe(200);
+    await suspended;
+    // the decision saw `running` and wrote nothing to the run; the suspend's re-check resumed it
+    expect(await runStatus(runId)).toBe("queued");
+    expect(await owedResumes(convId)).toEqual([{ job_id: resumeJobId(convId, waitId) }]);
+    await deliver();
+    await waitForTerminal(db, convId, 1);
+    expect(memState().echoCalls).toBe(1);
+  });
+});
+
+describe("one lock order for decisions and stops (conversation, decided row, run)", () => {
+  it("a decision and a stop of the same waiting run, forced to interleave, neither errors", async () => {
+    const convId = await createConv(req, orgId, agentId);
+    const { runId, waitId } = await startAndWait(convId, ECHO, "approval_requested");
+    // the conversation row is held: the stop queues on it first, then the decision. With the
+    // decision taking the approval row before the conversation, the stop (conversation, run,
+    // approvals) and the decision would deadlock once released.
+    const blocker = await holdLock((t) =>
+      sql`SELECT 1 FROM capybara.conversations WHERE id = ${convId} FOR UPDATE`.execute(t),
+    );
+    const stop = req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    await waitFor(async () => (await lockWaiters()) >= 1, 10_000, "stop blocked");
+    const decision = decide(waitId);
+    await waitFor(async () => (await lockWaiters()) >= 2, 10_000, "decision blocked");
+    await blocker.release();
+    const [s, d] = await Promise.all([stop, decision]);
+    // the stop went first: it cancelled the approval and ended the run; the decision finds the
+    // approval decided (409), not a deadlock (500)
+    expect(s.statusCode, s.body).toBe(202);
+    expect(d.statusCode, d.body).toBe(409);
+    expect(await runStatus(runId)).toBe("aborted");
+    const a = await db
+      .selectFrom("approvals")
+      .select("status")
+      .where("id", "=", waitId)
+      .executeTakeFirstOrThrow();
+    expect(a.status).toBe("cancelled");
+    expect(await owedResumes(convId)).toEqual([]);
+    expect(memState().echoCalls).toBe(0);
   });
 });

@@ -34,7 +34,7 @@ import { subagentsWaitId, subagentWaitingIdemKey, type WaitingFor } from "./loop
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
 import { notifyFinished, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
-import { type ResumeOutcome, RunResume, resumeJobId } from "./run-jobs.js";
+import { RunResume, resumeJobId } from "./run-jobs.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
 import {
   childResult,
@@ -121,8 +121,9 @@ export interface WaitTimeoutData {
  *
  * One resume only: a resume locks the run row and moves it `waiting → queued` only when it waits on
  * nothing else, owing the run job `run-<conversationId>-resume-<waitId>` in the same transaction
- * (transactional outbox spec §6). A decision does it in its own transaction ({@link resumeIn});
- * the timeout job, the suspend's re-check and the sweeps through {@link resume}. Whichever comes
+ * (transactional outbox spec §6). A decision does it in its own transaction
+ * (`RunResume.resumeIn`); the timeout job, the suspend's re-check and the sweeps through
+ * {@link resume}. Whichever comes
  * first, the run resumes once.
  */
 @Injectable()
@@ -156,7 +157,7 @@ export class Waits implements OnApplicationShutdown {
     @Inject(RunAbort) private readonly abort: Pick<RunAbort, "requested" | "request">,
     /** Owes the wait timeout jobs (`MaintenanceProcessor` consumes them) with the suspend. */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
-    /** The resume of a waiting run, in the caller's transaction ({@link resumeIn}). */
+    /** The resume of a waiting run, in the caller's transaction ({@link resume}). */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
@@ -223,8 +224,9 @@ export class Waits implements OnApplicationShutdown {
   /**
    * After the loop returned `suspended` (the worker released the conversation lock and the quota):
    * in one transaction the conditional `running → waiting` (recording `waiting_since`) and the
-   * wait's timeout job (`runAt` = `expiresAt`); then a re-check whether the wait is already settled:
-   * a decision that came while the run was still `running` did not resume it, so the re-check does.
+   * wait's timeout job (`runAt` = `expiresAt`); then a re-check whether the wait is already
+   * settled: a decision that came while the run was still `running` did not resume it, so the
+   * re-check does.
    * A run no longer running (ended by another path) → nothing.
    * A stop received while suspending (`abort`), or found in the stop marker after `waiting` is set
    * → the wait is cancelled and the run ended as {@link abortWaiting} does (a stop arriving after
@@ -345,24 +347,14 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * Resumes the run in its own transaction ({@link resumeIn}); true when this call queued it. The
-   * wait timeout, the suspend's re-check, a fork child's finish and the sweeps use it.
+   * Resumes the run in its own transaction (`RunResume.resumeIn`: locks the run row and, when it
+   * is `waiting` on nothing else, sets it `queued` and owes its resume job); true when this call
+   * queued it. The wait timeout, the suspend's re-check, a fork child's finish and the sweeps use
+   * it; the decisions call `RunResume.resumeIn` in their own transactions.
    */
   @Transactional()
   async resume(runId: string, waitId: string): Promise<boolean> {
-    return (await this.resumeIn(runId, waitId)) === "queued";
-  }
-
-  /**
-   * In the caller's transaction (`mandatory`): locks the run row and, when it is `waiting` on
-   * nothing else, sets it `queued` and owes its resume job `run-<conversationId>-resume-<waitId>`
-   * (`RunResume.resumeIn`, which the tools domain's decisions call directly: the runtime imports
-   * the tools domain, so they cannot reach this class). "still-running": nothing is written, the
-   * run's suspend re-checks the wait after setting `waiting`.
-   */
-  @Transactional({ propagation: "mandatory" })
-  async resumeIn(runId: string, waitId: string): Promise<ResumeOutcome> {
-    return this.resumes.resumeIn(runId, waitId);
+    return (await this.resumes.resumeIn(runId, waitId)) === "queued";
   }
 
   /**
@@ -453,6 +445,7 @@ export class Waits implements OnApplicationShutdown {
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
+    await this.lockWaitRows(runId);
     const run = await t
       .selectFrom("runs")
       .select("status")
@@ -528,6 +521,28 @@ export class Waits implements OnApplicationShutdown {
     });
   }
 
+  /**
+   * Locks the run's approval and input request rows (`FOR UPDATE`), in the caller's transaction,
+   * after its conversation and before its run row: the one lock order of every path that writes
+   * them (conversation, decided rows, run), so a stop never deadlocks with a decision or timeout.
+   */
+  private async lockWaitRows(runId: string): Promise<void> {
+    await this.db
+      .selectFrom("approvals")
+      .select("id")
+      .where("run_id", "=", runId)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    await this.db
+      .selectFrom("questions")
+      .select("id")
+      .where("run_id", "=", runId)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+  }
+
   /** 扫描 3：运行已终态（如暂停途中失败）仍 pending 的审批 / 输入请求 → 取消（写决定 / 回答事件）。 */
   private async sweepFinishedRuns(): Promise<number> {
     const db = this.db;
@@ -598,6 +613,7 @@ export class Waits implements OnApplicationShutdown {
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
+    await this.lockWaitRows(runId);
     const run = await t
       .selectFrom("runs")
       .select("status")

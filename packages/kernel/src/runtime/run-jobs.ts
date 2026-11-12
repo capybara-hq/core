@@ -42,8 +42,8 @@ export const runJobId = (conversationId: string, maxUserSeq: number): string =>
   `run-${conversationId}-${maxUserSeq}`;
 
 /**
- * A resumed run's job id: apart from the per-message `run-<conversationId>-<seq>`, and one per wait,
- * so the same wait resumes its run once.
+ * A resumed run's job id: apart from the per-message `run-<conversationId>-<seq>`, and one per
+ * wait, so the same wait resumes its run once.
  */
 export const resumeJobId = (conversationId: string, waitId: string): string =>
   `run-${conversationId}-resume-${waitId}`;
@@ -190,7 +190,7 @@ export type ResumeOutcome = "queued" | "still-running" | "other-wait-pending" | 
  * resume in their own transaction"), in the caller's transaction. A decision (approvals, questions,
  * a reply's skips) calls it after writing the decided row, so the lock order is the decided row,
  * then the `runs` row. It lives beside the run jobs, not in `Waits`, so the tools domain (which the
- * runtime imports) can call it; `Waits.resumeIn` is the same call.
+ * runtime imports) can call it; `Waits.resume` wraps it in a transaction of its own.
  */
 @Injectable()
 export class RunResume {
