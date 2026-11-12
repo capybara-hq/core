@@ -3,6 +3,7 @@ import { pipeline } from "node:stream/promises";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
+import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
@@ -28,6 +29,7 @@ import {
   readReceivePackCommands,
   receivePackRefusal,
 } from "./pkt-line.js";
+import { recordGitFetch } from "./run-end.js";
 import { type GitSourceFor, GitSources } from "./sources.js";
 import { type GitTicketBinding, GitTickets, hashGitTicket } from "./tickets.js";
 
@@ -289,6 +291,17 @@ function meterStream(meter: ByteMeter, touch: () => void): Transform {
   });
 }
 
+/**
+ * What the `git.push` audit row of one receive-pack carries; `result` stays undefined for requests
+ * that are not a push attempt (a fetch, an unreadable body, the allowed ref advertisement).
+ */
+interface PushAudit {
+  /** Ref names only. */
+  refs: string[];
+  /** `ok` | `refused:<reason>` | `upstream:<status>` | `error`. */
+  result?: string;
+}
+
 /** What one request is logged with (never a ticket or a token). */
 interface LogFields {
   ticket?: string;
@@ -396,6 +409,7 @@ export class GitGateway {
       pipeline(body, t).catch(() => {});
       metered = t;
     }
+    const push: PushAudit = { refs: [] };
     try {
       await this.relay(req, reply, {
         target,
@@ -405,6 +419,7 @@ export class GitGateway {
         fields,
         text,
         transfer,
+        push,
       });
     } catch (e) {
       // anything unexpected before the answer started is a 502 git prints; after, the
@@ -424,6 +439,59 @@ export class GitGateway {
       // best effort: an aborted request's bytes are counted too
       await transfer.meter.flush().catch(() => {});
       this.done(undefined, fields, started);
+      // audit and counters never block or fail the transfer: written after the response is over
+      void this.afterRequest(binding, source, target, push, transfer.meter.moved);
+    }
+  }
+
+  /** The `git.push` audit row of a receive-pack and the run's fetch counters (best effort). */
+  private async afterRequest(
+    binding: GitTicketBinding,
+    source: GitSourceFor,
+    target: GitGatewayTarget,
+    push: PushAudit,
+    bytes: number,
+  ): Promise<void> {
+    try {
+      if (target.service === "git-upload-pack") {
+        await recordGitFetch(
+          this.redis,
+          binding.runId,
+          target.host,
+          target.repo,
+          bytes,
+          target.endpoint === "git-upload-pack",
+        );
+      }
+      if (push.result === undefined) return;
+      const run = await this.db.db
+        .selectFrom("runs")
+        .select("conversation_id")
+        .where("id", "=", binding.runId)
+        .executeTakeFirst();
+      await audit(this.db.db, {
+        actorAccountId: binding.accountId,
+        orgId: binding.orgId,
+        action: "git.push",
+        target: `${target.host}/${target.repo}`,
+        // never a token or a ticket
+        detail: {
+          runId: binding.runId,
+          ...(run !== undefined && { conversationId: run.conversation_id }),
+          connectorId: source.connectorId,
+          host: target.host,
+          repo: target.repo,
+          refs: push.refs,
+          result: push.result,
+          bot: source.bot,
+        },
+      });
+    } catch (e) {
+      this.log.warn("git gateway: the audit write failed", {
+        host: target.host,
+        repo: target.repo,
+        error: e instanceof Error ? e.name : "unknown",
+      });
     }
   }
 
@@ -475,9 +543,14 @@ export class GitGateway {
       fields: LogFields;
       text: (status: number, message: string) => FastifyReply;
       transfer: Transfer;
+      push: PushAudit;
     },
   ): Promise<void> {
-    const { target, binding, source, fields, text, transfer } = c;
+    const { target, binding, source, fields, text, transfer, push } = c;
+    /** Sets the audit result of a push that was read (a no-op for any other request). */
+    const pushResult = (r: string) => {
+      if (push.result !== undefined) push.result = r;
+    };
     const { meter, touch, ac } = transfer;
     let upstreamBody: Readable | undefined = c.body;
 
@@ -487,6 +560,7 @@ export class GitGateway {
         const decision = await this.decide(binding, source, target);
         if (decision.decision === "deny") {
           await this.recordRefusal(binding, source, target, [], decision);
+          push.result = `refused:${decision.reason}`;
           fields.status = 200;
           fields.push = decision.reason;
           reply
@@ -520,11 +594,14 @@ export class GitGateway {
           throw e;
         }
         const refs = parsed.commands.map((cmd: RefCommand) => cmd.ref);
+        push.refs = refs;
+        push.result = "error";
         if (refs.length > 0) {
           const decision = await this.decide(binding, source, target);
           fields.push = decision.reason;
           if (decision.decision !== "allow") {
             await this.recordRefusal(binding, source, target, refs, decision);
+            push.result = `refused:${decision.reason}`;
             const note = refusalNote(target.repo, refs, decision);
             fields.status = 200;
             // the refused pack is read and dropped before the answer (counted, capped, under the
@@ -578,6 +655,7 @@ export class GitGateway {
 
     const auth = await this.connectorAuth(binding.orgId, source.connectorId);
     if (auth === null) {
+      pushResult("refused:not_connected");
       text(403, notConnected(target.host));
       return;
     }
@@ -631,6 +709,7 @@ export class GitGateway {
       }
     } catch (e) {
       if (e instanceof CredentialMissing) {
+        pushResult("refused:credential");
         text(403, reconnect(target.host));
         return;
       }
@@ -648,6 +727,7 @@ export class GitGateway {
         return;
       }
       if (e instanceof GitBytesExceeded || meter.exceeded) {
+        pushResult("refused:byte_cap");
         text(403, BYTES_EXCEEDED);
         return;
       }
@@ -658,6 +738,7 @@ export class GitGateway {
       throw e;
     }
     fields.upstream = res.status;
+    if (res.status !== 200) pushResult(`upstream:${res.status}`);
     if (res.status === 401) {
       await res.body?.cancel().catch(() => {});
       if (req.method === "POST") {
@@ -696,6 +777,8 @@ export class GitGateway {
     });
     reply.send(down);
     await done;
+    // `ok`: the host took the pack (its per-ref report is not parsed); a cut stream is an error
+    if (fields.broken === undefined) pushResult("ok");
   }
 
   /** The push decision for this target (spec §7). */

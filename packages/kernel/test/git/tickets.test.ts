@@ -204,6 +204,44 @@ describe("issue and resolve", () => {
 });
 
 describe("revocation and live checks", () => {
+  it("never shortens the run set's TTL when a ticket is issued", async () => {
+    const runId = await newRun();
+    const setKey = gitRunTicketsKey(runId);
+    await ticketsA().issue(request(runId));
+    // a longer TTL on the set (an earlier, longer ticket TTL) survives a later issue
+    await redis.expire(setKey, 100_000);
+    await ticketsA().issue(request(runId));
+    expect(await redis.ttl(setKey)).toBeGreaterThan(99_000);
+    // a shorter one is extended to the ticket TTL
+    await redis.expire(setKey, 5);
+    await ticketsA().issue(request(runId));
+    expect(await redis.ttl(setKey)).toBeGreaterThan(5);
+  });
+
+  it("revokes atomically: a ticket issued during a revocation is never left unlisted", async () => {
+    const runId = await newRun();
+    const issued: string[] = [];
+    const work: Promise<unknown>[] = [];
+    for (let i = 0; i < 40; i++) {
+      work.push(
+        ticketsA()
+          .issue(request(runId))
+          .then((t) => issued.push(t)),
+      );
+      if (i % 8 === 4) work.push(ticketsB().revokeRun(runId));
+    }
+    await Promise.all(work);
+    const listed = new Set(await redis.smembers(gitRunTicketsKey(runId)));
+    for (const t of issued) {
+      const hash = hashGitTicket(t);
+      // a live ticket is always in the set a later revocation reads
+      if ((await redis.exists(gitTicketKey(hash))) === 1) expect(listed.has(hash)).toBe(true);
+    }
+    await ticketsA().revokeRun(runId);
+    for (const t of issued) expect(await ticketsA().resolve(t)).toBeNull();
+    expect(await redis.exists(gitRunTicketsKey(runId))).toBe(0);
+  });
+
   it("revokeRun deletes every ticket of the run and leaves other runs alone", async () => {
     const runId = await newRun();
     const other = await newRun();

@@ -87,7 +87,7 @@ export class GitTickets {
   /**
    * Issues a ticket for one exec and returns the raw value (it goes only into that exec's
    * environment). Stores the binding under the ticket's hash and adds the hash to the run's set,
-   * both with the ticket TTL (the set's TTL is refreshed on every issue).
+   * the ticket with the ticket TTL, the set with the longest TTL any of its tickets got.
    */
   async issue(req: GitTicketRequest): Promise<string> {
     const raw = randomBytes(32).toString("base64url");
@@ -102,18 +102,19 @@ export class GitTickets {
       ...(req.repos !== undefined && { repos: [...req.repos] }),
       issuedAt: Date.now(),
     };
-    const runKey = gitRunTicketsKey(req.runId);
-    const results = await this.redis
-      .multi()
-      .set(gitTicketKey(hash), JSON.stringify(binding), "EX", ttl)
-      .sadd(runKey, hash)
-      .expire(runKey, ttl)
-      .exec();
-    // MULTI reports each command's error in its result, not as a rejection: a ticket whose
-    // binding or revocation entry was not written must not be handed out
-    if (results === null || results.some(([err]) => err !== null)) {
-      // best effort: a binding that was written dies with the refused ticket
-      await this.redis.del(gitTicketKey(hash)).catch(() => {});
+    try {
+      await this.redis.eval(
+        ISSUE,
+        2,
+        gitTicketKey(hash),
+        gitRunTicketsKey(req.runId),
+        JSON.stringify(binding),
+        String(ttl),
+        hash,
+      );
+    } catch {
+      // a ticket whose binding or revocation entry was not written must not be handed out
+      // (the script lists the ticket first, so a failure leaves no binding behind)
       throw new Error("git ticket: storing the binding in Redis failed");
     }
     this.log.debug("git ticket issued", {
@@ -170,14 +171,39 @@ export class GitTickets {
     return binding;
   }
 
-  /** Deletes every ticket of the run (run end, abort, offboarding). */
+  /**
+   * Deletes every ticket of the run (run end, abort, offboarding) in one Lua script, so a ticket
+   * added concurrently is either deleted with the rest or left in a set that still lists it.
+   */
   async revokeRun(runId: string): Promise<void> {
-    const runKey = gitRunTicketsKey(runId);
-    const hashes = await this.redis.smembers(runKey);
-    await this.redis.del(runKey, ...hashes.map(gitTicketKey));
-    if (hashes.length > 0) this.log.debug("git tickets revoked", { runId, count: hashes.length });
+    const count = await this.redis.eval(REVOKE_RUN, 1, gitRunTicketsKey(runId), TICKET_KEY_PREFIX);
+    if (typeof count === "number" && count > 0) {
+      this.log.debug("git tickets revoked", { runId, count });
+    }
   }
 }
+
+const TICKET_KEY_PREFIX = "git-ticket:";
+
+/**
+ * Lists the ticket in the run's set, stores its binding with the TTL and gives the set a TTL that
+ * only grows (KEYS: ticket, run set; ARGV: binding, ttl, hash): lowering `ticketTtlSeconds` must
+ * not cut the set below a live ticket.
+ */
+const ISSUE = `
+redis.call('SADD', KEYS[2], ARGV[3])
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+if redis.call('TTL', KEYS[2]) < tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[2], ARGV[2]) end
+return 1
+`;
+
+/** Reads the run's set, deletes every listed ticket and the set (KEYS[1]; ARGV[1] the ticket key prefix). */
+const REVOKE_RUN = `
+local hashes = redis.call('SMEMBERS', KEYS[1])
+for _, h in ipairs(hashes) do redis.call('DEL', ARGV[1] .. h) end
+redis.call('DEL', KEYS[1])
+return #hashes
+`;
 
 function parseBinding(stored: string): GitTicketBinding | null {
   try {

@@ -14,7 +14,7 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import type { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -25,9 +25,17 @@ import {
   repoAllowed,
 } from "../../src/git/gateway.js";
 import { MAX_COMMAND_BYTES, MAX_COMMANDS, pktLine } from "../../src/git/pkt-line.js";
-import { type GitTicketRequest, GitTickets } from "../../src/git/tickets.js";
+import { gitFetchKey } from "../../src/git/run-end.js";
+import {
+  type GitTicketRequest,
+  GitTickets,
+  gitRunTicketsKey,
+  gitTicketKey,
+  hashGitTicket,
+} from "../../src/git/tickets.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
+import { RunFinish } from "../../src/runtime/run-finish.js";
 import { type ConnectorAuth, Credentials } from "../../src/tools/credentials.js";
 import { gitAskKey } from "../../src/tools/git-asks.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -57,6 +65,8 @@ const TOKEN = `ghp_${randomBytes(18).toString("hex")}`;
 const BASIC = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
 const GH: GitHostEntry[] = [{ host: "github.com", username: "x-access-token" }];
 const PERSONAL: ConnectorAuth = { type: "bearer", ownership: "personal" };
+/** A second host, served by org-owned bot connectors the revocation tests create and drop. */
+const BOT_HOST = "bot.example.com";
 const MAX_CONCURRENT = 3;
 const MAX_BYTES = 4 * 1024 * 1024;
 
@@ -112,7 +122,7 @@ beforeAll(async () => {
       {
         provide: GIT_UPSTREAM_ORIGIN,
         useValue: (host: string) =>
-          host === "github.com" ? (upstream ?? fakeOrigin) : `https://${host}`,
+          host === "github.com" || host === BOT_HOST ? (upstream ?? fakeOrigin) : `https://${host}`,
       },
     ],
   });
@@ -175,6 +185,7 @@ async function ticketFor(over: Partial<GitTicketRequest> = {}): Promise<{
   ticket: string;
   runId: string;
   execId: string;
+  conversationId: string;
 }> {
   const conversationId = await createConv(owner, orgId, agentId);
   const runId = randomUUID();
@@ -199,7 +210,7 @@ async function ticketFor(over: Partial<GitTicketRequest> = {}): Promise<{
     ...over,
   });
   tickets.push(ticket);
-  return { ticket, runId, execId };
+  return { ticket, runId, execId, conversationId };
 }
 
 const gateway = () => `http://127.0.0.1:${k.port}/git/v1`;
@@ -762,6 +773,268 @@ describe("pushes the gateway reads before it decides", { timeout: 30_000 }, () =
     expect(r.cut || r.status === 504).toBe(true);
     await expect.poll(async () => Number((await redis.get(gitConcurrencyKey(orgId))) ?? 0)).toBe(0);
     expect(receives()).toHaveLength(0);
+  });
+});
+
+/** The audit rows of an action, oldest first. */
+async function auditRows(action: string, runId: string) {
+  const rows = await db
+    .selectFrom("audit_events")
+    .select(["action", "actor_account_id", "org_id", "target", "detail"])
+    .where("action", "=", action)
+    .orderBy("id")
+    .execute();
+  return rows.filter((r) => (r.detail as { runId?: string }).runId === runId);
+}
+
+/** Ends a run the way the runtime does (terminal status committed, then the afterCommit hook). */
+async function finishRun(
+  conversationId: string,
+  runId: string,
+  status: "completed" | "failed" | "aborted",
+): Promise<void> {
+  const event =
+    status === "completed"
+      ? ({ type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } } as const)
+      : status === "failed"
+        ? ({ type: "run_failed", payload: { error: { code: "x", message: "m" } } } as const)
+        : ({ type: "run_aborted", payload: { reason: "user", byAccountId: ownerId } } as const);
+  const seq = await k.app
+    .get(RunFinish)
+    .finish({ conversationId, runId, status, consumed: null, event });
+  expect(seq).not.toBeNull();
+}
+
+describe("run end, audit and revocation", { timeout: 30_000 }, () => {
+  it("revokes the run's tickets when it reaches a terminal status", async () => {
+    for (const status of ["completed", "failed", "aborted"] as const) {
+      const { ticket, runId, conversationId } = await ticketFor();
+      const other = await ticketFor();
+      const hash = hashGitTicket(ticket);
+      expect(await redis.exists(gitTicketKey(hash))).toBe(1);
+      await finishRun(conversationId, runId, status);
+      await expect.poll(() => redis.exists(gitTicketKey(hash))).toBe(0);
+      expect(await redis.exists(gitRunTicketsKey(runId))).toBe(0);
+      expect(await k.app.get(GitTickets).resolve(ticket)).toBeNull();
+      // another run's ticket is untouched
+      expect(await k.app.get(GitTickets).resolve(other.ticket)).not.toBeNull();
+    }
+  });
+
+  it("audits a push per receive-pack: ok, refused and upstream error, never a secret", async () => {
+    // ok: a real push, allowed
+    await db.updateTable("connectors").set({ git_push_policy: "allow" }).execute();
+    const okRun = await ticketFor();
+    const env = await gitEnv(okRun.ticket);
+    const c = await clone(env);
+    expect(c.code, c.out).toBe(0);
+    await commitIn(c.dir, env);
+    const p = await git(["push", "origin", "HEAD:refs/heads/audit-ok"], env, c.dir);
+    expect(p.code, p.out).toBe(0);
+    await expect.poll(async () => (await auditRows("git.push", okRun.runId)).length).toBe(1);
+    const [ok] = await auditRows("git.push", okRun.runId);
+    expect(ok).toMatchObject({
+      actor_account_id: aliceId,
+      org_id: orgId,
+      target: "github.com/acme/app",
+      detail: {
+        runId: okRun.runId,
+        conversationId: okRun.conversationId,
+        connectorId,
+        host: "github.com",
+        repo: "acme/app",
+        refs: ["refs/heads/audit-ok"],
+        result: "ok",
+        bot: false,
+      },
+    });
+
+    // refused: policy deny, then ask
+    await db.updateTable("connectors").set({ git_push_policy: "deny" }).execute();
+    const denied = await ticketFor();
+    await rawPost(RECEIVE, denied.ticket, [pushBody()]);
+    await db.updateTable("connectors").set({ git_push_policy: "ask" }).execute();
+    const asked = await ticketFor();
+    await rawPost(RECEIVE, asked.ticket, [pushBody()]);
+    for (const r of [denied, asked]) {
+      await expect.poll(async () => (await auditRows("git.push", r.runId)).length).toBe(1);
+    }
+    const [d] = await auditRows("git.push", denied.runId);
+    expect((d?.detail as { result: string }).result).toMatch(/^refused:/);
+    expect((d?.detail as { refs: string[] }).refs).toEqual(["refs/heads/main"]);
+    const [a] = await auditRows("git.push", asked.runId);
+    expect((a?.detail as { result: string }).result).toMatch(/^refused:/);
+    expect((a?.detail as { result: string }).result).not.toBe(
+      (d?.detail as { result: string }).result,
+    );
+
+    // upstream error: the host answers 500 to the pack
+    await db.updateTable("connectors").set({ git_push_policy: "allow" }).execute();
+    const failing = await ticketFor();
+    fake.failNext(500, "boom");
+    const f = await rawPost(RECEIVE, failing.ticket, [pushBody()]);
+    expect(f.status).toBe(502);
+    await expect.poll(async () => (await auditRows("git.push", failing.runId)).length).toBe(1);
+    const [u] = await auditRows("git.push", failing.runId);
+    expect((u?.detail as { result: string }).result).toBe("upstream:500");
+
+    // no row carries a token, a ticket or a Basic value
+    const everything = JSON.stringify(
+      await db.selectFrom("audit_events").selectAll().where("action", "like", "git.%").execute(),
+    );
+    expect(everything).not.toContain(TOKEN);
+    expect(everything).not.toContain(BASIC);
+    for (const t of tickets) expect(everything).not.toContain(t);
+  });
+
+  it("counts a run's fetches per repository and writes one summary row at run end", async () => {
+    const { ticket, runId, conversationId } = await ticketFor();
+    const env = await gitEnv(ticket);
+    const c = await clone(env);
+    expect(c.code, c.out).toBe(0);
+    await fake.commit("acme/app", { "README.md": "seed\n", "more.txt": "m\n" });
+    expect((await git(["pull", "--quiet", "--ff-only"], env, c.dir)).code).toBe(0);
+    const o = await clone(env, "https://github.com/acme/other.git");
+    expect(o.code, o.out).toBe(0);
+    const posts = (repo: string) =>
+      fake.requests.filter(
+        (r) => r.method === "POST" && r.service === "git-upload-pack" && r.path.includes(repo),
+      ).length;
+
+    // counters live in Redis with a TTL until the run ends
+    await expect.poll(() => redis.hlen(gitFetchKey(runId))).toBeGreaterThan(0);
+    expect(await redis.ttl(gitFetchKey(runId))).toBeGreaterThan(0);
+    expect(await auditRows("git.fetch", runId)).toHaveLength(0);
+
+    await finishRun(conversationId, runId, "completed");
+    await expect.poll(async () => (await auditRows("git.fetch", runId)).length).toBe(2);
+    expect(await redis.exists(gitFetchKey(runId))).toBe(0);
+    const rows = await auditRows("git.fetch", runId);
+    const app = rows.find((r) => r.target === "github.com/acme/app");
+    expect(app).toMatchObject({
+      actor_account_id: aliceId,
+      org_id: orgId,
+      detail: { conversationId, host: "github.com", repo: "acme/app", count: posts("acme/app") },
+    });
+    expect((app?.detail as { count: number }).count).toBeGreaterThanOrEqual(2);
+    expect((app?.detail as { bytes: number }).bytes).toBeGreaterThan(0);
+    expect(rows.find((r) => r.target === "github.com/acme/other")?.detail).toMatchObject({
+      count: posts("acme/other"),
+    });
+  });
+});
+
+describe("the next gateway request fails once access is revoked", { timeout: 30_000 }, () => {
+  const botPath = `/git/v1/${BOT_HOST}/acme/app.git/info/refs?service=git-upload-pack`;
+  let bob: string;
+  const made: string[] = [];
+
+  beforeAll(async () => {
+    bob = (await accountsFor(db).createLocal({ login: "bob", password: PW, displayName: "Bob" }))
+      .id;
+    await testMembers(db).add(orgId, bob, "member", ownerId);
+  });
+
+  afterEach(async () => {
+    await db
+      .updateTable("connectors")
+      .set({ deleted_at: new Date() })
+      .where("id", "in", made.length > 0 ? made : [randomUUID()])
+      .execute();
+    made.length = 0;
+    await db.updateTable("orgs").set({ settings: "{}" }).where("id", "=", orgId).execute();
+    await db.updateTable("accounts").set({ status: "active" }).where("id", "=", bob).execute();
+  });
+
+  /** An org-owned connector turned on for git on BOT_HOST, with its org credential. */
+  async function botConnector(): Promise<string> {
+    const id = randomUUID();
+    const auth: ConnectorAuth = { type: "bearer", ownership: "org" };
+    await db
+      .insertInto("connectors")
+      .values({
+        id,
+        org_id: orgId,
+        slug: `bot-${id.slice(0, 6)}`,
+        name: "Bot",
+        connector: "fake",
+        endpoint: JSON.stringify({}),
+        auth: JSON.stringify(auth),
+        created_by: ownerId,
+        git_hosts: JSON.stringify([{ host: BOT_HOST, username: "x-access-token" }]),
+        use_for_git: true,
+      })
+      .execute();
+    made.push(id);
+    await k.app.get(Credentials).setStatic(orgId, id, auth, { kind: "org" }, { token: TOKEN });
+    return id;
+  }
+
+  /** A ticket of bob for BOT_HOST whose first request has succeeded. */
+  async function working(): Promise<{ ticket: string; connector: string }> {
+    const connector = await botConnector();
+    const { ticket } = await ticketFor({ accountId: bob, hosts: [BOT_HOST] });
+    expect((await get(ticket)).statusCode).toBe(200);
+    return { ticket, connector };
+  }
+
+  const get = (ticket: string) =>
+    k.http.inject({ method: "GET", url: botPath, headers: { authorization: `Bearer ${ticket}` } });
+
+  it("a member removed from the org", async () => {
+    const { ticket } = await working();
+    await db
+      .deleteFrom("memberships")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", bob)
+      .execute();
+    try {
+      expect((await get(ticket)).statusCode).toBe(403);
+    } finally {
+      await testMembers(db).add(orgId, bob, "member", ownerId);
+    }
+  });
+
+  it("an account deactivated", async () => {
+    const { ticket } = await working();
+    await db.updateTable("accounts").set({ status: "disabled" }).where("id", "=", bob).execute();
+    expect((await get(ticket)).statusCode).toBe(403);
+  });
+
+  it("a connector deleted", async () => {
+    const { ticket, connector } = await working();
+    await db
+      .updateTable("connectors")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", connector)
+      .execute();
+    expect((await get(ticket)).statusCode).toBe(403);
+  });
+
+  it("a credential cleared", async () => {
+    const { ticket, connector } = await working();
+    await k.app.get(Credentials).clear(orgId, connector, { kind: "org" });
+    expect((await get(ticket)).statusCode).toBe(403);
+  });
+
+  it("use_for_git turned off", async () => {
+    const { ticket, connector } = await working();
+    await db
+      .updateTable("connectors")
+      .set({ use_for_git: false })
+      .where("id", "=", connector)
+      .execute();
+    expect((await get(ticket)).statusCode).toBe(403);
+  });
+
+  it("the org's gateway switch turned off", async () => {
+    const { ticket } = await working();
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ gitGateway: { enabled: false } }) })
+      .where("id", "=", orgId)
+      .execute();
+    expect((await get(ticket)).statusCode).toBe(403);
   });
 });
 
