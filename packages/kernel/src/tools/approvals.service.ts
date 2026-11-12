@@ -33,7 +33,7 @@ import { type PendingPolicyOp, pendingPolicyOpsOf } from "../local-devices/polic
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
+import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
 import {
   grantRefusalOf,
@@ -107,7 +107,11 @@ export interface NetworkAskDetail {
 
 /** Why a pending network ask's last 「一直允许」 did not decide it ({@link NetworkAskDetail.attempt}). */
 export interface NetworkAskAttempt {
-  outcome: "failed" | "unknown";
+  /**
+   * `applied_undecided`: the device applied the change, but the account that chose it can no
+   * longer decide this ask (someone else must).
+   */
+  outcome: "failed" | "unknown" | "applied_undecided";
   message: string;
 }
 
@@ -285,6 +289,9 @@ const refusedBeforeWrite = (e: unknown): e is ApiError =>
 /** A pending network ask's reason when its device change got no answer (`detail.attempt`). */
 const UNCONFIRMED_ATTEMPT =
   "The device did not confirm the change to its network rules; its next connection tells whether it took effect.";
+/** A pending network ask's reason when the device applied it but its chooser cannot decide. */
+const APPLIED_UNDECIDED_ATTEMPT =
+  "The device allowed it, but the person who chose this can no longer decide this request.";
 /** A pending network ask's reason when its device change failed without a message. */
 const NOT_APPLIED_ATTEMPT = "The device did not apply the change to its network rules.";
 const iso = (v: Date | string): string => new Date(v).toISOString();
@@ -727,7 +734,8 @@ export class ApprovalsService {
       network = { wanted: granted, granted, outcome: "once", via };
       if (scope === "always") {
         const decided = await this.decideAlways(orgId, ask, accountId, body, granted, via);
-        await this.announceDecided(decided.record, decided.toSeq);
+        // null: the resolver decided it as this owner meanwhile (announced by its commit)
+        if (decided.toSeq !== null) await this.announceDecided(decided.record, decided.toSeq);
         return decided.record;
       }
     } else {
@@ -750,7 +758,10 @@ export class ApprovalsService {
    * (the device is offline, deleted, or its program lacks the feature) the decision is a run
    * grant with the reason. The device's answer decides: applied → `always`; refused → `always`
    * with outcome `refused`, nothing granted; no answer → a run grant (`once_fallback`, `offline`)
-   * while the op stays `unknown` for the machine's next hello or the resolver.
+   * while the op stays `unknown` for the machine's next hello or the resolver. A device that
+   * reconnects during the call and reports the op applied lets the resolver approve the ask as
+   * this owner first: that decision is returned (`toSeq` null: already announced), never a 409. A
+   * device deleted during the call is `device.not_found` (the op recorded unknown).
    */
   private async decideAlways(
     orgId: string,
@@ -759,7 +770,7 @@ export class ApprovalsService {
     body: DecisionInput,
     granted: string[],
     via: DecisionVia,
-  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+  ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
     const detail = ask.detail as NetworkAskDetail;
     const accountName = (await this.displayNameOf(accountId)) ?? accountId;
     let begun: Awaited<ReturnType<DevicePolicyService["begin"]>>;
@@ -788,6 +799,11 @@ export class ApprovalsService {
     }
     const { intent } = begun;
     const sent = await this.policies.send(intent);
+    if (sent.notFound) {
+      // deleted during the call: nothing to grant on, the run cannot go on there either
+      await this.settleOpOnly({ machineId: intent.machineId, opId: intent.opId }, sent.result);
+      throw deviceNotFound();
+    }
     const network: NetworkDecision =
       sent.result.outcome === "applied"
         ? { wanted: granted, granted, outcome: "always", via }
@@ -801,6 +817,23 @@ export class ApprovalsService {
       result: sent.result,
     });
     if ("decided" in settled) return settled.decided;
+    if (settled.closed.code === "approval.already_decided" && !settled.late) {
+      // the machine reconnected mid-call and reported the op: the resolver approved it as this
+      // owner, with this change; it is their decision, not a conflict
+      const now = await this.db
+        .selectFrom("approvals")
+        .selectAll()
+        .where("id", "=", ask.id)
+        .executeTakeFirst();
+      const record = now === undefined ? null : toRecord(now);
+      if (
+        record?.status === "approved" &&
+        record.detail?.outcome === "always" &&
+        record.decidedBy === accountId
+      ) {
+        return { record, toSeq: null };
+      }
+    }
     // the device took the hosts, but a reply, the expiry or a stop closed the ask meanwhile: the
     // change stands (the owner chose it), audited late in the settle transaction, and said
     if (settled.late && settled.closed.code === "approval.already_decided") {
@@ -810,6 +843,15 @@ export class ApprovalsService {
       );
     }
     throw settled.closed;
+  }
+
+  /** Records only the op's outcome, in its own transaction (the ask is left as it is). */
+  @Transactional()
+  private async settleOpOnly(
+    op: { machineId: string; opId: string },
+    result: PolicyOpResult,
+  ): Promise<void> {
+    await this.policies.settleIn(op, result);
   }
 
   /**
@@ -846,13 +888,16 @@ export class ApprovalsService {
   /**
    * The op's outcome for an ask that is no longer pending (in the caller's transaction): recorded,
    * and a change the device applied audited `device.network_allowed` `late` (the change stands:
-   * the owner chose it; no inverse change is sent). True when it was audited late.
+   * the owner chose it; no inverse change is sent). True when it was audited late. `undecided`:
+   * the ask is still pending but the op's account can no longer decide it; the allow is audited
+   * without `late` (it is not after the ask) and the caller gives the ask the reason.
    */
   @Transactional({ propagation: "mandatory" })
   private async settleClosedIn(
     approvalId: string,
     op: { machineId: string; opId: string; result: PolicyOpResult },
     via: DecisionVia,
+    undecided = false,
   ): Promise<boolean> {
     const pendingOp = await this.pendingOpOf(op.machineId, op.opId);
     const out = await this.policies.settleIn(op, op.result);
@@ -876,7 +921,7 @@ export class ApprovalsService {
         hosts: pendingOp.add,
         scope: "always",
         outcome: "always",
-        late: true,
+        ...(undecided ? { undecided: true } : { late: true }),
         by: pendingOp.source.accountId,
         via,
         conversationId: ask.conversationId,
@@ -903,9 +948,11 @@ export class ApprovalsService {
    * (conversation, then the approval) the op is read again (settled meanwhile: nothing to do).
    * Applied, and the ask still pending → approved `always` by the op's account (`via` as it
    * asked), the run resumed in this transaction as every decision does; the ask closed → audited
-   * `late`. Not applied (refused, never received, interrupted) or still unknown → the op's outcome
-   * recorded and the ask left pending with the reason (`detail.attempt`) and an `approval_updated`
-   * event so the card shows it: no person is there to fall back to a run grant (D2).
+   * `late`; still pending but the op's account can no longer decide it → the allow audited (not
+   * late) and the ask left pending with `applied_undecided`. Not applied (refused, never received,
+   * interrupted) or still unknown → the op's outcome recorded and the ask left pending with the
+   * reason (`detail.attempt`) and an `approval_updated` event so the card shows it: no person is
+   * there to fall back to a run grant (D2).
    */
   @Transactional({ propagation: "mandatory" })
   async settleFromResolver(
@@ -949,9 +996,14 @@ export class ApprovalsService {
           { wanted: pendingOp.add, granted: pendingOp.add, outcome: "always", via },
         );
       } catch (e) {
-        // the op's account may no longer decide it (left the org): the change stands, late
+        // the op's account may no longer decide it: the change stands, the ask waits with why
         if (!refusedBeforeWrite(e)) throw e;
-        await this.settleClosedIn(ask.id, op, via);
+        if (await this.settleClosedIn(ask.id, op, via, true)) {
+          await this.attemptIn(ask, ref.opId, {
+            outcome: "applied_undecided",
+            message: APPLIED_UNDECIDED_ATTEMPT,
+          });
+        }
         return;
       }
       await this.policies.settleIn(op, result);
@@ -960,11 +1012,27 @@ export class ApprovalsService {
     }
     const out = await this.policies.settleIn(op, result);
     if (out === null || !open || ask.detail === null) return;
-    const attempt: NetworkAskAttempt =
+    await this.attemptIn(
+      ask,
+      ref.opId,
       result.outcome === "unknown"
         ? { outcome: "unknown", message: UNCONFIRMED_ATTEMPT }
-        : { outcome: "failed", message: out.applied ? NOT_APPLIED_ATTEMPT : out.message };
-    await t
+        : { outcome: "failed", message: out.applied ? NOT_APPLIED_ATTEMPT : out.message },
+    );
+  }
+
+  /**
+   * A pending network ask's reason (`detail.attempt`) and its `approval_updated` event (one per
+   * op and outcome), in the caller's transaction with the ask locked; notified after the commit.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async attemptIn(
+    ask: ApprovalRecord,
+    opId: string,
+    attempt: NetworkAskAttempt,
+  ): Promise<void> {
+    if (ask.detail === null) return;
+    await this.db.db
       .updateTable("approvals")
       .set({ detail: JSON.stringify({ ...ask.detail, attempt } satisfies NetworkAskDetail) })
       .where("id", "=", ask.id)
@@ -973,7 +1041,7 @@ export class ApprovalsService {
       {
         type: "approval_updated",
         runId: ask.runId,
-        idemKey: `approval_updated:${ask.id}:${ref.opId}:${attempt.outcome}`,
+        idemKey: `approval_updated:${ask.id}:${opId}:${attempt.outcome}`,
         payload: { approvalId: ask.id, callId: ask.callId },
       },
     ]);

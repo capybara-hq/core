@@ -85,7 +85,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker", "gateway"],
-        devices: { local: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
+        // long enough for a machine to reconnect while a call waits for it
+        devices: { local: { reconnectGraceSeconds: 5, leaseTtlMs: 6000 } },
       },
     ),
     {
@@ -518,6 +519,89 @@ describe("network asks on the device policy intent", { timeout: 60_000 }, () => 
     expect(all[3]?.at).toEqual(all[4]?.at);
     // one decision only
     expect(ofType(await eventsOf(db, s.conversationId), "approval_decided")).toHaveLength(1);
+  });
+
+  it("the device reconnects mid-call and reports the op applied: the owner gets the approved ask, not a 409", async () => {
+    const sim = new Sim();
+    // the machine applies the change and drops before answering
+    sim.mode = "apply-then-drop";
+    const machine = await connect(sim);
+    const first = machine.next((f) => f.type === "req" && f.op === "policy");
+    const a = await ask();
+    const pending = always(a.id);
+    const op = (await first) as KernelReq;
+    const opId = (op.args as { opId: string }).opId;
+    await disconnect(machine);
+    // it comes back within the grace and reports the op applied in its hello
+    const again = await connect(sim, { recentOps: sim.recentOps() });
+    // the reported job runs while the owner's call still waits: it approves the ask as the owner
+    await resolver().resolve(jobData(await owed(`device-op-reported-${opId}`)));
+    expect(await row(a.id)).toMatchObject({ status: "approved", scope: "always" });
+    // then sends the result it kept while disconnected
+    again.respond(op.id, { ok: true, result: { policy: sim.policy } });
+    const res = await pending;
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { approval: unknown }).approval).toMatchObject({
+      status: "approved",
+      scope: "always",
+      decidedBy: s.accountId,
+      detail: { outcome: "always" },
+    });
+    expect((await audits()).map((x) => x.action)).toEqual([
+      "device.policy_requested",
+      "device.network_allowed",
+      "device.policy_changed",
+    ]);
+    expect(ofType(await eventsOf(db, s.conversationId), "approval_decided")).toHaveLength(1);
+  });
+
+  it("the device is deleted during the call: device.not_found, the op recorded unknown, nothing granted", async () => {
+    const sim = new Sim();
+    sim.mode = "hold";
+    const machine = await connect(sim);
+    void machine
+      .next((f) => f.type === "req" && f.op === "policy")
+      .then(async () => {
+        await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${s.deviceId}`.execute(
+          raw,
+        );
+        machine.close();
+      });
+    const a = await ask();
+    const res = await always(a.id);
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: { code: "device.not_found" } });
+    expect((await row(a.id)).status).toBe("pending");
+    expect((await audits()).map((x) => x.action)).toEqual([
+      "device.policy_requested",
+      "device.policy_unknown",
+    ]);
+  });
+
+  it("a crash after the call whose chooser can no longer decide: the ask waits with that reason, the allow audited, not late", async () => {
+    const sim = new Sim();
+    await connect(sim);
+    const a = await ask();
+    const opId = await crashedAlways(a.id);
+    // the ask now waits for someone else (its chooser cannot decide it any more)
+    await sql`UPDATE capybara.approvals SET requested_for = ${ownerId} WHERE id = ${a.id}`.execute(
+      raw,
+    );
+    await resolver().resolve(jobData(await owed(`device-op-resolve-${opId}`)));
+    const r = await row(a.id);
+    expect(r.status).toBe("pending");
+    expect(r.detail).toMatchObject({
+      attempt: { outcome: "applied_undecided", message: expect.stringMatching(/allowed it/) },
+    });
+    const all = await audits();
+    expect(all.map((x) => x.action)).toEqual([
+      "device.policy_requested",
+      "device.policy_changed",
+      "device.network_allowed",
+    ]);
+    expect(all[2]?.detail).toMatchObject({ approvalId: a.id, undecided: true });
+    expect(all[2]?.detail).not.toHaveProperty("late");
+    expect(ofType(await eventsOf(db, s.conversationId), "approval_updated")).toHaveLength(1);
   });
 
   it("the ask closed during the call: the change is audited late in the settle transaction and the owner gets a 409", async () => {

@@ -166,7 +166,7 @@ export class DevicePolicyService {
   }): Promise<{ intent: PolicyIntent } | { outcome: PolicyChangeOutcome }> {
     if (currentStore()) {
       throw new Error(
-        "DevicePolicyService.apply() must not run inside a transaction: the intent is recorded " +
+        "DevicePolicyService.begin() must not run inside a transaction: the intent is recorded " +
           "first, the policy op sent, then the outcome recorded in a transaction.",
       );
     }

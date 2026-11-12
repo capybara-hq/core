@@ -481,6 +481,18 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
         en.approval.network.attempt.failed.replace("{message}", "Remote grants are off."),
       ),
     ).toBeTruthy();
+    cleanup();
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: {
+            ...NET,
+            detail: { ...NET.detail, attempt: { outcome: "applied_undecided", message: "x" } },
+          },
+        }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "zh" });
+    expect(await screen.findByText(zh.approval.network.attempt.appliedUndecided)).toBeTruthy();
   });
 
   it("skipped: one line", async () => {

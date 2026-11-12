@@ -346,9 +346,11 @@ export function ApprovalCard({
       />
       {state.kind === "pending" && detail?.attempt !== undefined && (
         <Text variant="small" tone="warn">
-          {detail.attempt.outcome === "unknown"
-            ? t("network.attempt.unknown")
-            : t("network.attempt.failed", { message: detail.attempt.message })}
+          {detail.attempt.outcome === "failed"
+            ? t("network.attempt.failed", { message: detail.attempt.message })
+            : detail.attempt.outcome === "unknown"
+              ? t("network.attempt.unknown")
+              : t("network.attempt.appliedUndecided")}
         </Text>
       )}
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}

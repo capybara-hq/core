@@ -1846,7 +1846,8 @@
       "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
       "attempt": {
         "unknown": "The device did not confirm the change to its network rules; when it connects again it says whether the change took effect. You can decide again.",
-        "failed": "The change to the device's network rules did not take effect: {message} You can decide again."
+        "failed": "The change to the device's network rules did not take effect: {message} You can decide again.",
+        "appliedUndecided": "The device allowed it, but the person who chose this can no longer decide this request."
       }
     }
   },
