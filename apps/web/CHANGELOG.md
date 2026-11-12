@@ -1,5 +1,11 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- f4aab95: The sidebar's 设备 item moves under 更多: devices are set up once and rarely visited.
+
 ## 0.1.0-rc.23
 
 ### Minor Changes

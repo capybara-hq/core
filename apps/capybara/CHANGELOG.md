@@ -1,5 +1,30 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- 8ef7ec6: The plugin enable wizard no longer asks for connector templates that start switched off
+  (`defaultEnabled: false`); the org catalog detail marks them with `defaultOff`.
+- f156a46: Background Bash tasks (`run_in_background`) work on macOS devices: where `pgrep` has no `-s`, the
+  launch runs the command in a process group of its own, watched by a small perl launcher that
+  enforces the time limit and signals the group on a stop (macOS has no `setsid` or GNU `timeout`,
+  and its OS sandbox lets no command list or signal another command's processes).
+- a3ca5ef: The super admin sets the platform's sandbox levels (`sandbox.tiers.max`, `default`,
+  `allowUnsandboxed`) on the admin settings page (`PUT /api/v1/admin/settings` `sandboxTiers`). A field
+  set in the startup config (env, file or Nacos) wins and is read-only there; an API token or the
+  Platform tool may only lower them. The dev hosts preset (`DEV_HOSTS`) adds `storage.googleapis.com`,
+  where Playwright's Chromium download (Chrome for Testing) is served from.
+- Updated dependencies [8471657]
+- Updated dependencies [8ef7ec6]
+- Updated dependencies [f156a46]
+- Updated dependencies [a3ca5ef]
+  - @capybara-hq/kernel@0.1.0-rc.23
+
 ## 0.1.0-rc.23
 
 ### Minor Changes

@@ -1,5 +1,19 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.17
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- a3ca5ef: The super admin sets the platform's sandbox levels (`sandbox.tiers.max`, `default`,
+  `allowUnsandboxed`) on the admin settings page (`PUT /api/v1/admin/settings` `sandboxTiers`). A field
+  set in the startup config (env, file or Nacos) wins and is read-only there; an API token or the
+  Platform tool may only lower them. The dev hosts preset (`DEV_HOSTS`) adds `storage.googleapis.com`,
+  where Playwright's Chromium download (Chrome for Testing) is served from.
+
 ## 0.1.0-rc.16
 
 ### Minor Changes
