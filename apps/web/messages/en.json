@@ -500,6 +500,10 @@
       "invalid_time_zone": "The time zone isn't valid.",
       "limit_reached": "The limit of scheduled tasks is reached.",
       "once_in_past": "That time has already passed."
+    },
+    "deployment": {
+      "setting_readonly": "This sandbox level is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
+      "sandbox_tier_not_allowed": "An API token or the Platform tool can only lower the platform's sandbox levels; a super admin raises them on the admin settings page."
     }
   },
   "agents": {

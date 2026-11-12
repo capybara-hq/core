@@ -500,6 +500,10 @@
       "invalid_time_zone": "时区无效。",
       "limit_reached": "定时任务数量已达上限。",
       "once_in_past": "这个时间已经过去了。"
+    },
+    "deployment": {
+      "setting_readonly": "这项沙箱级别由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
+      "sandbox_tier_not_allowed": "通过 API 令牌或平台工具只能调低平台的沙箱级别；要调高，请超级管理员在后台设置页修改。"
     }
   },
   "agents": {
