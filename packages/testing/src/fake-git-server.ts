@@ -11,8 +11,28 @@ export interface FakeGitRequest {
   method: string;
   /** Path and query, e.g. `/x.git/info/refs?service=git-upload-pack`. */
   path: string;
-  /** The `Authorization` header. */
+  /** `git-upload-pack` or `git-receive-pack` for smart-HTTP requests. */
+  service?: string;
+  /** False when `requireBasic` is set and the request did not carry the matching Basic auth. */
+  authorized: boolean;
+  /**
+   * The `Authorization` header value; set unless `recordAuthorization: false` (the catalog tests
+   * assert on it; tests that handle real credentials pass false).
+   */
   authorization?: string;
+  /** Lower-case names of the request headers; values are never recorded (no credential in here). */
+  headerNames: string[];
+}
+
+export interface FakeGitServerOptions {
+  /** Repos (`owner/repo` or `repo`) created as bare repos at start. */
+  repos?: string[];
+  /** Seed each of `repos` with one commit on `main` so clones are not empty (default true). */
+  seed?: boolean;
+  /** Answers 401 (`WWW-Authenticate: Basic realm="fake"`) unless the request carries this Basic auth. */
+  /** Record each request's `Authorization` value in `requests` (default true, for tests of what a client sends; pass false to record names only). */
+  recordAuthorization?: boolean;
+  requireBasic?: { username: string; password: string };
 }
 
 /** Entries that are not regular files, for tests of refused trees. */
@@ -43,12 +63,18 @@ export interface FakeGitServer {
   commit(repo: string, files: Record<string, string>, opts?: FakeGitCommitOptions): Promise<string>;
   /** Makes every request answer 302 to `location` (`null` restores it). */
   setRedirect(location: string | null): void;
+  /** The next request (only) answers `status` with `body`. */
+  failNext(status: number, body?: string): void;
+  /** The next request (only) answers 302 to `location`. */
+  redirectNext(location: string): void;
+  /** The sha `ref` (e.g. `refs/heads/main`) points at in the bare repo, or undefined. */
+  refOf(repo: string, ref: string): Promise<string | undefined>;
   /** The requests received, in order. */
   requests: FakeGitRequest[];
   stop(): Promise<void>;
 }
 
-const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
 
 /** Git runs with no user or system config, so a developer's settings never change the repos. */
 function gitEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -101,7 +127,7 @@ function git(
   });
 }
 
-/** Starts `git http-backend` as a CGI script for one request (smart HTTP, read-only). */
+/** Starts `git http-backend` as a CGI script for one request (smart HTTP, push enabled). */
 function spawnCgi(root: string, req: IncomingMessage): ChildProcessWithoutNullStreams {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const env: Record<string, string> = {
@@ -119,7 +145,9 @@ function spawnCgi(root: string, req: IncomingMessage): ChildProcessWithoutNullSt
   if (typeof proto === "string") env.GIT_PROTOCOL = proto;
   const enc = req.headers["content-encoding"];
   if (typeof enc === "string") env.HTTP_CONTENT_ENCODING = enc;
-  const p = spawn("git", ["http-backend"], { env: gitEnv(env) });
+  const p = spawn("git", ["-c", "http.receivepack=true", "http-backend"], {
+    env: gitEnv(env),
+  });
   // http-backend may exit without reading the whole body (a GET, or a request it refuses): the
   // write then fails with EPIPE. Its exit status and output decide the response, not the pipe.
   p.stdin.on("error", () => {});
@@ -228,8 +256,8 @@ const fastImportPath = (path: string): string =>
     : path;
 
 /**
- * A fake git host: bare repos in a temp dir, served read-only by the system `git http-backend`
- * (smart HTTP, as CGI) over a loopback http server. Repos allow fetching any reachable commit by sha
+ * A fake git host: bare repos in a temp dir, served by the system `git http-backend`
+ * (smart HTTP, as CGI, pushes included) over a loopback http server. Repos allow fetching any reachable commit by sha
  * (`uploadpack.allowReachableSHA1InWant`, as GitHub does). Needs `git` on PATH.
  *
  * Spawning git is what these tests spend their time on, and it slows down most under load, so the
@@ -237,26 +265,71 @@ const fastImportPath = (path: string): string =>
  * `git fast-import`, and a ref advertisement (`GET …/info/refs`) is answered by http-backend once per
  * repo state, then repeated until the next commit to that repo.
  */
-export async function startFakeGitServer(): Promise<FakeGitServer> {
+export async function startFakeGitServer(
+  options: FakeGitServerOptions = {},
+): Promise<FakeGitServer> {
   const root = await mkdtemp(join(tmpdir(), "capybara-fake-git-"));
   const requests: FakeGitRequest[] = [];
   let redirect: string | null = null;
+  let nextFail: { status: number; body: string } | undefined;
+  let nextRedirect: string | undefined;
+  const expectedBasic =
+    options.requireBasic === undefined
+      ? undefined
+      : `Basic ${Buffer.from(`${options.requireBasic.username}:${options.requireBasic.password}`).toString("base64")}`;
   /** Ref advertisements by repo, then by request (path, query and `Git-Protocol`). */
   const advertised = new Map<string, Map<string, CgiAnswer>>();
   /** Bumped by every commit to a repo: an answer read before the commit is not kept. */
   const generation = new Map<string, number>();
   const repoOf = (pathname: string): string | undefined =>
-    /^\/([^/]+)\.git\/info\/refs$/.exec(pathname)?.[1];
+    /^\/(.+)\.git\/info\/refs$/.exec(pathname)?.[1];
+  const pushedRepo = (pathname: string): string | undefined =>
+    /^\/(.+)\.git\/git-receive-pack$/.exec(pathname)?.[1];
   const server = createServer((req, res) => {
-    const r: FakeGitRequest = { method: req.method ?? "GET", path: req.url ?? "/" };
-    if (typeof req.headers.authorization === "string") r.authorization = req.headers.authorization;
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const authorized = expectedBasic === undefined || req.headers.authorization === expectedBasic;
+    const r: FakeGitRequest = {
+      method: req.method ?? "GET",
+      path: req.url ?? "/",
+      authorized,
+      headerNames: Object.keys(req.headers),
+    };
+    if (options.recordAuthorization !== false && typeof req.headers.authorization === "string") {
+      r.authorization = req.headers.authorization;
+    }
+    const service =
+      url.searchParams.get("service") ?? /\/(git-(?:upload|receive)-pack)$/.exec(url.pathname)?.[1];
+    if (service !== undefined && service !== null) r.service = service;
     requests.push(r);
+    if (nextFail !== undefined) {
+      const f = nextFail;
+      nextFail = undefined;
+      res.writeHead(f.status, { "content-type": "text/plain" }).end(f.body);
+      return;
+    }
+    if (nextRedirect !== undefined) {
+      const l = nextRedirect;
+      nextRedirect = undefined;
+      res.writeHead(302, { location: l }).end();
+      return;
+    }
+    if (!authorized) {
+      res.writeHead(401, { "www-authenticate": 'Basic realm="fake"' }).end();
+      return;
+    }
     if (redirect !== null) {
       res.writeHead(302, { location: redirect }).end();
       return;
     }
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const repo = req.method === "GET" ? repoOf(url.pathname) : undefined;
+    const pushed = pushedRepo(url.pathname);
+    if (pushed !== undefined) {
+      // a push moves refs: advertisements read before it are stale
+      res.on("close", () => {
+        generation.set(pushed, (generation.get(pushed) ?? 0) + 1);
+        advertised.delete(pushed);
+      });
+    }
     if (repo === undefined) {
       serveCgi(root, req, res);
       return;
@@ -284,6 +357,13 @@ export async function startFakeGitServer(): Promise<FakeGitServer> {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
+  const stopServer = async (): Promise<void> => {
+    await new Promise<void>((resolve) => {
+      server.closeAllConnections();
+      server.close(() => resolve());
+    });
+    await rm(root, { recursive: true, force: true });
+  };
 
   const repoDir = async (repo: string): Promise<string> => {
     if (!REPO_RE.test(repo)) throw new Error(`invalid fake repo name: ${repo}`);
@@ -368,19 +448,36 @@ export async function startFakeGitServer(): Promise<FakeGitServer> {
     return sha;
   };
 
-  return {
+  const fake: FakeGitServer = {
     url: (repo) => `http://127.0.0.1:${port}/${repo}.git`,
     commit,
     setRedirect: (l) => {
       redirect = l;
     },
-    requests,
-    stop: async () => {
-      await new Promise<void>((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      });
-      await rm(root, { recursive: true, force: true });
+    failNext: (status, body = "") => {
+      nextFail = { status, body };
     },
+    redirectNext: (l) => {
+      nextRedirect = l;
+    },
+    refOf: async (repo, ref) => {
+      const gitDir = await repoDir(repo);
+      return git(["rev-parse", "--verify", "--quiet", ref], { env: { GIT_DIR: gitDir } }).then(
+        (sha) => sha || undefined,
+        () => undefined,
+      );
+    },
+    requests,
+    stop: stopServer,
   };
+  try {
+    for (const repo of options.repos ?? []) {
+      if (options.seed === false) await repoDir(repo);
+      else await commit(repo, { "README.md": "seed\n" });
+    }
+  } catch (e) {
+    await stopServer();
+    throw e;
+  }
+  return fake;
 }
