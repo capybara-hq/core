@@ -9,7 +9,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { EffectiveConfigs } from "./effective-config.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "./enabled.js";
-import { OrgExtensionConfigs } from "./org-config.js";
+import { OrgConfigInvalidError, OrgExtensionConfigs } from "./org-config.js";
 import { ExtensionRegistry } from "./registry.js";
 
 /**
@@ -106,7 +106,8 @@ export class ExtensionPointDefaults {
    * here, enabled in the org, valid org and effective config, `configured()` not false), for
    * points whose every enabled provider is used (no `selection`). `failed`: the providers enabled
    * in the org whose status could not be read (reading a config or `configured()` threw, e.g. a
-   * transient database error); they are neither serving nor known to be off.
+   * transient database error); they are neither serving nor known to be off. An invalid stored
+   * org config ({@link OrgConfigInvalidError}) is not a read error: that provider is off.
    */
   async providersFor<T>(
     orgId: string,
@@ -200,7 +201,8 @@ export class ExtensionPointDefaults {
 
   /**
    * The candidates of `point` in `orgId`, by extension name, and the enabled providers whose status
-   * could not be read (a read or `configured()` threw: excluded, logged).
+   * could not be read (a read or `configured()` threw: excluded, logged). A provider whose stored
+   * org config or effective config is invalid is excluded but not `failed`: it is known to be off.
    */
   private async candidates(
     orgId: string,
@@ -226,13 +228,16 @@ export class ExtensionPointDefaults {
       try {
         cfg = await this.orgConfigs.get(orgId, extension);
       } catch (err) {
-        this.log.warn("extension point provider excluded, its org config is invalid", {
-          orgId,
-          point,
-          extension,
-          err,
-        });
-        failed.add(extension);
+        // a stored org config that no longer validates is a known state: the provider is off
+        // (as for an invalid effective config below); only a read that failed is `failed`
+        const invalid = err instanceof OrgConfigInvalidError;
+        this.log.warn(
+          invalid
+            ? "extension point provider excluded, its stored org config is invalid"
+            : "extension point provider excluded, cannot read its org config",
+          { orgId, point, extension, err },
+        );
+        if (!invalid) failed.add(extension);
         continue;
       }
       if (!cfg?.enabled) continue;

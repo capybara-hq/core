@@ -334,6 +334,28 @@ describe("context@1 providers at run start", { timeout: 60_000 }, () => {
     expect(await contexts(conv)).toHaveLength(1);
   });
 
+  it("a stored org config that no longer validates switches the provider off", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await run(owner, conv, 1);
+    // e.g. after a plugin upgrade: the org's stored config no longer matches the schema
+    await sql`UPDATE capybara.extension_org_configs SET config = '{"label": 5}'::jsonb
+      WHERE plugin = ${PLUGIN} AND org_id = ${orgId}`.execute(raw);
+    lines.length = 0;
+    await run(owner, conv, 2);
+    // not asked, and its recorded text is blanked (as for an invalid effective config)
+    expect(calls()).toHaveLength(1);
+    expect((await contexts(conv)).map((e) => e.payload.text)).toEqual(["fake context", ""]);
+    expect(
+      lines.some(
+        (l) =>
+          l.level === "warn" &&
+          l.context === "ExtensionPointDefaults" &&
+          (l as { extension?: string }).extension === PLUGIN &&
+          l.msg.includes("stored org config is invalid"),
+      ),
+    ).toBe(true);
+  });
+
   it("an eval conversation's run in the run worker never asks the providers", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await sql`UPDATE capybara.conversations SET kind = 'eval' WHERE id = ${conv}`.execute(raw);

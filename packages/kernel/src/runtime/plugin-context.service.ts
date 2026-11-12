@@ -57,10 +57,11 @@ const sha256 = (text: string): string => createHash("sha256").update(text).diges
  * plugin whose text differs from the latest one it recorded in the conversation. Fail open: a
  * provider that throws, times out or returns too much is skipped for this run (its earlier text
  * stays in effect) and logged. A provider loaded here that recorded text but no longer serves the
- * org (switched off, its config invalid) gets an empty event, so its text stops following
- * summaries; a plugin not loaded on this replica is left alone (another replica may still load
- * it during a rollout, and blanking it here would make its text flap), and so is one whose status
- * could not be read (a transient error must not flip the model's context). Chat runs only: an
+ * org (switched off, its stored org config or its effective config invalid) gets an empty event,
+ * so its text stops following summaries; a plugin not loaded on this replica is left alone
+ * (another replica may still load it during a rollout, and blanking it here would make its text
+ * flap), and so is one whose status could not be read (a transient read error must not flip the
+ * model's context). Chat runs only: an
  * eval replay reads the recorded events, and a sub-agent gets no plugin context (spec §5.4).
  */
 @Injectable()
@@ -83,7 +84,7 @@ export class PluginContextService {
       found = await this.points.providersFor<ContextProvider>(input.orgId, "context");
     } catch (err) {
       // fail open: without the org's providers nothing is asked and nothing is switched off
-      this.log.warn("context providers not read; plugin context left as recorded", {
+      this.log.warn("context providers could not be listed; plugin context left as recorded", {
         orgId: input.orgId,
         conversationId: input.conversationId,
         runId: input.runId,
