@@ -17,9 +17,9 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 
 /**
- * Lifecycle hooks across two replicas: replica A's adds to the lifecycle queue fail (the outbox's
- * `OUTBOX_DISPATCH_FAILS` seam, a Redis outage on A), so a member removed there is not delivered by
- * A's fast path; the row stays owed and B's outbox relay delivers it, exactly once.
+ * Lifecycle hooks across two replicas: replica A (api only) cannot add to the lifecycle queue (the
+ * outbox's `OUTBOX_DISPATCH_FAILS` seam, a Redis outage on A), so a member removed there is not
+ * delivered by A's fast path; the row stays owed and B's outbox relay delivers it, exactly once.
  */
 
 const PLUGIN = "fake-lifecycle";
@@ -31,20 +31,22 @@ let db: KernelSchemaDb;
 let a: TestKernel;
 let b: TestKernel;
 
-const config = () =>
+const config = (roles: ("api" | "worker")[]) =>
   runConfig(
     { pg: pgc.url, redis: rd.url },
-    { roles: ["api", "worker"], extensions: [MODEL_FAKE, fakeExtensionEntry(PLUGIN)] },
+    { roles, extensions: [MODEL_FAKE, fakeExtensionEntry(PLUGIN)] },
   );
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  a = await startKernel(config(), {
+  // A runs only the api role: no relay of its own competes with B's (a failed pass of A's would
+  // push the row's backoff out), as in test/infra/outbox.relay.test.ts
+  a = await startKernel(config(["api"]), {
     overrides: [
       { provide: OUTBOX_DISPATCH_FAILS, useValue: (queue: string) => queue === LIFECYCLE_QUEUE },
     ],
   });
-  b = await startKernel(config());
+  b = await startKernel(config(["api", "worker"]));
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
 }, 180_000);
