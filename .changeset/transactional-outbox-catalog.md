@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/kernel": minor
+"@capybara-hq/web": patch
 ---
 
 Plugin scope syncs follow the transactional outbox: a scope change, a deployment-level disable or
@@ -17,3 +18,7 @@ first version: their files are copied before it under a key made from their cont
 import leaves no item and a retry copies nothing again. The worker job
 `platform-components-migrate` and its retry after a failed post-import sync are gone. Removing an
 org upload still awaiting confirmation owes its cleanup too.
+
+With the job gone, the platform inbox no longer has a "platform components migration" item and
+the org inbox no longer has the `skill_renamed` notice (only that job wrote it): migration 0121
+drops `platform_migration_runs`, deletes those notices and narrows the notice kind check.

@@ -1920,16 +1920,6 @@
       "approved": "已批准技能变更",
       "rejected": "已拒绝技能变更"
     },
-    "skillRenamed": {
-      "label": "技能改名",
-      "title": "技能 {from} 已改名为 {to}",
-      "hint": "平台提供了同名技能 {from}，所以本组织自己的技能 {from} 已改名为 {to}。使用它的智能体会继续使用，名称变为新名称。该平台技能在本组织默认关闭，管理员可在技能页面开启。已存的 SKILL.md 里名称仍是 {from}，以后上传新版本时请把 SKILL.md 里的名称改为 {to}。",
-      "from": "原名称",
-      "to": "新名称",
-      "plugin": "插件",
-      "dismiss": "知道了",
-      "dismissed": "已移除通知"
-    },
     "orgNotice": {
       "itemSharedLabel": "已共享",
       "itemSharedTitle": "{org} 现在可以使用 {name}",
@@ -3569,7 +3559,6 @@
           "catalog_request": "平台目录申请",
           "permission_confirmation": "权限确认",
           "scope_sync_failed": "范围同步失败",
-          "platform_migration": "迁移需要查看",
           "ownership_transferred": "所有权转移",
           "org_upload_pending": "组织上传待确认"
         },
@@ -3763,16 +3752,6 @@
           "uninstall": "插件的范围要求它在 {org} 中停用，但同步失败了。这个插件和组织下次同步时会再试：排除原因后，在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。",
           "dependencies": "插件已在 {org} 中启用，但平台更新后新增的依赖没能安装。这个插件和组织下次同步时会再试：排除原因后（例如导入满足版本要求的依赖），在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。"
         }
-      },
-      "migration": {
-        "label": "平台组件迁移",
-        "stuck": "未完成",
-        "failed": "{n} 个插件失败",
-        "started": "开始时间",
-        "finished": "结束时间",
-        "items": "失败的插件",
-        "hintStuck": "最近一次迁移开始一小时后仍未结束，运行它的 worker 可能已停止。下次 worker 启动或每日运行时会重新执行。",
-        "hintFailed": "最近一次迁移没能写入这些插件的平台组件，下次运行会再次尝试。原因见内核日志。"
       },
       "orgUpload": {
         "label": "上传待确认",

@@ -52,8 +52,7 @@ const BY_TYPE = {
   catalog_request: 3,
   permission_confirmation: 0,
   scope_sync_failed: 2,
-  platform_migration: 1,
-  ownership_transferred: 0,
+  ownership_transferred: 1,
   org_upload_pending: 0,
 };
 const OV_INBOX = { items: [], truncated: false, total: 6, byType: BY_TYPE };
@@ -284,7 +283,7 @@ describe("/admin 概览（OverviewPage）", () => {
         .getByRole("link", { name: o.inboxTypes.scope_sync_failed })
         .getAttribute("href"),
     ).toBe("/admin/inbox?type=scope_sync_failed");
-    expect(within(typeRow(o.inboxTypes.platform_migration)).getByText("1")).toBeTruthy();
+    expect(within(typeRow(o.inboxTypes.ownership_transferred)).getByText("1")).toBeTruthy();
     expect(within(inbox).queryByText(o.inboxTypes.permission_confirmation)).toBeNull();
     expect(box.getByRole("link", { name: o.viewInbox }).getAttribute("href")).toBe("/admin/inbox");
     // extensions: the reason in words, linking to the extension
@@ -2177,30 +2176,34 @@ describe("/admin/inbox?type=（按类型过滤）", () => {
       failedAt: "2026-11-10T08:00:00.000Z",
     },
   });
-  const MIGRATION = {
-    type: "platform_migration",
-    id: "run1",
+  const TRANSFERRED = {
+    type: "ownership_transferred",
+    id: "n9",
     createdAt: "2026-11-10T09:00:00.000Z",
-    run: {
-      id: "run1",
-      startedAt: "2026-11-10T09:00:00.000Z",
-      finishedAt: null,
-      stuck: true,
-      itemsFailed: [],
+    notice: {
+      id: "n9",
+      kind: "ownership_transferred",
+      createdAt: "2026-11-10T09:00:00.000Z",
+      detail: {
+        ref: { kind: "skill", id: "sk-9" },
+        name: "transferred-skill",
+        fromOrg: { id: "o-gone", name: "Gone" },
+        reason: "org_deleted",
+        usedBy: 1,
+      },
     },
   };
   const routes = () => ({
     "GET /api/v1/admin/inbox": () =>
       json(200, {
-        items: [MIGRATION, SYNC("s1", "Beta"), SYNC("s2", "Gamma")],
+        items: [TRANSFERRED, SYNC("s1", "Beta"), SYNC("s2", "Gamma")],
         truncated: false,
         total: 3,
         byType: {
           catalog_request: 0,
           permission_confirmation: 0,
           scope_sync_failed: 2,
-          platform_migration: 1,
-          ownership_transferred: 0,
+          ownership_transferred: 1,
           org_upload_pending: 0,
         },
       }),
@@ -2216,7 +2219,7 @@ describe("/admin/inbox?type=（按类型过滤）", () => {
     });
     const table = await screen.findByRole("table", { name: I.listLabel });
     expect(within(table).getAllByRole("row").slice(1)).toHaveLength(2);
-    expect(within(table).queryByText(I.migration.label)).toBeNull();
+    expect(within(table).queryByText("transferred-skill")).toBeNull();
     expect(screen.getByText(fill(I.filtered, { type: types.scope_sync_failed }))).toBeTruthy();
     expect(screen.getByRole("link", { name: I.clearFilter }).getAttribute("href")).toBe(
       "/admin/inbox",
