@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   advertisementError,
   FLUSH_PKT,
+  MAX_COMMAND_BYTES,
+  MAX_COMMANDS,
   pktLine,
   ReceivePackParseError,
   readReceivePackCommands,
@@ -81,6 +83,34 @@ describe("readReceivePackCommands", () => {
         ReceivePackParseError,
       );
     }
+  });
+});
+
+describe("limits", () => {
+  it("refuses more than MAX_COMMANDS commands", async () => {
+    const line = (i: number) => pktLine(`${Z} ${A} refs/heads/b${i}\n`);
+    const ok = Buffer.concat([
+      ...Array.from({ length: MAX_COMMANDS }, (_, i) => line(i)),
+      FLUSH_PKT,
+    ]);
+    expect((await readReceivePackCommands(chunksOf([ok]))).commands).toHaveLength(MAX_COMMANDS);
+    const over = Buffer.concat([
+      ...Array.from({ length: MAX_COMMANDS + 1 }, (_, i) => line(i)),
+      FLUSH_PKT,
+    ]);
+    await expect(readReceivePackCommands(chunksOf([over]))).rejects.toThrow("too many ref updates");
+  });
+
+  it("stops reading a command list over MAX_COMMAND_BYTES", async () => {
+    const shallow = pktLine(`shallow ${B}\n`);
+    const chunk = Buffer.concat(Array.from({ length: 1024 }, () => shallow));
+    const chunks = Array.from(
+      { length: Math.ceil(MAX_COMMAND_BYTES / chunk.length) + 5 },
+      () => chunk,
+    );
+    const it = chunksOf(chunks);
+    await expect(readReceivePackCommands(it)).rejects.toThrow("command list too long");
+    expect(it.pulled).toBeLessThan(chunks.length);
   });
 });
 

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,7 @@ import {
   parseGitGatewayPath,
   repoAllowed,
 } from "../../src/git/gateway.js";
+import { MAX_COMMAND_BYTES, MAX_COMMANDS, pktLine } from "../../src/git/pkt-line.js";
 import { type GitTicketRequest, GitTickets } from "../../src/git/tickets.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
@@ -57,7 +58,7 @@ const BASIC = Buffer.from(`x-access-token:${TOKEN}`).toString("base64");
 const GH: GitHostEntry[] = [{ host: "github.com", username: "x-access-token" }];
 const PERSONAL: ConnectorAuth = { type: "bearer", ownership: "personal" };
 const MAX_CONCURRENT = 3;
-const MAX_BYTES = 1024 * 1024;
+const MAX_BYTES = 4 * 1024 * 1024;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -285,6 +286,8 @@ describe("path parsing and repo allowlists", () => {
       ["GET", "/git/v1/github.com/acme/app.git/git-upload-pack"],
       ["POST", "/git/v1/github.com/acme/app.git/git-upload-pack?x=1"],
       ["GET", "/git/v1/github.com/acme/app.git/HEAD"],
+      ["GET", "/git/v1/github.com/acme/app.git.git/info/refs?service=git-upload-pack"],
+      ["POST", "/git/v1/github.com/acme/app.GIT.git/git-receive-pack"],
       ["GET", "/git/v1/github.com/acme/app.git/objects/info/packs"],
       ["GET", "/git/v1/github.com/a/b/c.git/info/refs?service=git-upload-pack"],
       ["GET", "/git/v1/github.com/../app.git/info/refs?service=git-upload-pack"],
@@ -578,6 +581,187 @@ describe("refusals", { timeout: 30_000 }, () => {
     expect(c.code, c.out).toBe(0);
     await expect.poll(async () => Number((await redis.get(key)) ?? 0)).toBe(0);
     expect(await redis.ttl(key)).not.toBe(-1);
+  });
+});
+
+/** A ref update command list as git sends it, then `rest`. */
+const pushBody = (rest: Buffer = Buffer.from("PACK\0\0\0\x02")) =>
+  Buffer.concat([
+    pktLine(`${"0".repeat(40)} ${"a".repeat(40)} refs/heads/main\0 report-status side-band-64k\n`),
+    Buffer.from("0000"),
+    rest,
+  ]);
+
+const RECEIVE = "/git/v1/github.com/acme/app.git/git-receive-pack";
+const UPLOAD = "/git/v1/github.com/acme/app.git/git-upload-pack";
+
+/**
+ * A POST over a real connection that writes `chunks` one by one (`gapMs` apart), stopping when the
+ * server answers or cuts the connection. Resolves with the status (if any), the body, whether the
+ * connection was cut, and how many chunks were written.
+ */
+function rawPost(
+  path: string,
+  ticket: string,
+  chunks: Buffer[],
+  o: {
+    type?: string;
+    gapMs?: number;
+    end?: boolean;
+    headers?: Record<string, string>;
+    /** Keep writing after the answer, until the connection is cut (as git does). */
+    writeAll?: boolean;
+  } = {},
+): Promise<{ status?: number; body: string; cut: boolean; written: number }> {
+  return new Promise((resolve) => {
+    let written = 0;
+    let settled = false;
+    let answered = false;
+    let status: number | undefined;
+    let body = "";
+    let writing = true;
+    const finish = (cut: boolean) => {
+      answered = true;
+      if (settled || (o.writeAll && writing && !cut)) return;
+      settled = true;
+      resolve({ ...(status !== undefined && { status }), body, cut, written });
+    };
+    const r = httpRequest(
+      {
+        host: "127.0.0.1",
+        port: k.port,
+        method: "POST",
+        path,
+        headers: {
+          authorization: `Bearer ${ticket}`,
+          "content-type": o.type ?? "application/x-git-receive-pack-request",
+          "transfer-encoding": "chunked",
+          ...o.headers,
+        },
+      },
+      (res) => {
+        status = res.statusCode;
+        res.on("data", (b: Buffer) => {
+          body += b.toString("latin1");
+        });
+        res.on("end", () => finish(false));
+        res.on("error", () => finish(true));
+      },
+    );
+    r.on("error", () => finish(true));
+    r.on("close", () => {
+      if (status === undefined) finish(true);
+    });
+    void (async () => {
+      for (const c of chunks) {
+        if ((answered && !o.writeAll) || r.destroyed) break;
+        if (!r.write(c)) {
+          await new Promise<void>((w) => {
+            const done = () => {
+              r.off("drain", done).off("close", done);
+              w();
+            };
+            r.on("drain", done).on("close", done);
+          });
+        }
+        written++;
+        if (o.gapMs) await new Promise((w) => setTimeout(w, o.gapMs));
+      }
+      writing = false;
+      if (o.end !== false && !r.destroyed) r.end();
+      if (r.destroyed) finish(true);
+      else if (answered) finish(false);
+    })();
+  });
+}
+
+describe("pushes the gateway reads before it decides", { timeout: 30_000 }, () => {
+  const receives = () => fake.requests.filter((r) => r.service === "git-receive-pack");
+
+  it("holds a direct receive-pack POST under ask and refuses it under deny, upstream untouched", async () => {
+    const asked = await ticketFor();
+    const a = await rawPost(RECEIVE, asked.ticket, [pushBody()]);
+    expect(a.status).toBe(200);
+    expect(a.body).toContain("Capybara: [git] Push to acme/app needs approval");
+    expect(a.body).toContain("ng refs/heads/main needs approval");
+    expect(await redis.get(gitAskKey(asked.execId))).not.toBeNull();
+
+    await db.updateTable("connectors").set({ git_push_policy: "deny" }).execute();
+    const denied = await ticketFor();
+    const d = await rawPost(RECEIVE, denied.ticket, [pushBody()]);
+    expect(d.status).toBe(200);
+    expect(d.body).toContain("not allowed by this organization's policy");
+    expect(receives()).toHaveLength(0);
+  });
+
+  it("refuses compressed, malformed, oversized and overlong command lists", async () => {
+    const { ticket } = await ticketFor();
+    const gz = await rawPost(RECEIVE, ticket, [pushBody()], {
+      headers: { "content-encoding": "gzip" },
+    });
+    expect(gz.status).toBe(415);
+
+    const bad = await rawPost(RECEIVE, ticket, [
+      Buffer.concat([pktLine("not a command\n"), Buffer.from("0000")]),
+    ]);
+    expect(bad.status).toBe(400);
+    expect(bad.body).toContain("malformed ref update command");
+
+    // shallow lines are skipped, so they fill the command list without counting as commands
+    const shallow = pktLine(`shallow ${"b".repeat(40)}\n`);
+    const big = Buffer.concat(
+      Array.from({ length: Math.ceil(MAX_COMMAND_BYTES / shallow.length) + 10 }, () => shallow),
+    );
+    const over = await rawPost(RECEIVE, ticket, [big]);
+    expect(over.status).toBe(400);
+    expect(over.body).toContain("command list too long");
+
+    const many = Buffer.concat([
+      pktLine(`${"0".repeat(40)} ${"a".repeat(40)} refs/heads/b0\0 report-status\n`),
+      ...Array.from({ length: MAX_COMMANDS }, (_, i) =>
+        pktLine(`${"0".repeat(40)} ${"a".repeat(40)} refs/heads/b${i + 1}\n`),
+      ),
+      Buffer.from("0000"),
+    ]);
+    const tooMany = await rawPost(RECEIVE, ticket, [many]);
+    expect(tooMany.status).toBe(400);
+    expect(tooMany.body).toContain("too many ref updates");
+    expect(receives()).toHaveLength(0);
+  });
+
+  it("stops reading a refused push's pack at the byte cap", async () => {
+    const { ticket, runId } = await ticketFor();
+    const chunk = randomBytes(64 * 1024);
+    const chunks = [pushBody(Buffer.alloc(0)), ...Array.from({ length: 160 }, () => chunk)];
+    const r = await rawPost(RECEIVE, ticket, chunks, { writeAll: true });
+    // 10 MiB offered, the cap is 4 MiB: the drain stops near the cap and cuts the connection
+    await expect
+      .poll(async () => Number(await redis.get(gitBytesKey(runId))))
+      .toBeGreaterThan(MAX_BYTES);
+    expect(Number(await redis.get(gitBytesKey(runId)))).toBeLessThan(MAX_BYTES + 1024 * 1024);
+    expect(r.written).toBeLessThan(chunks.length);
+    expect(receives()).toHaveLength(0);
+    await expect.poll(async () => Number((await redis.get(gitConcurrencyKey(orgId))) ?? 0)).toBe(0);
+  });
+
+  it("cuts a slow-drip POST at the idle timeout and frees its slot", async () => {
+    const { ticket } = await ticketFor();
+    const started = Date.now();
+    const r = await rawPost(UPLOAD, ticket, [Buffer.from("0032want ")], {
+      type: "application/x-git-upload-pack-request",
+      end: false,
+    });
+    expect(r.cut || r.status === 504).toBe(true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4_500);
+    await expect.poll(async () => Number((await redis.get(gitConcurrencyKey(orgId))) ?? 0)).toBe(0);
+  });
+
+  it("cuts a slow-drip push command list at the idle timeout", async () => {
+    const { ticket } = await ticketFor();
+    const r = await rawPost(RECEIVE, ticket, [Buffer.from("00")], { end: false });
+    expect(r.cut || r.status === 504).toBe(true);
+    await expect.poll(async () => Number((await redis.get(gitConcurrencyKey(orgId))) ?? 0)).toBe(0);
+    expect(receives()).toHaveLength(0);
   });
 });
 

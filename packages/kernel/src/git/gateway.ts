@@ -117,6 +117,8 @@ export function parseGitGatewayPath(method: string, url: string): GitGatewayTarg
   if (!HOST_RE.test(host)) return null;
   if (!SEGMENT_RE.test(owner) || !SEGMENT_RE.test(name)) return null;
   const bare = name.replace(/\.git$/i, "");
+  // one `.git` suffix only: `app.git.git` would be decided as `app` but requested as `app.git`
+  if (/\.git$/i.test(bare)) return null;
   const repo = normalizeGitRepo(`${owner}/${bare}`);
   if (repo === null) return null;
   return { host, path: `${owner}/${bare}`, repo, endpoint, service };
@@ -190,6 +192,8 @@ class ByteMeter {
     private readonly key: string,
     private readonly cap: number,
     start: number,
+    /** The org's concurrency key: every flush refreshes its TTL, so a long transfer stays counted. */
+    private readonly slotKey: string,
   ) {
     this.total = start;
   }
@@ -211,6 +215,7 @@ class ByteMeter {
       .multi()
       .incrby(this.key, n)
       .expire(this.key, BYTES_TTL_SECONDS)
+      .expire(this.slotKey, CONCURRENCY_TTL_SECONDS)
       .exec();
     const v = res?.[0]?.[1];
     this.total = typeof v === "number" ? v : this.total + n;
@@ -225,6 +230,43 @@ class GitBytesExceeded extends Error {
   constructor() {
     super("git transfer limit reached");
     this.name = "GitBytesExceeded";
+  }
+}
+
+/**
+ * The guards of one authenticated request, from the moment it holds an org slot: the idle timer
+ * (any byte either way resets it; when it fires, {@link ac} aborts, which cuts the upstream call
+ * and destroys the request), the byte meter, and the slot itself, held until the response is over
+ * (the drain of a refused push's pack happens before the answer). In-flight transfers are
+ * not tracked by `GracefulShutdown`: a replica that stops cuts them with its connections, and the
+ * slots they held fall back to the counter's TTL.
+ */
+class Transfer {
+  readonly ac = new AbortController();
+  private idle: NodeJS.Timeout | undefined;
+  private open = true;
+  constructor(
+    readonly meter: ByteMeter,
+    private readonly idleMs: number,
+    private readonly release: () => void,
+  ) {}
+
+  /** Resets the idle timer (a no-op once the transfer is over). */
+  readonly touch = (): void => {
+    if (this.idle !== undefined) clearTimeout(this.idle);
+    this.idle = undefined;
+    if (!this.open) return;
+    this.idle = setTimeout(() => this.ac.abort(new Error("idle")), this.idleMs);
+  };
+
+  /** The response is over: stops the timer, flushes the meter and frees the slot (once). */
+  drop(): void {
+    if (!this.open) return;
+    this.open = false;
+    if (this.idle !== undefined) clearTimeout(this.idle);
+    this.idle = undefined;
+    void this.meter.flush().catch(() => {});
+    this.release();
   }
 }
 
@@ -276,19 +318,25 @@ export class GitGateway {
     const started = performance.now();
     const fields: LogFields = {};
     const body = req.body instanceof Readable ? req.body : undefined;
+    // a refusal closes the connection and stops reading the body: nothing unauthenticated or
+    // refused is read further, and nothing it sends is left unbounded
     const text = (status: number, message: string) => {
-      body?.resume();
       fields.status = status;
+      if (body !== undefined) reply.raw.once("finish", () => body.destroy());
       return reply
         .code(status)
         .header("content-type", "text/plain; charset=utf-8")
         .header("cache-control", "no-cache")
+        .header("connection", "close")
         .send(`${message}\n`);
     };
 
     const target = parseGitGatewayPath(req.method, req.url);
-    if (target === null) return text(404, "Capybara: not a git smart-HTTP endpoint.");
-    if (req.method === "POST" && contentTypeOf(req) !== `application/x-${target.service}-request`) {
+    const wrongBody =
+      req.method === "POST"
+        ? contentTypeOf(req) !== `application/x-${target?.service}-request`
+        : body !== undefined;
+    if (target === null || wrongBody) {
       return text(404, "Capybara: not a git smart-HTTP endpoint.");
     }
     fields.host = target.host;
@@ -320,18 +368,44 @@ export class GitGateway {
     fields.connectorId = source.connectorId;
 
     const cfg = this.config.get().tools.git;
-    const meterKey = gitBytesKey(binding.runId);
-    const used = Number((await this.redis.get(meterKey)) ?? 0);
+    const used = Number((await this.redis.get(gitBytesKey(binding.runId))) ?? 0);
     if (used >= cfg.maxBytesPerRun) return this.done(text(403, BYTES_EXCEEDED), fields, started);
 
-    const { inUse, release } = await this.acquireOrgSlot(binding.orgId);
+    const { key: slotKey, inUse, release } = await this.acquireOrgSlot(binding.orgId);
     if (inUse > cfg.maxConcurrentPerOrg) {
       release();
       return this.done(text(429, TOO_MANY), fields, started);
     }
-    reply.raw.once("close", release);
+    // from here the slot is held: every byte of the body is counted and capped, and the idle
+    // timer runs, before anything else reads it (the push command parse included)
+    const transfer = new Transfer(
+      new ByteMeter(this.redis, gitBytesKey(binding.runId), cfg.maxBytesPerRun, used, slotKey),
+      cfg.idleTimeoutMs,
+      release,
+    );
+    reply.raw.once("close", () => {
+      if (!reply.raw.writableFinished) transfer.ac.abort(new Error("client closed"));
+      transfer.drop();
+    });
+    transfer.ac.signal.addEventListener("abort", () => body?.destroy(), { once: true });
+    transfer.touch();
+    let metered: Readable | undefined;
+    if (body !== undefined) {
+      const t = meterStream(transfer.meter, transfer.touch);
+      // a cap or idle error destroys the request too
+      pipeline(body, t).catch(() => {});
+      metered = t;
+    }
     try {
-      await this.relay(req, reply, { target, binding, source, body, fields, used, text });
+      await this.relay(req, reply, {
+        target,
+        binding,
+        source,
+        body: metered,
+        fields,
+        text,
+        transfer,
+      });
     } catch (e) {
       // anything unexpected before the answer started is a 502 git prints; after, the
       // connection is cut (git reports the transfer broke)
@@ -340,19 +414,27 @@ export class GitGateway {
         error: e instanceof Error ? e.name : "unknown",
       });
       if (!reply.sent && !reply.raw.headersSent) {
-        text(502, upstreamFailed(target.host, "gateway error"));
+        if (transfer.meter.exceeded) text(403, BYTES_EXCEEDED);
+        else if (transfer.ac.signal.aborted) {
+          text(504, upstreamFailed(target.host, "no data within the idle timeout"));
+        } else text(502, upstreamFailed(target.host, "gateway error"));
       } else reply.raw.destroy();
     } finally {
+      fields.bytes = transfer.meter.moved;
+      // best effort: an aborted request's bytes are counted too
+      await transfer.meter.flush().catch(() => {});
       this.done(undefined, fields, started);
     }
   }
 
   /**
    * Takes one of the org's gateway slots (Redis `git-conc:<orgId>`, TTL refreshed by every
-   * request) and returns how many are in use now with the slot's release (idempotent; a counter
-   * that went below zero after an expiry is reset).
+   * request and every byte meter flush) and returns how many are in use now with the slot's
+   * release (idempotent; a counter that went below zero after an expiry is reset).
    */
-  private async acquireOrgSlot(orgId: string): Promise<{ inUse: number; release: () => void }> {
+  private async acquireOrgSlot(
+    orgId: string,
+  ): Promise<{ key: string; inUse: number; release: () => void }> {
     const key = gitConcurrencyKey(orgId);
     const res = await this.redis.multi().incr(key).expire(key, CONCURRENCY_TTL_SECONDS).exec();
     let released = false;
@@ -366,7 +448,7 @@ export class GitGateway {
     };
     const n = res?.[0]?.[1];
     // a failed count is taken as full: refuse rather than run unbounded
-    return { inUse: typeof n === "number" ? n : Number.POSITIVE_INFINITY, release };
+    return { key, inUse: typeof n === "number" ? n : Number.POSITIVE_INFINITY, release };
   }
 
   private done<T>(result: T, fields: LogFields, started: number): T {
@@ -388,14 +470,15 @@ export class GitGateway {
       target: GitGatewayTarget;
       binding: GitTicketBinding;
       source: GitSourceFor;
+      /** The request body, already counted and under the idle timer (POST only). */
       body: Readable | undefined;
       fields: LogFields;
-      used: number;
       text: (status: number, message: string) => FastifyReply;
+      transfer: Transfer;
     },
   ): Promise<void> {
-    const { target, binding, source, fields, text } = c;
-    const cfg = this.config.get().tools.git;
+    const { target, binding, source, fields, text, transfer } = c;
+    const { meter, touch, ac } = transfer;
     let upstreamBody: Readable | undefined = c.body;
 
     // pushes: the policy decides before any byte reaches the host
@@ -425,21 +508,15 @@ export class GitGateway {
           return;
         }
         const iterator = c.body[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
-        // a refused push's pack is read and dropped, so git gets the answer on a clean connection
-        const drain = () => {
-          void (async () => {
-            for (;;) if ((await iterator.next()).done) return;
-          })().catch(() => {});
-        };
         let parsed: Awaited<ReturnType<typeof readReceivePackCommands>>;
         try {
           parsed = await readReceivePackCommands(iterator);
         } catch (e) {
           if (e instanceof ReceivePackParseError) {
-            drain();
             text(400, BAD_PUSH(e.message));
             return;
           }
+          // the cap or the idle timer cut the body: handled by the caller
           throw e;
         }
         const refs = parsed.commands.map((cmd: RefCommand) => cmd.ref);
@@ -450,7 +527,11 @@ export class GitGateway {
             await this.recordRefusal(binding, source, target, refs, decision);
             const note = refusalNote(target.repo, refs, decision);
             fields.status = 200;
-            drain();
+            // the refused pack is read and dropped before the answer (counted, capped, under the
+            // idle timer, the slot held): Node stops reading a request once its response has
+            // ended, and git reads the answer only after it has sent the body. A cap or idle
+            // error here cuts the connection (handled by the caller).
+            for (;;) if ((await iterator.next()).done) break;
             reply
               .code(200)
               .header("content-type", "application/x-git-receive-pack-result")
@@ -481,157 +562,140 @@ export class GitGateway {
       }
     }
 
-    // the idle timer: any byte either way resets it
-    const ac = new AbortController();
-    let idle: NodeJS.Timeout | undefined;
-    const touch = () => {
-      if (idle !== undefined) clearTimeout(idle);
-      idle = setTimeout(() => ac.abort(new Error("idle")), cfg.idleTimeoutMs);
-    };
-    reply.raw.once("close", () => {
-      if (!reply.raw.writableFinished) ac.abort(new Error("client closed"));
-    });
-    touch();
-    const meter = new ByteMeter(this.redis, gitBytesKey(binding.runId), cfg.maxBytesPerRun, c.used);
-    try {
-      const url = `${(this.upstreamOrigin ?? defaultOrigin)(target.host)}/${target.path}.git/${target.endpoint}${
-        target.endpoint === "info/refs" ? `?service=${target.service}` : ""
-      }`;
-      const headers = new Headers();
-      for (const name of FORWARD_REQUEST) {
-        const v = req.headers[name];
-        if (typeof v === "string") headers.set(name, v);
-      }
-      const ua = req.headers["user-agent"];
-      headers.set(
-        "user-agent",
-        `${typeof ua === "string" ? `${ua.slice(0, 200)} ` : ""}capybara-git-gateway`,
-      );
+    const url = `${(this.upstreamOrigin ?? defaultOrigin)(target.host)}/${target.path}.git/${target.endpoint}${
+      target.endpoint === "info/refs" ? `?service=${target.service}` : ""
+    }`;
+    const headers = new Headers();
+    for (const name of FORWARD_REQUEST) {
+      const v = req.headers[name];
+      if (typeof v === "string") headers.set(name, v);
+    }
+    const ua = req.headers["user-agent"];
+    headers.set(
+      "user-agent",
+      `${typeof ua === "string" ? `${ua.slice(0, 200)} ` : ""}capybara-git-gateway`,
+    );
 
-      const auth = await this.connectorAuth(binding.orgId, source.connectorId);
-      if (auth === null) {
-        text(403, notConnected(target.host));
-        return;
-      }
-      const authorization = () =>
-        this.credentials.gitAuthorization(
+    const auth = await this.connectorAuth(binding.orgId, source.connectorId);
+    if (auth === null) {
+      text(403, notConnected(target.host));
+      return;
+    }
+    const authorization = () =>
+      this.credentials.gitAuthorization(
+        binding.orgId,
+        source.connectorId,
+        auth,
+        binding.accountId,
+        source.username,
+      );
+    // a body is sent once (POST); a GET has none, so the 401 retry below never re-reads one
+    let unsent = upstreamBody;
+    const send = async (value: string) => {
+      headers.set("authorization", value);
+      const body = unsent === undefined ? undefined : (Readable.toWeb(unsent) as ReadableStream);
+      unsent = undefined;
+      return safeFetch(
+        url,
+        {
+          method: req.method,
+          headers,
+          ...(body !== undefined && { body, duplex: "half" }),
+          signal: ac.signal,
+        } as RequestInit & { signal: AbortSignal },
+        // the same rules as the commit identity lookup: the deployment's egress proxy and its
+        // private host allowance (`marketplaces.allowPrivateHosts`, e.g. an internal GitHub
+        // Enterprise host), never a redirect
+        gitNetPolicy(this.config.get()),
+      );
+    };
+
+    let res: Response;
+    let value = "";
+    try {
+      value = await authorization();
+      res = await send(value);
+      if (res.status === 401 && req.method === "GET") {
+        // one forced refresh and one retry; a POST body is not replayable
+        await res.body?.cancel().catch(() => {});
+        await this.credentials.gitUnauthorized(
           binding.orgId,
           source.connectorId,
           auth,
           binding.accountId,
-          source.username,
+          value,
         );
-      const send = async (value: string) => {
-        headers.set("authorization", value);
-        const body =
-          upstreamBody === undefined
-            ? undefined
-            : (Readable.toWeb(upstreamBody.pipe(meterStream(meter, touch))) as ReadableStream);
-        return safeFetch(
-          url,
-          {
-            method: req.method,
-            headers,
-            ...(body !== undefined && { body, duplex: "half" }),
-            signal: ac.signal,
-          } as RequestInit & { signal: AbortSignal },
-          // the same rules as the commit identity lookup: the deployment's egress proxy and its
-          // private host allowance (`marketplaces.allowPrivateHosts`, e.g. an internal GitHub
-          // Enterprise host), never a redirect
-          gitNetPolicy(this.config.get()),
-        );
-      };
-
-      let res: Response;
-      let value = "";
-      try {
         value = await authorization();
         res = await send(value);
-        if (res.status === 401 && req.method === "GET") {
-          // one forced refresh and one retry; a POST body is not replayable
-          await res.body?.cancel().catch(() => {});
-          await this.credentials.gitUnauthorized(
-            binding.orgId,
-            source.connectorId,
-            auth,
-            binding.accountId,
-            value,
-          );
-          value = await authorization();
-          res = await send(value);
-          fields.refreshed = true;
-        }
-      } catch (e) {
-        if (e instanceof CredentialMissing) {
-          text(403, reconnect(target.host));
-          return;
-        }
-        if (e instanceof NetDeniedError) {
-          fields.net = e.code;
-          text(
-            502,
-            upstreamFailed(
-              target.host,
-              e.code === "net.redirect"
-                ? "it answered with a redirect, which is not followed"
-                : "refused by the network rules",
-            ),
-          );
-          return;
-        }
-        if (e instanceof GitBytesExceeded || meter.exceeded) {
-          text(403, BYTES_EXCEEDED);
-          return;
-        }
-        if (ac.signal.aborted) {
-          text(504, upstreamFailed(target.host, "no data within the idle timeout"));
-          return;
-        }
-        throw e;
+        fields.refreshed = true;
       }
-      fields.upstream = res.status;
-      if (res.status === 401) {
-        await res.body?.cancel().catch(() => {});
-        if (req.method === "POST") {
-          // a refused POST credential is refreshed for the next command (no retry here)
-          await this.credentials
-            .gitUnauthorized(binding.orgId, source.connectorId, auth, binding.accountId, value)
-            .catch(() => {});
-        }
+    } catch (e) {
+      if (e instanceof CredentialMissing) {
         text(403, reconnect(target.host));
         return;
       }
-      if (res.status !== 200) {
-        await res.body?.cancel().catch(() => {});
-        if (res.status === 404 || res.status === 403) {
-          text(res.status, `Capybara: ${target.host} answered ${res.status} for ${target.repo}.`);
-        } else {
-          text(502, upstreamFailed(target.host, `status ${res.status}`));
-        }
+      if (e instanceof NetDeniedError) {
+        fields.net = e.code;
+        text(
+          502,
+          upstreamFailed(
+            target.host,
+            e.code === "net.redirect"
+              ? "it answered with a redirect, which is not followed"
+              : "refused by the network rules",
+          ),
+        );
         return;
       }
-
-      reply.code(200);
-      for (const name of FORWARD_RESPONSE) {
-        const v = res.headers.get(name);
-        if (v !== null) reply.header(name, v);
-      }
-      fields.status = 200;
-      if (res.body === null) {
-        reply.send();
+      if (e instanceof GitBytesExceeded || meter.exceeded) {
+        text(403, BYTES_EXCEEDED);
         return;
       }
-      const down = meterStream(meter, touch);
-      const source$ = Readable.fromWeb(res.body as import("node:stream/web").ReadableStream);
-      const done = pipeline(source$, down).catch((e: unknown) => {
-        fields.broken = e instanceof Error ? e.name : "unknown";
-      });
-      reply.send(down);
-      await done;
-    } finally {
-      if (idle !== undefined) clearTimeout(idle);
-      fields.bytes = meter.moved;
+      if (ac.signal.aborted) {
+        text(504, upstreamFailed(target.host, "no data within the idle timeout"));
+        return;
+      }
+      throw e;
     }
+    fields.upstream = res.status;
+    if (res.status === 401) {
+      await res.body?.cancel().catch(() => {});
+      if (req.method === "POST") {
+        // a refused POST credential is refreshed for the next command (no retry here)
+        await this.credentials
+          .gitUnauthorized(binding.orgId, source.connectorId, auth, binding.accountId, value)
+          .catch(() => {});
+      }
+      text(403, reconnect(target.host));
+      return;
+    }
+    if (res.status !== 200) {
+      await res.body?.cancel().catch(() => {});
+      if (res.status === 404 || res.status === 403) {
+        text(res.status, `Capybara: ${target.host} answered ${res.status} for ${target.repo}.`);
+      } else {
+        text(502, upstreamFailed(target.host, `status ${res.status}`));
+      }
+      return;
+    }
+
+    reply.code(200);
+    for (const name of FORWARD_RESPONSE) {
+      const v = res.headers.get(name);
+      if (v !== null) reply.header(name, v);
+    }
+    fields.status = 200;
+    if (res.body === null) {
+      reply.send();
+      return;
+    }
+    const down = meterStream(meter, touch);
+    const source$ = Readable.fromWeb(res.body as import("node:stream/web").ReadableStream);
+    const done = pipeline(source$, down).catch((e: unknown) => {
+      fields.broken = e instanceof Error ? e.name : "unknown";
+    });
+    reply.send(down);
+    await done;
   }
 
   /** The push decision for this target (spec §7). */
