@@ -120,6 +120,8 @@ export function orgsFor(
     { enqueueOrg: async () => {} },
     // no catalog here: what a deleted org owns is covered by test/orgs/org-delete-owned.test.ts
     { onOrgDeleted: async () => ({ transferred: 0, removed: 0 }) },
+    // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
+    { recordIn: async () => [], enqueue: async () => {} },
   );
 }
 
@@ -209,6 +211,8 @@ export function testOffboarding(
     },
     approvals ?? noWaits,
     questions ?? noWaits,
+    // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
+    { recordIn: async () => [], enqueue: async () => {} },
     (opts.log ?? quiet) as KernelLogger,
   );
 }

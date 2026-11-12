@@ -4,6 +4,7 @@ import {
   type HookHandler,
   type HookOptions,
   type HookPayloads,
+  type LIFECYCLE_HOOKS,
   type Logger,
   POLICY_HOOKS,
   type PolicyHook,
@@ -86,6 +87,15 @@ export interface HookSource {
   readonly hooks: readonly RegisteredHook[];
   readonly inflight: InflightTracker;
 }
+
+/** A lifecycle mount: an observe-only notice that a member, an agent or an org was removed. */
+export type LifecycleHook = (typeof LIFECYCLE_HOOKS)[number];
+
+/**
+ * Mounts delivered by a queue (at least once, by plugin) instead of {@link HookRegistry.run}:
+ * `usage.report` and the lifecycle mounts.
+ */
+export type QueuedHook = "usage.report" | LifecycleHook;
 
 const AVAILABLE: ReadonlySet<string> = new Set(HOOKS_AVAILABLE);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
@@ -277,12 +287,13 @@ export class HookRegistry {
   }
 
   /**
-   * `usage.report` handlers by plugin name (delivered by the usage queue, not by {@link run}); each
+   * Handlers of a queue-delivered mount by plugin name: `usage.report` (the usage queue) and the
+   * lifecycle mounts (the lifecycle queue, `lifecycle-hooks.ts`), never through {@link run}. Each
    * call runs through the instance's `inflight.run` with the plugin's effective config for the
    * payload's organization, and throws {@link HookNeedsConfigError} without calling the handler
    * when that config is not valid (layering spec A §6).
    */
-  handlers(mount: "usage.report"): { plugin: string; handler: HookHandler<"usage.report"> }[] {
+  handlers<K extends QueuedHook>(mount: K): { plugin: string; handler: HookHandler<K> }[] {
     return this.entries(mount).map(({ src, hook }) => ({
       plugin: src.name,
       handler: (payload, signal) =>
@@ -294,8 +305,8 @@ export class HookRegistry {
     }));
   }
 
-  /** Runs the hooks of a mount point (see the class comment). */
-  async run<K extends Exclude<AvailableHook, "usage.report">>(
+  /** Runs the hooks of a mount point (see the class comment); queue-delivered mounts excluded. */
+  async run<K extends Exclude<AvailableHook, QueuedHook>>(
     mount: K,
     payload: HookPayloads[K],
     signal: AbortSignal,

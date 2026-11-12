@@ -5,8 +5,10 @@ import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { EvalBudget } from "../evals/budget.js";
+import { LifecycleHooks } from "../extensions/lifecycle-hooks.js";
 import { audit } from "../identity/audit.js";
 import type { WriteActor } from "../identity/write-actor.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -385,6 +387,9 @@ export class AgentsService {
     /** Settles the agent's connector setup request when its pending connectors change (P4-7). */
     @Inject(PendingConnectorRequests)
     private readonly setupRequests: Pick<PendingConnectorRequests, "settleIn" | "retargetIn">,
+    /** Records `agent.deleted` for the subscribing plugins in the delete's transaction. */
+    @Inject(LifecycleHooks)
+    private readonly lifecycle: Pick<LifecycleHooks, "recordIn" | "enqueue">,
   ) {}
 
   /**
@@ -1042,6 +1047,9 @@ export class AgentsService {
       { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
       "agent_deleted",
     );
+    // plugins learn of the delete durably: recorded here, enqueued after the root commit
+    const deliveries = await this.lifecycle.recordIn("agent.deleted", { orgId, agentId });
+    afterCommit(() => this.lifecycle.enqueue(deliveries));
     // joins this transaction (mandatory: it relies on the agent row lock taken above)
     return this.skillChanges.cancelPendingForAgent(
       orgId,

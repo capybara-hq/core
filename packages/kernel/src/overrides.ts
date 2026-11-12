@@ -5,6 +5,10 @@ import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
+import {
+  LIFECYCLE_DELIVERY_HOOKS,
+  type LifecycleDeliveryHooks,
+} from "./extensions/lifecycle-hooks.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
@@ -30,6 +34,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EVAL_REPLAY_HOOKS`: the hooks of the eval full-run replay and the judge;
  * - `TOOL_PIPELINE_HOOKS`: the tool pipeline's hooks and policy decision;
  * - `SUBAGENT_MESSAGES_HOOKS`: the sub-agent message tools' hooks (a send raced by a run's end);
+ * - `LIFECYCLE_DELIVERY_HOOKS`: a shorter lifecycle hook backoff, and enqueues dropped on purpose;
  * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
  *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`, `SETUP_CHECK_TIMEOUT`,
  *   `PRESENCE_INTERVAL_MS`: shorter timings;
@@ -45,6 +50,7 @@ interface KernelSeams {
   [EVAL_REPLAY_HOOKS]: EvalReplayHooks;
   [TOOL_PIPELINE_HOOKS]: ToolPipelineHooks;
   [SUBAGENT_MESSAGES_HOOKS]: SubagentMessagesHooks;
+  [LIFECYCLE_DELIVERY_HOOKS]: LifecycleDeliveryHooks;
   [BOOTSTRAP_LOCK_TTL]: number;
   [FILE_PREVIEW_TIMEOUT]: number;
   [LIST_MODELS_TIMEOUT]: number;
@@ -75,6 +81,7 @@ const SEAM_TOKENS = [
   EVAL_REPLAY_HOOKS,
   TOOL_PIPELINE_HOOKS,
   SUBAGENT_MESSAGES_HOOKS,
+  LIFECYCLE_DELIVERY_HOOKS,
   BOOTSTRAP_LOCK_TTL,
   FILE_PREVIEW_TIMEOUT,
   LIST_MODELS_TIMEOUT,

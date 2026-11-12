@@ -1295,6 +1295,20 @@ export interface UsageReportSweepTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/**
+ * 0120: one lifecycle hook delivery (`org.member_removed`, `agent.deleted`, `org.deleted`) to one
+ * subscribing plugin; delivered by the `cap-kernel-lifecycle` queue (`extensions/lifecycle-hooks.ts`).
+ */
+export interface LifecycleDeliveriesTable {
+  id: Generated<string>;
+  mount: "org.member_removed" | "agent.deleted" | "org.deleted";
+  payload: Json<Record<string, string>>;
+  plugin: string;
+  created_at: Ts;
+  delivered_at: TsNullable;
+  attempts: ColumnType<number, number | undefined, number>;
+}
+
 /** A model disabled on the platform (`org_id` null) or in one org (0089, spec B §5.3). */
 export interface ModelDisabledTable {
   org_id: string | null;
@@ -1458,6 +1472,7 @@ export interface KernelDatabase {
   extension_installs: ExtensionInstallsTable;
   extension_replica_status: ExtensionReplicaStatusTable;
   usage_report_sweep: UsageReportSweepTable;
+  lifecycle_deliveries: LifecycleDeliveriesTable;
   extension_name_owners: ExtensionNameOwnersTable;
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
   catalog_items: CatalogItemsTable;

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
  * | `fake-object-store` | `object-store@1` on the `startTestS3()` container (deployment config as `TestS3` gives it; POST-policy presign) |
  * | `fake-tools-ui` | tool `write`, view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector); no storage |
  * | `fake-storage-user` | tools `note` / `read_note` through `ctx.storage` (`permissions.storage`) |
+ * | `fake-lifecycle` | observes `org.member_removed`, `agent.deleted` and `org.deleted`; a migration with tables `calls` (every call) and `deliveries` (every call that succeeded), each row the mount and the payload; deployment config `failTimes` (default 0): the first `failTimes` calls of each (mount, payload) throw |
  * | `fake-embed` | embeds `panel` (page) and `panel-conv` (conversation), static `/ui/panel.js`, token-checked routes, SSE over `ctx.bus` |
  * | `fake-bootstrap-a` | `model-provider@2` with a required secret `apiKey` (pending configuration until set) |
  * | `fake-bootstrap-b` | `object-store@1` kept in its own PG table; `bucket` + secret `secretKey` |
@@ -32,6 +33,7 @@ export const FAKE_EXTENSIONS = [
   "fake-object-store",
   "fake-tools-ui",
   "fake-storage-user",
+  "fake-lifecycle",
   "fake-embed",
   "fake-bootstrap-a",
   "fake-bootstrap-b",

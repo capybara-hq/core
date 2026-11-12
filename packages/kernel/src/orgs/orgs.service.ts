@@ -7,6 +7,7 @@ import { PluginScopeSync } from "../catalog/scope-sync.js";
 import type { OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { EvalBudget } from "../evals/budget.js";
+import { LifecycleHooks } from "../extensions/lifecycle-hooks.js";
 import type { Account } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
@@ -94,6 +95,9 @@ export class OrgsService {
     @Inject(PluginScopeSync) private readonly scopeSync: Pick<PluginScopeSync, "enqueueOrg">,
     /** What the deleted org owns is transferred or removed in the delete's transaction (P3-20). */
     @Inject(OwnedItems) private readonly ownedItems: Pick<OwnedItems, "onOrgDeleted">,
+    /** Records `org.deleted` for the subscribing plugins in the delete's transaction. */
+    @Inject(LifecycleHooks)
+    private readonly lifecycle: Pick<LifecycleHooks, "recordIn" | "enqueue">,
   ) {}
 
   /**
@@ -243,8 +247,9 @@ export class OrgsService {
    * sessions' current org pointing at it, and transfers or removes the plugins and promoted
    * components it owns ({@link OwnedItems.onOrgDeleted}, P3-20: shared ones become the platform's,
    * the others are removed, a removed plugin's extension taken out by its cleanup job after the
-   * commit); after the commit emits `org.deleted` (channel connections go with the org: the
-   * runtime's connection reads filter deleted orgs).
+   * commit) and records the `org.deleted` lifecycle hook deliveries; after the commit emits
+   * `org.deleted` (channel connections go with the org: the runtime's connection reads filter
+   * deleted orgs) and enqueues those deliveries.
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.softDeleteIn(orgId, actor, actorTokenId);
@@ -293,7 +298,9 @@ export class OrgsService {
       action: "org.deleted",
       target: orgId,
     });
+    const deliveries = await this.lifecycle.recordIn("org.deleted", { orgId });
     // channel connections follow the org after the root commit (none after a rollback)
     afterCommit(() => this.events.emit("org.deleted", { orgId }));
+    afterCommit(() => this.lifecycle.enqueue(deliveries));
   }
 }

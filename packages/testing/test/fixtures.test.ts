@@ -70,6 +70,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-object-store": { provides: ["object-store@1"] },
   "fake-tools-ui": { provides: [] },
   "fake-storage-user": { provides: [] },
+  "fake-lifecycle": { provides: [] },
   "fake-embed": { provides: [] },
   "fake-bootstrap-a": { provides: ["model-provider@2"] },
   "fake-bootstrap-b": { provides: ["object-store@1"] },

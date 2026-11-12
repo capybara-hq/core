@@ -6,6 +6,7 @@ import { retargetSetupRequests } from "../agents/pending-connector-requests.js";
 import { EventLog } from "../conversations/event-log.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { LifecycleHooks } from "../extensions/lifecycle-hooks.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SessionService } from "../identity/sessions.js";
@@ -48,6 +49,8 @@ export interface OffboardResult {
   devices: string[];
   /** Conversations whose queued messages were deleted (`changed: queue` after commit). */
   queueConversations: string[];
+  /** The `org.member_removed` deliveries recorded here (enqueued after commit). */
+  lifecycleDeliveries: string[];
 }
 
 /** 运行中止：与会话中止接口（`POST .../abort`）同一套路径，`byAccountId = null` 表示系统发起。 */
@@ -102,6 +105,9 @@ export class Offboarding {
     private readonly approvals: Pick<ApprovalsService, "cancelPendingFor">,
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "cancelPendingFor">,
+    /** Records `org.member_removed` for the subscribing plugins; enqueued after the commit. */
+    @Inject(LifecycleHooks)
+    private readonly lifecycle: Pick<LifecycleHooks, "recordIn" | "enqueue">,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
@@ -123,7 +129,8 @@ export class Offboarding {
    * 8. 审计 `org.member.offboarded`；
    * 9. Soft-deletes the person's devices in the org and clears their default row (the
    *    instances and files are destroyed after the commit, best effort; the hourly sweep finishes
-   *    any left).
+   *    any left);
+   * 10. Records the `org.member_removed` lifecycle hook deliveries (enqueued after the commit).
    */
   @Transactional({ propagation: "mandatory" })
   async offboard(
@@ -348,6 +355,10 @@ export class Offboarding {
         ...(queued.length > 0 && { queuedMessagesDeleted: queued.length }),
       },
     });
+    const lifecycleDeliveries = await this.lifecycle.recordIn("org.member_removed", {
+      orgId,
+      accountId,
+    });
     return {
       role: deleted.role,
       revokedSessionIds: sessions.map((s) => s.id),
@@ -360,6 +371,7 @@ export class Offboarding {
       newOwnerId: agents.length > 0 ? owner.account_id : null,
       devices: devices.map((r) => r.id),
       queueConversations,
+      lifecycleDeliveries,
     };
   }
 
@@ -388,11 +400,13 @@ export class Offboarding {
   /**
    * After the commit (callers register it with the infra `afterCommit` inside their transaction):
    * writes the session revocation markers, publishes the cancelled events, stops the person's
-   * runs in the org and schedules destroying their devices. A failing step only logs a
-   * warning.
+   * runs in the org, schedules destroying their devices and enqueues the `org.member_removed`
+   * deliveries. A failing step only logs a warning.
    */
   async afterOffboard(r: OffboardResult): Promise<void> {
     const { sessions, log, eventLog } = this;
+    // first: it never throws, and nothing below must keep it from running (the sweeper is the net)
+    await this.lifecycle.enqueue(r.lifecycleDeliveries);
     try {
       await sessions.markRevoked(r.revokedSessionIds);
     } catch (err) {
