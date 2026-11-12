@@ -237,7 +237,7 @@ export const resetDeviceFiles = (orgId: string, id: string) =>
 
 /**
  * Whether the machine itself is set to run without a sandbox (its reported raw value) while the
- * platform no longer counts it as unsandboxed because the level is below 开放: the device refuses
+ * platform no longer counts it as unsandboxed because the level is below open: the device refuses
  * every command then (spec §11.1).
  */
 export const deviceUnsandboxedRefused = (e: Pick<Device, "sandbox" | "network">): boolean =>
