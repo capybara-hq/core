@@ -129,7 +129,19 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       // a departed member's run stop, owed by the offboarding (transactional outbox spec §8.1)
       case RUN_STOP_JOB:
-        await this.offboarding.stopRun(job.data as RunStopJobData);
+        try {
+          await this.offboarding.stopRun(job.data as RunStopJobData);
+        } catch (err) {
+          // nothing stops the run after its last attempt: say so (the failed job is kept)
+          if (job.attemptsMade + 1 >= (job.opts.attempts ?? 1)) {
+            this.log.error("a departed member's run could not be stopped", {
+              jobId: job.id,
+              runId: (job.data as RunStopJobData).runId,
+              err,
+            });
+          }
+          throw err;
+        }
         return;
       // the end of a conversation's wake window (background Bash spec §3)
       case BG_WAKE_JOB: {

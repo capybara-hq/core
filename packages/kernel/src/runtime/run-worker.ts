@@ -76,6 +76,10 @@ export interface RunHooks {
   lockTtlMs?: number;
   /** 任务结束后的每次 ensureRun 尝试之前调用（attempt 从 0 起）；抛错即模拟该次尝试失败。 */
   beforeEnsureRun?(conversationId: string, attempt: number): Promise<void>;
+  /** Called after a run job read the run's status, before it takes the conversation lock. */
+  afterRunRead?(runId: string, conversationId: string): Promise<void>;
+  /** Called with the conversation lock held, before a queued run's `run_started` is written. */
+  beforeRunStarted?(runId: string, conversationId: string): Promise<void>;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -435,6 +439,7 @@ export class RunWorker {
     }
     // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
     if (run.status === "waiting") return;
+    await this.hooks?.afterRunRead?.(runId, conversationId);
     const conv = await this.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id", "kind", "subagent_depth"])
@@ -668,9 +673,13 @@ export class RunWorker {
     }
     if (run.status === "queued" || startedAt === null) {
       if (!existingStart) {
+        await this.hooks?.beforeRunStarted?.(runId, conversationId);
         if (saved !== undefined)
           await this.fallBackIfUnavailable(conv.org_id, conversationId, runId, saved);
         const started = await this.appendRunStarted(conversationId, run, agent, saved);
+        // the status was read before the conversation lock: a stop that ended the run meanwhile
+        // (a queued run's direct abort, an orphan abort) wins, and the run never starts
+        if (started.terminal) return "finished";
         agent = started.agent;
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
@@ -702,12 +711,15 @@ export class RunWorker {
           },
         }),
       });
+      // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
         .where("id", "=", runId)
+        .where("status", "in", ["queued", "running"])
         .returning("started_at")
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+      if (updated === undefined) return "finished";
       startedAt = updated.started_at as Date;
     }
     // 截止时间以首次开始为准：停机后在其他 worker 续跑也不重新计时；等人处理的时长（waited_ms）不计入。
@@ -919,7 +931,7 @@ export class RunWorker {
     /** The definition so far (a sub-agent's frozen one is final). */
     current: AgentDefinition,
     saved: AgentDefinition | undefined,
-  ): Promise<{ toSeq: number | undefined; agent: AgentDefinition }> {
+  ): Promise<{ toSeq: number | undefined; agent: AgentDefinition; terminal?: true }> {
     const t = this.db;
     await t
       .selectFrom("conversations")
@@ -927,6 +939,17 @@ export class RunWorker {
       .where("id", "=", conversationId)
       .forUpdate()
       .execute();
+    // the run's status again under the locks (conversation, then run, as `RunFinish.finishIn`):
+    // the job read it before taking the conversation lock, and a stop may have ended it since
+    const row = await t
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", run.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || TERMINAL_STATUSES.has(row.status)) {
+      return { toSeq: undefined, agent: current, terminal: true };
+    }
     const agent =
       saved !== undefined
         ? effectiveDefinition(saved, await readSelection(t, conversationId))

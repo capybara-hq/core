@@ -84,12 +84,13 @@ export const OUTBOX_JOBS = {
     queue: "cap-kernel-maintenance",
     idempotent: "stopping a finished run is a no-op",
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
-    // retried while PG or Redis is briefly unavailable; removed once done
+    // retried while PG or Redis is briefly unavailable; removed once done; a job that failed every
+    // attempt is kept a week (no sweep stops the run after it: the failure must stay visible)
     opts: {
       attempts: 5,
       backoff: { type: "exponential", delay: 5_000 },
       removeOnComplete: true,
-      removeOnFail: true,
+      removeOnFail: { age: 7 * 86_400, count: 1_000 },
     },
   },
   // `sandbox/jobs.ts` SANDBOX_DESTROY_FOR_JOB: owed by the transaction that soft-deletes a device

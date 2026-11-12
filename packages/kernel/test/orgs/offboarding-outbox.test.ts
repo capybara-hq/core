@@ -357,10 +357,17 @@ describe("offboarding owes its run stops and device destroys", () => {
 });
 
 describe("offboarding and a reply's skips lock conversation trees root first", () => {
-  /** How many backends of this database wait for a lock. */
-  const lockWaiters = async () => {
-    const r = await sql<{ n: string }>`SELECT count(*) AS n FROM pg_stat_activity
-      WHERE datname = current_database() AND wait_event_type = 'Lock'`.execute(raw);
+  /**
+   * How many backends wait, directly or through another waiter, on the backend `pid` (the test's
+   * own lock holder): other sessions of the database never count.
+   */
+  const waitersOn = async (pid: number) => {
+    const r = await sql<{ n: string }>`WITH RECURSIVE w(pid) AS (
+        SELECT a.pid FROM pg_stat_activity a WHERE ${pid}::int = ANY(pg_blocking_pids(a.pid))
+        UNION
+        SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
+      )
+      SELECT count(*) AS n FROM w`.execute(raw);
     return Number(r.rows[0]?.n ?? 0);
   };
 
@@ -410,17 +417,17 @@ describe("offboarding and a reply's skips lock conversation trees root first", (
     const released = new Promise<void>((r) => {
       release = r;
     });
-    let held!: () => void;
-    const holding = new Promise<void>((r) => {
+    let held!: (pid: number) => void;
+    const holding = new Promise<number>((r) => {
       held = r;
     });
     const holder = raw.transaction().execute(async (t) => {
       await sql`SELECT id FROM capybara.questions WHERE id = ${question.id} FOR UPDATE`.execute(t);
-      held();
+      const me = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(t);
+      held(Number(me.rows[0]?.pid));
       await released;
     });
-    await holding;
-    const base = await lockWaiters();
+    const holderPid = await holding;
 
     const reply = kernelTransaction(k, async () => {
       const conversations = k.app.get(ConversationsService);
@@ -429,11 +436,11 @@ describe("offboarding and a reply's skips lock conversation trees root first", (
       );
       return conversations.skipWaitsIn(rootId, author.id, 100);
     });
-    await waitFor(async () => (await lockWaiters()) >= base + 1, 10_000, "the reply waits");
+    await waitFor(async () => (await waitersOn(holderPid)) >= 1, 10_000, "the reply waits");
     const offboard = kernelTransaction(k, () =>
       k.app.get(Offboarding).offboard(orgId, leaver.id, "directory"),
     );
-    await waitFor(async () => (await lockWaiters()) >= base + 2, 10_000, "the offboarding waits");
+    await waitFor(async () => (await waitersOn(holderPid)) >= 2, 10_000, "the offboarding waits");
     release();
     await holder;
 

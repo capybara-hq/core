@@ -637,8 +637,10 @@ export class RunQueue {
    * R27): with the conversation lock free, under the conversation row lock, a run still `queued`
    * is finished `aborted` with `run_aborted` (`consumed_seq` at least to its trigger), so a job
    * that runs later finds it finished and starts nothing. True when it did; false when a worker
-   * holds the conversation (it hears the stop) or the run is no longer queued. The caller writes
-   * the stop marker first, so a worker that takes the conversation meanwhile still stops.
+   * holds the conversation or wrote the run's `run_started` (it hears the stop), or the run is no
+   * longer queued. The caller writes the stop marker first, so a worker that takes the
+   * conversation meanwhile still stops; a worker that read the run before this commit re-checks it
+   * under the row locks before its `run_started` and never moves it back to `running`.
    */
   async abortQueued(
     conversationId: string,
@@ -668,6 +670,14 @@ export class RunQueue {
       .executeTakeFirst();
     const active = await this.activeRun(t, conversationId);
     if (!conv || !active || active.id !== runId || active.status !== "queued") return null;
+    // a worker already wrote its start (it holds the conversation since): the stop marker ends it
+    const started = await t
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("idem_key", "=", `run_started:${runId}`)
+      .executeTakeFirst();
+    if (started) return null;
     return this.finisher.finishIn({
       conversationId,
       runId,

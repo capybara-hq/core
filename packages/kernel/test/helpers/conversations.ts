@@ -93,6 +93,7 @@ const noRuns: RunControl = {
   resumeIn: async () => "not-waiting",
   oweStopDeletedTree: async () => true,
   abortIfOrphaned: async () => false,
+  abortQueued: async () => false,
   abortWaiting: async () => false,
   requestAbort: async () => {},
   stopTree: async () => 0,

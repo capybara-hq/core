@@ -274,8 +274,8 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     path: "packages/kernel/src/sandbox/jobs.ts",
     within: "resetFiles",
     reason:
-      "a files reset is a request-time action with no database write that owes it: the request " +
-      "fails when the add fails, so it is not owed work (ruling R28)",
+      "a files reset is a request-time action that no write owes (the audit row only records the " +
+      "request): the request fails when the add fails, so it is not owed work (ruling R28)",
   },
   {
     rule: "kc-cache",
