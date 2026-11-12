@@ -168,6 +168,9 @@
       "not_found": "The background task does not exist or has been cleaned up.",
       "output_unavailable": "The output can't be read now. Open the task to see why."
     },
+    "outbox": {
+      "not_found": "The background job no longer exists."
+    },
     "run": {
       "not_active": "There is no reply in progress.",
       "model_unavailable": "The model is unavailable.",
