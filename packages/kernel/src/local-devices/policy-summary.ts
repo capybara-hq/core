@@ -4,7 +4,7 @@ import {
   isSandboxTier,
 } from "@capybara-hq/plugin-sdk";
 
-const KNOWN_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp"];
+const KNOWN_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp", "tiers"];
 
 /**
  * The known features in `v` (a hello's `features` or the stored column), in a fixed order and

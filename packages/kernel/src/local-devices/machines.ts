@@ -194,13 +194,25 @@ export class MachinesService {
    * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
    * never said hello has no known roots: nothing to compare. The reported features (known ones
    * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
-   * program downgraded to one without them is no longer sent what it cannot do.
+   * program downgraded to one without them is no longer sent what it cannot do. A reported
+   * isolation that differs from the stored one (none stored counts as `sandbox`) is audited
+   * `device.isolation_reported` (sandbox dev tiers spec §10.4), once per change.
    */
   @Transactional()
   async recordHello(machineId: string, hello: DeviceHello): Promise<void> {
     const self = await this.db
       .selectFrom("device_machines")
-      .select(["device_id", "name", "os", "arch", "roots", "created_at"])
+      .select([
+        "device_id",
+        "org_id",
+        "account_id",
+        "name",
+        "os",
+        "arch",
+        "roots",
+        "created_at",
+        "local_policy",
+      ])
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .forUpdate()
@@ -231,6 +243,17 @@ export class MachinesService {
           .execute();
       }
     }
+    const policy = localPolicyOf(hello.policy);
+    const before = localPolicyOf(self.local_policy)?.isolation ?? "sandbox";
+    if (policy !== null && policy.isolation !== before) {
+      await audit(this.db.db, {
+        actorAccountId: self.account_id,
+        orgId: self.org_id,
+        action: "device.isolation_reported",
+        target: self.device_id,
+        detail: { machineId, isolation: policy.isolation, previous: before },
+      });
+    }
     await this.db
       .updateTable("device_machines")
       .set({
@@ -241,7 +264,7 @@ export class MachinesService {
         roots: JSON.stringify(hello.roots),
         session_isolation: hello.sessionIsolation,
         features: deviceFeaturesOf(hello.features),
-        local_policy: jsonOrNull(localPolicyOf(hello.policy)),
+        local_policy: jsonOrNull(policy),
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)

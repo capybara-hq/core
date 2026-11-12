@@ -836,7 +836,8 @@ export class CatalogRequestsService {
    * {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`). An org
    * following the deployment default starts from the deployment's list (it keeps its own list from
    * then on). The deployment egress `none`, or the org's `none` -> `catalog.request_invalid`; more
-   * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`. Hosts all allowed
+   * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`; decided with an API
+   * token -> `org.sandbox_egress_not_allowed` (only a person widens the network). Hosts all allowed
    * already: nothing is written.
    */
   private async approveNetwork(
@@ -871,12 +872,15 @@ export class CatalogRequestsService {
         `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts; remove some in the organization settings first`,
       );
     }
+    // approving widens the org's base list: only a person in a session does that, never an API
+    // token (sandbox dev tiers spec §7.2; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
       { sandboxEgress: { mode: "allowlist", allowHosts } },
       actor,
       opts.actorTokenId,
       { requestId },
+      { onlyNarrows: opts.actorTokenId !== undefined },
     );
   }
 

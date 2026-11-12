@@ -200,7 +200,6 @@ describe("DevicePolicyService.apply", () => {
         detail: {
           add: ["files.slack.com"],
           remove: [],
-          network: null,
           by: d.accountId,
           via: "web",
           approvalId: "ap-1",
@@ -213,8 +212,16 @@ describe("DevicePolicyService.apply", () => {
     expect(view.network).toEqual({
       features: ["networkReport", "policyOp"],
       policy: want,
-      recent: [expect.objectContaining({ add: ["files.slack.com"], via: "web", confirmed: true })],
     });
+    expect(view.sandbox.recent).toEqual([
+      expect.objectContaining({
+        kind: "policy",
+        add: ["files.slack.com"],
+        tier: null,
+        via: "web",
+        confirmed: true,
+      }),
+    ]);
   });
 
   it("a program without policyOp is unsupported and is sent nothing", async () => {

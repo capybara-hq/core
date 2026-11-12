@@ -29,15 +29,16 @@ export type PolicyChangeOutcome =
   | { applied: false; reason: "offline" | "refused" | "unsupported"; message: string };
 
 const OFFLINE_MESSAGE =
-  "The device's machine is offline, so its network policy was not changed. Start capybara-device on it.";
+  "The device's machine is offline, so its policy was not changed. Start capybara-device on it.";
 const UNSUPPORTED_MESSAGE =
-  "The device's capybara-device program cannot change its network policy from the platform. Update capybara-device on the machine.";
+  "The device's capybara-device program cannot change its policy from the platform. Update capybara-device on the machine.";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Changes a local device's network policy on its machine (network ask-to-allow spec §5.2): the
- * kernel→device `policy` op over the {@link LocalDeviceRelay}. The machine is the authority: it
+ * Changes a local device's policy on its machine (network ask-to-allow spec §5.2; sandbox dev
+ * tiers spec §7.3: its hosts, its `tier`, and `isolation` back to `sandbox`): the kernel→device
+ * `policy` op over the {@link LocalDeviceRelay}. The machine is the authority: it
  * refuses widening unless its owner allows remote grants, validates every host and answers with
  * the policy as written, which the kernel then keeps on the active machine's row (§5.4) and
  * audits as `device.policy_changed`.
@@ -159,8 +160,9 @@ export class DevicePolicyService {
       detail: {
         add: change.add ?? [],
         remove: change.remove ?? [],
-        // Shown on the device page as the old network switch until the page shows tiers.
-        network: change.tier === undefined ? null : change.tier === "open" ? "open" : "allowlist",
+        // only when set (null: follow the org's default); the device page lists the change
+        ...(change.tier !== undefined && { tier: change.tier }),
+        ...(change.isolation !== undefined && { isolation: change.isolation }),
         by: source.accountId,
         via: source.via,
         approvalId: source.approvalId ?? null,

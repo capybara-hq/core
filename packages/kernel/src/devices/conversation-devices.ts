@@ -3,6 +3,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import type { DeviceSandboxLevel } from "../runtime/context/device-paths.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
@@ -45,8 +46,16 @@ export class ConversationDevices {
       Partial<Pick<SandboxProviders, "forName">>,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
-    private readonly devices: Pick<DevicesService, "ensureDefault">,
+    private readonly devices: Pick<DevicesService, "ensureDefault" | "sandboxLevel">,
   ) {}
+
+  /**
+   * The sandbox level a call in the device runs at now ({@link DevicesService.sandboxLevel}),
+   * recorded for the model in `device_paths` (sandbox dev tiers spec §11.5).
+   */
+  sandboxLevel(orgId: string, deviceId: string): Promise<DeviceSandboxLevel | null> {
+    return this.devices.sandboxLevel(orgId, deviceId);
+  }
 
   /**
    * The device a new conversation of `accountId` is bound to: the chosen one when it is

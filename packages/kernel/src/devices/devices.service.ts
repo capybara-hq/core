@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type {
-  DeviceLocalPolicySummary,
-  LocalizedName,
-  SandboxLimits,
+import {
+  type DeviceFeature,
+  type DeviceLocalPolicySummary,
+  type LocalizedName,
+  type SandboxLimits,
+  type SandboxTier,
+  tierAtMost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -21,9 +24,12 @@ import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
+import type { DeviceSandboxLevel } from "../runtime/context/device-paths.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
 import {
   DeviceAccess,
   demotedProvider,
@@ -70,39 +76,101 @@ export interface DeviceView {
   network: {
     features: string[];
     policy: DeviceLocalPolicySummary | null;
-    /** The device's last {@link RECENT_POLICY_CHANGES} policy changes, newest first (§10.4). */
-    recent: DevicePolicyChangeView[];
   } | null;
+  /** Its sandbox level (sandbox dev tiers spec §4, §11.1). */
+  sandbox: DeviceSandboxView;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
   instance: { status: "running" | "suspended"; lastUsedAt: string } | null;
-  /** The org's effective sandbox limits (phase 1 devices use them unchanged, spec §8.4). */
+  /**
+   * The sandbox limits of its effective tier (sandbox dev tiers spec §4.2): what a cloud
+   * instance is created with; for a local device the network of the org's default tier.
+   */
   limits: SandboxLimits;
   createdAt: string;
 }
 
-/** How many recent policy changes a device view lists. */
+/**
+ * A device's sandbox level as its owner sees it (sandbox dev tiers spec §4, §11.1).
+ */
+export interface DeviceSandboxView {
+  /**
+   * The tier the owner chose: a cloud device's stored one, a local device's as its machine last
+   * reported it; null follows the org's default.
+   */
+  tier: SandboxTier | null;
+  /**
+   * The tier its commands run at: min(chosen ?? the org's default, ceiling); `strict` for a local
+   * device whose program lacks the `tiers` feature (it runs as before tiers).
+   */
+  effectiveTier: SandboxTier;
+  /** The highest tier the device may reach: min(the org's max, the platform's max). */
+  ceiling: SandboxTier;
+  /** Which ceiling lowered the chosen tier; null when none did. */
+  cappedBy: "org" | "platform" | null;
+  /** The org's default tier for devices that choose none (at most {@link ceiling}). */
+  defaultTier: SandboxTier;
+  /** The org and the platform let a local device run without a sandbox (its ceiling is `open`). */
+  allowUnsandboxed: boolean;
+  /** `none`: a local device runs its commands without a sandbox (its owner set it locally). */
+  isolation: "sandbox" | "none";
+  /**
+   * A cloud device's instance runs another tier or network than {@link effectiveTier}: its next
+   * use updates or recreates it, files kept (「下次使用时生效，文件保留」).
+   */
+  pendingNextUse: boolean;
+  /**
+   * A cloud device's new tier waits for a file reset: its provider applies limits only when the
+   * file system is made (`limitsApplyAt: "fileSystem"`) and cannot update them.
+   */
+  pendingFilesReset: boolean;
+  /** Its last {@link RECENT_POLICY_CHANGES} sandbox changes, newest first (§10.4). */
+  recent: DeviceSandboxChangeView[];
+}
+
+/** How many recent sandbox changes a device view lists. */
 export const RECENT_POLICY_CHANGES = 10;
 
-/** One `device.policy_changed` audit row, as the device's owner sees it on the device page. */
-export interface DevicePolicyChangeView {
+/**
+ * One sandbox change of a device, as its owner sees it on the device page (§10.4):
+ * - `policy` (`device.policy_changed`): a local policy change sent to the machine;
+ * - `tier` (`device.tier_changed`): a cloud device's tier set by its owner;
+ * - `isolation` (`device.isolation_reported`): the machine reported running without a sandbox,
+ *   or with one again.
+ */
+export interface DeviceSandboxChangeView {
   at: string;
+  kind: "policy" | "tier" | "isolation";
+  /** Hosts added to / removed from the local allowlist (`policy` only; else empty). */
   add: string[];
   remove: string[];
-  network: "allowlist" | "open" | null;
+  /** The tier set (`to: null`: follow the org's default); null when the tier did not change. */
+  tier: { to: SandboxTier | null } | null;
+  /** The isolation set or reported; null when it did not change. */
+  isolation: "sandbox" | "none" | null;
   /** The deciding account's display name (null when the account is gone). */
   by: string | null;
-  via: "web" | "im";
+  /** `device`: reported by the machine itself (`isolation`). */
+  via: "web" | "im" | "device";
   /** The machine answered with the policy as written (false: the answer never came). */
   confirmed: boolean;
 }
 
-/** A change of a device's network policy by its owner (`POST /devices/:id/policy`). */
+/** A change of a local device's policy by its owner (`POST /devices/:id/policy`). */
 export interface DevicePolicyChange {
   add?: string[] | undefined;
   remove?: string[] | undefined;
-  network?: "allowlist" | "open" | undefined;
+  /** null: follow the org's default. */
+  tier?: SandboxTier | null | undefined;
+  isolation?: "sandbox" | undefined;
+}
+
+/** What `PATCH /devices/:id` changes. */
+export interface DevicePatch {
+  name?: string;
+  /** A cloud device's tier; null follows the org's default. */
+  tier?: SandboxTier | null;
 }
 
 /** The machine connected to a local device, as its owner sees it. */
@@ -150,7 +218,8 @@ export class DevicesService {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(SandboxProviders)
     private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "deviceLimits" | "limitsState">,
     @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy" | "resetFiles">,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(ExtensionDisplayNames)
@@ -392,6 +461,121 @@ export class DevicesService {
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
+    await this.renameLocked(orgId, accountId, id, before, name, actorTokenId, auditDetail);
+  }
+
+  /**
+   * `PATCH /devices/:id` (sandbox dev tiers spec §7.2): renames one of the person's live devices
+   * ({@link rename}) and sets a cloud device's sandbox tier, in one transaction. The tier: null
+   * follows the org's default; above the device's ceiling (the org's or the platform's max) →
+   * `device.tier_not_allowed`; a local device → `device.tier_on_device` (its tier is its
+   * machine's, changed with {@link changePolicy}). A changed tier is audited `device.tier_changed`
+   * (`from` / `to`); the device's next use applies it (the instance is updated, or recreated on
+   * the kept files). Callers make sure only a person in a session sets the tier.
+   */
+  async update(
+    orgId: string,
+    accountId: string,
+    id: string,
+    patch: DevicePatch,
+    actorTokenId?: string,
+  ): Promise<DeviceView> {
+    await this.updateIn(orgId, accountId, id, patch, actorTokenId);
+    return this.get(orgId, accountId, id);
+  }
+
+  @Transactional()
+  private async updateIn(
+    orgId: string,
+    accountId: string,
+    id: string,
+    patch: DevicePatch,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const before = await this.lockOwn(orgId, accountId, id);
+    if (patch.tier !== undefined) {
+      if (before.source !== "cloud") {
+        throw new ApiError(
+          "device.tier_on_device",
+          "This device's sandbox level is kept on its connected machine: change it from the device page (sent to the machine) or run capybara-device policy set tier <strict|dev|open|default> there.",
+        );
+      }
+      const policy = await this.policyFor(orgId, patch.tier);
+      if (patch.tier !== null && !tierAtMost(patch.tier, policy.ceiling)) {
+        throw tierNotAllowed(patch.tier, policy);
+      }
+      if (patch.tier !== before.tier) {
+        await this.db
+          .updateTable("devices")
+          .set({ tier: patch.tier, updated_at: sql<Date>`now()` })
+          .where("id", "=", id)
+          .execute();
+        await audit(this.db.db, {
+          actorAccountId: accountId,
+          ...(actorTokenId !== undefined && { actorTokenId }),
+          orgId,
+          action: "device.tier_changed",
+          target: id,
+          detail: { from: before.tier, to: patch.tier },
+        });
+      }
+    }
+    if (patch.name !== undefined) {
+      await this.renameLocked(orgId, accountId, id, before, patch.name, actorTokenId, undefined);
+    }
+  }
+
+  /** The org's sandbox policy for a device choosing `tier` (null: the org's default). */
+  private async policyFor(
+    orgId: string,
+    tier: SandboxTier | null,
+  ): Promise<EffectiveSandboxPolicy> {
+    return effectiveSandboxPolicy(
+      this.config.get().sandbox,
+      await readOrgSettings(this.db.db, orgId),
+      tier,
+    );
+  }
+
+  /**
+   * The sandbox level a sandbox call in the device runs at now, for the model (`device_paths`,
+   * spec §11.5): see {@link sandboxStateOf}. Null when the device is not a live device of the org.
+   */
+  async sandboxLevel(orgId: string, deviceId: string): Promise<DeviceSandboxLevel | null> {
+    const row = await this.db
+      .selectFrom("devices as e")
+      .leftJoin("device_machines as m", (j) =>
+        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
+      )
+      .select(["e.source", "e.tier", "m.features", "m.local_policy"])
+      .where("e.id", "=", deviceId)
+      .where("e.org_id", "=", orgId)
+      .where("e.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (row === undefined) return null;
+    const settings = await readOrgSettings(this.db.db, orgId);
+    const s = sandboxStateOf(
+      (tier) => effectiveSandboxPolicy(this.config.get().sandbox, settings, tier),
+      {
+        source: row.source,
+        tier: row.tier,
+        features: deviceFeaturesOf(row.features),
+        policy: localPolicyOf(row.local_policy),
+      },
+    );
+    return { tier: s.effectiveTier, isolation: s.isolation };
+  }
+
+  /** Renames the device locked by {@link lockOwn} (`before`); see {@link rename}. */
+  private async renameLocked(
+    orgId: string,
+    accountId: string,
+    id: string,
+    before: { name: string | null },
+    name: string,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
+  ): Promise<void> {
     if (before.name === name) return;
     // the same name in another case is this device's own: the index allows it
     if (before.name?.toLowerCase() !== name.toLowerCase()) {
@@ -478,14 +662,17 @@ export class DevicesService {
   }
 
   /**
-   * The owner changes one of their own devices' network policy (network ask-to-allow spec §7,
-   * §13 Q6): sent to the machine with the `policy` op, which is the authority and answers with
-   * the policy as written. Anyone but the owner gets `device.not_found`. A widening change (`add`,
-   * `network: "open"`) is refused up front with `device.policy_refused` when the machine last
-   * reported `remoteGrants: "off"` (otherwise the machine decides); narrowing is always sent. The
-   * machine offline → `device.offline`; a cloud device or a program without the `policyOp` feature
-   * → `device.policy_unsupported`; the machine's refusal → `device.policy_refused` with its message.
-   * Callers are human sessions only (no personal access token, no service token, no Platform op).
+   * The owner changes one of their own devices' local policy (network ask-to-allow spec §7, §13
+   * Q6; sandbox dev tiers spec §7.3): sent to the machine with the `policy` op, which is the
+   * authority and answers with the policy as written. Anyone but the owner gets
+   * `device.not_found`. A `tier` above the device's ceiling → `device.tier_not_allowed`. A widening
+   * change (`add`; a `tier` that may raise the machine's, judged as the machine judges it) is
+   * refused up front with `device.policy_refused` when the machine last reported
+   * `remoteGrants: "off"` (otherwise the machine decides); narrowing is always sent, and
+   * `isolation` is only ever `sandbox`. The machine offline → `device.offline`; a cloud device or a
+   * program without the `policyOp` feature → `device.policy_unsupported`; the machine's refusal →
+   * `device.policy_refused` with its message. Callers are human sessions only (no personal access
+   * token, no service token, no Platform op).
    */
   async changePolicy(
     orgId: string,
@@ -494,12 +681,18 @@ export class DevicesService {
     change: DevicePolicyChange,
   ): Promise<DeviceLocalPolicySummary> {
     await this.access.usable(orgId, account.id, id);
+    if (change.tier !== undefined && change.tier !== null) {
+      const policy = await this.policyFor(orgId, change.tier);
+      if (!tierAtMost(change.tier, policy.ceiling)) throw tierNotAllowed(change.tier, policy);
+    }
     const summary = await this.policies.summary(id);
-    const widens = (change.add?.length ?? 0) > 0 || change.network === "open";
+    const known = summary?.policy ?? null;
+    const widens =
+      (change.add?.length ?? 0) > 0 || (known !== null && tierWidens(known.tier, change.tier));
     // only a known "off" is refused here; an unknown summary, a machine that cannot take the op
     // or none at all are left to apply (the machine decides, or unsupported / offline)
     const canApply = summary?.features.includes("policyOp") === true;
-    if (widens && canApply && summary?.policy?.remoteGrants === "off") {
+    if (widens && canApply && known?.remoteGrants === "off") {
       throw new ApiError("device.policy_refused", remoteGrantsOffMessage(change));
     }
     const out = await this.policies.apply({
@@ -508,10 +701,8 @@ export class DevicesService {
       change: {
         ...(change.add !== undefined && { add: change.add }),
         ...(change.remove !== undefined && { remove: change.remove }),
-        // Until the route takes a tier: the old open network is tier `open`, allowlist `strict`.
-        ...(change.network !== undefined && {
-          tier: change.network === "open" ? ("open" as const) : ("strict" as const),
-        }),
+        ...(change.tier !== undefined && { tier: change.tier }),
+        ...(change.isolation !== undefined && { isolation: change.isolation }),
       },
       source: { accountId: account.id, accountName: account.displayName, via: "web" },
     });
@@ -844,6 +1035,7 @@ export class DevicesService {
         "e.source",
         "e.provider",
         "e.demoted_from_provider",
+        "e.tier",
         "e.created_at",
         "m.id as machine_id",
         "m.name as machine_name",
@@ -894,14 +1086,31 @@ export class DevicesService {
     const demotedProviders = [
       ...new Set(rows.flatMap((r) => (demoted.get(r.id) ? [demoted.get(r.id) as string] : []))),
     ];
-    const [limits, names, recent] = await Promise.all([
-      this.sandbox.orgLimits(orgId),
+    const [names, recent, settings] = await Promise.all([
       this.displayNames.many(demotedProviders),
-      this.recentPolicyChanges(
+      this.recentSandboxChanges(
         orgId,
-        rows.filter((r) => r.source === "local" && r.machine_id !== null).map((r) => r.id),
+        rows.map((r) => r.id),
       ),
+      readOrgSettings(this.db.db, orgId),
     ]);
+    const policyOf = (tier: SandboxTier | null) =>
+      effectiveSandboxPolicy(this.config.get().sandbox, settings, tier);
+    // each device's limits (a cloud device's own tier) and its instance's pending change
+    const perDevice = new Map(
+      await Promise.all(
+        rows.map(async (r) => {
+          const policy = policyOf(r.source === "cloud" ? r.tier : null);
+          const [limits, state] = await Promise.all([
+            this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy }),
+            r.source === "cloud"
+              ? this.sandbox.limitsState({ orgId, deviceId: r.id })
+              : { pendingNextUse: false, pendingFilesReset: false },
+          ]);
+          return [r.id, { limits, state }] as const;
+        }),
+      ),
+    );
     const current = this.providers.cloud()?.plugin;
     // a local device is online while a replica holds its machine's connection lease
     const online = new Map(
@@ -954,9 +1163,19 @@ export class DevicesService {
             ? {
                 features: deviceFeaturesOf(r.machine_features),
                 policy: localPolicyOf(r.machine_local_policy),
-                recent: recent.get(r.id) ?? [],
               }
             : null,
+        sandbox: {
+          ...sandboxStateOf(policyOf, {
+            source: r.source,
+            tier: r.tier,
+            features: r.machine_id === null ? [] : deviceFeaturesOf(r.machine_features),
+            policy: r.machine_id === null ? null : localPolicyOf(r.machine_local_policy),
+          }),
+          pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
+          pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
+          recent: recent.get(r.id) ?? [],
+        },
         // a local device's machine decides it; cloud devices have none in phase 2
         sessionIsolation: r.machine_session_isolation ?? false,
         filesLost: r.fs_status === "lost",
@@ -966,26 +1185,28 @@ export class DevicesService {
               lastUsedAt: (r.last_used_at as Date).toISOString(),
             }
           : null,
-        limits: { ...limits, allowHosts: [...limits.allowHosts] },
+        limits: limitsView(perDevice.get(r.id)?.limits as SandboxLimits),
         createdAt: r.created_at.toISOString(),
       };
     });
   }
 
   /**
-   * The last {@link RECENT_POLICY_CHANGES} `device.policy_changed` audit rows of each device in
-   * the org, newest first, with the deciding account's display name.
+   * The last {@link RECENT_POLICY_CHANGES} sandbox changes of each device in the org (audit rows
+   * `device.policy_changed`, `device.tier_changed`, `device.isolation_reported`), newest first,
+   * with the deciding account's display name.
    */
-  private async recentPolicyChanges(
+  private async recentSandboxChanges(
     orgId: string,
     deviceIds: string[],
-  ): Promise<Map<string, DevicePolicyChangeView[]>> {
-    const out = new Map<string, DevicePolicyChangeView[]>();
+  ): Promise<Map<string, DeviceSandboxChangeView[]>> {
+    const out = new Map<string, DeviceSandboxChangeView[]>();
     if (deviceIds.length === 0) return out;
     const ranked = this.db
       .selectFrom("audit_events as a")
       .select([
         "a.target",
+        "a.action",
         "a.at",
         "a.detail",
         "a.actor_account_id",
@@ -994,30 +1215,26 @@ export class DevicesService {
         ),
       ])
       .where("a.org_id", "=", orgId)
-      .where("a.action", "=", "device.policy_changed")
+      .where("a.action", "in", [...SANDBOX_CHANGE_ACTIONS])
       .where("a.target", "in", deviceIds);
     const rows = await this.db
       .selectFrom(ranked.as("r"))
       .leftJoin("accounts as ac", "ac.id", "r.actor_account_id")
-      .select(["r.target", "r.at", "r.detail", "ac.display_name"])
+      .select(["r.target", "r.action", "r.at", "r.detail", "ac.display_name"])
       .where("r.n", "<=", RECENT_POLICY_CHANGES)
       .orderBy("r.at", "desc")
       .execute();
     for (const r of rows) {
       if (r.target === null) continue;
-      const d = r.detail as Record<string, unknown>;
-      const hosts = (v: unknown) =>
-        Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
       const list = out.get(r.target) ?? [];
-      list.push({
-        at: r.at.toISOString(),
-        add: hosts(d.add),
-        remove: hosts(d.remove),
-        network: d.network === "allowlist" || d.network === "open" ? d.network : null,
-        by: r.display_name ?? null,
-        via: d.via === "im" ? "im" : "web",
-        confirmed: d.confirmed === true,
-      });
+      list.push(
+        sandboxChangeOf(
+          r.action,
+          r.at,
+          (r.detail ?? {}) as Record<string, unknown>,
+          r.display_name ?? null,
+        ),
+      );
       out.set(r.target, list);
     }
     return out;
@@ -1059,11 +1276,16 @@ export class DevicesService {
     orgId: string,
     accountId: string,
     id: string,
-  ): Promise<{ name: string | null; is_default: boolean }> {
+  ): Promise<{
+    name: string | null;
+    is_default: boolean;
+    source: "cloud" | "local";
+    tier: SandboxTier | null;
+  }> {
     await this.lockMember(orgId, accountId);
     const row = await this.db
       .selectFrom("devices")
-      .select(["name", "is_default"])
+      .select(["name", "is_default", "source", "tier"])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("owner_kind", "=", "personal")
@@ -1101,6 +1323,116 @@ function refuseDeviceReset(env: { provider: string | null }): void {
   }
 }
 
+/** A copy of `l` for a view (its lists not shared). */
+const limitsView = (l: SandboxLimits): SandboxLimits => ({
+  ...l,
+  allowHosts: [...l.allowHosts],
+  devHosts: [...l.devHosts],
+});
+
+/** The audit actions a device's recent sandbox changes list. */
+const SANDBOX_CHANGE_ACTIONS = [
+  "device.policy_changed",
+  "device.tier_changed",
+  "device.isolation_reported",
+] as const;
+
+const tierOrNull = (v: unknown): SandboxTier | null =>
+  v === "strict" || v === "dev" || v === "open" ? v : null;
+
+/** One audit row of {@link SANDBOX_CHANGE_ACTIONS} as a {@link DeviceSandboxChangeView}. */
+function sandboxChangeOf(
+  action: string,
+  at: Date,
+  d: Record<string, unknown>,
+  by: string | null,
+): DeviceSandboxChangeView {
+  const hosts = (v: unknown) =>
+    Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
+  const isolation = d.isolation === "sandbox" || d.isolation === "none" ? d.isolation : null;
+  const base = { at: at.toISOString(), add: [], remove: [], tier: null, isolation: null, by };
+  if (action === "device.tier_changed") {
+    return { ...base, kind: "tier", tier: { to: tierOrNull(d.to) }, via: "web", confirmed: true };
+  }
+  if (action === "device.isolation_reported") {
+    return { ...base, kind: "isolation", isolation, via: "device", confirmed: true };
+  }
+  return {
+    ...base,
+    kind: "policy",
+    add: hosts(d.add),
+    remove: hosts(d.remove),
+    // the key is there only when the change set the tier (null: follow the org's default)
+    tier: "tier" in d ? { to: tierOrNull(d.tier) } : null,
+    isolation,
+    via: d.via === "im" ? "im" : "web",
+    confirmed: d.confirmed === true,
+  };
+}
+
+/** What {@link sandboxStateOf} reads of a device. */
+export interface DeviceSandboxFacts {
+  source: "cloud" | "local";
+  /** A cloud device's stored tier (ignored for a local device). */
+  tier: SandboxTier | null;
+  /** A local device's connected machine's features ([] when none is connected). */
+  features: readonly DeviceFeature[];
+  /** A local device's policy summary as last reported (null when unknown or none connected). */
+  policy: DeviceLocalPolicySummary | null;
+}
+
+/**
+ * A device's sandbox level (spec §4.2, §4.4): its chosen tier (a cloud device's stored one, a
+ * local device's reported one) under the org's policy (`policyOf`). A local device whose program
+ * lacks the `tiers` feature runs `strict` (it ignores the tier the kernel sends); it runs without
+ * a sandbox only when it reports `isolation: "none"` and its effective tier is `open` (the device
+ * keeps the sandbox at any lower tier).
+ */
+export function sandboxStateOf(
+  policyOf: (tier: SandboxTier | null) => EffectiveSandboxPolicy,
+  d: DeviceSandboxFacts,
+): Omit<DeviceSandboxView, "pendingNextUse" | "pendingFilesReset" | "recent"> {
+  const chosen = d.source === "cloud" ? d.tier : (d.policy?.tier ?? null);
+  const p = policyOf(chosen);
+  const tiersKnown = d.source === "cloud" || d.features.includes("tiers");
+  const effectiveTier = tiersKnown ? p.tier : "strict";
+  return {
+    tier: chosen,
+    effectiveTier,
+    ceiling: p.ceiling,
+    cappedBy: tiersKnown ? p.cappedBy : null,
+    defaultTier: p.defaultTier,
+    allowUnsandboxed: p.allowUnsandboxed,
+    isolation:
+      d.source === "local" && d.policy?.isolation === "none" && effectiveTier === "open"
+        ? "none"
+        : "sandbox",
+  };
+}
+
+/**
+ * Whether setting a local device's tier to `next` (null: follow the org's default) may raise it,
+ * not knowing the org's default at the machine: a tier above the reported one, any tier but
+ * `strict` when it reports none, and following the default when it reports `strict` or `dev`.
+ */
+export function tierWidens(
+  reported: SandboxTier | undefined,
+  next: SandboxTier | null | undefined,
+): boolean {
+  if (next === undefined || next === "strict") return false;
+  if (next === null) return reported !== undefined && reported !== "open";
+  return reported === undefined || !tierAtMost(next, reported);
+}
+
+/** A tier above the device's ceiling: which ceiling, and the highest tier allowed. */
+function tierNotAllowed(tier: SandboxTier, policy: EffectiveSandboxPolicy): ApiError {
+  const platform = policy.cappedBy === "platform";
+  return new ApiError(
+    "device.tier_not_allowed",
+    `${platform ? "The platform" : "Your organization"} allows sandbox levels up to ${policy.ceiling}; this device cannot be set to ${tier}.`,
+  );
+}
+
 /**
  * The refusal of a widening change on a device whose machine reported `remoteGrants: "off"`: the
  * command to run on the machine instead.
@@ -1110,7 +1442,9 @@ function remoteGrantsOffMessage(change: DevicePolicyChange): string {
     ...(change.add !== undefined && change.add.length > 0
       ? [`capybara-device policy add allowedDomains ${change.add.join(",")}`]
       : []),
-    ...(change.network === "open" ? ["capybara-device policy set network open"] : []),
+    ...(change.tier !== undefined
+      ? [`capybara-device policy set tier ${change.tier ?? "default"}`]
+      : []),
   ];
-  return `This device does not accept network changes from the deployment; change it on the machine: ${local.join("; ")}`;
+  return `This device does not accept widening changes from the deployment; change it on the machine: ${local.join("; ")}`;
 }

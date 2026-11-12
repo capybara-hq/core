@@ -590,11 +590,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({ step: count, added: z.array(z.string()), removed: z.array(z.string()) }),
   ),
   /**
-   * The directories of the instance a sandbox tool call entered, when they differ from the
-   * defaults (environments spec §13.1: a connected machine's real paths). Written once per
-   * conversation and roots, before that call's result. **Model-visible**: rendered at its position
-   * as a system message (`devicePathsText`); a summary covering it is followed by the latest
-   * one again.
+   * The directories of the instance a sandbox tool call entered and the device's sandbox level
+   * (environments spec §13.1; sandbox dev tiers spec §11.5: `tier` and `isolation`, absent on
+   * events recorded before tiers). Written on a conversation's first sandbox call and whenever
+   * they change, before that call's result. **Model-visible**: rendered at its position as a
+   * system message (`devicePathsText`); a summary covering it is followed by the latest one again.
    */
   ev(
     "device_paths",
@@ -604,6 +604,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         skills: z.string().min(1).max(4096),
         tmp: z.string().min(1).max(4096),
       }),
+      tier: z.enum(["strict", "dev", "open"]).optional(),
+      isolation: z.enum(["sandbox", "none"]).optional(),
     }),
   ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
