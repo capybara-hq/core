@@ -23,6 +23,7 @@ import {
   sql,
   type UpdateObject,
 } from "kysely";
+import { SESSION_MODE_SCRIPT } from "../background/launch.js";
 import { BackgroundTaskStore } from "../background/store.js";
 import {
   DEFAULT_MAX_COMMAND_SECONDS,
@@ -1419,7 +1420,7 @@ export class SandboxService {
   /**
    * Under the exclusive lease, right after a resume or a (re)build: kills the sessions of the
    * background tasks marked lost while their process may live on (`kill_pending`), in one exec of
-   * `pkill -KILL -s <sid>`, then clears their flags. Tasks of another instance have no process
+   * `pkill -KILL -s <sid>` (`-g` on macOS), then clears their flags. Tasks of another instance have no process
    * here and are only cleared. A gone instance and an abort are thrown; another failure is warned
    * and leaves the flags of this instance's tasks for the next resume.
    */
@@ -1441,10 +1442,12 @@ export class SandboxService {
     let cleared = rows;
     if (mine.length > 0) {
       // pkill exits 1 when the session has no process left: only a higher status is a failure
-      const command = `rc=0; for sid in ${mine.map((r) => r.sid).join(" ")}; do pkill -KILL -s "$sid"; c=$?; [ "$c" -le 1 ] || rc=$c; done; exit $rc`;
+      const command = `${SESSION_MODE_SCRIPT}\nrc=0; for sid in ${mine.map((r) => r.sid).join(" ")}; do tk_kill KILL "$sid"; c=$?; [ "$c" -le 1 ] || rc=$c; done; exit $rc`;
       try {
         const r = await p.impl.exec(handle, {
           command,
+          // tk_kill's control files are relative to the workspace root (macOS devices)
+          cwd: rootsOf(handle).workspace,
           timeoutMs: PENDING_KILL_TIMEOUT_MS,
           maxOutputBytes: 4096,
           signal,

@@ -9,43 +9,23 @@ import {
   type BackgroundStoppedBy,
   BackgroundTaskFinisher,
 } from "./finish.js";
-import { TASKS_DIR } from "./launch.js";
 import {
   actingAs,
   assertTaskRef,
   decodeTail,
   killSession,
+  TERM_EXEC_TIMEOUT_MS,
   tailCommand,
   taskActor,
+  termScript,
 } from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 
 /** Why a task is stopped. */
 export type StopReason = "tool" | "person" | "subagent_end" | "conversation_deleted";
 
-/** How long a stop waits after SIGTERM before SIGKILL (spec §2.3). */
-export const STOP_GRACE_MS = 5000;
-
-/** The time limit of the SIGTERM exec: the grace period plus some room. */
-const TERM_EXEC_TIMEOUT_MS = STOP_GRACE_MS + 5000;
 /** The time limit of reading the last lines after a stop. */
 const TAIL_EXEC_TIMEOUT_MS = 10_000;
-
-/**
- * Exit code 0 with `exited <code>` when the task had already finished (its exit file exists),
- * else sends SIGTERM to the session and waits up to {@link STOP_GRACE_MS} for it to empty, then
- * prints `term`. Relative to the workspace root.
- */
-function termScript(id: string, sid: string): string {
-  const f = `${TASKS_DIR}/${id}`;
-  const tries = Math.ceil(STOP_GRACE_MS / 200);
-  return [
-    `if [ -s ${f}.exit ]; then echo "exited $(cat ${f}.exit)"; exit 0; fi`,
-    `pkill -TERM -s ${sid} >/dev/null 2>&1`,
-    `i=0; while [ "$i" -lt ${tries} ] && pgrep -s ${sid} >/dev/null 2>&1; do sleep 0.2; i=$((i+1)); done`,
-    "echo term",
-  ].join("\n");
-}
 
 /** How a task that exited by itself ends (spec §4.3): exit 137 past its deadline timed out. */
 export function exitedAs(task: BackgroundTaskRow, code: number, now: Date): BackgroundFinish {
