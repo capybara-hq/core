@@ -6,7 +6,7 @@ import { LockedInterval } from "../schedule/locked-interval.js";
 import { KERNEL_LOGGER } from "../tokens.js";
 import { OutboxDispatcher } from "./outbox.dispatcher.js";
 
-/** The relay's `@LockedInterval` job name, also its run lock key (`lock:outbox-relay`). */
+/** The relay's `@LockedInterval` job name (its run lock key is the default `cron:outbox-relay`). */
 export const OUTBOX_RELAY_JOB = "outbox-relay";
 /** The relay's period: a fixed constant, not a config field. */
 export const OUTBOX_RELAY_PERIOD_MS = 2000;
@@ -20,7 +20,9 @@ export const OUTBOX_RELAY_MAX_ROUNDS = 10;
  * replicas it delivers the due rows the fast path did not (a failed or skipped pass, a process that
  * died after the commit, a retry whose backoff ran out). A tick runs passes of
  * {@link OUTBOX_RELAY_BATCH} rows until one handles fewer (the backlog is drained) or
- * {@link OUTBOX_RELAY_MAX_ROUNDS} have run, and stops early when the run is aborted.
+ * {@link OUTBOX_RELAY_MAX_ROUNDS} have run. It also stops early when the run is aborted, and after
+ * a pass that delivered nothing but failed rows (Redis trouble: the next tick tries again, rather
+ * than spinning more passes that each hold a pool connection).
  */
 @Injectable()
 export class OutboxRelay {
@@ -31,7 +33,7 @@ export class OutboxRelay {
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
-  @LockedInterval(OUTBOX_RELAY_JOB, () => OUTBOX_RELAY_PERIOD_MS, { lockKey: OUTBOX_RELAY_JOB })
+  @LockedInterval(OUTBOX_RELAY_JOB, () => OUTBOX_RELAY_PERIOD_MS)
   async relay(signal?: AbortSignal): Promise<void> {
     await this.relayOnce(signal);
   }
@@ -45,6 +47,7 @@ export class OutboxRelay {
       sent += r.sent;
       // rows handled: `dead` is a part of `failed`, not counted again
       if (r.sent + r.failed < OUTBOX_RELAY_BATCH) break;
+      if (r.sent === 0 && r.failed > 0) break;
     }
     if (sent > 0) this.log.debug("outbox relay delivered rows", { rows: sent });
     return sent;

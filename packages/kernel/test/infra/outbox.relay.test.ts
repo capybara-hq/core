@@ -3,6 +3,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
 import {
@@ -12,13 +13,14 @@ import {
 import {
   OUTBOX_RELAY_BATCH,
   OUTBOX_RELAY_MAX_ROUNDS,
+  OUTBOX_RELAY_PERIOD_MS,
   OutboxRelay,
 } from "../../src/infra/outbox/outbox.relay.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import type { OutboxJobName } from "../../src/infra/outbox/registry.js";
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { createLogger } from "../../src/log.js";
-import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import { runConfig, sleep, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 
 /**
  * Transactional outbox spec §3.3: the relay (`outbox-relay`, a `@LockedInterval` on the worker
@@ -58,17 +60,34 @@ describe("outbox relay (two kernels, shared PG and Redis)", () => {
   });
 
   it("a row the fast path failed is delivered by the other replica's relay within one tick", async () => {
-    expect(b.app.get(LockedIntervalScheduler).periodOf("outbox-relay")).toBe(2000);
+    expect(b.app.get(LockedIntervalScheduler).periodOf("outbox-relay")).toBe(
+      OUTBOX_RELAY_PERIOD_MS,
+    );
 
+    // commit just after one of B's ticks (epoch-aligned), so A's fast path claims the row before
+    // B's next tick could; its failure then defers the row 1 s, still due at that next tick
+    while (
+      Date.now() % OUTBOX_RELAY_PERIOD_MS >= 500 ||
+      Date.now() % OUTBOX_RELAY_PERIOD_MS < 100
+    ) {
+      await sleep(10);
+    }
     const fastPath = vi.spyOn(a.app.get(OutboxDispatcher), "dispatchOwn");
     await a.app
       .get(TransactionHost)
       .run(() =>
         a.app.get(OutboxService).add({ queue: QUEUE, name: TEST_JOB, jobId: "relay-1", data: {} }),
       );
-    // A's fast path ran and failed: the row stays for the relay
+    // A's fast path ran and failed: the row stays for the relay, with the attempt recorded
     expect(fastPath).toHaveBeenCalledTimes(1);
     await fastPath.mock.results[0]?.value;
+    const row = await a.app
+      .get(KernelDb)
+      .selectFrom("outbox")
+      .select(["attempts", "last_error"])
+      .where("job_id", "=", "relay-1")
+      .executeTakeFirst();
+    expect(row).toMatchObject({ attempts: 1, last_error: expect.stringContaining("test seam") });
     expect(await queue.getJob("relay-1")).toBeUndefined();
 
     await waitFor(() => queue.getJob("relay-1"), 5000, "the relayed job");
@@ -93,12 +112,22 @@ describe("outbox relay tick", () => {
     const { relay, dispatchDue } = relayOver([
       full,
       { sent: 300, failed: 200, dead: 0 },
-      { sent: 0, failed: OUTBOX_RELAY_BATCH, dead: 5 },
+      { sent: 100, failed: 400, dead: 5 },
       { sent: 499, failed: 0, dead: 0 },
     ]);
-    expect(await relay.relayOnce()).toBe(500 + 300 + 499);
+    expect(await relay.relayOnce()).toBe(500 + 300 + 100 + 499);
     expect(dispatchDue).toHaveBeenCalledTimes(4);
     expect(dispatchDue).toHaveBeenCalledWith(OUTBOX_RELAY_BATCH);
+  });
+
+  it("stops after a pass that delivered nothing and failed rows (Redis trouble)", async () => {
+    const { relay, dispatchDue } = relayOver([
+      full,
+      { sent: 0, failed: OUTBOX_RELAY_BATCH, dead: 0 },
+      full,
+    ]);
+    expect(await relay.relayOnce()).toBe(OUTBOX_RELAY_BATCH);
+    expect(dispatchDue).toHaveBeenCalledTimes(2);
   });
 
   it("stops after 10 passes, and at once when aborted", async () => {
