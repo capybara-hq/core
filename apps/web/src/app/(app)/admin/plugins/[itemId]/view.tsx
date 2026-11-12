@@ -94,12 +94,15 @@ const awaitingOf = (item: CatalogItem): boolean => item.awaitingConfirmation ===
 /**
  * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name, the
  * platform's version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope dialog with
- * its impact preview), 停用 (with the same preview) or 启用, and 更新到 <version> when the catalog has a
- * newer version than the platform's (the platform update preview, spec §7.1), else 导入 <version>
- * when its marketplace has a newer compatible version (stages it and opens the import review). A
+ * its impact preview), 停用 (with the same preview) or 启用, and one 更新到 <version> (maintainer
+ * decision 2026-11-13): to the newest version its marketplace has when that is newer than every
+ * imported one (stages it and opens the one wizard at `/admin/plugins/import?staging=<id>`: the
+ * import review, then the update preview, confirmed together), else to the newest imported
+ * version newer than the platform's (the platform update preview dialog, spec §7.1). The 版本 tab's
+ * row menu moves the platform to any other imported version (更新到 / 回退到, the same dialog). A
  * built-in plugin has neither 设置范围 nor 停用. An org's upload (phase 3) names its owner org, takes no
- * 更新到 / 导入 (its org uploads its versions), only narrows when its org does not share it, and takes
- * no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
+ * 更新到 or version moves (its org uploads its versions), only narrows when its org does not share
+ * it, and takes no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
  * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
  * component's own, linking to the component); its dependencies; the translation report), 组织
  * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
@@ -170,7 +173,9 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.items ?? null;
   const sourceLabel = useSourceLabel(marketplaces ?? []);
   const [tab, setTab] = useState<Tab>("components");
-  const [dialog, setDialog] = useState<"scope" | "disable" | "update" | null>(null);
+  const [dialog, setDialog] = useState<"scope" | "disable" | null>(null);
+  /** The version the platform update dialog moves to (更新到, or a 版本 row's move). */
+  const [moveTo, setMoveTo] = useState<string | null>(null);
   const item = detail.item;
   const platformVersion = item.platformVersion ?? item.latestVersion;
   // The highest imported version newer than the platform's: the platform update (a version that
@@ -186,11 +191,13 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     ext === undefined ? 0 : declaredPermissions(ext).reduce((n, g) => n + g.items.length, 0);
   const claudeCode = latest?.sourceFormat === "claude-code";
   const deleted = item.deletedAt !== null;
+  // The marketplace's newer version, when it is newer than every imported one: 更新到 stages it
+  // and opens the one wizard (the import review, then the update preview)
   const fetchable =
-    updateTo === null &&
     item.newerInMarketplace &&
     item.marketplaceId !== null &&
-    item.latestMarketplaceVersion !== null
+    item.latestMarketplaceVersion !== null &&
+    (updateTo === null || (compareSemver(item.latestMarketplaceVersion, updateTo) ?? 0) > 0)
       ? { sourceId: item.marketplaceId, version: item.latestMarketplaceVersion }
       : null;
 
@@ -266,6 +273,8 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   // An org's upload: its org uploads its versions (ruling P3-12); a first version waiting for the
   // confirmation takes no scope change or disable (409 catalog.item_pending, ruling P3-9)
   const awaiting = item.awaitingConfirmation === true;
+  // The platform moves between versions (更新到, a 版本 row's move): a live, enabled platform plugin
+  const movable = owner === null && !deleted && !item.disabled && !awaiting;
   const actions = [
     ...(item.builtin || deleted || awaiting
       ? []
@@ -302,19 +311,11 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           },
         ]
       : []),
-    ...(updateTo !== null && owner === null && !deleted && !item.disabled
+    // One 更新到: the marketplace's newer version through the one wizard, else an imported one
+    ...(fetchable !== null && movable
       ? [
           {
-            label: t("detail.actions.update", { version: versionLabel(updateTo) }),
-            variant: "primary" as const,
-            onSelect: () => setDialog("update"),
-          },
-        ]
-      : []),
-    ...(fetchable !== null && owner === null && !deleted
-      ? [
-          {
-            label: t("detail.actions.import", { version: versionLabel(fetchable.version) }),
+            label: t("detail.actions.update", { version: versionLabel(fetchable.version) }),
             variant: "primary" as const,
             loading: stage.isPending,
             onSelect: () =>
@@ -324,7 +325,15 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
               }),
           },
         ]
-      : []),
+      : updateTo !== null && movable
+        ? [
+            {
+              label: t("detail.actions.update", { version: versionLabel(updateTo) }),
+              variant: "primary" as const,
+              onSelect: () => setMoveTo(updateTo),
+            },
+          ]
+        : []),
   ];
 
   // 删除 (a deletable plugin): the head's ⋯ menu, a destructive item (spec §6.7)
@@ -453,7 +462,11 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           ) : tab === "orgs" ? (
             <OrgsTab item={item} />
           ) : (
-            <Versions versions={detail.versions} />
+            <Versions
+              versions={detail.versions}
+              platformVersion={platformVersion}
+              {...(movable ? { onMove: setMoveTo } : {})}
+            />
           )}
           {/* 许可证全文: folded, at the end of the page */}
           {platformRelease !== undefined && (
@@ -471,12 +484,12 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
       {dialog === "disable" && (
         <PluginDisableDialog item={item} orgId={orgId} onClose={() => setDialog(null)} />
       )}
-      {dialog === "update" && updateTo !== null && (
+      {moveTo !== null && (
         <PlatformUpdateDialog
           item={item}
-          version={updateTo}
+          version={moveTo}
           orgId={orgId}
-          onClose={() => setDialog(null)}
+          onClose={() => setMoveTo(null)}
         />
       )}
       <DangerConfirm
@@ -767,8 +780,23 @@ function OrgsTab({ item }: { item: CatalogItem }) {
   );
 }
 
-function Versions({ versions }: { versions: CatalogItemVersion[] }) {
+/**
+ * 版本: each imported version. With `onMove` (a platform plugin that can move) a row other than
+ * the platform's version has a menu moving the platform to it: 更新到 a newer one, 回退到 an older
+ * one (the platform update preview, spec §7.1; rollback stays here, maintainer decision
+ * 2026-11-13).
+ */
+function Versions({
+  versions,
+  platformVersion,
+  onMove,
+}: {
+  versions: CatalogItemVersion[];
+  platformVersion: string;
+  onMove?: (version: string) => void;
+}) {
   const t = useTranslations("catalog.admin.detail.versionColumns");
+  const ta = useTranslations("catalog.admin.detail.actions");
   const tv = useTranslations("catalog.versionSource");
   const tf = useTranslations("catalog.admin.detail.format");
   const origin = useOrigin();
@@ -803,6 +831,22 @@ function Versions({ versions }: { versions: CatalogItemVersion[] }) {
       rowKey={(v) => v.version}
       state="ready"
       empty={{ title: "—" }}
+      {...(onMove !== undefined
+        ? {
+            rowMenu: (v: CatalogItemVersion) =>
+              v.version === platformVersion
+                ? []
+                : [
+                    {
+                      label:
+                        (compareSemver(v.version, platformVersion) ?? 0) > 0
+                          ? ta("update", { version: versionLabel(v.version) })
+                          : ta("rollback", { version: versionLabel(v.version) }),
+                      onSelect: () => onMove(v.version),
+                    },
+                  ],
+          }
+        : {})}
     />
   );
 }

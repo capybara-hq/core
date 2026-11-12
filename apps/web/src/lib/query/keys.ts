@@ -556,6 +556,12 @@ export const keys = {
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
       /** A staged plugin import's review. */
       stagedImport: (stagingId: string): readonly unknown[] => [...all, "stagedImport", stagingId],
+      /** The platform update a staged new version of an installed plugin applies. */
+      stagedUpdatePreview: (stagingId: string): readonly unknown[] => [
+        ...all,
+        "stagedUpdatePreview",
+        stagingId,
+      ],
       /** The plugins waiting for a permission confirmation (待确认). */
       catalogPending: (): readonly unknown[] => [...all, "catalogPending"],
       /** The pending catalog requests at the deployment stage. */

@@ -243,7 +243,7 @@
       "missing_file": "部署锁定的某个引导插件包不在引导目录里。"
     },
     "catalog": {
-      "version_exists": "这个版本已经导入过。",
+      "version_exists": "这个版本已在插件的版本列表里：在插件页更新到它。",
       "item_not_found": "条目不存在或你看不到它。",
       "name_conflict": "同名条目来自另一个 npm 包。",
       "item_disabled": "超级管理员禁用了这个条目（或它包含的某个扩展），不能新装或启用。",
@@ -256,7 +256,7 @@
       "invalid_manifest": "插件包不合法：",
       "legacy_format": "该包使用 0.1.0 之前的包格式。请用 .capybara-plugin/plugin.json 重新打包为插件（pnpm pack-plugin）后再导入。",
       "no_extension": "该插件没有扩展，部署上没有可安装的内容。",
-      "dependency_unresolved": "该插件依赖的插件在目录中没有满足版本范围的版本，请先让超级管理员导入。",
+      "dependency_unresolved": "该插件依赖的插件在平台上没有满足版本范围的版本，请先让超级管理员安装。",
       "dependency_disabled": "该插件依赖的插件已被超级管理员禁用。",
       "dependency_cycle": "该插件的依赖形成循环，无法安装。",
       "request_pending": "已经有一个待处理的同类申请。",
@@ -432,11 +432,11 @@
       "entry_not_found": "市场条目或版本不存在（市场可能已停用）。",
       "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
       "invalid": "市场内容格式不合法，已保留上一份条目。",
-      "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝引入。包可能被篡改，请联系市场维护者。",
+      "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝安装。包可能被篡改，请联系市场维护者。",
       "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
       "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
-      "entry_deprecated": "这个版本已被市场标为废弃，不能引入，请选择其他版本。",
+      "entry_deprecated": "这个版本已被市场标为废弃，不能安装，请选择其他版本。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
       "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
@@ -464,7 +464,8 @@
       "switch_stale": "影响在你确认前变了，请重新查看后再确认。",
       "builtin": "内置插件的范围不能更改，也不能停用。",
       "scope_stale": "影响在你确认前变了，请重新预览后再确认。",
-      "extension_upload_pending": "这个插件带扩展，已提交，等待超级管理员确认后才能使用。"
+      "extension_upload_pending": "这个插件带扩展，已提交，等待超级管理员确认后才能使用。",
+      "imported_not_updated": "新版本已加入插件的版本列表，但平台更新失败，平台仍在原版本。可在插件页再次更新。"
     },
     "lock": {
       "acquire_failed": "该资源上有其他操作正在进行，请稍后再试。"
@@ -3719,7 +3720,7 @@
         "note": "说明",
         "hint": {
           "access": "{org} 申请使用这个插件。在插件页的待确认中批准或拒绝；批准后这个组织立即可以使用。",
-          "import": "{org} 申请从市场引入这个插件。在插件页的待确认中批准或拒绝；批准后进入导入审阅，范围默认是这个组织。"
+          "import": "{org} 申请从市场引入这个插件。在插件页的待确认中批准或拒绝；批准后进入安装审阅，范围默认是这个组织。"
         }
       },
       "permission": {
@@ -3740,7 +3741,7 @@
         "hint": {
           "install": "插件的范围要求它在 {org} 中启用，但同步失败了。这个插件和组织下次同步时会再试：排除原因后，在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。",
           "uninstall": "插件的范围要求它在 {org} 中停用，但同步失败了。这个插件和组织下次同步时会再试：排除原因后，在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。",
-          "dependencies": "插件已在 {org} 中启用，但平台更新后新增的依赖没能安装。这个插件和组织下次同步时会再试：排除原因后（例如导入满足版本要求的依赖），在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。"
+          "dependencies": "插件已在 {org} 中启用，但平台更新后新增的依赖没能安装。这个插件和组织下次同步时会再试：排除原因后（例如安装满足版本要求的依赖），在插件页修改范围或重启 worker 时会重新同步（保存未改动的范围不会触发同步）。"
         }
       },
       "migration": {
@@ -4199,7 +4200,7 @@
       },
       "loadFailed": "扩展没有加载出来。",
       "retry": "重试",
-      "importPlugin": "导入插件",
+      "importPlugin": "安装插件",
       "builtin": "内置",
       "description": "插件里在部署上运行的代码。部署级配置、权限和运行状态在这里。",
       "wizard": {
@@ -4361,7 +4362,7 @@
       "disabled": "已停用"
     },
     "source": {
-      "manual": "手动导入",
+      "manual": "手动安装",
       "official": "官方市场",
       "removed": "已删除的市场"
     },
@@ -4377,7 +4378,7 @@
       "extension": "扩展",
       "extensionNone": "没有扩展。",
       "extensionVersion": "{name} {version}",
-      "declaredHint": "包里声明的权限（引入这个版本时已审阅；在部署上的批准在扩展后台进行）。",
+      "declaredHint": "包里声明的权限（安装或更新到这个版本时已审阅；在部署上的批准在扩展后台进行）。",
       "skills": "技能",
       "skillsNone": "没有技能。",
       "skillFiles": "{n} 个文件",
@@ -4387,7 +4388,7 @@
       "dependenciesNone": "没有依赖。",
       "dependenciesHint": "这个插件依赖的插件；组织安装时先装它们（组织已有的不重装）。",
       "dependencyResolved": "{name} {range} → 平台目录里的 {version}",
-      "dependencyUnresolved": "{name} {range}：平台目录里还没有符合的版本。导入仍会完成，但在导入符合的版本之前，组织无法安装这个插件。",
+      "dependencyUnresolved": "{name} {range}：平台上还没有符合的版本。安装仍会完成，但在平台装上符合的版本之前，组织无法启用这个插件。",
       "dependencyInCatalog": "{name} {range}：已在平台目录（{versions}）",
       "dependencyNotInCatalog": "{name} {range}：不在平台目录里",
       "errorDependency": "依赖：{dependency}",
@@ -4405,7 +4406,7 @@
     },
     "admin": {
       "title": "插件",
-      "empty": "还没有插件。从市场引入，或上传插件包。",
+      "empty": "还没有插件。从市场安装，或上传插件包。",
       "noResults": "没有符合筛选条件的条目。",
       "filters": {
         "source": "来源",
@@ -4437,7 +4438,7 @@
         "delete": "删除插件",
         "deleteConfirm": {
           "title": "删除插件 {name}",
-          "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新引入。",
+          "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新安装。",
           "confirm": "删除",
           "extensionNote": "插件的扩展在部署上启用时不能删除：须先在扩展页停用它。删除后扩展仍保留在扩展页，可在那里卸载。",
           "openExtension": "去扩展页停用"
@@ -4449,11 +4450,11 @@
           "source": "来源",
           "ref": "来源引用",
           "size": "大小",
-          "imported": "导入时间",
+          "imported": "加入时间",
           "origin": "出处",
           "format": "格式"
         },
-        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「市场」再次引入，会记为该版本的一个构建。",
+        "contentChanged": "它的市场里，一个已有的版本现在指向了不同的内容。可在「市场」更新到新内容，会记为该版本的一个构建。",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
@@ -4468,8 +4469,8 @@
           "update": "更新到 {version}",
           "disable": "停用",
           "enable": "启用",
-          "import": "导入 {version}",
-          "applyAppearance": "应用此插件的外观"
+          "applyAppearance": "应用此插件的外观",
+          "rollback": "回退到 {version}"
         },
         "componentColumns": {
           "name": "组件",
@@ -4507,11 +4508,12 @@
         "ownerValue": "{org}（新版本由该组织上传）"
       },
       "review": {
-        "title": "导入插件",
+        "title": "安装插件",
         "steps": {
           "source": "选择插件包",
           "review": "审阅",
-          "confirm": "确认"
+          "confirm": "确认",
+          "update": "更新预览"
         },
         "sourceLabel": "来源",
         "sourceFile": "上传插件包（.tgz）",
@@ -4536,20 +4538,20 @@
         "keepExtension": "扩展 {name} {version} 已安装在部署上。",
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
-        "confirm": "确认导入",
-        "done": "已导入插件「{name}」。",
+        "confirm": "确认安装",
+        "done": "已安装插件「{name}」。",
         "deployResult": "部署结果",
-        "deployFailed": "{name} {version}：装到部署失败（{code}），导入已保留。可在扩展后台重试。",
+        "deployFailed": "{name} {version}：装到部署失败（{code}），插件已保留在平台上。可在扩展后台重试。",
         "deployLeftDisabled": "{name} {version} 已安装但保持停用：{point}只能启用一个提供方。请先停用 {other}，再启用它。",
         "deployLeftDisabledRequired": "{name} {version} 已安装但保持停用：{point}由部署必需的插件「{other}」提供，不能替换。",
         "openEnabled": "查看 {name}",
         "openItem": "查看插件",
-        "gone": "暂存的导入已过期或已确认。请重新导入。",
-        "restart": "重新导入",
+        "gone": "暂存的插件包已过期或已确认。请重新开始。",
+        "restart": "重新开始",
         "sourceGit": "Git 仓库",
         "sourceGitHint": "从 Git 仓库读取一次：不会添加市场，也不跟踪更新。",
         "gitUrl": "仓库",
-        "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性导入：不会添加市场，也不跟踪更新。",
+        "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性读取：不会添加市场，也不跟踪更新。",
         "gitRef": "分支、标签或提交",
         "gitRefHelp": "可选；留空用远端 HEAD。",
         "gitPath": "目录",
@@ -4660,7 +4662,11 @@
           "origin": "来源",
           "provenance": "来源证明",
           "provenanceNotChecked": "未核对（{reason}）"
-        }
+        },
+        "titleUpdate": "更新插件「{name}」",
+        "confirmUpdate": "确认更新",
+        "updateHint": "确认后把 {version} 加入平台并把插件更新到它，所有组织一起更新。确认前取消不会改动任何东西。",
+        "importedNotUpdated": "{version} 已加入插件的版本列表，但把平台更新到它失败了（{code}）：平台仍在 {from}，扩展和权限保持原样。可在插件页「更新到 {version}」重试。"
       },
       "entries": {
         "title": "浏览市场",
@@ -4682,10 +4688,10 @@
         "permissionsNone": "未提供",
         "incompatible": "{version}（不兼容）",
         "noVersion": "（以包为准）",
-        "adopted": "已引入 {version}",
-        "notAdopted": "未引入",
-        "import": "引入",
-        "importVersion": "引入 {version}",
+        "adopted": "已安装 {version}",
+        "notAdopted": "未安装",
+        "import": "安装",
+        "importVersion": "安装 {version}",
         "noCompatible": "没有兼容的版本",
         "reason": {
           "host_not_allowed": "主机 {host} 不在 marketplaces.allowedHosts 中。",
@@ -4695,21 +4701,21 @@
         "gitFollows": "跟随 {ref}",
         "gitFollowsDefault": "跟随默认分支",
         "pathSource": "市场仓库中的 {path}",
-        "importChanged": "导入 {version} 的新内容",
-        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。",
+        "importChanged": "更新到 {version} 的新内容",
+        "contentChangedHint": "更新时会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。",
         "view": "查看",
         "homepage": "主页",
         "loadFailed": "市场条目没有加载出来。",
         "retry": "重试",
-        "adoptedUpdate": "已引入 {version} · 可更新到 {latest}",
-        "update": "更新",
+        "adoptedUpdate": "已安装 {version} · 可更新到 {latest}",
+        "update": "更新到 {version}",
         "otherVersions": "其他版本",
         "deprecated": "{version} 已废弃",
         "deprecatedReason": "{version} 已废弃：{reason}"
       },
       "marketplaces": {
         "title": "市场源",
-        "description": "插件从这里的市场源列出。在插件页的「市场」里引入时会下载、按市场的完整性校验，审阅后才加入。",
+        "description": "插件从这里的市场源列出。在插件页的「市场」里安装或更新时会下载、按市场的完整性校验，审阅后才加入。",
         "search": "搜索市场源",
         "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
@@ -4747,7 +4753,7 @@
         "remove": "删除",
         "removeConfirm": {
           "title": "删除市场 {name}",
-          "hint": "它的条目缓存随之删除，已引入的平台目录条目保留。",
+          "hint": "它的条目缓存随之删除，已安装的插件保留。",
           "confirm": "删除"
         },
         "removed": "已删除「{name}」。",
@@ -4780,7 +4786,7 @@
         "pending": "待确认"
       },
       "search": "搜索插件",
-      "description": "插件是一包扩展、技能、连接器模板和智能体模板。从市场引入或上传，确认权限后即装好。",
+      "description": "插件是一包扩展、技能、连接器模板和智能体模板。从市场安装或上传，确认权限后即装好。",
       "chips": {
         "builtin": "内置",
         "claudeCode": "Claude Code",
@@ -5093,11 +5099,11 @@
       "pathEntry": "市场条目 {entry}（路径 {path}）",
       "sameVersion": "平台已在用 {version}。",
       "dependentRange": "插件 {dependent} 依赖 {range}，{version} 不满足。",
-      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请删除插件，再把新版本作为新插件引入。",
+      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请删除插件，再把新版本作为新插件安装。",
       "configExtension": "这个插件的扩展在启动配置里声明（部署运行 {version}），更新不能移动它；请先在启动配置里修改。",
       "configExtensionUnloaded": "这个插件的扩展在启动配置里声明，更新不能移动它；请先在启动配置里修改。",
       "extensionRemoved": "{version} 不带扩展，但部署正在运行它；请先卸载扩展。",
-      "extensionPackage": "{version} 的扩展包不在目录里，不能更新到它；请重新引入这个版本。"
+      "extensionPackage": "{version} 的扩展包不在平台上，不能更新到它；请从市场或插件包重新更新到这个版本。"
     },
     "owner": {
       "self": "本组织",
@@ -5636,10 +5642,10 @@
       "org": "组织创建"
     },
     "empty": {
-      "skill": "还没有技能。引入带技能的插件后，它们会出现在这里。",
-      "connector_template": "还没有连接器模板。引入带连接器模板的插件后，它们会出现在这里。",
-      "agent_template": "还没有智能体模板。引入带智能体模板的插件后，它们会出现在这里。",
-      "theme": "还没有主题。引入带主题的插件后，它们会出现在这里。"
+      "skill": "还没有技能。安装带技能的插件后，它们会出现在这里。",
+      "connector_template": "还没有连接器模板。安装带连接器模板的插件后，它们会出现在这里。",
+      "agent_template": "还没有智能体模板。安装带智能体模板的插件后，它们会出现在这里。",
+      "theme": "还没有主题。安装带主题的插件后，它们会出现在这里。"
     },
     "emptyTab": {
       "agent_template": "这一栏下没有智能体模板。"
@@ -5835,7 +5841,7 @@
       "title": "主题",
       "description": "本组织启用的主题，可在下面选为默认主题。平台默认主题在每个组织都启用，不能关闭。",
       "label": "本组织的主题",
-      "empty": "还没有可用的主题。超级管理员引入带主题的插件后，它们会出现在这里。",
+      "empty": "还没有可用的主题。超级管理员安装带主题的插件后，它们会出现在这里。",
       "lockedDefault": "平台默认主题 · 不能关闭"
     },
     "org": {
