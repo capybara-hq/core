@@ -481,7 +481,7 @@ interface SandboxProvider {
   platform ceiling fails with `org.sandbox_tier_not_allowed`; `sandboxEgress` keeps its schema.
   `GET` returns the platform's tiers next to `deployment.sandboxEgress`.
 - Migration (expand-only, `NNNN_sandbox_tiers.sql`): `devices.tier text NULL CHECK (tier IN
-  ('strict','dev','open'))`; `devices.instance_limits jsonb NULL` (the limits the current instance
+  ('strict','dev','open'))`; `device_instances.instance_limits jsonb NULL` (the limits the current instance
   was created with, written with the fenced create). `device_machines.local_policy` keeps its
   column; its JSON shape changes (§7.3).
 - `SandboxService.orgLimits(orgId)` becomes `deviceLimits(device)` using `effectiveSandboxPolicy`;
