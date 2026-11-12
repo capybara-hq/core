@@ -2,6 +2,7 @@
 
 import { Stack, Text } from "@capybara-hq/design";
 import type { ReactNode } from "react";
+import { RefHydrating } from "./ref-block";
 import { REFERENCE_BLOCKS } from "./reference-blocks";
 import type { ReferenceComponent } from "./routes";
 
@@ -13,6 +14,7 @@ export function ReferenceCatalog({ component }: { component: ReferenceComponent 
   const blocks = BLOCKS[component];
   return (
     <Stack gap={24}>
+      <RefHydrating />
       <Text variant="h1">{`reference/${component}`}</Text>
       {blocks ? (
         <Stack gap={32}>{blocks()}</Stack>

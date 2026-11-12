@@ -1,5 +1,5 @@
 import { type ForcedPseudo, ReferenceBlock } from "@capybara-hq/design";
-import type { ReactNode } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 
 /**
  * A reference-set block in `/dev/ui/reference/<component>`: `id` is `<component>-<state>`, the
@@ -26,4 +26,20 @@ export function RefBlock(props: {
  */
 export function RefPending() {
   return <span data-ref-pending="true" hidden />;
+}
+
+const noSubscribe = () => () => {};
+
+/**
+ * A `RefPending` marker until the page has hydrated. Before hydration the app shell draws both
+ * sidebar panels and the drawer bar and lets CSS pick one (`data-responsive`); a busy runner can
+ * still be hydrating at `networkidle`, and a spec measuring then counted the sidebar twice.
+ */
+export function RefHydrating() {
+  const hydrated = useSyncExternalStore(
+    noSubscribe,
+    () => true,
+    () => false,
+  );
+  return hydrated ? null : <RefPending />;
 }
