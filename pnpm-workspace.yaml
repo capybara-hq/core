@@ -12,3 +12,5 @@ allowBuilds:
   msgpackr-extract: false
   protobufjs: true
   ssh2: true
+patchedDependencies:
+  '@anthropic-ai/sandbox-runtime@0.0.81': patches/@anthropic-ai__sandbox-runtime@0.0.81.patch
