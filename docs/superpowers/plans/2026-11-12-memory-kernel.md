@@ -22,7 +22,7 @@ testcontainers.
 - English for code, comments, tests and model-visible text; touched comments translated, no bulk
   translation (AGENTS.md "Language").
 - Applied migrations are immutable; new files are `NNNN_<snake_desc>.sql` with `IF [NOT] EXISTS`
-  (writing-migrations skill). This plan uses `0118` (source), `0119` (lifecycle), `0120` (pgvector); renumber if `main` moved.
+  (writing-migrations skill). This plan uses `0118` (pgvector, Task 7), `0119` (source, Task 2), `0120` (lifecycle, Task 6), numbered in execution order; renumber if `main` moved.
 - Multi-replica: no in-process state; queue names and job ids contain no `:`; enqueues in
   `afterCommit`; consumers only under `WorkerModule`; periodic work `@LockedInterval`.
 - Kernel conventions: `@Injectable`, explicit `@Inject` on every constructor parameter
@@ -84,18 +84,18 @@ testcontainers.
 ### Task 2: `conversations.source`
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0118_conversation_source.sql`
+- Create: `packages/kernel/src/migrations/0119_conversation_source.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (column type)
 - Modify: `packages/kernel/src/conversations/conversations.service.ts` (`create`, `createWithMessage` take `source`)
 - Modify: `packages/kernel/src/channels/inbound.ts:266`, `packages/kernel/src/schedules/fire.ts` (`:290`, `:366`, `:410`), `packages/kernel/src/runtime/subagents/dispatch.ts:247`
-- Test: `packages/kernel/test/migrations/0118.test.ts`, `packages/kernel/test/conversations/source.test.ts`
+- Test: `packages/kernel/test/migrations/0119.test.ts`, `packages/kernel/test/conversations/source.test.ts`
 
 **Interfaces:**
 - Consumes: `ConversationSource` (Task 1).
 - Produces: `conversations.source text NOT NULL DEFAULT 'web' CHECK (source IN (…4 values))`; `ConversationsService.create(orgId, accountId, agentId, pick, opts?: { source?: ConversationSource })` and `createWithMessage(…, internal: InternalMessageOptions & { source?: ConversationSource })`; `export async function conversationSourceOf(db, conversationId): Promise<ConversationSource>` in `conversations/source.ts`.
 
 - [ ] **Step 1: Write failing tests.** `0118.test.ts`: seed a conversation with a `channel_threads` row `thread_key = 'dm:u1'` **archived**, one with a group thread key, one `kind='subagent'`, one plain; after the migration they are `channel_dm`, `channel_group`, `subagent`, `web`. `source.test.ts`: inbound DM → `channel_dm`; inbound group → `channel_group` (from `e.target.chatType`, `inbound.ts:210`); scheduled task with `chat.chatType = "group"` fired once → its new conversation is `channel_group` **before any outbound post**; DM task → `channel_dm`; `new` mode → `web`; sub-agent dispatch → `subagent`; web create → `web`.
-- [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/migrations/0118.test.ts packages/kernel/test/conversations/source.test.ts` — Expected: FAIL.
+- [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/migrations/0119.test.ts packages/kernel/test/conversations/source.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Write the migration** (add column, backfill in the order subagent → channel thread rows of any archive state by `thread_key LIKE 'dm:%'` → rest web, add the CHECK) **and pass `source` at each creation site.** The scheduled-task sites read `task.chat.chatType`.
 - [ ] **Step 4: Run** the tests — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(kernel): record each conversation's source`.
@@ -169,12 +169,12 @@ testcontainers.
 ### Task 6: Durable lifecycle hooks
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0119_lifecycle_deliveries.sql`
+- Create: `packages/kernel/src/migrations/0120_lifecycle_deliveries.sql`
 - Create: `packages/kernel/src/extensions/lifecycle-hooks.ts` (`LifecycleHooks` service: `recordIn`, `enqueue`, consumer, sweeper)
 - Modify: `packages/kernel/src/extensions/hooks.ts` (`handlers(mount)` accepts lifecycle mounts as it does `usage.report`; `run` excludes them)
 - Modify: `packages/kernel/src/orgs/offboarding.ts` (`offboard` records, `afterOffboard` enqueues), `packages/kernel/src/agents/agents.service.ts` (`softDeleteLocked`), `packages/kernel/src/orgs/orgs.service.ts` (`softDelete`)
 - Modify: the worker module (consumer + `@LockedInterval` sweeper), `KernelConfigSchema` only if a knob is needed (prefer constants)
-- Modify: `packages/testing/fixtures/extensions/fake-context/` (observe all three mounts; append each payload to a table in its schema)
+- Create: `packages/testing/fixtures/extensions/fake-lifecycle/` (observes all three mounts; appends each payload to a table in its own schema; its behaviour (throw N times) driven by deployment config)
 - Test: `packages/kernel/test/extensions/lifecycle-hooks.test.ts`, `packages/kernel/test/extensions/lifecycle-hooks.dual.test.ts`
 
 **Interfaces:**
@@ -196,16 +196,16 @@ testcontainers.
 
 **Files:**
 - Modify: `docker/compose.yaml:85`, `docker/compose.dev.yaml:5`, `packages/testing/src/containers.ts:118` → `pgvector/pgvector:pg17`
-- Create: `packages/kernel/src/migrations/0120_pgvector.sql`
+- Create: `packages/kernel/src/migrations/0118_pgvector.sql`
 - Modify: `docs/deploy/` (the PG requirements page: pgvector recommended, not required; what falls back)
 - Create: `.changeset/memory-pgvector-image.md` (`@capybara-hq/capybara: patch`)
-- Test: `packages/kernel/test/migrations/0120.test.ts`
+- Test: `packages/kernel/test/migrations/0118.test.ts`
 
 **Interfaces:**
-- Produces: after 0120, `vector` is installed in `public` when available and creatable; otherwise the migration is a no-op with a notice.
+- Produces: after 0118, `vector` is installed in `public` when available and creatable; otherwise the migration is a no-op with a notice.
 
-- [ ] **Step 1: Write failing tests**: on the pgvector container, after 0120 `SELECT extnamespace::regnamespace FROM pg_extension WHERE extname='vector'` is `public`, and `SET search_path = plugin_x, public; SELECT '[1,2]'::vector <=> '[1,3]'::vector` works; with the extension pre-installed in schema `other`, 0120 leaves it there and succeeds; as a role without `CREATE` on the database, 0120 succeeds (notice only); on a plain `postgres:17` container (`describe` that starts one), 0120 succeeds and installs nothing.
-- [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/migrations/0120.test.ts` — Expected: FAIL.
+- [ ] **Step 1: Write failing tests**: on the pgvector container, after 0118 `SELECT extnamespace::regnamespace FROM pg_extension WHERE extname='vector'` is `public`, and `SET search_path = plugin_x, public; SELECT '[1,2]'::vector <=> '[1,3]'::vector` works; with the extension pre-installed in schema `other`, 0118 leaves it there and succeeds; as a role without `CREATE` on the database, 0118 succeeds (notice only); on a plain `postgres:17` container (`describe` that starts one), 0118 succeeds and installs nothing.
+- [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/migrations/0118.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Write the migration** as one `DO $$ … $$` block: return when `NOT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name='vector')` or `EXISTS (SELECT 1 FROM pg_extension WHERE extname='vector')`; else `EXECUTE 'CREATE EXTENSION IF NOT EXISTS vector SCHEMA public'` inside `BEGIN … EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE …`. Switch the images.
 - [ ] **Step 4: Run** the test and `docker compose -f docker/compose.dev.yaml up -d` then `pnpm dev:kernel` once (migrations apply; `grep -i vector /tmp/capybara-dev-kernel.log`) — Expected: PASS, kernel starts.
 - [ ] **Step 5: Commit** `feat(docker): ship pgvector and enable it when available`.
