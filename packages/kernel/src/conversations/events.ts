@@ -299,6 +299,21 @@ export const RunContextSchema = z.object({
 const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
   z.object({ type: z.literal(type), payload });
 
+/** The most UTF-8 bytes a `plugin_context` event's text may hold (memory spec §6.1). */
+export const PLUGIN_CONTEXT_MAX_BYTES = 32768;
+
+/**
+ * `plugin_context` (memory spec §6.1): the text a `context@1` provider added at a run start. Empty
+ * text means the provider has nothing (any more); `hash` is the sha256 (hex) of `text`.
+ */
+export const PluginContextSchema = z.object({
+  plugin: z.string().min(1).max(64),
+  text: z.string().refine((t) => Buffer.byteLength(t, "utf8") <= PLUGIN_CONTEXT_MAX_BYTES, {
+    message: `at most ${PLUGIN_CONTEXT_MAX_BYTES} UTF-8 bytes`,
+  }),
+  hash: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 /**
  * An agent definition frozen into a log (`subagent_started`): the current schema, with the
  * selected and pinned skills of older logs still accepted (skills default-on spec §4: history
@@ -579,6 +594,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * system message (`runContextText`); a summary covering it restores the current values.
    */
   ev("run_context", RunContextSchema),
+  /**
+   * Text a `context@1` provider added at a run start (memory spec §6.1), written only when its
+   * hash differs from the plugin's previous one in the conversation. **Model-visible**: rendered
+   * at its position as a system message (`pluginContextText`, nothing for empty text); a summary
+   * covering it is followed by the latest non-empty one per plugin again.
+   */
+  ev("plugin_context", PluginContextSchema),
   /**
    * The step's resolved tool set differs from the one the conversation's previous model request
    * offered (`toolSetChange`): tool names as the model sees them, sorted. Written before that

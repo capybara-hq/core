@@ -24,6 +24,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
+import { pluginContextIdemKey } from "../runtime/context/plugin-context.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
@@ -160,12 +161,17 @@ export interface ReplaySeed {
    * the original date, names and org, never the eval day's.
    */
   runContext: { payload: unknown } | undefined;
+  /**
+   * The original run's `plugin_context` events (memory spec §6.1), in log order, copied as is:
+   * replays never call context providers.
+   */
+  pluginContexts: { payload: { plugin: string } }[];
 }
 
 /**
  * The seed of a full-run replay (C6): the `kind = 'eval'` conversation with the events before the
  * original run at their original seqs, the run row and its `run_started` (and the original
- * `skills_catalog`), in one transaction of its own.
+ * `skills_catalog`, `run_context` and `plugin_context` events), in one transaction of its own.
  */
 @Injectable()
 export class EvalReplaySeeder {
@@ -266,6 +272,12 @@ export class EvalReplaySeeder {
             },
           ]
         : []),
+      ...p.pluginContexts.map((c) => ({
+        type: "plugin_context" as const,
+        runId,
+        idemKey: pluginContextIdemKey(runId, c.payload.plugin),
+        payload: c.payload,
+      })),
     ]);
     if (onSeeded && !(await onSeeded(conversationId))) throw new ReplayClaimLost();
   }
@@ -478,6 +490,9 @@ export async function replayRun(
   const runContext = s.events.find(
     (e) => e.runId === s.runId && e.type === "run_context" && e.seq > R,
   );
+  const pluginContexts = s.events
+    .filter((e) => e.runId === s.runId && e.type === "plugin_context" && e.seq > R)
+    .map((e) => ({ payload: e.payload as { plugin: string } }));
 
   // a sub-agent's case (spec §15.3) runs the effective definition frozen in its subagent_started
   // (the request renders that event's preamble and instructions; its tools come from it too), with
@@ -518,6 +533,7 @@ export async function replayRun(
       model: agent.model,
       catalog,
       runContext,
+      pluginContexts,
     },
     d.onSeeded,
   );
