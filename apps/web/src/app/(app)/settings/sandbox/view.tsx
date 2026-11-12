@@ -385,6 +385,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
               </Field>
             )}
             {devHosts.length > 0 &&
+              tierMax !== "strict" &&
               (egressMode === "allowlist" ||
                 (egressMode === "default" && deployment.sandboxEgress.mode === "allowlist")) && (
                 <Disclosure summary={t("egress.devHosts", { count: devHosts.length })}>

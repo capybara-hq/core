@@ -347,7 +347,10 @@ describe("沙箱级别 (sandbox dev tiers spec §11.2)", () => {
     // the switch belongs under 开放, which the platform keeps closed
     expect(screen.queryByRole("switch", { name: "允许成员的设备不使用沙箱" })).toBeNull();
     const user = userEvent.setup();
+    // the dev hosts only matter from the development level up
+    expect(screen.queryByText(/开发级别还会放行常用开发域名/)).not.toBeNull();
     await user.click(radio("严格"));
+    expect(screen.queryByText(/开发级别还会放行常用开发域名/)).toBeNull();
     expect(await optionLabels(screen.getByRole("combobox", { name: "新设备默认" }), user)).toEqual([
       "严格",
     ]);

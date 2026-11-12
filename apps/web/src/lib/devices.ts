@@ -236,15 +236,27 @@ export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
 
 /**
+ * Whether the machine itself is set to run without a sandbox (its reported raw value) while the
+ * platform no longer counts it as unsandboxed because the level is below 开放: the device refuses
+ * every command then (spec §11.1).
+ */
+export const deviceUnsandboxedRefused = (e: Pick<Device, "sandbox" | "network">): boolean =>
+  e.sandbox !== undefined &&
+  e.sandbox.isolation !== "none" &&
+  e.network?.policy?.isolation === "none";
+
+/**
  * The mark a device carries in lists and pickers (spec §11.1): 不使用沙箱 (`fail`) when it runs
- * without a sandbox, 开放 (`warn`) when its commands run at the open level; none otherwise.
+ * without a sandbox (or is set to and refuses its commands), 开放 (`warn`) when its commands run at
+ * the open level; none otherwise.
  */
 export function deviceSandboxMark(
-  e: Pick<Device, "sandbox">,
+  e: Pick<Device, "sandbox" | "network">,
 ): { kind: "unsandboxed"; tone: "fail" } | { kind: "open"; tone: "warn" } | null {
   const s = e.sandbox;
   if (s === undefined) return null;
-  if (s.isolation === "none") return { kind: "unsandboxed", tone: "fail" };
+  if (s.isolation === "none" || deviceUnsandboxedRefused(e))
+    return { kind: "unsandboxed", tone: "fail" };
   if (s.effectiveTier === "open") return { kind: "open", tone: "warn" };
   return null;
 }

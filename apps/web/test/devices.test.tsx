@@ -2,6 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import zh from "../messages/zh.json";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -994,7 +995,7 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     expect(
       await screen.findByText(/不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行/),
     ).toBeTruthy();
-    const code = screen.getByText(/capybara-device policy set isolation none --yes/);
+    const code = screen.getByText(/capybara-device policy set isolation none/);
     expect(code.textContent).toContain("capybara-device policy set tier open");
     expect(screen.getByRole("button", { name: "复制" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "恢复沙箱" })).toBeNull();
@@ -1028,6 +1029,26 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({ tier: "strict" });
     // no request ever turns the sandbox off
     expect(calls.some((c) => String(c.body ?? "").includes('"none"'))).toBe(false);
+  });
+
+  it("不使用沙箱 refused: the machine says none while the level is below open", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local(
+            { tier: "open", effectiveTier: "dev", isolation: "sandbox", cappedBy: "org" },
+            { tier: "open", effectiveTier: "dev", isolation: "none" },
+          ),
+        }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ isolation: "sandbox" }) }),
+    });
+    await renderDetail({ locale: "zh" });
+    const restore = await screen.findByRole("button", { name: "恢复沙箱" });
+    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("已开启");
+    expect(screen.getByText(zh.devices.sandbox.unsandboxedRefused)).toBeTruthy();
+    await userEvent.setup().click(restore);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ isolation: "sandbox" });
   });
 
   it("a Docker-mode or capped device has no 不使用沙箱 row", async () => {

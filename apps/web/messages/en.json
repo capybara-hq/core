@@ -1737,6 +1737,7 @@
       },
       "openRiskCloud": "At the open level, agent commands on this cloud device can reach any public address and port, including uploading files and data to outside sites. Prompt injection can make an agent do that. Turn it on only with agents and material you trust.",
       "unsandboxedOnMark": "On",
+      "unsandboxedRefused": "The device is set to run without a sandbox, but the current level is below open, so it refuses every command. Turn the sandbox back on to use it.",
       "isolationResetNote": "This device runs without a sandbox now. Changing its level here turns the sandbox back on."
     }
   },

@@ -24,6 +24,7 @@ import {
   type DeviceSandbox,
   type DeviceSandboxChange,
   deviceCapped,
+  deviceUnsandboxedRefused,
   SANDBOX_TIERS,
   type SandboxTier,
   setDeviceTier,
@@ -41,7 +42,7 @@ const FOLLOW = "default";
 
 /** The local commands that turn a device's sandbox off (spec §5.4, §14 Q1: shown, never sent). */
 export const UNSANDBOXED_COMMANDS =
-  "capybara-device policy set tier open\ncapybara-device policy set isolation none --yes";
+  "capybara-device policy set tier open\ncapybara-device policy set isolation none";
 
 /** The local command that raises a device's tier on the machine (`remoteGrants: off`). */
 const RAISE_COMMAND = "capybara-device policy set tier <strict|dev|open|default>";
@@ -169,11 +170,13 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
     }
   };
 
+  // the machine is set to no sandbox but the level fell below open: it refuses every command
+  const refused = deviceUnsandboxedRefused(e);
   const unsandboxedRow =
     local &&
     e.machine?.mode === "os" &&
     localBlock === null &&
-    (s.isolation === "none" || (s.allowUnsandboxed && s.ceiling === "open"));
+    (s.isolation === "none" || refused || (s.allowUnsandboxed && s.ceiling === "open"));
 
   return (
     <ContentSection title={t("title")} description={t("description")}>
@@ -256,7 +259,7 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
           <UnsandboxedRow
             sandbox={s}
             pending={pending}
-            canRestore={features.includes("policyOp")}
+            refused={refused}
             onRestore={() => void restore()}
           />
         )}
@@ -285,16 +288,17 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
 function UnsandboxedRow({
   sandbox: s,
   pending,
-  canRestore,
+  refused,
   onRestore,
 }: {
   sandbox: DeviceSandbox;
   pending: boolean;
-  canRestore: boolean;
+  /** The machine is set to no sandbox but the level is below open: its commands are refused. */
+  refused: boolean;
   onRestore(): void;
 }) {
   const t = useTranslations("devices.sandbox");
-  const on = s.isolation === "none";
+  const on = s.isolation === "none" || refused;
   return (
     <Stack gap={8}>
       <Stack direction="row" gap={8} align="center">
@@ -304,13 +308,18 @@ function UnsandboxedRow({
       {on ? (
         <>
           <Text variant="prose">{t("unsandboxedOn")}</Text>
-          {!s.allowUnsandboxed && (
+          {refused && (
+            <Text variant="prose" tone="warn">
+              {t("unsandboxedRefused")}
+            </Text>
+          )}
+          {!s.allowUnsandboxed && !refused && (
             <Text variant="prose" tone="warn">
               {t("unsandboxedNotAllowed")}
             </Text>
           )}
           <Stack direction="row" gap={8}>
-            <Button disabled={pending || !canRestore} loading={pending} onClick={onRestore}>
+            <Button disabled={pending} loading={pending} onClick={onRestore}>
               {t("restore")}
             </Button>
           </Stack>
