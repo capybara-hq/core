@@ -405,7 +405,7 @@ describe("subagentLimits", () => {
       maxDepth: 3,
       maxConcurrentPerConversation: 4,
       maxDispatchesPerRun: 50,
-      maxTokensPerRun: 5_000_000,
+      maxTokensPerRun: 0,
     });
     await override({ maxTokensPerRun: 20_000 });
     expect(
@@ -419,7 +419,7 @@ describe("subagentLimits", () => {
     expect(
       (await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, "another-org"))
         .maxTokensPerRun,
-    ).toBe(5_000_000);
+    ).toBe(0);
     // out of bounds or unknown keys are refused; null removes the override
     for (const bad of [
       { maxConcurrentPerConversation: 21 },
@@ -444,7 +444,7 @@ describe("subagentLimits", () => {
     expect(
       (await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId))
         .maxTokensPerRun,
-    ).toBe(5_000_000);
+    ).toBe(0);
   });
 });
 

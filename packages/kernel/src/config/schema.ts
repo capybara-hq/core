@@ -1197,12 +1197,12 @@ export const KernelConfigSchema = z.object({
         .int()
         .min(0)
         .refine((n) => n === 0 || n >= 10_000, "0 (no limit) or at least 10,000")
-        .default(5_000_000)
+        .default(0)
         .meta(
           meta({
             hot: true,
             description:
-              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
+              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 (the default) means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
     })

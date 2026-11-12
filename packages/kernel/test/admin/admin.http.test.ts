@@ -729,7 +729,7 @@ describe("超级管理员端点", () => {
         maxDepth: 3,
         maxConcurrentPerConversation: 4,
         maxDispatchesPerRun: 50,
-        maxTokensPerRun: 5_000_000,
+        maxTokensPerRun: 0,
       },
     });
   });
