@@ -62,7 +62,10 @@ interface ActiveRunRow {
   id: string;
   status: string;
   trigger_seq: string;
-  /** A resume's job id; null: the trigger's (`runJobId`). */
+  /**
+   * A resume's job id, or a later run of the same trigger's `<runJobId>-<n>`; null: the trigger's
+   * first run (`runJobId`).
+   */
   job_id: string | null;
 }
 
@@ -319,8 +322,9 @@ export class RunQueue {
 
   /**
    * Owes the new run's job in {@link ensureRunIn}'s transaction, before its run row is written.
-   * False (logged): the same job id is still owed, so the caller writes no run (a second run of
-   * one trigger; the conversation's unique active run makes this a should-not-happen).
+   * False (logged): the same job id is still owed, so the caller writes no run. A later run of the
+   * same trigger has its own `<runJobId>-<n>` ({@link jobIdFor}), so this is a should-not-happen
+   * (the conversation has one active run at a time).
    */
   private async oweJob(
     conversationId: string,
@@ -345,10 +349,11 @@ export class RunQueue {
    * racing the run's end starts a new run, never lost); and it is woken by its own background
    * task's finish or a delivery from its own sub-agent, under the same rules as a chat
    * conversation. Neither happens once its last run was stopped (`aborted`): a stopped sub-agent is
-   * started again only by its parent. Both read the queue and the trigger account's access on the root
-   * of its tree; a message needs no wake setting and has no wake window. The run counts against
-   * the root's budget window and runs on the sub-agent queue under `runJobId(child, boundary
-   * seq)`. An active run is never started past (one nobody runs is the `run-orphan-check`'s).
+   * started again only by its parent. Both read the queue and the trigger account's access on the
+   * root of its tree; a message needs no wake setting and has no wake window. The run counts
+   * against the root's budget window and runs on the sub-agent queue under
+   * `runJobId(child, boundary seq)`. An active run is never started past (one nobody runs is the
+   * `run-orphan-check`'s).
    */
   private async childWakeIn(
     conversationId: string,
@@ -423,8 +428,8 @@ export class RunQueue {
   }
 
   /**
-   * The newest unconsumed message of an idle sub-agent (a `SendMessage` its last run did not absorb)
-   * as a run boundary, or null: none; the root's queue is paused or the root deleted (the
+   * The newest unconsumed message of an idle sub-agent (a `SendMessage` its last run did not
+   * absorb) as a run boundary, or null: none; the root's queue is paused or the root deleted (the
    * message waits for the unpause, {@link wakeHeldTree}); or its author can no longer send to the
    * root (it waits for a later run). The caller already refused a stopped sub-agent (last run
    * `aborted`): a message that reached it while running and then stopped is parked, and the next
@@ -546,8 +551,8 @@ export class RunQueue {
   /**
    * Stops an orphaned run directly (`POST .../abort`, a tree stop): a `running` run whose
    * conversation lock is free and whose BullMQ job is gone hears no stop broadcast, so its
-   * `run_aborted` is written here (status aborted, `consumed_seq` at least to its trigger): true. Not
-   * an orphan (someone runs it; a queued run's job is owed, or lost and re-added by the
+   * `run_aborted` is written here (status aborted, `consumed_seq` at least to its trigger): true.
+   * Not an orphan (someone runs it; a queued run's job is owed, or lost and re-added by the
    * `run-orphan-check`, whose worker then sees the stop marker) or already finished: false, and the
    * caller broadcasts the stop.
    */
@@ -597,14 +602,15 @@ export class RunQueue {
 
   /**
    * Ends a `queued` run in PG before any worker started it (an offboarded member's run, ruling
-   * R27): with the conversation lock free, under the conversation row lock, a run still `queued`
-   * is finished `aborted` with `run_aborted` (`consumed_seq` at least to its trigger), so a job
-   * that runs later finds it finished and starts nothing. True when it did; false when a worker
-   * holds the conversation or is in the middle of the run's first start (`run_started` written,
+   * R27): with the conversation lock free, under the conversation row lock, a run still `queued` is
+   * finished `aborted` with `run_aborted` (`consumed_seq` at least to its trigger), so a job that
+   * runs later finds it finished and starts nothing. True when it did; false when a worker holds
+   * the conversation or is in the middle of the run's first start (`run_started` written,
    * `started_at` not yet set; it hears the stop), or the run is no longer queued. A run resumed
-   * from `waiting` to `queued` is ended like a new one. The caller writes the stop marker first, so a worker that takes the
-   * conversation meanwhile still stops; a worker that read the run before this commit re-checks it
-   * under the row locks before its `run_started` and never moves it back to `running`.
+   * from `waiting` to `queued` is ended like a new one. The caller writes the stop marker first, so
+   * a worker that takes the conversation meanwhile still stops; a worker that read the run before
+   * this commit re-checks it under the row locks before its `run_started` and never moves it back
+   * to `running`.
    */
   async abortQueued(
     conversationId: string,

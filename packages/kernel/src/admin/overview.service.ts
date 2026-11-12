@@ -163,11 +163,11 @@ export function providerProblem(p: ProviderStatus): AttentionProviderProblem | n
 }
 
 /**
- * The admin overview (spec §4.1, §5.2): its numbers and the 待处理 lists, read live from the
- * sources the admin pages read (`ExtensionAdmin`, the catalog, the provider registry's cached
- * lists, the dead outbox rows, the run queue's lost-jobs canary). Each source is read on its own: a failing one is reported in
- * `unavailable`. Reads are not audited (decision D5) and not cached further (every source is PG
- * or already Redis-cached).
+ * The admin overview (spec §4.1, §5.2): its numbers and the 待处理 lists, read live from the sources
+ * the admin pages read (`ExtensionAdmin`, the catalog, the provider registry's cached lists, the
+ * dead outbox rows, the run queue's lost-jobs canary). Each source is read on its own: a failing
+ * one is reported in `unavailable`. Reads are not audited (decision D5) and not cached further
+ * (every source is PG or already Redis-cached).
  */
 @Injectable()
 export class AdminOverviewService {
@@ -269,13 +269,13 @@ export class AdminOverviewService {
   /**
    * The extensions needing a look, but not one pending approval whose plugin waits in the platform
    * inbox (a permission confirmation or an org upload: the inbox already lists and counts it). A
-   * config-declared extension has no catalog item and stays. Without the catalog nothing is left out.
+   * config-declared extension has no catalog item and stays. Without the catalog none is left out.
    */
   private async extensionRows(items: Promise<CatalogItemView[]>): Promise<AttentionExtension[]> {
     const [views, catalog] = await Promise.all([this.extensions.list(), items.catch(() => [])]);
     const inInbox = new Set(catalog.filter((i) => i.pending).map((i) => i.name));
     return views.flatMap((v) => {
-      // every status of extensionNeedsAction has a reason, and so has enabled with an invalid config
+      // every status of extensionNeedsAction has a reason, as has enabled with an invalid config
       const reason = extensionReason(v);
       if (reason === null) return [];
       if (v.status === "pending_approval" && inInbox.has(v.name)) return [];

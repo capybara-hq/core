@@ -19,7 +19,7 @@ import { RunJobs, runJobId, runQueueNameFor } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
 import { Waits } from "./waits.js";
 
-/** The check's `@LockedInterval` job name (its run lock key is the default `cron:run-orphan-check`). */
+/** The check's `@LockedInterval` job name (its run lock key: `cron:run-orphan-check`). */
 export const RUN_ORPHAN_CHECK_JOB = "run-orphan-check";
 
 /** The check's period: a fixed constant, not a config field. */
@@ -148,12 +148,12 @@ async function* candidatePages(
 }
 
 /**
- * The `queued` runs (in their state for over `minAgeMs`) whose job is neither in the outbox
- * (owed, or dead) nor in BullMQ (`jobExists`), and that are still queued after both looks: the run
- * queue lost their jobs. The outbox is read before BullMQ (a row is deleted only after its job was added) and the
- * run again after both (a job that finished took its run out of `queued` first), so a run in
- * flight is never reported. The `run-orphan-check` uses it; so does the dual-replica test harness,
- * which asserts at its teardown that the kernel left none (`minAgeMs` 0).
+ * The `queued` runs (in their state for over `minAgeMs`) whose job is neither in the outbox (owed,
+ * or dead) nor in BullMQ (`jobExists`), and that are still queued after both looks: the run queue
+ * lost their jobs. The outbox is read before BullMQ (a row is deleted only after its job was added)
+ * and the run again after both (a job that finished took its run out of `queued` first), so a run
+ * in flight is never reported. The `run-orphan-check` uses it; so does the dual-replica test
+ * harness, which asserts at its teardown that the kernel left none (`minAgeMs` 0).
  */
 export async function queuedRunsWithoutJob(
   db: KernelSchemaDb,
@@ -186,9 +186,9 @@ export async function queuedRunsWithoutJob(
  *   `run.orphaned` (its terminal transaction cancels its waits and owes what every run end owes),
  *   then, after the commit, its checkpoints are dropped, its fork child stopped (`run.orphaned`), a
  *   sub-agent's failure delivered to its parent at once and the conversation's next run started.
- * - `queued`, with no outbox row either (pending or dead): a canary. Every queued run has its job owed in its
- *   own transaction, so this means Redis lost data. It is logged as an error, counted for the admin
- *   overview ({@link QueueLostJobs}) and its job owed again so the run is not stuck.
+ * - `queued`, with no outbox row either (pending or dead): a canary. Every queued run has its job
+ *   owed in its own transaction, so this means Redis lost data. It is logged as an error, counted
+ *   for the admin overview ({@link QueueLostJobs}) and its job owed again so the run is not stuck.
  * Redis is read before each repair's transaction, which then re-reads the run under its
  * conversation row lock and acts only if it is still in the same state since the same time. Read
  * paths never repair runs.
