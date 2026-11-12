@@ -27,6 +27,7 @@ describe("configFields", () => {
       "subagents.maxConcurrentPerConversation",
       "subagents.maxDispatchesPerRun",
       "subagents.maxTokensPerRun",
+      "skills.catalogBudgetChars",
       "web.search.maxResults",
       "web.fetch.maxPageChars",
       "web.fetch.maxAnswerTokens",
