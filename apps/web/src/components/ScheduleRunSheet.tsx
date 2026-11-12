@@ -135,6 +135,17 @@ export function ScheduleRunSheet({
     return null;
   }
 
+  // The day's read failed: say so, with a retry.
+  const failedLine = (
+    <Stack direction="row" gap={8} align="center">
+      <Text tone="fail" icon="circle-x">
+        {t("loadFailed")}
+      </Text>
+      <Button density="dense" onClick={() => void dayRead.refetch()}>
+        {t("retry")}
+      </Button>
+    </Stack>
+  );
   let body: ReactNode;
   if (open !== null && item !== undefined) {
     body = (
@@ -142,11 +153,11 @@ export function ScheduleRunSheet({
     );
   } else if (open !== null) {
     // An item of a collapsed day while the day is read.
-    body = dayRead.isError ? <Text tone="fail">{t("loadFailed")}</Text> : <Skeleton rows={3} />;
+    body = dayRead.isError ? failedLine : <Skeleton rows={3} />;
   } else {
     const dayItems = (dayRead.data?.items ?? []).filter((it) => it.taskId === task.id);
     body = dayRead.isError ? (
-      <Text tone="fail">{t("loadFailed")}</Text>
+      failedLine
     ) : dayRead.data === undefined ? (
       <Skeleton rows={3} />
     ) : (

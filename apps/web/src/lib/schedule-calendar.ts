@@ -133,6 +133,19 @@ export function minuteIn(ms: number, timeZone: string): number {
   return w.h * 60 + w.mi;
 }
 
+/** Where an instant sits on the grid: its viewer-local day, minute and `HH:mm` (one zone read). */
+export function placeIn(
+  ms: number,
+  timeZone: string,
+): { day: string; minute: number; time: string } {
+  const w = wallOf(ms, timeZone);
+  return {
+    day: `${w.y}-${pad(w.m)}-${pad(w.d)}`,
+    minute: w.h * 60 + w.mi,
+    time: `${pad(w.h)}:${pad(w.mi)}`,
+  };
+}
+
 /** `HH:mm` of an instant in the zone. */
 export function timeIn(ms: number, timeZone: string): string {
   const w = wallOf(ms, timeZone);

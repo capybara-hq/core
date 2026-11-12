@@ -24,15 +24,14 @@ import {
   itemInstant,
   itemRef,
   itemState,
-  minuteIn,
   parseRunPanelRef,
+  placeIn,
   rangeBounds,
   rangeDays,
   rangeLabel,
   refId,
   type SchedulesUrl,
   shiftDate,
-  timeIn,
 } from "../lib/schedule-calendar";
 import type { CalendarAnswer, CalendarTask, ScheduledTaskListItem } from "../lib/schedules";
 import { browserTimeZone } from "../lib/schedules";
@@ -140,14 +139,13 @@ export function ScheduleCalendarView({
     );
   }
 
-  const drawn =
-    failed !== null
-      ? null
-      : cal.isPlaceholderData
-        ? shown.current
-        : cal.data !== undefined
-          ? { range: url.range, date, answer: cal.data }
-          : null;
+  // What the grid draws: this range's answer (kept when a background refresh fails, with the
+  // error line), the previous range's while this one loads, nothing when this range failed.
+  const drawn = cal.isPlaceholderData
+    ? shown.current
+    : cal.data !== undefined
+      ? { range: url.range, date, answer: cal.data }
+      : null;
   const loading = drawn === null && failed === null;
   const answer = drawn?.answer ?? null;
   const drawnRange = drawn?.range ?? url.range;
@@ -165,8 +163,7 @@ export function ScheduleCalendarView({
     const ms = itemInstant(it);
     const task = taskOf.get(it.taskId);
     const state = itemState(it);
-    const day = dayIn(ms, timeZone);
-    const time = timeIn(ms, timeZone);
+    const { day, minute, time } = placeIn(ms, timeZone);
     const title = task?.name ?? it.taskId;
     const m = meta(task);
     const mark =
@@ -177,17 +174,13 @@ export function ScheduleCalendarView({
             ? tc("manual")
             : undefined
         : undefined;
-    const label = tc("itemLabel", {
-      title,
-      meta: m ?? "",
-      day: dayLabel(day),
-      time,
-      state: words.state(state),
-    });
+    const parts = { title, day: dayLabel(day), time, state: words.state(state) };
+    const label =
+      m !== undefined ? tc("itemLabel", { ...parts, meta: m }) : tc("itemNoMetaLabel", parts);
     return {
       id: refId(itemRef(it)),
       day,
-      minute: minuteIn(ms, timeZone),
+      minute,
       time,
       title,
       ...(m !== undefined ? { meta: m } : {}),
@@ -230,7 +223,13 @@ export function ScheduleCalendarView({
   // Empty range: the next planned run (of the scope's tasks) and a way to it, or "all paused".
   const scopeTasks = all ? allTasks : (tasks ?? undefined);
   let empty: ComponentProps<typeof ScheduleCalendar>["empty"];
-  if (answer && !cal.isPlaceholderData && items.length === 0 && collapsed.length === 0) {
+  if (
+    answer &&
+    !answer.truncated &&
+    !cal.isPlaceholderData &&
+    items.length === 0 &&
+    collapsed.length === 0
+  ) {
     const active = (scopeTasks ?? []).filter((s) => s.status === "active");
     if (scopeTasks !== undefined && scopeTasks.length > 0 && active.length === 0) {
       empty = {

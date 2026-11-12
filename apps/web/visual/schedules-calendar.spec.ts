@@ -18,11 +18,11 @@ async function open(
   route: string,
   opts: { theme?: (typeof THEMES)[number]; width?: number; hash?: string } = {},
 ) {
-  await page
-    .context()
-    .addCookies([
-      { name: "cb-theme", value: opts.theme ?? "dark", url: `http://localhost:${PORT}` },
-    ]);
+  await page.context().addCookies([
+    { name: "cb-theme", value: opts.theme ?? "dark", url: `http://localhost:${PORT}` },
+    // the server renders in the browser's zone, as after a first visit
+    { name: "cb-tz", value: "Asia/Shanghai", url: `http://localhost:${PORT}` },
+  ]);
   await page.clock.setFixedTime(new Date("2026-11-12T10:24:00+08:00"));
   await page.setViewportSize({ width: opts.width ?? 1440, height: 900 });
   await page.goto(`/dev/ui/pages/${route}${opts.hash ?? ""}`);
@@ -85,6 +85,9 @@ test.describe("first paint without JavaScript", () => {
   test("a phone paints the agenda, never the grid, with no horizontal page scroll", async ({
     page,
   }) => {
+    await page
+      .context()
+      .addCookies([{ name: "cb-tz", value: "Asia/Shanghai", url: `http://localhost:${PORT}` }]);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/dev/ui/pages/schedules-calendar");
     await expect(page.locator('[data-part="schedule-calendar-agenda"]')).toBeVisible();

@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "../i18n/navigation";
+import { cookieOf } from "./cookies";
 import {
   parseRunPanelRef,
   type RunPanelRef,
   refId,
+  SCHEDULES_VIEW_COOKIE,
   type SchedulesUrl,
   schedulesSearch,
+  schedulesUrlOf,
   viewCookie,
 } from "./schedule-calendar";
 
@@ -17,7 +21,8 @@ import {
  * show the same view. The tab and the range are also written to the `cap_schedules_view` cookie,
  * which the server reads for the next document's first paint. `initial` is what `page.tsx` read
  * from the address and the cookie; when it changes (a navigation to `/schedules` with other
- * parameters) the state follows it.
+ * parameters) the state follows it, and so it does when the address changes by anything but this
+ * hook's own writes (Back and Forward restoring an entry, as `useUrlParam` follows them).
  */
 export function useSchedulesUrl(
   initial: SchedulesUrl,
@@ -28,6 +33,19 @@ export function useSchedulesUrl(
   if (seen !== key) {
     setSeen(key);
     setValue(initial);
+  }
+  const params = useSearchParams();
+  const address = ["view", "range", "date", "scope"].map((n) => params.get(n) ?? "").join("|");
+  const [seenAddress, setSeenAddress] = useState(address);
+  // The address this hook wrote last: its own writes are already the state.
+  const written = useRef<string | null>(null);
+  if (seenAddress !== address) {
+    setSeenAddress(address);
+    if (written.current !== address) {
+      // A change from outside (only after hydration: the server never sees one), read with the
+      // remembered view as page.tsx reads it.
+      setValue(schedulesUrlOf(params, cookieOf(document.cookie, SCHEDULES_VIEW_COOKIE)));
+    }
   }
   // The tab and range shown are remembered (an explicit `?view=` too: it wins and is written back).
   useEffect(() => {
@@ -40,11 +58,10 @@ export function useSchedulesUrl(
     // to the calendar: the list drops it.
     const url = new URL(window.location.href);
     const hash = next.view === "calendar" ? url.hash : "";
-    window.history.replaceState(
-      window.history.state,
-      "",
-      url.pathname + schedulesSearch(next) + hash,
-    );
+    const search = schedulesSearch(next);
+    const q = new URLSearchParams(search);
+    written.current = ["view", "range", "date", "scope"].map((n) => q.get(n) ?? "").join("|");
+    window.history.replaceState(window.history.state, "", url.pathname + search + hash);
   };
   return [value, select];
 }

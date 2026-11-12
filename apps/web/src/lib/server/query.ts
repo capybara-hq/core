@@ -69,6 +69,8 @@ export async function prefetchRoute(
     orgId: session.orgId,
     locale: uiLocale(session.locale ?? "en"),
     cookie: (name) => cookieOf(session.cookie ?? null, name),
+    // The root layout's clock reads its own Date.now(): across a viewer-local midnight the two
+    // may name different days, and the view then reads its range again (a rare extra read).
     now: Date.now(),
   };
   const queries = match.entry.queries(ctx);

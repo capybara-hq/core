@@ -331,6 +331,117 @@ describe("/schedules?view=calendar", () => {
     expect(window.location.hash).toBe("#at=s1/2026-11-13T14:00:00.000Z");
   });
 
+  it("a failed background refresh keeps the grid and the open panel, with the error line", async () => {
+    let fail = false;
+    stubApi(
+      routes({
+        [`GET ${CAL}`]: () =>
+          (fail ? json(500, { code: "internal", message: "boom" }) : json(200, ANSWER)) as never,
+      }),
+    );
+    window.history.replaceState(null, "", "/schedules?view=calendar#run=tr2");
+    const { client } = await load("/schedules?view=calendar");
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    fail = true;
+    await act(() => client.refetchQueries({ queryKey: keys.org("o1").schedulesAll() }));
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-part="schedule-calendar-error"]')).not.toBeNull(),
+    );
+    expect(block("run=tr1")).not.toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("a collapsed day opens its task's items (read with taskId), each with a way back", async () => {
+    const day = TODAY;
+    const dense = {
+      ...ANSWER,
+      tasks: [
+        ...ANSWER.tasks,
+        calTask({
+          id: "s4",
+          name: "Data sync",
+          trigger: { kind: "cron", expr: "0 * * * *", timeZone: ZONE },
+        }),
+      ],
+      collapsed: [
+        {
+          taskId: "s4",
+          day,
+          count: 24,
+          upcoming: 20,
+          running: 0,
+          completed: 2,
+          failed: 2,
+          skipped: 0,
+          first: WEEK.from,
+          last: WEEK.from,
+        },
+      ],
+    };
+    const dayItems = {
+      tasks: dense.tasks.slice(1),
+      items: [
+        run({
+          id: "tr7",
+          taskId: "s4",
+          scheduledFor: new Date(startOfDay(day, ZONE)).toISOString(),
+          status: "failed",
+          error: "boom",
+          conversationId: "c7",
+        }),
+        {
+          kind: "occurrence",
+          taskId: "s4",
+          scheduledFor: new Date(startOfDay(day, ZONE) + 23 * 3600_000).toISOString(),
+          at: new Date(startOfDay(day, ZONE) + 23 * 3600_000).toISOString(),
+        },
+      ],
+      collapsed: [],
+      horizon: ANSWER.horizon,
+      truncated: false,
+    };
+    const calls = stubApi(
+      routes({
+        [`GET ${CAL}`]: () =>
+          json(200, calls.at(-1)?.url.includes("taskId=s4") ? dayItems : dense) as never,
+      }),
+    );
+    req.cookie = COOKIES;
+    await renderRouteWithCache(
+      "/schedules?view=calendar",
+      routes({ [`GET ${CAL}`]: ok(dense) }) as never,
+      { cookie: COOKIES },
+    );
+    const chip = grid().querySelector<HTMLElement>(`[data-key="c:day=s4/${day}"]`) as HTMLElement;
+    expect(chip.getAttribute("aria-label")).toContain("Hourly · 24 runs");
+    const user = userEvent.setup();
+    await user.click(chip);
+    const sheet = await screen.findByRole("dialog");
+    await vi.waitFor(() =>
+      expect(within(sheet).getAllByRole("button", { name: C.panel.view })).toHaveLength(2),
+    );
+    expect(calendarReads(calls).at(-1)).toMatchObject({ taskId: "s4" });
+    await user.click(
+      within(sheet).getAllByRole("button", { name: C.panel.view })[0] as HTMLElement,
+    );
+    expect(window.location.hash).toBe(`#day=s4/${day}&run=tr7`);
+    expect(
+      within(sheet).getByRole("link", { name: C.panel.openConversation }).getAttribute("href"),
+    ).toBe("/chat/c7");
+    await user.click(within(sheet).getByRole("button", { name: C.panel.back }));
+    expect(window.location.hash).toBe(`#day=s4/${day}`);
+  });
+
+  it("an admin's remembered 全组织 address is prefetched on a document load", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await load("/schedules?view=calendar&scope=all", { me: asRole("admin") });
+    expect(calendarReads(calls)).toEqual([{ ...WEEK, timeZone: ZONE, all: "true" }]);
+    expect(calls.some((c) => c.url === `${BASE}?all=true`)).toBe(true);
+    expect(calls.some((c) => c.url === `${ORG}/members`)).toBe(true);
+    await settle();
+    expect(browser.map((c) => c.url)).toEqual([]);
+  });
+
   it("a member never sees the scope control", async () => {
     stubApi(routes());
     await load("/schedules?view=calendar&scope=all", { me: asRole("member") });

@@ -5,6 +5,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Catalog } from "../src/dev/catalog";
 import { CATALOG_ROUTES, REFERENCE_ROUTES } from "../src/dev/catalog/routes";
 
+// the catalog draws the /schedules calendar page, whose view navigates through the app's router
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");

@@ -6119,7 +6119,6 @@
       "calendar": "日历"
     },
     "calendar": {
-      "label": "定时任务日历",
       "mine": "只看我的",
       "all": "全组织",
       "zone": "时间按 {zone} 显示。",
@@ -6144,6 +6143,7 @@
       "manual": "手动",
       "dayLabel": "{m}月{d}日 {weekday}",
       "itemLabel": "{title}，{meta}，{day} {time}，{state}",
+      "itemNoMetaLabel": "{title}，{day} {time}，{state}",
       "itemMarkLabel": "{label}，{mark}",
       "metaWithCreator": "{agent} · {person}",
       "collapsed": {
@@ -6164,7 +6164,6 @@
         "manual": "手动",
         "trial": "试运行",
         "reason": "原因",
-        "error": "错误",
         "failed": "运行失败。",
         "missing": "{n, plural, other {# 个工具被拒绝}}",
         "openConversation": "打开会话",

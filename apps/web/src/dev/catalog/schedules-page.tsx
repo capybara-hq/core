@@ -1,6 +1,6 @@
 "use client";
 
-import { AppShell } from "@capybara-hq/design";
+import { AppShell, useTimeZone } from "@capybara-hq/design";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import SchedulesView from "../../app/(app)/schedules/view";
@@ -206,11 +206,10 @@ function answerFor(range: CalendarRange, all: boolean, zone: string): CalendarAn
 }
 
 /** A query cache holding the page's answers, never read again (no kernel behind the catalog). */
-function seeded(variant: SchedulesPageVariant): QueryClient {
+function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
   const qc = new QueryClient({
     defaultOptions: { queries: { staleTime: Number.POSITIVE_INFINITY, retry: false } },
   });
-  const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const admin = variant === "admin";
   qc.setQueryData(meQuery().queryKey, meAs(admin ? "owner" : "member"));
   qc.setQueryData(readinessQuery(ORG).queryKey, { modelProvider: "ready", agents: 3 });
@@ -241,7 +240,9 @@ function seeded(variant: SchedulesPageVariant): QueryClient {
 
 /** The schedules page in the workspace shell. */
 export function SchedulesPageCatalog({ variant }: { variant: SchedulesPageVariant }) {
-  const [client] = useState(() => seeded(variant));
+  // the zone the page draws in (the server render's from `cb-tz`, as the view reads it)
+  const zone = useTimeZone() ?? new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [client] = useState(() => seeded(variant, zone));
   const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: "schedules" }, () => "#");
   return (
     <QueryClientProvider client={client}>

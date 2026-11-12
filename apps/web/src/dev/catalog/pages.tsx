@@ -26,7 +26,6 @@ import { meQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
 import type { PageRoute } from "./routes";
-import { SchedulesPageCatalog } from "./schedules-page";
 import { sidebarProps, statusFixture } from "./shell-fixture";
 
 // Real app pages drawn from a seeded query cache (no kernel), for the screenshot tests of pages
@@ -250,10 +249,8 @@ function seeded(): QueryClient {
 
 /** `/dev/ui/pages/<page>`: one app page in the admin console's shell. */
 export function PageCatalog({ route }: { route: PageRoute }) {
-  if (route === "pages/schedules-calendar") return <SchedulesPageCatalog variant="week" />;
-  if (route === "pages/schedules-calendar-month") return <SchedulesPageCatalog variant="month" />;
-  if (route === "pages/schedules-calendar-admin") return <SchedulesPageCatalog variant="admin" />;
-  return <AdminOverviewCatalog />;
+  // the schedules pages are drawn by the catalog's index (not lazy)
+  return route === "pages/admin-overview" ? <AdminOverviewCatalog /> : null;
 }
 
 /** `/dev/ui/pages/admin-overview`: the admin console overview. */

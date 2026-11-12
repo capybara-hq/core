@@ -87,7 +87,8 @@ Anti-goals (a failure even if it works):
 - The page head of `/schedules` keeps its title, description and 新建定时任务 primary. Its **tab
   row** holds 列表 / 日历 (decided, Q1): the design spec's tab row is the pattern for "pages
   with views" (§4.2 row 4), while `Segmented` is a control inside content (§6.4). The tabs change the
-  view with `onSelect` and a `router.replace` of the query, no reload.
+  view with `onSelect` and a `history.replaceState` of the query (implementation 2026-11-13: as
+  `useUrlParam`; Next keeps its search params in step, no server round trip), no reload.
 - URL: `/schedules` (list), `/schedules?view=calendar` (calendar), plus `&range=week|month`
   (absent = `week`), `&date=YYYY-MM-DD` (any day of the shown week or month, in the viewer's zone;
   absent = today) and `&scope=all` (admins; absent = mine). Every state is a URL, so a reload, Back
@@ -161,7 +162,9 @@ Guests get the existing no-access state (members up, as the list). The page's ot
 
 A `Sheet` (480, no scrim, the grid stays usable) opened from a block, a chip or a Popover item;
 its open item is in the URL hash (`#run=<taskRunId>`, `#at=<taskId>/<ISO tick>` for an occurrence,
-`#day=<taskId>/<YYYY-MM-DD>` for a collapsed chip) so a reload keeps it (designer's call). Content,
+`#day=<taskId>/<YYYY-MM-DD>` for a collapsed chip; an item opened from that chip keeps the day
+first, `#day=<taskId>/<YYYY-MM-DD>&run=<id>`, so its Back and a reload return to the day,
+implementation 2026-11-13) so a reload keeps it (designer's call). Content,
 as `Subsection variant="divided"` regions (design spec §6.7, one box, no cards):
 
 - **Status line** (no title): the state mark (icon + word) and the time in the viewer's zone, plus
@@ -462,7 +465,8 @@ is told by color alone.
   lands (`placeholderData: keepPreviousData`) with the toolbar's range label already updated and a
   dense `spinner` beside it, so the grid never flashes empty (designer's call).
 - **No tasks at all**: the page `EmptyState` as on the list (「还没有定时任务」 + 新建定时任务); the
-  tabs still switch.
+  tabs still switch. Org admins get the calendar instead (implementation 2026-11-13): their
+  全组织 switch must stay reachable, so an admin with no task of their own sees the empty week.
 - **Tasks, but nothing in the range**: the grid is drawn empty with a `panel` `EmptyState` centered
   over the grid body: 「本周没有运行」 / 「本月没有运行」, hint with the next planned run when there is
   one (from the tasks' `nextRunAt`), and the action 跳到下一次运行 that navigates to its range.
@@ -470,7 +474,8 @@ is told by color alone.
 - **Org turned scheduled tasks off**: the existing `warn` callout; past runs still show, no
   occurrences (§5.2).
 - **Error**: a failed first read is the page's `ErrorFrame`; a failed range change keeps the grid
-  with the in-grid load-failed line (「加载失败」 in `fail`, code · request id, 重试).
+  with the in-grid load-failed line (「加载失败」 in `fail`, the code, 重试; the component's `error`
+  carries no request id); a failed background refresh keeps the drawn answer under that line.
 - **Truncated**: the `warn` callout of §5.5.
 
 ## 9. Web wiring
