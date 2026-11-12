@@ -492,6 +492,44 @@ describe("platform plugin update (spec §7)", { timeout: 120_000 }, () => {
     expect(await secretsOf(gh.id)).toEqual([]);
   });
 
+  it("a template that drops its git hosts updates git_hosts and clears use_for_git", async () => {
+    const git = { hosts: [{ host: "github.com", username: "x-access-token" }] };
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: { git } } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {} },
+    });
+    await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
+    const gh = await connectorFrom(env.orgId, "gh");
+    await env.db
+      .updateTable("connectors")
+      .set({ use_for_git: true })
+      .where("id", "=", gh.id)
+      .execute();
+    const gitOf = () =>
+      env.db
+        .selectFrom("connectors")
+        .select(["git_hosts", "use_for_git"])
+        .where("id", "=", gh.id)
+        .executeTakeFirstOrThrow();
+    expect(await gitOf()).toEqual({ git_hosts: git.hosts, use_for_git: true });
+    await updateTo(item, "1.1.0");
+    expect(await gitOf()).toEqual({ git_hosts: null, use_for_git: false });
+    const applied = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "connector.template_applied")
+      .where("target", "=", gh.id)
+      .executeTakeFirstOrThrow();
+    expect(applied.detail).toMatchObject({ useForGit: { from: true, to: false } });
+    // back to the version with hosts: they return, "use for git" stays off until an admin says so
+    await updateTo(item, "1.0.0");
+    expect(await gitOf()).toEqual({ git_hosts: git.hosts, use_for_git: false });
+  });
+
   it("default tool policies follow the template unless the org set them; a downgrade restores them", async () => {
     const item = await seedPlugin(env, {
       name: "crm",

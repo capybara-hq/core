@@ -895,15 +895,22 @@ export class ConnectorsService {
     actorTokenId?: string,
   ): Promise<void> {
     const t = this.db;
-    await this.row(t, orgId, connectorId, true);
+    const before = await this.row(t, orgId, connectorId, true);
     const { input } = p;
     const policies = input.template.defaultToolPolicies;
+    const botCapable =
+      input.git !== undefined &&
+      input.git.hosts.length > 0 &&
+      input.auth.type !== "none" &&
+      input.auth.ownership === "org";
     await t
       .updateTable("connectors")
       .set({
         endpoint: JSON.stringify(p.endpoint),
         auth: JSON.stringify(input.auth),
         git_hosts: input.git !== undefined ? JSON.stringify(input.git.hosts) : null,
+        // "use for git" needs org ownership and git hosts: a template that drops either clears it
+        ...(!botCapable && { use_for_git: false }),
         catalog_item_id: input.template.itemId,
         catalog_version: input.template.version,
         template_tool_policies: policies ? JSON.stringify(policies) : null,
@@ -976,6 +983,7 @@ export class ConnectorsService {
         credentialsReset: input.resetCredentials,
         credentialProvided: p.secret !== undefined || p.oauth !== undefined,
         policies: policyChanges,
+        ...(before.use_for_git && !botCapable && { useForGit: { from: true, to: false } }),
       },
     });
   }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GitHostEntry } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { KernelConfig } from "../config/schema.js";
@@ -102,7 +103,10 @@ export class GitIdentities {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(Credentials)
-    private readonly credentials: Pick<Credentials, "gitAuthorization" | "gitUnauthorized">,
+    private readonly credentials: Pick<
+      Credentials,
+      "gitAuthorization" | "gitUnauthorized" | "checkRevision"
+    >,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     /** Read by `@Cacheable`. */
     @Inject(CacheService) readonly cacheService: CacheService,
@@ -115,6 +119,11 @@ export class GitIdentities {
    * `name` (else the login) and `<id>+<login>@users.noreply.<host>`. Null for a host without an
    * identity API (not github.com or `*.ghe.com`), a connector of another org or without that host,
    * a missing credential or an API failure (git then uses the sandbox's own config).
+   *
+   * Cached per (org, connector, subject, host, credential revision): the subject is the account
+   * for a personal connector and `org` for an org-credential one (the bot's identity is the same
+   * for every member, read once); the revision (`Credentials.checkRevision`, hashed) changes when
+   * the credential is set, refreshed or cleared, so a reconnect reads the user again.
    */
   async gitIdentity(
     orgId: string,
@@ -122,27 +131,6 @@ export class GitIdentities {
     accountId: string,
     host: string,
   ): Promise<GitIdentity | null> {
-    if ((this.apiBase ?? gitIdentityApiBase)(host) === null) return null;
-    const user = await this.gitHubUser(orgId, connectorId, accountId, host);
-    if (user === null) return null;
-    return {
-      name: user.name ?? user.login,
-      email: `${user.id}+${user.login}@users.noreply.${host}`,
-    };
-  }
-
-  /**
-   * `GET /user` on the host's API with the connector's credential (one forced refresh after a
-   * 401), cached 24 h per (org, connector, account, host); failures are not cached. The cached
-   * value holds no token; the log lines name the connector and the status, never a header.
-   */
-  @Cacheable({ key: "git-identity:#{0}:#{1}:#{2}:#{3}", ttl: GIT_IDENTITY_TTL_SECONDS })
-  async gitHubUser(
-    orgId: string,
-    connectorId: string,
-    accountId: string,
-    host: string,
-  ): Promise<GitHubUser | null> {
     const base = (this.apiBase ?? gitIdentityApiBase)(host);
     if (base === null) return null;
     const row = await this.db.db
@@ -155,6 +143,41 @@ export class GitIdentities {
     const entry = ((row?.git_hosts ?? []) as GitHostEntry[]).find((h) => h.host === host);
     if (row === undefined || entry === undefined) return null;
     const auth = row.auth as unknown as ConnectorAuth;
+    const bot = auth.type !== "none" && auth.ownership === "org";
+    const subject = bot ? "org" : accountId;
+    const revision = createHash("sha256")
+      .update(await this.credentials.checkRevision(orgId, connectorId, bot ? null : accountId))
+      .digest("hex")
+      .slice(0, 16);
+    const user = await this.gitHubUser(orgId, connectorId, subject, host, revision, {
+      base,
+      auth,
+      username: entry.username,
+      accountId,
+    });
+    if (user === null) return null;
+    return {
+      name: user.name ?? user.login,
+      email: `${user.id}+${user.login}@users.noreply.${host}`,
+    };
+  }
+
+  /**
+   * `GET /user` on the host's API with the connector's credential (one forced refresh after a
+   * 401), cached 24 h under the first five arguments (see {@link gitIdentity}); failures are not
+   * cached. The cached value holds no token; the log lines name the connector and the status,
+   * never a header. Called by {@link gitIdentity} only.
+   */
+  @Cacheable({ key: "git-identity:#{0}:#{1}:#{2}:#{3}:#{4}", ttl: GIT_IDENTITY_TTL_SECONDS })
+  async gitHubUser(
+    orgId: string,
+    connectorId: string,
+    _subject: string,
+    host: string,
+    _revision: string,
+    req: { base: string; auth: ConnectorAuth; username: string; accountId: string },
+  ): Promise<GitHubUser | null> {
+    const { base, auth, accountId, username } = req;
     const config = this.config.get();
     const get = async (authorization: string) =>
       safeFetch(
@@ -176,20 +199,14 @@ export class GitIdentities {
         connectorId,
         auth,
         accountId,
-        entry.username,
+        username,
       );
       let res = await get(authorization);
       if (res.status === 401) {
         await res.body?.cancel().catch(() => {});
         await this.credentials.gitUnauthorized(orgId, connectorId, auth, accountId, authorization);
         res = await get(
-          await this.credentials.gitAuthorization(
-            orgId,
-            connectorId,
-            auth,
-            accountId,
-            entry.username,
-          ),
+          await this.credentials.gitAuthorization(orgId, connectorId, auth, accountId, username),
         );
       }
       if (res.status !== 200) {

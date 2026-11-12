@@ -22,14 +22,30 @@ export interface GitSourceFor {
   bot: boolean;
 }
 
-/** A connector usable for one host, before the pick. */
+/** An org connector declaring one host, before the org-wide choice. */
 interface Candidate extends GitSourceFor {
+  auth: ConnectorAuth;
   oauthCode: boolean;
   createdAt: Date;
 }
 
+/**
+ * The org-wide default among a host's candidates (no pick): personal-ownership connectors before
+ * `use_for_git` bots, then the authorization-code one, then the oldest, then the lowest id.
+ */
+function byDefault(a: Candidate, b: Candidate): number {
+  return (
+    Number(a.bot) - Number(b.bot) ||
+    Number(b.oauthCode) - Number(a.oauthCode) ||
+    a.createdAt.getTime() - b.createdAt.getTime() ||
+    a.connectorId.localeCompare(b.connectorId)
+  );
+}
+
 /** Auth types whose credential can be presented as a basic password (not `none` / `headers`). */
-const gitCapable = (auth: ConnectorAuth): boolean =>
+const gitCapable = (
+  auth: ConnectorAuth,
+): auth is Exclude<ConnectorAuth, { type: "none" } | { type: "headers" }> =>
   auth.type === "bearer" || auth.type === "api_key" || auth.type === "basic" || isOAuth(auth);
 
 @Injectable()
@@ -46,14 +62,15 @@ export class GitSources {
    *
    * - nothing while the gateway is off (`tools.git.enabled`, the org's `gitGateway.enabled`), for
    *   an account that is not an active member of the live org, or for an anonymous channel guest;
-   * - a personal connector (live, active, with `git_hosts`) where this account has its own
-   *   credential; never another account's;
-   * - an org-credential connector only with `use_for_git` and its org credential present
-   *   (`bot: true`);
-   * - one per host: with the org's `gitGateway.hostSources[host]` pick only that connector, and
-   *   nothing for an account that cannot use it (the pick is org-wide, never a fallback to
-   *   another connector or a bot); without a pick the authorization-code (`oauth_code`) one,
-   *   else the oldest (then the lowest id).
+   * - one connector per host for the whole org ("never mixed"): the org's
+   *   `gitGateway.hostSources[host]` pick; without one, among the org's live, active connectors
+   *   declaring the host (personal-ownership ones, and org-credential ones only with
+   *   `use_for_git`): a personal one before a bot (a bot is the default only when no personal
+   *   connector declares the host), the authorization-code (`oauth_code`) one first, else the
+   *   oldest;
+   * - the account gets that connector only when it can use it: its own credential for a
+   *   personal one (never another account's), the org credential for a bot (`bot: true`);
+   *   otherwise no source for the host, never another connector.
    */
   async sourcesFor(orgId: string, accountId: string): Promise<GitSourceFor[]> {
     if (!this.config.get().tools.git.enabled) return [];
@@ -85,19 +102,17 @@ export class GitSources {
     const byHost = new Map<string, Candidate[]>();
     for (const r of rows) {
       const auth = r.auth as unknown as ConnectorAuth;
-      const hosts = (r.git_hosts ?? []) as GitHostEntry[];
-      if (hosts.length === 0 || !gitCapable(auth) || auth.type === "none") continue;
+      if (!gitCapable(auth)) continue;
       const bot = auth.ownership === "org";
       if (bot && !r.use_for_git) continue;
-      // personal: this account's own credential; org: the org's (status never decrypts)
-      if ((await this.credentials.status(orgId, r.id, auth, accountId)) !== "connected") continue;
-      for (const h of hosts) {
+      for (const h of (r.git_hosts ?? []) as GitHostEntry[]) {
         const list = byHost.get(h.host) ?? [];
         list.push({
           host: h.host,
           connectorId: r.id,
           username: h.username,
           bot,
+          auth,
           oauthCode: auth.type === "oauth_code",
           createdAt: new Date(r.created_at),
         });
@@ -108,17 +123,18 @@ export class GitSources {
     const picks = settings.gitGateway?.hostSources ?? {};
     const out: GitSourceFor[] = [];
     for (const [host, list] of [...byHost].sort(([a], [b]) => a.localeCompare(b))) {
-      // the org's pick is org-wide ("never mixed", spec §6.2): only that connector serves the
-      // host, and an account that cannot use it gets no source there (never another connector)
       const chosen = Object.hasOwn(picks, host)
         ? list.find((c) => c.connectorId === picks[host])
-        : [...list].sort(
-            (a, b) =>
-              Number(b.oauthCode) - Number(a.oauthCode) ||
-              a.createdAt.getTime() - b.createdAt.getTime() ||
-              a.connectorId.localeCompare(b.connectorId),
-          )[0];
+        : [...list].sort(byDefault)[0];
       if (chosen === undefined) continue;
+      // personal: this account's own credential; bot: the org's (status never decrypts)
+      const usable = await this.credentials.status(
+        orgId,
+        chosen.connectorId,
+        chosen.auth,
+        accountId,
+      );
+      if (usable !== "connected") continue;
       out.push({
         host,
         connectorId: chosen.connectorId,

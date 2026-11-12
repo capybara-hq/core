@@ -283,7 +283,7 @@ describe("sourcesFor", () => {
     }
   });
 
-  it("one source per host: the org pick, else the oauth_code one, else the oldest", async () => {
+  it("one source per host for the org: the pick, else the oauth_code one, else the oldest", async () => {
     const t0 = new Date("2026-01-01T00:00:00Z");
     const t1 = new Date("2026-02-01T00:00:00Z");
     const t2 = new Date("2026-03-01T00:00:00Z");
@@ -304,9 +304,10 @@ describe("sourcesFor", () => {
       { access_token: "gho_alice_00000001", expires_at: null, token_type: "Bearer" },
     );
     expect(await pick()).toEqual([oauth]);
-    // Bob has only the newer PAT: he gets that one
+    // the choice is org-wide: Bob has only a credential on the newer PAT, so he gets no source
+    // (the OAuth connector serves the host; never his PAT in its place)
     await personalToken(newPat, bobId, "ghp_bob_0000000001");
-    expect((await sources().sourcesFor(orgId, bobId)).map((s) => s.connectorId)).toEqual([newPat]);
+    expect(await sources().sourcesFor(orgId, bobId)).toEqual([]);
 
     // the org's pick is org-wide: it wins over the oauth_code one
     await setGateway({ hostSources: { "github.com": newPat } });
@@ -322,6 +323,25 @@ describe("sourcesFor", () => {
     // the pick is per host: another host's pick leaves the default rules here
     await setGateway({ hostSources: { "gitlab.com": newPat } });
     expect(await pick()).toEqual([oauth]);
+  });
+
+  it("without a pick a personal connector wins over an older bot; the bot only when alone", async () => {
+    const bot = await connector(ORG_PAT, { useForGit: true, createdAt: new Date(0) });
+    await orgToken(bot, "ghp_bot_000000000004");
+    // only the bot declares the host: the bot for everyone
+    for (const a of [aliceId, bobId]) {
+      expect((await sources().sourcesFor(orgId, a)).map((s) => [s.connectorId, s.bot])).toEqual([
+        [bot, true],
+      ]);
+    }
+    // a personal connector declares it too: it is the org's source, the bot is not used
+    const pat = await connector(PERSONAL);
+    await personalToken(pat, aliceId, "ghp_alice_000000012");
+    expect(await sources().sourcesFor(orgId, aliceId)).toEqual([
+      { host: "github.com", connectorId: pat, username: "x-access-token", bot: false },
+    ]);
+    // Bob has not connected it: no source (never the bot), so the org never mixes the two
+    expect(await sources().sourcesFor(orgId, bobId)).toEqual([]);
   });
 
   it("a pick of a personal connector never falls back to a use_for_git bot", async () => {
@@ -398,7 +418,8 @@ describe("gitIdentity", () => {
     // cached: no second request
     expect(await ids.gitIdentity(orgId, c, aliceId, "github.com")).not.toBeNull();
     expect(api.requests).toHaveLength(1);
-    const key = `cache:git-identity:${orgId}:${c}:${aliceId}:github.com`;
+    const [key] = await redis.keys(`cache:git-identity:${orgId}:${c}:${aliceId}:github.com:*`);
+    if (key === undefined) throw new Error("no identity cache entry");
     const ttl = await redis.ttl(key);
     expect(ttl).toBeGreaterThan(GIT_IDENTITY_TTL_SECONDS - 60);
     expect(ttl).toBeLessThanOrEqual(GIT_IDENTITY_TTL_SECONDS);
@@ -410,6 +431,38 @@ describe("gitIdentity", () => {
       const type = await redis.type(k2);
       if (type === "string") expect(await redis.get(k2)).not.toContain(token);
     }
+  });
+
+  it("a credential set or cleared reads the user again; a bot's identity is read once for all", async () => {
+    const c = await connector(PERSONAL);
+    await personalToken(c, aliceId, "ghp_alice_identity_0010");
+    api.users.set("ghp_alice_identity_0010", { login: "alice-old", id: 5 });
+    api.users.set("ghp_alice_identity_0011", { login: "alice-new", id: 6 });
+    const ids = k.app.get(GitIdentities);
+    expect((await ids.gitIdentity(orgId, c, aliceId, "github.com"))?.name).toBe("alice-old");
+    expect(api.requests).toHaveLength(1);
+    // reconnecting as another GitHub user: the revision changed, the user is read again
+    await new Promise((r) => setTimeout(r, 5));
+    await personalToken(c, aliceId, "ghp_alice_identity_0011");
+    expect((await ids.gitIdentity(orgId, c, aliceId, "github.com"))?.name).toBe("alice-new");
+    expect(api.requests).toHaveLength(2);
+    // cleared: no identity (and nothing stale served)
+    await creds().clear(orgId, c, { kind: "user", accountId: aliceId });
+    expect(await ids.gitIdentity(orgId, c, aliceId, "github.com")).toBeNull();
+    expect(api.requests).toHaveLength(2);
+
+    const bot = await connector(ORG_PAT, { useForGit: true });
+    await orgToken(bot, "ghp_bot_identity_00001");
+    api.users.set("ghp_bot_identity_00001", { login: "acme-bot", id: 99, name: "Acme Bot" });
+    const before = api.requests.length;
+    for (const a of [aliceId, bobId]) {
+      expect(await ids.gitIdentity(orgId, bot, a, "github.com")).toEqual({
+        name: "Acme Bot",
+        email: "99+acme-bot@users.noreply.github.com",
+      });
+    }
+    expect(api.requests.length - before).toBe(1);
+    expect(await redis.keys(`cache:git-identity:${orgId}:${bot}:org:github.com:*`)).toHaveLength(1);
   });
 
   it("falls back to the login, uses the ghe.com noreply domain, null for other hosts", async () => {
