@@ -94,20 +94,6 @@ export async function confirmRisk(
   return answer === "y" || answer === "yes";
 }
 
-/** @deprecated Use {@link needsConfirmation}; kept until cli.ts switches. */
-export const needsOpenConfirmation = needsConfirmation;
-
-/** @deprecated Use {@link confirmRisk}; kept until cli.ts switches (asks for tier open). */
-export function confirmOpenNetwork(deps: {
-  out: (line: string) => void;
-  ask: (question: string) => Promise<string>;
-}): Promise<boolean> {
-  return confirmRisk({ command: "policy", action: "set", key: "tier", value: "open" }, deps);
-}
-
-/** @deprecated Use {@link policyRisk}'s `needsYes`; kept until cli.ts switches. */
-export const OPEN_NETWORK_NEEDS_YES = OPEN_TIER.needsYes;
-
 /** What the OS mode does not enforce yet, shown with every `show` and `set`. */
 export const NOT_ENFORCED_NOTE =
   "Note: in OS mode cpu and memoryMb are not enforced yet, and allowCredentials is not used: " +

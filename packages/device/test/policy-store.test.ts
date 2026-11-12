@@ -37,6 +37,17 @@ describe("PolicyStore", () => {
     expect(new PolicyStore(dir).current().allowedDomains).toEqual(["a.com"]);
   });
 
+  it("reports a legacy network open and hands out a new object per version only", () => {
+    writeFileSync(policyPath(dir), JSON.stringify({ network: "open" }));
+    const store = new PolicyStore(dir);
+    expect(store.legacyNetworkOpen).toBe(true);
+    const first = store.current();
+    expect(store.current()).toBe(first);
+    writePolicy(dir, withDomains(["a.com"]));
+    expect(store.current()).not.toBe(first);
+    expect(new PolicyStore(dir).legacyNetworkOpen).toBe(false);
+  });
+
   it("re-reads policy.json when it changes, without a restart", () => {
     writePolicy(dir, withDomains(["a.com"]));
     const store = new PolicyStore(dir);

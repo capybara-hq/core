@@ -7,8 +7,16 @@ import {
   type DeviceExecArgs,
   type ExecResult,
   type SandboxRoots,
+  type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
-import { effectiveEgress } from "../policy.js";
+import {
+  deviceTier,
+  type EgressLimits,
+  effectiveEgress,
+  provisionalTier,
+  type TierFacts,
+  tierFacts,
+} from "../policy.js";
 import type { Policy } from "../state.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
@@ -52,6 +60,28 @@ const SPEC_LABEL = "capybara.device.spec";
 const FILE_OP_TIMEOUT_S = 30;
 
 const ROOTS: SandboxRoots = DEFAULT_SANDBOX_ROOTS;
+
+/**
+ * The container's `--shm-size` for a tier (spec §5.2): `strict` keeps Docker's default (64 MiB);
+ * `dev` and `open` get a quarter of the memory ceiling up to 1 GiB (at least the default), or
+ * 1 GiB without a ceiling, so browsers have room.
+ */
+export function shmSize(tier: SandboxTier, memoryMb: number | null): string | undefined {
+  if (tier === "strict") return undefined;
+  if (memoryMb === null) return "1g";
+  return `${Math.max(64, Math.min(1024, Math.floor(memoryMb / 4)))}m`;
+}
+
+/**
+ * Whether a command gets the default bridge (spec §5.2 table). Docker mode has no domain filter,
+ * and the bridge reaches the host and the intranet, so only an explicit choice opens it: the
+ * device's own allowed domains within the ceiling (as `strict` computes them; the dev hosts do
+ * not count), or tier `open` with a ceiling that allows any host.
+ */
+export function bridgeNetwork(policy: Policy, limits: EgressLimits): boolean {
+  if (deviceTier(policy, limits) === "open") return effectiveEgress(policy, limits).length > 0;
+  return effectiveEgress({ ...policy, tier: "strict" }, limits).length > 0;
+}
 
 /** Container name of a device. */
 export function containerName(deviceId: string): string {
@@ -168,8 +198,9 @@ export interface DockerExecutorOptions {
   dir: string;
   deviceId: string;
   /**
-   * The local policy now. The network decision reads it at each command; cpu and memory apply
-   * when the container is next created.
+   * The local policy now. The network decision reads it at each command; cpu, memory and the
+   * tier's shm size apply when the container is next created (at the next command that finds it
+   * idle).
    */
   policy: () => Policy;
 }
@@ -203,8 +234,10 @@ interface Inspected {
  * /workspace, /skills and /tmp. Workspace and tmp files are read and written inside the container
  * (as the `sandbox` user, so a link a command plants resolves in the container and never on the
  * host); the skills directory, which commands cannot write, is accessed from the host with the
- * same real-path checks as the OS executor. Network: none unless the effective egress is
- * non-empty, then the default bridge (Docker mode has no domain allowlist).
+ * same real-path checks as the OS executor. Network: none unless {@link bridgeNetwork} says
+ * otherwise, then the default bridge (Docker mode has no domain allowlist). Tiers `dev` and
+ * `open` get a larger `/dev/shm` ({@link shmSize}); a change of the container's flags recreates it
+ * at the next command that finds it idle.
  */
 export class DockerExecutor implements Executor {
   readonly mode = "docker" as const;
@@ -225,6 +258,10 @@ export class DockerExecutor implements Executor {
   private readonly queue: Waiter[] = [];
   private pumping = false;
   private dirty = false;
+  /** The limits of the latest command: they decide the tier the container is made for. */
+  private lastLimits: EgressLimits | undefined;
+  /** The spec hash of the container in use (set when it is created or reused). */
+  private spec: string | undefined;
 
   constructor(private readonly opts: DockerExecutorOptions) {
     const dir = resolve(opts.dir);
@@ -264,9 +301,22 @@ export class DockerExecutor implements Executor {
     ];
   }
 
+  /** The tier commands run at now (the owner's choice, else `dev`, before any command). */
+  tier(policy: Policy = this.opts.policy()): SandboxTier {
+    return this.lastLimits === undefined
+      ? provisionalTier(policy)
+      : deviceTier(policy, this.lastLimits);
+  }
+
+  /** What the tier gives in this mode (for the policy summary). */
+  tierFacts(policy: Policy = this.opts.policy()): TierFacts {
+    return tierFacts(policy, this.lastLimits, { proxyDetected: false, mode: "docker" });
+  }
+
   /** Every `docker run` flag of the container except its name and spec label. */
   private runArgs(): string[] {
     const policy = this.opts.policy();
+    const shm = shmSize(this.tier(policy), policy.memoryMb);
     return [
       "--init",
       "--read-only",
@@ -290,6 +340,7 @@ export class DockerExecutor implements Executor {
       ...(policy.memoryMb !== null
         ? ["--memory", `${policy.memoryMb}m`, "--memory-swap", `${policy.memoryMb}m`]
         : []),
+      ...(shm !== undefined ? ["--shm-size", shm] : []),
       "--entrypoint",
       "sleep",
       SANDBOX_IMAGE,
@@ -299,7 +350,11 @@ export class DockerExecutor implements Executor {
 
   /** A hash of the run flags: a container made with other flags is recreated. */
   private specHash(): string {
-    return createHash("sha256").update(JSON.stringify(this.runArgs())).digest("hex").slice(0, 16);
+    return this.hashOf(this.runArgs());
+  }
+
+  private hashOf(runArgs: string[]): string {
+    return createHash("sha256").update(JSON.stringify(runArgs)).digest("hex").slice(0, 16);
   }
 
   private matches(c: Inspected): boolean {
@@ -317,8 +372,13 @@ export class DockerExecutor implements Executor {
     return r;
   }
 
-  /** Creates the container, or reuses the existing one when it matches; call inside `serial`. */
-  private async ensureContainer(): Promise<void> {
+  /**
+   * Creates the container, or reuses the existing one when it matches; call inside `serial`.
+   * A file operation (`anySpec`) reuses any container that sees the directory: it needs no
+   * particular flags, and before the first command the tier is not known yet. The next command
+   * that finds it idle recreates it if its flags differ.
+   */
+  private async ensureContainer(opts: { anySpec?: boolean } = {}): Promise<void> {
     if (this.ready) return;
     if (!existsSync(this.dir)) {
       throw new DeviceOpError("error", "the device directory is gone");
@@ -330,28 +390,27 @@ export class DockerExecutor implements Executor {
       mkdirSync(r, { recursive: true });
     }
     let c = await this.inspect();
-    if (c !== null && (!this.matches(c) || !(await this.seesHostRoots(c)))) {
+    if (
+      c !== null &&
+      ((opts.anySpec !== true && !this.matches(c)) || !(await this.seesHostRoots(c)))
+    ) {
       await this.mustDocker(["rm", "-f", this.name], "removing the old container");
       c = null;
     }
     if (c === null) {
+      const runArgs = this.runArgs();
+      const spec = this.hashOf(runArgs);
       await this.mustDocker(
-        [
-          "run",
-          "-d",
-          "--name",
-          this.name,
-          "--label",
-          `${SPEC_LABEL}=${this.specHash()}`,
-          ...this.runArgs(),
-        ],
+        ["run", "-d", "--name", this.name, "--label", `${SPEC_LABEL}=${spec}`, ...runArgs],
         "creating the container",
       );
+      this.spec = spec;
       // Created on the default bridge (a container created with `none` cannot join it later).
       this.netOpen = true;
     } else {
       if (!c.State.Running) await this.mustDocker(["start", this.name], "starting the container");
       this.netOpen = "bridge" in (await this.inspectNetworks());
+      this.spec = c.Config.Labels?.[SPEC_LABEL];
     }
     this.ready = true;
   }
@@ -447,6 +506,11 @@ export class DockerExecutor implements Executor {
         let served: boolean;
         try {
           served = await this.serial(async () => {
+            // The policy or the tier changed the container's flags (shm, cpu, memory): recreate
+            // it once nothing runs in it.
+            if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) {
+              this.ready = false;
+            }
             await this.ensureContainer();
             if (w.dead) return true;
             if (this.netOpen !== w.open) {
@@ -500,7 +564,8 @@ export class DockerExecutor implements Executor {
       if (!ENV_NAME_RE.test(k))
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
     }
-    const open = effectiveEgress(this.opts.policy(), args.limits).length > 0;
+    this.lastLimits = args.limits;
+    const open = bridgeNetwork(this.opts.policy(), args.limits);
     await this.acquire(open, signal);
     try {
       signal.throwIfAborted();
@@ -659,7 +724,7 @@ export class DockerExecutor implements Executor {
     input?: Uint8Array,
   ): Promise<DockerRun | null> {
     // A file operation does not need the network; it runs on whichever state the container has.
-    await this.serial(() => this.ensureContainer());
+    await this.serial(() => this.ensureContainer({ anySpec: true }));
     const r = await docker(
       [
         "exec",

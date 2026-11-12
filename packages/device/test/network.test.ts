@@ -12,7 +12,14 @@ import {
 const limits = (
   egress: SandboxLimits["egress"],
   allowHosts: string[] = [],
-): Pick<SandboxLimits, "egress" | "allowHosts"> => ({ egress, allowHosts });
+  tier: SandboxLimits["tier"] = "open",
+  devHosts: string[] = [],
+): Pick<SandboxLimits, "egress" | "allowHosts" | "tier" | "devHosts"> => ({
+  egress,
+  allowHosts,
+  tier,
+  devHosts,
+});
 const policy = (allowedDomains: string[], tier?: "strict" | "dev" | "open") => ({
   allowedDomains,
   ...(tier !== undefined && { tier }),
@@ -100,6 +107,14 @@ describe("classifyHost", () => {
     expect(
       classifyHost("x.com", notListed, limits("allowlist", ["x.com"]), policy(["*.x.com"])),
     ).toBe("device");
+  });
+
+  it("a dev device admits the dev hosts; strict does not; the ceiling cuts open", () => {
+    const l = limits("allowlist", ["registry.npmjs.org"], "open", ["registry.npmjs.org"]);
+    expect(classifyHost("registry.npmjs.org", notListed, l, policy([], "dev"))).toBe("unknown");
+    expect(classifyHost("registry.npmjs.org", notListed, l, policy([], "strict"))).toBe("device");
+    const capped = limits("allowlist", ["a.com"], "strict");
+    expect(classifyHost("a.com", notListed, capped, policy([], "open"))).toBe("device");
   });
 
   it("a device whose tier is open is never the refusing layer", () => {

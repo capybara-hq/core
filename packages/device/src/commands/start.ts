@@ -21,6 +21,11 @@ export interface StartDeps {
   connect?: typeof connect;
 }
 
+/** Printed at start while policy.json still has the legacy `network: "open"` (spec §12). */
+export const LEGACY_NETWORK_NOTICE =
+  "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` " +
+  "to keep an unlimited network.";
+
 /** `start`: connect and serve in the foreground until stopped, drained, revoked or replaced. */
 export async function start(deps: StartDeps): Promise<number> {
   const { stateDir, out, err } = deps;
@@ -70,6 +75,7 @@ export async function start(deps: StartDeps): Promise<number> {
     try {
       // An invalid policy.json stops the start; later, a broken edit keeps the last good policy.
       policy = new PolicyStore(stateDir, { err });
+      if (policy.legacyNetworkOpen) out(LEGACY_NETWORK_NOTICE);
       executor = await deps.createExecutor(cred, policy);
     } catch (e) {
       err(`Cannot start: ${(e as Error).message}`);

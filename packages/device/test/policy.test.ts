@@ -5,29 +5,36 @@ import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import {
-  OPEN_NETWORK_NEEDS_YES,
-  OPEN_NETWORK_PROMPT,
-  OPEN_NETWORK_RISK,
+  OPEN_TIER_RISK,
   policyCommand,
+  policyRisk,
+  UNSANDBOXED_RISK_TEXT,
 } from "../src/commands/policy.js";
 import {
   DENIED_SECRET_PATHS,
   deniedSecretPaths,
+  deviceTier,
   effectiveEgress,
   grantedHosts,
   implicitWritePaths,
   srtConfig,
+  tierFacts,
 } from "../src/policy.js";
 import { DEFAULT_POLICY, policyPath, readPolicy, writeCredential } from "../src/state.js";
 
-const limits = (egress: SandboxLimits["egress"], allowHosts: string[] = []): SandboxLimits => ({
+const limits = (
+  egress: SandboxLimits["egress"],
+  allowHosts: string[] = [],
+  tier: SandboxLimits["tier"] = "open",
+  devHosts: string[] = [],
+): SandboxLimits => ({
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
   egress,
   allowHosts,
-  tier: "strict",
-  devHosts: [],
+  tier,
+  devHosts,
 });
 const policy = (allowedDomains: string[]) => ({ ...DEFAULT_POLICY, allowedDomains });
 
@@ -59,7 +66,109 @@ describe("effectiveEgress", () => {
   });
 });
 
-describe("effectiveEgress: network open", () => {
+describe("deviceTier", () => {
+  it("is the owner's choice, else the org's default, else strict, cut to the ceiling", () => {
+    const p = (tier?: "strict" | "dev" | "open") => ({ ...DEFAULT_POLICY, ...(tier && { tier }) });
+    expect(deviceTier(p(), { tier: "open" })).toBe("strict");
+    expect(deviceTier(p(), { tier: "open", defaultTier: "dev" })).toBe("dev");
+    expect(deviceTier(p("open"), { tier: "dev", defaultTier: "strict" })).toBe("dev");
+    expect(deviceTier(p("strict"), { tier: "open", defaultTier: "open" })).toBe("strict");
+    expect(deviceTier(p("open"), { tier: "open" })).toBe("open");
+  });
+});
+
+describe("effectiveEgress per tier", () => {
+  const D = ["registry.npmjs.org", "pypi.org"];
+  const p = (tier: "strict" | "dev" | "open", allowedDomains: string[] = ["a.com"]) => ({
+    ...DEFAULT_POLICY,
+    allowedDomains,
+    tier,
+  });
+  const ceiling = ["a.com", "b.com", "registry.npmjs.org"];
+
+  it("strict: the ceiling and the local list", () => {
+    expect(effectiveEgress(p("strict"), limits("allowlist", ceiling, "open", D))).toEqual([
+      "a.com",
+    ]);
+  });
+
+  it("dev: the ceiling and the local list plus the dev hosts", () => {
+    expect(effectiveEgress(p("dev"), limits("allowlist", ceiling, "open", D))).toEqual([
+      "a.com",
+      "registry.npmjs.org",
+    ]);
+    // an open ceiling: the local list and the dev hosts themselves
+    expect(effectiveEgress(p("dev", []), limits("open", [], "open", D))).toEqual(D);
+  });
+
+  it("open: the ceiling itself, any host when it is open", () => {
+    expect(effectiveEgress(p("open"), limits("allowlist", ceiling, "open", D))).toEqual(ceiling);
+    expect(effectiveEgress(p("open"), limits("open", [], "open", D))).toEqual(["*"]);
+  });
+
+  it("the ceiling's tier cuts the device's choice; none is none in every tier", () => {
+    expect(effectiveEgress(p("open"), limits("allowlist", ceiling, "dev", D))).toEqual([
+      "a.com",
+      "registry.npmjs.org",
+    ]);
+    expect(effectiveEgress(p("dev"), limits("allowlist", ceiling, "strict", D))).toEqual(["a.com"]);
+    for (const t of ["strict", "dev", "open"] as const) {
+      expect(effectiveEgress(p(t), limits("none", ceiling, "open", D))).toEqual([]);
+    }
+  });
+
+  it("no tier on the device: the org's default", () => {
+    const l = { ...limits("allowlist", ceiling, "open", D), defaultTier: "dev" as const };
+    expect(effectiveEgress(policy(["a.com"]), l)).toEqual(["a.com", "registry.npmjs.org"]);
+  });
+});
+
+describe("tierFacts", () => {
+  const open = { ...DEFAULT_POLICY, tier: "open" as const };
+  const os = { proxyDetected: false, mode: "os" as const };
+
+  it("macOS: strict has neither; dev and open have localhost unless a proxy was found", () => {
+    const mac = { ...os, platform: "darwin" as const };
+    expect(tierFacts(DEFAULT_POLICY, { tier: "strict" }, mac)).toEqual({
+      effectiveTier: "strict",
+      localhost: "off",
+      unixSockets: "off",
+    });
+    expect(tierFacts(open, { tier: "dev" }, mac)).toEqual({
+      effectiveTier: "dev",
+      localhost: "on",
+      unixSockets: "roots",
+    });
+    expect(tierFacts(open, { tier: "open" }, { ...mac, proxyDetected: true })).toEqual({
+      effectiveTier: "open",
+      localhost: "off-proxy-detected",
+      unixSockets: "roots",
+    });
+    expect(
+      tierFacts({ ...open, localhost: "allow" }, { tier: "open" }, { ...mac, proxyDetected: true })
+        .localhost,
+    ).toBe("on");
+  });
+
+  it("before any exec: the owner's choice, else dev", () => {
+    const mac = { ...os, platform: "darwin" as const };
+    expect(tierFacts(DEFAULT_POLICY, undefined, mac).effectiveTier).toBe("dev");
+    expect(tierFacts(open, undefined, mac).effectiveTier).toBe("open");
+  });
+
+  it("Linux: its own loopback, sockets blocked; Docker: the container's own", () => {
+    expect(tierFacts(open, { tier: "open" }, { ...os, platform: "linux" })).toEqual({
+      effectiveTier: "open",
+      localhost: "on",
+      unixSockets: "off",
+    });
+    expect(
+      tierFacts(open, { tier: "dev" }, { proxyDetected: true, mode: "docker", platform: "darwin" }),
+    ).toEqual({ effectiveTier: "dev", localhost: "on", unixSockets: "all-masked" });
+  });
+});
+
+describe("effectiveEgress: tier open", () => {
   const open = (allowedDomains: string[] = []) => ({
     ...DEFAULT_POLICY,
     allowedDomains,
@@ -135,7 +244,61 @@ describe("srtConfig", () => {
     expect(c.filesystem.allowWrite).toEqual(["/e/workspace", "/e/tmp"]);
     expect(c.filesystem.denyWrite).toEqual(["/e/skills", ...implicitWritePaths()]);
     expect(c.filesystem.denyRead).toEqual(deniedSecretPaths("/h"));
-    expect(c.network).toEqual({ allowedDomains: ["b.com"], deniedDomains: [] });
+    expect(c.network).toEqual({
+      allowedDomains: ["b.com"],
+      deniedDomains: [],
+      allowLocalBinding: false,
+    });
+  });
+
+  const dev = {
+    home: "/h",
+    tier: "dev" as const,
+    socketDir: "/private/tmp/cap-12345678",
+    cacheDir: "/e/cache",
+  };
+
+  it("strict: no local binding and no unix sockets on any platform", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const c = srtConfig(DEFAULT_POLICY, roots, [], { ...dev, tier: "strict", platform });
+      expect(c.network.allowLocalBinding).toBe(false);
+      expect(c.network.allowUnixSockets).toBeUndefined();
+      expect(c.filesystem.allowWrite).toEqual(["/e/workspace", "/e/tmp"]);
+    }
+  });
+
+  it("dev and open on macOS: localhost, sockets under the roots and the socket dir, caches", () => {
+    for (const tier of ["dev", "open"] as const) {
+      const c = srtConfig(DEFAULT_POLICY, roots, [], { ...dev, tier, platform: "darwin" });
+      expect(c.network.allowLocalBinding).toBe(true);
+      expect(c.network.allowUnixSockets).toEqual([
+        "/e/tmp",
+        "/e/workspace",
+        "/private/tmp/cap-12345678",
+      ]);
+      expect(c.network).not.toHaveProperty("allowAllUnixSockets");
+      expect(c.filesystem.allowWrite).toEqual([
+        "/e/workspace",
+        "/e/tmp",
+        "/private/tmp/cap-12345678",
+        "/e/cache",
+      ]);
+    }
+  });
+
+  it("macOS dev: a detected local proxy turns local binding off unless localhost is allow", () => {
+    const o = { ...dev, platform: "darwin" as const, proxyDetected: true };
+    expect(srtConfig(DEFAULT_POLICY, roots, [], o).network.allowLocalBinding).toBe(false);
+    expect(
+      srtConfig({ ...DEFAULT_POLICY, localhost: "allow" }, roots, [], o).network.allowLocalBinding,
+    ).toBe(true);
+  });
+
+  it("dev on Linux: caches, but unix sockets stay blocked and no socket dir", () => {
+    const c = srtConfig(DEFAULT_POLICY, roots, [], { ...dev, platform: "linux" });
+    expect(c.network.allowLocalBinding).toBe(false);
+    expect(c.network.allowUnixSockets).toBeUndefined();
+    expect(c.filesystem.allowWrite).toEqual(["/e/workspace", "/e/tmp", "/e/cache"]);
   });
 
   it("the denied list expands ~ and covers the spec's paths and browser profiles", () => {
@@ -198,15 +361,42 @@ describe("policy command", () => {
       stateDir: dir,
       out: (l) => out.push(l),
       err: (l) => err.push(l),
+      platform: "darwin",
+      detectProxy: async () => proxy,
     });
+  let proxy = { detected: false, reasons: [] as string[] };
 
-  it("show prints the defaults when there is no file", () => {
-    expect(run({ command: "policy", action: "show" })).toBe(0);
+  it("show prints the defaults when there is no file", async () => {
+    expect(await run({ command: "policy", action: "show" })).toBe(0);
     expect(JSON.parse(out[0] ?? "")).toEqual(DEFAULT_POLICY);
-    expect(out[1]).toMatch(/cpu and memoryMb are not enforced.*no local credentials/);
+    expect(out.at(-1)).toMatch(/cpu and memoryMb are not enforced.*no local credentials/);
   });
 
-  it("allowing a domain on a docker-mode device warns that it opens all network", () => {
+  it("show says what the tier gives on this machine", async () => {
+    expect(await run({ command: "policy", action: "show" })).toBe(0);
+    let text = out.join("\n");
+    expect(text).toMatch(/Tier: the organization's default/);
+    expect(text).toMatch(/At tier dev on this machine: localhost commands can listen/);
+    expect(text).toMatch(/Unix sockets: allowed under the device's workspace/);
+    out.length = 0;
+    proxy = { detected: true, reasons: ["a listener on 127.0.0.1:7890"] };
+    await run({ command: "policy", action: "show" });
+    text = out.join("\n");
+    expect(text).toMatch(
+      /localhost off: a local proxy was detected \(a listener on 127\.0\.0\.1:7890\)/,
+    );
+    expect(text).toContain("capybara-device policy set localhost allow");
+    proxy = { detected: false, reasons: [] };
+    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, tier: "strict" }));
+    out.length = 0;
+    await run({ command: "policy", action: "show" });
+    text = out.join("\n");
+    expect(text).toMatch(/Tier: strict \(set on this device/);
+    expect(text).toMatch(/localhost off\./);
+    expect(text).toMatch(/Unix sockets: blocked/);
+  });
+
+  it("allowing a domain on a docker-mode device warns that it opens all network", async () => {
     const docker = {
       url: "http://x.test",
       connectUrl: "ws://x.test/device/connect",
@@ -218,157 +408,176 @@ describe("policy command", () => {
       maxFrameBytes: 1024,
     };
     writeCredential(dir, { ...docker, mode: "docker" });
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
-      0,
-    );
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
     expect(out.join("\n")).toMatch(/Docker mode.*whole internet/);
     out.length = 0;
     expect(
-      run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
+      await run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
     ).toBe(0);
     expect(out.join("\n")).not.toMatch(/Docker mode/);
     writeCredential(dir, { ...docker, mode: "os" });
     out.length = 0;
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
-      0,
-    );
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
     expect(out.join("\n")).not.toMatch(/Docker mode/);
   });
 
-  it("show prints network and remoteGrants", () => {
+  it("show prints tier and remoteGrants", async () => {
     writeFileSync(
       policyPath(dir),
       JSON.stringify({ ...DEFAULT_POLICY, tier: "open", remoteGrants: "off" }),
     );
-    expect(run({ command: "policy", action: "show" })).toBe(0);
+    expect(await run({ command: "policy", action: "show" })).toBe(0);
     expect(JSON.parse(out[0] ?? "")).toMatchObject({ tier: "open", remoteGrants: "off" });
   });
 
-  it("set allowedDomains stores the list; show prints it", () => {
+  it("set allowedDomains stores the list; show prints it", async () => {
     expect(
-      run({ command: "policy", action: "set", key: "allowedDomains", value: "a.com,*.b.com" }),
+      await run({
+        command: "policy",
+        action: "set",
+        key: "allowedDomains",
+        value: "a.com,*.b.com",
+      }),
     ).toBe(0);
     expect(readPolicy(dir).allowedDomains).toEqual(["a.com", "*.b.com"]);
     out.length = 0;
-    run({ command: "policy", action: "show" });
+    await run({ command: "policy", action: "show" });
     expect(JSON.parse(out[0] ?? "").allowedDomains).toEqual(["a.com", "*.b.com"]);
   });
 
-  it("set cpu and memoryMb take a positive number or none", () => {
-    expect(run({ command: "policy", action: "set", key: "cpu", value: "2" })).toBe(0);
-    expect(run({ command: "policy", action: "set", key: "memoryMb", value: "1024" })).toBe(0);
+  it("set cpu and memoryMb take a positive number or none", async () => {
+    expect(await run({ command: "policy", action: "set", key: "cpu", value: "2" })).toBe(0);
+    expect(await run({ command: "policy", action: "set", key: "memoryMb", value: "1024" })).toBe(0);
     expect(readPolicy(dir)).toMatchObject({ cpu: 2, memoryMb: 1024 });
-    expect(run({ command: "policy", action: "set", key: "cpu", value: "none" })).toBe(0);
+    expect(await run({ command: "policy", action: "set", key: "cpu", value: "none" })).toBe(0);
     expect(readPolicy(dir).cpu).toBeNull();
-    expect(run({ command: "policy", action: "set", key: "memoryMb", value: "-1" })).toBe(2);
+    expect(await run({ command: "policy", action: "set", key: "memoryMb", value: "-1" })).toBe(2);
   });
 
-  it("set refuses an unknown key and an invalid domain", () => {
-    expect(run({ command: "policy", action: "set", key: "egress", value: "open" })).toBe(2);
+  it("set refuses an unknown key and an invalid domain", async () => {
+    expect(await run({ command: "policy", action: "set", key: "egress", value: "open" })).toBe(2);
+    expect(await run({ command: "policy", action: "set", key: "network", value: "open" })).toBe(2);
+    expect(err.join("\n")).toMatch(/network is replaced by tier/);
     expect(
-      run({ command: "policy", action: "set", key: "allowedDomains", value: "https://a.com" }),
+      await run({
+        command: "policy",
+        action: "set",
+        key: "allowedDomains",
+        value: "https://a.com",
+      }),
     ).toBe(2);
     expect(err.join("\n")).toMatch(/https:\/\/a\.com/);
     expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
   });
 
-  it("set says the running program applies it at the next command, never to restart", () => {
-    expect(run({ command: "policy", action: "set", key: "cpu", value: "2" })).toBe(0);
+  it("set says the running program applies it at the next command, never to restart", async () => {
+    expect(await run({ command: "policy", action: "set", key: "cpu", value: "2" })).toBe(0);
     const text = out.join("\n");
     expect(text).not.toMatch(/Restart/i);
     expect(text).toMatch(/applies it at the next command/);
   });
 
-  it("add and remove allowedDomains: validated, lowercased, deduped, idempotent", () => {
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "A.com" })).toBe(
-      0,
-    );
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "*.b.com" })).toBe(
-      0,
-    );
+  it("add and remove allowedDomains: validated, lowercased, deduped, idempotent", async () => {
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "A.com" }),
+    ).toBe(0);
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "*.b.com" }),
+    ).toBe(0);
     expect(readPolicy(dir).allowedDomains).toEqual(["a.com", "*.b.com"]);
     out.length = 0;
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
-      0,
-    );
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
     expect(out.join("\n")).toMatch(/already/);
     expect(readPolicy(dir).allowedDomains).toEqual(["a.com", "*.b.com"]);
     expect(
-      run({ command: "policy", action: "remove", key: "allowedDomains", value: "A.COM" }),
+      await run({ command: "policy", action: "remove", key: "allowedDomains", value: "A.COM" }),
     ).toBe(0);
     expect(readPolicy(dir).allowedDomains).toEqual(["*.b.com"]);
     out.length = 0;
     expect(
-      run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
+      await run({ command: "policy", action: "remove", key: "allowedDomains", value: "a.com" }),
     ).toBe(0);
     expect(out.join("\n")).toMatch(/not in allowedDomains/);
     expect(out.join("\n")).not.toMatch(/Restart/i);
   });
 
-  it("add and remove compare domains ignoring case; remove takes any spelling", () => {
+  it("add and remove compare domains ignoring case; remove takes any spelling", async () => {
     writeFileSync(
       policyPath(dir),
       JSON.stringify({ ...DEFAULT_POLICY, allowedDomains: ["Mixed.COM", "10.0.0.5"] }),
     );
     out.length = 0;
     expect(
-      run({ command: "policy", action: "add", key: "allowedDomains", value: "mixed.com" }),
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "mixed.com" }),
     ).toBe(0);
     expect(out.join("\n")).toMatch(/already/);
     expect(readPolicy(dir).allowedDomains).toEqual(["Mixed.COM", "10.0.0.5"]);
     // A hand-written entry add would refuse can still be removed.
     expect(
-      run({ command: "policy", action: "remove", key: "allowedDomains", value: " 10.0.0.5 " }),
+      await run({
+        command: "policy",
+        action: "remove",
+        key: "allowedDomains",
+        value: " 10.0.0.5 ",
+      }),
     ).toBe(0);
     expect(
-      run({ command: "policy", action: "remove", key: "allowedDomains", value: "MIXED.com" }),
+      await run({ command: "policy", action: "remove", key: "allowedDomains", value: "MIXED.com" }),
     ).toBe(0);
     expect(readPolicy(dir).allowedDomains).toEqual([]);
   });
 
-  it("add refuses an invalid host and leaves the file alone", () => {
+  it("add refuses an invalid host and leaves the file alone", async () => {
     expect(
-      run({ command: "policy", action: "add", key: "allowedDomains", value: "10.0.0.5" }),
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "10.0.0.5" }),
     ).toBe(2);
     expect(err.join("\n")).toMatch(/10\.0\.0\.5/);
     expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
   });
 
-  it("add and remove work on allowCredentials and refuse other keys", () => {
-    expect(run({ command: "policy", action: "add", key: "allowCredentials", value: "gh" })).toBe(0);
+  it("add and remove work on allowCredentials and refuse other keys", async () => {
+    expect(
+      await run({ command: "policy", action: "add", key: "allowCredentials", value: "gh" }),
+    ).toBe(0);
     expect(readPolicy(dir).allowCredentials).toEqual(["gh"]);
-    expect(run({ command: "policy", action: "remove", key: "allowCredentials", value: "gh" })).toBe(
-      0,
-    );
+    expect(
+      await run({ command: "policy", action: "remove", key: "allowCredentials", value: "gh" }),
+    ).toBe(0);
     expect(readPolicy(dir).allowCredentials).toEqual([]);
-    expect(run({ command: "policy", action: "add", key: "cpu", value: "2" })).toBe(2);
+    expect(await run({ command: "policy", action: "add", key: "cpu", value: "2" })).toBe(2);
     expect(err.join("\n")).toMatch(/allowedDomains/);
   });
 
-  it("a change keeps keys this version does not know", () => {
+  it("a change keeps keys this version does not know", async () => {
     writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, futureKey: "x" }));
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
-      0,
-    );
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" }),
+    ).toBe(0);
     expect(JSON.parse(readFileSync(policyPath(dir), "utf8")).futureKey).toBe("x");
   });
 
-  it("a change refuses to overwrite an unreadable file", () => {
+  it("a change refuses to overwrite an unreadable file", async () => {
     writeFileSync(policyPath(dir), "{nope");
-    expect(run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" })).toBe(
-      1,
-    );
+    expect(
+      await run({ command: "policy", action: "add", key: "allowedDomains", value: "a.com" }),
+    ).toBe(1);
     expect(readFileSync(policyPath(dir), "utf8")).toBe("{nope");
   });
 
-  it("show reports an unreadable policy file instead of throwing", () => {
+  it("show reports an unreadable policy file instead of throwing", async () => {
     writeFileSync(policyPath(dir), "{nope");
-    expect(run({ command: "policy", action: "show" })).toBe(1);
+    expect(await run({ command: "policy", action: "show" })).toBe(1);
     expect(err.join("\n")).toMatch(/policy\.json/);
   });
 });
 
-describe("policy set network and remoteGrants", () => {
+describe("policy set tier, isolation, localhost and remoteGrants", () => {
   let home: string;
   let dir: string;
   let out: string[];
@@ -396,56 +605,112 @@ describe("policy set network and remoteGrants", () => {
         return tty.answer ?? "";
       },
     });
+  const OPEN_PROMPT = policyRisk({
+    command: "policy",
+    action: "set",
+    key: "tier",
+    value: "open",
+  })?.prompt;
 
-  it("the risk text is the spec's English text", () => {
-    expect(OPEN_NETWORK_RISK).toBe(
-      "With no network limit, agent commands on this device can reach any address the organization allows (any public address if the organization has no limit), including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
+  it("the unsandboxed risk text is the spec's English text", () => {
+    expect(UNSANDBOXED_RISK_TEXT).toBe(
+      "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust.",
     );
   });
 
-  it("open without --yes and no terminal: prints the risk, refuses with exit 2 and a hint", async () => {
-    expect(await cli(["set", "network", "open"])).toBe(2);
-    expect(out).toContain(OPEN_NETWORK_RISK);
-    expect(err.join("\n")).toContain("capybara-device policy set network open --yes");
+  it("tier open without --yes and no terminal: prints the risk, refuses with exit 2 and a hint", async () => {
+    expect(await cli(["set", "tier", "open"])).toBe(2);
+    expect(out).toContain(OPEN_TIER_RISK);
+    expect(err.join("\n")).toContain("capybara-device policy set tier open --yes");
     expect(asked).toEqual([]);
     expect(readPolicy(dir).tier).toBeUndefined();
   });
 
-  it("open with --yes: prints the risk and opens", async () => {
-    expect(await cli(["set", "network", "open", "--yes"])).toBe(0);
-    expect(out).toContain(OPEN_NETWORK_RISK);
+  it("tier open with --yes: prints the risk and sets it", async () => {
+    expect(await cli(["set", "tier", "open", "--yes"])).toBe(0);
+    expect(out).toContain(OPEN_TIER_RISK);
     expect(readPolicy(dir).tier).toBe("open");
     expect(asked).toEqual([]);
   });
 
-  it("open on a terminal: asks once; y opens, anything else leaves it alone", async () => {
-    expect(await cli(["set", "network", "open"], { isTTY: true, answer: "n" })).toBe(1);
-    expect(asked).toEqual([OPEN_NETWORK_PROMPT]);
-    expect(out).toEqual([OPEN_NETWORK_RISK]);
-    expect(err).toEqual([OPEN_NETWORK_NEEDS_YES]);
+  it("tier open on a terminal: asks once; y sets it, anything else leaves it alone", async () => {
+    expect(await cli(["set", "tier", "open"], { isTTY: true, answer: "n" })).toBe(1);
+    expect(asked).toEqual([OPEN_PROMPT]);
+    expect(out).toEqual([OPEN_TIER_RISK]);
     expect(readPolicy(dir).tier).toBeUndefined();
 
     out.length = 0;
     asked.length = 0;
-    expect(await cli(["set", "network", "open"], { isTTY: true, answer: " Y " })).toBe(0);
-    expect(asked).toEqual([OPEN_NETWORK_PROMPT]);
+    expect(await cli(["set", "tier", "open"], { isTTY: true, answer: " Y " })).toBe(0);
+    expect(asked).toEqual([OPEN_PROMPT]);
     // the risk is shown once
-    expect(out.filter((l) => l === OPEN_NETWORK_RISK)).toHaveLength(1);
+    expect(out.filter((l) => l === OPEN_TIER_RISK)).toHaveLength(1);
     expect(readPolicy(dir).tier).toBe("open");
   });
 
-  it("allowlist is always accepted, without a question", async () => {
+  it("strict and dev need no question; default removes the key", async () => {
     writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, tier: "open" }));
-    expect(await cli(["set", "network", "allowlist"], { isTTY: true })).toBe(0);
-    expect(asked).toEqual([]);
-    expect(out).not.toContain(OPEN_NETWORK_RISK);
+    expect(await cli(["set", "tier", "dev"], { isTTY: true })).toBe(0);
+    expect(readPolicy(dir).tier).toBe("dev");
+    expect(await cli(["set", "tier", "STRICT"], { isTTY: true })).toBe(0);
     expect(readPolicy(dir).tier).toBe("strict");
+    expect(asked).toEqual([]);
+    expect(out).not.toContain(OPEN_TIER_RISK);
+    expect(await cli(["set", "tier", "default"])).toBe(0);
+    expect(readPolicy(dir).tier).toBeUndefined();
+    expect(JSON.parse(readFileSync(policyPath(dir), "utf8"))).not.toHaveProperty("tier");
+    expect(out.join("\n")).toMatch(/follows the organization's default tier/);
   });
 
-  it("network takes allowlist or open only", async () => {
-    expect(await cli(["set", "network", "everything", "--yes"])).toBe(2);
-    expect(err.join("\n")).toMatch(/allowlist or open/);
+  it("tier takes strict, dev, open or default only", async () => {
+    expect(await cli(["set", "tier", "everything", "--yes"])).toBe(2);
+    expect(err.join("\n")).toMatch(/strict, dev, open or default/);
     expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
+  });
+
+  it("isolation none needs --yes and prints the unsandboxed risk; sandbox never asks", async () => {
+    expect(await cli(["set", "isolation", "none"])).toBe(2);
+    expect(out).toContain(UNSANDBOXED_RISK_TEXT);
+    expect(err.join("\n")).toContain("capybara-device policy set isolation none --yes");
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+    out.length = 0;
+    expect(await cli(["set", "isolation", "none", "--yes"])).toBe(0);
+    expect(out).toContain(UNSANDBOXED_RISK_TEXT);
+    expect(readPolicy(dir).isolation).toBe("none");
+    expect(out.join("\n")).toMatch(/The tier is not open yet/);
+    out.length = 0;
+    expect(await cli(["set", "isolation", "sandbox"], { isTTY: true })).toBe(0);
+    expect(asked).toEqual([]);
+    expect(out).not.toContain(UNSANDBOXED_RISK_TEXT);
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+    expect(await cli(["set", "isolation", "partly"])).toBe(2);
+  });
+
+  it("isolation none is refused in Docker mode", async () => {
+    writeCredential(dir, {
+      url: "http://x.test",
+      connectUrl: "ws://x.test/device/connect",
+      credential: "cap_dev_x",
+      orgId: "o",
+      deviceId: "d",
+      dir: "/w",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1024,
+      mode: "docker",
+    });
+    expect(await cli(["set", "isolation", "none", "--yes"])).toBe(2);
+    expect(err.join("\n")).toMatch(/Docker mode/);
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+  });
+
+  it("localhost takes auto or allow", async () => {
+    expect(await cli(["set", "localhost", "allow"])).toBe(0);
+    expect(readPolicy(dir).localhost).toBe("allow");
+    expect(out.join("\n")).toMatch(/even when a local proxy runs/);
+    expect(await cli(["set", "localhost", "auto"])).toBe(0);
+    expect(readPolicy(dir).localhost).toBe("auto");
+    expect(await cli(["set", "localhost", "always"])).toBe(2);
+    expect(err.join("\n")).toMatch(/auto or allow/);
   });
 
   it("remoteGrants takes owner or off; other fields are kept", async () => {

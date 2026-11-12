@@ -16,7 +16,7 @@ export type Command =
       action: "set" | "add" | "remove";
       key: string;
       value: string;
-      /** `--yes`: confirms `set network open` without asking. */
+      /** `--yes`: confirms `set tier open` or `set isolation none` without asking. */
       yes?: true;
     }
   | { command: "service"; action: "install" | "uninstall" }
@@ -33,8 +33,12 @@ export const USAGE = `Usage:
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (applies at the next command)
-  capybara-device policy set network allowlist|open [--yes]
-                                  Limit network to allowedDomains, or to what the org allows
+  capybara-device policy set tier strict|dev|open|default [--yes]
+                                  Choose the sandbox tier (default: follow the organization)
+  capybara-device policy set isolation sandbox|none [--yes]
+                                  none: at tier open, run commands without a sandbox (OS mode)
+  capybara-device policy set localhost auto|allow
+                                  allow: reach localhost at tier dev or open despite a local proxy
   capybara-device policy set remoteGrants owner|off
                                   Let the device owner widen the network from the web, or not
   capybara-device policy add|remove allowedDomains <host>
