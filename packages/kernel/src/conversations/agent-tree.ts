@@ -148,3 +148,62 @@ function toNode(r: NodeRow, isRoot: boolean): AgentTreeNode {
 
 const modelOf = (m: { provider: string; model: string } | null): AgentTreeNode["model"] =>
   m ? { provider: m.provider, model: m.model } : null;
+
+/** One sub-agent a conversation dispatched, as `TaskList` lists it. */
+export interface ChildAgent {
+  /** The child conversation's id: the agentId the parent saw. */
+  id: string;
+  /** The dispatched description (the child's title when no dispatch event has one). */
+  description: string;
+  /** The latest run's status; `queued` before the first run is recorded. */
+  status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
+  /** When the latest run ended; null while it is active. */
+  finishedAt: Date | null;
+}
+
+/**
+ * The sub-agents `parentId` of org `orgId` dispatched itself (not their own sub-agents), oldest
+ * first: live sub-agent conversations with a dispatch row, as {@link readAgentTree} counts them.
+ */
+export async function readChildAgents(
+  db: KernelSchemaDb,
+  orgId: string,
+  parentId: string,
+): Promise<ChildAgent[]> {
+  const { rows } = await sql<{
+    id: string;
+    title: string | null;
+    description: string | null;
+    last_status: ChildAgent["status"] | null;
+    last_finished_at: Date | null;
+  }>`
+    SELECT c.id, c.title,
+      (SELECT e.payload->>'description' FROM capybara.conversation_events e
+        WHERE e.conversation_id = c.parent_conversation_id AND e.type = 'subagent_dispatched'
+          AND e.payload->>'subagentId' = c.id
+        ORDER BY e.seq DESC LIMIT 1) AS description,
+      latest.status AS last_status, latest.finished_at AS last_finished_at
+    FROM capybara.conversations c
+    LEFT JOIN LATERAL (
+      SELECT r.status, r.finished_at FROM capybara.runs r
+      WHERE r.conversation_id = c.id
+      ORDER BY r.created_at DESC, r.id DESC
+      LIMIT 1
+    ) latest ON true
+    WHERE c.parent_conversation_id = ${parentId} AND c.org_id = ${orgId}
+      AND c.kind = 'subagent' AND c.deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM capybara.subagent_dispatches sd WHERE sd.child_conversation_id = c.id
+      )
+    ORDER BY c.created_at, c.id
+  `.execute(db);
+  return rows.map((r) => {
+    const status = r.last_status ?? "queued";
+    return {
+      id: r.id,
+      description: r.description ?? r.title ?? "",
+      status,
+      finishedAt: ACTIVE.has(status) ? null : (r.last_finished_at ?? null),
+    };
+  });
+}

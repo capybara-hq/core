@@ -127,7 +127,7 @@ export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): P
 
 const notFound = (id: string): ToolError =>
   new ToolError(
-    `No background task ${clip(id, 40)} in this conversation. Pass a task id that Bash with run_in_background returned in this conversation.`,
+    `No background task ${clip(id, 40)} in this conversation. Pass a task id that Bash with run_in_background returned in this conversation; call TaskList to see this conversation's tasks.`,
   );
 
 /**
