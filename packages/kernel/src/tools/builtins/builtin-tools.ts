@@ -5,6 +5,7 @@ import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
+import { conversationAncestors } from "../../conversations/tree.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
 import { ExtensionHost } from "../../extensions/host.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
@@ -86,6 +87,10 @@ export class BuiltinTools {
       devices,
       background,
       tasks: { finisher, stopper },
+      subagents: {
+        inTree: async (root, id) =>
+          id !== root && (await conversationAncestors(db.db, id)).includes(root),
+      },
       attachments,
       storage,
       eventLog,

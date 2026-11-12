@@ -155,6 +155,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     decides how: `off` refuses a `create` or `update` that asks for open with an English error; `proxy` goes through the provider's egress proxy, which still
     refuses private, loopback, link-local and metadata addresses; `direct` attaches the shared bridge and reaches the host and the intranet (trusted deployments
     only). The kernel warns at start when `sandbox.tiers.max` is `open` while the provider is `off`.
+  - A cloud provider's failed `createFileSystem` / `create` / `update` (not an abort, gone, unreachable or kernel error) is logged with the provider's
+    error and replaced (`providerRefusal` in `sandbox.service.ts`): open egress → `sandbox.tier_refused` (details `[{ tier }]`), any other create →
+    `sandbox.create_failed`; the sandbox tools turn them into actionable text (`sandboxTierRefusedText`, `SANDBOX_CREATE_FAILED_TEXT`). The provider's
+    message never reaches the model (it may name settings). Test it with `setFakeSandboxRefuseOpenEgress`.
 - **The allowlist does not prevent data exfiltration**: it blocks the internal network and hosts outside the allowlist, but not data sent to allowlisted hosts (`git push` to github.com, publishing packages).
   The README must say so and recommend `sandboxToolPolicy: ask` and / or `sandboxEgress: none` for sensitive orgs.
 - A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).

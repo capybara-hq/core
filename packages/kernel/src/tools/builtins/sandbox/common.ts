@@ -3,6 +3,7 @@ import {
   DeviceProtocolError,
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxTier,
   type Logger,
   type SandboxHandle,
   type SandboxRoots,
@@ -69,6 +70,11 @@ export interface SandboxToolDeps {
    * What `TaskOutput` and `TaskStop` finish and stop tasks with; absent in test stubs, where both
    * answer that background tasks are not available.
    */
+  /**
+   * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
+   * TaskStop tell a sub-agent's agentId apart from an unknown task id); absent in test stubs.
+   */
+  subagents?: { inTree(rootConversationId: string, id: string): Promise<boolean> };
   tasks?: {
     finisher: Pick<BackgroundTaskFinisher, "finish">;
     stopper: Pick<BackgroundTaskStopper, "stop">;
@@ -165,6 +171,15 @@ const DEVICE_REVOKED_TEXT =
   "The device's machine was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation on another device.";
 const deviceProtocolText = (detail: string): string =>
   `The device's machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
+/**
+ * A cloud provider refused the device's tier (`sandbox.tier_refused`, spec §5.3): the tier the
+ * device asks for, never the provider's own message (it may name its settings).
+ */
+export const sandboxTierRefusedText = (tier: string): string =>
+  `The cloud sandbox can't run this device at the ${tier} tier: the sandbox provider refused to create it there, so nothing ran in the sandbox and retrying won't help. Ask the person to lower the device's sandbox tier on its device page, or to have an org admin lower the org's highest tier in the sandbox settings, or a super admin to allow that tier in the sandbox extension's settings (Admin console → Extensions). Continue without the sandbox meanwhile.`;
+/** A cloud provider failed to create the device's sandbox otherwise (`sandbox.create_failed`). */
+export const SANDBOX_CREATE_FAILED_TEXT =
+  "The cloud sandbox provider could not create this device's sandbox, so nothing ran in it. Retry once; if it fails again, continue without the sandbox and ask the person to have a super admin check the sandbox extension's settings (Admin console → Extensions).";
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
@@ -521,6 +536,11 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     }
     if (e.code === "device.unsandboxed_not_allowed") return new ToolError(UNSANDBOXED_TEXT);
     if (e.code === "device.tier_not_granted") return new ToolError(UNATTENDED_OPEN_TIER_ERROR);
+    if (e.code === "sandbox.tier_refused") {
+      const tier = (detail as { tier?: unknown } | undefined)?.tier;
+      return new ToolError(sandboxTierRefusedText(isSandboxTier(tier) ? tier : "requested"));
+    }
+    if (e.code === "sandbox.create_failed") return new ToolError(SANDBOX_CREATE_FAILED_TEXT);
   }
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);

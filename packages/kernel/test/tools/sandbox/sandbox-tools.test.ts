@@ -11,6 +11,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ARTIFACT_PREVIEW_MAX_LINES } from "../../../src/conversations/artifacts.js";
 import { EventLog } from "../../../src/conversations/event-log.js";
@@ -26,11 +27,14 @@ import {
   SANDBOX_RESTARTED_NOTICE,
   SANDBOX_STARTED_NOTICE,
   SANDBOX_UNREACHABLE_TEXT,
+  sandboxTierRefusedText,
 } from "../../../src/tools/builtins/sandbox/common.js";
 import {
+  FAKE_REFUSAL_SECRET,
   removeFakeSandbox,
   setFakeFileSystemIdsByName,
   setFakeSandboxFault,
+  setFakeSandboxRefuseOpenEgress,
 } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
@@ -97,7 +101,8 @@ beforeAll(async () => {
           },
           "sandbox-fake": { root },
         },
-        sandbox: { deliverMaxBytes: 1024 },
+        // the platform allows open; an org without settings follows the default (dev)
+        sandbox: { deliverMaxBytes: 1024, tiers: { max: "open" } },
       },
     ),
     { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
@@ -1188,5 +1193,38 @@ describe("sandbox provider unreachable", { timeout: 90_000 }, () => {
     expect(reset.isError).toBe(true);
     expect(reset.content).toBe(SANDBOX_CONNECTION_DROPPED_TEXT);
     expect(unreachableWarns().slice(before)[0]?.err?.message).toBe("read ECONNRESET");
+  });
+});
+
+describe("a sandbox provider that refuses the open tier", { timeout: 90_000 }, () => {
+  afterEach(async () => {
+    await setFakeSandboxRefuseOpenEgress(root, false);
+  });
+
+  it("Bash gets the actionable tier error, not the generic failure or the provider's message", async () => {
+    const conv = await sandboxConversation();
+    const ok = await call(conv, "Bash", { description: "Test step", command: "echo dev" }, 1);
+    expect(ok.isError).toBe(false);
+    // the org allows open and the device asks for it; the provider refuses open egress
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ sandboxTier: { max: "open" } })}::jsonb
+      WHERE id = ${orgId}`.execute(db);
+    await sql`UPDATE capybara.devices SET tier = 'open' WHERE id = ${await envOf(conv)}`.execute(
+      db,
+    );
+    await setFakeSandboxRefuseOpenEgress(root, true);
+    const failedBefore = logLines.filter((l) => l.includes('"msg":"tool call failed"')).length;
+    const r = await call(conv, "Bash", { description: "Test step", command: "echo open" }, 2);
+    expect(r.isError).toBe(true);
+    expect(r.content).toBe(sandboxTierRefusedText("open"));
+    expect(r.content).not.toContain(FAKE_REFUSAL_SECRET);
+    expect(logLines.filter((l) => l.includes('"msg":"tool call failed"'))).toHaveLength(
+      failedBefore,
+    );
+    // the kernel log keeps the provider's reason for the operator
+    expect(
+      logLines.some(
+        (l) => l.includes("refused an instance in the open tier") && l.includes("openEgress"),
+      ),
+    ).toBe(true);
   });
 });

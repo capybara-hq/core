@@ -321,7 +321,9 @@
       "file_invalid_path": "The path must be absolute and inside the sandbox.",
       "file_not_found": "No file at this path in the sandbox.",
       "file_is_directory": "This path is a directory; pass one file.",
-      "file_too_large": "The file is too large."
+      "file_too_large": "The file is too large.",
+      "tier_refused": "The cloud sandbox can't run this device at its sandbox level. Lower the device's level, or ask an org admin or the super admin.",
+      "create_failed": "The cloud sandbox could not be created. Try again; if it keeps failing, ask the super admin to check the sandbox extension's settings."
     },
     "device": {
       "not_found": "The device does not exist or has been deleted.",
