@@ -23,7 +23,6 @@ import {
   subagentBudgetUsedUp,
   subagentLimits,
 } from "../../../src/runtime/subagents/limits.js";
-import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { AGENT_REFUSALS, type AgentToolInputT } from "../../../src/tools/builtins/agent.js";
 import type { ToolStepContext } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
@@ -46,7 +45,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../../helpers/runs.js";
-import { childRunsOf, finishedDeliveries } from "../../helpers/subagents.js";
+import { childRunsOf, commitDispatchOwing, finishedDeliveries } from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 10: the per-run sub-agent limits (concurrency, dispatch count, tokens), the
@@ -361,7 +360,9 @@ async function dispatchFrom(
     agentVersion: 1,
     accountId: account,
   } as unknown as ToolStepContext;
-  const out = await k.app.get(SubagentsService).commitDispatch(
+  // the kernel's dispatch transaction, owing no run job: these children never run
+  const commitDispatch = commitDispatchOwing(k.app, eventLog, async () => true);
+  const out = await commitDispatch(
     { ctx, callId: randomUUID(), input: { description: "Task", prompt: "p" } as AgentToolInputT },
     {
       childConversationId: childConv,

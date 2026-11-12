@@ -389,7 +389,7 @@ export class AgentsService {
     private readonly setupRequests: Pick<PendingConnectorRequests, "settleIn" | "retargetIn">,
     /** Records `agent.deleted` for the subscribing plugins in the delete's transaction. */
     @Inject(LifecycleHooks)
-    private readonly lifecycle: Pick<LifecycleHooks, "recordIn" | "enqueue">,
+    private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
   ) {}
 
   /**
@@ -1047,9 +1047,8 @@ export class AgentsService {
       { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
       "agent_deleted",
     );
-    // plugins learn of the delete durably: recorded here, enqueued after the root commit
-    const deliveries = await this.lifecycle.recordIn("agent.deleted", { orgId, agentId });
-    afterCommit(() => this.lifecycle.enqueue(deliveries));
+    // plugins learn of the delete durably: owed here, delivered by the outbox after the commit
+    await this.lifecycle.recordIn("agent.deleted", { orgId, agentId });
     // joins this transaction (mandatory: it relies on the agent row lock taken above)
     return this.skillChanges.cancelPendingForAgent(
       orgId,

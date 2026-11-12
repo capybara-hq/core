@@ -30,7 +30,7 @@ import {
   hookDeniedEvent,
   hookRequestOf,
 } from "../runtime/hook-calls.js";
-import { UsageReporter, UsageReportModule } from "../runtime/usage-report.js";
+import { UsageReportJobs, UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
 import { HIDDEN_FORMAT_RE } from "../text.js";
 import { type AppendEvent, EventLog, EventLogModule } from "./event-log.js";
 import { type ConversationEvent, typedInvocation } from "./events.js";
@@ -149,7 +149,7 @@ export interface TitleDeps {
   db: KernelSchemaDb;
   eventLog: Pick<
     EventLog,
-    "append" | "appendIn" | "readAfter" | "latestOfType" | "notify" | "publishChanged"
+    "appendInReport" | "readAfter" | "latestOfType" | "notify" | "publishChanged"
   >;
   purposes: Pick<ModelPurposesService, "chat">;
   log: Pick<Logger, "warn">;
@@ -158,11 +158,10 @@ export interface TitleDeps {
    * title and uses up the attempt) and `model.response` with `purpose: "title"`, like compaction.
    */
   hooks?: HookRunner;
-  usageReport?: Pick<UsageReporter, "enqueue">;
   /** Aborts the call (worker shutdown). */
   signal?: AbortSignal;
   /** The job's transactional writes ({@link TitleGenerator}). */
-  writes: Pick<TitleGenerator, "writeResult" | "auditDenied">;
+  writes: Pick<TitleGenerator, "writeResult" | "writeUsage" | "auditDenied">;
 }
 
 /** The attempt number to enqueue for this conversation, or null when no title job is due. */
@@ -333,10 +332,7 @@ export async function runTitleJob(
     });
   }
   const { written, usage } = await d.writes.writeResult(conversationId, attempt, out, title);
-  if (usage) {
-    await d.eventLog.notify(conversationId, usage.seq);
-    void d.usageReport?.enqueue(conversationId, usage.seq);
-  }
+  if (usage) await d.eventLog.notify(conversationId, usage.seq);
   if (written) await d.eventLog.publishChanged(conversationId, "title");
 }
 
@@ -358,8 +354,8 @@ async function logUsage(
   attempt: number,
   u: { provider: string; model: string; usage: ModelUsage },
 ): Promise<void> {
-  const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, u)]);
-  if (ev) void d.usageReport?.enqueue(conversationId, ev.seq);
+  const ev = await d.writes.writeUsage(conversationId, attempt, u);
+  if (ev) await d.eventLog.notify(conversationId, ev.seq);
 }
 
 /** Returns a claimed attempt (shutdown before the call was sent). */
@@ -491,7 +487,8 @@ export class TitleGenerator {
     @Inject(ModelPurposesService) private readonly purposes: Pick<ModelPurposesService, "chat">,
     /** The title call fires the plugin hooks (`model.request`, `model.response`). */
     @Inject(ExtensionHost) private readonly host: { readonly hooks?: HookRunner } | undefined,
-    @Inject(UsageReporter) private readonly usageReport: Pick<UsageReporter, "enqueue"> | undefined,
+    /** The title call's `usage.report` delivery, owed with its usage event. */
+    @Inject(UsageReportJobs) private readonly usage: Pick<UsageReportJobs, "oweEvents">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -509,7 +506,6 @@ export class TitleGenerator {
         purposes: this.purposes,
         log: this.log,
         ...(hooks !== undefined && { hooks }),
-        ...(this.usageReport !== undefined && { usageReport: this.usageReport }),
         ...(signal !== undefined && { signal }),
         writes: this,
       },
@@ -519,8 +515,8 @@ export class TitleGenerator {
   }
 
   /**
-   * Appends the call's `usage` event and writes the title while `title_source IS NULL` (a rename
-   * wins), in one transaction.
+   * Appends the call's `usage` event (owing its `usage.report` delivery) and writes the title while
+   * `title_source IS NULL` (a rename wins), in one transaction.
    */
   @Transactional({ propagation: "requires_new" })
   async writeResult(
@@ -533,7 +529,7 @@ export class TitleGenerator {
     // Updating the title first held the row FOR NO KEY UPDATE, which lets in another
     // transaction's foreign key check (FOR KEY SHARE, e.g. inserting an approval); the append's
     // FOR UPDATE then waited for that one while it waited for the title row: 40P01
-    const [ev] = await this.eventLog.appendIn(conversationId, [usageEvent(attempt, out)]);
+    const ev = await this.appendUsage(conversationId, attempt, out);
     const row =
       title === null
         ? undefined
@@ -545,6 +541,33 @@ export class TitleGenerator {
             .returning("id")
             .executeTakeFirst();
     return { written: row !== undefined, usage: ev };
+  }
+
+  /**
+   * Appends the usage event of a call that failed after it was sent (billed, so reported) and owes
+   * its `usage.report` delivery, in one transaction.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async writeUsage(
+    conversationId: string,
+    attempt: number,
+    u: { provider: string; model: string; usage: ModelUsage },
+  ): Promise<ConversationEvent | undefined> {
+    return this.appendUsage(conversationId, attempt, u);
+  }
+
+  /** The usage event and its owed delivery (only when this call wrote it, not on a retry's hit). */
+  @Transactional({ propagation: "mandatory" })
+  private async appendUsage(
+    conversationId: string,
+    attempt: number,
+    u: { provider: string; model: string; usage: ModelUsage },
+  ): Promise<ConversationEvent | undefined> {
+    const { events, fresh } = await this.eventLog.appendInReport(conversationId, [
+      usageEvent(attempt, u),
+    ]);
+    if (fresh[0]) await this.usage.oweEvents(conversationId, events);
+    return events[0];
   }
 
   /** The `hook.denied` audit row of a denied title call. */
@@ -627,7 +650,13 @@ const TITLE_QUEUE_MODULE = QueueModule.registerQueue(TITLE_QUEUE);
 
 /** Conversation titles: the queue and the job (consumed on the worker role). */
 @Module({
-  imports: [EventLogModule, ModelsModule, ExtensionsModule, UsageReportModule, TITLE_QUEUE_MODULE],
+  imports: [
+    EventLogModule,
+    ModelsModule,
+    ExtensionsModule,
+    UsageReportJobsModule,
+    TITLE_QUEUE_MODULE,
+  ],
   providers: [TitleGenerator, TitleQueue],
   exports: [TitleQueue, TITLE_QUEUE_MODULE],
 })

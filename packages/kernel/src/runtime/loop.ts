@@ -36,7 +36,11 @@ export interface LoopContext {
    * 即 seq 也大于会话的 `consumed_seq`），按 seq 升序。loop 记录吸收到的最大 seq 作为 `consumedUpToSeq`。
    */
   pendingAbsorbable(afterSeq: number): Promise<AbsorbableEvent[]>;
-  limits: { maxSteps: number; deadline: number };
+  /**
+   * The run's limits; an absent one is no limit (`runtime.maxSteps` / `runtime.maxRunSeconds` 0):
+   * `maxSteps` model steps before the final wrap-up, `deadline` in epoch ms.
+   */
+  limits: { maxSteps?: number; deadline?: number };
   /**
    * Kind of the conversation: plugin hooks fire for `chat` and `subagent` (F10, P-18, sub-agents
    * spec §11). Eval replays pass `eval`; when absent, hooks do not fire.
@@ -129,7 +133,8 @@ export interface AgentLoop {
 /**
  * The wait of a step whose sub-agents still run (spec §7.2): id `sa-<runId>-<step>`, expiring after
  * the approval timeout plus one run's duration plus 10 minutes (a child may itself wait for an
- * approval); the timeout is a safety net.
+ * approval); the timeout is a safety net. Without a run duration limit (`runtime.maxRunSeconds` 0)
+ * it is the approval timeout plus 10 minutes.
  */
 export function subagentsWait(
   runId: string,

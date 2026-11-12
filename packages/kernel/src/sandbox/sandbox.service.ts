@@ -25,11 +25,7 @@ import {
 } from "kysely";
 import { SESSION_MODE_SCRIPT } from "../background/launch.js";
 import { BackgroundTaskStore } from "../background/store.js";
-import {
-  DEFAULT_MAX_COMMAND_SECONDS,
-  DEFAULT_MAX_RUN_SECONDS,
-  type KernelConfig,
-} from "../config/schema.js";
+import type { KernelConfig } from "../config/schema.js";
 import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
@@ -332,14 +328,14 @@ function tagged<P>(
  *   run time limit (Ruling M20);
  * - `sandbox.tiers.max` is open but the current provider plugin sets `openEgress: "off"`: every
  *   creation of an open-tier instance is refused.
- * With both time limits at their defaults (900 < 7200, a known trade-off) it is only info; warn
- * when an operator changed one and they still disagree.
+ * No run duration limit (`runtime.maxRunSeconds` 0, the default) cuts no command, so there is
+ * nothing to tell.
  */
 export function sandboxConfigWarnings(
   cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
   providerPlugin?: string,
-): { level: "info" | "warn"; message: string }[] {
-  const out: { level: "info" | "warn"; message: string }[] = [];
+): { level: "warn"; message: string }[] {
+  const out: { level: "warn"; message: string }[] = [];
   if (cfg.sandbox.tiers.max === "open" && providerPlugin !== undefined) {
     // absent means the plugin's default ("proxy"), which creates open instances
     const pc = cfg.extensionConfig[providerPlugin] as { openEgress?: unknown } | undefined;
@@ -352,10 +348,9 @@ export function sandboxConfigWarnings(
   }
   const run = cfg.runtime.maxRunSeconds;
   const cmd = cfg.sandbox.limits.maxCommandSeconds;
-  if (run < cmd) {
-    const defaults = run === DEFAULT_MAX_RUN_SECONDS && cmd === DEFAULT_MAX_COMMAND_SECONDS;
+  if (run > 0 && run < cmd) {
     out.push({
-      level: defaults ? "info" : "warn",
+      level: "warn",
       message: `runtime.maxRunSeconds (${run}) is less than sandbox.limits.maxCommandSeconds (${cmd}): sandbox commands are limited to the time left in the run, so commands longer than about ${run} seconds cannot finish; raise runtime.maxRunSeconds to at least ${cmd} if agents need long commands`,
     });
   }

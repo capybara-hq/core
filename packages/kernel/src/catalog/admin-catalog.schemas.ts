@@ -17,6 +17,10 @@ export const CatalogUpdatePreviewBody = z.object({ version: CatalogVersion }).st
 export const CatalogUpdateBody = z
   .object({ version: CatalogVersion, diffHash: CatalogHash })
   .strict();
+/** `POST imports/:stagingId/update`: the import review's hash and the update preview's. */
+export const CatalogImportUpdateBody = z
+  .object({ reviewHash: CatalogHash, diffHash: CatalogHash })
+  .strict();
 
 /** `:id` as the routes take it (`@Param`). */
 export const CatalogIdPathParams = z.object({ id: z.string().min(1) });
@@ -89,6 +93,10 @@ export const ADMIN_CATALOG_ROUTES: readonly RouteSchemas[] = [
   { route: "POST /api/v1/admin/catalog/import/npm", body: CatalogNpmImportBody },
   { route: "POST /api/v1/admin/catalog/import/git", body: CatalogGitImportBody },
   { route: "GET /api/v1/admin/catalog/imports/:stagingId", params: CatalogStagingPathParams },
+  {
+    route: "GET /api/v1/admin/catalog/imports/:stagingId/update-preview",
+    params: CatalogStagingPathParams,
+  },
   {
     route: "POST /api/v1/admin/catalog/items/:id/scope/preview",
     params: CatalogIdPathParams,

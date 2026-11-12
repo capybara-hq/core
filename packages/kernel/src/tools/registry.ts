@@ -82,6 +82,8 @@ export interface BuiltinCallContext extends ToolCallContext {
   /**
    * 本次运行的截止时间（epoch 毫秒，`runtime.maxRunSeconds` 起算，Ruling M20）。到点运行被中止；
    * 沙箱命令按它收紧超时，赶在截止前自己超时、给模型可执行的说明。
+   * Absent when the run has no duration limit (`runtime.maxRunSeconds` 0): commands are then limited
+   * only by `sandbox.limits.maxCommandSeconds` and the tool timeouts.
    */
   runDeadline?: number;
   /**
@@ -333,7 +335,7 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  *
  * What is offered:
  * - builtins: every {@link AGENT_BUILTIN_NAMES} entry registered here that can run (`unavailable`
- *   says why not), `TaskOutput` / `TaskStop` with `Bash`, `Agent` while its roster is not empty;
+ *   says why not), `TaskOutput` / `TaskStop` / `TaskList` with `Bash`, `Agent` while its roster is not empty;
  * - extension tools: every tool registered by an extension loaded on this replica and enabled in
  *   the org (`extension_org_configs.enabled`; required bootstrap plugins are enabled in every org,
  *   `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
@@ -668,7 +670,8 @@ export class ToolRegistry {
         spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
       }
       add(builtinTool(b, spec));
-      // `TaskOutput` and `TaskStop` come with an available `Bash` (background Bash spec §2)
+      // `TaskOutput`, `TaskStop` and `TaskList` come with an available `Bash` (background Bash
+      // spec §2)
       if (name === BUILTIN.Bash) {
         for (const companion of BASH_COMPANION_TOOLS) {
           const c = this.builtins.find((x) => x.spec.name === companion);
@@ -883,7 +886,7 @@ export class ToolRegistry {
 
 /**
  * `tools` narrowed by a sub-agent's key filter (tools default-on spec §4): `deny` keys removed,
- * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` follow `Bash`, as they come with
+ * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` / `TaskList` follow `Bash`, as they come with
  * it. Without a filter the list is returned as it is.
  */
 export function filterSubagentTools(

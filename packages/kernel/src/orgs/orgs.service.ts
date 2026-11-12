@@ -91,13 +91,13 @@ export class OrgsService {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** Cancels the deleted org's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
-    /** A new org gets the plugins its scope offers it (the scope sync, after the commit). */
+    /** A new org gets the plugins its scope offers it (the scope sync, owed with the org). */
     @Inject(PluginScopeSync) private readonly scopeSync: Pick<PluginScopeSync, "enqueueOrg">,
     /** What the deleted org owns is transferred or removed in the delete's transaction (P3-20). */
     @Inject(OwnedItems) private readonly ownedItems: Pick<OwnedItems, "onOrgDeleted">,
     /** Records `org.deleted` for the subscribing plugins in the delete's transaction. */
     @Inject(LifecycleHooks)
-    private readonly lifecycle: Pick<LifecycleHooks, "recordIn" | "enqueue">,
+    private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
   ) {}
 
   /**
@@ -145,7 +145,7 @@ export class OrgsService {
       target: row.id,
       detail: { slug, name },
     });
-    afterCommit(() => this.scopeSync.enqueueOrg(row.id));
+    await this.scopeSync.enqueueOrg(row.id);
     return toOrg(row);
   }
 
@@ -247,9 +247,9 @@ export class OrgsService {
    * sessions' current org pointing at it, and transfers or removes the plugins and promoted
    * components it owns ({@link OwnedItems.onOrgDeleted}, P3-20: shared ones become the platform's,
    * the others are removed, a removed plugin's extension taken out by its cleanup job after the
-   * commit) and records the `org.deleted` lifecycle hook deliveries; after the commit emits
-   * `org.deleted` (channel connections go with the org: the runtime's connection reads filter
-   * deleted orgs) and enqueues those deliveries.
+   * commit) and owes the `org.deleted` lifecycle hook deliveries (outbox jobs); after the commit
+   * emits `org.deleted` (channel connections go with the org: the runtime's connection reads filter
+   * deleted orgs).
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.softDeleteIn(orgId, actor, actorTokenId);
@@ -266,6 +266,13 @@ export class OrgsService {
       .updateTable("orgs")
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", orgId)
+      .execute();
+    // the org's owed jobs go with it; dead letters stay for the overview, and the deletion's own
+    // cleanup work carries no org_id (transactional outbox spec §9)
+    await this.db
+      .deleteFrom("outbox")
+      .where("org_id", "=", orgId)
+      .where("dead_at", "is", null)
       .execute();
     // after the org is marked deleted, so it counts as no user of what it shared (P3-18)
     await this.ownedItems.onOrgDeleted(orgId, actor.id, {
@@ -298,9 +305,9 @@ export class OrgsService {
       action: "org.deleted",
       target: orgId,
     });
-    const deliveries = await this.lifecycle.recordIn("org.deleted", { orgId });
+    // owed with the delete, carrying no org id, so the org's own outbox cleanup keeps them
+    await this.lifecycle.recordIn("org.deleted", { orgId });
     // channel connections follow the org after the root commit (none after a rollback)
     afterCommit(() => this.events.emit("org.deleted", { orgId }));
-    afterCommit(() => this.lifecycle.enqueue(deliveries));
   }
 }

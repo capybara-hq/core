@@ -21,7 +21,6 @@ import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { addOrgNotice, itemDisplayName, notifySharedUpdate } from "../inbox/org-notices.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -344,14 +343,14 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   the extension first (`ExtensionAdminOps.install`, enabled when the update installs it; added
  *   permissions wait for the admin's approval as for any extension upgrade), then one transaction
  *   under the item name's lock that recomputes the diff (`plugin.upgrade_stale` on a difference)
- *   and writes the platform versions (`PlatformComponents.syncFromVersion`, which records
+ *   and writes the platform versions (`PlatformComponents.applySyncIn`, which records
  *   `platform_synced_version`), the removals (a component no agent uses is soft-deleted, so
  *   unpinned linked copies go with it; pinned copies keep their own version; a removed connector
  *   template leaves its connectors as the orgs' own), clears the pins of linked copies, fans
  *   changed templates out to every connector made from them (`applyTemplateIn`, under each org's
  *   row lock, credentials cleared only for a changed credential shape), moves every org install to the version and audits
- *   `plugin.platform_updated`; the scope sync of the item and its dependencies is enqueued after
- *   the commit (orgs get new dependencies by rule 9). A failure rolls the transaction back and
+ *   `plugin.platform_updated`; the scope sync of the item and its dependencies is owed in that
+ *   transaction (orgs get new dependencies by rule 9). A failure rolls the transaction back and
  *   puts the extension back where it was (audit `plugin.platform_update_failed`, 502
  *   `plugin.upgrade_failed`); files copied to `deployment/platform/` stay unreferenced.
  * Storage is never read or written inside the transaction: the target's contents (and the
@@ -397,6 +396,25 @@ export class PlatformPluginUpdater {
   /** The update preview (see the class comment); writes nothing. */
   async preview(itemId: string, version: string): Promise<PlatformUpdatePreview> {
     return this.withGuideChanges(await this.diff(itemId, version));
+  }
+
+  /**
+   * The update preview of a version staged for import, not imported yet (the platform's import and
+   * update, `PlatformImportUpdate`): the same diff as {@link preview}, with the target read from the
+   * staging (`target`, whose files are where the import's version row will point), so the
+   * `diffHash` is the one {@link updateHeld} recomputes after the import. Writes nothing.
+   */
+  async previewStaged(
+    itemId: string,
+    version: string,
+    target: UpdateTarget,
+  ): Promise<PlatformUpdatePreview> {
+    if (target.version !== version) {
+      throw new Error(
+        `internal: previewStaged got the staged target of version ${target.version} for version ${version}`,
+      );
+    }
+    return this.withGuideChanges(await this.diff(itemId, version, { target }));
   }
 
   /** The preview of a diff with the template guides it changes. */
@@ -603,6 +621,19 @@ export class PlatformPluginUpdater {
   withItemLock<T>(itemId: string, f: () => Promise<T>): Promise<T> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     return this.locked(itemId, f);
+  }
+
+  /**
+   * {@link update} for a caller already holding the item's update lock ({@link withItemLock}):
+   * the platform's import and update runs its import and this update under one hold.
+   */
+  async updateHeld(
+    actor: string,
+    itemId: string,
+    input: { version: string; diffHash: string },
+    opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> } = {},
+  ): Promise<PlatformUpdateResult> {
+    return this.updateLocked(actor, itemId, input, opts);
   }
 
   /**
@@ -963,19 +994,8 @@ export class PlatformPluginUpdater {
         ...opts.auditDetail,
       },
     });
-    const enqueue = [itemId, ...diff.dependencies];
-    afterCommit(async () => {
-      for (const id of enqueue) {
-        try {
-          await this.sync.enqueueItem(id);
-        } catch (err) {
-          this.log.warn("enqueueing the scope sync after a platform update failed", {
-            itemId: id,
-            err,
-          });
-        }
-      }
-    });
+    // The scope sync of the item and its dependencies is owed with the update (outbox spec §8.1)
+    for (const id of [itemId, ...diff.dependencies]) await this.sync.enqueueItem(id);
     return diff;
   }
 
@@ -1685,7 +1705,7 @@ export class PlatformPluginUpdater {
   /**
    * Other platform plugins depending on this one must accept the target (their platform version's
    * dependency range); returns the catalog items of the target's own dependencies (their scope
-   * sync is enqueued after the update: rule 9).
+   * sync is owed with the update: rule 9).
    */
   private async checkDependents(name: string, to: VersionRow): Promise<string[]> {
     const rows = await this.db

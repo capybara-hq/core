@@ -3,6 +3,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { BackgroundTaskFinisher } from "../../background/finish.js";
 import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
+import { readChildAgents } from "../../conversations/agent-tree.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
 import { conversationAncestors } from "../../conversations/tree.js";
@@ -20,7 +21,6 @@ import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
-import { UsageReporter } from "../../runtime/usage-report.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
@@ -64,7 +64,6 @@ export class BuiltinTools {
     /** The WebFetch extraction call: the `web_fetch` purpose, its hooks, usage and denials. */
     @Inject(ModelPurposesService) purposes: ModelPurposesService,
     @Inject(ExtensionHost) host: { readonly hooks?: HookRunner } | undefined,
-    @Inject(UsageReporter) usageReport: UsageReporter,
     @Inject(StepLog) stepLog: StepLog,
     @Inject(KERNEL_LOGGER) log: Logger,
     @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
@@ -90,6 +89,7 @@ export class BuiltinTools {
       subagents: {
         inTree: async (root, id) =>
           id !== root && (await conversationAncestors(db.db, id)).includes(root),
+        childrenOf: (orgId, conversationId) => readChildAgents(db.db, orgId, conversationId),
       },
       attachments,
       storage,
@@ -129,7 +129,7 @@ export class BuiltinTools {
         cache: webPages,
         extract: (ctx, page, prompt) =>
           extractAnswer(
-            { purposes, eventLog, stepLog, config, log, hooks: host?.hooks, usageReport },
+            { purposes, eventLog, stepLog, config, log, hooks: host?.hooks },
             ctx,
             page,
             prompt,

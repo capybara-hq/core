@@ -5,7 +5,7 @@ import { ApiError } from "../../errors.js";
 import type { SkillInvoker } from "../../skills/invoke.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../tools/builtins/agent.js";
 import { type LoopContext, subagentsWait, type WaitingFor } from "../loop.js";
-import { TERMINAL_STATUSES } from "../run-finish.js";
+import { TERMINAL_STATUSES } from "../run-jobs.js";
 import { childResult, type DispatchRow, dispatchOfCall, finishedEvent } from "./child.js";
 import { type DispatchDeps, dispatchSubagent } from "./dispatch.js";
 
@@ -15,8 +15,8 @@ import { type DispatchDeps, dispatchSubagent } from "./dispatch.js";
  * through phase C's `dispatchSubagent` before any model call and waits on it (`subagents` wait
  * `sa-<runId>-0`; the dispatch row has `for_skill`, agent map spec §5.4: a fork stays in the
  * foreground while `Agent` calls run in the background). When the child has ended, `prepare` appends the model-visible
- * `skill_fork_result` and the parent's model answers. Every terminal path of the run (and the wait
- * sweep) pairs a fork invocation without a report ({@link pairStoppedForks}), so the log never holds
+ * `skill_fork_result` and the parent's model answers. Every terminal path of the run
+ * (`RunFinish.finishIn`) pairs a fork invocation without a report ({@link pairStoppedForks}), so the log never holds
  * a fork lead whose report is missing before the next model call.
  */
 
@@ -189,7 +189,7 @@ export async function advanceSkillForks(
       ownerAccountId: ctx.ownerAccountId,
       role: ctx.role,
       signal: ctx.signal,
-      deadline: ctx.limits.deadline,
+      ...(ctx.limits.deadline !== undefined && { deadline: ctx.limits.deadline }),
       ...(ctx.conversationKind !== undefined &&
         ctx.conversationKind !== "eval" && { conversationKind: ctx.conversationKind }),
     },
@@ -259,7 +259,7 @@ export const recordedSkillForks = (
 });
 
 /**
- * In the transaction of a run's terminal path (or the wait sweep): the run's fork invocation
+ * In the transaction of a run's terminal path (`RunFinish.finishIn`): the run's fork invocation
  * (its trigger message, by the run boundary) without a report gets one now: the ended child's
  * result (and the parent's missing `subagent_finished`), {@link AGENT_STOPPED_WITH_RUN_TEXT} for a
  * child still active (the caller stops it after its commit, as for `Agent` calls), or

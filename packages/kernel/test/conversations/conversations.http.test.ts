@@ -391,7 +391,7 @@ describe("Conversation HTTP", () => {
     expect(p2.next).toBeNull();
   });
 
-  it("abort：没有活跃运行 → 409 run.not_active；有排队中的运行 → 202 { runId } 并设置中止标记", async () => {
+  it("abort: no active run → 409 run.not_active; a queued run → 202 { runId }, ended in PG and the stop marker set", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const agentId = await createAgent(req, orgId);
@@ -411,7 +411,8 @@ describe("Conversation HTTP", () => {
       .select(["id", "status"])
       .where("conversation_id", "=", conv.id)
       .executeTakeFirstOrThrow();
-    expect(run).toEqual({ id: runId, status: "queued" });
+    // no worker started it: ended at once in PG (ruling R27), the marker set first
+    expect(run).toEqual({ id: runId, status: "aborted" });
     expect(await redis.ttl(`capk:run-abort:${runId}`)).toBeGreaterThan(3500);
   });
 

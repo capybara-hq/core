@@ -4,6 +4,7 @@ import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js"
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
@@ -134,7 +135,9 @@ async function sharedCrm(): Promise<string> {
     .set({ shown_to_others: true })
     .where("id", "=", itemId)
     .execute();
-  await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+  await env.k.app
+    .get(TransactionHost)
+    .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(
     async () => (await usable(orgB)).includes("crm-notes"),
     15_000,
@@ -255,7 +258,9 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
       .set({ scope_version: sql<number>`scope_version + 1` })
       .where("id", "=", itemId)
       .execute();
-    await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+    await env.k.app
+      .get(TransactionHost)
+      .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
     await waitFor(
       async () =>
         (

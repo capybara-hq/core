@@ -2,7 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -11,12 +10,13 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
-import { KERNEL_BUS } from "../../../src/infra/tokens.js";
+import { LockedIntervalScheduler } from "../../../src/infra/schedule/locked-interval.js";
 import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
+import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../../src/runtime/run-orphan-check.job.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
-import { resumeJobId, Waits } from "../../../src/runtime/waits.js";
+import { resumeJobId } from "../../../src/runtime/waits.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
-import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
+import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -42,15 +42,16 @@ import {
   type ChildRun,
   childRunsOf,
   dropChildJobs,
-  finishChildByHand,
   runStatus,
 } from "../../helpers/subagents.js";
 
 /**
  * Background sub-agents (agent map spec §5.4, §10) recover from lost work: a child stopped outside
- * its worker delivers its finish at once, and the wait sweep re-enqueues a lost child job, fails an
- * orphaned child run and writes a finish delivery its finisher never wrote, each once. One kernel;
- * the sub-agent queue is paused by the test whenever it needs a child to stay queued.
+ * its worker delivers its finish at once, and the `run-orphan-check` owes a job the queue lost
+ * again, once (an orphaned running child and a lost finish delivery are covered by
+ * run-orphan-check.test.ts and outbox-tree.test.ts). One kernel, whose own tick of the check is
+ * stopped (the tests call it); the sub-agent queue is paused by the test whenever it needs a child
+ * to stay queued.
  */
 
 const fixture = (name: string) =>
@@ -126,6 +127,7 @@ beforeAll(async () => {
       },
     ),
   );
+  k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
   subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
   runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
 }, 180_000);
@@ -252,80 +254,44 @@ describe("a child stopped outside its worker delivers its finish at once", () =>
     );
   }, 60_000);
 
-  it("stopping a queued child no worker holds delivers aborted without the sweep", async () => {
+  it("stopping a queued child whose job the queue lost: re-added by the check, it ends aborted", async () => {
     const { conv, child } = await startPaused("SCENARIO one");
     await dropChildJobs(subQueue, [child.conversationId]);
     await backdateRun(db, child.runId);
+    // a queued run is never stopped as an orphan: the stop is broadcast and marked
     const res = await abortChild(child.conversationId);
     expect(res.statusCode, res.body).toBe(202);
+    expect(await runStatus(db, child.runId)).toBe("queued");
+    expect(await k.app.get(RunOrphanCheck).check()).toEqual({
+      runningRepaired: 0,
+      queuedReadded: 1,
+    });
+    await subQueue.resume();
     const d = await deliveredOnce(conv);
     expect(await runStatus(db, child.runId)).toBe("aborted");
     expect(d.payload).toMatchObject({ status: "aborted", abortedBy: "user" });
   }, 60_000);
 });
 
-describe("recovery by the wait sweep", () => {
-  it("crash after the dispatch commit, before the enqueue: the sweep re-enqueues, no second dispatch", async () => {
+describe("recovery by the run-orphan-check", () => {
+  it("a child whose job the queue lost: the check owes it again once, no second dispatch", async () => {
     const { conv, child } = await startPaused("SCENARIO one");
     expect(await dropChildJobs(subQueue, [child.conversationId])).toBe(1);
     await subQueue.resume();
     await sleep(300);
     expect(await runStatus(db, child.runId)).toBe("queued");
-    // within the grace period nothing happens
-    expect((await k.app.get(Waits).sweep()).requeued).toBe(0);
+    const check = () => k.app.get(RunOrphanCheck).check();
+    // queued for under a minute: nothing happens
+    expect((await check()).queuedReadded).toBe(0);
     await backdateRun(db, child.runId);
-    expect((await k.app.get(Waits).sweep()).requeued).toBe(1);
+    expect((await check()).queuedReadded).toBe(1);
     const d = await deliveredOnce(conv);
     expect(d.payload).toMatchObject({ status: "completed", text: "child ok" });
     expect(await childRunsOf(db, conv)).toEqual([{ ...child, status: "completed" }]);
     expect(ofType(await eventsOf(db, conv), "subagent_dispatched")).toHaveLength(1);
   }, 60_000);
 
-  it("a running child without job or lock: the sweep fails it run.orphaned and delivers the failure", async () => {
-    const { conv, child } = await startPaused("SCENARIO one");
-    await dropChildJobs(subQueue, [child.conversationId]);
-    await db
-      .updateTable("runs")
-      .set({ status: "running", started_at: new Date() })
-      .where("id", "=", child.runId)
-      .execute();
-    await backdateRun(db, child.runId);
-    const out = await k.app.get(Waits).sweep();
-    expect(out.orphaned).toBe(1);
-    const cev = await eventsOf(db, child.conversationId);
-    expect(ofType(cev, "run_failed")[0]?.payload.error.code).toBe("run.orphaned");
-    const d = await deliveredOnce(conv);
-    expect(d.payload).toMatchObject({
-      status: "failed",
-      errorCode: "run.orphaned",
-      text: "The run was lost and will not continue",
-    });
-  }, 60_000);
-
-  it("child finisher crash: the sweep writes the missing finished delivery, once", async () => {
-    const { conv, child } = await startPaused("SCENARIO one");
-    await dropChildJobs(subQueue, [child.conversationId]);
-    await finishChildByHand(
-      db,
-      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-      child,
-      "finished alone",
-    );
-    await sleep(300);
-    expect(await finished(conv)).toEqual([]);
-    // within the grace period nothing happens
-    expect((await k.app.get(Waits).sweep()).delivered).toBe(0);
-    await backdateRun(db, child.runId);
-    expect((await k.app.get(Waits).sweep()).delivered).toBe(1);
-    const ds = await finished(conv);
-    expect(ds.map((d) => d.payload.text)).toEqual(["finished alone"]);
-    expect(ofType(await eventsOf(db, conv), "subagent_finished")).toHaveLength(1);
-    // idempotent: a second sweep finds nothing
-    expect((await k.app.get(Waits).sweep()).delivered).toBe(0);
-    expect(await finished(conv)).toHaveLength(1);
-  }, 60_000);
-
-  it("a parent set queued by a resume whose enqueue never happened is enqueued by the sweep (final review m8)", async () => {
+  it("a parent queued by a resume whose job the queue lost is owed again under its resume job id", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO direct");
     const approval = await waitFor(
@@ -342,8 +308,8 @@ describe("recovery by the wait sweep", () => {
     const runId = approval.run_id;
     await waitFor(async () => (await runStatus(db, runId)) === "waiting", 20_000, "parent waiting");
     await waitForRunJobDone(db, runQueue, runId);
-    // the approval is decided and Waits.resume's update committed, then its replica died before
-    // queue.add
+    // the approval is decided and the resume committed with its job owed; then the queue lost the
+    // job (the outbox row is gone, the job never reached BullMQ)
     await db
       .updateTable("approvals")
       .set({ status: "approved", scope: "once", decided_by: ownerId, decided_at: new Date() })
@@ -360,9 +326,10 @@ describe("recovery by the wait sweep", () => {
       })
       .where("id", "=", runId)
       .execute();
-    expect((await k.app.get(Waits).sweep()).requeued).toBe(0);
+    const check = () => k.app.get(RunOrphanCheck).check();
+    expect((await check()).queuedReadded).toBe(0);
     await backdateRun(db, runId);
-    expect((await k.app.get(Waits).sweep()).requeued).toBe(1);
+    expect((await check()).queuedReadded).toBe(1);
     await waitForTerminal(db, conv, 1, 20_000);
     expect(finalText(await eventsOf(db, conv))).toBe("direct done");
   }, 60_000);

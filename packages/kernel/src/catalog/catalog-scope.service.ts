@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
-import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -12,14 +10,13 @@ import { PluginInstallLock } from "../extensions/locks.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { addOrgNotice, itemDisplayName, notifyItemShared } from "../inbox/org-notices.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import {
   assertNotPlatformDefault,
   type ThemeAfter,
@@ -43,7 +40,8 @@ import {
   switchOf,
   themeIdClashes,
 } from "./component-state.js";
-import { ownedPluginCleanupJob } from "./job-ids.js";
+import { oweOwnedPluginCleanup } from "./job-ids.js";
+import { CatalogItemLock } from "./locks.js";
 import {
   assertNotAwaiting,
   assertOwnerListed,
@@ -58,6 +56,7 @@ import {
   pendingDigest,
   releaseExtensionClaim,
 } from "./ownership.js";
+import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-components.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { PlatformPluginUpdater } from "./plugin-upgrade.js";
@@ -203,10 +202,10 @@ export function conflictsError(conflicts: ScopePreview["conflicts"]): ApiError {
 
 /**
  * The super admin's plugin scope and deployment-level disable (plugin and component management
- * spec §4.1, §5 rules 2-4 and 8), and the import confirm that enqueues the scope sync of the item it
+ * spec §4.1, §5 rules 2-4 and 8), and the import confirm that owes the scope sync of the item it
  * wrote. A change is previewed, then confirmed with the preview's `scopeHash`, recomputed under the
  * item row lock (a difference -> 409 `plugin.scope_stale`); it bumps `scope_version`, audits
- * `catalog.scope_changed` and, after the commit, enqueues the item's scope sync, which installs or
+ * `catalog.scope_changed` and owes the item's scope sync in the same transaction, which installs or
  * uninstalls in every org. Disabling keeps the scope, its org list and the org switches, so
  * re-enabling (no hash needed) reinstalls where it was on. Builtin items -> 409 `plugin.builtin`.
  * Stateless, shared by every replica.
@@ -218,6 +217,10 @@ export class CatalogScopeService {
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    /** A confirmed first version's platform components (written in the confirming commit). */
+    @Inject(PlatformComponents) private readonly platform: PlatformComponents,
+    /** The import's item name lock, taken by the confirming commit before the item row. */
+    @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ExtensionAdmin) private readonly extensions: ExtensionAdmin,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
@@ -229,8 +232,8 @@ export class CatalogScopeService {
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     /** This replica's reconcile once a confirmed extension is enabled (before the scope sync). */
     @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
-    /** The removed org plugin's cleanup job, backing the take-out of P3-21 (pre-flight F9). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
+    /** Owes the scope syncs and the removed org plugin's cleanup (P3-21, pre-flight F9). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -241,7 +244,7 @@ export class CatalogScopeService {
 
   /**
    * Confirms a staged import ({@link PluginImport.confirm}: installs and enables the extension,
-   * writes the new item's scope), then enqueues the item's scope sync when its scope turns it on
+   * writes the new item's scope), then owes the item's scope sync when its scope turns it on
    * by itself (`all` or `named`; an `optional` item is on only where an org admin switches it on).
    */
   async confirmImport(
@@ -251,7 +254,7 @@ export class CatalogScopeService {
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     const r = await this.pluginImport.confirm(actor, stagingId, input, opts);
-    if (r.item.scope !== "optional") await this.enqueue(r.item.id);
+    if (r.item.scope !== "optional") await this.oweSync(r.item.id);
     return r;
   }
 
@@ -283,6 +286,7 @@ export class CatalogScopeService {
         "owner_org_id",
         "awaiting_confirmation",
         "pending_version",
+        "scope",
       ])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
@@ -336,9 +340,13 @@ export class CatalogScopeService {
       // Already approved but not enabled yet: carry on to the enable; else nothing to confirm
       if (!disabled || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
     }
+    // The permissions are confirmed (a stale hash refused above): the backstop before the enable
+    // (ruling R24), so a crash before the post-deploy add below still converges the orgs; only
+    // when the item's scope turns it on by itself, as the import's commit
+    if (item.scope !== "optional") await this.oweBackstop(itemId);
     // An occupied single-provider point leaves it installed disabled (the admin view says why)
     if (disabled) await this.ops.enableUnlessOccupied(item.name, actor, opts.actorTokenId);
-    await this.enqueue(itemId);
+    await this.oweSync(itemId);
     return (await this.catalog.get(itemId)).item;
   }
 
@@ -349,9 +357,10 @@ export class CatalogScopeService {
    * pending version (withdrawn, rejected, replaced by one without an extension) -> 409
    * `extension.not_pending`.
    *
-   * A first version: its extension installed, its permissions approved, enabled, then (one
-   * transaction) the item stops waiting and the owner is told (`upload_confirmed`); after the
-   * commit its platform components are written and the scope sync enqueued. Each step re-reads
+   * A first version: its platform components planned and their files copied (keyed by content),
+   * its extension installed, its permissions approved, enabled, then (one transaction) the item
+   * stops waiting, its platform component rows are written and the owner is told
+   * (`upload_confirmed`); after the commit the scope sync is owed. Each step re-reads
    * the item under its row lock: removed meanwhile -> 409 `catalog.item_removed`, the pending
    * version replaced -> `extension.approval_stale`; the extension this confirmation installed is
    * then taken out again. A new version: the platform update to it
@@ -380,15 +389,14 @@ export class CatalogScopeService {
         CONFIRM_RECONCILE_WAIT_MS,
         this.log,
       );
-      await this.pluginImport.writePlatformComponents(item.id, first);
-      await this.enqueue(item.id);
+      await this.oweSync(item.id);
     }
     return (await this.catalog.get(item.id)).item;
   }
 
   /**
-   * {@link confirmOrgUpload} under the item lock; returns the confirmed first version (its
-   * platform components and scope sync follow after), null for a new version.
+   * {@link confirmOrgUpload} under the item lock; returns the confirmed first version (its scope
+   * sync follows after), null for a new version.
    */
   private async confirmLocked(
     actor: string,
@@ -491,6 +499,8 @@ export class CatalogScopeService {
     await this.stillPending(itemId, name, version);
     let installedHere = false;
     try {
+      // Planned and copied before any transaction; the rows are written by the confirming commit
+      const components = await this.platform.prepareSync(itemId, version, { confirming: true });
       if (install?.sha256 !== sha) {
         await this.ops.install(name, sha, actor, opts.actorTokenId, {
           catalogItemId: itemId,
@@ -503,7 +513,7 @@ export class CatalogScopeService {
       await this.stillPending(itemId, name, version);
       // An occupied single-provider point leaves it installed disabled (the admin view says why)
       await this.ops.enableUnlessOccupied(name, actor, opts.actorTokenId);
-      await this.finishFirstVersion(actor, itemId, version, opts);
+      await this.finishFirstVersion(actor, itemId, version, components, opts);
     } catch (e) {
       // Taken out only when this confirmation did not win: the item gone or still waiting
       if (installedHere && !(await this.confirmed(itemId))) {
@@ -609,9 +619,10 @@ export class CatalogScopeService {
   /**
    * An extension a confirmation installed whose item was removed or replaced meanwhile is taken
    * out again (disabled, uninstalled; P3-21), and the name claim released when the item is gone
-   * (ruling P3-37). Inline and best effort (a failure is logged); a removed item's cleanup job
-   * (`owned-plugin-cleanup-<itemId>`, idempotent) is enqueued as well, so a failed take-out is
-   * retried (pre-flight F9).
+   * (ruling P3-37), in one transaction ({@link takeOutIn}). Inline (a failure is logged): when the
+   * take-out fails, a removed item's cleanup job (`owned-plugin-cleanup-<itemId>`, idempotent) is
+   * owed instead, so the job retries it (pre-flight F9). That owe is the last resort: when it
+   * fails too (PG unavailable) nothing retries the take-out, and it is logged as an error.
    */
   private async takeOut(
     itemId: string,
@@ -620,39 +631,60 @@ export class CatalogScopeService {
     opts: ActorOpts,
   ): Promise<void> {
     try {
-      await this.ops.disable(name, actor, opts.actorTokenId);
-      await this.ops.uninstall(name, actor, opts.actorTokenId);
-      await this.releaseIfGone(itemId, name);
+      await this.takeOutIn(itemId, name, actor, opts);
+      return;
     } catch (err) {
       this.log.error("taking out the extension of a removed org upload failed", { name, err });
     }
-    const gone = await this.db
-      .selectFrom("catalog_items")
-      .select("id")
-      .where("id", "=", itemId)
-      .where("deleted_at", "is not", null)
-      .executeTakeFirst();
-    if (gone === undefined) return;
-    const job = ownedPluginCleanupJob(itemId);
     try {
-      await this.maintenance.add(job.name, job.data, job.opts);
+      await this.oweCleanupIfGone(itemId);
     } catch (err) {
-      this.log.warn("enqueueing the owned plugin cleanup failed", { itemId, err });
+      this.log.error("owing the owned plugin cleanup failed; the take-out is not retried", {
+        itemId,
+        err,
+      });
     }
   }
 
-  /** Releases the name claim of a removed item (nothing installed under it any more). */
+  /**
+   * {@link takeOut}'s transaction, in the global lock order (ruling P3-50): the super admin lock,
+   * the item row, then the extension's install lock (taken by the disable): disabled,
+   * uninstalled, and the name claim released when the item is gone.
+   */
   @Transactional()
-  private async releaseIfGone(itemId: string, name: string): Promise<void> {
+  private async takeOutIn(
+    itemId: string,
+    name: string,
+    actor: string,
+    opts: ActorOpts,
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor);
     const row = await this.db
       .selectFrom("catalog_items")
       .select(["deleted_at", "package_name"])
       .where("id", "=", itemId)
       .forUpdate()
       .executeTakeFirst();
+    await this.ops.disable(name, actor, opts.actorTokenId);
+    await this.ops.uninstall(name, actor, opts.actorTokenId);
     if (row === undefined || row.deleted_at !== null) {
       await releaseExtensionClaim(this.db, name, row?.package_name ?? null);
     }
+  }
+
+  /**
+   * Owes the cleanup of a removed item; a live item owes nothing (a removal committing later owes
+   * its own).
+   */
+  @Transactional()
+  private async oweCleanupIfGone(itemId: string): Promise<void> {
+    const gone = await this.db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("id", "=", itemId)
+      .where("deleted_at", "is not", null)
+      .executeTakeFirst();
+    if (gone !== undefined) await oweOwnedPluginCleanup(this.outbox, itemId);
   }
 
   /** The item is still live and pending with `version` (row lock), else 409 (P3-21). */
@@ -676,12 +708,18 @@ export class CatalogScopeService {
     return row.owner_org_id;
   }
 
-  /** A confirmed first version: the item stops waiting, the owner is told (`upload_confirmed`). */
+  /**
+   * A confirmed first version: the item stops waiting, its platform component rows are written
+   * from `components` (a component changed since they were planned -> 409
+   * `extension.approval_stale`: confirm again), the owner is told (`upload_confirmed`). The
+   * import's item name lock before the item row, as an import's commit takes them (ruling P3-50).
+   */
   @Transactional()
   private async finishFirstVersion(
     actor: string,
     itemId: string,
     version: string,
+    components: PreparedSync,
     opts: ActorOpts,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
@@ -690,6 +728,7 @@ export class CatalogScopeService {
       .select("name")
       .where("id", "=", itemId)
       .executeTakeFirstOrThrow();
+    await this.itemLock.lock(named.name);
     const owner = await this.pendingRow(itemId, named.name, version);
     await this.db
       .updateTable("catalog_items")
@@ -705,6 +744,12 @@ export class CatalogScopeService {
       .where("id", "=", itemId)
       .execute();
     await markVersionApplied(this.db, itemId, version);
+    try {
+      await this.platform.applySyncIn(components);
+    } catch (e) {
+      if (e instanceof PlanStale) throw pendingStale(named.name);
+      throw e;
+    }
     await addOrgNotice(this.db, owner, "upload_confirmed", {
       itemId,
       name: named.name,
@@ -718,6 +763,9 @@ export class CatalogScopeService {
       target: itemId,
       detail: { name: named.name, version, ownerOrgId: owner },
     });
+    // The confirmation's commit owes the sync's backstop (ruling R24); the immediate sync follows
+    // the commit
+    await this.sync.enqueueBackstop(itemId);
   }
 
   /**
@@ -986,7 +1034,7 @@ export class CatalogScopeService {
         ...opts.auditDetail,
       },
     });
-    afterCommit(() => this.enqueue(itemId));
+    await this.enqueue(itemId);
   }
 
   @Transactional()
@@ -1029,14 +1077,14 @@ export class CatalogScopeService {
         ...opts.auditDetail,
       },
     });
-    afterCommit(() => this.enqueue(itemId));
+    await this.enqueue(itemId);
   }
 
   /**
    * Writes an org-owned plugin's 可共享 flag and copies it to its component rows (ruling P3-2).
    * Turning it off narrows an `optional` / `all` plugin, and each component with its own such
-   * scope, to the owner plus the orgs where it is on now (ruling P3-25), and enqueues the item's
-   * scope sync after the commit. The caller authorizes (the owner org's admin, Task 7). A platform
+   * scope, to the owner plus the orgs where it is on now (ruling P3-25), and owes the item's
+   * scope sync with it. The caller authorizes (the owner org's admin, Task 7). A platform
    * item (no owner) or a missing one -> 404.
    */
   @Transactional()
@@ -1075,14 +1123,14 @@ export class CatalogScopeService {
         await narrowComponentOnUnshare(this.db, actor, c);
       }
     }
-    if (narrowed) afterCommit(() => this.enqueue(itemId));
+    if (narrowed) await this.enqueue(itemId);
   }
 
   /**
    * Adds one org to a `named` item's list in the caller's transaction (an approved `access`
    * request, spec §5.1 rule 2): nobody loses access, so no preview. The item row is locked; it
    * must be live and not builtin (404 / `plugin.builtin`). Bumps `scope_version`, audits
-   * `catalog.scope_changed` and enqueues the item's scope sync after the commit. Returns whether
+   * `catalog.scope_changed` and owes the item's scope sync in that transaction. Returns whether
    * the list changed (false: not `named`, or listed already).
    */
   @Transactional({ propagation: "mandatory" })
@@ -1095,25 +1143,42 @@ export class CatalogScopeService {
     const item = await this.item(itemId, true);
     assertNotAwaiting(item);
     const changed = await addScopeOrg(this.db, actor, item, orgId, opts);
-    if (changed) afterCommit(() => this.enqueue(itemId));
+    if (changed) await this.enqueue(itemId);
     return changed;
   }
 
   /**
-   * Enqueues the item's scope sync after a commit made elsewhere (an org upload's confirm,
-   * `OrgPluginUploads`); a failure only warns.
+   * Owes the item's scope sync in the caller's transaction (an ownership transfer, an org upload's
+   * confirm in `OrgPluginUploads`).
    */
+  @Transactional({ propagation: "mandatory" })
   async enqueueSync(itemId: string): Promise<void> {
     await this.enqueue(itemId);
   }
 
-  /** Enqueues the item's scope sync; a failure only warns (the next change or org sync converges). */
+  /** Owes the item's scope sync in the transaction that changes its scope (outbox spec §8.1). */
+  @Transactional({ propagation: "mandatory" })
   private async enqueue(itemId: string): Promise<void> {
-    try {
-      await this.sync.enqueueItem(itemId);
-    } catch (err) {
-      this.log.warn("enqueueing the plugin scope sync failed", { itemId, err });
-    }
+    await this.sync.enqueueItem(itemId);
+  }
+
+  /**
+   * Owes the item's scope sync in a transaction of its own, after a confirmation whose last write
+   * (the extension's deploy, or the platform components) committed outside the scope service: the
+   * sync must not run before the extension it installs is enabled.
+   */
+  @Transactional()
+  private async oweSync(itemId: string): Promise<void> {
+    await this.enqueue(itemId);
+  }
+
+  /**
+   * Owes the delayed backstop of the item's sync in a transaction of its own (ruling R24): a
+   * permissions confirm writes nothing of the scope service's before its enable.
+   */
+  @Transactional()
+  private async oweBackstop(itemId: string): Promise<void> {
+    await this.sync.enqueueBackstop(itemId);
   }
 
   /**

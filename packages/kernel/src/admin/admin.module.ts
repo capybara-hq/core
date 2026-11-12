@@ -4,14 +4,16 @@ import { ChannelsModule } from "../channels/channels.module.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LifecycleHooksModule } from "../extensions/lifecycle-hooks.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
-import { UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
+import { UsageReportModule } from "../runtime/usage-report.js";
 import { AdminHealthService } from "./health.service.js";
+import { OutboxDeadService } from "./outbox-dead.service.js";
 import { AdminOverviewService } from "./overview.service.js";
 import { PlatformAuditService } from "./platform-audit.service.js";
 import { SetupService } from "./setup.service.js";
@@ -20,7 +22,8 @@ import { AdminUsageService } from "./usage.service.js";
 
 /**
  * Deployment administration: the setup wizard, the platform-level audit log and the admin overview
- * with its health read and seven-day usage aggregate (its controllers are the api role's, `ApiModule`).
+ * with its health read, seven-day usage aggregate and dead outbox rows (its controllers are the api
+ * role's, `ApiModule`).
  */
 @Module({
   imports: [
@@ -36,8 +39,9 @@ import { AdminUsageService } from "./usage.service.js";
     RunJobsModule,
     ChannelsModule,
     TitlesModule,
-    UsageReportJobsModule,
+    UsageReportModule,
     EvalsModule,
+    LifecycleHooksModule,
     // the price table of the usage aggregate
     ModelsModule,
   ],
@@ -47,6 +51,7 @@ import { AdminUsageService } from "./usage.service.js";
     AdminOverviewService,
     AdminHealthService,
     AdminUsageService,
+    OutboxDeadService,
   ],
   exports: [
     SetupService,
@@ -54,6 +59,7 @@ import { AdminUsageService } from "./usage.service.js";
     AdminOverviewService,
     AdminHealthService,
     AdminUsageService,
+    OutboxDeadService,
   ],
 })
 export class AdminModule {}

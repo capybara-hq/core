@@ -5,7 +5,8 @@ export type Theme = (typeof THEMES)[number];
 
 /**
  * Opens `/dev/ui/reference/<component>` in `theme` (the `cb-theme` cookie), waits for the
- * fonts and for content drawn later (`data-ref-pending`), and forces the pseudo-states the blocks ask for (`data-ref-force` on
+ * fonts, for hydration and for content drawn later (both `data-ref-pending`: `RefHydrating`,
+ * `RefPending`), and forces the pseudo-states the blocks ask for (`data-ref-force` on
  * `data-ref-force-selector` inside the block) through the DevTools protocol, marking each forced
  * element `data-ref-forced="true"` (design spec §9.2). Chromium only.
  */
@@ -18,6 +19,8 @@ export async function openReference(page: Page, component: string, theme: Theme,
   // Content a block draws later (`RefPending`: the chart images are made on a canvas, then handed
   // out as blob URLs) must be there before states are forced or anything is measured: under load
   // the image block was still empty and its force selector matched nothing.
+  // Hydration likewise (`RefHydrating`): before it the app shell draws both sidebar panels and the
+  // drawer bar (CSS picks one), and a busy runner can still be hydrating at networkidle.
   await page.waitForFunction(() => document.querySelector("[data-ref-pending]") === null);
   await forceStates(page);
   return res;

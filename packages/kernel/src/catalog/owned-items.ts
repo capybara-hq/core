@@ -5,23 +5,19 @@
 // since Task 8, the org's own skills and agent templates (promoted ones through their platform
 // rows, ruling P3-3).
 import { createHash } from "node:crypto";
-import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { loadTemplates, readOwnTemplate, softDeleteTemplateIn } from "../agents/templates.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { addPlatformNotice } from "../inbox/platform-notices.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { SkillsService } from "../skills/skills.service.js";
 import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import { type ActorOpts, CatalogService } from "./catalog.service.js";
@@ -39,7 +35,6 @@ import {
   pluginFactsOf,
   switchOf,
 } from "./component-state.js";
-import { ownedPluginCleanupJob } from "./job-ids.js";
 import { type OwnedRef, orgsUsing } from "./ownership.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { ScopeStillWanted } from "./scope-state.js";
@@ -135,8 +130,6 @@ export class OwnedItems {
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     /** The owner's org skill row, soft-deleted after its promoted platform row leaves it. */
     @Inject(SkillsService) private readonly skills: SkillsService,
-    /** The removed plugin's cleanup job (`owned-plugin-cleanup-<itemId>`, P3-20). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -483,10 +476,10 @@ export class OwnedItems {
    * it passed the share gate already, so every org could see it, and the former owner is then an
    * ordinary org that may switch it on again), written
    * directly rather than through the guarded scope writer (ruling P3-27); platform notice
-   * `ownership_transferred`, audit `catalog.ownership_transferred`, the scope sync enqueued after
-   * the commit (it uninstalls the former owner's install). Otherwise -> `removed`: the soft delete
-   * of `catalog.remove` ({@link CatalogService.removeIn}) and, after the commit, the cleanup job
-   * `owned-plugin-cleanup-<itemId>` that takes its extension out; an owner delete
+   * `ownership_transferred`, audit `catalog.ownership_transferred`, the scope sync owed with it
+   * (it uninstalls the former owner's install). Otherwise -> `removed`: the soft delete of
+   * `catalog.remove` ({@link CatalogService.removeIn}, which owes the cleanup job
+   * `owned-plugin-cleanup-<itemId>` that takes its extension out); an owner delete
    * (`owner_deleted`) also uninstalls it in the owner org through the normal uninstall, keeping the
    * connectors it created as the org's own (ruling P3-41). A first upload still waiting is never
    * transferred. A gone or platform item -> 404.
@@ -513,8 +506,9 @@ export class OwnedItems {
     const others = item.awaiting_confirmation ? [] : await orgsUsing(t, ref, { except: owner });
     if (others.length === 0) {
       await this.catalog.removeIn(actor, item.id, { ...opts, reason });
+      // removeIn owes the cleanup job of a confirmed plugin (a first upload still waiting has
+      // nothing installed: its name claim is released there)
       if (reason === "owner_deleted") await this.uninstallInOwner(owner, actor, item.id, opts);
-      afterCommit(() => this.enqueueCleanup(item.id));
       return "removed";
     }
     // A transfer leaves none of its themes `all` (an `all` scope is narrowed, P3-39): refused
@@ -643,7 +637,7 @@ export class OwnedItems {
         ...opts.auditDetail,
       },
     });
-    afterCommit(() => this.scope.enqueueSync(item.id));
+    await this.scope.enqueueSync(item.id);
     return "transferred";
   }
 
@@ -654,7 +648,7 @@ export class OwnedItems {
    * each goes through {@link transferOrRemove} with reason `org_deleted`. A first upload still
    * waiting is removed and its extension name released here (nothing is installed under it,
    * pre-flight F10); a pending new version of a transferred plugin is cleared; a removed plugin's
-   * extension is taken out by the cleanup job after the commit. The org's unpromoted rows (its own
+   * extension is taken out by the cleanup job the deletion owes. The org's unpromoted rows (its own
    * skills, copies, installs) are left: they go with the org as before. Must not inject
    * `OrgsService` (it calls this).
    */
@@ -864,16 +858,6 @@ export class OwnedItems {
         orgId: owner,
         itemId,
       });
-    }
-  }
-
-  /** Enqueues the removed plugin's cleanup; a failure only warns (the daily sweep repairs it). */
-  async enqueueCleanup(itemId: string): Promise<void> {
-    const job = ownedPluginCleanupJob(itemId);
-    try {
-      await this.queue.add(job.name, job.data, job.opts);
-    } catch (err) {
-      this.log.warn("enqueueing the owned plugin cleanup failed", { itemId, err });
     }
   }
 

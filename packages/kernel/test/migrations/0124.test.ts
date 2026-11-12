@@ -9,13 +9,13 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0120_conversation_source.sql (memory plugin spec §6.2): conversations gain `source`, backfilled
+ * 0124_conversation_source.sql (memory plugin spec §6.2): conversations gain `source`, backfilled
  * from the rows that existed: `kind = 'subagent'` → subagent, a conversation with a channel thread
  * row of any archive state → channel_dm (only `dm:` keys) or channel_group, a group conversation whose
  * thread is still to bind → channel_group (its delivery's target), the rest → web. Migrates to the
- * migration before it, seeds, then runs 0120 (twice: idempotent).
+ * migration before it, seeds, then runs 0124 (twice: idempotent).
  */
-const FILE = "0120_conversation_source.sql";
+const FILE = "0124_conversation_source.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -99,7 +99,7 @@ const EXPECTED = {
   "c-web": "web",
 };
 
-describe("0120_conversation_source", () => {
+describe("0124_conversation_source", () => {
   it("backfills each existing conversation's source, archived thread rows included", async () => {
     expect(await sources()).toEqual(EXPECTED);
   });

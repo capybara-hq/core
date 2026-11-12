@@ -10,6 +10,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { recordToolSpecs } from "../tools/specs.js";
 import { budgetRunOf } from "./subagents/limits.js";
+import { UsageReportJobs, UsageReportJobsModule } from "./usage-report-jobs.js";
 
 /** An audit row written with the events (`identity/audit.ts`). */
 export type StepAuditEntry = Parameters<typeof audit>[1];
@@ -17,16 +18,34 @@ export type StepAuditEntry = Parameters<typeof audit>[1];
 /**
  * The writes of a run step that go to the event log together with another row, each in a
  * transaction of its own (the caller notifies the log after the commit): a model call with the
- * tool definitions it sent, a denial with its audit row, and a sub-agent's usage counted on its
- * parent run. The step functions (`model-call.ts`, `hook-calls.ts`) reach it through their deps.
+ * tool definitions it sent, a denial with its audit row, usage events with their owed
+ * `usage.report` deliveries (transactional outbox spec §8.1), and a sub-agent's usage counted on
+ * its parent run. The step functions (`model-call.ts`, `hook-calls.ts`) reach it through their deps.
  */
 @Injectable()
 export class StepLog {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
+    @Inject(UsageReportJobs) private readonly usage: Pick<UsageReportJobs, "oweEvents">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
+
+  /**
+   * Appends events and owes the `usage.report` delivery of the `usage` events it newly wrote, in
+   * one transaction. Returns what was written (hits included) and the highest new seq (null:
+   * nothing new).
+   */
+  @Transactional({ propagation: "requires_new" })
+  async appendReported(
+    conversationId: string,
+    events: AppendEvent[],
+  ): Promise<{ written: ConversationEvent[]; toSeq: number | null }> {
+    const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
+    const added = written.filter((_, i) => fresh[i]);
+    await this.usage.oweEvents(conversationId, added);
+    return { written, toSeq: added.length > 0 ? Math.max(...added.map((e) => e.seq)) : null };
+  }
 
   /**
    * Appends events of a sub-agent's run and adds the tokens of the usage events it newly wrote to
@@ -34,7 +53,7 @@ export class StepLog {
    * the whole tree counts on one run): `counter.budgetRunId`, the run's own window
    * (`SubagentParent.budgetRunId`), else the parent run's ({@link budgetRunOf}). A usage event
    * already in the log (an idempotent hit after a crash) adds nothing, so each call counts exactly
-   * once. Returns what was written (hits included) and the highest new seq (null: nothing new).
+   * once; the new usage events' `usage.report` deliveries are owed in the same transaction. Returns what was written (hits included) and the highest new seq (null: nothing new).
    */
   @Transactional({ propagation: "requires_new" })
   async appendCounted(
@@ -52,6 +71,7 @@ export class StepLog {
       .executeTakeFirstOrThrow();
     const written = await this.eventLog.appendIn(conversationId, events);
     const fresh = written.filter((e) => e.seq > Number(before.last_seq));
+    await this.usage.oweEvents(conversationId, fresh);
     let tokens = 0;
     for (const e of fresh) if (e.type === "usage") tokens += usageTokens(e.payload);
     if (tokens > 0) {
@@ -96,7 +116,7 @@ export class StepLog {
  * extraction's usage and denials) uses them without importing the runtime.
  */
 @Module({
-  imports: [EventLogModule],
+  imports: [EventLogModule, UsageReportJobsModule],
   providers: [StepLog],
   exports: [StepLog],
 })

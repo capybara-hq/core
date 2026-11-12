@@ -17,7 +17,6 @@ import { ModelPurposesService } from "../../../src/models/purposes.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { SubagentDeliveries } from "../../../src/runtime/subagents/deliveries.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
-import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { agentStartedText } from "../../../src/tools/builtins/agent.js";
 import {
   openBarrier,
@@ -44,7 +43,12 @@ import {
   waitForTerminal,
 } from "../../helpers/runs.js";
 import { webCaller } from "../../helpers/step-context.js";
-import { childRunsOf, finishChildByHand, runStatus } from "../../helpers/subagents.js";
+import {
+  childRunsOf,
+  commitDispatchOwing,
+  finishChildByHand,
+  runStatus,
+} from "../../helpers/subagents.js";
 
 /**
  * Agent map spec §4.1, §4.5, §5.4 (Task A4): `Agent` dispatches in the background. Its result is
@@ -295,10 +299,10 @@ describe("finish deliveries", () => {
     purposes: k.app.get(ModelPurposesService),
     registry: k.app.get(ProviderRegistry),
     config: { get: () => k.app.get(KernelConfigService).get() },
-    // the child run is finished by hand here, never executed
-    enqueue: async () => {},
+    // the children are finished by hand (or not at all) here: no run job is owed, none runs
+    owe: async () => true,
     log: { error: () => {}, warn: () => {} },
-    commitDispatch: (a, plan, child) => k.app.get(SubagentsService).commitDispatch(a, plan, child),
+    commitDispatch: commitDispatchOwing(k.app, k.app.get(EventLog), async () => true),
   });
 
   it("idempotent finish: two finishers write one delivery", async () => {

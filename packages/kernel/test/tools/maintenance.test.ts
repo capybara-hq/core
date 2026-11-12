@@ -172,7 +172,25 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
-      { processTimeout: async (job, token) => void calls.push(["wait", job.data, token]) },
+      {
+        processTimeout: async (job, token) => void calls.push(["wait", job.data, token]),
+        childFinished: async (id) => {
+          calls.push(["deliver", id]);
+          return false;
+        },
+        stopChildren: async (id, by) => {
+          calls.push(["stop-children", id, by]);
+          return 0;
+        },
+        stopDescendantsOfStopped: async (id) => {
+          calls.push(["stop-descendants", id]);
+          return 0;
+        },
+        stopTree: async (id, by, opts) => {
+          calls.push(["stop-tree", id, by, opts]);
+          return 0;
+        },
+      },
       {
         destroyDevice: async (id) => void calls.push(["sandbox", id]),
         resetFileSystem: async (id) => void calls.push(["reset", id]),
@@ -184,6 +202,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { runSyncJob: async (d) => void calls.push(["directory", d]) },
+      { stopRun: async (d) => void calls.push(["run-stop", d]) },
       {
         ensureRun: async (id) => {
           calls.push(["wake", id]);
@@ -191,7 +210,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { run: async (id) => void calls.push(["owned-cleanup", id]) },
-      { fire: async (id) => void calls.push(["sched-fire", id]) },
+      {
+        fire: async (id) => void calls.push(["sched-fire", id]),
+        settle: async (d) => void calls.push(["sched-settle", d]),
+      },
       {
         runNow: async (name) => {
           if (name !== "sandbox-suspend-idle") return false;
@@ -210,9 +232,14 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
+    await processor.process(job("run-stop", { conversationId: "c4", runId: "r4" }));
     await processor.process(job("bg-wake", { conversationId: "c2" }));
+    await processor.process(job("stop-tree", { runId: "r1" }));
+    await processor.process(job("stop-tree", { conversationId: "c3", byAccountId: "a1" }));
+    await processor.process(job("deliver-to-parent", { childRunId: "r2" }));
     await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
     await processor.process(job("sched-fire", { taskRunId: "tr1" }));
+    await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
     await processor.process(job("sandbox-suspend-idle", {}));
     await processor.process(job("no-such-job", {}));
     expect(calls).toEqual([
@@ -221,9 +248,15 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["reset", "e1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
+      ["run-stop", { conversationId: "c4", runId: "r4" }],
       ["wake", "c2"],
+      ["stop-children", "r1", null],
+      ["stop-descendants", "r1"],
+      ["stop-tree", "c3", "a1", { includeSelf: false }],
+      ["deliver", "r2"],
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],
+      ["sched-settle", { taskRunId: "tr1", check: 2 }],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([

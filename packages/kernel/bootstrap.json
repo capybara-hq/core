@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "3750cf790971bbed4045f0830e9934ab6349eab7"
+    "commit": "4bfd588739e5cec6f2177d4e8f72e43a4dae50f3"
   },
   "plugins": [
     {
@@ -98,8 +98,8 @@
       "name": "todo",
       "source": "npm",
       "npm": "@capybara-hq/plugin-todo",
-      "version": "0.1.0-rc.7",
-      "integrity": "sha512-ZMoC09CDxgKw6gCkvmc2kl72Uar37ykTIYJogJiBphTnwEzTNkEcj9SnTE0jjWJph1XIaUjZVt4GGaCSWPcFwA==",
+      "version": "0.1.0-rc.8",
+      "integrity": "sha512-xNdzvAmOQmBaDj29hsvbhMJINy2xe+ILTqG+cQhUfsyar7gUJaVOehseufvIq+cVbTjkI2tW7XlwGrtP3E3NtA==",
       "required": false
     },
     {

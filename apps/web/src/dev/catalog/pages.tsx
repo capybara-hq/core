@@ -51,7 +51,6 @@ const INBOX: PlatformInboxView = {
     catalog_request: 3,
     permission_confirmation: 1,
     scope_sync_failed: 2,
-    platform_migration: 0,
     ownership_transferred: 0,
     org_upload_pending: 0,
   },
@@ -94,7 +93,9 @@ const ATTENTION: AdminAttention = {
       problem: "list_failed",
     },
   ],
-  more: { extensions: 0, updates: 0, providers: 0 },
+  outbox: [],
+  queue: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
   unavailable: [],
 };
 

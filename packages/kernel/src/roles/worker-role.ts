@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { PluginScopeSyncProcessor } from "../catalog/scope-sync.js";
+import { PluginScopeSyncProcessor } from "../catalog/scope-sync-workers.js";
 import { ChannelsProcessor } from "../channels/channels.module.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -98,8 +98,6 @@ export class WorkerRole {
     // The gate opens: from here on ticks run; the runOnStart jobs run once now, in the background
     this.scheduledRuns.open();
     this.intervals.runStartJobs();
-    // Every plugin's scope converges once per worker start (a failed or lost sync is retried)
-    this.scopeProcessor.resync();
   }
 
   /**

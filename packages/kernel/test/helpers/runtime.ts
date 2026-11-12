@@ -14,15 +14,20 @@ import type { EffectiveConfigs } from "../../src/extensions/effective-config.js"
 import type { HookRegistry } from "../../src/extensions/hooks.js";
 import { CacheService } from "../../src/infra/cache/cache.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { OUTBOX_JOBS } from "../../src/infra/outbox/registry.js";
 import { createLogger } from "../../src/log.js";
 import type { ModelEnablement } from "../../src/models/enablement.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { type ProviderHost, ProviderRegistry } from "../../src/runtime/providers.js";
 import { StepLog } from "../../src/runtime/step-log.js";
 import {
+  modelUsageJobId,
+  USAGE_REPORT_JOB,
   USAGE_REPORT_QUEUE,
   UsageReporter,
   type UsageReportJob,
+  type UsageReportJobs,
+  usageReportJobId,
 } from "../../src/runtime/usage-report.js";
 import { handlesFor } from "./identity.js";
 
@@ -82,9 +87,14 @@ export function checkpointsFor(db: Kysely<any>): KyselyCheckpointSaver {
 }
 
 /** A run step's transactional writes over a test's pool; `eventLog` over the same pool. */
-export function stepLogFor(db: Kysely<any>, eventLog: EventLog): StepLog {
+export function stepLogFor(
+  db: Kysely<any>,
+  eventLog: EventLog,
+  /** Sees the events each step write owes usage reports for (default: nothing is owed). */
+  oweEvents: UsageReportJobs["oweEvents"] = async () => {},
+): StepLog {
   const h = handlesFor(db);
-  return new StepLog(h.db, eventLog, h.txHost);
+  return new StepLog(h.db, eventLog, { oweEvents }, h.txHost);
 }
 
 /**
@@ -102,7 +112,7 @@ export function runTitleJob(
     d.eventLog,
     d.purposes,
     d.hooks !== undefined ? { hooks: d.hooks } : undefined,
-    d.usageReport,
+    { oweEvents: async () => {} },
     d.log,
     h.txHost,
   ).run(conversationId, attempt, d.signal);
@@ -125,8 +135,16 @@ export interface UsageReporterTestDeps {
   retry?: { attempts: number; backoffMs: number };
 }
 
-/** A usage reporter on its own Redis connections; `startWorker()` consumes like its processor. */
-export type TestUsageReporter = Omit<UsageReporter, "startWorker"> & { startWorker(): void };
+/**
+ * A usage reporter on its own Redis connections; `startWorker()` consumes like its processor, and
+ * `enqueue` / `enqueueUsage` add a delivery job the way the outbox dispatcher does (the registry's
+ * options, `retry` overriding attempts and backoff).
+ */
+export type TestUsageReporter = Omit<UsageReporter, "startWorker"> & {
+  startWorker(): void;
+  enqueue(conversationId: string, seq: number): Promise<void>;
+  enqueueUsage(usageId: string): Promise<void>;
+};
 
 /**
  * A usage reporter over test doubles: its own queue (and, once started, a worker built like the
@@ -152,13 +170,26 @@ export function usageReporterFor(d: UsageReporterTestDeps): TestUsageReporter {
     { get: d.config },
     new LockService(conn(), quiet),
     d.log,
-    d.retry,
   );
   r.subscribers = d.subscribers;
+  const { opts } = OUTBOX_JOBS[USAGE_REPORT_JOB];
+  const add = async (data: UsageReportJob, jobId: string) => {
+    await queue.add(USAGE_REPORT_JOB, data, {
+      ...opts,
+      ...(d.retry !== undefined && {
+        attempts: d.retry.attempts,
+        backoff: { type: "exponential", delay: d.retry.backoffMs },
+      }),
+      jobId,
+    });
+  };
   r.unservable = d.unservable ?? (async () => new Set());
   const start = r.startWorker.bind(r);
   const stop = r.stop.bind(r);
   return Object.assign(r, {
+    enqueue: (conversationId: string, seq: number) =>
+      add({ conversationId, seq }, usageReportJobId(conversationId, seq)),
+    enqueueUsage: (usageId: string) => add({ usageId }, modelUsageJobId(usageId)),
     startWorker() {
       const { jobLockMs, stalledIntervalMs } = d.config().runtime;
       const worker = new Worker<UsageReportJob>(

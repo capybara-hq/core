@@ -75,6 +75,20 @@ Version N+1 (contract): after confirming that no running version still reads or 
 ALTER TABLE events DROP COLUMN IF EXISTS old_name;
 ```
 
+## A migration that changes state which owes work
+
+Kernel code owes follow-up work (a BullMQ job) by writing an `outbox` row in the transaction that changes the state (transactional outbox spec, `OutboxService.add`), and no start-time sweep re-enqueues what a write may have lost. So a migration that changes such state itself (rewrites a plugin's scope, creates an org, removes an org-owned plugin) inserts the outbox rows that work needs in the same migration: the job name, its deterministic job id and data exactly as the code's producer writes them (the queue and job name come from `OUTBOX_JOBS` in `packages/kernel/src/infra/outbox/registry.ts`). `ON CONFLICT … DO NOTHING` on the pending-row index keeps it idempotent; the relay delivers the rows once a worker runs.
+
+```sql
+-- every live, not builtin item whose scope this migration rewrote converges in every org
+INSERT INTO outbox (queue, job_name, job_id, data)
+SELECT 'cap-kernel-plugin-scope', 'scope-item', 'scope-item-' || id || '-' || scope_version,
+       jsonb_build_object('kind', 'item', 'itemId', id)
+FROM catalog_items
+WHERE deleted_at IS NULL AND builtin = false
+ON CONFLICT (queue, job_id) WHERE dead_at IS NULL DO NOTHING;
+```
+
 ## Exemption comment
 
 - Form: `-- capybara:allow-destructive <reason>`; it must be on the line **immediately above** the destructive statement (or the `DO` line of a `DO` block), with no blank line or other comment in between.

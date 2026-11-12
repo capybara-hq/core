@@ -5,6 +5,8 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -15,7 +17,7 @@ import { ExtensionDeploymentConfigService } from "../../src/extensions/deploymen
 import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { createLogger } from "../../src/log.js";
 import { PluginContextService } from "../../src/runtime/plugin-context.service.js";
-import { RunQueue } from "../../src/runtime/run-queue.js";
+import { RUN_JOB, RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -378,7 +380,10 @@ describe("context@1 providers at run start", { timeout: 60_000 }, () => {
         trigger_seq: msg?.seq ?? 0,
       })
       .execute();
-    await k.app.get(RunQueue).enqueue({ runId, conversationId: conv }, `run-eval-${runId}`);
+    // a hand-made run: its job is added directly (the kernel owes it through the outbox)
+    await k.app
+      .get<Queue>(getQueueToken(RUN_QUEUE_NAME))
+      .add(RUN_JOB, { runId, conversationId: conv }, { jobId: `run-eval-${runId}` });
     const ends = await waitForTerminal(db, conv, 1, 20_000);
     expect(ends[0]?.runId).toBe(runId);
     expect(calls()).toEqual([]);

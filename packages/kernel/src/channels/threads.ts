@@ -42,9 +42,10 @@ export class AnonymousGuests {
   ) {}
 
   /**
-   * 该组织唯一的匿名访客账号 id；首次使用时创建（`accounts.status = active`、没有任何登录方式、组织角色 guest）。
-   * 每次都确保成员关系存在（被移出后再次使用会补回 guest）：运行的兜底扫描会中止「发起人已不是该组织成员」的运行。
-   * 跨副本并发首次创建由 {@link AnonymousGuestLock} 串行化，只建一个账号。
+   * The org's one anonymous guest account id, created on first use (`accounts.status = active`, no
+   * way to sign in, org role guest). Every call makes sure the membership exists (a removed guest
+   * is added back on its next use). Concurrent first creations across replicas are serialized by
+   * {@link AnonymousGuestLock}: one account.
    */
   @Transactional()
   async ensure(orgId: string): Promise<string> {

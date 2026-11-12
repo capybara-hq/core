@@ -1,155 +1,102 @@
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  startPostgresContainer,
-  startTestPostgres,
-  type TestContainer,
-} from "@capybara-hq/testing";
-import pg from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { startTestPostgres } from "@capybara-hq/testing";
+import { sql } from "kysely";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
+import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0119_pgvector.sql (memory plugin spec §6.4): installs pgvector in `public` when the server offers
- * it and the migrating role may create it; otherwise it is a no-op (a notice at most), so a managed
- * PostgreSQL without pgvector, or without the right to create it, still migrates.
+ * 0119_outbox.sql (transactional outbox spec §4): the outbox table, one pending row per
+ * (queue, job_id) (a dead row does not count, R8), and a partial index over the rows still owed.
+ * Migrates up to and including 0119, then runs the file again (idempotent).
  */
-const FILE = "0119_pgvector.sql";
-const TEXT = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
+const FILE = "0119_outbox.sql";
 
+let pg: Awaited<ReturnType<typeof startTestPostgres>>;
+let db: ReturnType<typeof createDb>;
 const dirs: string[] = [];
-const stops: (() => Promise<void>)[] = [];
 
-const migrationsThrough = (last: string) => {
+const copyMigrations = (pred: (f: string) => boolean) => {
   const dir = mkdtempSync(join(tmpdir(), "cap-mig-"));
   dirs.push(dir);
   for (const f of readdirSync(KERNEL_MIGRATIONS_DIR)) {
-    if (f.endsWith(".sql") && f <= last) copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(dir, f));
+    if (f.endsWith(".sql") && pred(f)) copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(dir, f));
   }
   return dir;
 };
 
-const track = (c: TestContainer) => {
-  stops.push(() => c.stop());
-  return c;
-};
-
-/** Run `fn` on one connection to `url`, collecting the server notices it raises. */
-async function withClient<T>(
-  url: string,
-  fn: (c: pg.Client, notices: string[]) => Promise<T>,
-): Promise<T> {
-  const client = new pg.Client({ connectionString: url });
-  const notices: string[] = [];
-  client.on("notice", (n) => notices.push(n.message ?? ""));
-  await client.connect();
-  try {
-    return await fn(client, notices);
-  } finally {
-    await client.end();
-  }
-}
-
-const vectorSchema = (url: string) =>
-  withClient(url, async (c) => {
-    const r = await c.query<{ schema: string }>(
-      "select extnamespace::regnamespace::text as schema from pg_extension where extname = 'vector'",
-    );
-    return r.rows[0]?.schema ?? null;
-  });
+beforeAll(async () => {
+  pg = await startTestPostgres();
+  db = createDb(pg.url, 3);
+  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
+  // idempotent: the file's statements run again without error
+  const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
+  await sql.raw(`set search_path to capybara; ${text}`).execute(db);
+}, 120_000);
 
 afterAll(async () => {
-  // Every client is ended by withClient / migrate before this runs; only the databases and
-  // containers themselves are left. Stopped one at a time, newest first.
-  for (const stop of stops.reverse()) await stop();
+  await db?.destroy();
+  await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0119_pgvector on a server with pgvector", () => {
-  it("installs vector in public, visible from a plugin schema", async () => {
-    const db = track(await startTestPostgres());
-    await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
-    expect(await vectorSchema(db.url)).toBe("public");
-    await withClient(db.url, async (c) => {
-      await c.query("create schema plugin_x");
-      await c.query("set search_path = plugin_x, public");
-      const r = await c.query<{ d: number }>("select '[1,2]'::vector <=> '[1,3]'::vector as d");
-      expect(r.rows[0]?.d).toBeGreaterThan(0);
-      // idempotent: the file runs again without error and changes nothing
-      await c.query(`set search_path to capybara, public; ${TEXT}`);
-    });
-    expect(await vectorSchema(db.url)).toBe("public");
-  }, 180_000);
+const insertJob = (jobId: string) =>
+  sql`insert into capybara.outbox (queue, job_name, job_id, data)
+    values ('cap-q', 'run', ${jobId}, '{}'::jsonb)`.execute(db);
 
-  it("leaves an extension a DBA installed in another schema where it is", async () => {
-    const db = track(await startTestPostgres());
-    await withClient(db.url, async (c) => {
-      await c.query("create schema other");
-      await c.query("create extension vector schema other");
-    });
-    await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
-    expect(await vectorSchema(db.url)).toBe("other");
-  }, 180_000);
+describe("0119_outbox", () => {
+  it("0119 creates outbox with a unique pending (queue, job_id) and a partial due index", async () => {
+    const cols = await sql<{ column_name: string; data_type: string; is_nullable: string }>`
+      select column_name, data_type, is_nullable from information_schema.columns
+      where table_schema = 'capybara' and table_name = 'outbox' order by ordinal_position`.execute(
+      db,
+    );
+    expect(cols.rows).toEqual([
+      { column_name: "id", data_type: "bigint", is_nullable: "NO" },
+      { column_name: "queue", data_type: "text", is_nullable: "NO" },
+      { column_name: "job_name", data_type: "text", is_nullable: "NO" },
+      { column_name: "job_id", data_type: "text", is_nullable: "NO" },
+      { column_name: "data", data_type: "jsonb", is_nullable: "NO" },
+      { column_name: "run_at", data_type: "timestamp with time zone", is_nullable: "YES" },
+      { column_name: "org_id", data_type: "text", is_nullable: "YES" },
+      { column_name: "attempts", data_type: "integer", is_nullable: "NO" },
+      { column_name: "next_attempt_at", data_type: "timestamp with time zone", is_nullable: "NO" },
+      { column_name: "last_error", data_type: "text", is_nullable: "YES" },
+      { column_name: "dead_at", data_type: "timestamp with time zone", is_nullable: "YES" },
+      { column_name: "created_at", data_type: "timestamp with time zone", is_nullable: "NO" },
+    ]);
 
-  it("only raises a notice for a role that may not create extensions", async () => {
-    const db = track(await startTestPostgres());
-    const role = `cap_noext_${Math.random().toString(36).slice(2, 10)}`;
-    await withClient(db.url, (c) => c.query(`create role ${role} login password 'p'`));
-    const url = new URL(db.url);
-    url.username = role;
-    url.password = "p";
-    let notices: string[];
-    try {
-      notices = await withClient(url.toString(), async (c, n) => {
-        const r = await c.query<{ create: boolean }>(
-          "select has_database_privilege(current_database(), 'CREATE') as create",
-        );
-        expect(r.rows[0]?.create).toBe(false);
-        await c.query(TEXT);
-        return n;
-      });
-    } finally {
-      // Roles are cluster-wide (the shared server outlives this file): drop it here, while the
-      // database is still there, not in afterAll, where it would race the database's drop.
-      await withClient(db.url, (c) => c.query(`drop role if exists ${role}`));
-    }
-    expect(notices.some((m) => /pgvector not installed.*SQLSTATE 42501/.test(m))).toBe(true);
-    expect(await vectorSchema(db.url)).toBeNull();
-  }, 180_000);
+    await insertJob("j1");
+    await expect(insertJob("j1")).rejects.toMatchObject({ code: "23505" });
+    const row = await sql<{ attempts: number; dead_at: Date | null }>`
+      select attempts, dead_at from capybara.outbox where job_id = 'j1'`.execute(db);
+    expect(row.rows).toEqual([{ attempts: 0, dead_at: null }]);
 
-  it("only raises a notice when the server refuses CREATE EXTENSION as not supported", async () => {
-    // Stands in for a managed server's allow-list (e.g. Azure Flexible Server): an event trigger
-    // in this throwaway database rejects CREATE EXTENSION with feature_not_supported (0A000).
-    const db = track(await startTestPostgres());
-    const notices = await withClient(db.url, async (c, n) => {
-      await c.query(`create function refuse_extensions() returns event_trigger language plpgsql as $$
-        begin
-          raise exception 'extension not allow-listed' using errcode = 'feature_not_supported';
-        end $$`);
-      await c.query(`create event trigger refuse_extensions on ddl_command_start
-        when tag in ('CREATE EXTENSION') execute function refuse_extensions()`);
-      await expect(c.query("create extension vector schema public")).rejects.toMatchObject({
-        code: "0A000",
-      });
-      await c.query(TEXT);
-      return n;
-    });
-    expect(notices.some((m) => /pgvector not installed.*SQLSTATE 0A000/.test(m))).toBe(true);
-    expect(await vectorSchema(db.url)).toBeNull();
-  }, 180_000);
-});
+    const idx = await sql<{ indexname: string; indexdef: string }>`
+      select indexname, indexdef from pg_indexes
+      where schemaname = 'capybara' and tablename = 'outbox' order by indexname`.execute(db);
+    const due = idx.rows.find((r) => r.indexname === "outbox_due");
+    expect(due?.indexdef).toContain("(next_attempt_at)");
+    expect(due?.indexdef).toContain("WHERE (dead_at IS NULL)");
+    const uniq = idx.rows.find((r) => r.indexname === "outbox_job_uniq");
+    expect(uniq?.indexdef).toContain("UNIQUE INDEX");
+    expect(uniq?.indexdef).toContain("(queue, job_id)");
+    expect(uniq?.indexdef).toContain("WHERE (dead_at IS NULL)");
+  });
 
-describe("0119_pgvector on a server without pgvector", () => {
-  it("succeeds and installs nothing", async () => {
-    const db = track(await startPostgresContainer({ image: "postgres:17" }));
-    await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
-    expect(await vectorSchema(db.url)).toBeNull();
-    const available = await withClient(db.url, async (c) => {
-      const r = await c.query("select 1 from pg_available_extensions where name = 'vector'");
-      return r.rowCount;
-    });
-    expect(available).toBe(0);
-  }, 180_000);
+  it("0119 allows a pending row next to a dead row with the same job id", async () => {
+    await insertJob("j2");
+    await sql`update capybara.outbox set dead_at = now() where job_id = 'j2'`.execute(db);
+    await insertJob("j2");
+    // still one pending row per job
+    await expect(insertJob("j2")).rejects.toMatchObject({ code: "23505" });
+    const rows = await sql<{ dead: boolean }>`
+      select dead_at is not null as dead from capybara.outbox where job_id = 'j2' order by id`.execute(
+      db,
+    );
+    expect(rows.rows).toEqual([{ dead: true }, { dead: false }]);
+  });
 });

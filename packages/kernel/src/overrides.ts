@@ -1,25 +1,27 @@
 import type { NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
+import { SCOPE_BACKSTOP_DELAY } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
-import {
-  LIFECYCLE_DELIVERY_HOOKS,
-  type LifecycleDeliveryHooks,
-} from "./extensions/lifecycle-hooks.js";
+import { USAGE_SUBSCRIBERS_CLOCK } from "./extensions/usage-subscribers.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
+import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
+import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
+import type { KernelQueueName } from "./infra/queue/queue-names.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
+import { ENSURE_RUN_FAILS } from "./runtime/run-queue.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "./runtime/run-steps.js";
 import { RUN_HOOKS, type RunHooks } from "./runtime/run-worker.js";
 import {
   SUBAGENT_MESSAGES_HOOKS,
   type SubagentMessagesHooks,
 } from "./runtime/subagents/messages.js";
-import { USAGE_REPORT_RETRY, type UsageReportRetry } from "./runtime/usage-report.js";
 import { SANDBOX_LEASE_TIMINGS, type SandboxLeaseTimings } from "./sandbox/leases.js";
 import { SETUP_CHECK_TIMEOUT } from "./setup/setup-checks.service.js";
 import { TOOL_PIPELINE_HOOKS, type ToolPipelineHooks } from "./tools/pipeline.js";
@@ -34,14 +36,22 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EVAL_REPLAY_HOOKS`: the hooks of the eval full-run replay and the judge;
  * - `TOOL_PIPELINE_HOOKS`: the tool pipeline's hooks and policy decision;
  * - `SUBAGENT_MESSAGES_HOOKS`: the sub-agent message tools' hooks (a send raced by a run's end);
- * - `LIFECYCLE_DELIVERY_HOOKS`: a shorter lifecycle hook backoff, and enqueues dropped on purpose;
- * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
+ * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`,
  *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`, `SETUP_CHECK_TIMEOUT`,
  *   `PRESENCE_INTERVAL_MS`: shorter timings;
  * - `ADMIN_USAGE_TIMINGS`: the usage aggregate's statement timeout and clock;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
  * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
  *   `CurrentTime` builtin the time;
+ * - `OUTBOX_STRICT_CONFLICTS`: a reused outbox job id with different data throws (tests) instead
+ *   of logging an error;
+ * - `OUTBOX_DISPATCH_FAILS`: returns true to make the outbox dispatcher's adds to the given queue
+ *   fail (a Redis outage);
+ * - `USAGE_SUBSCRIBERS_CLOCK`: the clock the `usage.report` subscriber cache ages with;
+ * - `OUTBOX_FAST_PATH_SETTLED`: receives each detached outbox fast-path pass (a test awaits them);
+ * - `ENSURE_RUN_FAILS`: returns true to make `RunQueue.ensureRun` throw (Redis unreachable, or the
+ *   direct call after a commit skipped by a crash);
+ * - `SCOPE_BACKSTOP_DELAY`: the delay of a confirmation's scope sync backstop (ruling R24);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -50,11 +60,9 @@ interface KernelSeams {
   [EVAL_REPLAY_HOOKS]: EvalReplayHooks;
   [TOOL_PIPELINE_HOOKS]: ToolPipelineHooks;
   [SUBAGENT_MESSAGES_HOOKS]: SubagentMessagesHooks;
-  [LIFECYCLE_DELIVERY_HOOKS]: LifecycleDeliveryHooks;
   [BOOTSTRAP_LOCK_TTL]: number;
   [FILE_PREVIEW_TIMEOUT]: number;
   [LIST_MODELS_TIMEOUT]: number;
-  [USAGE_REPORT_RETRY]: UsageReportRetry;
   [SANDBOX_LEASE_TIMINGS]: Partial<SandboxLeaseTimings>;
   [CHANNEL_WEBHOOK_TIMINGS]: Partial<ChannelWebhookTimings>;
   [SETUP_CHECK_TIMEOUT]: number;
@@ -62,6 +70,12 @@ interface KernelSeams {
   [ADMIN_USAGE_TIMINGS]: Partial<AdminUsageTimings>;
   [EMBED_TOKEN_CLOCK]: () => number;
   [RUN_CONTEXT_CLOCK]: () => number;
+  [OUTBOX_STRICT_CONFLICTS]: boolean;
+  [OUTBOX_DISPATCH_FAILS]: (queue: KernelQueueName) => boolean;
+  [USAGE_SUBSCRIBERS_CLOCK]: () => number;
+  [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
+  [ENSURE_RUN_FAILS]: () => boolean;
+  [SCOPE_BACKSTOP_DELAY]: number;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
 
@@ -81,11 +95,10 @@ const SEAM_TOKENS = [
   EVAL_REPLAY_HOOKS,
   TOOL_PIPELINE_HOOKS,
   SUBAGENT_MESSAGES_HOOKS,
-  LIFECYCLE_DELIVERY_HOOKS,
   BOOTSTRAP_LOCK_TTL,
   FILE_PREVIEW_TIMEOUT,
   LIST_MODELS_TIMEOUT,
-  USAGE_REPORT_RETRY,
+  USAGE_SUBSCRIBERS_CLOCK,
   SANDBOX_LEASE_TIMINGS,
   CHANNEL_WEBHOOK_TIMINGS,
   SETUP_CHECK_TIMEOUT,
@@ -93,6 +106,11 @@ const SEAM_TOKENS = [
   ADMIN_USAGE_TIMINGS,
   EMBED_TOKEN_CLOCK,
   RUN_CONTEXT_CLOCK,
+  OUTBOX_STRICT_CONFLICTS,
+  OUTBOX_DISPATCH_FAILS,
+  OUTBOX_FAST_PATH_SETTLED,
+  ENSURE_RUN_FAILS,
+  SCOPE_BACKSTOP_DELAY,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];
 

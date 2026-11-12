@@ -225,10 +225,17 @@ export const ERROR_CODES = {
   "plugin.upgrade_stale": 409,
   "plugin.upgrade_target_invalid": 409,
   "plugin.upgrade_failed": 502,
+  /**
+   * The platform's import and update imported the version but the update failed: the platform
+   * stays on its version, the imported version is in the catalog (retry with the plain update).
+   */
+  "plugin.imported_not_updated": 409,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   /** The admin overview's seven-day usage aggregate ran past its statement timeout (spec §5.5). */
   "admin.usage_unavailable": 503,
+  /** No dead outbox row has this id (delivered, discarded, retried, or never dead). */
+  "outbox.not_found": 404,
   "agent.not_found": 404,
   "agent.version_conflict": 409,
   /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */

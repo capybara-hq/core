@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { extname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
+import { Redis } from "ioredis";
 import {
   createFreshDatabase,
   sharedPgAdminUrl,
@@ -125,7 +126,13 @@ export interface Harness {
    * 另一个副本照常工作。已退出时是空操作。
    */
   kill(index: number): Promise<void>;
-  /** 停两个副本（15s 后 SIGKILL）、删临时库、关自有容器；幂等。 */
+  /**
+   * 停两个副本（15s 后 SIGKILL）、删临时库、关自有容器；幂等。Before the replicas stop it asserts
+   * that they left no queued run without its job (neither in the outbox nor in BullMQ: the "queue
+   * lost jobs" canary of the kernel's run-orphan-check, transactional outbox spec §11); after the
+   * cleanup it rejects naming such runs, or with the check's own error. A database or Redis it
+   * cannot reach skips the check.
+   */
   stop(): Promise<void>;
 }
 
@@ -134,6 +141,44 @@ const ALL_ROLES = ["api", "worker", "gateway"];
 const STOP_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 60_000;
 const STDERR_TAIL = 4000;
+
+/**
+ * The queued runs of the harness's database whose job is neither in the outbox nor in BullMQ (the
+ * kernel's `queuedRunsWithoutJob`; a BullMQ job is the hash `bull:<queue>:<jobId>`). Null only when
+ * the database or Redis cannot be reached (a test that stopped them: the check is skipped); any
+ * other error is thrown.
+ */
+async function queuedOrphansOf(dbUrl: string, redisUrl: string): Promise<string[] | null> {
+  // loaded here, not at the top: a process that only spawns replicas (or is killed) never needs
+  // the kernel in its own module graph
+  const { createDb, kernelDb, queuedRunsWithoutJob } = await import("@capybara-hq/kernel");
+  const { sql } = await import("kysely");
+  const raw = createDb(dbUrl, 1, () => {}, { connectTimeoutMs: 5000 });
+  const redis = new Redis(redisUrl, {
+    lazyConnect: true,
+    connectTimeout: 5000,
+    maxRetriesPerRequest: 1,
+    retryStrategy: () => null,
+  });
+  redis.on("error", () => {});
+  try {
+    try {
+      await redis.connect();
+      await sql`SELECT 1`.execute(raw);
+    } catch {
+      return null;
+    }
+    const found = await queuedRunsWithoutJob(
+      kernelDb(raw),
+      async (queue, jobId) => (await redis.exists(`bull:${queue}:${jobId}`)) === 1,
+      { minAgeMs: 0 },
+    );
+    return found.map((c) => `${c.runId} (conversation ${c.conversationId}, job ${c.jobId})`);
+  } finally {
+    redis.disconnect();
+    await raw.destroy().catch(() => {});
+  }
+}
 
 /** 子进程 + 其输出尾部 + 退出信息。 */
 interface Runner {
@@ -262,6 +307,8 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
   const runners: Runner[] = [];
   let dropDb: (() => Promise<void>) | undefined;
   let stopPromise: Promise<void> | undefined;
+  /** Set once both replicas started: `stop()` then checks for queued runs without a job. */
+  let checkOrphans: (() => Promise<string[] | null>) | undefined;
 
   const stopRunner = async (r: Runner) => {
     if (r.child.exitCode !== null || r.child.signalCode !== null) return;
@@ -280,9 +327,22 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
 
   const stop = (): Promise<void> => {
     stopPromise ??= (async () => {
+      const checked = await checkOrphans?.().then(
+        (orphans) => ({ orphans }),
+        (error: unknown) => ({ error }),
+      );
       await Promise.allSettled(runners.map(stopRunner));
       await Promise.allSettled([dropDb?.()]);
       await Promise.allSettled(owned.map((c) => c.stop()));
+      if (checked && "error" in checked) throw checked.error;
+      const orphans = checked?.orphans ?? null;
+      if (orphans !== null && orphans.length > 0) {
+        throw new Error(
+          `the replicas left ${orphans.length} queued run(s) without a job (neither owed by the ` +
+            `outbox nor in BullMQ; the run-orphan-check would report "the queue lost jobs"): ` +
+            orphans.join(", "),
+        );
+      }
     })();
     return stopPromise;
   };
@@ -362,6 +422,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
     };
     let calls = 0;
     let extraChain: Promise<void> = Promise.resolve();
+    checkOrphans = () => queuedOrphansOf(db.url, redisUrl as string);
     const kill = async (index: number) => {
       const { runner: r } = runnerAt(index);
       if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill("SIGKILL");

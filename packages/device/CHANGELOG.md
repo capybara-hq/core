@@ -1,5 +1,30 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.6
+
+### Patch Changes
+
+- d3f5836: At tiers `dev` and `open`, sandboxed commands may write `.git/config`, so `git init`, `clone`,
+  `config` and `remote add` work in OS mode. `.git/hooks` stays unwritable at every tier (now also
+  when the program runs from a directory that does not contain the device's roots), init and clone
+  use an empty template, and `strict` keeps `.git/config` unwritable.
+- 873dc2c: Sandboxed commands no longer get `npm_config_store_dir`, which made every npm command warn
+  `Unknown env config "store-dir"`; pnpm 10 has no other variable for its store, so it stays at
+  pnpm's default under the command's HOME.
+- 67e6ad5: A local OS-sandboxed device now kills what a foreground command leaves running (`server &`,
+  `nohup …`) when the command ends, by its process group and by a per-command marker for processes
+  that left the group. Inside the sandbox no later command could signal them, so they leaked. A
+  background task launch, whose command starts with the new `BACKGROUND_LAUNCH_LINE`
+  (`@capybara-hq/plugin-sdk`), keeps what it starts. The `Bash` description tells the model to use
+  `run_in_background` for servers and watchers.
+- cb0be5f: `capybara-device service install` on macOS waits until `launchctl bootout` has really removed the
+  old agent before `bootstrap`, and retries a bootstrap that fails with error 5 (Input/output error),
+  with a clear message when it keeps failing. On Linux a reinstall restarts the unit. `drain --wait
+  [--timeout <seconds>]` returns once the program has exited.
+- Updated dependencies [67e6ad5]
+- Updated dependencies [e76028b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.18
+
 ## 0.1.0-rc.5
 
 ### Patch Changes

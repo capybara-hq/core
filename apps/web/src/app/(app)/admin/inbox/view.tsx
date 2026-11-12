@@ -49,9 +49,8 @@ import NotFound from "../../not-found";
 /**
  * `/admin/inbox`: what waits on the platform (InboxPage, spec §5.1 rule 5, §13.5): the orgs'
  * requests (`access` / `import`), plugins whose extension permissions wait for a confirmation,
- * failed scope syncs, a platform components migration run that failed plugins or is stuck, org
- * uploads waiting in 待确认 and shared items now owned by the platform (phase 3). Nothing is
- * decided here: the selected item's 前往处理 opens the page where it is acted on; a transfer is a
+ * failed scope syncs, org uploads waiting in 待确认 and shared items now owned by the platform
+ * (phase 3). Nothing is decided here: the selected item's 前往处理 opens the page where it is acted on; a transfer is a
  * notice, which 知道了 dismisses for every super admin. `type` (the overview's per-type rows,
  * `?type=`) lists only that type, filtered on the cached list, with a link back to all. From
  * the query cache (the layout prefetched the inbox on a first load).
@@ -250,14 +249,6 @@ function rowOf(
         trailing: null,
         description: `${t("sync.label")} · ${item.failure.org.name} · ${t(`sync.op.${item.failure.op}`)}`,
       };
-    case "platform_migration":
-      return {
-        title: t("migration.label"),
-        trailing: null,
-        description: item.run.stuck
-          ? t("migration.stuck")
-          : t("migration.failed", { n: item.run.itemsFailed.length }),
-      };
     case "org_upload_pending":
       return {
         title: displayNameOf(item.item, locale),
@@ -282,8 +273,6 @@ function titleOf(item: PlatformInboxItem, t: Translate, locale: string): string 
       return `${t("permission.label")} · ${displayNameOf(item.item, locale)}`;
     case "scope_sync_failed":
       return `${t("sync.label")} · ${displayNameOf(item.failure.item, locale)}`;
-    case "platform_migration":
-      return t("migration.label");
     case "org_upload_pending":
       return t("orgUpload.title", {
         org: ownerOrgOf(item.item)?.name ?? "",
@@ -449,45 +438,6 @@ function detailOf(
               <Text variant="prose" tone="muted">
                 {t("transferred.hint")}
               </Text>
-            </Stack>
-          </Card>
-        ),
-      };
-    }
-    case "platform_migration": {
-      const run = item.run;
-      return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("migration.started"), v: <DateTime value={run.startedAt} /> },
-              {
-                k: t("migration.finished"),
-                v: run.finishedAt === null ? "—" : <DateTime value={run.finishedAt} />,
-              },
-            ]}
-          />
-        ),
-        content: (
-          <Card
-            title={titleOf(item, t, locale)}
-            actions={
-              <StatusMark status="failed" label={run.stuck ? t("migration.stuck") : t("failed")} />
-            }
-          >
-            <Stack gap={8}>
-              <Text variant="prose">
-                {run.stuck ? t("migration.hintStuck") : t("migration.hintFailed")}
-              </Text>
-              {run.itemsFailed.length > 0 && (
-                <Stack gap={4}>
-                  <Text variant="small" tone="muted">
-                    {t("migration.items")}
-                  </Text>
-                  <Text variant="prose">{run.itemsFailed.join(", ")}</Text>
-                </Stack>
-              )}
             </Stack>
           </Card>
         ),

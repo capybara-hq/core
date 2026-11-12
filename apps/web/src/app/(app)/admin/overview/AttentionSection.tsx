@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Dialog,
   EmptyState,
   ItemList,
   type ItemListRow,
@@ -9,25 +10,41 @@ import {
   OverviewSection,
   Subsection,
   Text,
+  useToast,
   versionLabel,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import type { AdminAttention, AttentionExtension, AttentionSource } from "../../../../lib/admin";
+import { useState } from "react";
+import {
+  type AdminAttention,
+  type AttentionExtension,
+  type AttentionOutboxDead,
+  type AttentionSource,
+  discardOutboxDead,
+  type OutboxDeadRow,
+  retryOutboxDead,
+} from "../../../../lib/admin";
 import {
   PLATFORM_INBOX_TYPES,
   type PlatformInboxView,
   platformInboxTypeHref,
 } from "../../../../lib/admin-inbox";
 import { displayNameOf } from "../../../../lib/catalog";
-import { adminAttentionQuery, adminInboxQuery } from "../../../../lib/query/admin";
+import {
+  adminAttentionQuery,
+  adminInboxQuery,
+  adminOutboxDeadQuery,
+} from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
+import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
 type T = ReturnType<typeof useTranslations<"admin.overview.attention">>;
 
 /** Where the "+n" row of a capped list leads: the page that lists them all. */
-const MORE_HREF: Record<AttentionSource, string> = {
+const MORE_HREF: Record<Exclude<AttentionSource, "outbox" | "queue">, string> = {
   extensions: "/admin/extensions",
   updates: "/admin/plugins",
   providers: "/admin/models",
@@ -42,11 +59,14 @@ const reasonOf = (e: AttentionExtension, t: T): string =>
     : t(`reasons.${e.reason}`);
 
 /**
- * 待处理 (spec §6.1): one section with up to four groups, each only when it has rows: the inbox by
+ * 待处理 (spec §6.1): one section with up to six groups, each only when it has rows: the inbox by
  * type (a count per type, each linking where it is handled), extensions needing a look, plugins
- * with a newer marketplace version and model providers with problems. Reads the cached inbox (the
- * layout prefetched it) and the attention lists, which are not prefetched (a provider's model list
- * may be slow), so this section draws its own skeleton and its own error with 重试.
+ * with a newer marketplace version, model providers with problems, background work the kernel
+ * could not queue (dead outbox rows, each with 重试 and 丢弃: transactional outbox spec §3.4) and
+ * the run queue's lost jobs (Redis lost data; the runs were queued again: spec §8.3).
+ * Reads the cached inbox (the layout prefetched it) and the attention lists, which are not
+ * prefetched (a provider's model list may be slow), so this section draws its own skeleton and its
+ * own error with 重试.
  */
 export function AttentionSection() {
   const t = useTranslations("admin.overview.attention");
@@ -100,8 +120,10 @@ const NO_ATTENTION: AdminAttention = {
   extensions: [],
   updates: [],
   providers: [],
-  more: { extensions: 0, updates: 0, providers: 0 },
-  unavailable: ["extensions", "updates", "providers"],
+  outbox: [],
+  queue: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
+  unavailable: ["extensions", "updates", "providers", "outbox", "queue"],
 };
 
 function AttentionGroups({
@@ -124,7 +146,7 @@ function AttentionGroups({
   const attention = read ?? NO_ATTENTION;
   const unavailable = new Set<string>(attention.unavailable);
   if (inbox === null) unavailable.add("inbox");
-  const more = (source: AttentionSource): ItemListRow[] =>
+  const more = (source: Exclude<AttentionSource, "outbox" | "queue">): ItemListRow[] =>
     attention.more[source] > 0
       ? [
           {
@@ -183,6 +205,24 @@ function AttentionGroups({
     { id: "extensions", title: t("groups.extensions"), rows: extensionRows, source: "extensions" },
     { id: "updates", title: t("groups.updates"), rows: updateRows, source: "updates" },
     { id: "providers", title: t("groups.providers"), rows: providerRows, source: "providers" },
+    // its rows are read on their own (OutboxDeadList); the summary item only says there are some
+    {
+      id: "outbox",
+      title: t("groups.outbox"),
+      rows: attention.outbox.map((o) => ({ id: o.kind, title: o.kind })),
+      source: "outbox",
+    },
+    {
+      id: "queue",
+      title: t("groups.queue"),
+      rows: attention.queue.map((q) => ({
+        id: q.kind,
+        title: t("queue.lostJobs"),
+        meta: t("queue.hint"),
+        status: { label: t("queue.count", { n: q.count }), tone: "accent" },
+      })),
+      source: "queue",
+    },
   ];
   // A group shows when it has rows, or when its list could not be read (it says so).
   const shown = groups.filter((g) => g.rows.length > 0 || unavailable.has(g.source));
@@ -219,10 +259,98 @@ function AttentionGroups({
           <Text variant="prose" tone="muted">
             {t("unavailable")}
           </Text>
+        ) : g.id === "outbox" ? (
+          <OutboxDeadList label={g.title} summary={attention.outbox} t={t} />
         ) : (
           <ItemList label={g.title} rows={g.rows} />
         )}
       </Subsection>
     );
   });
+}
+
+/**
+ * The dead outbox rows (transactional outbox spec §3.4): each with its job, queue and last error,
+ * 重试 (queued again; dropped instead when the same job is owed already) and 丢弃 (after a
+ * confirmation: the job never runs). Until the rows are read, the summary's count stands in.
+ */
+function OutboxDeadList({
+  label,
+  summary,
+  t,
+}: {
+  label: string;
+  summary: AttentionOutboxDead[];
+  t: T;
+}) {
+  const errorMessage = useErrorMessage();
+  const toast = useToast();
+  const q = adminOutboxDeadQuery();
+  const dead = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const [discarding, setDiscarding] = useState<OutboxDeadRow | null>(null);
+  const d = keys.deployment();
+  const invalidates = () => [d.adminOverview(), d.platformAuditAll()];
+  const retry = useAppMutation({
+    fn: (id: string) => retryOutboxDead(id),
+    invalidates,
+    onSuccess: (r) =>
+      toast.success(t(r.outcome === "retried" ? "outbox.retried" : "outbox.alreadyOwed")),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const discard = useAppMutation({
+    fn: (id: string) => discardOutboxDead(id),
+    invalidates,
+    onSuccess: () => toast.success(t("outbox.discarded")),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const busy = retry.isPending || discard.isPending;
+  const rows: ItemListRow[] =
+    dead.data === undefined
+      ? summary.map((o) => ({ id: o.kind, title: t("outbox.count", { n: o.count }) }))
+      : dead.data.items.map((r) => ({
+          id: r.id,
+          title: r.jobName,
+          meta: [r.queue, r.lastError].filter((x) => x !== null && x !== "").join(" · "),
+          actions: (
+            <>
+              <Button density="dense" disabled={busy} onClick={() => retry.mutate(r.id)}>
+                {t("outbox.retry")}
+              </Button>
+              <Button density="dense" disabled={busy} onClick={() => setDiscarding(r)}>
+                {t("outbox.discard")}
+              </Button>
+            </>
+          ),
+        }));
+  return (
+    <>
+      <ItemList label={label} rows={rows} />
+      <Dialog
+        open={discarding !== null}
+        onOpenChange={(open) => {
+          if (!open) setDiscarding(null);
+        }}
+        title={t("outbox.discardTitle")}
+        danger
+        initialFocus="cancel"
+        footer={
+          <>
+            <Button onClick={() => setDiscarding(null)}>{t("outbox.cancel")}</Button>
+            <Button
+              variant="danger-solid"
+              disabled={discard.isPending}
+              onClick={() => {
+                if (discarding === null) return;
+                discard.mutate(discarding.id, { onSettled: () => setDiscarding(null) });
+              }}
+            >
+              {t("outbox.discard")}
+            </Button>
+          </>
+        }
+      >
+        <Text variant="prose">{t("outbox.discardHint", { job: discarding?.jobName ?? "" })}</Text>
+      </Dialog>
+    </>
+  );
 }

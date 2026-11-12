@@ -51,22 +51,11 @@ export interface ScheduleAttention {
 export type NoticeOwner = { kind: "platform" } | { kind: "org"; orgId: string; name: string };
 
 /**
- * A notice for the org's admins until one of them dismisses it: `skill_renamed` (an org skill the
- * platform components migration renamed; agents keep it, they select skills by id) and the phase 3
- * kinds with their `detail`. A kind this app does not know arrives as `{ kind: string; detail }`
+ * A notice for the org's admins until one of them dismisses it: the phase 3 kinds with their
+ * `detail`. A kind this app does not know arrives as `{ kind: string; detail }`
  * and is shown generically.
  */
 export type OrgNotice = { id: string; createdAt: string } & (
-  | {
-      kind: "skill_renamed";
-      skillRenamed: {
-        skillId: string;
-        from: string;
-        to: string;
-        platformSkillId: string;
-        plugin: string | null;
-      };
-    }
   | {
       kind: "item_shared";
       detail: {

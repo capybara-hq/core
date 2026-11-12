@@ -12,11 +12,6 @@ import type { PlatformNoticeDetails } from "./platform-notices.js";
 export const PLATFORM_INBOX_MAX_ITEMS = 100;
 /** The most open scope sync failures one read takes. */
 export const SCOPE_SYNC_FAILURES_LIST_MAX = 200;
-/**
- * A platform components migration run unfinished this long after its start is stuck (its worker
- * stopped mid-run; a run takes seconds, and the next one starts at the next worker start or day).
- */
-export const MIGRATION_RUN_STUCK_MS = 60 * 60_000;
 
 /** Plugin install statuses of a plugin that is on in the org. */
 const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
@@ -37,19 +32,6 @@ export interface ScopeSyncFailureView {
 }
 
 /**
- * The latest platform components migration run (`platform_migration_runs`) when it needs a look:
- * finished with catalog items whose components could not be written (`itemsFailed`,
- * `<name>@<version>`), or `stuck` (unfinished {@link MIGRATION_RUN_STUCK_MS} after its start).
- */
-export interface MigrationRunView {
-  id: string;
-  startedAt: string;
-  finishedAt: string | null;
-  stuck: boolean;
-  itemsFailed: string[];
-}
-
-/**
  * One item of the super admin's inbox (by `type`). Nothing is decided in the inbox: each item is
  * acted on where it lives (the web links to it).
  * - `catalog_request`: an org's pending request to the platform (`access`: use a plugin shown to
@@ -59,7 +41,6 @@ export interface MigrationRunView {
  * - `org_upload_pending`: an org-owned plugin whose uploaded version (with an extension) waits for
  *   the super admin in 待确认 (ruling P3-22; confirmed or rejected there), `id` = the item's;
  * - `scope_sync_failed`: an open scope sync failure, `id` = `<itemId>/<orgId>`;
- * - `platform_migration`: the latest migration run, failed items or stuck, `id` = the run's;
  * - `ownership_transferred`: a deleted org's shared item now belongs to the platform, until a
  *   super admin dismisses it (`POST admin/inbox/notices/:id/dismiss`).
  */
@@ -68,7 +49,6 @@ export type PlatformInboxItem =
   | { type: "permission_confirmation"; id: string; createdAt: string; item: CatalogItemView }
   | { type: "org_upload_pending"; id: string; createdAt: string; item: CatalogItemView }
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailureView }
-  | { type: "platform_migration"; id: string; createdAt: string; run: MigrationRunView }
   | {
       type: "ownership_transferred";
       id: string;
@@ -82,7 +62,6 @@ export const PLATFORM_INBOX_TYPES = [
   "permission_confirmation",
   "org_upload_pending",
   "scope_sync_failed",
-  "platform_migration",
   "ownership_transferred",
 ] as const satisfies readonly PlatformInboxItem["type"][];
 
@@ -112,8 +91,8 @@ export interface PlatformInboxView {
 /**
  * The super admin's inbox (plugin scope spec §5.1 rule 5, §13.5): what waits on the platform,
  * gathered from the sources the admin pages read (the 待确认 tab's requests and permission
- * confirmations), plus the scope sync's open failures and the platform components migration's
- * latest run. Stateless, read live from PG.
+ * confirmations), plus the scope sync's open failures and the platform notices. Stateless, read
+ * live from PG.
  */
 @Injectable()
 export class PlatformInboxService {
@@ -128,14 +107,13 @@ export class PlatformInboxService {
   ) {}
 
   async list(): Promise<PlatformInboxView> {
-    const [requests, requestCount, pending, failures, failureCount, run, notices, noticeCount] =
+    const [requests, requestCount, pending, failures, failureCount, notices, noticeCount] =
       await Promise.all([
         this.requests.listDeployment(),
         this.requests.countPendingDeployment(),
         this.catalog.list({ pending: true }),
         this.scopeSyncFailures(),
         this.countScopeSyncFailures(),
-        this.migrationRun(),
         this.notices(),
         this.countNotices(),
       ]);
@@ -172,16 +150,6 @@ export class PlatformInboxService {
           notice: n,
         }),
       ),
-      ...(run === null
-        ? []
-        : [
-            {
-              type: "platform_migration",
-              id: run.id,
-              createdAt: run.finishedAt ?? run.startedAt,
-              run,
-            } satisfies PlatformInboxItem,
-          ]),
     ];
     // newest first; equal times by id (a stable order)
     all.sort((a, b) =>
@@ -201,7 +169,6 @@ export class PlatformInboxService {
       permission_confirmation: pending.length - orgUploads,
       org_upload_pending: orgUploads,
       scope_sync_failed: failureCount,
-      platform_migration: run === null ? 0 : 1,
       ownership_transferred: noticeCount,
     };
     const total = Object.values(byType).reduce((a, b) => a + b, 0);
@@ -214,14 +181,13 @@ export class PlatformInboxService {
    * requests and the failures; the permission confirmations are the catalog's pending list).
    */
   async count(): Promise<number> {
-    const [requests, pending, failures, run, notices] = await Promise.all([
+    const [requests, pending, failures, notices] = await Promise.all([
       this.requests.countPendingDeployment(),
       this.catalog.list({ pending: true }),
       this.countScopeSyncFailures(),
-      this.migrationRun(),
       this.countNotices(),
     ]);
-    return requests + pending.length + failures + (run === null ? 0 : 1) + notices;
+    return requests + pending.length + failures + notices;
   }
 
   private async countNotices(): Promise<number> {
@@ -335,36 +301,6 @@ export class PlatformInboxService {
       message: r.message,
       failedAt: r.failed_at.toISOString(),
     }));
-  }
-
-  /**
-   * The latest migration run when it needs a look (see {@link MigrationRunView}); null when it
-   * finished without failed items, is still running, or there was none. An earlier run's failure
-   * is not shown: each run tries every unwritten item again.
-   */
-  private async migrationRun(): Promise<MigrationRunView | null> {
-    const run = await this.kdb.db
-      .selectFrom("platform_migration_runs")
-      .select(["id", "started_at", "finished_at", "stats"])
-      .orderBy("started_at", "desc")
-      .orderBy("id", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    if (run === undefined) return null;
-    const failed = run.stats.itemsFailed;
-    const itemsFailed = Array.isArray(failed)
-      ? failed.filter((x): x is string => typeof x === "string")
-      : [];
-    const stuck =
-      run.finished_at === null && run.started_at.getTime() < Date.now() - MIGRATION_RUN_STUCK_MS;
-    if (!stuck && (run.finished_at === null || itemsFailed.length === 0)) return null;
-    return {
-      id: run.id,
-      startedAt: run.started_at.toISOString(),
-      finishedAt: run.finished_at?.toISOString() ?? null,
-      stuck,
-      itemsFailed,
-    };
   }
 }
 

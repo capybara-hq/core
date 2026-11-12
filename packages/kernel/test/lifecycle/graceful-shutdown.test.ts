@@ -272,12 +272,10 @@ describe("startKernelApp signal handling", () => {
     jobs.enqueue = async (id) => {
       seen.push(`delivery:${id}`);
     };
+    // a decision resumes its run and owes its IM delivery in its own transaction (no
+    // subscription); `run.started` is the channel delivery's hint
     const waits = app.get(Waits) as unknown as {
-      resume: (runId: string, id: string) => Promise<void>;
       stopChildren: (runId: string, by: null) => Promise<unknown>;
-    };
-    waits.resume = async (runId, id) => {
-      seen.push(`resume:${runId}:${id}`);
     };
     waits.stopChildren = async (runId) => {
       seen.push(`orphaned:${runId}`);
@@ -289,25 +287,16 @@ describe("startKernelApp signal handling", () => {
     connections.notifyOrgChanged = async (orgId) => {
       seen.push(`org:${orgId}`);
     };
-    // The runs phase drains: the run finishing now appends its last events and decides its wait
+    // The runs phase drains: a run taken over now starts, another is found orphaned
     const worker = app.get(WorkerRole);
     worker.drainRuns = () =>
       (async () => {
-        await events.emit("conversation.event-appended", { conversationId: "c1", toSeq: 1 });
-        await events.emit("approval.decided", {
-          id: "a1",
-          orgId: "o1",
-          conversationId: "c1",
-          runId: "r1",
-          status: "approved",
-        });
+        await events.emit("run.started", { conversationId: "c1", runId: "r1" });
         await events.emit("run.orphaned", { runId: "r2" });
         await events.emit("org.deleted", { orgId: "o2" });
       })();
     await closeKernelApp(app);
-    expect(seen).toEqual(
-      expect.arrayContaining(["delivery:c1", "resume:r1:a1", "orphaned:r2", "org:o2"]),
-    );
+    expect(seen).toEqual(expect.arrayContaining(["delivery:c1", "orphaned:r2", "org:o2"]));
   }, 60_000);
 
   it("listen() after the shutdown began rejects and opens no port", async () => {

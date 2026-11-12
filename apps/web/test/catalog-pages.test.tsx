@@ -607,7 +607,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(src("plain")).toBeNull();
   });
 
-  it("org admins: the 市场 tab lists the entries with 申请引入; it is hidden when browsing is off", async () => {
+  it("org admins: the 市场 tab lists the entries with 申请安装; it is hidden when browsing is off", async () => {
     const p = en.plugins;
     const entry = {
       sourceId: "official",
@@ -1232,6 +1232,321 @@ describe("/admin/plugins/import (WizardPage)", () => {
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
     expect(await screen.findByText(`${en.errors.catalog.legacy_format}`)).toBeTruthy();
+  });
+});
+
+describe("/admin/plugins/import: install a new plugin, update an installed one (one wizard)", () => {
+  /** The platform's catalog item `crm` (installed at 1.0.0). */
+  const INSTALLED = {
+    id: ID,
+    name: "crm",
+    publisher: "Acme",
+    displayName: null,
+    description: "",
+    scope: "optional",
+    scopeOrgs: [],
+    builtin: false,
+    disabled: false,
+    shownToOthers: true,
+    enabledOrgs: 1,
+    pending: false,
+    permissionsHash: null,
+    latestVersion: "1.0.0",
+    versions: ["1.0.0"],
+    installs: 1,
+    source: "marketplace",
+    marketplaceId: "official",
+    latestMarketplaceVersion: "2.0.0",
+    newerInMarketplace: true,
+    contentChanged: false,
+    componentCounts: { extension: 1, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
+    updatedAt: "2026-10-22T00:00:00.000Z",
+  };
+  const REVIEW2 = { ...REVIEW, version: "2.0.0", reviewHash: "h2" };
+  const UPDATE_PREVIEW = (diffHash = "d".repeat(64)) => ({
+    itemId: ID,
+    name: "crm",
+    from: "1.0.0",
+    to: "2.0.0",
+    components: [
+      {
+        kind: "skill",
+        id: "s1",
+        name: "pdf-tools",
+        change: "upgrade",
+        from: "1.0.0",
+        to: "2.0.0",
+        updatedOnOwn: false,
+        ownScope: false,
+        pinnedOrgs: [],
+      },
+      {
+        kind: "skill",
+        id: null,
+        name: "csv-tools",
+        change: "added",
+        from: null,
+        to: "2.0.0",
+        updatedOnOwn: false,
+        ownScope: false,
+        pinnedOrgs: [],
+      },
+    ],
+    extension: { from: "1.0.0", to: "2.0.0", orgs: ["o1"], needsApproval: false },
+    connectorOrgs: [
+      {
+        orgId: "o1",
+        connectors: [],
+        needsConfig: ["linear"],
+      },
+    ],
+    diffHash,
+  });
+  /** The routes of an installed plugin's staged 2.0.0 (`st7`). */
+  const updateRoutes = (over: Routes = {}): Routes => ({
+    "GET /api/v1/admin/catalog/items": () => json(200, { items: [INSTALLED], nextOffset: null }),
+    "GET /api/v1/admin/orgs": () =>
+      json(200, {
+        orgs: [{ id: "o1", slug: "acme", name: "Acme", createdAt: "", memberCount: 1 }],
+      }),
+    "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
+    "GET /api/v1/admin/catalog/imports/st7": () => json(200, { stagingId: "st7", review: REVIEW2 }),
+    "GET /api/v1/admin/catalog/imports/st7/update-preview": () => json(200, UPDATE_PREVIEW()),
+    ...over,
+  });
+  const posts = (calls: { method: string; url: string }[]) =>
+    calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.url}`);
+  const previewReads = (calls: { method: string; url: string }[]) =>
+    calls.filter((c) => c.url.endsWith("/update-preview"));
+
+  it.each(LOCALES)(
+    "an installed plugin: 更新插件 with the review, then the update preview; the confirm sends both hashes to the one route (%s)",
+    async (locale) => {
+      const r = msgs[locale].catalog.admin.review;
+      const u = msgs[locale].catalog.update;
+      const w = msgs[locale].admin.extensions.wizard;
+      window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+      const calls = stubApi(
+        updateRoutes({
+          "POST /api/v1/admin/catalog/imports/st7/update": () =>
+            json(201, {
+              item: { ...INSTALLED, latestVersion: "2.0.0" },
+              update: {
+                itemId: ID,
+                version: "2.0.0",
+                components: [],
+                extension: null,
+                connectorOrgs: [],
+              },
+            }),
+        }),
+      );
+      await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
+      expect(
+        await screen.findByRole("heading", { name: fill(r.titleUpdate, { name: "crm" }) }),
+      ).toBeTruthy();
+      // the steps: the review, then the update preview (no scope: the plugin keeps its own)
+      expect(screen.getByText(r.steps.update)).toBeTruthy();
+      expect(screen.queryByText(r.steps.confirm)).toBeNull();
+      expect(
+        await screen.findByRole("region", { name: msgs[locale].catalog.components.skills }),
+      ).toBeTruthy();
+      await userEvent.setup().click(screen.getByRole("button", { name: w.next }));
+      // the update preview: versions, per-component changes, the extension and the orgs' config
+      // (the plugin's versions line, the extension's and the skill's row)
+      expect(
+        (await screen.findAllByText(fill(u.versions, { from: "v1.0.0", to: "v2.0.0" }))).length,
+      ).toBeGreaterThan(1);
+      expect(screen.getByText("csv-tools")).toBeTruthy();
+      expect(screen.getByText(u.change.added)).toBeTruthy();
+      expect(screen.getByText(fill(u.needsConfigNote, { ids: "linear" }))).toBeTruthy();
+      expect(screen.getByText(fill(r.updateHint, { version: "v2.0.0" }))).toBeTruthy();
+      // the confirm approves the reviewed permissions: no "waits for approval" notice
+      expect(screen.queryByText(u.needsApproval)).toBeNull();
+      expect(screen.queryByRole("radiogroup")).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+      const user = userEvent.setup();
+      const confirm = screen.getByRole("button", { name: r.confirmUpdate }) as HTMLButtonElement;
+      // sensitive items: the ack first
+      expect(confirm.disabled).toBe(true);
+      await user.click(screen.getByRole("checkbox", { name: r.ack }));
+      expect(confirm.disabled).toBe(false);
+      await user.click(confirm);
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
+      expect(posts(calls)).toEqual([`POST /api/v1/admin/catalog/imports/st7/update`]);
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/st7/update")))).toEqual({
+        reviewHash: "h2",
+        diffHash: "d".repeat(64),
+      });
+      expect(
+        await screen.findByText(fill(u.done, { name: "crm", version: "v2.0.0" })),
+      ).toBeTruthy();
+    },
+  );
+
+  it("cancel on the review step changes nothing: back to the plugin, no write, no preview read", async () => {
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    const calls = stubApi(updateRoutes());
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    await screen.findByRole("region", { name: en.catalog.components.skills });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: en.admin.extensions.wizard.cancel }));
+    expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`);
+    expect(posts(calls)).toEqual([]);
+    expect(previewReads(calls)).toEqual([]);
+  });
+
+  it("cancel on the update preview step changes nothing either", async () => {
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    const calls = stubApi(updateRoutes());
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await screen.findByText("csv-tools");
+    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.cancel }));
+    expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`);
+    expect(posts(calls)).toEqual([]);
+    expect(previewReads(calls)).toHaveLength(1);
+  });
+
+  it("a stale preview is read again and confirmed with its new diffHash", async () => {
+    const u = en.catalog.update;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    let previews = 0;
+    let confirms = 0;
+    const calls = stubApi(
+      updateRoutes({
+        "GET /api/v1/admin/catalog/imports/st7/update-preview": () => {
+          previews += 1;
+          return json(200, UPDATE_PREVIEW(String(previews).repeat(64)));
+        },
+        "POST /api/v1/admin/catalog/imports/st7/update": () => {
+          confirms += 1;
+          return confirms === 1
+            ? json(409, { error: { code: "plugin.upgrade_stale", message: "x" } })
+            : json(201, {
+                item: INSTALLED,
+                update: {
+                  itemId: ID,
+                  version: "2.0.0",
+                  components: [],
+                  extension: null,
+                  connectorOrgs: [],
+                },
+              });
+        },
+      }),
+    );
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await screen.findByText("csv-tools");
+    await user.click(screen.getByRole("checkbox", { name: en.catalog.admin.review.ack }));
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirmUpdate }));
+    expect(await screen.findByText(u.stale)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirmUpdate }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
+    const sent = calls.filter((c) => c.url.endsWith("/st7/update")).map((c) => bodyOf(c));
+    expect(sent).toEqual([
+      { reviewHash: "h2", diffHash: "1".repeat(64) },
+      { reviewHash: "h2", diffHash: "2".repeat(64) },
+    ]);
+  });
+
+  it("the update failing after the import says plainly what remains: the version imported, the platform on its version", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    stubApi(
+      updateRoutes({
+        "POST /api/v1/admin/catalog/imports/st7/update": () =>
+          json(409, {
+            error: {
+              code: "plugin.imported_not_updated",
+              message: "x",
+              details: [
+                {
+                  version: "2.0.0",
+                  from: "1.0.0",
+                  code: "plugin.upgrade_failed",
+                  approvalRestored: true,
+                },
+              ],
+            },
+          }),
+      }),
+    );
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await screen.findByText("csv-tools");
+    await user.click(screen.getByRole("checkbox", { name: r.ack }));
+    await user.click(screen.getByRole("button", { name: r.confirmUpdate }));
+    expect(
+      await screen.findByText(
+        fill(r.importedNotUpdated, {
+          version: "v2.0.0",
+          from: "v1.0.0",
+          code: "plugin.upgrade_failed",
+        }),
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: r.openItem }).getAttribute("href")).toBe(
+      `/admin/plugins/${ID}`,
+    );
+    expect(
+      (screen.getByRole("button", { name: r.confirmUpdate }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(LOCALES)(
+    "a new plugin: 安装插件, the scope on the last step; cancel at the review or the confirm step writes nothing (%s)",
+    async (locale) => {
+      const r = msgs[locale].catalog.admin.review;
+      const w = msgs[locale].admin.extensions.wizard;
+      window.history.replaceState(null, "", "/admin/plugins/import?staging=st8");
+      const calls = stubApi({
+        "GET /api/v1/admin/catalog/imports/st8": () =>
+          json(200, { stagingId: "st8", review: REVIEW }),
+      });
+      await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
+      expect(await screen.findByRole("heading", { name: r.title })).toBeTruthy();
+      expect(screen.getByText(r.steps.confirm)).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: w.cancel }));
+      expect(router.push).toHaveBeenLastCalledWith("/admin/plugins");
+      await user.click(screen.getByRole("button", { name: w.next }));
+      expect(await screen.findByRole("radiogroup")).toBeTruthy();
+      expect(screen.getByRole("button", { name: r.confirm })).toBeTruthy();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+      await user.click(screen.getByRole("button", { name: w.cancel }));
+      expect(router.push).toHaveBeenLastCalledWith("/admin/plugins");
+      expect(posts(calls)).toEqual([]);
+      expect(previewReads(calls)).toEqual([]);
+    },
+  );
+
+  it("the plugin list: an installed plugin with a newer marketplace version has one 更新到, which stages it and opens the wizard", async () => {
+    const calls = stubApi({
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [INSTALLED], nextOffset: null }),
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [] }),
+      "POST /api/v1/admin/marketplaces/official/entries/crm/import": () =>
+        json(200, { stagingId: "st7", review: REVIEW2 }),
+    });
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: en.catalog.admin.title });
+    const row = within(list).getByText("crm").closest("li") as HTMLElement;
+    await userEvent.setup().click(
+      within(row).getByRole("button", {
+        name: fill(en.catalog.admin.detail.actions.update, { version: "v2.0.0" }),
+      }),
+    );
+    await waitFor(() =>
+      expect(router.push).toHaveBeenCalledWith("/admin/plugins/import?staging=st7"),
+    );
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ version: "2.0.0" });
   });
 });
 
@@ -2159,7 +2474,7 @@ describe("/admin/plugins and marketplace entries", () => {
     },
   );
 
-  it("entries: one row per plugin with its latest version; an older import can be updated; 其他版本 imports another version", async () => {
+  it("entries: one row per plugin with its latest version; an installed plugin is updated (更新到), never imported alone; 其他版本 offers it only newer versions", async () => {
     const c = en.catalog.admin.entries;
     const at = (name: string, v: string, over: Record<string, unknown> = {}) =>
       entry({ name, version: v, adopted: null, newerAvailable: false, ...over });
@@ -2189,7 +2504,7 @@ describe("/admin/plugins and marketplace entries", () => {
     const list = await screen.findByRole("list", { name: c.title });
     expect(within(list).getAllByRole("listitem")).toHaveLength(3);
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    // imported at an older version: 可更新到 the latest, 更新 imports it
+    // installed at an older version: 可更新到 the latest, 更新到 stages it for the wizard
     const cat = row("cat-a");
     expect(
       within(cat).getByText(
@@ -2199,34 +2514,36 @@ describe("/admin/plugins and marketplace entries", () => {
     // the state says it: no 有新版本 chip
     expect(within(cat).queryByText(en.catalog.newer)).toBeNull();
     const user = userEvent.setup();
-    await user.click(within(cat).getByRole("button", { name: c.update }));
+    await user.click(
+      within(cat).getByRole("button", { name: fill(c.update, { version: "v1.0.0-rc.10" }) }),
+    );
     await waitFor(() =>
       expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({
         version: "1.0.0-rc.10",
       }),
     );
-    // never imported: 未引入 and 引入 the latest
+    // never installed: 未安装 and 安装 the latest
     const dog = row("dog-b");
     expect(within(dog).getByText(c.notAdopted)).toBeTruthy();
     expect(
       within(dog).getByRole("button", { name: fill(c.importVersion, { version: "v1.0.0" }) }),
     ).toBeTruthy();
-    // imported at the latest: 已引入 and 查看
+    // installed at the latest: 已安装 and 查看
     const eel = row("eel-c");
     expect(within(eel).getByText(fill(c.adopted, { version: "v2.0.0" }))).toBeTruthy();
     expect(within(eel).getByRole("link", { name: c.view }).getAttribute("href")).toContain(
       "/admin/plugins/e1",
     );
-    // 其他版本: the other versions, the imported one not importable again
+    // 其他版本 of an installed plugin: only the versions newer than its own, as 更新到 (an older
+    // one is a rollback on the plugin's 版本 tab, never an import alone)
     await user.click(within(cat).getByRole("button", { name: "More actions" }));
     await user.click(await screen.findByRole("menuitem", { name: c.otherVersions }));
     const rc2 = await screen.findByRole("menuitem", {
-      name: fill(c.importVersion, { version: "v1.0.0-rc.2" }),
+      name: fill(c.update, { version: "v1.0.0-rc.2" }),
     });
-    const rc0 = screen.getByRole("menuitem", {
-      name: fill(c.adopted, { version: "v1.0.0-rc.0" }),
-    });
-    expect(rc0.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      screen.queryByRole("menuitem", { name: fill(c.adopted, { version: "v1.0.0-rc.0" }) }),
+    ).toBeNull();
     rc2.focus();
     await user.keyboard("{Enter}");
     await waitFor(() =>
@@ -4271,9 +4588,9 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     const table = screen.getByRole("table", { name: P.detail.tabs.components });
     expect(within(table).getByText("jina-web")).toBeTruthy();
     expect(within(table).getByText("web-research")).toBeTruthy();
-    // a newer marketplace version is imported first (the platform update comes after the import)
+    // a newer marketplace version: one 更新到 (the import review and the update preview together)
     expect(
-      screen.getByRole("button", { name: fill(P.detail.actions.import, { version: "v1.3.0" }) }),
+      screen.getByRole("button", { name: fill(P.detail.actions.update, { version: "v1.3.0" }) }),
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: P.detail.actions.scope }));
     const dialog = await screen.findByRole("dialog");

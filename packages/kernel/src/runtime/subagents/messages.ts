@@ -100,13 +100,14 @@ export const toParentIdemKey = (runId: string, callId: string): string =>
 @Injectable()
 export class SubagentMessages {
   /** What the dispatch transaction of a restart needs (`commit`). */
-  private readonly deps: Pick<DispatchDeps, "commitDispatch" | "enqueue" | "log" | "eventLog">;
+  private readonly deps: Pick<DispatchDeps, "commitDispatch" | "log" | "eventLog">;
 
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
-    @Inject(RunJobs) jobs: RunJobs,
+    /** Owes a restarted sub-agent's run job in the dispatch's transaction. */
+    @Inject(RunJobs) private readonly jobs: Pick<RunJobs, "owe">,
     @Inject(KERNEL_LOGGER) log: KernelLogger,
     @Inject(SubagentDeliveries) private readonly deliveries: SubagentDeliveries,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -116,7 +117,6 @@ export class SubagentMessages {
   ) {
     this.deps = {
       eventLog,
-      enqueue: (data, jobId, kind) => jobs.enqueue(data, jobId, kind),
       log,
       commitDispatch: (a, plan, child) => this.commitDispatch(a, plan, child),
     };
@@ -130,7 +130,12 @@ export class SubagentMessages {
     child: ChildWriter,
   ): Promise<DispatchCommit | null> {
     return commitDispatchIn(
-      { db: this.db, eventLog: this.eventLog, config: this.config },
+      {
+        db: this.db,
+        eventLog: this.eventLog,
+        config: this.config,
+        owe: (data, jobId, kind, orgId) => this.jobs.owe(data, jobId, kind, orgId),
+      },
       a,
       plan,
       child,

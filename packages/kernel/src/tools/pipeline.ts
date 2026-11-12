@@ -719,7 +719,7 @@ export class ToolPipeline {
 
   /**
    * Writes, in the caller's transaction (`mandatory`), what a run that is being stopped (a person,
-   * its deadline, a failure, the wait sweep) still owes its log: the report of its fork invocation
+   * its deadline, a failure, an orphan repair) still owes its log: the report of its fork invocation
    * (phase D, `pairStoppedForks`; a still active fork child is stopped by the caller after its
    * commit). An `Agent` call has its result from its dispatch (agent map spec §4.1), so there is
    * nothing to write for it. Returns the fork's call id (the caller must not write a "not executed"

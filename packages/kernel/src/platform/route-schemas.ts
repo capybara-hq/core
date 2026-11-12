@@ -3,6 +3,7 @@ import { ADMIN_ROUTES } from "../admin/admin.schemas.js";
 import { ADMIN_ITEM_ROUTES } from "../admin/admin-items.schemas.js";
 import { AUDIT_ROUTES } from "../admin/audit.schemas.js";
 import { ADMIN_EXTENSION_ROUTES } from "../admin/extensions.schemas.js";
+import { OUTBOX_DEAD_ROUTES } from "../admin/outbox-dead.schemas.js";
 import { OVERVIEW_ROUTES } from "../admin/overview.schemas.js";
 import { AGENT_ROUTES } from "../agents/agents.schemas.js";
 import { AGENT_TEMPLATE_ROUTES } from "../agents/templates.schemas.js";
@@ -99,4 +100,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   // the admin overview and the platform-level audit log (admin overview spec §5.2)
   ...OVERVIEW_ROUTES,
   ...AUDIT_ROUTES,
+  // dead outbox rows (transactional outbox spec §3.4)
+  ...OUTBOX_DEAD_ROUTES,
 ];

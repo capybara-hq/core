@@ -18,6 +18,8 @@ import { PlatformInboxService } from "../inbox/platform-inbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
+import { QueueLostJobs } from "../runtime/queue-lost-jobs.js";
+import { OutboxDeadService } from "./outbox-dead.service.js";
 
 /** The most rows each attention list returns; the rest are counted in `more`. */
 export const ATTENTION_LIST_MAX = 20;
@@ -28,7 +30,8 @@ export interface AdminOverviewStats {
   accounts: number;
   /**
    * What waits for a super admin: the platform inbox total plus the extensions, plugin updates and
-   * model providers of {@link AdminAttention} (each counted in full, not capped).
+   * model providers of {@link AdminAttention} (each counted in full, not capped), every dead
+   * outbox row and the run queue's lost-jobs item.
    */
   attentionTotal: number;
   /** An attention source could not be read: `attentionTotal` leaves its items out. */
@@ -54,7 +57,7 @@ export type AttentionExtensionReason =
 export type AttentionProviderProblem = "list_failed" | "no_chat_model";
 
 /** An attention list a source failed to read (it is then empty, the others intact). */
-export type AttentionSource = "extensions" | "updates" | "providers";
+export type AttentionSource = "extensions" | "updates" | "providers" | "outbox" | "queue";
 
 export interface AttentionExtension {
   name: string;
@@ -87,6 +90,29 @@ export interface AttentionProvider {
 }
 
 /**
+ * Background work the kernel could not queue (transactional outbox spec §3.4): how many outbox
+ * rows are dead and the oldest one's `dead_at`. One item for all of them; the rows themselves are
+ * `GET /api/v1/admin/outbox/dead`.
+ */
+export interface AttentionOutboxDead {
+  kind: "outbox_dead";
+  count: number;
+  oldestAt: string;
+}
+
+/**
+ * The run queue lost background jobs (transactional outbox spec §8.3): the `run-orphan-check`
+ * found queued runs whose job was neither in the queue nor owed, which only Redis losing data
+ * explains. Their jobs were added again; the item says Redis durability needs a look, how many
+ * jobs were lost and when last (it stays a week after the last loss).
+ */
+export interface AttentionQueueLostJobs {
+  kind: "queue_lost_jobs";
+  count: number;
+  lastAt: string;
+}
+
+/**
  * `GET /api/v1/admin/overview/attention` (spec §5.2, §9): what needs a super admin besides the
  * inbox, each list at most {@link ATTENTION_LIST_MAX} rows with the rest counted in `more`, and
  * `unavailable` naming each source that could not be read. Reason categories only: never an error
@@ -96,6 +122,10 @@ export interface AdminAttention {
   extensions: AttentionExtension[];
   updates: AttentionUpdate[];
   providers: AttentionProvider[];
+  /** System items: at most one, `outbox_dead`, when some outbox rows are dead. */
+  outbox: AttentionOutboxDead[];
+  /** System items: at most one, `queue_lost_jobs`, when the run queue lost jobs this week. */
+  queue: AttentionQueueLostJobs[];
   more: Record<AttentionSource, number>;
   unavailable: AttentionSource[];
 }
@@ -135,8 +165,9 @@ export function providerProblem(p: ProviderStatus): AttentionProviderProblem | n
 /**
  * The admin overview (spec §4.1, §5.2): its numbers and the 待处理 lists, read live from the
  * sources the admin pages read (`ExtensionAdmin`, the catalog, the provider registry's cached
- * lists). Each source is read on its own: a failing one is reported in `unavailable`. Reads are not
- * audited (decision D5) and not cached further (every source is PG or already Redis-cached).
+ * lists, the dead outbox rows, the run queue's lost-jobs canary). Each source is read on its own: a failing one is reported in
+ * `unavailable`. Reads are not audited (decision D5) and not cached further (every source is PG
+ * or already Redis-cached).
  */
 @Injectable()
 export class AdminOverviewService {
@@ -150,6 +181,8 @@ export class AdminOverviewService {
     @Inject(OrgsService) private readonly orgs: OrgsService,
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    @Inject(OutboxDeadService) private readonly outboxDead: OutboxDeadService,
+    @Inject(QueueLostJobs) private readonly lostJobs: Pick<QueueLostJobs, "summary">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
   ) {}
 
@@ -160,11 +193,20 @@ export class AdminOverviewService {
       this.inbox.count(),
       this.attention(),
     ]);
-    const listed = (s: AttentionSource) => attention[s].length + attention.more[s];
+    const listed = (s: Exclude<AttentionSource, "outbox" | "queue">) =>
+      attention[s].length + attention.more[s];
+    // each dead row waits for a super admin, not the one item that counts them
+    const dead = attention.outbox.reduce((n, o) => n + o.count, 0);
     return {
       orgs: orgs.length,
       accounts,
-      attentionTotal: inbox + listed("extensions") + listed("updates") + listed("providers"),
+      attentionTotal:
+        inbox +
+        listed("extensions") +
+        listed("updates") +
+        listed("providers") +
+        dead +
+        attention.queue.length,
       partial: attention.unavailable.length > 0,
     };
   }
@@ -173,16 +215,20 @@ export class AdminOverviewService {
     // the catalog is read once: the update rows, and the plugins the inbox already lists
     const items = this.catalogItems();
     items.catch(() => {}); // awaited (and reported) by updateRows
-    const [extensions, updates, providers] = await Promise.allSettled([
+    const [extensions, updates, providers, outbox, queue] = await Promise.allSettled([
       this.extensionRows(items),
       this.updateRows(items),
       this.providerRows(),
+      this.outboxRows(),
+      this.queueRows(),
     ]);
     const out: AdminAttention = {
       extensions: [],
       updates: [],
       providers: [],
-      more: { extensions: 0, updates: 0, providers: 0 },
+      outbox: [],
+      queue: [],
+      more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
       unavailable: [],
     };
     /** The rows of a source that answered (capped), or none and its name in `unavailable`. */
@@ -202,7 +248,22 @@ export class AdminOverviewService {
     out.extensions = take("extensions", extensions);
     out.updates = take("updates", updates);
     out.providers = take("providers", providers);
+    out.outbox = take("outbox", outbox);
+    out.queue = take("queue", queue);
     return out;
+  }
+
+  /** The `queue_lost_jobs` item when the run queue lost jobs this week, else none. */
+  private async queueRows(): Promise<AttentionQueueLostJobs[]> {
+    const lost = await this.lostJobs.summary();
+    return lost === null ? [] : [{ kind: "queue_lost_jobs", ...lost }];
+  }
+
+  /** The `outbox_dead` item when some outbox rows are dead, else none. */
+  private async outboxRows(): Promise<AttentionOutboxDead[]> {
+    const { count, oldestAt } = await this.outboxDead.summary();
+    if (count === 0 || oldestAt === null) return [];
+    return [{ kind: "outbox_dead", count, oldestAt: oldestAt.toISOString() }];
   }
 
   /**

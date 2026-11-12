@@ -14,20 +14,18 @@ import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
-import type { KernelLogger } from "../log.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { DeviceSandboxLevel } from "../runtime/context/device-paths.js";
-import { SandboxJobs } from "../sandbox/jobs.js";
+import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
@@ -221,8 +219,8 @@ const nameTaken = (): ApiError =>
  * Personal devices (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9):
  * cloud ones on the deployment's sandbox provider and `device` ones on a connected machine; a
  * person's devices in an org, visible and usable only by their owner (anyone else gets
- * `device.not_found`). Deleting one soft-deletes it and destroys its instance and files in a
- * `sandbox-destroy-for` job after the commit.
+ * `device.not_found`). Deleting one soft-deletes it and owes the destruction of its instance and
+ * files (a `sandbox-destroy-for` job) in the same transaction.
  */
 @Injectable()
 export class DevicesService {
@@ -234,11 +232,12 @@ export class DevicesService {
     private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "deviceLimits" | "limitsState">,
-    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy" | "resetFiles">,
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "resetFiles">,
+    /** Owes a deleted device's destruction in the delete's transaction. */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(ExtensionDisplayNames)
     private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** Reads the device relay's lease (`online`). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(MachinesService)
@@ -655,9 +654,9 @@ export class DevicesService {
   }
 
   /**
-   * Deletes one of the person's live devices: soft delete, its IM default row cleared, and
-   * after the commit a `sandbox-destroy-for` job (the worker waits for running commands, then
-   * destroys the instance and the files). Conversations bound to it keep pointing at it; their
+   * Deletes one of the person's live devices: soft delete, its IM default row cleared, and a
+   * `sandbox-destroy-for` job owed in the same transaction (`device-destroy-<deviceId>`; the
+   * worker waits for running commands, then destroys the instance and the files). Conversations bound to it keep pointing at it; their
    * sandbox tools then fail with `device.not_found`. A local device's machine is
    * revoked in the same transaction; after the commit it is told `stop { reason: "deleted" }`
    * (while connected) and its connection is closed.
@@ -691,14 +690,7 @@ export class DevicesService {
       target: id,
       detail: { name: before.name, isDefault: before.is_default, ...auditDetail },
     });
-    afterCommit(async () => {
-      try {
-        await this.sandboxJobs.destroy([id]);
-      } catch (err) {
-        // the hourly destruction sweep destroys deleted devices too
-        this.log.warn("cannot schedule device destruction", { deviceId: id, err });
-      }
-    });
+    await oweDeviceDestroy(this.outbox, id, orgId);
   }
 
   /**

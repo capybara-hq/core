@@ -1,5 +1,15 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.8
+
+### Patch Changes
+
+- ba36733: Field `action`: a control that acts on the field's value (an 「添加」 button) sits on the control's
+  line, the help and error below both; the device page's 「添加域名」 row uses it.
+- e76028b: ScheduleCalendar: the scheduled task runs of a week or a month (time grid with a now line, three blocks side by side then +N, a dense lane, 6 × 7 month cells, the phone agenda, roving keyboard focus, loading, empty and load-failed states); the layout.calendar-* sizes and the ink / fail on hover and selected contrast pairs (also in the SDK's theme readability check)
+- 8f08231: ScheduleCalendar: at most two overlapping blocks side by side in the week view (three left about
+  51 px each, an icon and a clipped time); a larger cluster keeps one block and puts the rest in +N
+
 ## 0.2.0-rc.7
 
 ### Minor Changes

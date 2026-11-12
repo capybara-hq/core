@@ -15,15 +15,14 @@ import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { embeddingDeniedAudit, type HookRunner } from "../runtime/hook-calls.js";
 import { modelDeniedText } from "../runtime/model-call.js";
 import { ProviderRegistry } from "../runtime/providers.js";
+import { UsageReportJobs } from "../runtime/usage-report-jobs.js";
 import { ModelPurposesService, type PurposeTarget } from "./purposes.js";
 
 /** An extension's `permissions.models` (what it declared, as approved in its manifest). */
@@ -51,9 +50,9 @@ export const EMBED_MAX_INPUTS = 2048;
  *   limited by `models.embedTimeoutMs` (`ModelError("timeout")`), checks each result ({@link validateEmbedResult}: a
  *   wrong count, dimension or a non-finite number is a `ModelError` of kind `server`), and
  *   concatenates the vectors; no retries (an extension retries itself if it wants to);
- * - writes one `model_usage` row (the sum of the batches' input tokens) and announces it after the
- *   commit (`model_usage.recorded`: the usage reporter's `ModelUsageJobs` enqueues its
- *   `usage.report` delivery; the usage sweep catches up a lost one). A call that fails after the
+ * - writes one `model_usage` row (the sum of the batches' input tokens) and, in the same
+ *   transaction, owes its `usage.report` delivery while some plugin subscribes (`UsageReportJobs`,
+ *   transactional outbox spec §8.1). A call that fails after the
  *   provider answered some batches (an invalid result, a later batch failing) still records their
  *   input tokens before the error reaches the extension; one that fails before any answer records
  *   nothing.
@@ -67,8 +66,8 @@ export class ModelEmbeddings {
     @Inject(ModelPurposesService)
     private readonly purposes: Pick<ModelPurposesService, "resolve">,
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
-    /** `model_usage.recorded`: the usage reporter enqueues the row's delivery. */
-    @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
+    /** The row's `usage.report` delivery, owed with it. */
+    @Inject(UsageReportJobs) private readonly usage: Pick<UsageReportJobs, "oweModelUsage">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
     /** `models.embedTimeoutMs` (hot). */
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
@@ -287,7 +286,7 @@ export class ModelEmbeddings {
     }
   }
 
-  /** One `model_usage` row; its `usage.report` delivery is enqueued after the commit. */
+  /** One `model_usage` row with its owed `usage.report` delivery. */
   @Transactional()
   private async record(
     plugin: string,
@@ -308,13 +307,7 @@ export class ModelEmbeddings {
       })
       .returning("id")
       .executeTakeFirstOrThrow();
-    // fire and forget: the extension's call never waits on the enqueue (PG, Redis); a lost one is
-    // caught up by the usage sweep
-    afterCommit(() => {
-      void this.events
-        .emit("model_usage.recorded", { id: row.id })
-        .catch((err) => this.log.warn("model usage event failed", { usageId: row.id, err }));
-    });
+    await this.usage.oweModelUsage(row.id, orgId);
   }
 }
 

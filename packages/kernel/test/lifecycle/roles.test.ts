@@ -8,6 +8,8 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildKernelApp, closeKernelApp, createKernelApp } from "../../src/app.js";
+import { BACKGROUND_PRUNE_JOB, BackgroundTaskPollJob } from "../../src/background/poll.job.js";
+import { BackgroundTaskStore } from "../../src/background/store.js";
 import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
 import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
@@ -25,8 +27,8 @@ import { GatewayRole } from "../../src/roles/gateway-role.js";
 import { WorkerRole } from "../../src/roles/worker-role.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
+import { RUN_ORPHAN_CHECK_JOB } from "../../src/runtime/run-orphan-check.job.js";
 import { USAGE_REPORT_QUEUE } from "../../src/runtime/usage-report.js";
-import { WAIT_SWEEP_JOB, WaitSweepJob, Waits } from "../../src/runtime/waits.js";
 import { ToolDrift } from "../../src/tools/drift.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
@@ -208,9 +210,16 @@ describe("role modules", () => {
     absent(a, GatewayRole);
     absent(a, ChannelSupervisor);
     const crons = a.get(SchedulerRegistry).getCronJobs();
-    expect([...crons.keys()]).toEqual(expect.arrayContaining([WAIT_SWEEP_JOB, GATEWAY_CHECK_JOB]));
+    expect([...crons.keys()]).toEqual(
+      expect.arrayContaining([BACKGROUND_PRUNE_JOB, GATEWAY_CHECK_JOB]),
+    );
     for (const [name, job] of crons) expect(job.isActive, name).toBe(true);
-    expect(a.get(LockedIntervalScheduler).names()).toContain(PLUGINS_RECONCILE_JOB);
+    expect(a.get(LockedIntervalScheduler).names()).toEqual(
+      expect.arrayContaining([PLUGINS_RECONCILE_JOB, RUN_ORPHAN_CHECK_JOB]),
+    );
+    // job names become lock keys and BullMQ-adjacent ids: no `:`
+    expect(RUN_ORPHAN_CHECK_JOB).not.toContain(":");
+    expect(a.get(LockedIntervalScheduler).periodOf(RUN_ORPHAN_CHECK_JOB)).toBe(60_000);
     workerSchedules = schedulesOf(a);
     const { jobHosts, processors } = scan(a);
     expect(jobHosts).toEqual([
@@ -222,17 +231,13 @@ describe("role modules", () => {
       "GatewayCheckJob",
       "InitialPasswordCleanupJob",
       "LegacySandboxCleanupJob",
-      "LifecycleSweepJob",
-      "OffboardSweepJob",
-      "OwnedPluginCleanup",
-      "PlatformMigration",
+      "OutboxRelay",
       "PluginsReconcileJob",
+      "RunOrphanCheck",
       "SandboxSweepJobs",
       "ScheduledTaskScanJob",
       "StoragePurgeJob",
       "ToolJobs",
-      "UsageSweepJob",
-      "WaitSweepJob",
     ]);
     expect(processors).toHaveLength(KERNEL_QUEUES.length);
     for (const q of queues) expect(await q.getWorkersCount(), q.name).toBeGreaterThan(0);
@@ -241,7 +246,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(19);
+    expect(jobHosts).toHaveLength(15);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);
@@ -288,18 +293,19 @@ describe("role modules", () => {
         },
       );
       app = built;
-      // the job bodies: the wait sweep (a @LockedCron) and the drift scan (a @LockedInterval)
+      // the job bodies: the daily prune of finished background tasks (a @LockedCron, rare enough
+      // that its own tick never lands in the test) and the drift scan (a @LockedInterval)
       const sweep = vi.fn(async () => 0);
       const scan = vi.fn(async () => 0);
-      built.get(Waits).sweep = sweep as never;
+      built.get(BackgroundTaskStore).pruneFinished = sweep as never;
       built.get(ToolDrift).scan = scan;
       const init = built.init();
       init.catch(() => {});
       await enteredP;
       // The start is waiting in the extension load: the schedulers are armed already, but a tick
       // (the cron's own trigger, the decorated methods the timers call) runs nothing
-      await built.get(SchedulerRegistry).getCronJob(WAIT_SWEEP_JOB).fireOnTick();
-      await built.get(WaitSweepJob).run();
+      await built.get(SchedulerRegistry).getCronJob(BACKGROUND_PRUNE_JOB).fireOnTick();
+      await built.get(BackgroundTaskPollJob).prune();
       await built.get(ToolJobs).scanDrift();
       expect(sweep).not.toHaveBeenCalled();
       expect(scan).not.toHaveBeenCalled();
@@ -308,7 +314,7 @@ describe("role modules", () => {
       await init;
       // the worker role opened the gate: the runOnStart drift scan and a forced tick run
       await vi.waitFor(() => expect(scan).toHaveBeenCalled(), { timeout: 10_000 });
-      await built.get(WaitSweepJob).run();
+      await built.get(BackgroundTaskPollJob).prune();
       expect(sweep).toHaveBeenCalledTimes(1);
       expect(lines.filter((l) => l.level === "error")).toEqual([]);
     } finally {

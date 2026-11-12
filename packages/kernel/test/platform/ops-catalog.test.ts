@@ -158,6 +158,7 @@ describe("registration", () => {
       "plugins.import-git",
       "plugins.import-npm",
       "plugins.import-review",
+      "plugins.import-update-preview",
       "plugins.installs",
       "plugins.list",
       "plugins.owned-delete",

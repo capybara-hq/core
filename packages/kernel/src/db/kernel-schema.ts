@@ -306,7 +306,7 @@ export interface ConversationsTable {
   /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
   scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
-   * 0120: where the conversation comes from, set at creation and never changed. Required on insert
+   * 0124: where the conversation comes from, set at creation and never changed. Required on insert
    * (the column's `web` default is not relied on: a forgotten source must not read as web).
    */
   source: ColumnType<ConversationSource, ConversationSource, never>;
@@ -1293,27 +1293,6 @@ export interface ExtensionReplicaStatusTable {
   heartbeat_at: Ts;
 }
 
-/** 0040: the usage.report sweeper's watermark (a single row, id = 1). */
-export interface UsageReportSweepTable {
-  id: ColumnType<number, number | undefined, never>;
-  watermark: Ts;
-  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
-}
-
-/**
- * 0121: one lifecycle hook delivery (`org.member_removed`, `agent.deleted`, `org.deleted`) to one
- * subscribing plugin; delivered by the `cap-kernel-lifecycle` queue (`extensions/lifecycle-hooks.ts`).
- */
-export interface LifecycleDeliveriesTable {
-  id: Generated<string>;
-  mount: "org.member_removed" | "agent.deleted" | "org.deleted";
-  payload: Json<Record<string, string>>;
-  plugin: string;
-  created_at: Ts;
-  delivered_at: TsNullable;
-  attempts: ColumnType<number, number | undefined, number>;
-}
-
 /** A model disabled on the platform (`org_id` null) or in one org (0089, spec B §5.3). */
 export interface ModelDisabledTable {
   org_id: string | null;
@@ -1334,7 +1313,7 @@ export interface ModelUsageTable {
   input_tokens: number;
   occurred_at: Ts;
   reported_at: TsNullable;
-  /** Set when the row's `usage.report` job gave up after its last attempt (the sweep skips it). */
+  /** Set when the row's `usage.report` job gave up after its last attempt. */
   report_failed_at: TsNullable;
 }
 
@@ -1392,8 +1371,6 @@ export interface ScheduledTaskRunsTable {
   >;
   error: NullableText;
   missing_grants: ColumnType<string[], string | undefined, string>;
-  /** When the scanner's repair last found this started run still in flight. */
-  rechecked_at: NullableTs;
 }
 
 /** 0113: a scheduled task's remembered grants (same shape as `conversation_tool_grants`). */
@@ -1476,8 +1453,6 @@ export interface KernelDatabase {
   extension_blobs: ExtensionBlobsTable;
   extension_installs: ExtensionInstallsTable;
   extension_replica_status: ExtensionReplicaStatusTable;
-  usage_report_sweep: UsageReportSweepTable;
-  lifecycle_deliveries: LifecycleDeliveriesTable;
   extension_name_owners: ExtensionNameOwnersTable;
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
   catalog_items: CatalogItemsTable;
@@ -1505,12 +1480,35 @@ export interface KernelDatabase {
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
   bootstrap_runs: BootstrapRunsTable;
-  platform_migration_runs: PlatformMigrationRunsTable;
   org_notices: OrgNoticesTable;
   platform_notices: PlatformNoticesTable;
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
   extension_client_builds: ExtensionClientBuildsTable;
   extension_client_reports: ExtensionClientReportsTable;
+  outbox: OutboxTable;
+}
+
+/**
+ * 0119: the transactional outbox (transactional outbox spec §4). A row is a BullMQ job owed by a
+ * committed transaction; deleted on delivery, so only dead rows (`dead_at` set) stay.
+ */
+export interface OutboxTable {
+  /** bigint identity; the pg driver reads it as a string. */
+  id: Generated<string>;
+  queue: string;
+  job_name: string;
+  /** Unique per queue: a second add of the same job before delivery is a no-op. */
+  job_id: string;
+  data: Json;
+  /** The job's delay target; null runs it now. */
+  run_at: Date | null;
+  /** Null for platform work. */
+  org_id: string | null;
+  attempts: Generated<number>;
+  next_attempt_at: Generated<Date>;
+  last_error: string | null;
+  dead_at: Date | null;
+  created_at: Generated<Date>;
 }
 
 /**
@@ -1549,17 +1547,8 @@ export interface ExtensionClientReportsTable {
   last_message: string;
 }
 
-/** 0082: one run of the platform components migration job (`catalog/platform-migration.ts`). */
-export interface PlatformMigrationRunsTable {
-  id: string;
-  started_at: Ts;
-  finished_at: TsNullable;
-  stats: Json<Record<string, unknown>>;
-}
-
-/** 0082: the kinds of {@link OrgNoticesTable}. */
+/** 0084 (0121 dropped `skill_renamed`): the kinds of {@link OrgNoticesTable}. */
 export type OrgNoticeKind =
-  | "skill_renamed"
   | "item_shared"
   | "shared_item_updated"
   | "upload_confirmed"
@@ -1570,7 +1559,7 @@ export interface OrgNoticesTable {
   id: string;
   org_id: string;
   kind: OrgNoticeKind;
-  /** `skill_renamed`: `{ skillId, from, to, platformSkillId, plugin }`. */
+  /** The kind's shape (`OrgNoticeDetails` in `inbox/org-notices.ts`). */
   detail: Json<Record<string, unknown>>;
   created_at: Ts;
   dismissed_at: TsNullable;

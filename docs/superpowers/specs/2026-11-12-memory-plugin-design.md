@@ -352,10 +352,13 @@ Three new observe-only hook mount points, added to `HOOKS_AVAILABLE` **(designer
 | `agent.deleted` | `{ orgId, agentId }` | after the agent soft delete commits |
 | `org.deleted` | `{ orgId }` | after the org soft delete commits |
 
-- **Durable.** The firing transaction writes one outbox row per (event, plugin); delivery is
-  a BullMQ job per row with a deterministic id (`lifecycle-<deliveryId>`, the row's id), enqueued
-  in `afterCommit`, consumed under `WorkerModule`, retried with backoff. The in-process
-  `KernelEventMap` is not used.
+- **Durable.** The firing transaction owes one job per (event, plugin) through the kernel's
+  transactional outbox (`OutboxService.add`, job name `lifecycle` on the queue
+  `cap-kernel-lifecycle`, deterministic id `lifecycle-<mount>-<plugin>-<payload ids>`, no `org_id`
+  since it is the deletion's own cleanup work); the outbox delivers it after the commit, the
+  consumer runs under `WorkerModule`, and BullMQ retries it (15 attempts from 2 s, doubling,
+  about 18 h) while the plugin is not loaded on the replica or its handler fails. No table or sweep
+  of its own (transactional outbox spec, anti-goals). The in-process `KernelEventMap` is not used.
 - **Who receives.** Every loaded plugin that registered the mount and declared it in
   `permissions.hooks`, **whether or not the org has it enabled**: cleanup concerns data the plugin
   already holds. A plugin not loaded at delivery time (uninstalled) gets nothing.

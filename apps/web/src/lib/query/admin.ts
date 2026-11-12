@@ -8,6 +8,7 @@ import {
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
+  listOutboxDead,
   listPlatformAudit,
 } from "../admin";
 import {
@@ -20,6 +21,7 @@ import { getPlatformInbox, getPlatformInboxCount } from "../admin-inbox";
 import {
   getCatalogItem,
   getStagedImport,
+  getStagedUpdatePreview,
   listCatalogItems,
   listDeploymentRequests,
   listMarketplaceEntries,
@@ -47,6 +49,18 @@ export const adminAttentionQuery = () =>
   defineQuery({
     key: d().adminAttention(),
     fn: () => getAdminAttention(),
+    freshness: "deployment",
+  });
+
+/**
+ * The dead outbox rows the overview's 待处理 lists with 重试 / 丢弃: under `adminOverview`, so a
+ * retry or discard (which invalidates the overview) reads them again. Read only when the attention
+ * lists name dead rows.
+ */
+export const adminOutboxDeadQuery = () =>
+  defineQuery({
+    key: d().adminOutboxDead(),
+    fn: () => listOutboxDead(),
     freshness: "deployment",
   });
 
@@ -256,6 +270,17 @@ export const stagedImportQuery = (stagingId: string) =>
   defineQuery({
     key: d().stagedImport(stagingId),
     fn: () => getStagedImport(stagingId),
+    freshness: "deployment",
+  });
+
+/**
+ * The platform update a staged new version of an installed plugin applies (the 更新到 wizard's
+ * update preview; `plugin.upgrade_target_invalid` when it is not installed).
+ */
+export const stagedUpdatePreviewQuery = (stagingId: string) =>
+  defineQuery({
+    key: d().stagedUpdatePreview(stagingId),
+    fn: () => getStagedUpdatePreview(stagingId),
     freshness: "deployment",
   });
 

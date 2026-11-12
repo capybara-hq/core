@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createDualReplicaHarness,
@@ -14,7 +15,14 @@ import {
   runnerEnv,
   TSX_LOADER,
 } from "../src/dual-replica.js";
-import { startTestPostgres, startTestRedis, type TestContainer } from "../src/index.js";
+import {
+  createDb,
+  createLocalAccount,
+  kernelDb,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "../src/index.js";
 
 const fx = (n: string) => fileURLToPath(new URL(`./fixtures/${n}/index.ts`, import.meta.url));
 
@@ -145,6 +153,32 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
     const pids = h.replicas.map((r) => r.pid);
     await h.stop();
     await h.stop();
+    for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  it("stop() rejects naming a queued run the replicas left without a job (owed by nobody)", async () => {
+    // not in `harnesses`: this stop is expected to reject
+    const h = await createDualReplicaHarness({ extensions: [fx("good-counter")], pgUrl: pgc.url });
+    const raw = createDb(h.dbUrl, 2);
+    try {
+      const account = await createLocalAccount(kernelDb(raw), "owner");
+      await sql`INSERT INTO capybara.orgs (id, slug, name) VALUES ('o1', 'o1', 'O')`.execute(raw);
+      await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+        VALUES ('a1', 'o1', ${account}, 'private', 1)`.execute(raw);
+      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+        VALUES ('c1', 'o1', 'a1', ${account})`.execute(raw);
+      // queued, but its job is neither owed by the outbox nor in BullMQ
+      await sql`INSERT INTO capybara.runs
+          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+        VALUES ('r1', 'c1', 'queued', 1, ${account}, 1)`.execute(raw);
+    } finally {
+      await raw.destroy();
+    }
+    const pids = h.replicas.map((r) => r.pid);
+    await expect(h.stop()).rejects.toThrow(
+      /1 queued run\(s\) without a job.*r1 \(conversation c1, job run-c1-1\)/,
+    );
+    // the cleanup happened before the rejection
     for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
   });
 

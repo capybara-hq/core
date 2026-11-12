@@ -27,6 +27,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
@@ -317,10 +318,12 @@ function canHandle(
  * 工具调用审批：新建（loop 调用）、列出 / 查看 / 处理（HTTP），以及「以后都允许」授权的查看与撤销。
  * 状态全部在 PG：处理决定在事务里 `SELECT … FOR UPDATE` 审批行，多副本并发处理同一审批时恰好一个生效。
  *
- * A decision is announced after the commit as the domain event `approval.decided` (exactly once:
- * only the decision that changed the row from pending), which the run's waits follow to resume it
- * (spec §3b; the wait sweep resumes a run whose resume was lost). Events are appended in the
- * context's transaction (`EventLog.appendIn`) and published after the commit.
+ * A decision resumes its waiting run in the decision's transaction (`RunResume.resumeIn`, after the
+ * decided row: lock order approval, then run; transactional outbox spec §6). It is announced after
+ * the commit as the domain event `approval.decided` (exactly once: only the decision that changed
+ * the row from pending; no kernel subscriber: the IM card update is owed by the `approval_decided`
+ * append, transactional outbox spec §8.1). Events are appended in the context's transaction
+ * (`EventLog.appendIn`) and published after the commit.
  */
 @Injectable()
 export class ApprovalsService {
@@ -341,6 +344,8 @@ export class ApprovalsService {
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ceilingLimits">,
+    /** A decision resumes its waiting run in the decision's transaction. */
+    @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
   ) {}
 
   /**
@@ -800,7 +805,7 @@ export class ApprovalsService {
   /** After the commit: the decision's events reach the page, the run's waits and IM delivery. */
   private async announceDecided(record: ApprovalRecord, toSeq: number): Promise<void> {
     await this.eventLog.notify(record.conversationId, toSeq);
-    // waits resume the run and its IM delivery is enqueued (handler failures are logged)
+    // its IM delivery is enqueued (handler failures are logged); the run resumed in the decision
     await this.events.emit("approval.decided", {
       id: record.id,
       orgId: record.orgId,
@@ -832,6 +837,8 @@ export class ApprovalsService {
     network?: NetworkDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     const t = this.db.db;
+    // lock order: the conversation, the approval, then the run (as a stop of the waiting run)
+    if (!(await this.lockConversationOf(id, orgId))) throw notFound();
     const locked = await t
       .selectFrom("approvals")
       .selectAll()
@@ -1003,6 +1010,7 @@ export class ApprovalsService {
           ...(reason !== undefined && { reason }),
         },
       });
+      await this.resumes.resumeIn(before.runId, id);
       return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
     }
     await audit(t, {
@@ -1023,6 +1031,9 @@ export class ApprovalsService {
         ...(reason !== undefined && { reason }),
       },
     });
+    // the run last (lock order: the decided row, then `runs`); a still-running run is resumed by
+    // its suspend's re-check
+    await this.resumes.resumeIn(before.runId, id);
     return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
@@ -1192,6 +1203,7 @@ export class ApprovalsService {
     toSeq?: number;
   }> {
     const t = this.db.db;
+    if (!(await this.lockConversationOf(id))) return { outcome: "settled" as const };
     const locked = await t
       .selectFrom("approvals")
       .selectAll()
@@ -1243,20 +1255,46 @@ export class ApprovalsService {
   }
 
   /**
-   * 在调用方的事务内（`mandatory`）取消某组织里指定由 `accountId` 处理（`requested_for`）的全部 pending 审批（成员离职），
-   * 走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、写 `approval_decided{cancelled}`（处理人为 null）。
-   * 返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件（并可续跑对应运行）。
+   * The conversations of `orgId` holding a pending approval `accountId` is asked to decide
+   * (`requested_for`), read without locks: offboarding locks them, by tree root first
+   * (`lockConversationTrees`), before {@link cancelPendingFor}.
+   */
+  async pendingConversationsFor(orgId: string, accountId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("approvals")
+      .select("conversation_id")
+      .distinct()
+      .where("org_id", "=", orgId)
+      .where("requested_for", "=", accountId)
+      .where("status", "=", "pending")
+      .execute();
+    return rows.map((r) => r.conversation_id);
+  }
+
+  /**
+   * In the caller's transaction (`mandatory`; offboarding): cancels every pending approval of
+   * `orgId` that `accountId` is asked to decide (`requested_for`) in `conversationIds`, the
+   * conversations the caller already locked (by tree root first, `lockConversationTrees`; lock
+   * order: conversations, then approval rows), along the same path as {@link cancelPendingIn}:
+   * `cancelled`, `approval_decided{cancelled}` with no decider. An approval asked meanwhile in
+   * another conversation is left to its run's stop, so no conversation is locked after a row.
+   * Returns the cancelled records and the highest seq written per conversation; the caller
+   * publishes after the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async cancelPendingFor(
     orgId: string,
     accountId: string,
+    conversationIds: readonly string[],
   ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
     const t = this.db.db;
+    const convs = [...conversationIds];
+    if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("approvals")
       .selectAll()
       .where("org_id", "=", orgId)
+      .where("conversation_id", "in", convs)
       .where("requested_for", "=", accountId)
       .where("status", "=", "pending")
       .orderBy("created_at")
@@ -1285,8 +1323,10 @@ export class ApprovalsService {
    * active runs `authorAccountId` started, in the conversation and in its sub-agents'
    * conversations at any depth (their asks are shown in the root). Each becomes `skipped` with
    * `approval_decided{skipped}` by the author; access stays blocked. Returns the skipped records and
-   * the highest seq written per conversation; the caller notifies and emits
-   * `approval.decided{skipped}` after the commit, so the runs resume.
+   * the highest seq written per conversation; the caller resumes their waiting runs in this
+   * transaction once every skipped row is locked (`ConversationsService.skipWaitsIn`), and notifies
+   * and emits the domain event `approval.decided{skipped}` after the commit (its IM card update is
+   * owed by the append, transactional outbox spec §8.1).
    */
   @Transactional({ propagation: "mandatory" })
   async skipNetworkIn(
@@ -1295,11 +1335,22 @@ export class ApprovalsService {
   ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
     const t = this.db.db;
     const tree = await this.subtreeOf(conversationId);
+    // the sub-agents' conversations with a pending ask first, in id order (lock order:
+    // conversation, then approval rows; the caller holds `conversationId`'s already)
+    const convs = await this.lockConversations(
+      t
+        .selectFrom("approvals")
+        .select("conversation_id")
+        .where("conversation_id", "in", tree)
+        .where("kind", "=", "network")
+        .where("status", "=", "pending"),
+    );
+    if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("approvals as a")
       .innerJoin("runs as r", "r.id", "a.run_id")
       .selectAll("a")
-      .where("a.conversation_id", "in", tree)
+      .where("a.conversation_id", "in", convs)
       .where("a.kind", "=", "network")
       .where("a.status", "=", "pending")
       .where(sql<boolean>`a.expires_at > now()`)
@@ -1323,6 +1374,44 @@ export class ApprovalsService {
       records.push(toRecord(updated));
     }
     return { records, seqs };
+  }
+
+  /**
+   * Locks the conversation row of approval `id` (`SELECT … FOR UPDATE`; re-entrant with the lock
+   * `EventLog.appendIn` takes later). Every write to an approval row takes its conversation's lock
+   * first, then the approval row, then the run row, as the stop of a waiting run
+   * (`Waits.abortWaitingIn`) and the questions do, so no two of them can deadlock. False: no such
+   * approval (in `orgId`).
+   */
+  private async lockConversationOf(id: string, orgId?: string): Promise<boolean> {
+    const t = this.db.db;
+    let q = t.selectFrom("approvals").select("conversation_id").where("id", "=", id);
+    if (orgId !== undefined) q = q.where("org_id", "=", orgId);
+    const row = await q.executeTakeFirst();
+    if (!row) return false;
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", row.conversation_id)
+      .forUpdate()
+      .executeTakeFirst();
+    return true;
+  }
+
+  /** Locks, in id order, the conversations `ids` selects; returns their ids. */
+  private async lockConversations(ids: {
+    execute(): Promise<{ conversation_id: string }[]>;
+  }): Promise<string[]> {
+    const found = [...new Set((await ids.execute()).map((r) => r.conversation_id))];
+    if (found.length === 0) return [];
+    const rows = await this.db.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "in", found)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    return rows.map((r) => r.id);
   }
 
   /** `conversationId` and its sub-agents' conversations at any depth (at most 16 levels). */

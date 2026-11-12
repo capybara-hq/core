@@ -17,6 +17,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { sameRepository } from "../packages/provenance.js";
 import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import {
@@ -39,6 +40,7 @@ import {
   readGitTreeAndOids,
   resolveGitCommit,
 } from "./git-source.js";
+import { oweOwnedPluginCleanup } from "./job-ids.js";
 import {
   fetchMarketplaceArchive,
   marketplaceNetPolicy,
@@ -337,6 +339,8 @@ export class CatalogService {
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     /** Serializes a claim release with an install of that name still committing (F10). */
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
+    /** A removed org-owned plugin's cleanup job, owed by the removal (transactional outbox §8.1). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -797,7 +801,8 @@ export class CatalogService {
    * still enabled on the deployment -> 409 `catalog.extension_enabled` (details
    * `[{ extension, displayName }]`): disable it on the Extensions page first, as an uninstall
    * requires. A disabled extension keeps its install record (the super admin uninstalls it on the
-   * Extensions page); an org-owned item's extension is taken out by `OwnedPluginCleanup`.
+   * Extensions page); an org-owned item's extension is taken out by `OwnedPluginCleanup`, the job
+   * the removal owes ({@link removeIn}).
    */
   async remove(actor: string, itemId: string, opts: ActorOpts = {}): Promise<void> {
     if (!UUID_RE.test(itemId)) throw notFound();
@@ -867,8 +872,9 @@ export class CatalogService {
    * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
    * extension name claim of a first upload still waiting released (ruling P3-37, F10), its themes
    * soft-deleted (refused with 409 `theme.platform_default` while one is the platform default),
-   * pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the
-   * removed item's name, or null when it is gone already.
+   * pending requests cancelled, an org-owned item's cleanup job owed
+   * (`owned-plugin-cleanup-<itemId>`), audit `catalog.removed` (`actor` null: the kernel). Returns
+   * the removed item's name, or null when it is gone already.
    */
   @Transactional({ propagation: "mandatory" })
   async removeIn(
@@ -913,6 +919,13 @@ export class CatalogService {
     if (row.awaiting_confirmation && row.package_name !== null) {
       await this.installLock.lock(row.name);
       await releaseExtensionClaim(t, row.name, row.package_name);
+    }
+    // An org-owned plugin: its extension is taken out (and its name claim released) by the cleanup
+    // job the removal owes, whoever removes it (the super admin, its owner, an org deletion). Also
+    // while its first upload still waits: a confirmation may have committed its install and not
+    // reached its take-out yet (the job is idempotent; nothing installed changes nothing)
+    if (row.owner_org_id !== null) {
+      await oweOwnedPluginCleanup(this.outbox, itemId);
     }
     // Its themes go with it (themes spec §6): nothing refers to a theme row (a theme picked by an
     // org or a person is an id that falls back once no live theme has it)

@@ -7,7 +7,10 @@ import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { PluginInstallLock } from "../../src/extensions/locks.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
+import {
+  runOutsideTransaction,
+  TransactionHost,
+} from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -181,7 +184,9 @@ async function sharedWithB(orgId: string, itemId: string, skill: string): Promis
     .set({ scope_version: sql<number>`scope_version + 1` })
     .where("id", "=", itemId)
     .execute();
-  await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+  await env.k.app
+    .get(TransactionHost)
+    .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
 }
 

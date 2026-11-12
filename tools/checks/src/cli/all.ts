@@ -6,6 +6,7 @@ import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
+import { checkOutboxRegistry } from "../outbox-registry.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkPlatformOps } from "../platform-ops.js";
 import { checkPluginClientApi, checkPluginClientApiReport } from "../plugin-client-api.js";
@@ -65,6 +66,7 @@ const checks: NamedCheck[] = [
   { name: "Agent docs", run: () => checkAgentDocs(root) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },
+  { name: "Outbox registry", run: () => checkOutboxRegistry(root) },
   { name: "Platform operations", run: () => checkPlatformOps(root) },
   {
     name: "compose haproxy",

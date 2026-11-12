@@ -78,6 +78,22 @@ function attentionRows(a: AdminAttention) {
             ? `Check the provider's deployment config and connection on its extension page (/admin/extensions/${p.plugin}); the models page (/admin/models) shows the list.`
             : "The provider lists no chat model that is switched on: switch one on in the admin console (/admin/models) or check the provider's config.",
       })),
+      ...a.outbox.map((o) => ({
+        kind: "outbox" as const,
+        id: o.kind,
+        name: "Background work that could not be queued",
+        state: "dead",
+        reason: `${o.count} dead outbox row(s), the oldest dead since ${o.oldestAt}`,
+        next: "List them with admin.outbox-list-dead, then retry each with admin.outbox-retry or drop it with admin.outbox-discard.",
+      })),
+      ...a.queue.map((q) => ({
+        kind: "queue" as const,
+        id: q.kind,
+        name: "The queue lost background jobs",
+        state: "lost_jobs",
+        reason: `${q.count} queued run job(s) were missing from the queue, the last at ${q.lastAt}; they were queued again`,
+        next: "Redis lost data: check its persistence (AOF or snapshots) and whether it restarted or evicted keys. Nothing to do per run; the item clears a week after the last loss.",
+      })),
     ],
     more: a.more,
     unavailable: a.unavailable,
@@ -119,7 +135,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.overview",
         description:
-          "The admin console's dashboard numbers (super admin): orgs, accounts and attentionTotal, everything waiting for a super admin (the platform inbox total plus the extensions, plugin updates and model providers admin.attention lists); partial is true when one of those lists could not be read right now (attentionTotal then leaves it out).",
+          "The admin console's dashboard numbers (super admin): orgs, accounts and attentionTotal, everything waiting for a super admin (the platform inbox total plus the extensions, plugin updates and model providers admin.attention lists, every dead outbox row and the lost-jobs item of the run queue); partial is true when one of those lists could not be read right now (attentionTotal then leaves it out).",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -130,7 +146,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.attention",
         description:
-          "What needs the super admin besides the platform inbox (super admin), one compact row each (kind, id, name, state, reason, next step): extensions (reason config, load_failed, approval, dependency, conflict, converging or legacy_format), platform plugins with a newer marketplace version (reason names both versions) and model providers (reason list_failed or no_chat_model). Each kind lists at most 20 rows; more counts the rest per kind. unavailable names a kind that could not be read right now (try again later). The platform inbox itself is inbox.platform-list.",
+          "What needs the super admin besides the platform inbox (super admin), one compact row each (kind, id, name, state, reason, next step): extensions (reason config, load_failed, approval, dependency, conflict, converging or legacy_format), platform plugins with a newer marketplace version (reason names both versions) model providers (reason list_failed or no_chat_model) background work the kernel could not queue (kind outbox: how many outbox rows are dead and since when) and run jobs the queue lost (kind queue: Redis lost data; the runs were queued again). Each kind lists at most 20 rows; more counts the rest per kind. unavailable names a kind that could not be read right now (try again later). The platform inbox itself is inbox.platform-list.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },

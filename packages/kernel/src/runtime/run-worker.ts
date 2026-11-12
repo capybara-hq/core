@@ -31,11 +31,11 @@ import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { SkillsCatalogService } from "../skills/catalog.js";
 import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
-import { ToolPipeline } from "../tools/pipeline.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
+import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
 import { PluginContextService } from "./plugin-context.service.js";
@@ -43,8 +43,8 @@ import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
 import { RunDrafts, streamSink } from "./run-drafts.js";
-import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
-import type { RunJobData } from "./run-jobs.js";
+import { type FinishRunArgs, RunFinish } from "./run-finish.js";
+import { type RunJobData, TERMINAL_STATUSES } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
 import { AgentLoops, RunSteps } from "./run-steps.js";
 import { dispatchOfChildRun, rootConversationOf } from "./subagents/child.js";
@@ -79,6 +79,12 @@ export interface RunHooks {
   lockTtlMs?: number;
   /** 任务结束后的每次 ensureRun 尝试之前调用（attempt 从 0 起）；抛错即模拟该次尝试失败。 */
   beforeEnsureRun?(conversationId: string, attempt: number): Promise<void>;
+  /** Called after a run job read the run's status, before it takes the conversation lock. */
+  afterRunRead?(runId: string, conversationId: string): Promise<void>;
+  /** Called with the conversation lock held, before a queued run's `run_started` is written. */
+  beforeRunStarted?(runId: string, conversationId: string): Promise<void>;
+  /** Called with the conversation lock held, before a queued run's status becomes `running`. */
+  beforeRunning?(runId: string, conversationId: string): Promise<void>;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -103,7 +109,7 @@ export type ProcessResult = "ensure" | undefined;
 
 /**
  * `broken`：编排自身出错，已尽力标记失败。之后仍 ensureRun：标记成功时触发消息已被消费，只有更新的消息才起新一轮；
- * 标记也失败时运行停在 running，而任务此时已完成并移除，ensureRun 的孤儿清理会把它标记为失败——
+ * 标记也失败时运行停在 running，而任务此时已完成并移除，`run-orphan-check` 会把它标记为失败——
  * 每一轮都要有新的用户消息，不会形成无限重试。
  */
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken" | "suspended";
@@ -183,12 +189,6 @@ export class RunWorker {
     private readonly pluginContext: Pick<PluginContextService, "record">,
     /** The run's resolved tools, for the plugin context's `tools` (chat runs with providers). */
     @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "forAgent">,
-    /**
-     * In the terminal transaction of every run: writes its open `Agent` call results
-     * (`stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe hooks after the
-     * commit (sub-agents spec §12, review m1: a failed or stalled parent too).
-     */
-    @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The steps' live drafts this process writes for the runs it executes. */
@@ -256,7 +256,8 @@ export class RunWorker {
   /**
    * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
    * active fork invocation child on its behalf (no account); background `Agent` children keep
-   * running (agent map spec §5.4). The wait sweep is the backstop.
+   * running (agent map spec §5.4). The terminal transaction owed the same stop (`stop-tree`), the
+   * backstop when this call never happens.
    */
   private async stopChildren(runId: string): Promise<void> {
     try {
@@ -269,7 +270,8 @@ export class RunWorker {
   /**
    * After a sub-agent run's terminal state committed (sub-agents spec §7.3): reports it to the
    * parent. Called with any run id whose conversation may be a child; runs that were not
-   * dispatched are ignored. Errors are logged (the wait sweep repairs a missed call).
+   * dispatched are ignored. Errors are logged: the terminal transaction owed the same delivery
+   * (`deliver-to-parent`) and stop (`stop-tree`), which repair a missed call.
    */
   private async childFinished(runId: string): Promise<void> {
     try {
@@ -457,6 +459,7 @@ export class RunWorker {
     }
     // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
     if (run.status === "waiting") return;
+    await this.hooks?.afterRunRead?.(runId, conversationId);
     const conv = await this.db
       .selectFrom("conversations")
       .select(["org_id", "agent_id", "kind", "subagent_depth", "source", "account_id"])
@@ -527,8 +530,6 @@ export class RunWorker {
       if (!entered) {
         delayMs = QUOTA_FULL_DELAY_MS;
       } else {
-        // 运行开始执行（含续跑、stalled 后接手）：通知旁路（渠道出站投递据此把输出投到 IM），失败不影响运行
-        void this.events.emit("run.started", { conversationId, runId });
         const r = await this.execute(run, { id: conversationId, ...conv }, state).catch(
           async (err: unknown): Promise<ExecResult> => {
             if (state.abandoned) return "abandoned";
@@ -608,7 +609,8 @@ export class RunWorker {
     // a chat run's saved agent version, under the conversation's model switch (UI refresh B); a
     // sub-agent has none: it never takes a selection
     let saved: AgentDefinition | undefined;
-    let maxSteps = runtime.maxSteps;
+    /** The run's step limit; `undefined` = no limit (`runtime.maxSteps` 0). */
+    let maxSteps = tightestLimit(runtime.maxSteps);
     let parent: SubagentParent | undefined;
     /** A sub-agent's name in its run context: the roster name, or the forked skill's. */
     let childName: string | undefined;
@@ -630,7 +632,8 @@ export class RunWorker {
           ? trigger.payload.dispatch?.narrowed
           : undefined,
       );
-      maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
+      // the tighter of the logged limit and the deployment's (0 in either = no limit there)
+      maxSteps = tightestLimit(started.payload.maxSteps, runtime.maxSteps);
       childName = started.payload.template.invokedSkill?.name ?? started.payload.agentType;
       const row = await dispatchOfChildRun(this.db, runId);
       const otherAgent = started.payload.template.source === "agent";
@@ -704,9 +707,13 @@ export class RunWorker {
     }
     if (run.status === "queued" || startedAt === null) {
       if (!existingStart) {
+        await this.hooks?.beforeRunStarted?.(runId, conversationId);
         if (saved !== undefined)
           await this.fallBackIfUnavailable(conv.org_id, conversationId, runId, saved);
         const started = await this.appendRunStarted(conversationId, run, agent, saved);
+        // the status was read before the conversation lock: a stop that ended the run meanwhile
+        // (a queued run's direct abort, an orphan abort) wins, and the run never starts
+        if (started.terminal) return "finished";
         agent = started.agent;
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
@@ -757,30 +764,45 @@ export class RunWorker {
         // the run's own abort watch starts with its execution below: until then, the shutdown
         signal: state.shutdown.signal,
       });
+      await this.hooks?.beforeRunning?.(runId, conversationId);
+      // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })
         .where("id", "=", runId)
+        .where("status", "in", ["queued", "running"])
         .returning("started_at")
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+      if (updated === undefined) return "finished";
       startedAt = updated.started_at as Date;
     }
+    // the run executes (a first start, a resume, a stalled takeover): a hint to the side paths (the
+    // channel outbound delivers its output to IM), after the start went through, never for a run a
+    // stop ended first; a failure does not affect the run
+    void this.events.emit("run.started", { conversationId, runId });
     // 截止时间以首次开始为准：停机后在其他 worker 续跑也不重新计时；等人处理的时长（waited_ms）不计入。
-    const deadline = startedAt.getTime() + Number(run.waited_ms) + runtime.maxRunSeconds * 1000;
+    // `runtime.maxRunSeconds` 0: no deadline, no timer (the run ends when the model stops or is stopped)
+    const deadline = runDeadline(
+      startedAt.getTime() + Number(run.waited_ms),
+      runtime.maxRunSeconds,
+    );
 
     const ac = new AbortController();
     let abortedBy: string | null | undefined;
     let abortDetail: RunAbortDetail | undefined;
     let deadlineHit = false;
-    const deadlineTimer = setTimeout(
-      () => {
-        deadlineHit = true;
-        ac.abort();
-      },
-      Math.max(0, deadline - Date.now()),
-    );
+    const deadlineTimer =
+      deadline === undefined
+        ? undefined
+        : setTimeout(
+            () => {
+              deadlineHit = true;
+              ac.abort();
+            },
+            Math.max(0, deadline - Date.now()),
+          );
     state.stopTimers = () => {
-      clearTimeout(deadlineTimer);
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
     };
 
     let unwatch: (() => Promise<void>) | undefined;
@@ -836,7 +858,10 @@ export class RunWorker {
           shutdown: state.shutdown.signal,
           sink: this.sinkFor(conversationId),
           pendingAbsorbable,
-          limits: { maxSteps, deadline },
+          limits: {
+            ...(maxSteps !== undefined && { maxSteps }),
+            ...(deadline !== undefined && { deadline }),
+          },
           // a sub-agent's conversation fires hooks like a chat, with `parent` set (spec §11)
           conversationKind:
             conv.kind === "eval" ? "eval" : conv.kind === "subagent" ? "subagent" : "chat",
@@ -1002,7 +1027,7 @@ export class RunWorker {
     /** The definition so far (a sub-agent's frozen one is final). */
     current: AgentDefinition,
     saved: AgentDefinition | undefined,
-  ): Promise<{ toSeq: number | undefined; agent: AgentDefinition }> {
+  ): Promise<{ toSeq: number | undefined; agent: AgentDefinition; terminal?: true }> {
     const t = this.db;
     await t
       .selectFrom("conversations")
@@ -1010,6 +1035,17 @@ export class RunWorker {
       .where("id", "=", conversationId)
       .forUpdate()
       .execute();
+    // the run's status again under the locks (conversation, then run, as `RunFinish.finishIn`):
+    // the job read it before taking the conversation lock, and a stop may have ended it since
+    const row = await t
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", run.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || TERMINAL_STATUSES.has(row.status)) {
+      return { toSeq: undefined, agent: current, terminal: true };
+    }
     const agent =
       saved !== undefined
         ? effectiveDefinition(saved, await readSelection(t, conversationId))
@@ -1102,7 +1138,7 @@ export class RunWorker {
     hook = true,
     floorToTrigger = true,
   ): Promise<number | null> {
-    let fire = () => {};
+    // the terminal transaction also writes the run's open fork report and cancels its waits
     const toSeq = await this.finisher.finish({
       conversationId,
       runId,
@@ -1110,11 +1146,7 @@ export class RunWorker {
       consumed,
       event,
       floorToTrigger,
-      beforeTerminal: async () => {
-        fire = (await this.pipeline.stopOpenAgentCalls(runId)).fire;
-      },
     });
-    if (toSeq !== null) fire();
     if (hook) await this.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;
   }

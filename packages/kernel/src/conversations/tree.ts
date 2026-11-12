@@ -50,3 +50,41 @@ export async function conversationAncestors(
     SELECT id FROM up WHERE level > 0 ORDER BY level`.execute(db);
   return r.rows.map((row) => row.id);
 }
+
+/**
+ * Locks the conversations `ids` and every ancestor of theirs (`FOR NO KEY UPDATE`, in the caller's
+ * transaction) tree by tree, root first: the trees in root id order, within a tree by level below
+ * the root, then id. A reply locks its root conversation and only then the sub-agents' below it
+ * (`ConversationsService.skipWaitsIn`), and a dispatch locks a parent before its child; a locker
+ * of conversations in plain id order could take a child before its root and wait for the root
+ * while such a path holds the root and waits for the child (40P01). Returns the ids locked (the
+ * requested ones and their ancestors); an unknown id is skipped.
+ */
+export async function lockConversationTrees(
+  db: KernelSchemaDb,
+  ids: readonly string[],
+): Promise<string[]> {
+  const wanted = [...new Set(ids)];
+  if (wanted.length === 0) return [];
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE up(start, id, parent, level) AS (
+      SELECT c.id, c.id, c.parent_conversation_id, 0 FROM capybara.conversations c
+      WHERE c.id = ANY(${wanted}::text[])
+      UNION ALL
+      SELECT up.start, c.id, c.parent_conversation_id, up.level + 1
+      FROM capybara.conversations c JOIN up ON c.id = up.parent
+      WHERE up.level < ${TREE_MAX_LEVELS}
+    ),
+    tops AS (
+      SELECT DISTINCT ON (start) start, id AS root, level AS height
+      FROM up ORDER BY start, level DESC
+    ),
+    nodes AS (
+      SELECT DISTINCT up.id, tops.root, tops.height - up.level AS depth
+      FROM up JOIN tops ON tops.start = up.start
+    )
+    SELECT c.id FROM capybara.conversations c JOIN nodes n ON n.id = c.id
+    ORDER BY n.root, n.depth, n.id
+    FOR NO KEY UPDATE OF c`.execute(db);
+  return r.rows.map((row) => row.id);
+}
