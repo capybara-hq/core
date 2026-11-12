@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -6,13 +6,16 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionDeploymentConfigService } from "../../src/extensions/deployment-config.js";
+import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { createLogger } from "../../src/log.js";
 import { PluginContextService } from "../../src/runtime/plugin-context.service.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -293,6 +296,71 @@ describe("context@1 providers at run start", { timeout: 60_000 }, () => {
     );
     expect(calls().map((c) => c.conversationId)).toEqual([conv]);
     expect(await contexts(child as string)).toEqual([]);
+  });
+
+  it("a provider whose config cannot be read keeps its recorded text (fail open)", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await run(owner, conv, 1);
+    // the next run start's read of the fixture's effective config fails once (a transient error)
+    const effective = k.app.get(EffectiveConfigs);
+    const real = effective.get.bind(effective);
+    let failed = 0;
+    const spy = vi.spyOn(effective, "get").mockImplementation(async (org, plugin) => {
+      if (plugin === PLUGIN && failed === 0) {
+        failed++;
+        throw new Error("connection terminated unexpectedly");
+      }
+      return real(org, plugin);
+    });
+    try {
+      await run(owner, conv, 2);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(failed).toBe(1);
+    // not asked, not switched off: the text stays as recorded
+    expect(calls()).toHaveLength(1);
+    expect((await contexts(conv)).map((e) => e.payload.text)).toEqual(["fake context"]);
+    expect(
+      lines.some(
+        (l) =>
+          l.level === "warn" &&
+          l.context === "ExtensionPointDefaults" &&
+          (l as { extension?: string }).extension === PLUGIN,
+      ),
+    ).toBe(true);
+    await run(owner, conv, 3);
+    expect(calls()).toHaveLength(2);
+    expect(await contexts(conv)).toHaveLength(1);
+  });
+
+  it("an eval conversation's run in the run worker never asks the providers", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await sql`UPDATE capybara.conversations SET kind = 'eval' WHERE id = ${conv}`.execute(raw);
+    // the run worker executes a run of the row's kind: a message, a queued run and its job
+    const [msg] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: "echo:hi" }], authorAccountId: ownerId },
+      },
+    ]);
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conv,
+        status: "queued",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: msg?.seq ?? 0,
+      })
+      .execute();
+    await k.app.get(RunQueue).enqueue({ runId, conversationId: conv }, `run-eval-${runId}`);
+    const ends = await waitForTerminal(db, conv, 1, 20_000);
+    expect(ends[0]?.runId).toBe(runId);
+    expect(calls()).toEqual([]);
+    expect(await contexts(conv)).toEqual([]);
   });
 
   it("an eval or sub-agent kind never asks the providers", async () => {

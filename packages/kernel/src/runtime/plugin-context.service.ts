@@ -59,7 +59,8 @@ const sha256 = (text: string): string => createHash("sha256").update(text).diges
  * stays in effect) and logged. A provider loaded here that recorded text but no longer serves the
  * org (switched off, its config invalid) gets an empty event, so its text stops following
  * summaries; a plugin not loaded on this replica is left alone (another replica may still load
- * it during a rollout, and blanking it here would make its text flap). Chat runs only: an
+ * it during a rollout, and blanking it here would make its text flap), and so is one whose status
+ * could not be read (a transient error must not flip the model's context). Chat runs only: an
  * eval replay reads the recorded events, and a sub-agent gets no plugin context (spec §5.4).
  */
 @Injectable()
@@ -77,7 +78,20 @@ export class PluginContextService {
   /** Asks the providers and records what changed (see the class); notifies after the commit. */
   async record(input: PluginContextInput): Promise<void> {
     if (input.kind !== "chat") return;
-    const providers = await this.points.providersFor<ContextProvider>(input.orgId, "context");
+    let found: { providers: PointProvider<ContextProvider>[]; failed: Set<string> };
+    try {
+      found = await this.points.providersFor<ContextProvider>(input.orgId, "context");
+    } catch (err) {
+      // fail open: without the org's providers nothing is asked and nothing is switched off
+      this.log.warn("context providers not read; plugin context left as recorded", {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        err,
+      });
+      return;
+    }
+    const { providers } = found;
     const tools = providers.length > 0 ? await input.toolKeysByPlugin() : new Map();
     const answers = await Promise.all(
       providers.map(async (p) => {
@@ -101,7 +115,8 @@ export class PluginContextService {
       this.registry
         .list("context")
         .map((e) => e.plugin)
-        .filter((plugin) => !serving.has(plugin)),
+        // a provider whose status could not be read (a transient error) keeps its recorded text
+        .filter((plugin) => !serving.has(plugin) && !found.failed.has(plugin)),
     );
     // nothing answered and nothing to switch off: no transaction, no row lock
     if (texts.size === 0 && off.size === 0) return;

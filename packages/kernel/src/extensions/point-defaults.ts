@@ -87,7 +87,7 @@ export class ExtensionPointDefaults {
     if (!hasSelection(point)) {
       throw new Error(`extension point ${point} has no org-default selection`);
     }
-    const candidates = await this.candidates(orgId, point);
+    const { candidates } = await this.candidates(orgId, point);
     const chosen = await this.choose(orgId, point, candidates);
     if (!chosen.ok) return chosen;
     const c = chosen.candidate;
@@ -104,15 +104,24 @@ export class ExtensionPointDefaults {
    * Every provider of `point` (the name without the major, e.g. `context`) that could serve
    * `orgId` now, in extension-name order: the same candidates {@link resolve} chooses from (loaded
    * here, enabled in the org, valid org and effective config, `configured()` not false), for
-   * points whose every enabled provider is used (no `selection`).
+   * points whose every enabled provider is used (no `selection`). `failed`: the providers enabled
+   * in the org whose status could not be read (reading a config or `configured()` threw, e.g. a
+   * transient database error); they are neither serving nor known to be off.
    */
-  async providersFor<T>(orgId: string, point: string): Promise<PointProvider<T>[]> {
-    return (await this.candidates(orgId, point)).map((c) => ({
-      extension: c.extension,
-      impl: c.impl as T,
-      orgConfig: c.orgConfig,
-      config: c.config,
-    }));
+  async providersFor<T>(
+    orgId: string,
+    point: string,
+  ): Promise<{ providers: PointProvider<T>[]; failed: Set<string> }> {
+    const { candidates, failed } = await this.candidates(orgId, point);
+    return {
+      providers: candidates.map((c) => ({
+        extension: c.extension,
+        impl: c.impl as T,
+        orgConfig: c.orgConfig,
+        config: c.config,
+      })),
+      failed,
+    };
   }
 
   /** Every `org-default` point with its candidates, stored default and effective provider. */
@@ -120,7 +129,7 @@ export class ExtensionPointDefaults {
     const stored = await this.storedDefaults(orgId);
     const out: OrgPointDefaultView[] = [];
     for (const point of selectionPoints()) {
-      const candidates = await this.candidates(orgId, point);
+      const { candidates } = await this.candidates(orgId, point);
       const chosen = pick(candidates, stored.get(point));
       out.push({
         point,
@@ -189,8 +198,14 @@ export class ExtensionPointDefaults {
     });
   }
 
-  /** The candidates of `point` in `orgId`, by extension name. */
-  private async candidates(orgId: string, point: string): Promise<Candidate[]> {
+  /**
+   * The candidates of `point` in `orgId`, by extension name, and the enabled providers whose status
+   * could not be read (a read or `configured()` threw: excluded, logged).
+   */
+  private async candidates(
+    orgId: string,
+    point: string,
+  ): Promise<{ candidates: Candidate[]; failed: Set<string> }> {
     const db = this.kdb.db;
     const enabled = new Set(
       (
@@ -205,6 +220,7 @@ export class ExtensionPointDefaults {
       if (enabled.has(e.plugin) && !providers.has(e.plugin)) providers.set(e.plugin, e.impl);
     }
     const out: Candidate[] = [];
+    const failed = new Set<string>();
     for (const [extension, impl] of providers) {
       let cfg: { enabled: boolean; config: unknown } | undefined;
       try {
@@ -216,6 +232,7 @@ export class ExtensionPointDefaults {
           extension,
           err,
         });
+        failed.add(extension);
         continue;
       }
       if (!cfg?.enabled) continue;
@@ -230,6 +247,7 @@ export class ExtensionPointDefaults {
           extension,
           err,
         });
+        failed.add(extension);
         continue;
       }
       if (!effective.ok) continue;
@@ -246,13 +264,15 @@ export class ExtensionPointDefaults {
             extension,
             err,
           });
+          failed.add(extension);
           continue;
         }
         if (!ok) continue;
       }
       out.push({ extension, impl, orgConfig: cfg.config, config: effective.config });
     }
-    return out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
+    out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
+    return { candidates: out, failed };
   }
 
   private async choose(
