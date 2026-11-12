@@ -2,7 +2,6 @@ import {
   type AvailableHook,
   defineExtension,
   type ExtensionContext,
-  HOOKS_AVAILABLE,
 } from "@capybara-hq/plugin-sdk";
 
 /**
@@ -181,7 +180,15 @@ export default defineExtension({
       const purpose = params.get("purpose");
       const counts: Record<string, number> = {};
       const last: Record<string, unknown> = {};
-      for (const m of [...HOOKS_AVAILABLE, "handler"]) {
+      // the mounts it registers (the lifecycle mounts are not among them), as permissions.hooks
+      for (const m of [
+        "model.request",
+        "model.response",
+        "tool.preExecute",
+        "tool.postExecute",
+        "usage.report",
+        "handler",
+      ]) {
         counts[m] = Number((await ctx.kv.get(`count:${orgId}:${m}`)) ?? 0);
         const raw = await ctx.kv.get(
           purpose !== null
