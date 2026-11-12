@@ -262,19 +262,20 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
   describe("the settle checks of a task run (ruling R26)", () => {
     /**
      * The owed settle rows of `taskRunId` (the claimed checks, or with `unfired` the unfired one),
-     * with their delay on the database's clock (ms).
+     * with their due time (`run_at`, ms). The kernel computes it on its own (Node) clock, the
+     * test's process: bounds are taken with `Date.now()` around the owing call, never against the
+     * database's `now()` (a few ms of skew between the two clocks broke them).
      */
     const owedSettles = async (taskRunId: string, unfired = false) =>
       (
-        await sql<{ job_id: string; data: unknown; org_id: string; delay_ms: string }>`
-          SELECT job_id, data, org_id,
-            round(extract(epoch FROM run_at - now()) * 1000) AS delay_ms
+        await sql<{ job_id: string; data: unknown; org_id: string; run_at: Date }>`
+          SELECT job_id, data, org_id, run_at
           FROM capybara.outbox
           WHERE job_name = 'sched-settle' AND dead_at IS NULL
             AND data ->> 'taskRunId' = ${taskRunId}
             AND (data ? 'unfired') = ${unfired}
           ORDER BY id`.execute(raw)
-      ).rows.map((r) => ({ ...r, delay_ms: Number(r.delay_ms) }));
+      ).rows.map((r) => ({ ...r, run_at: new Date(r.run_at).getTime() }));
 
     /**
      * Makes job `jobId` due now and waits until it is done: an owed row is brought forward and
@@ -383,6 +384,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       const [run] = await store.listRuns(db, t.id, 10);
       if (!run) throw new Error("the scan wrote no task run");
       const restore = await failStarts(t.id);
+      const before = Date.now();
       try {
         // every attempt of the fire job fails at the start; the claim committed before it
         for (let i = 0; i < 3; i++) {
@@ -393,6 +395,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       } finally {
         await restore();
       }
+      const after = Date.now();
       expect((await runOf(run.id)).status).toBe("pending");
       expect((await runOf(run.id)).firedAt).not.toBeNull();
       const [owed, ...more] = await owedSettles(run.id);
@@ -402,8 +405,8 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
         data: { taskRunId: run.id, check: 0 },
         org_id: orgId,
       });
-      expect(owed?.delay_ms).toBeGreaterThan(SCHED_SETTLE_AFTER_MS - 60_000);
-      expect(owed?.delay_ms).toBeLessThanOrEqual(SCHED_SETTLE_AFTER_MS);
+      expect(owed?.run_at).toBeGreaterThanOrEqual(before + SCHED_SETTLE_AFTER_MS);
+      expect(owed?.run_at).toBeLessThanOrEqual(after + SCHED_SETTLE_AFTER_MS);
 
       await settleNow(run.id);
       expect(await runOf(run.id)).toMatchObject({
@@ -447,8 +450,8 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
         data: { taskRunId: run.id, unfired: true },
         org_id: orgId,
       });
-      const due = tick.getTime() + 70 * 60_000 - Date.now();
-      expect(Math.abs((unfired?.delay_ms ?? 0) - due)).toBeLessThan(60_000);
+      // the tick's own time decides (it is later than ten minutes from now): no clock read
+      expect(unfired?.run_at).toBe(tick.getTime() + 70 * 60_000);
 
       await fireFailsForGood(t.id, run.id);
       await deliverNow(schedSettleUnfiredJobId(run.id));
@@ -470,13 +473,15 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
 
     it("a run-now whose fire job fails for good before its claim is removed", async () => {
       const t = await dueTask({ nextRunAt: new Date(Date.now() + 86_400_000) });
+      const before = Date.now();
       const run = await k.app.get(ScheduledTasksService).runNow(orgId, ownerId, t.id, {
         trial: false,
       });
+      const after = Date.now();
       const [unfired] = await owedSettles(run.id, true);
       expect(unfired?.job_id).toBe(schedSettleUnfiredJobId(run.id));
-      expect(unfired?.delay_ms).toBeGreaterThan(SCHED_SETTLE_AFTER_MS - 60_000);
-      expect(unfired?.delay_ms).toBeLessThanOrEqual(SCHED_SETTLE_AFTER_MS);
+      expect(unfired?.run_at).toBeGreaterThanOrEqual(before + SCHED_SETTLE_AFTER_MS);
+      expect(unfired?.run_at).toBeLessThanOrEqual(after + SCHED_SETTLE_AFTER_MS);
 
       await fireFailsForGood(t.id, run.id);
       await deliverNow(schedSettleUnfiredJobId(run.id));
@@ -539,13 +544,16 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
         VALUES (${conv}, 1, 'user_message',
           ${JSON.stringify({ content: [], schedule: { taskRunId: run.id } })}::jsonb)`.execute(raw);
 
+      const before = Date.now();
       await settleNow(run.id);
+      const after = Date.now();
       expect((await runOf(run.id)).status).toBe("pending");
       const next = await owedSettles(run.id);
       expect(next).toMatchObject([
         { job_id: schedSettleJobId(run.id, 1), data: { taskRunId: run.id, check: 1 } },
       ]);
-      expect(next[0]?.delay_ms).toBeGreaterThan(SCHED_SETTLE_RECHECK_MS - 60_000);
+      expect(next[0]?.run_at).toBeGreaterThanOrEqual(before + SCHED_SETTLE_RECHECK_MS);
+      expect(next[0]?.run_at).toBeLessThanOrEqual(after + SCHED_SETTLE_RECHECK_MS);
       // the conversation goes, so the run is released by the next check
       await db.deleteFrom("conversation_events").where("conversation_id", "=", conv).execute();
       await db.deleteFrom("conversations").where("id", "=", conv).execute();
