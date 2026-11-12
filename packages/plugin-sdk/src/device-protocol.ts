@@ -266,6 +266,7 @@ function parseLimits(v: unknown): SandboxLimits {
     devHosts,
   };
   if (o.defaultTier !== undefined) out.defaultTier = parseTier(o, "defaultTier");
+  if (o.allowUnsandboxed !== undefined) out.allowUnsandboxed = bool(o, "allowUnsandboxed");
   return out;
 }
 

@@ -64,9 +64,24 @@ export interface SandboxLimits {
   tier: SandboxTier;
   /** Local exec args only: the org's default tier, used when the device chose none. */
   defaultTier?: SandboxTier;
+  /**
+   * Local exec args only: whether this command may run without a sandbox (the platform and the
+   * org allow it, the ceiling is `open`, and an unattended run has the `tier:open` grant). A device
+   * whose local policy asks for no sandbox refuses the command unless this is `true` (absent counts
+   * as `false`), with {@link UNSANDBOXED_NOT_ALLOWED_MESSAGE}.
+   */
+  allowUnsandboxed?: boolean;
   /** The dev hosts preset; cloud providers ignore it (`allowHosts` is final for them). */
   devHosts: string[];
 }
+
+/**
+ * The refusal of a command that would run without a sandbox where the org does not allow it
+ * (sandbox dev tiers spec §4.3): the kernel's `device.unsandboxed_not_allowed` text, and the
+ * message a device sends with a `policy` error when `allowUnsandboxed` is not `true`.
+ */
+export const UNSANDBOXED_NOT_ALLOWED_MESSAGE =
+  "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
 
 /** The absolute roots inside one instance (a device may place them anywhere on its host). */
 export interface SandboxRoots {

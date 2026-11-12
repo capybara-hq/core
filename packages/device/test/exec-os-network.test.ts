@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -461,7 +462,7 @@ describe("OsExecutor tiers (mocked runtime)", () => {
     await ex.dispose();
   });
 
-  it("a cache folder a command replaced with a file or a link is made again", async () => {
+  it("a cache folder a command replaced is left out, and a linked cache root is remade", async () => {
     policy = { ...policy, tier: "dev" };
     const ex = await make();
     await ex.ensureRoot();
@@ -469,14 +470,21 @@ describe("OsExecutor tiers (mocked runtime)", () => {
     await ex.exec(execArgs("true"), never);
     rmSync(join(cache, "npm"), { recursive: true });
     writeFileSync(join(cache, "npm"), "not a folder");
-    rmSync(join(cache, "pip"), { recursive: true });
-    symlinkSync(join(base, "elsewhere"), join(cache, "pip"));
-    const r = await ex.exec(execArgs('printf "%s" "$npm_config_cache"'), never);
+    const show = 'printf "%s|%s|%s" "$npm_config_cache" "$PIP_CACHE_DIR" "$UV_CACHE_DIR"';
+    let r = await ex.exec(execArgs(show), never);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toBe(join(cache, "npm"));
-    expect(lstatSync(join(cache, "npm")).isDirectory()).toBe(true);
-    expect(lstatSync(join(cache, "pip")).isDirectory()).toBe(true);
-    expect(existsSync(join(base, "elsewhere"))).toBe(false);
+    expect(r.stdout).toBe(`|${join(cache, "pip")}|${join(cache, "uv")}`);
+    expect(lstatSync(join(cache, "npm")).isFile()).toBe(true);
+    // the whole root replaced with a link to a host folder: the link goes, the folder stays
+    const victim = join(base, "elsewhere");
+    mkdirSync(victim);
+    writeFileSync(join(victim, "npm"), "x");
+    rmSync(cache, { recursive: true });
+    symlinkSync(victim, cache);
+    r = await ex.exec(execArgs(show), never);
+    expect(r.stdout).toBe(`${join(cache, "npm")}|${join(cache, "pip")}|${join(cache, "uv")}`);
+    expect(lstatSync(cache).isDirectory()).toBe(true);
+    expect(readdirSync(victim)).toEqual(["npm"]);
     await ex.dispose();
   });
 

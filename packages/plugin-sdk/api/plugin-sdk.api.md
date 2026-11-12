@@ -2551,6 +2551,7 @@ export interface SandboxHandle {
 // @public
 export interface SandboxLimits {
     allowHosts: string[];
+    allowUnsandboxed?: boolean;
     cpu: number;
     defaultTier?: SandboxTier;
     devHosts: string[];
@@ -3636,6 +3637,9 @@ export interface UiView {
     data?: JsonValue;
     open?: UiOpen;
 }
+
+// @public
+export const UNSANDBOXED_NOT_ALLOWED_MESSAGE = "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
 
 // @public
 export type UsagePurpose = ModelCallPurpose | "embedding";

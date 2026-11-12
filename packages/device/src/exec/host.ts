@@ -14,7 +14,7 @@ import {
   policyError,
   RootGuard,
 } from "./shared.js";
-import type { Executor } from "./types.js";
+import type { ExecHooks, Executor } from "./types.js";
 
 export interface HostExecutorOptions {
   /** The device directory (from login). */
@@ -78,12 +78,15 @@ export class HostExecutor implements Executor {
     return env;
   }
 
-  async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
+  async exec(args: DeviceExecArgs, signal: AbortSignal, hooks?: ExecHooks): Promise<ExecResult> {
     signal.throwIfAborted();
     const cwd = await this.files.inside(args.cwd ?? this.roots.workspace, "cwd");
     const env = this.envFor(args);
     // The kernel may have cancelled while the cwd was checked.
     signal.throwIfAborted();
+    // The sandbox may have been turned back on meanwhile: judged again with no await before the
+    // spawn, so a kill of every unsandboxed command never misses this one.
+    hooks?.beforeSpawn?.();
     // detached: the command leads its own process group, so a kill reaches its children too.
     const child: ChildProcess = spawn("/bin/bash", ["-c", args.command], {
       cwd,

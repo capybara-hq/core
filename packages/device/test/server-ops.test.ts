@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KernelReq } from "@capybara-hq/plugin-sdk";
+import { type KernelReq, UNSANDBOXED_NOT_ALLOWED_MESSAGE } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import { DeviceOpError } from "../src/exec/types.js";
@@ -573,6 +573,7 @@ describe("tiers in the summary and the command log", () => {
       ...execArgs("now").limits,
       tier,
       ...(defaultTier !== undefined && { defaultTier }),
+      allowUnsandboxed: true,
     },
   });
 
@@ -666,6 +667,16 @@ describe("tiers in the summary and the command log", () => {
       error: { kind: "policy", message: expect.stringContaining("at most the dev tier") },
     });
     expect(refused.run).toMatchObject({ tier: "dev", isolation: "none" });
+    expect(ex.started).toHaveLength(before);
+    // The kernel does not allow this command to run unsandboxed: refused with its text.
+    const notAllowed = withTier("open");
+    notAllowed.limits.allowUnsandboxed = false;
+    const na = await serveOp(ex, r("exec", notAllowed), never, { policy: store });
+    expect(na.res).toMatchObject({
+      ok: false,
+      error: { kind: "policy", message: UNSANDBOXED_NOT_ALLOWED_MESSAGE },
+    });
+    expect(na.run).toMatchObject({ tier: "open", isolation: "none" });
     expect(ex.started).toHaveLength(before);
     // Docker mode ignores isolation.
     const docker = new FakeExecutor();

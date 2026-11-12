@@ -17,15 +17,25 @@ export interface ExecIsolation {
   refusal?: string;
 }
 
+/** Hooks of one command. */
+export interface ExecHooks {
+  /**
+   * Called synchronously right before the command is spawned, after everything the executor
+   * awaits; throwing refuses the command (nothing is spawned) with that error.
+   */
+  beforeSpawn?: () => void;
+}
+
 /** What runs the operations on this machine: the OS sandbox (os) or a container (docker). */
 export interface Executor {
   readonly mode: "os" | "docker";
   readonly roots: SandboxRoots;
   /**
    * Runs one command; `signal` aborting kills its whole process tree. An executor must not start
-   * work on an already-aborted signal (the kernel cancelled the request).
+   * work on an already-aborted signal (the kernel cancelled the request). `hooks` are honoured by
+   * the executor that runs commands without a sandbox; others may ignore them.
    */
-  exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult>;
+  exec(args: DeviceExecArgs, signal: AbortSignal, hooks?: ExecHooks): Promise<ExecResult>;
   /** The file's bytes (at most `maxBytes`); null when it does not exist. */
   readFile(
     path: string,

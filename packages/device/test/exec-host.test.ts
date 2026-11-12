@@ -10,12 +10,21 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceExecArgs,
+  type SandboxLimits,
+  UNSANDBOXED_NOT_ALLOWED_MESSAGE,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HostExecutor } from "../src/exec/host.js";
 import { findMarked } from "../src/exec/procs.js";
 import { osRoots } from "../src/exec/shared.js";
-import { execIsolation, policyUnsandboxed, SwitchingExecutor } from "../src/exec/switch.js";
+import {
+  execIsolation,
+  policyUnsandboxed,
+  SANDBOX_BACK_ON,
+  SwitchingExecutor,
+} from "../src/exec/switch.js";
 import { DEFAULT_POLICY, type Policy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
@@ -31,6 +40,7 @@ const LIMITS: SandboxLimits = {
   allowHosts: [],
   tier: "open",
   devHosts: [],
+  allowUnsandboxed: true,
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -135,6 +145,20 @@ describe("HostExecutor: commands without a sandbox", () => {
       ex.exec(execArgs(`touch '${join(ex.roots.workspace, "ran")}'`), ac.signal),
     ).rejects.toThrow();
     expect(existsSync(join(ex.roots.workspace, "ran"))).toBe(false);
+  });
+
+  it("a beforeSpawn hook that throws refuses the command before it is spawned", async () => {
+    const marker = join(base, "spawned");
+    const refusal = new Error("refused");
+    await expect(
+      ex.exec(execArgs(`touch ${marker}`), never, {
+        beforeSpawn: () => {
+          throw refusal;
+        },
+      }),
+    ).rejects.toBe(refusal);
+    await sleep(100);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("reports the exit code, and 128 + n for a signal it killed itself with", async () => {
@@ -251,7 +275,8 @@ describe("execIsolation: when a command runs without a sandbox", () => {
     "back on with capybara-device policy set isolation sandbox.";
 
   it("only with isolation none, the local tier open, OS mode and open after the ceiling", () => {
-    expect(execIsolation(p({ tier: "open", isolation: "none" }), { tier: "open" }, "os")).toEqual({
+    const allowed = { tier: "open", allowUnsandboxed: true } as const;
+    expect(execIsolation(p({ tier: "open", isolation: "none" }), allowed, "os")).toEqual({
       tier: "open",
       isolation: "none",
     });
@@ -273,6 +298,24 @@ describe("execIsolation: when a command runs without a sandbox", () => {
     ).toEqual({ tier: "dev", isolation: "none", refusal: NOT_SET });
   });
 
+  it("refuses unless the kernel allows this command to run without a sandbox", () => {
+    // absent (an older kernel) counts as not allowed: fail closed
+    for (const allowUnsandboxed of [undefined, false]) {
+      expect(
+        execIsolation(
+          p({ tier: "open", isolation: "none" }),
+          { tier: "open", ...(allowUnsandboxed !== undefined && { allowUnsandboxed }) },
+          "os",
+        ),
+      ).toEqual({ tier: "open", isolation: "none", refusal: UNSANDBOXED_NOT_ALLOWED_MESSAGE });
+    }
+    // a sandboxed command needs nothing from the kernel
+    expect(execIsolation(p({ tier: "open" }), { tier: "open" }, "os")).toEqual({
+      tier: "open",
+      isolation: "sandbox",
+    });
+  });
+
   it("Docker mode ignores isolation", () => {
     expect(
       execIsolation(p({ tier: "open", isolation: "none" }), { tier: "open" }, "docker"),
@@ -283,7 +326,13 @@ describe("execIsolation: when a command runs without a sandbox", () => {
   });
 
   it("refuses, naming why, when a tier is below open", () => {
-    expect(execIsolation(p({ tier: "open", isolation: "none" }), { tier: "dev" }, "os")).toEqual({
+    expect(
+      execIsolation(
+        p({ tier: "open", isolation: "none" }),
+        { tier: "dev", allowUnsandboxed: true },
+        "os",
+      ),
+    ).toEqual({
       tier: "dev",
       isolation: "none",
       refusal:
@@ -410,6 +459,42 @@ describe("SwitchingExecutor", () => {
         policy,
       ),
     ).rejects.toMatchObject({ kind: "policy", message: "no" });
+  });
+
+  it("an unsandboxed command whose sandbox came back on while it started is refused", async () => {
+    setup();
+    policy = { ...policy, tier: "open", isolation: "none" };
+    let start!: () => void;
+    host.startGate = new Promise((r) => {
+      start = r;
+    });
+    const running = ex.exec(tierArgs("open"), never);
+    await sleep(10);
+    // the switch back lands while the command is starting: the kill finds nothing yet
+    policy = { ...policy, isolation: "sandbox" };
+    await ex.sync();
+    expect(switches).toEqual(["none", "sandbox"]);
+    start();
+    await expect(running).rejects.toMatchObject({ kind: "policy", message: SANDBOX_BACK_ON });
+    expect(host.started).toEqual([]);
+    expect(sandboxed.started).toEqual([]);
+  });
+
+  it("file operations follow the commands' decision, not the policy alone", async () => {
+    setup();
+    policy = { ...policy, tier: "open", isolation: "none" };
+    // before any command no ceiling is known: sandboxed
+    expect(await read()).toBe("sandboxed");
+    await ex.exec(tierArgs("open"), never);
+    expect(await read()).toBe("host");
+    // the latest command was not allowed to run unsandboxed: neither are file operations
+    await expect(
+      ex.exec(execArgs("now", { limits: { ...LIMITS, allowUnsandboxed: false } }), never),
+    ).rejects.toMatchObject({ kind: "policy", message: UNSANDBOXED_NOT_ALLOWED_MESSAGE });
+    expect(await read()).toBe("sandboxed");
+    // a ceiling below open: the same
+    await expect(ex.exec(tierArgs("dev"), never)).rejects.toMatchObject({ kind: "policy" });
+    expect(await read()).toBe("sandboxed");
   });
 
   it("kills reach both executors' commands", async () => {

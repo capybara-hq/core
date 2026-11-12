@@ -158,6 +158,7 @@ describe("device protocol", () => {
       ["exec", { ...exec, limits: { ...limits, devHosts: ["10.0.0.1"] } }],
       ["exec", { ...exec, limits: { ...limits, devHosts: [1] } }],
       ["exec", { ...exec, limits: { ...limits, defaultTier: "x" } }],
+      ["exec", { ...exec, limits: { ...limits, allowUnsandboxed: "yes" } }],
       ["exec", { ...exec, cwd: 1 }],
       ["exec", { ...exec, env: { A: 1 } }],
       ["readFile", { path: "/a", maxBytes: -1 }],
@@ -186,6 +187,7 @@ describe("device protocol", () => {
           limits: { ...limits, tier: "open", defaultTier: "dev", devHosts: ["registry.npmjs.org"] },
         },
       ],
+      ["exec", { ...exec, limits: { ...limits, tier: "open", allowUnsandboxed: true } }],
       ["stop", { reason: "deleted" }],
     ];
     for (const [op, args] of goods) expect(parse(req(op, args), "kernel")().type).toBe("req");
