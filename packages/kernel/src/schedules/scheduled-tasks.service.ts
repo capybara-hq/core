@@ -57,7 +57,7 @@ import {
   TIER_GRANT_SPEC_HASH,
   tierGrantRefusal,
 } from "./grant-rules.js";
-import { oweSchedFire } from "./job-ids.js";
+import { oweSchedFire, oweSchedSettleUnfired } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
@@ -1168,6 +1168,8 @@ export class ScheduledTasksService {
       detail: { taskRunId: run.id, trial: opts.trial },
     });
     await oweSchedFire(this.outbox, run.id, orgId);
+    // a fire job that fails for good before its claim leaves the run to this check (`removed`)
+    await oweSchedSettleUnfired(this.outbox, run.id, orgId, run.scheduledFor, null);
     return run;
   }
 

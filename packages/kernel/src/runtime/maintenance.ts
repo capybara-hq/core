@@ -152,12 +152,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case SCHED_FIRE_JOB:
         await this.scheduledTasks.fire((job.data as SchedFireJobData).taskRunId);
         return;
-      // a claimed task run's settle check (ruling R26)
-      case SCHED_SETTLE_JOB: {
-        const d = job.data as SchedSettleJobData;
-        await this.scheduledTasks.settle(d.taskRunId, d.check);
+      // a task run's settle check, claimed or unfired (ruling R26)
+      case SCHED_SETTLE_JOB:
+        await this.scheduledTasks.settle(job.data as SchedSettleJobData);
         return;
-      }
       default:
         if (await this.scheduled.runNow(job.name)) return;
         this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });

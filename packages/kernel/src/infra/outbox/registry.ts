@@ -196,13 +196,14 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
-  // `schedules/job-ids.ts` SCHED_SETTLE_JOB: owed by the fire job's claim (the transaction that
-  // writes `fired_at`) with `runAt` 10 min on, under `schedSettleJobId`; a run still in flight
-  // owes the next check an hour on (ruling R26)
+  // `schedules/job-ids.ts` SCHED_SETTLE_JOB: the claimed check, owed by the fire job's claim (the
+  // transaction that writes `fired_at`) with `runAt` 10 min on, under `schedSettleJobId` (a run
+  // still in flight owes the next check an hour on); the unfired check, owed with the task run
+  // (scan tick, "run now") under `schedSettleUnfiredJobId` (ruling R26)
   "sched-settle": {
     queue: "cap-kernel-maintenance",
     idempotent:
-      "the check acts only on a task run still pending and claimed, under the task and run row locks, so a run started, ended or released since is left as it is",
+      "a check acts only on a task run still pending (claimed for the claimed check, unclaimed for the unfired one), under the task and run row locks, so a run claimed, started, ended or skipped since is left as it is",
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     // retried while PG is briefly unavailable; removed once done
     opts: {

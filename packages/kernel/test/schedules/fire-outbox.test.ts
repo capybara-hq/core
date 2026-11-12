@@ -19,6 +19,7 @@ import {
   SCHED_SETTLE_RECHECK_MS,
   schedFireJobId,
   schedSettleJobId,
+  schedSettleUnfiredJobId,
 } from "../../src/schedules/job-ids.js";
 import { ScheduledTaskScanJob } from "../../src/schedules/scan.job.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
@@ -258,9 +259,12 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
     expect((await settled(run.id)).status).toBe("completed");
   });
 
-  describe("the settle check of a claimed run (ruling R26)", () => {
-    /** The owed settle rows of `taskRunId`, with their delay on the database's clock (ms). */
-    const owedSettles = async (taskRunId: string) =>
+  describe("the settle checks of a task run (ruling R26)", () => {
+    /**
+     * The owed settle rows of `taskRunId` (the claimed checks, or with `unfired` the unfired one),
+     * with their delay on the database's clock (ms).
+     */
+    const owedSettles = async (taskRunId: string, unfired = false) =>
       (
         await sql<{ job_id: string; data: unknown; org_id: string; delay_ms: string }>`
           SELECT job_id, data, org_id,
@@ -268,34 +272,89 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
           FROM capybara.outbox
           WHERE job_name = 'sched-settle' AND dead_at IS NULL
             AND data ->> 'taskRunId' = ${taskRunId}
+            AND (data ? 'unfired') = ${unfired}
           ORDER BY id`.execute(raw)
       ).rows.map((r) => ({ ...r, delay_ms: Number(r.delay_ms) }));
 
     /**
-     * Ten minutes pass: the run's claim moves back, its settle check is due now and one relay pass
-     * delivers it; returns once the job is done (removed from the queue).
+     * Makes job `jobId` due now and waits until it is done: an owed row is brought forward and
+     * delivered in one relay pass; one the relay already added with its delay (it adds rows due
+     * later ahead of time) is promoted in the queue.
      */
-    async function settleNow(taskRunId: string, check = 0): Promise<void> {
+    async function deliverNow(jobId: string): Promise<void> {
       failing = false;
-      await sql`UPDATE capybara.scheduled_task_runs
-        SET fired_at = fired_at - interval '11 minutes' WHERE id = ${taskRunId}`.execute(raw);
       await db
         .updateTable("outbox")
         .set({
           run_at: sql<Date>`now()` as unknown as Date,
           next_attempt_at: sql<Date>`now()` as unknown as Date,
         })
-        .where("job_id", "=", schedSettleJobId(taskRunId, check))
+        .where("job_id", "=", jobId)
         .execute();
       await k.app.get(OutboxDispatcher).dispatchDue(500);
-      expect(await owedSettles(taskRunId)).not.toContainEqual(
-        expect.objectContaining({ job_id: schedSettleJobId(taskRunId, check) }),
-      );
+      const left = await db
+        .selectFrom("outbox")
+        .select("id")
+        .where("job_id", "=", jobId)
+        .where("dead_at", "is", null)
+        .execute();
+      expect(left).toEqual([]);
+      const added = await maintenance.getJob(jobId);
+      if (added && (await added.getState()) === "delayed") await added.promote();
       await waitFor(
-        async () => (await maintenance.getJob(schedSettleJobId(taskRunId, check))) === undefined,
+        async () => (await maintenance.getJob(jobId)) === undefined,
         20_000,
-        "settle job done",
+        `${jobId} done`,
       );
+    }
+
+    /**
+     * Every claim of `taskId`'s runs fails as it writes `fired_at` (its transaction rolls back);
+     * returns the undo.
+     */
+    async function failClaims(taskId: string): Promise<() => Promise<void>> {
+      const fn = `fail_claim_${taskId.replaceAll("-", "_")}`;
+      await sql
+        .raw(`CREATE OR REPLACE FUNCTION capybara.${fn}() RETURNS trigger AS $$
+          BEGIN
+            IF NEW.task_id = '${taskId}' AND OLD.fired_at IS NULL AND NEW.fired_at IS NOT NULL
+              THEN RAISE EXCEPTION 'simulated claim failure'; END IF;
+            RETURN NEW;
+          END $$ LANGUAGE plpgsql;
+          CREATE TRIGGER ${fn} BEFORE UPDATE ON capybara.scheduled_task_runs
+            FOR EACH ROW EXECUTE FUNCTION capybara.${fn}();`)
+        .execute(raw);
+      return async () => {
+        await sql
+          .raw(`DROP TRIGGER IF EXISTS ${fn} ON capybara.scheduled_task_runs;
+            DROP FUNCTION IF EXISTS capybara.${fn}();`)
+          .execute(raw);
+      };
+    }
+
+    /** The fire job of `taskRunId` fails all three attempts before its claim and is gone. */
+    async function fireFailsForGood(taskId: string, taskRunId: string): Promise<void> {
+      const restore = await failClaims(taskId);
+      try {
+        for (let i = 0; i < 3; i++) {
+          await expect(k.app.get(ScheduledTaskFirer).fire(taskRunId)).rejects.toThrow(
+            /simulated claim failure/,
+          );
+        }
+      } finally {
+        await restore();
+      }
+      // the attempts above were its delivery: its owed row is gone
+      await db.deleteFrom("outbox").where("job_id", "=", schedFireJobId(taskRunId)).execute();
+      expect(await runOf(taskRunId)).toMatchObject({ status: "pending", firedAt: null });
+      expect(await owedSettles(taskRunId)).toEqual([]);
+    }
+
+    /** Ten minutes pass: the run's claim moves back and its claimed check `check` runs now. */
+    async function settleNow(taskRunId: string, check = 0): Promise<void> {
+      await sql`UPDATE capybara.scheduled_task_runs
+        SET fired_at = fired_at - interval '11 minutes' WHERE id = ${taskRunId}`.execute(raw);
+      await deliverNow(schedSettleJobId(taskRunId, check));
     }
 
     /** Every start of `taskId`'s new conversations fails (a database error, retried for nothing). */
@@ -368,6 +427,64 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       // only the claim time differs (the test moved it back)
       expect({ ...(await runOf(run.id)), firedAt: null }).toEqual({ ...done, firedAt: null });
       expect(await owedSettles(run.id)).toEqual([]);
+      // its unfired check finds it claimed: nothing changes either
+      await deliverNow(schedSettleUnfiredJobId(run.id));
+      expect({ ...(await runOf(run.id)), firedAt: null }).toEqual({ ...done, firedAt: null });
+    });
+
+    it("a tick whose fire job fails for good before its claim is missed, and the next tick fires", async () => {
+      const t = await dueTask();
+      const tick = t.nextRunAt as Date;
+      await scanner().scanAt(new Date());
+      const [run] = await store.listRuns(db, t.id, 10);
+      if (!run) throw new Error("the scan wrote no task run");
+      // owed with the tick, due when the fire job would call the tick missed itself (default
+      // window 60 min + 10 min)
+      const [unfired, ...more] = await owedSettles(run.id, true);
+      expect(more).toEqual([]);
+      expect(unfired).toMatchObject({
+        job_id: schedSettleUnfiredJobId(run.id),
+        data: { taskRunId: run.id, unfired: true },
+        org_id: orgId,
+      });
+      const due = tick.getTime() + 70 * 60_000 - Date.now();
+      expect(Math.abs((unfired?.delay_ms ?? 0) - due)).toBeLessThan(60_000);
+
+      await fireFailsForGood(t.id, run.id);
+      await deliverNow(schedSettleUnfiredJobId(run.id));
+      expect(await runOf(run.id)).toMatchObject({
+        status: "skipped",
+        skipReason: "missed",
+        firedAt: null,
+      });
+      expect((await store.getTask(db, orgId, t.id))?.status).toBe("active");
+
+      // the next tick is not held back as an overlap
+      failing = true;
+      await scanner().scanAt(new Date(Date.now() + FIVE_MIN));
+      const next = (await store.listRuns(db, t.id, 10)).find((r) => r.id !== run.id);
+      if (!next) throw new Error("the scan wrote no next task run");
+      await relay();
+      expect((await settled(next.id)).status).toBe("completed");
+    });
+
+    it("a run-now whose fire job fails for good before its claim is removed", async () => {
+      const t = await dueTask({ nextRunAt: new Date(Date.now() + 86_400_000) });
+      const run = await k.app.get(ScheduledTasksService).runNow(orgId, ownerId, t.id, {
+        trial: false,
+      });
+      const [unfired] = await owedSettles(run.id, true);
+      expect(unfired?.job_id).toBe(schedSettleUnfiredJobId(run.id));
+      expect(unfired?.delay_ms).toBeGreaterThan(SCHED_SETTLE_AFTER_MS - 60_000);
+      expect(unfired?.delay_ms).toBeLessThanOrEqual(SCHED_SETTLE_AFTER_MS);
+
+      await fireFailsForGood(t.id, run.id);
+      await deliverNow(schedSettleUnfiredJobId(run.id));
+      expect(await runOf(run.id)).toMatchObject({
+        status: "skipped",
+        skipReason: "removed",
+        firedAt: null,
+      });
     });
 
     it("a once task's last run whose start failed for good ends released, the task ended", async () => {

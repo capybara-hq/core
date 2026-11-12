@@ -211,7 +211,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       { run: async (id) => void calls.push(["owned-cleanup", id]) },
       {
         fire: async (id) => void calls.push(["sched-fire", id]),
-        settle: async (id, check) => void calls.push(["sched-settle", id, check]),
+        settle: async (d) => void calls.push(["sched-settle", d]),
       },
       {
         runNow: async (name) => {
@@ -253,7 +253,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["deliver", "r2"],
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],
-      ["sched-settle", "tr1", 2],
+      ["sched-settle", { taskRunId: "tr1", check: 2 }],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([

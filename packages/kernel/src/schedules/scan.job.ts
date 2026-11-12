@@ -11,11 +11,11 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
-import { oweSchedFire, SCHED_SCAN_JOB } from "./job-ids.js";
+import { oweSchedFire, oweSchedSettleUnfired, SCHED_SCAN_JOB } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { type ScanStep, scanStep } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
-import type { ScheduledTask } from "./types.js";
+import type { ScheduledTask, TaskRun } from "./types.js";
 
 /** Due tasks per scan; what is left waits for the next minute. */
 const MAX_TASKS = 2000;
@@ -43,7 +43,8 @@ class TaskScanFailed extends Error {
  * tick plus the task's jitter (or a `once` task ends, or one past its `expires_at`), and the same
  * transaction owes `sched-fire-<taskRunId>` (transactional outbox spec §8.1), so a written tick is
  * never left unfired and the scan needs no repair of lost fire jobs (a fire delivered too late
- * marks its tick missed itself, `ScheduledTaskFirer`). A task whose stored trigger the schedule
+ * marks its tick missed itself, `ScheduledTaskFirer`), and the run's unfired settle check (a fire
+ * job that failed for good before its claim: the tick is missed, `job-ids.ts`). A task whose stored trigger the schedule
  * math cannot evaluate is paused (`invalid_schedule`) instead of failing the scan; a database
  * error fails the pass (the next minute retries) and pauses nothing.
  */
@@ -107,7 +108,16 @@ export class ScheduledTaskScanJob {
       settings.set(task.orgId, s);
     }
     const fired = await this.advance(t, task, now, s.catchUpWindowMinutes);
-    if (fired !== null) await oweSchedFire(this.outbox, fired, task.orgId);
+    if (fired !== null) {
+      await oweSchedFire(this.outbox, fired.id, task.orgId);
+      await oweSchedSettleUnfired(
+        this.outbox,
+        fired.id,
+        task.orgId,
+        fired.scheduledFor,
+        s.catchUpWindowMinutes,
+      );
+    }
     return true;
   }
 
@@ -117,13 +127,13 @@ export class ScheduledTaskScanJob {
     await pauseTaskIn(this.db, taskId, "invalid_schedule", null);
   }
 
-  /** One due task (see the class); returns the id of the run to fire, if any. */
+  /** One due task (see the class); returns the run to fire, if any. */
   private async advance(
     t: KernelSchemaDb,
     task: ScheduledTask,
     now: Date,
     catchUpWindowMinutes: number,
-  ): Promise<string | null> {
+  ): Promise<TaskRun | null> {
     // the schedule math alone may mark the task broken; database errors fail this pass only
     let step: ScanStep;
     try {
@@ -151,7 +161,7 @@ export class ScheduledTaskScanJob {
         skipReason: "missed",
       });
     }
-    let fired: string | null = null;
+    let fired: TaskRun | null = null;
     if (step.fire !== null) {
       const run = await this.store.insertRun(t, {
         id: randomUUID(),
@@ -160,7 +170,7 @@ export class ScheduledTaskScanJob {
         scheduledFor: step.fire,
         trial: false,
       });
-      fired = run?.id ?? null;
+      fired = run ?? null;
     }
     const patch: ScheduledTaskPatch =
       step.end === "done"

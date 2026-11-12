@@ -22,7 +22,14 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
-import { oweSchedSettle, SCHED_SETTLE_AFTER_MS, SCHED_SETTLE_RECHECK_MS } from "./job-ids.js";
+import {
+  oweSchedSettle,
+  SCHED_LATE_FIRE_SLACK_MS,
+  SCHED_SETTLE_AFTER_MS,
+  SCHED_SETTLE_LONG_CHECKS,
+  SCHED_SETTLE_RECHECK_MS,
+  type SchedSettleJobData,
+} from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { lockTaskRow, ScheduledTaskRunTracker, ScheduledTaskTrackerModule } from "./run-tracker.js";
 import { ScheduledTaskScanJob } from "./scan.job.js";
@@ -40,11 +47,6 @@ import type {
 export const scheduledClientMessageId = (taskRunId: string): string => `sched-${taskRunId}`;
 
 const HOUR_MS = 3_600_000;
-/**
- * How long past the org's catch-up window a tick's fire may come before the tick is missed: the
- * scan fires a tick still inside the window, and its fire job follows within seconds.
- */
-const LATE_FIRE_SLACK_MS = 10 * 60_000;
 /** How many stale previous runs the overlap check releases before it gives up. */
 const OVERLAP_SETTLE_MAX = 5;
 
@@ -158,21 +160,56 @@ export class ScheduledTaskFirer {
   }
 
   /**
-   * The `sched-settle` job (ruling R26): a task run claimed (`fired_at`) and still `pending` goes
-   * through the run tracker's check, which links it to its run, settles it, or releases a run that
-   * left no trace (`skipped`, `removed`), so a `once` task's last run never stays pending. One
-   * still in flight (its item queued, its message posted) owes the next check an hour on. A run
-   * started or ended, or released since, is left as it is.
+   * The `sched-settle` job (ruling R26; `job-ids.ts`). The claimed check: a task run claimed
+   * (`fired_at`) and still `pending` goes through the run tracker's check, which links it to its
+   * run, settles it, or releases a run that left no trace (`skipped`, `removed`), so a `once`
+   * task's last run never stays pending; one still in flight (its item queued, its message posted)
+   * owes the next check an hour on. The unfired check: a run still `pending` that no claim took
+   * (its fire job failed for good before the claim) is skipped, `missed` for a tick, `removed` for
+   * a "run now", so the overlap check never waits on it. A run claimed, started, ended or skipped
+   * since is left as it is (the claimed check follows a claimed run).
    */
   @Transactional()
-  async settle(taskRunId: string, check: number): Promise<void> {
+  async settle(data: SchedSettleJobData): Promise<void> {
+    const { taskRunId } = data;
+    if ("unfired" in data) {
+      await this.settleUnfired(taskRunId);
+      return;
+    }
     const run = await this.store.updateRun(this.db, taskRunId, {});
     if (run?.status !== "pending" || run.firedAt === null) return;
     // inFlightIn takes the task row before the run (the one lock order)
     if (!(await this.tracker.inFlightIn(run))) return;
     const now = await this.store.updateRun(this.db, taskRunId, {});
     if (now?.status !== "pending" || now.firedAt === null) return;
-    await oweSchedSettle(this.outbox, taskRunId, run.orgId, check + 1, SCHED_SETTLE_RECHECK_MS);
+    const next = data.check + 1;
+    if (next === SCHED_SETTLE_LONG_CHECKS) {
+      this.log.warn("scheduled task run still in flight a week after its claim", {
+        taskId: run.taskId,
+        taskRunId,
+      });
+    }
+    await oweSchedSettle(this.outbox, taskRunId, run.orgId, next, SCHED_SETTLE_RECHECK_MS);
+  }
+
+  /** The unfired check (see {@link settle}), task row first (the one lock order). */
+  private async settleUnfired(taskRunId: string): Promise<void> {
+    const t = this.db;
+    const owner = await t
+      .selectFrom("scheduled_task_runs")
+      .select("task_id")
+      .where("id", "=", taskRunId)
+      .executeTakeFirst();
+    if (!owner) return;
+    await lockTaskRow(t, owner.task_id);
+    const run = await t
+      .selectFrom("scheduled_task_runs")
+      .select(["status", "fired_at", "manual"])
+      .where("id", "=", taskRunId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (run?.status !== "pending" || run.fired_at !== null) return;
+    await this.skipIn(t, taskRunId, owner.task_id, run.manual ? "removed" : "missed");
   }
 
   /** Step 1 (see the class): a skip, the plan, or null when there is nothing to fire. */
@@ -221,7 +258,7 @@ export class ScheduledTaskFirer {
     const settings = await readScheduleSettings(t, this.config, orgId);
     // a tick whose fire comes this late (workers down for long) is missed, as the scan records a
     // tick it finds outside the window; a person's "run now" still runs
-    const lateAfter = settings.catchUpWindowMinutes * 60_000 + LATE_FIRE_SLACK_MS;
+    const lateAfter = settings.catchUpWindowMinutes * 60_000 + SCHED_LATE_FIRE_SLACK_MS;
     if (!resumed && !run.manual && Date.now() - run.scheduledFor.getTime() > lateAfter) {
       return skip("missed");
     }

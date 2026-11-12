@@ -10,4 +10,6 @@ re-enqueue after 10 minutes, no give-up after an hour, no recheck of started run
 minutes past the org's catch-up window (workers down for long) is still skipped as `missed`, now by
 the fire job itself; a "Run now" still runs. The fire job's claim owes a settle check 10 minutes on
 (`sched-settle`): a run claimed but never started (its start failed for good) is linked, settled or
-released as the scan's recheck did, so a once task's last run never stays pending.
+released as the scan's recheck did, so a once task's last run never stays pending. The tick and "Run
+now" also owe an unfired check: a run whose fire job failed for good before claiming it is skipped
+(`missed`, or `removed` for a "Run now") instead of blocking every later tick as an overlap.

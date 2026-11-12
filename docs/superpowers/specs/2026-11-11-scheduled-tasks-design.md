@@ -203,7 +203,11 @@ connection_id)` for the chat targets.
   (`sched-settle-<taskRunId>`, 10 minutes on; ruling R26): a run still claimed and `pending` then
   goes through the run tracker's check, which links it to its run, settles it, or releases it, so
   a `once` task's last run never stays pending; one still in flight owes the next check an hour
-  on. The overlap check does the same for the task's previous run. A started run that shows no
+  on. The transaction that writes a task run (the tick, "Run now") also owes its unfired check
+  (`sched-settle-<taskRunId>-unfired`, due when the fire job would call the tick missed, or
+  10 minutes after a "Run now"): a run no claim took (its fire job failed for good first) is
+  `skipped`, `missed` for a tick and `removed` for a "Run now", so it never holds later ticks back
+  as an overlap. The overlap check does the same as the claimed check for the task's previous run. A started run that shows no
   queued item, no message and no run 5 minutes after `fired_at` is released (`skipped`,
   `removed`).
 - The fire job (idempotent on the task run's status) re-checks, then starts the run:

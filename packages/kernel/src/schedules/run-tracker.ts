@@ -118,7 +118,8 @@ export class ScheduledTaskRunTracker {
       await this.settle(tr, run.status as RunOutcome);
       return false;
     }
-    // not started yet: its fire job is still to come (the scanner repairs a lost one)
+    // not claimed yet: its fire job is still to come (the run's unfired settle check skips it
+    // when the job failed for good before its claim)
     if (tr.fired_at === null) return true;
     // only a run with a target conversation is ever queued (`conversation`, `chat`): no scan of
     // every queue's markers for the others
