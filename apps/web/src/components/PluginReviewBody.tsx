@@ -3,7 +3,6 @@
 import {
   Badge,
   Callout,
-  Checkbox,
   CodeBlock,
   Disclosure,
   ItemList,
@@ -38,24 +37,15 @@ import { PermissionReview } from "./PermissionReview";
  * org admin's upload (`OrgPluginUploadDialog`): the plugin line and its facts (package, publisher,
  * license, origin, provenance), a marketplace permission mismatch, a Claude Code translation
  * report, then the five component sections (the extension with its action and permissions, the
- * skills with their SKILL.md and, for the import, the "suggest pinned" checkboxes, the connector
- * templates, the agent templates, the dependencies).
+ * skills with their SKILL.md, the connector templates, the agent templates, the dependencies).
  */
 export function PluginReviewBody({
   review,
   mismatch = null,
-  pinned,
-  onPinned,
 }: {
   review: PluginReview;
   /** A marketplace import's permission summary that differs from the package. */
   mismatch?: PermissionsMismatch;
-  /**
-   * The skills ticked "suggest pinned" and their setter; without them (an org's upload, whose
-   * new versions keep the plugin's own suggestions) the checkboxes are left out.
-   */
-  pinned?: string[];
-  onPinned?(next: string[]): void;
 }) {
   const t = useTranslations("catalog.admin.review");
   const tt = useTranslations("catalog.admin.review.translation");
@@ -186,33 +176,6 @@ export function PluginReviewBody({
             </Disclosure>
           </Stack>
         ))}
-        {pinned !== undefined && onPinned !== undefined && (
-          <Disclosure
-            summary={tt("pinnedTitle", { n: pinned.length, total: review.skills.length })}
-            defaultOpen={review.translation?.sessionStart === true}
-          >
-            <Stack gap={8}>
-              <Text variant="small" tone="muted">
-                {tt("pinnedHint")}
-              </Text>
-              {review.translation?.sessionStart === true && (
-                <Text variant="small" tone="warn">
-                  {tt("sessionStartHint")}
-                </Text>
-              )}
-              {review.skills.map((s) => (
-                <Checkbox
-                  key={s.path}
-                  checked={pinned.includes(s.name)}
-                  onChange={(on) =>
-                    onPinned(on ? [...pinned, s.name] : pinned.filter((n) => n !== s.name))
-                  }
-                  label={tt("suggestPinned", { name: s.name })}
-                />
-              ))}
-            </Stack>
-          </Disclosure>
-        )}
       </ComponentSection>
       <ComponentSection
         title={tc("templates")}

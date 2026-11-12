@@ -49,7 +49,7 @@ export class AgentTemplatesOperations implements OnModuleInit {
       defineOperation({
         id: "agent-templates.get",
         description:
-          "Read one agent template with its definition (model tier, tools, skills, connectors it needs). Takes the template id from agent-templates.list.",
+          "Read one agent template with its definition (model tier, tools, the skills an agent made from it loads first, the skills it turns off (disallowedSkills), connectors it needs). Takes the template id from agent-templates.list.",
         input: z.object({ templateId: AgentTemplateIdParams.shape.id }).strict(),
         example: { templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10" },
         authz: { orgAction: "agents.create" },
@@ -63,7 +63,7 @@ export class AgentTemplatesOperations implements OnModuleInit {
       defineOperation({
         id: "agent-templates.save",
         description:
-          "Save an agent of the org as an org agent template under a new name, so members can create their own copy from it. Credentials and per-person settings are not carried over; the result lists what was omitted.",
+          "Save an agent of the org as an org agent template under a new name, so members can create their own copy from it. The skills the agent turns off are saved as the template's disallowedSkills. Credentials and per-person settings are not carried over; the result lists what was omitted.",
         input: SaveAsAgentIdParams.extend({
           name: SaveAsTemplateBody.shape.name.min(1).max(80),
           description: SaveAsTemplateBody.shape.description.max(1024),

@@ -42,8 +42,8 @@ import NotFound from "../../../not-found";
  * `/admin/agents/[id]` (super admins; spec 2026-11-10-admin-agents-connectors §3.3): one agent of
  * any org, read-only. The facts (org, owner with 待重新指派, visibility and members, model,
  * fallback and effort, the template it came from, versions, times), then the description, the
- * instructions in full, the quick actions by label, the skills it uses by name (org skills and its
- * own), the org's connectors it uses by name with their status, the connectors it waits to bind
+ * instructions in full, the quick actions by label, the skills it has by name (the org's skills
+ * it does not turn off, with how many it turns off, and its own), the org's connectors it uses by name with their status, the connectors it waits to bind
  * and its sub-agents. Never its
  * conversations, runs or credentials. Actions: 转移所有者 (a member of the agent's org, never its
  * anonymous guest) and 删除 (a confirmation naming the org and the owner, then back to the list).
@@ -146,6 +146,7 @@ function AgentFacts({ agent }: { agent: AdminAgentDetail }) {
         ...(def.fallback ? [{ k: t("facts.fallback"), v: model(def.fallback) }] : []),
         ...(isEffort(effort) ? [{ k: t("facts.effort"), v: te(effort) }] : []),
         { k: t("facts.from"), v: agent.createdFrom?.name ?? t("none") },
+        { k: t("facts.skillsOff"), v: String(agent.skillsOff) },
         { k: t("facts.versions"), v: String(agent.versions) },
         { k: t("facts.updated"), v: <DateTime value={agent.updatedAt} /> },
         { k: t("facts.created"), v: <DateTime value={agent.createdAt} /> },

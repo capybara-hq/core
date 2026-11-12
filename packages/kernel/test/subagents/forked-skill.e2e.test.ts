@@ -48,6 +48,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 import { backdateRun, childRunsOf, parentWaiting } from "../helpers/subagents.js";
 
 /**
@@ -197,7 +198,7 @@ async function reviewerTemplate(): Promise<string> {
   return id;
 }
 
-/** An agent with these org skills and plugin templates, and no `agent` tool. */
+/** An agent with only these org skills on, these plugin templates, and no `agent` tool. */
 async function createAgent(skills: string[], templates: string[] = []): Promise<string> {
   const res = await owner({
     method: "POST",
@@ -208,7 +209,7 @@ async function createAgent(skills: string[], templates: string[] = []): Promise<
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
         disabledTools: builtinsOff(),
-        skills: { orgSkills: skills },
+        disabledSkills: await onlySkills(db, orgId, skills),
         ...(templates.length > 0 && { subagents: { templates } }),
       },
       visibility: "org",
@@ -713,7 +714,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
           instructions: "Lead the work.",
           model: { provider: "model-script", model: "script-1" },
           disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
-          skills: { orgSkills: [narrow.id, general.id] },
+          disabledSkills: await onlySkills(db, orgId, [narrow.id, general.id]),
           subagents: { templates: [template] },
         },
         visibility: "org",
@@ -763,7 +764,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
             instructions: "Lead the work.",
             model: { provider: "model-script", model: "script-1" },
             disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
-            skills: { orgSkills: skills },
+            disabledSkills: await onlySkills(db, orgId, skills),
             ...(subagents !== undefined && { subagents }),
           },
           visibility: "org",

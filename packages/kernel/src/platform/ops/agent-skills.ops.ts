@@ -59,7 +59,7 @@ const SHARE_FILES_SHOWN = 10;
 /** The model-facing result line of `agents.share-skill`. */
 function sharedText(o: ShareOutcome, name: string): string {
   return o.kind === "shared"
-    ? `Shared skill "${name}" with the organization: it is now an org skill (the person maintains it) that any agent of the org can select; this agent keeps using it.`
+    ? `Shared skill "${name}" with the organization: it is now an org skill (the person maintains it) that every agent of the org has unless it turns it off; this agent keeps using it.`
     : `Asked the org admins to share skill "${name}" with the organization; it waits for their decision in the inbox. Until then it stays this agent's own skill.`;
 }
 
@@ -431,7 +431,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.share-skill",
         description:
-          "Share one of an agent's own skills with the organization, so any agent of the org can select it; the agent keeps using it and the person becomes its maintainer (later versions they register on their agents are proposed to the org admins). An org admin shares at once; anyone else's ask waits for an org admin's decision in the inbox. Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills.",
+          "Share one of an agent's own skills with the organization, so every agent of the org has it unless it turns it off; the agent keeps using it and the person becomes its maintainer (later versions they register on their agents are proposed to the org admins). An org admin shares at once; anyone else's ask waits for an org admin's decision in the inbox. Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills.",
         input: z.object({ agentId: AgentId, skillId: AgentSkillPathParams.shape.skillId }).strict(),
         example: {
           agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",

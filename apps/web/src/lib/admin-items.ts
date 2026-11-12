@@ -31,6 +31,8 @@ export interface AdminAgentRow {
   needsReassignment: boolean;
   visibility: AgentVisibility;
   createdFrom: { templateId: string; name: string | null } | null;
+  /** How many of the skills on in its org it turns off (builtin and shared ones never count). */
+  skillsOff: number;
   updatedAt: string;
 }
 
@@ -46,7 +48,7 @@ export interface AdminAgentDetail extends AdminAgentRow {
   /** How many versions the agent has. */
   versions: number;
   createdAt: string;
-  /** The skills it uses by name: selected org skills that resolve, and its own (`agent`). */
+  /** The skills it has by name: the org's skills it does not turn off, and its own (`agent`). */
   skills: { id: string; name: string; scope: "org" | "agent" }[];
   /** The org's live connectors it uses (all but those it turns off entirely), by name. */
   connectors: { id: string; name: string; slug: string; status: "active" | "disabled" }[];

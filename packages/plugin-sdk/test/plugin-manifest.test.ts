@@ -78,7 +78,7 @@ describe("parsePluginManifest", () => {
       license: "MIT",
       homepage: "https://example.com/writing-kit",
       dependencies: [{ name: "todo", version: "^1.0.0" }],
-      skills: [{ path: "./skills/outline", pinned: true }, { path: "./skills/edit" }],
+      skills: [{ path: "./skills/outline" }, { path: "./skills/edit" }],
       connectorTemplates: [{ path: "./connectors/crm.json" }],
       agents: [],
     });
@@ -131,6 +131,12 @@ describe("parsePluginManifest", () => {
     ["homepage http", skillsOnly({ homepage: "http://example.com" }), /^homepage: .*https/],
     ["unsafe skill path", skillsOnly({ skills: [{ path: "./../x" }] }), /^skills\.0\.path: /],
     ["skill path without ./", skillsOnly({ skills: [{ path: "skills/x" }] }), /^skills\.0\.path/],
+    // pinning is gone (skills default-on): the old suggestion flag is an unknown key
+    [
+      "skill pinned flag",
+      skillsOnly({ skills: [{ path: "./skills/x", pinned: true }] }),
+      /^skills\.0.*pinned/,
+    ],
     ["unsafe icon", skillsOnly({ icon: "../x.svg" }), /^icon: /],
     ["icon type", skillsOnly({ icon: "./icon.gif" }), /^icon: .*svg/],
     [
@@ -597,6 +603,7 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["with extension", withExtension()],
     ["$schema", skillsOnly({ $schema: "./x.json" })],
     ["unknown key", skillsOnly({ extra: 1 })],
+    ["skill pinned flag", skillsOnly({ skills: [{ path: "./skills/x", pinned: true }] })],
     [
       "extension unknown key",
       withExtension({ extension: { entry: "./dist/index.mjs", manifest: staticManifest(), x: 1 } }),

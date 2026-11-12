@@ -7,7 +7,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
@@ -36,7 +36,7 @@ import { makeZip } from "./zip.js";
 /**
  * Phase D task 2: a skill version stores its invocation metadata (`manifest.invocation`), and
  * manual-only versions (`disable-model-invocation: true`) stay out of the model's catalog, the
- * change reminders and the pinned skills. Real kernel + model-fake + SeaweedFS.
+ * change reminders. Real kernel + model-fake + SeaweedFS.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -212,7 +212,7 @@ async function seedSkill(opts: {
 
 const MANUAL = { model: false, user: true } as const;
 
-async function createAgent(skills: Record<string, unknown>, tools: unknown[] = []) {
+async function createAgent(tools: unknown[] = []) {
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -222,7 +222,6 @@ async function createAgent(skills: Record<string, unknown>, tools: unknown[] = [
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
         disabledTools: onlyBuiltins(tools as Record<string, unknown>[]),
-        skills,
       },
       visibility: "private",
     },
@@ -230,8 +229,8 @@ async function createAgent(skills: Record<string, unknown>, tools: unknown[] = [
   return res;
 }
 
-async function agentId(skills: Record<string, unknown>, tools: unknown[] = []): Promise<string> {
-  const res = await createAgent(skills, tools);
+async function agentId(tools: unknown[] = []): Promise<string> {
+  const res = await createAgent(tools);
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { agent: { id: string } }).agent.id;
 }
@@ -243,7 +242,7 @@ const catalogs = async (conv: string) =>
 const record = (
   conv: string,
   agent: string,
-  def: Pick<AgentDefinition, "skills">,
+  def: Pick<AgentDefinition, "disabledSkills">,
   runId: string,
   log?: { warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void },
 ) =>
@@ -281,7 +280,7 @@ describe("manifest.invocation", { timeout: 60_000 }, () => {
   });
 
   it("registering a package whose SKILL.md has disable-model-invocation: true creates a manual-only version", async () => {
-    const agent = await agentId({});
+    const agent = await agentId();
     const conv = await createConv(owner, orgId, agent);
     const out = await k.app.get(AgentSkillsService).register(
       { orgId, agentId: agent, accountId: ownerId, conversationId: conv },
@@ -310,20 +309,20 @@ describe("manifest.invocation", { timeout: 60_000 }, () => {
 
 describe("the model's catalog", { timeout: 60_000 }, () => {
   it("leaves out manual-only skills", async () => {
-    const manual = await seedSkill({ name: "manual", text: md("manual"), invocation: MANUAL });
-    const plain = await seedSkill({ name: "plain", text: md("plain") });
-    const agent = await agentId({ orgSkills: [manual.id, plain.id] });
+    await seedSkill({ name: "manual", text: md("manual"), invocation: MANUAL });
+    await seedSkill({ name: "plain", text: md("plain") });
+    const agent = await agentId();
     const conv = await createConv(owner, orgId, agent);
-    await record(conv, agent, { skills: { orgSkills: [manual.id, plain.id] } }, "run-1");
+    await record(conv, agent, { disabledSkills: [] }, "run-1");
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills.map((x) => x.name))).toEqual([["plain"]]);
   });
 
-  it("a new manual-only version of a selected skill reads as removed", async () => {
+  it("a new manual-only version of a skill reads as removed", async () => {
     const a = await seedSkill({ name: "alpha", text: md("alpha") });
-    const b = await seedSkill({ name: "beta", text: md("beta") });
-    const def = { skills: { orgSkills: [a.id, b.id] } };
-    const agent = await agentId(def.skills);
+    await seedSkill({ name: "beta", text: md("beta") });
+    const def = { disabledSkills: [] };
+    const agent = await agentId();
     const conv = await createConv(owner, orgId, agent);
     await record(conv, agent, def, "run-1");
     await seedSkill({ name: "alpha", text: md("alpha"), invocation: MANUAL, skillId: a.id });
@@ -341,50 +340,15 @@ describe("the model's catalog", { timeout: 60_000 }, () => {
   });
 
   it("a version without invocation stays in the catalog even if its SKILL.md says manual (no backfill)", async () => {
-    const old = await seedSkill({
+    await seedSkill({
       name: "legacy",
       text: md("legacy", "disable-model-invocation: true\n"),
     });
-    const agent = await agentId({ orgSkills: [old.id] });
+    const agent = await agentId();
     const conv = await createConv(owner, orgId, agent);
-    await record(conv, agent, { skills: { orgSkills: [old.id] } }, "run-1");
+    await record(conv, agent, { disabledSkills: [] }, "run-1");
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills.map((x) => x.name))).toEqual([["legacy"]]);
-  });
-});
-
-describe("pinned manual-only skills", { timeout: 60_000 }, () => {
-  it("pinning a manual-only skill is agent.pinned_invalid manual_only", async () => {
-    const manual = await seedSkill({ name: "manual", text: md("manual"), invocation: MANUAL });
-    const r = await createAgent({ orgSkills: [manual.id], pinned: [manual.id] });
-    expect(r.statusCode, r.body).toBe(400);
-    expect(r.json().error.code).toBe("agent.pinned_invalid");
-    expect(r.json().error.details).toEqual([{ skill: manual.id, reason: "manual_only" }]);
-  });
-
-  it("a pinned skill whose new version is manual-only is dropped at run start", async () => {
-    const a = await seedSkill({ name: "alpha", text: md("alpha", "", "Alpha body.") });
-    const b = await seedSkill({ name: "beta", text: md("beta", "", "Beta body.") });
-    const def = { skills: { orgSkills: [a.id, b.id], pinned: [a.id, b.id] } };
-    const agent = await agentId(def.skills);
-    const conv = await createConv(owner, orgId, agent);
-    await seedSkill({
-      name: "alpha",
-      text: md("alpha", "", "Alpha v2."),
-      invocation: MANUAL,
-      skillId: a.id,
-    });
-    const log = { warn: vi.fn(), error: vi.fn() };
-    await record(conv, agent, def, "run-1", log);
-    const snaps = await catalogs(conv);
-    expect(snaps).toHaveLength(1);
-    expect(snaps[0]?.payload.skills.map((s) => s.name)).toEqual(["beta"]);
-    expect(snaps[0]?.payload.pinned?.map((p) => p.name)).toEqual(["beta"]);
-    expect(log.warn).toHaveBeenCalledWith(
-      "pinned skill is manual-only",
-      expect.objectContaining({ orgId, agentId: agent, skillId: a.id, name: "alpha" }),
-    );
-    expect(log.warn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -434,9 +398,9 @@ describe("the Claude Code tool map (batch 1 review M8)", { timeout: 60_000 }, ()
   }));
 
   it("a claude-code skill cut from a truncated catalog adds no tool map (as before phase D)", async () => {
-    const ids = await bulk([...many, { name: "zzz", claude: true }]);
-    const def = { skills: { orgSkills: ids } };
-    const agent = await agentId({});
+    await bulk([...many, { name: "zzz", claude: true }]);
+    const def = { disabledSkills: [] };
+    const agent = await agentId();
     const conv = await createConv(owner, orgId, agent);
     await record(conv, agent, def, "run-1");
     const snap = (await catalogs(conv)).at(-1)?.payload;
@@ -446,12 +410,9 @@ describe("the Claude Code tool map (batch 1 review M8)", { timeout: 60_000 }, ()
   });
 
   it("a manual-only claude-code skill adds the tool map (a person can invoke it)", async () => {
-    const ids = await bulk([
-      { name: "plain" },
-      { name: "manual", claude: true, invocation: MANUAL },
-    ]);
-    const def = { skills: { orgSkills: ids } };
-    const agent = await agentId({});
+    await bulk([{ name: "plain" }, { name: "manual", claude: true, invocation: MANUAL }]);
+    const def = { disabledSkills: [] };
+    const agent = await agentId();
     const conv = await createConv(owner, orgId, agent);
     await record(conv, agent, def, "run-1");
     const snap = (await catalogs(conv)).at(-1)?.payload;

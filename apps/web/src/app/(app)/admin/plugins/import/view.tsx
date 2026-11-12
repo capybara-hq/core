@@ -33,7 +33,6 @@ import {
   importPageHref,
   type PluginConfirmResult,
   type PluginPrepared,
-  type PluginReview,
   type PluginScope,
   pluginReviewSensitive,
   preparePluginGit,
@@ -92,9 +91,7 @@ type Staged = PluginPrepared | null | { problem: Problem };
  *    attested one); a build version (`1.0.0+git.<sha12>`) says the release has other content;
  *    A Claude Code plugin also shows its translation report (five groups with reasons), its
  *    `repository` (display only, from the plugin, not verified); every plugin shows the root
- *    LICENSE text (collapsed), each skill's SKILL.md (collapsed) and the "suggest pinned"
- *    checkboxes (expanded by default when the plugin has a SessionStart hook); a changed choice is
- *    sent at confirm as `pinnedSuggestions`;
+ *    LICENSE text (collapsed) and each skill's SKILL.md (collapsed);
  * 3. confirm: the scope (spec §5; default "Organizations choose", or "Selected organizations" = the requesting org for a staging
  *    prepared by approving an org's `import` request); confirming installs and enables the
  *    extension (an import below the deployed version only joins the catalog, said as a notice);
@@ -202,10 +199,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<Problem>();
   const [prepared, setPrepared] = useState<PluginPrepared | null>(loaded);
-  /** Skill names ticked "suggest pinned" (starts from the plugin's own suggestion). */
-  const [pinned, setPinned] = useState<string[]>(() =>
-    loaded === null ? [] : suggestedPinned(loaded.review),
-  );
   const [ack, setAck] = useState(false);
   /** The scope the admin picked; until then the default (see `defaultScope`). */
   const [scopeChoice, setScopeChoice] = useState<{ scope: PluginScope; orgs: string[] }>();
@@ -241,7 +234,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
-    setPinned(suggestedPinned(p.review));
     setAck(false);
     setStep(1);
   };
@@ -330,12 +322,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           reviewHash: prepared.review.reviewHash,
           ...(sendScope && { scope: target.scope }),
           ...(sendScope && target.scope === "named" && { orgs: target.orgs }),
-          // only a changed choice: omitted keeps the plugin's own suggestion
-          ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
-            pinnedSuggestions: prepared.review.skills
-              .map((s) => s.name)
-              .filter((n) => pinned.includes(n)),
-          }),
         },
       });
       toast.success(t("done", { name: r.item.name }));
@@ -484,12 +470,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           </Stack>
         ))}
       {step === 1 && review !== null && (
-        <PluginReviewBody
-          review={review}
-          mismatch={prepared?.permissionsMismatch ?? null}
-          pinned={pinned}
-          onPinned={setPinned}
-        />
+        <PluginReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
       )}
       {step === 2 && review !== null && (
         <Stack gap={16}>
@@ -620,10 +601,3 @@ function ProminentError({ problem }: { problem: Problem }) {
     </Card>
   );
 }
-
-/** The skills the plugin itself suggests as pinned. */
-const suggestedPinned = (r: PluginReview): string[] =>
-  r.skills.filter((s) => s.suggestPinned === true).map((s) => s.name);
-
-const sameNames = (a: string[], b: string[]): boolean =>
-  a.length === b.length && a.every((n) => b.includes(n));

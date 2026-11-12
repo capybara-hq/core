@@ -1,5 +1,7 @@
 export type ControlA11y = {
   id?: string;
+  /** A name other than the visible label (a group's select-all box: 「全选「superpowers」」). */
+  "aria-label"?: string;
   "aria-describedby"?: string;
   "aria-invalid"?: boolean | "true" | "false";
   "aria-required"?: boolean | "true" | "false";

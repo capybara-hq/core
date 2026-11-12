@@ -52,7 +52,7 @@ const skill = (name: string, extra = "") =>
   `---\nname: ${name}\ndescription: Skill ${name}.${extra}\n---\n\n# ${name}\n`;
 
 describe("translateClaudePlugin", () => {
-  it("superpowers: 7 skills, the command and the agent imported, SessionStart hint, other harness manifests listed", () => {
+  it("superpowers: 7 skills, the command and the agent imported, the SessionStart hook warning, other harness manifests listed", () => {
     const files = loadFixture("superpowers");
     expect(isClaudePluginTree(files)).toBe(true);
     const t = translateClaudePlugin(files, OPTS);
@@ -102,7 +102,7 @@ describe("translateClaudePlugin", () => {
         { handlers: "command" },
       ],
       ["ignored", "file", ".codex-plugin", ".codex-plugin", "other_harness", null],
-      ["warnings", "hook", "SessionStart", null, "session_start_pin_hint", null],
+      ["warnings", "hook", "SessionStart", null, "session_start_hook", null],
     ]);
     expect(t.repository).toBe("https://github.com/obra/superpowers");
     expect(manifestOf(t.tree)).toEqual({
@@ -805,7 +805,7 @@ describe("translateClaudePlugin", () => {
         { keys: "allowed-tools" },
       ],
       ["warnings", "command", "sh", "commands/sh.md", "skill_shell_injection", null],
-      ["warnings", "hook", "SessionStart", null, "session_start_pin_hint", null],
+      ["warnings", "hook", "SessionStart", null, "session_start_hook", null],
     ]);
     // `run` is model-invocable: its generated SKILL.md has no disable-model-invocation
     const run = Buffer.from(

@@ -121,7 +121,6 @@ import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
 import {
   type PluginContents,
   PluginPackageError,
-  packagePath,
   readPluginFiles,
   readPluginPackage,
   themeApiError,
@@ -357,8 +356,6 @@ export interface PluginReview {
     body: string;
     path: string;
     files: number;
-    /** The plugin suggests pinning the skill (plugin.json `pinned`; changed at confirm). */
-    suggestPinned: boolean;
   }[];
   connectorTemplates: PluginReviewTemplate[];
   /**
@@ -1259,12 +1256,6 @@ export class PluginImport {
       scope?: PluginScope;
       /** The orgs of a `named` scope. */
       orgs?: string[];
-      /**
-       * The skills (by name, each in the review) suggested as pinned when an agent selects them
-       * (spec §9.1); replaces the plugin's `pinned` flags in the stored manifest. Omitted keeps
-       * them. An admin decision like the scope, so not part of `reviewHash`.
-       */
-      pinnedSuggestions?: string[];
       /** An org upload's new item: shared with other orgs by its owner (default false, P3-16). */
       shareable?: boolean;
     },
@@ -1311,7 +1302,7 @@ export class PluginImport {
     const staged = row.manifest as StagedPlugin;
     const src = row.source as PluginImportSource;
     if (input.reviewHash !== review.reviewHash) throw reviewStale(review);
-    const manifest = withPinned(staged.manifest, review, input.pinnedSuggestions);
+    const manifest = staged.manifest;
     const reviewed = review.extension;
     // Read the stored package outside the transaction (unless it was already installed as is, or
     // an org upload, which approves nothing)
@@ -1572,7 +1563,6 @@ export class PluginImport {
         stagingId,
         scope: actual.scope,
         ...(actual.scope === "named" && { orgs: actual.orgs }),
-        suggestedPinned: pinnedNames(manifest, review),
         ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
       },
     });
@@ -2109,7 +2099,6 @@ export class PluginImport {
     const m = pkg.manifest;
     const notLoaded: string[] = [];
     const templatePaths = new Map<string, string>();
-    const pinned = new Map((m.skills ?? []).map((s) => [packagePath(s.path), s.pinned === true]));
     const problems: string[] = [];
     const stored = new Map<string, SkillPackageFile>();
     const keep = (path: string) => {
@@ -2146,7 +2135,6 @@ export class PluginImport {
           body: "errors" in md ? "" : md.body,
           path: `./${s.dir}`,
           files: files.length,
-          suggestPinned: pinned.get(s.dir) === true,
         });
         for (const f of s.files) keepObject(`${s.dir}/${f}`);
       } catch (e) {
@@ -2400,19 +2388,13 @@ export class PluginImport {
 
 /**
  * plugin.json as stored on the version: skills and connector templates listed explicitly (what was
- * scanned when the manifest omitted them), `pinned` kept from the listing.
+ * scanned when the manifest omitted them).
  */
 function normalizedManifest(pkg: PluginContents): PluginManifest {
-  const pinned = new Map(
-    (pkg.manifest.skills ?? []).map((s) => [packagePath(s.path), s.pinned] as const),
-  );
   const { agents: _, themes: __, ...manifest } = pkg.manifest;
   return {
     ...manifest,
-    skills: pkg.skills.map((s) => {
-      const p = pinned.get(s.dir);
-      return { path: `./${s.dir}`, ...(p !== undefined && { pinned: p }) };
-    }),
+    skills: pkg.skills.map((s) => ({ path: `./${s.dir}` })),
     connectorTemplates: pkg.connectorTemplates.map((t) => ({ path: `./${t.path}` })),
     // listed only when there are any, so the stored manifests of other plugins stay as they were
     ...(pkg.agentTemplates.length > 0 && {
@@ -2582,40 +2564,6 @@ function licenseOf(files: ReadonlyMap<string, Uint8Array>): { text?: string; tru
     }
   }
   return { truncated: false };
-}
-
-/**
- * The manifest with the confirm's suggested pinning: `names` (each a skill of the review, else
- * `validation_failed`) marks those skills `pinned: true` and clears the flag on the others;
- * undefined keeps the plugin's flags.
- */
-function withPinned(
-  m: PluginManifest,
-  review: PluginReview,
-  names: string[] | undefined,
-): PluginManifest {
-  if (names === undefined) return m;
-  const byName = new Map(review.skills.map((s) => [s.name, s.path] as const));
-  const unknown = names.filter((n) => !byName.has(n));
-  if (unknown.length > 0) {
-    throw new ApiError(
-      "validation_failed",
-      `pinnedSuggestions: ${unknown.map((n) => JSON.stringify(n)).join(", ")} ${unknown.length === 1 ? "is not a skill" : "are not skills"} of this plugin`,
-    );
-  }
-  const paths = new Set(names.map((n) => byName.get(n)));
-  return {
-    ...m,
-    skills: (m.skills ?? []).map(({ pinned: _, ...s }) =>
-      paths.has(s.path) ? { ...s, pinned: true } : s,
-    ),
-  };
-}
-
-/** Names of the skills the stored manifest suggests pinning (for the audit). */
-function pinnedNames(m: PluginManifest, review: PluginReview): string[] {
-  const byPath = new Map(review.skills.map((s) => [s.path, s.name] as const));
-  return (m.skills ?? []).filter((s) => s.pinned === true).map((s) => byPath.get(s.path) ?? s.path);
 }
 
 /**

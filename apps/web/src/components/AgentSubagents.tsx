@@ -115,7 +115,7 @@ function cleanInline(x: InlineAgentTemplate): InlineAgentTemplate {
 
 /**
  * The `subagents` block to save: keys the person set, or that the definition had (kept even when
- * emptied, as for `skills.pinned`); undefined when there is nothing and there was nothing, so an
+ * emptied); undefined when there is nothing and there was nothing, so an
  * agent without sub-agents gains no version. Unknown keys of a newer kernel are kept.
  */
 function buildSubagents(

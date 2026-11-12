@@ -11,13 +11,16 @@ import {
   extensionToolKey,
   type ModelParameter,
   parseToolKey,
-  SKILL_ENTRY_FILE,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { connectorTemplateState } from "../catalog/component-state.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { invocationOf, PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
-import { type SkillVersionRow, usableSkillVersions } from "../skills/usable.js";
+import {
+  builtinSkillIds,
+  builtinSkillPlugins,
+  type SkillVersionRow,
+  usableSkillVersions,
+} from "../skills/usable.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import {
   AGENT_BUILTIN_NAMES,
@@ -30,8 +33,10 @@ import { canonicalJson } from "../tools/canonical-json.js";
 import {
   AgentDefinitionSchema,
   builtinDisabled,
+  canonicalDisabledSkills,
   canonicalDisabledTools,
   connectorToolDisabled,
+  type DisabledSkillRef,
   type DisabledToolRef,
   extensionToolDisabled,
   type InlineAgentTemplate,
@@ -74,8 +79,10 @@ export type PlanItemKind =
  *   describes sub-agents, though its allowlist leaves it out); unavailable `plugin_unavailable`
  *   (its plugin is not enabled in the org or not loaded), `unknown_tool`, `connector_key` (a
  *   connector tool key: connectors carry over only through `connectors` entries);
- * - skill: `pinned`, `not_pinned_manual_only`, `not_pinned_too_large`, `subagent` (named only by an
- *   inline sub-agent); unavailable `not_found`;
+ * - skill (a name of `skills` or an inline sub-agent's `skills`, or a `disallowedSkills` entry): a
+ *   carried name is on for the new agent, `subagent` when only an inline sub-agent names it;
+ *   `disallowed` for a `disallowedSkills` entry turned off; unavailable `not_found` (the org does
+ *   not have it);
  * - connector: `several` (the first of several connectors made from the template was bound);
  *   pending `no_connector`, `tools_missing` (the connector made from the template lacks every
  *   named tool), `needs`; unavailable `template_not_found` (also for a template the org may not
@@ -115,7 +122,8 @@ export interface TemplatePlan {
    * What has no place in the agent or was cut to its limits: `maxSteps`, `effort` when the model
    * does not declare it, `description` / `instructions` / `quickActions.<i>.title|body` /
    * `instructionFiles.<i>.content` / `subagents.inline.<name>.description|instructions` when cut to
-   * the kernel's limits (UTF-16 units), `subagents.inline.<name>.tools.<key>` for a key the agent
+   * the kernel's limits (UTF-16 units), `disallowedSkills.<entry>` for an entry that names no skill
+   * the org has, `subagents.inline.<name>.tools.<key>` for a key the agent
    * does not have, `connectors.<key>.tools.<name>` / `connectors.<key>.policies.<name>` for a tool
    * the bound connector does not offer.
    */
@@ -218,6 +226,39 @@ function skillByName(
   return [...found].sort(
     (a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   )[0];
+}
+
+/**
+ * A template's `disallowedSkills` entry as an agent's disabled skill entry (skills default-on spec
+ * §6.2): `<plugin>:*` the whole plugin (skills it gains later included), `<plugin>:<name>` that
+ * plugin's skill, a bare `<name>` the org's usable skill of that name without a plugin. Null when
+ * the agent's save check would refuse it: it names nothing the org has, a builtin plugin
+ * (`builtin.plugins`) or a builtin skill (`builtin.ids`, which cannot be turned off).
+ */
+function disallowedSkillRef(
+  skills: readonly SkillVersionRow[],
+  ref: string,
+  builtin: { plugins: ReadonlySet<string>; ids: ReadonlySet<string> },
+): DisabledSkillRef | null {
+  const isBuiltin = (s: SkillVersionRow) =>
+    builtin.ids.has(s.id) ||
+    (s.platformSkillId !== undefined && builtin.ids.has(s.platformSkillId));
+  const i = ref.indexOf(":");
+  if (i >= 0) {
+    const plugin = ref.slice(0, i);
+    const name = ref.slice(i + 1);
+    if (builtin.plugins.has(plugin)) return null;
+    const ofPlugin = skills.filter((s) => s.plugin === plugin);
+    if (name === "*") {
+      return ofPlugin.length === 0 ? null : { kind: "plugin", plugin, skills: "all" };
+    }
+    const s = ofPlugin.find((x) => x.name === name);
+    return s === undefined || isBuiltin(s) ? null : { kind: "plugin", plugin, skills: [name] };
+  }
+  const s = skills
+    .filter((x) => x.plugin === null && x.name === ref)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  return s === undefined || isBuiltin(s) ? null : { kind: "skill", skillId: s.id };
 }
 
 interface OrgConnector {
@@ -477,44 +518,33 @@ export async function planFromTemplate(
     // a connector key is matched against the bound connectors below
   }
 
-  // skills: by name against the org's usable skills (P4-5); every name gets its item
+  // skills (skills default-on spec §6.2): the new agent has every skill on in the org. Each name
+  // in `skills` (and in an inline sub-agent's, below) is checked against the org's usable skills
+  // and listed `carried` or `unavailable` (`not_found`); it narrows nothing.
   const usable = await usableSkillVersions(db, orgId);
-  const orgSkills: string[] = [];
-  const select = (id: string) => {
-    if (!orgSkills.includes(id)) orgSkills.push(id);
-  };
-  const pinned: string[] = [];
-  let pinnedBytes = 0;
-  const preloaded = new Set(t.skills ?? []);
-  const skillNames = [...new Set([...(t.skills ?? []), ...(t.selectedSkills ?? [])])];
-  for (const name of skillNames) {
-    const s = skillByName(usable, name, row.plugin);
-    if (!s) {
-      item("skill", name, "unavailable", "not_found");
+  for (const name of new Set(t.skills ?? [])) {
+    if (skillByName(usable, name, row.plugin)) item("skill", name, "carried");
+    else item("skill", name, "unavailable", "not_found");
+  }
+  // `disallowedSkills` turns skills off: `<plugin>:*` the whole plugin, `<plugin>:<name>` a
+  // plugin's skill, a bare `<name>` the org's skill without a plugin; an entry that names nothing
+  // the org has, or a builtin plugin or skill (always on), is dropped
+  const disabledSkills: DisabledSkillRef[] = [];
+  const builtin =
+    (t.disallowedSkills ?? []).length === 0
+      ? { plugins: new Set<string>(), ids: new Set<string>() }
+      : {
+          plugins: await builtinSkillPlugins(db),
+          ids: new Set(await builtinSkillIds(db, orgId)),
+        };
+  for (const ref of new Set(t.disallowedSkills ?? [])) {
+    const off = disallowedSkillRef(usable, ref, builtin);
+    if (off === null) {
+      dropped.push(`disallowedSkills.${ref}`);
       continue;
     }
-    select(s.id);
-    if (!preloaded.has(name)) {
-      item("skill", name, "carried", pinned.includes(s.id) ? "pinned" : undefined);
-      continue;
-    }
-    if (pinned.includes(s.id)) {
-      item("skill", name, "carried", "pinned");
-      continue;
-    }
-    const bytes = s.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
-    if (!invocationOf(s.manifest).model) {
-      item("skill", name, "carried", "not_pinned_manual_only");
-    } else if (
-      pinned.length >= PINNED_SKILLS_LIMITS.count ||
-      pinnedBytes + bytes > PINNED_SKILLS_LIMITS.totalBytes
-    ) {
-      item("skill", name, "carried", "not_pinned_too_large");
-    } else {
-      pinned.push(s.id);
-      pinnedBytes += bytes;
-      item("skill", name, "carried", "pinned");
-    }
+    disabledSkills.push(off);
+    item("skill", ref, "carried", "disallowed");
   }
 
   // connectors (P4-5, P4-6)
@@ -685,8 +715,7 @@ export async function planFromTemplate(
           continue;
         }
         if (!skillIds.includes(s.id)) skillIds.push(s.id);
-        if (!orgSkills.includes(s.id)) {
-          select(s.id);
+        if (!items.some((i) => i.kind === "skill" && i.name === name)) {
           item("skill", name, "carried", "subagent");
         }
       }
@@ -765,9 +794,7 @@ export async function planFromTemplate(
     fallbackParams: {},
     disabledTools: canonicalDisabledTools(disabled),
     toolPolicies,
-    ...((orgSkills.length > 0 || pinned.length > 0) && {
-      skills: { orgSkills, ...(pinned.length > 0 && { pinned }) },
-    }),
+    disabledSkills: canonicalDisabledSkills(disabledSkills),
     ...(subagents !== undefined && { subagents }),
     ...(pendingConnectors.length > 0 && { pendingConnectors }),
   };

@@ -457,7 +457,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,
-        // display only: a non-zero exit shows as failed on the row, `isError` stays as it was
+        // display only: a non-zero exit is information on the row (not a failure), like `isError`
         view: {
           kind: "command",
           ...(description !== undefined && { description }),

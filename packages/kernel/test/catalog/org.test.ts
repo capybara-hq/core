@@ -1117,7 +1117,14 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
       .values({
         agent_id: agentId,
         version: 1,
-        definition: JSON.stringify({ name: "Helper", skills: { orgSkills: [skill.id] } }),
+        definition: JSON.stringify({
+          name: "Helper",
+          subagents: {
+            inline: [
+              { name: "helper", description: "Helps.", instructions: "Help.", skills: [skill.id] },
+            ],
+          },
+        }),
         created_by: env.bossId,
       })
       .execute();

@@ -72,8 +72,9 @@ const agent = (over: Record<string, unknown> = {}) => ({
       { kind: "plugin", plugin: "todo", name: "write" },
     ],
     toolPolicies: {},
-    skills: { orgSkills: ["s1", "gone"] },
-    // 表单不认识的字段：保存时原样带回
+    // an entry for a skill the list does not show (deleted): kept as saved
+    disabledSkills: [{ kind: "skill", skillId: "gone" }],
+    // a field the form does not know: sent back as saved
     futureField: { keep: true },
   },
   ...over,
@@ -135,7 +136,7 @@ describe("编辑 agent（FormPage）", () => {
     [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [ownSkill] }),
   });
 
-  it("已删除的组织技能显示为「已删除」，取消勾选即移除；保存 PATCH 时保留表单不认识的字段", async () => {
+  it("every skill is on by default; unticking one writes disabledSkills, keeping entries not shown and unknown fields", async () => {
     const calls = stubApi({
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
@@ -145,30 +146,46 @@ describe("编辑 agent（FormPage）", () => {
     const group = await screen.findByRole("region", { name: en.agents.form.orgSkillsLabel });
     const live = await within(group).findByRole("checkbox", { name: /pdf-tools/ });
     expect(live).toHaveProperty("checked", true);
-    const deleted = within(group).getByRole("checkbox", {
-      name: en.agents.form.deletedSkill.replace("{id}", "gone"),
-    });
-    expect(deleted).toHaveProperty("checked", true);
+    // the hidden entry draws nothing
+    expect(within(group).queryByText(/gone/)).toBeNull();
+    // the summary: the org skill and the agent's own skill are on
+    expect(within(group).getByText("2 skills on")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(deleted);
+    await user.click(live);
+    expect(within(group).getByText("1 skill on · 1 off")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
       visibility?: string;
     };
-    expect(body.definition.skills).toEqual({ orgSkills: ["s1"] });
+    expect(body.definition.disabledSkills).toEqual([
+      { kind: "skill", skillId: "gone" },
+      { kind: "skill", skillId: "s1" },
+    ]);
+    expect(body.definition.skills).toBeUndefined();
     expect(body.definition.futureField).toEqual({ keep: true });
     expect(body.definition.tools).toEqual([
       { kind: "builtin", name: "AskUserQuestion" },
       { kind: "plugin", plugin: "todo", name: "write" },
     ]);
     expect(body.definition.instructions).toBe("Be helpful.");
-    // 没改可见性：不发
+    // visibility unchanged: not sent
     expect(body.visibility).toBeUndefined();
     // the section's save stays on the page
     expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("the section says skills are on by default, with no pinning left", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "skills" });
+    await screen.findByRole("region", { name: en.agents.form.orgSkillsLabel });
+    expect(screen.getByText(en.agents.form.skillsSectionHint)).toBeTruthy();
+    expect(zh.agents.form.skillsSectionHint).toBe(
+      "组织启用的技能默认对所有智能体开启。需要每次都遵循的内容请写进说明。",
+    );
+    expect(screen.queryByText(/Pin|pinned/)).toBeNull();
   });
 
   it.each(["zh", "en"] as const)(
@@ -210,7 +227,7 @@ describe("编辑 agent（FormPage）", () => {
     },
   );
 
-  it("a skills save keeps the tool order, merges skills (unknown keys kept) and sends expectedVersion", async () => {
+  it("a skills save keeps the tool order and sends expectedVersion", async () => {
     const tools = [
       { kind: "plugin", plugin: "todo", name: "write" },
       { kind: "builtin", name: "ReadToolOutput" },
@@ -218,7 +235,7 @@ describe("编辑 agent（FormPage）", () => {
     ];
     const def = agent().definition;
     const calls = stubApi({
-      ...routes({ definition: { ...def, tools, skills: { orgSkills: ["s1"], future: 1 } } }),
+      ...routes({ definition: { ...def, tools, disabledSkills: [] } }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
     await renderEditAgent({ section: "skills" });
@@ -233,7 +250,7 @@ describe("编辑 agent（FormPage）", () => {
       expectedVersion?: number;
     };
     expect(body.definition.tools).toEqual(tools);
-    expect(body.definition.skills).toEqual({ orgSkills: [], future: 1 });
+    expect(body.definition.disabledSkills).toEqual([{ kind: "skill", skillId: "s1" }]);
     expect(body.expectedVersion).toBe(3);
   });
 
@@ -295,7 +312,7 @@ describe("编辑 agent（FormPage）", () => {
     const calls = stubApi({
       ...routes({
         visibility: "private",
-        definition: { ...def, skills: { orgSkills: ["s1"], writePolicy: "ask", future: 1 } },
+        definition: { ...def, skills: { writePolicy: "ask" } },
       }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
@@ -309,7 +326,9 @@ describe("编辑 agent（FormPage）", () => {
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
     };
-    expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
+    // off = the key removed; nothing else in skills: no skills at all
+    expect(body.definition.skills).toBeUndefined();
+    expect(body.definition.disabledSkills).toEqual([{ kind: "skill", skillId: "gone" }]);
   });
 
   it("not the owner: the own skills are listed read-only, with no upload, share or delete", async () => {
@@ -465,13 +484,11 @@ describe("编辑 agent（FormPage）", () => {
     expect(await within(list).findByText(en.agents.form.shareWaiting)).toBeTruthy();
   });
 
-  it("a skill the agent shared stays in its own skills, marked shared, in effect and pinnable, with no share or delete", async () => {
+  it("a skill the agent shared stays in its own skills, marked shared and always on, with no share or delete", async () => {
     const f = en.agents.form;
     const shared = { ...orgSkill("k2", "team-notes"), shared: true };
     stubApi({
-      ...routes({
-        definition: { ...agent().definition, skills: { orgSkills: ["s1"], pinned: ["k2"] } },
-      }),
+      ...routes(),
       [`GET ${ORG}/skills`]: () => json(200, { skills: [orgSkill("s1", "pdf-tools"), shared] }),
       [`GET ${ORG}/agents/ag1/skills`]: () =>
         json(200, { skills: [{ ...ownSkill, shared: false }, shared] }),
@@ -483,16 +500,9 @@ describe("编辑 agent（FormPage）", () => {
     // the owner still shares and deletes the own skill, never the shared one
     expect(within(own).getAllByRole("button", { name: /notes-style/ })).toHaveLength(2);
     expect(within(own).queryByRole("button", { name: /team-notes/ })).toBeNull();
-    // not offered unticked in the org picker: it is in effect through the agent
+    // not offered in the org list: it is always on for the agent that shared it
     const orgPicker = screen.getByRole("region", { name: f.orgSkillsLabel });
     expect(within(orgPicker).queryByRole("checkbox", { name: /team-notes/ })).toBeNull();
-    // its pin is live, never a deleted skill
-    const pinned = screen.getByRole("region", { name: f.pinnedLabel });
-    const pin = within(pinned).getByRole("checkbox", {
-      name: f.pinSkill.replace("{name}", "team-notes"),
-    });
-    expect((pin as HTMLInputElement).checked).toBe(true);
-    expect(within(pinned).queryByText(f.deletedSkill.replace("{id}", "k2"))).toBeNull();
     expect(zh.agents.form.sharedWithOrg).toBe("已共享到组织");
   });
 
@@ -538,23 +548,16 @@ describe("编辑 agent（FormPage）", () => {
 
 describe("platform skills in the editor (plugin scope phase 2)", () => {
   beforeEach(() => resetNavigation("/agents/ag1"));
-  // a platform skill on in the org; the agent selected (and pinned) its linked org copy `copy1`
+  // a platform skill on in the org, of the plugin docs
   const platform = {
     ...orgSkill("p1", "pdf-tools"),
     origin: "platform",
     linkedIds: ["copy1"],
     plugin: "docs",
   };
-  const routes = () => ({
+  const routes = (disabledSkills: unknown[] = []) => ({
     [`GET ${ORG}/agents/ag1`]: () =>
-      json(200, {
-        agent: agent({
-          definition: {
-            ...agent().definition,
-            skills: { orgSkills: ["copy1"], pinned: ["copy1"] },
-          },
-        }),
-      }),
+      json(200, { agent: agent({ definition: { ...agent().definition, disabledSkills } }) }),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${ORG}/skills`]: () =>
@@ -562,35 +565,23 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
     [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
   });
 
-  it("a linked copy's id selects its platform skill (never deleted); reselecting stores the platform id", async () => {
+  it("a plugin entry naming the skill turns it off; ticking it again drops the entry", async () => {
     const calls = stubApi({
-      ...routes(),
+      ...routes([{ kind: "plugin", plugin: "docs", skills: ["pdf-tools"] }]),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
     await renderEditAgent({ section: "skills" });
     const group = await screen.findByRole("region", { name: en.agents.form.orgSkillsLabel });
     const box = await within(group).findByRole("checkbox", { name: /pdf-tools/ });
-    expect(box).toHaveProperty("checked", true);
-    // the platform badge, and no deleted line for the copy id
+    expect(box).toHaveProperty("checked", false);
     expect(within(group).getByText(en.agents.form.skillTag.platform)).toBeTruthy();
-    expect(within(group).queryByText(/copy1/)).toBeNull();
-    const pinned = screen.getByRole("region", { name: en.agents.form.pinnedLabel });
-    expect(
-      within(pinned).getByRole("checkbox", {
-        name: en.agents.form.pinSkill.replace("{name}", "pdf-tools"),
-      }),
-    ).toHaveProperty("checked", true);
-    expect(within(pinned).queryByText(/copy1/)).toBeNull();
-    const user = userEvent.setup();
-    await user.click(box);
-    await user.click(box);
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await userEvent.setup().click(box);
+    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
-      definition: { skills: Record<string, unknown> };
+      definition: { disabledSkills: unknown[] };
     };
-    expect(body.definition.skills.orgSkills).toEqual(["p1"]);
-    expect(body.definition.skills.pinned).toEqual([]);
+    expect(body.definition.disabledSkills).toEqual([]);
   });
 
   it("a builtin plugin's skill shows ticked and disabled with the built-in badge and hint", async () => {
@@ -600,7 +591,7 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
         json(200, {
           skills: [
             { ...orgSkill("g1", "skill-guide"), origin: "platform", builtin: true, plugin: "core" },
-            // the org's pinned copy of a builtin skill is always included too
+            // the org's pinned copy of a builtin skill is always on too
             { ...orgSkill("c1", "core-notes"), origin: "org", builtin: true },
           ],
         }),
@@ -610,7 +601,12 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
     const box = await within(group).findByRole("checkbox", { name: /skill-guide/ });
     expect(box).toHaveProperty("checked", true);
     expect(box).toHaveProperty("disabled", true);
-    expect(within(group).getAllByText(en.agents.form.skillTag.builtin)).toHaveLength(2);
+    // the badge on each row (the group's heading reads 「内置」 too)
+    expect(
+      within(group).getAllByText(en.agents.form.skillTag.builtin, {
+        selector: '[data-part="check-list-marks"] > *',
+      }),
+    ).toHaveLength(2);
     expect(within(group).getByText(en.agents.form.builtinHint)).toBeTruthy();
     const copy = within(group).getByRole("checkbox", { name: /core-notes/ });
     expect(copy).toHaveProperty("checked", true);
@@ -618,347 +614,210 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
   });
 });
 
-describe("a platform skill switched off in the org (spec §5 rule 8)", () => {
+describe("skills on / off, grouped by where they come from (acceptance: 15 Superpowers skills)", () => {
   beforeEach(() => resetNavigation("/agents/ag1"));
-
-  it("reads as unavailable, not deleted, in both pickers; unticking drops the reference", async () => {
-    const calls = stubApi({
-      [`GET ${ORG}/agents/ag1`]: () =>
-        json(200, {
-          agent: agent({
-            definition: {
-              ...agent().definition,
-              // the platform skill p2 and a copy linked to it; `gone` is really deleted
-              skills: { orgSkills: ["p2", "copy2", "gone"], pinned: ["copy2"] },
-            },
-          }),
-        }),
-      [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-      [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
-      [`GET ${ORG}/components`]: () =>
-        json(200, {
-          components: [
-            {
-              kind: "skill",
-              id: "p2",
-              name: "notes",
-              description: null,
-              plugin: "docs",
-              itemId: null,
-              version: "1",
-              scopeMode: "own",
-              switch: false,
-              on: false,
-              locked: false,
-              pluginOn: true,
-              switchable: true,
-              linkedIds: ["copy2"],
-            },
-          ],
-        }),
-      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
-    });
-    await renderEditAgent({ section: "skills" });
-    const group = await screen.findByRole("region", { name: en.agents.form.orgSkillsLabel });
-    const label = en.agents.form.unavailableSkill.replace("{name}", "notes");
-    const boxes = within(group).getAllByRole("checkbox", { name: label });
-    expect(boxes).toHaveLength(2);
-    expect(within(group).getByText(en.agents.form.unavailableSkillHint)).toBeTruthy();
-    expect(
-      within(group).getByRole("checkbox", {
-        name: en.agents.form.deletedSkill.replace("{id}", "gone"),
-      }),
-    ).toBeTruthy();
-    expect(within(group).queryByText(en.agents.form.deletedSkill.replace("{id}", "p2"))).toBeNull();
-    const pinned = screen.getByRole("region", { name: en.agents.form.pinnedLabel });
-    expect(within(pinned).getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
-    const user = userEvent.setup();
-    await user.click(boxes[0] as HTMLElement);
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
-      definition: { skills: Record<string, unknown> };
-    };
-    expect(body.definition.skills.orgSkills).toEqual(["copy2", "gone"]);
-  });
-});
-
-describe("pinned skills (skills.pinned)", () => {
-  const fill = (s: string, vars: Record<string, string | number>) =>
-    s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
-  const pinSkill = (
-    id: string,
-    name: string,
-    over: { suggestPinned?: boolean; entryBytes?: number } = {},
-  ) => ({
-    ...orgSkill(id, name),
-    plugin: over.suggestPinned ? "superpowers" : null,
-    sourceFormat: over.suggestPinned ? "claude-code" : "capybara",
-    suggestPinned: over.suggestPinned ?? false,
-    entryBytes: over.entryBytes ?? 2000,
-    tokenEstimate: Math.ceil((over.entryBytes ?? 2000) / 4),
-  });
-  const ORG_SKILLS = [
-    pinSkill("s1", "using-superpowers", { suggestPinned: true, entryBytes: 4000 }),
-    pinSkill("s2", "brainstorming", { entryBytes: 8000 }),
-    pinSkill("s3", "pdf-tools"),
-    pinSkill("s4", "slides"),
+  const F = en.agents.form;
+  const SP = ["brainstorming", "systematic-debugging", "writing-plans", "using-superpowers"].concat(
+    Array.from({ length: 6 }, (_, i) => `sp-extra-${i}`),
+  );
+  const LONG =
+    "Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions";
+  const skills = [
+    ...SP.map((name, i) => ({
+      ...orgSkill(`sp${i}`, name),
+      description: name === "using-superpowers" ? LONG : `Use for ${name}.`,
+      origin: "platform",
+      plugin: "superpowers",
+    })),
+    { ...orgSkill("o1", "csv-report"), origin: "org", plugin: null },
+    { ...orgSkill("o2", "tone"), origin: "org", plugin: null },
+    { ...orgSkill("g1", "skill-guide"), origin: "platform", builtin: true, plugin: "skills-core" },
   ];
-  const editRoutes = (skills: Record<string, unknown>) => ({
+  const routes = (disabledSkills: unknown[] = []) => ({
     [`GET ${ORG}/agents/ag1`]: () =>
-      json(200, { agent: agent({ definition: { ...agent().definition, skills } }) }),
+      json(200, { agent: agent({ definition: { ...agent().definition, disabledSkills } }) }),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-    [`GET ${ORG}/skills`]: () => json(200, { skills: ORG_SKILLS }),
+    [`GET ${ORG}/skills`]: () => json(200, { skills }),
     [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
   });
-
-  it("when the agent's own skills cannot be read, no pinned skill shows as deleted (batch-3 I1)", async () => {
-    const f = en.agents.form;
-    // A failed read keeps the pins as they are and marks none deleted.
+  const selectAllOf = (group: string) => `Select all in ${group}`;
+  const countOf = (list: HTMLElement) =>
+    list.parentElement?.querySelector('[data-part="check-list-count"]')?.textContent;
+  const sentOff = (calls: Parameters<typeof bodyOf>[0][]) =>
+    (
+      bodyOf(calls.find((c) => c?.method === "PATCH")) as {
+        definition: { disabledSkills: unknown };
+      }
+    ).definition.disabledSkills;
+  const withSave = (disabledSkills: unknown[] = []) =>
     stubApi({
-      ...editRoutes({ orgSkills: ["s1"], pinned: ["s1", "k1"] }),
-      [`GET ${ORG}/agents/ag1/skills`]: () =>
-        json(500, { error: { code: "internal", message: "x" } }),
-    });
-    await renderEditAgent({ section: "skills" });
-    const again = await screen.findByRole("region", { name: f.pinnedLabel });
-    expect(await within(again).findByText(f.pinnedUnavailable)).toBeTruthy();
-    expect(within(again).queryByRole("checkbox", { name: /k1/ })).toBeNull();
-  });
-
-  it("deselecting a skill unpins it; a definition without pinned is saved without skills.pinned", async () => {
-    const f = en.agents.form;
-    const calls = stubApi({
-      ...editRoutes({ orgSkills: ["s3"] }),
+      ...routes(disabledSkills),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
+  const save = async (calls: Parameters<typeof bodyOf>[0][]) => {
+    await userEvent.setup().click(screen.getByRole("button", { name: F.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c?.method === "PATCH")).toBe(true));
+    return sentOff(calls);
+  };
+
+  it("one list per plugin, then the org's own, then the built-in ones; every row starts checked", async () => {
+    stubApi(routes());
     await renderEditAgent({ section: "skills" });
-    const user = userEvent.setup();
-    const org = await screen.findByRole("region", { name: f.orgSkillsLabel });
-    const pinned = screen.getByRole("region", { name: f.pinnedLabel });
-    // selecting the suggested one ticks it, deselecting it unpins it again
-    await user.click(await within(org).findByRole("checkbox", { name: /using-superpowers/ }));
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const lists = await within(region).findAllByRole("list");
+    expect(lists.map((l) => l.getAttribute("aria-label"))).toEqual([
+      "superpowers",
+      F.skillGroupOrg,
+      F.skillGroupBuiltin,
+    ]);
+    const sp = within(region).getByRole("checkbox", { name: selectAllOf("superpowers") });
+    expect(sp.getAttribute("aria-checked")).toBe("true");
+    expect(countOf(lists[0] as HTMLElement)).toBe("10/10");
+    expect(countOf(lists[1] as HTMLElement)).toBe("2/2");
+    // built-in: always on, no group box, counted apart, with its note
     expect(
-      within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "using-superpowers" }),
-      }),
-    ).toHaveProperty("checked", true);
-    await user.click(within(org).getByRole("checkbox", { name: /using-superpowers/ }));
-    expect(
-      within(pinned).queryByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "using-superpowers" }),
-      }),
+      within(region).queryByRole("checkbox", { name: selectAllOf(F.skillGroupBuiltin) }),
     ).toBeNull();
-    // a skill that is not suggested for pinning: the save has a change but still no pins
-    await user.click(within(org).getByRole("checkbox", { name: /brainstorming/ }));
-    await user.click(screen.getByRole("button", { name: f.submit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
-      definition: Record<string, unknown>;
-    };
-    expect(body.definition.skills).toEqual({ orgSkills: ["s3", "s2"] });
+    expect(countOf(lists[2] as HTMLElement)).toBe("1");
+    const guide = within(region).getByRole("checkbox", { name: "skill-guide" });
+    expect(guide).toHaveProperty("checked", true);
+    expect(guide).toHaveProperty("disabled", true);
+    expect(within(region).getByText(F.builtinHint)).toBeTruthy();
+    expect(within(region).getByText("13 skills on")).toBeTruthy();
   });
 
-  it.each(["zh", "en"] as const)(
-    "three titled regions: empty org skills link to the skills page, pins wait for a selection, the confirmation sits with the agent's own skills (%s)",
-    async (locale) => {
-      const f = msgs[locale].agents.form;
-      const calls = stubApi({
-        ...editRoutes({ orgSkills: [] }),
-        [`GET ${ORG}/agents/ag1`]: () =>
-          json(200, {
-            agent: agent({
-              visibility: "private",
-              definition: { ...agent().definition, skills: { orgSkills: [] } },
-            }),
-          }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-        [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
-      });
-      await renderEditAgent({ locale, section: "skills" });
-      const org = await screen.findByRole("region", { name: f.orgSkillsLabel });
-      const pinned = screen.getByRole("region", { name: f.pinnedLabel });
-      const own = screen.getByRole("region", { name: f.ownSkillsLabel });
-      // the regions in order, each a heading of its own
-      const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-      expect(headings).toEqual([f.orgSkillsLabel, f.pinnedLabel, f.ownSkillsLabel]);
-      // org skills: the panel empty state with the way to the skills page
-      expect(await within(org).findByText(f.noOrgSkills)).toBeTruthy();
-      expect(within(org).getByRole("link", { name: f.goToSkills }).getAttribute("href")).toContain(
-        "/skills",
-      );
-      // pinned: one help line, the count at the heading, one short line instead of the pin list
-      expect(within(pinned).getByText(f.pinnedHint)).toBeTruthy();
-      expect(within(pinned).getByText("0 / 3")).toBeTruthy();
-      expect(within(pinned).getByText(f.noPinnable)).toBeTruthy();
-      expect(within(pinned).queryByRole("checkbox")).toBeNull();
-      // own skills: the confirmation and its one-line help, then the empty state
-      const sw = within(own).getByRole("checkbox", { name: f.confirmSkillRegister });
-      expect(within(own).getByText(f.confirmSkillRegisterHint)).toBeTruthy();
-      expect(await within(own).findByText(f.noOwnSkills)).toBeTruthy();
-      // no internal names in the section's copy
-      const text = screen.getByRole("region", { name: f.orgSkillsLabel }).closest("section")
-        ?.parentElement?.textContent;
-      expect(text).not.toMatch(/SkillWrite|SKILL\.md|\bSkill\b/);
-      // the save payload is as before: the confirmation writes writePolicy
-      const user = userEvent.setup();
-      await user.click(sw);
-      await user.click(screen.getByRole("button", { name: f.submit }));
-      await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-      const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
-        definition: Record<string, unknown>;
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
-    },
-  );
-
-  it("the pinned count follows the pins; the size limit is no standing line", async () => {
-    const f = en.agents.form;
-    stubApi(editRoutes({ orgSkills: ["s3", "s4"], pinned: ["s3"] }));
+  it("a plugin entry naming skills draws the group mixed with its off count", async () => {
+    stubApi(routes([{ kind: "plugin", plugin: "superpowers", skills: ["brainstorming"] }]));
     await renderEditAgent({ section: "skills" });
-    const pinned = await screen.findByRole("region", { name: f.pinnedLabel });
-    expect(await within(pinned).findByText("1 / 3")).toBeTruthy();
-    expect(within(pinned).queryByText(f.noPinnable)).toBeNull();
-    // the size limit is not a standing line: it shows only when the pins are over it
-    expect(within(pinned).queryByText(/32|bytes/)).toBeNull();
-    const user = userEvent.setup();
-    await user.click(
-      within(pinned).getByRole("checkbox", { name: fill(f.pinSkill, { name: "slides" }) }),
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const sp = await within(region).findByRole("checkbox", { name: selectAllOf("superpowers") });
+    expect(sp.getAttribute("aria-checked")).toBe("mixed");
+    expect(countOf(within(region).getAllByRole("list")[0] as HTMLElement)).toBe("9/10");
+    expect(within(region).getByRole("checkbox", { name: "brainstorming" })).toHaveProperty(
+      "checked",
+      false,
     );
-    expect(within(pinned).getByText("2 / 3")).toBeTruthy();
+    expect(within(region).getByText("1 off")).toBeTruthy();
+    expect(within(region).getByText("12 skills on · 1 off")).toBeTruthy();
   });
 
-  it("a fourth pin is disabled with the tooMany hint; the token estimate sums the pinned skills", async () => {
-    const f = en.agents.form;
-    stubApi(editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s1", "s2", "s3"] }));
+  it("a row: the name and its badges on the first line, the description a cut second line with the full text on hover", async () => {
+    stubApi(routes());
     await renderEditAgent({ section: "skills" });
-    const pinned = await screen.findByRole("region", { name: f.pinnedLabel });
-    const slides = await within(pinned).findByRole("checkbox", {
-      name: fill(f.pinSkill, { name: "slides" }),
-    });
-    expect(slides).toHaveProperty("checked", false);
-    expect(slides).toHaveProperty("disabled", true);
-    expect(within(pinned).getByText(fill(f.tooMany, { max: 3 }))).toBeTruthy();
-    // 1000 + 2000 + 500 tokens
-    expect(within(pinned).getByText(fill(f.pinnedTotal, { n: 3500 }))).toBeTruthy();
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const box = await within(region).findByRole("checkbox", { name: "using-superpowers" });
+    const row = box.closest('[data-part="check-list-row"]') as HTMLElement;
+    const line = row.querySelector('[data-part="check-list-line"]') as HTMLElement;
+    expect(line.contains(box)).toBe(true);
+    expect(within(line).getByText(F.skillTag.platform)).toBeTruthy();
+    const desc = row.querySelector('[data-part="check-list-description"]') as HTMLElement;
+    expect(line.contains(desc)).toBe(false);
+    expect(desc.textContent).toBe(LONG);
+    expect(desc.getAttribute("title")).toBe(LONG);
+    // the badge is not part of the name, nor glued to the description
+    expect(box.closest("label")?.textContent).toBe("using-superpowers");
   });
 
-  it("an unchanged pinned set over 32 KB is a warning only; the kernel's error lines map per reason", async () => {
-    const f = en.agents.form;
-    const big = [
-      pinSkill("s1", "using-superpowers", { entryBytes: 20000 }),
-      pinSkill("s2", "brainstorming", { entryBytes: 20000 }),
-      pinSkill("s3", "pdf-tools"),
-    ];
-    const calls = stubApi({
-      ...editRoutes({ orgSkills: ["s1", "s2", "s3"], pinned: ["s1", "s2"] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: big }),
-      [`PATCH ${ORG}/agents/ag1`]: () =>
-        json(400, {
-          error: {
-            code: "agent.pinned_invalid",
-            message: "x",
-            details: [
-              { skill: "s3", reason: "not_selected" },
-              { skill: "gone", reason: "not_found" },
-              { skill: "s1", reason: "duplicate" },
-              { skill: "s3", reason: "too_many" },
-              { skill: "s2", reason: "too_large", totalBytes: 40000 },
-            ],
-          },
-        }),
-    });
+  it("unticking the group head turns the whole plugin off (later skills too), keeping other entries", async () => {
+    // an entry for a plugin the org turned off: not shown, kept
+    const hidden = { kind: "plugin", plugin: "retired", skills: "all" };
+    const calls = withSave([hidden]);
     await renderEditAgent({ section: "skills" });
-    const pinned = await screen.findByRole("region", { name: f.pinnedLabel });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const sp = await within(region).findByRole("checkbox", { name: selectAllOf("superpowers") });
+    const user = userEvent.setup();
+    await user.click(sp);
+    expect(sp.getAttribute("aria-checked")).toBe("false");
+    expect(within(region).getByText(F.skillsOffAll)).toBeTruthy();
+    expect(zh.agents.form.skillsOffAll).toBe("已关闭全部（含以后新增的）");
+    expect(await save(calls)).toEqual([
+      hidden,
+      { kind: "plugin", plugin: "superpowers", skills: "all" },
+    ]);
+  });
+
+  it("ticking the head of a plugin turned off as a whole clears its entry", async () => {
+    const calls = withSave([{ kind: "plugin", plugin: "superpowers", skills: "all" }]);
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    expect(await within(region).findByText(F.skillsOffAll)).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(within(region).getByRole("checkbox", { name: selectAllOf("superpowers") }));
+    expect(await save(calls)).toEqual([]);
+  });
+
+  it("unticking every row one by one collapses to the whole plugin; ticking one back names the rest", async () => {
+    const calls = withSave();
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    await within(region).findByRole("checkbox", { name: "brainstorming" });
+    const user = userEvent.setup();
+    for (const name of SP) await user.click(within(region).getByRole("checkbox", { name }));
+    expect(within(region).getByText(F.skillsOffAll)).toBeTruthy();
+    await user.click(within(region).getByRole("checkbox", { name: "brainstorming" }));
+    expect(within(region).getByText("9 off")).toBeTruthy();
+    expect(await save(calls)).toEqual([
+      { kind: "plugin", plugin: "superpowers", skills: SP.slice(1).sort() },
+    ]);
+  });
+
+  it("the filter narrows by name and description; the head then acts on the shown rows by name", async () => {
+    const calls = withSave();
+    await renderEditAgent({ section: "skills" });
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    const search = await within(region).findByRole("searchbox", { name: F.searchSkills });
+    const user = userEvent.setup();
+    // "clarifying" is only in using-superpowers' description
+    await user.type(search, "clarifying");
+    expect(within(region).getAllByRole("list")).toHaveLength(1);
+    expect(within(region).getByRole("checkbox", { name: "using-superpowers" })).toBeTruthy();
+    expect(within(region).queryByRole("checkbox", { name: "brainstorming" })).toBeNull();
+    await user.clear(search);
+    await user.type(search, "writing");
+    expect(countOf(within(region).getAllByRole("list")[0] as HTMLElement)).toBe("1/1");
+    await user.click(within(region).getByRole("checkbox", { name: selectAllOf("superpowers") }));
+    await user.clear(search);
+    // only the shown row went off: the group is mixed, never the whole plugin
     expect(
-      await within(pinned).findByText(fill(f.overLimit, { bytes: 40000, max: 32768 })),
-    ).toBeTruthy();
-    expect(within(pinned).getByText(f.overLimitKept)).toBeTruthy();
-    const user = userEvent.setup();
-    // changing the list: saving is refused until it fits
-    await user.click(
-      within(pinned).getByRole("checkbox", { name: fill(f.pinSkill, { name: "pdf-tools" }) }),
-    );
-    expect(within(pinned).getByText(f.overLimitRefused)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: f.submit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    const e = f.pinnedError;
-    for (const line of [
-      fill(e.not_selected, { name: "pdf-tools" }),
-      fill(e.not_found, { name: "gone" }),
-      fill(e.duplicate, { name: "using-superpowers" }),
-      fill(e.too_many, { name: "pdf-tools", max: 3 }),
-      fill(e.too_large, { name: "brainstorming", bytes: 40000, max: 32768 }),
-    ]) {
-      expect(await screen.findByText(line)).toBeTruthy();
-    }
-    const top = screen.getByText(en.errors.agent.pinned_invalid);
-    // the fail tone carries the circle-x icon, not a character
-    expect(top.querySelector('[data-icon="circle-x"]')).not.toBeNull();
+      within(region)
+        .getByRole("checkbox", { name: selectAllOf("superpowers") })
+        .getAttribute("aria-checked"),
+    ).toBe("mixed");
+    await user.type(search, "nothing-matches-this");
+    expect(within(region).getByText(F.noSkillMatch)).toBeTruthy();
+    expect(await save(calls)).toEqual([
+      { kind: "plugin", plugin: "superpowers", skills: ["writing-plans"] },
+    ]);
   });
 
-  it.each(["zh", "en"] as const)(
-    "phase D: manual and sub-agent skills are tagged; a manual one is not pinnable; one that became manual warns (%s)",
-    async (locale) => {
-      const f = msgs[locale].agents.form;
-      const skills = [
-        { ...pinSkill("s1", "using-superpowers"), manual: false, fork: false },
-        { ...pinSkill("s2", "release-check"), manual: true, fork: false },
-        { ...pinSkill("s3", "review"), manual: false, fork: true },
-        { ...pinSkill("s4", "old-pin"), manual: true, fork: false },
-      ];
-      stubApi({
-        ...editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s4"] }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills }),
-      });
-      await renderEditAgent({ locale, section: "skills" });
-      const org = await screen.findByRole("region", { name: f.orgSkillsLabel });
-      await within(org).findByRole("checkbox", { name: /release-check/ });
-      // release-check and old-pin are manual, review runs as a sub-agent
-      expect(within(org).getAllByText(f.skillTag.manual)).toHaveLength(2);
-      expect(within(org).getAllByText(f.skillTag.fork)).toHaveLength(1);
-      expect(within(org).getByText(f.manualHint)).toBeTruthy();
-      const pinned = screen.getByRole("region", { name: f.pinnedLabel });
-      const manual = within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "release-check" }),
-      });
-      expect(manual).toHaveProperty("disabled", true);
-      expect(within(pinned).getByText(f.manualNotPinnable)).toBeTruthy();
-      // a pinned skill whose new version is manual-only: kept ticked (to be unticked), with a warning
-      const old = within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "old-pin" }),
-      });
-      expect(old).toHaveProperty("checked", true);
-      expect(old).toHaveProperty("disabled", false);
-      expect(within(pinned).getByText(fill(f.pinnedManualOnly, { name: "old-pin" }))).toBeTruthy();
-    },
-  );
-
-  it("phase D: the kernel's manual_only refusal names the skill", async () => {
-    const f = en.agents.form;
-    stubApi({
-      ...editRoutes({ orgSkills: ["s3"], pinned: [] }),
-      [`PATCH ${ORG}/agents/ag1`]: () =>
-        json(400, {
-          error: {
-            code: "agent.pinned_invalid",
-            message: "x",
-            details: [{ skill: "s3", reason: "manual_only" }],
-          },
-        }),
-    });
+  it("the 本组织 head turns its skills off one by one, by id (no whole-group entry)", async () => {
+    const calls = withSave();
     await renderEditAgent({ section: "skills" });
-    const pinned = await screen.findByRole("region", { name: f.pinnedLabel });
-    const user = userEvent.setup();
-    await user.click(
-      within(pinned).getByRole("checkbox", { name: fill(f.pinSkill, { name: "pdf-tools" }) }),
-    );
-    await user.click(screen.getByRole("button", { name: f.submit }));
-    expect(
-      await screen.findByText(fill(f.pinnedError.manual_only, { name: "pdf-tools" })),
-    ).toBeTruthy();
+    const region = await screen.findByRole("region", { name: F.orgSkillsLabel });
+    await userEvent
+      .setup()
+      .click(await within(region).findByRole("checkbox", { name: selectAllOf(F.skillGroupOrg) }));
+    expect(within(region).getByText("2 off")).toBeTruthy();
+    expect(await save(calls)).toEqual([
+      { kind: "skill", skillId: "o1" },
+      { kind: "skill", skillId: "o2" },
+    ]);
+  });
+
+  it("someone who may not change the agent never reaches the skill switches", async () => {
+    stubApi(routes());
+    await renderEditAgent({
+      section: "skills",
+      me: {
+        ...ME,
+        account: { ...ME.account, id: "someone-else", isSuperAdmin: false },
+        memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+      },
+    });
+    await screen.findByRole("heading", { level: 1, name: "Helper" });
+    expect(screen.queryByRole("region", { name: F.orgSkillsLabel })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Select all in/ })).toBeNull();
   });
 });

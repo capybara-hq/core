@@ -67,4 +67,26 @@ describe("reconstructRequest: a recording from before skills were on by default"
       }
     }
   });
+
+  it("a candidate reports pinned_changed on the parent's pinned calls and subagent_changed on the child's", () => {
+    const parent = fixture.parent.snapshot;
+    for (const c of ofType(parent, "model_call")) {
+      const out = reconstructRequest(parent, c.seq, {
+        model: fixture.model,
+        params: { effort: "high" },
+      });
+      // every parent call ran under a pinned snapshot; the request still renders its pins
+      expect(out.drift, `model_call seq ${c.seq}`).toContain("pinned_changed");
+      expect(out.request.system[0]?.text).toContain("<pinned_skill");
+    }
+    const child = fixture.child.snapshot;
+    for (const c of ofType(child, "model_call")) {
+      const out = reconstructRequest(child, c.seq, {
+        model: fixture.model,
+        params: { effort: "high" },
+      });
+      expect(out.drift, `model_call seq ${c.seq}`).toContain("subagent_changed");
+      expect(out.drift).not.toContain("pinned_changed");
+    }
+  });
 });

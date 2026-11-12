@@ -5,6 +5,7 @@ import {
   AGENT_TEMPLATE_LIMITS,
   AGENT_TEMPLATE_NAME_RE,
   type AgentTemplate,
+  isDisallowedSkillRef,
   parseAgentTemplate,
 } from "../src/index.js";
 
@@ -153,10 +154,10 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
     return r.template;
   };
 
-  it("reads selectedSkills, connectors, subagents, modelRef, quickActions and instructionFiles", () => {
+  it("reads disallowedSkills, connectors, subagents, modelRef, quickActions and instructionFiles", () => {
     const t = parse(
       [
-        "selectedSkills: [pdf-tools, writing-plans]",
+        "disallowedSkills: [pdf-tools, 'superpowers:*', 'crm:writing-plans']",
         "connectors:",
         "  - template: github",
         "    tools: [list_issues]",
@@ -185,7 +186,7 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
         "    content: Be brief.",
       ].join("\n"),
     );
-    expect(t.selectedSkills).toEqual(["pdf-tools", "writing-plans"]);
+    expect(t.disallowedSkills).toEqual(["pdf-tools", "superpowers:*", "crm:writing-plans"]);
     expect(t.connectors).toEqual([
       { template: "github", tools: ["list_issues"] },
       { template: "other:jira" },
@@ -278,7 +279,7 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
   it("leaves the new fields absent for an old file", () => {
     const t = parse("skills: [pdf-tools]");
     for (const k of [
-      "selectedSkills",
+      "disallowedSkills",
       "connectors",
       "subagents",
       "modelRef",
@@ -290,10 +291,15 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
   });
 
   it("rejects over-limit lists with the field path", () => {
-    const names = Array.from({ length: 33 }, (_, i) => `s${i}`).join(", ");
-    expect(errorsOf(md(`${base}\nselectedSkills: [${names}]`))).toEqual([
-      expect.stringContaining("selectedSkills"),
+    const names = Array.from(
+      { length: AGENT_TEMPLATE_LIMITS.disallowedSkills + 1 },
+      (_, i) => `s${i}`,
+    ).join(", ");
+    expect(errorsOf(md(`${base}\ndisallowedSkills: [${names}]`))).toEqual([
+      expect.stringContaining("disallowedSkills"),
     ]);
+    const atLimit = names.split(", ").slice(0, AGENT_TEMPLATE_LIMITS.disallowedSkills).join(", ");
+    expect(errorsOf(md(`${base}\ndisallowedSkills: [${atLimit}]`))).toEqual([]);
     const conns = Array.from({ length: 17 }, () => "  - template: a").join("\n");
     expect(errorsOf(md(`${base}\nconnectors:\n${conns}`))).toEqual([
       expect.stringContaining("connectors"),
@@ -314,6 +320,22 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
     ).toEqual([expect.stringContaining("subagents")]);
   });
 
+  it("ignores selectedSkills, a field the format no longer has", () => {
+    const t = parse("selectedSkills: [pdf-tools, writing-plans]");
+    expect("selectedSkills" in t).toBe(false);
+    expect("disallowedSkills" in t).toBe(false);
+    expect(parse("selectedSkills: [Not Valid]")).toBeDefined();
+  });
+
+  it("isDisallowedSkillRef accepts the three forms only", () => {
+    for (const ok of ["pdf", "crm:pdf", "crm:*", "a-1:b-2"]) {
+      expect(isDisallowedSkillRef(ok)).toBe(true);
+    }
+    for (const bad of ["", "*", "crm:", ":pdf", "Crm:pdf", "crm:Pdf", "a:b:c", "crm:**", 1, null]) {
+      expect(isDisallowedSkillRef(bad)).toBe(false);
+    }
+  });
+
   it("rejects over-long inline instructions", () => {
     const front = `${base}\nsubagents:\n  inline:\n    - name: a\n      description: d\n      instructions: ${"x".repeat(100_001)}\n      tools: []\n      skills: []\n      model: fast`;
     expect(errorsOf(md(front))).toEqual([
@@ -322,8 +344,13 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
   });
 
   it("rejects malformed entries with the field path", () => {
-    expect(errorsOf(md(`${base}\nselectedSkills: [Not Valid]`))).toEqual([
-      expect.stringContaining("selectedSkills"),
+    for (const bad of ["Not Valid", "'crm:'", "':pdf'", "'*'", "'crm:Pdf'", "'a:b:c'", "42"]) {
+      expect(errorsOf(md(`${base}\ndisallowedSkills: [${bad}]`))).toEqual([
+        expect.stringContaining("disallowedSkills"),
+      ]);
+    }
+    expect(errorsOf(md(`${base}\ndisallowedSkills: crm:*`))).toEqual([
+      expect.stringContaining("disallowedSkills"),
     ]);
     expect(errorsOf(md(`${base}\nconnectors:\n  - {}`))).toEqual([
       expect.stringContaining("connectors[0]"),
@@ -383,8 +410,8 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
         ),
       ),
     ).toEqual([expect.stringContaining("subagents.inline[0].instructions")]);
-    expect(errorsOf(md(`${base}\nselectedSkills: [a, a]`))).toEqual([
-      expect.stringContaining("selectedSkills"),
+    expect(errorsOf(md(`${base}\ndisallowedSkills: [a, 'crm:*', 'crm:*']`))).toEqual([
+      expect.stringContaining("disallowedSkills"),
     ]);
     expect(errorsOf(md(`${base}\nskills: [a, a]`))).toEqual([expect.stringContaining("skills")]);
     expect(errorsOf(md(`${base}\nsubagents:\n  types: [a, a]`))).toEqual([

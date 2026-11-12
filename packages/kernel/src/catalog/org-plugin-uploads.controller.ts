@@ -117,7 +117,6 @@ export class OrgPluginUploadsController {
       {
         reviewHash: body.reviewHash,
         ...(body.shareable !== undefined && { shareable: body.shareable }),
-        ...(body.pinnedSuggestions !== undefined && { pinnedSuggestions: body.pinnedSuggestions }),
       },
       actorOpts(actor),
     );

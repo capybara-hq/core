@@ -5621,3 +5621,93 @@ textarea {
   text-align: center;
   white-space: nowrap;
 }
+
+/* ── CheckList (spec §6.39) ───────────────────────────────────────────────── */
+
+.r-check-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-check-list[data-gap] {
+  margin-top: var(--cb-space-3);
+}
+.r-check-list-all {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-check-list-all > .r-tp-check,
+.r-check-list-all > .r-check-list-group {
+  flex: 1;
+  min-width: 0;
+}
+.r-check-list-group {
+  color: var(--cb-ink);
+  font-weight: 500;
+}
+.r-check-list-count {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  font-variant-numeric: tabular-nums;
+}
+.r-check-list-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.r-check-list-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--cb-space-1);
+  min-height: var(--cb-row-default);
+  padding: var(--cb-space-1) 0;
+}
+.r-check-list-row + .r-check-list-row {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-check-list-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-check-list-title {
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-check-list-row[data-locked] .r-check-list-title {
+  color: var(--cb-muted);
+}
+.r-check-list-marks {
+  display: inline-flex;
+  flex: none;
+  gap: var(--cb-space-1);
+  white-space: nowrap;
+}
+.r-cl-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: 14px;
+}
+.r-check-list-description {
+  overflow: hidden;
+  padding-left: 22px;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

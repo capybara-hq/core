@@ -388,7 +388,8 @@ describe("the agent page's sections with their own saves (agent profile design Â
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(3));
     expect(patches(calls)[2]).toEqual({
-      definition: { ...base, skills: { orgSkills: ["s1"] } },
+      // every skill is on: unticking one writes it off
+      definition: { ...base, disabledSkills: [{ kind: "skill", skillId: "s1" }] },
       expectedVersion: 1,
     });
 
@@ -433,7 +434,6 @@ describe("the agent page's sections with their own saves (agent profile design Â
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
     expect((patches(calls)[0] as { definition: { skills: unknown } }).definition.skills).toEqual({
-      orgSkills: [],
       writePolicy: "ask",
     });
   });

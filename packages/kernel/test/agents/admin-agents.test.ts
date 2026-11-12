@@ -247,6 +247,30 @@ describe("AdminAgents", () => {
     expect([first.agents[0]?.id, second.agents[0]?.id].sort()).toEqual([f.agentA, f.agentB].sort());
   });
 
+  it("the list counts the org skills each agent turns off; a skill it shared never counts", async () => {
+    const by = f.ownerA.id;
+    const a = await seedSkill(f.orgA, by, "alpha");
+    const b = await seedSkill(f.orgA, by, "beta");
+    const narrow = (
+      await agents.create(f.orgA, f.memberA.id, {
+        definition: def({
+          name: "Narrow",
+          disabledSkills: [
+            { kind: "skill", skillId: a },
+            { kind: "skill", skillId: b },
+          ],
+        }),
+        visibility: "private",
+      })
+    ).agent.id;
+    // `beta` is an org skill this agent shared: it always has it, so it is not counted as off
+    await db.updateTable("skills").set({ origin_agent_id: narrow }).where("id", "=", b).execute();
+    const { agents: rows } = await admin.list({ orgId: f.orgA, limit: 50 });
+    const off = Object.fromEntries(rows.map((r) => [r.name, r.skillsOff]));
+    expect(off).toMatchObject({ Narrow: 1, "Support bot": 0 });
+    expect((await admin.get(narrow)).skillsOff).toBe(1);
+  });
+
   it("detail has instructions and quick action labels only", async () => {
     const d = await admin.get(f.agentA);
     expect(d.definition.instructions).toBe("Answer support tickets politely.");
@@ -267,10 +291,11 @@ describe("AdminAgents", () => {
     expect(JSON.stringify(d)).not.toContain("full detail");
   });
 
-  it("detail names the skills and connectors it uses, never their bodies or auth", async () => {
+  it("detail names the skills and connectors it has, never their bodies or auth", async () => {
     const by = f.ownerA.id;
     const live = await seedSkill(f.orgA, by, "triage");
     const gone = await seedSkill(f.orgA, by, "old-style");
+    const off = await seedSkill(f.orgA, by, "turned-off");
     const github = await seedConnector(f.orgA, by, "GitHub", ["issues", "prs"]);
     const jira = await seedConnector(f.orgA, by, "Jira", ["search"]);
     const notion = await seedConnector(f.orgA, by, "Notion", ["read"]);
@@ -281,7 +306,7 @@ describe("AdminAgents", () => {
       await agents.create(f.orgA, f.memberA.id, {
         definition: def({
           name: "Skilled",
-          skills: { orgSkills: [live, gone] },
+          disabledSkills: [{ kind: "skill", skillId: off }],
           disabledTools: [
             // one tool of two off: still listed
             { kind: "connector", connectorId: github, tools: ["prs"] },
@@ -310,6 +335,8 @@ describe("AdminAgents", () => {
       { id: own, name: "my-notes", scope: "agent" },
       { id: live, name: "triage", scope: "org" },
     ]);
+    // the org's skills it turns off, counted (skills default-on spec §11)
+    expect(d.skillsOff).toBe(1);
     expect(d.connectors).toEqual([
       { id: empty, name: "Empty", slug: "empty", status: "disabled" },
       { id: github, name: "GitHub", slug: "github", status: "active" },

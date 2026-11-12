@@ -69,6 +69,7 @@ import {
   marketplaceIconUrl,
   wantedIcons,
 } from "./marketplace-icons.js";
+import { withoutRemovedManifestFields } from "./plugin-package.js";
 import { compareVersions, newestFirst, sameRelease } from "./versions.js";
 
 /** 官方清单来源的 id。 */
@@ -1315,7 +1316,7 @@ export class MarketplacesService {
       const pj = files.get(PLUGIN_MANIFEST_FILE);
       let entry: MarketplaceEntry;
       if (pj !== undefined) {
-        const m = parsePluginManifest(dec(pj));
+        const m = parsePluginManifest(withoutRemovedManifestFields(dec(pj)));
         if ("errors" in m) {
           throw new MarketplaceInvalidError(
             `the repository is a single plugin, but its ${PLUGIN_MANIFEST_FILE} is invalid: ${m.errors.slice(0, 5).join("; ")}`,

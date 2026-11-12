@@ -21,7 +21,7 @@ export const AGENT_TEMPLATE_LIMITS: {
     readonly perPlugin: 64;
     readonly skills: 3;
     readonly tools: 200;
-    readonly selectedSkills: 32;
+    readonly disallowedSkills: 64;
     readonly connectors: 16;
     readonly subagentTypes: 16;
     readonly inlineInstructionsChars: 100000;
@@ -40,6 +40,7 @@ export const AGENT_TEMPLATE_NAME_RE: RegExp;
 export interface AgentTemplate {
     connectors?: AgentTemplateConnector[];
     description: string;
+    disallowedSkills?: string[];
     disallowedTools?: string[];
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
     instructionFiles?: AgentTemplateInstructionFile[];
@@ -49,7 +50,6 @@ export interface AgentTemplate {
     modelRef?: string;
     name: string;
     quickActions?: AgentTemplateQuickAction[];
-    selectedSkills?: string[];
     skills?: string[];
     subagents?: AgentTemplateSubagents;
     toolPolicies?: Record<string, "ask" | "deny">;
@@ -1591,6 +1591,9 @@ export function isAttachmentId(s: unknown): s is string;
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
+export function isDisallowedSkillRef(v: unknown): v is string;
+
+// @public
 export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 
 // @public
@@ -2342,7 +2345,6 @@ export interface PluginSetupGuide {
 // @public
 export interface PluginSkillRef {
     path: string;
-    pinned?: boolean;
 }
 
 // @public

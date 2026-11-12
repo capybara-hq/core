@@ -548,17 +548,12 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         />
       );
     }
-    // A run fails with storage.unavailable or conflict only at start, reading the pinned skills.
     const summary =
       e.hook !== null
         ? e.hook.plugin !== null
           ? te("run.hook_denied", { plugin: e.hook.plugin })
           : te("run.hook_denied_unknown")
-        : e.code === "storage.unavailable"
-          ? te("run.pinned_unavailable")
-          : e.code === "conflict"
-            ? te("run.pinned_conflict")
-            : errorMessage(new ApiClientError(0, e.code, e.code));
+        : errorMessage(new ApiClientError(0, e.code, e.code));
     const detail = e.hook?.reason ?? e.message;
     const canRetry =
       !e.retried && e.retry !== null && e.hook === null && e.key === lastFailed && onRetry;

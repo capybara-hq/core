@@ -160,17 +160,24 @@ export function ToolsRead() {
 export function SkillsRead() {
   const t = useTranslations("agents.templatePage");
   const { definition } = useTemplatePage();
-  const pinned = definition.skills ?? [];
-  const selected = definition.selectedSkills ?? [];
+  const first = definition.skills ?? [];
+  const off = definition.disallowedSkills ?? [];
   return (
     <TemplateSectionFrame>
       <FormSection id="skills" title={t("sections.skills")} flush>
         <ItemList label={t("skills.list")} inset="flush" empty={t("skills.none")}>
-          {pinned.map((name) => (
-            <ItemListItem key={`p:${name}`} title={name} meta={t("skills.pinned")} />
+          {first.map((name) => (
+            <ItemListItem key={`f:${name}`} title={name} meta={t("skills.first")} />
           ))}
-          {selected.map((name) => (
-            <ItemListItem key={`s:${name}`} title={name} />
+          {off.map((ref) => (
+            <ItemListItem
+              key={`x:${ref}`}
+              title={
+                ref.endsWith(":*") ? t("skills.wholePlugin", { plugin: ref.slice(0, -2) }) : ref
+              }
+              code={ref}
+              meta={t("skills.off")}
+            />
           ))}
         </ItemList>
       </FormSection>

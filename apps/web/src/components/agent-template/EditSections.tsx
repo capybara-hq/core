@@ -3,7 +3,6 @@
 import {
   Button,
   Checkbox,
-  EmptyState,
   Field,
   FormSection,
   Input,
@@ -50,7 +49,15 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { modelsQuery } from "../../lib/query/conversation";
 import { skillsQuery } from "../../lib/query/skills";
+import {
+  canonicalOff,
+  disallowedToOff,
+  offToDisallowed,
+  skillIsOff,
+  skillNameKeys,
+} from "../../lib/skills-off";
 import { extensionToolKey, parseToolKey, toolDisplayName, toolTooltip } from "../../lib/tool-key";
+import { OrgSkillsPicker } from "../AgentSkills";
 import { sameJson } from "../agent/definition-parts";
 import { useSectionActionRow } from "../agent/definition-save";
 import { useInstructionFilesEditor } from "../agent/InstructionFilesEditor";
@@ -588,12 +595,12 @@ export function ToolsEdit() {
 }
 
 /**
- * 技能: the skills by name (a template carries names, ruling P4-1): pick from the org's skills,
- * and preload (pin) up to 3 of the picked ones. A name the org does not have stays picked and is
- * marked (用它创建 leaves it out); unticking drops it. Two titled regions in the card, as on the
- * agent page: the org skills (the panel empty state, linking to the skills page for members) and
- * the pinned ones (the count against the limit at the heading's right; with nothing selected, one
- * short line where the pin list would be).
+ * 技能: what the template turns off (`disallowedSkills`) with the agent page's grouped list
+ * (`OrgSkillsPicker`, a checked row is on; a plugin head is `<plugin>:*`, a plugin's row
+ * `<plugin>:<name>`, a skill without a plugin its bare name), and the skills a sub-agent made
+ * from it loads first (`skills`, at most 3: the chosen names, unticking drops one, a select adds
+ * one of the org's on skills). A name the org does not have stays listed and is marked (用它创建
+ * leaves it out). Entries for skills the org does not show stay as saved.
  */
 export function SkillsEdit() {
   const t = useTranslations("agents.templatePage");
@@ -603,37 +610,35 @@ export function SkillsEdit() {
   const sq = skillsQuery(orgId);
   const skills = useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) });
   const saved = {
-    selected: [...(definition.skills ?? []), ...(definition.selectedSkills ?? [])],
-    pinned: definition.skills ?? [],
+    off: disallowedToOff(definition.disallowedSkills ?? []),
+    first: definition.skills ?? [],
   };
   const draft = useSectionDraft(saved);
   const d = draft.draft;
-  const org = (skills.data?.skills ?? []).filter((s) => s.scope !== "agent");
-  const orgNames = new Set(org.map((s) => s.name));
-  const missing = [...new Set([...saved.selected, ...d.selected])].filter((n) => !orgNames.has(n));
+  const org = skills.data?.skills.filter((s) => s.scope !== "agent");
+  const orgNames = new Set((org ?? []).map((s) => s.name));
   const edit = (fn: (cur: typeof saved) => typeof saved) => {
     save.begin();
     draft.set(fn);
   };
-  const toggle = (name: string, on: boolean) =>
-    edit((cur) => ({
-      selected: on ? [...cur.selected, name] : cur.selected.filter((x) => x !== name),
-      pinned: on ? cur.pinned : cur.pinned.filter((x) => x !== name),
-    }));
-  const tooMany = d.selected.length - d.pinned.length > TEMPLATE_LIMITS.selectedSkills;
-  const unsaved = [
-    !sameJson([...d.selected].sort(), [...saved.selected].sort()),
-    !sameJson(d.pinned, saved.pinned),
-  ].filter(Boolean).length;
+  const disallowed = offToDisallowed(canonicalOff(d.off));
+  const tooMany = disallowed.length > TEMPLATE_LIMITS.disallowedSkills;
+  const offChanged = !sameJson(disallowed, offToDisallowed(canonicalOff(saved.off)));
+  const unsaved = [offChanged, !sameJson(d.first, saved.first)].filter(Boolean).length;
+  /** The org's skills a sub-agent may load first: on, in the model's catalog, not chosen yet. */
+  const addable = (org ?? []).filter(
+    (s) => s.manual !== true && !d.first.includes(s.name) && !skillIsOff(d.off, s, skillNameKeys),
+  );
 
   async function onSave() {
     if (save.pending || tooMany) return;
-    const rest = d.selected.filter((n) => !d.pinned.includes(n));
     const r = await save.send(
       withDefinition(template, {
-        skills: d.pinned.length === 0 && definition.skills === undefined ? undefined : d.pinned,
-        selectedSkills:
-          rest.length === 0 && definition.selectedSkills === undefined ? undefined : rest,
+        skills: d.first.length === 0 && definition.skills === undefined ? undefined : d.first,
+        disallowedSkills:
+          disallowed.length === 0 && definition.disallowedSkills === undefined
+            ? undefined
+            : disallowed,
       }),
     );
     if (r.saved) draft.reset();
@@ -648,86 +653,65 @@ export function SkillsEdit() {
       onDiscard={draft.reset}
     >
       <FormSection id="skills" title={t("sections.skills")} description={t("skills.hint")}>
-        <Subsection variant="divided" title={t("skills.selectLabel")}>
-          <Stack gap={4}>
-            {org.length === 0 && missing.length === 0 && skills.data !== undefined ? (
-              <EmptyState
-                size="panel"
-                text={t("skills.noOrgSkills")}
-                {...(navLevelOf(me) === "guest"
-                  ? {}
-                  : {
-                      action: {
-                        label: t("skills.goToSkills"),
-                        variant: "default" as const,
-                        href: "/skills",
-                      },
-                    })}
-              />
-            ) : null}
-            {skills.isError ? (
-              <Text variant="small" tone="faint">
-                {t("skills.unreadable")}
-              </Text>
-            ) : null}
-            {org.map((s) => (
-              <Checkbox
-                key={s.id}
-                label={s.description === "" ? s.name : `${s.name} · ${s.description}`}
-                checked={d.selected.includes(s.name)}
-                disabled={save.pending}
-                onChange={(on) => toggle(s.name, on)}
-              />
-            ))}
-            {missing.map((name) => (
-              <Checkbox
-                key={`missing:${name}`}
-                label={t("skills.missing", { name })}
-                checked={d.selected.includes(name)}
-                disabled={save.pending}
-                onChange={(on) => toggle(name, on)}
-              />
-            ))}
-            {tooMany ? (
-              <Text variant="small" tone="fail">
-                {t("skills.tooMany", { max: TEMPLATE_LIMITS.selectedSkills })}
-              </Text>
-            ) : null}
-          </Stack>
-        </Subsection>
+        {/* while the skills load, nothing: never the empty state */}
+        {org === undefined && !skills.isError ? null : (
+          <OrgSkillsPicker
+            skills={org}
+            value={d.off}
+            onChange={(off) => edit((cur) => ({ ...cur, off }))}
+            keyOf={skillNameKeys}
+            skillsHref={navLevelOf(me) === "guest" ? undefined : "/skills"}
+            disabled={save.pending}
+          />
+        )}
+        {tooMany ? (
+          <Text variant="small" tone="fail">
+            {t("skills.tooMany", { max: TEMPLATE_LIMITS.disallowedSkills })}
+          </Text>
+        ) : null}
         <Subsection
           variant="divided"
-          title={t("skills.pinLabel")}
-          description={t("skills.pinHint")}
+          title={t("skills.firstLabel")}
+          description={t("skills.firstHint")}
           actions={
             <Text variant="small" tone="faint">
-              {t("skills.pinCount", { count: d.pinned.length, max: TEMPLATE_LIMITS.skills })}
+              {t("skills.firstCount", { count: d.first.length, max: TEMPLATE_LIMITS.skills })}
             </Text>
           }
         >
           <Stack gap={4}>
-            {d.selected.length === 0 ? (
+            {d.first.map((name) => (
+              <Checkbox
+                key={`first:${name}`}
+                label={
+                  org === undefined || orgNames.has(name) ? name : t("skills.missing", { name })
+                }
+                checked
+                disabled={save.pending}
+                onChange={() =>
+                  edit((cur) => ({ ...cur, first: cur.first.filter((x) => x !== name) }))
+                }
+              />
+            ))}
+            {d.first.length < TEMPLATE_LIMITS.skills && addable.length > 0 ? (
+              <Select
+                aria-label={t("skills.addFirst")}
+                placeholder={t("skills.addFirst")}
+                density="dense"
+                disabled={save.pending}
+                value=""
+                onChange={(e) => {
+                  const name = e.target.value;
+                  if (name !== "") edit((cur) => ({ ...cur, first: [...cur.first, name] }));
+                }}
+                options={addable.map((s) => ({ value: s.name, label: s.name }))}
+              />
+            ) : null}
+            {d.first.length === 0 && addable.length === 0 ? (
               <Text variant="small" tone="faint">
-                {t("skills.noneToPin")}
+                {t("skills.noFirst")}
               </Text>
             ) : null}
-            {d.selected.map((name) => {
-              const pinned = d.pinned.includes(name);
-              return (
-                <Checkbox
-                  key={`pin:${name}`}
-                  label={t("skills.pin", { name })}
-                  checked={pinned}
-                  disabled={save.pending || (!pinned && d.pinned.length >= TEMPLATE_LIMITS.skills)}
-                  onChange={(on) =>
-                    edit((cur) => ({
-                      ...cur,
-                      pinned: on ? [...cur.pinned, name] : cur.pinned.filter((x) => x !== name),
-                    }))
-                  }
-                />
-              );
-            })}
           </Stack>
         </Subsection>
       </FormSection>

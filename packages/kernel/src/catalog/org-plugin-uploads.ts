@@ -106,7 +106,7 @@ export class OrgPluginUploads {
     actor: string,
     orgId: string,
     stagingId: string,
-    input: { reviewHash: string; shareable?: boolean; pinnedSuggestions?: string[] },
+    input: { reviewHash: string; shareable?: boolean },
     opts: ActorOpts = {},
   ): Promise<OrgUploadResult> {
     const st = await this.pluginImport.stagedTarget(stagingId, { orgId });
@@ -119,13 +119,6 @@ export class OrgPluginUploads {
       if (r.pending) return { item: r.item, outcome: "pending" };
       await this.scope.enqueueSync(r.item.id);
       return { item: r.item, outcome: r.firstVersion ? "installed" : "updated" };
-    }
-    if (input.pinnedSuggestions !== undefined) {
-      throw new ApiError(
-        "validation_failed",
-        "pinnedSuggestions: a new version keeps the plugin's own pinned suggestions",
-        [{ path: "pinnedSuggestions", message: "not allowed for a new version" }],
-      );
     }
     // The one hash covers the review and the update (P3-12): both recomputed now
     const preview = await this.updater.previewForOwner(orgId, st.itemId, st.version, st.target);

@@ -50,7 +50,7 @@ type Tab = (typeof TABS)[number];
 
 /**
  * `/skills/[id]`: an org skill's detail (DetailPage, one centred column): the full description
- * first (line breaks kept), the facts as a KeyValue, then the tabs: the SKILL.md body (plain text, no HTML or
+ * first (line breaks kept), the facts as a KeyValue (with how many agents turn it off), then the tabs: the SKILL.md body (plain text, no HTML or
  * Markdown rendering), the current version's files, the versions. Org admins delete the org's own
  * skill from the head's ⋯ menu (typing its name; the confirmation says what the delete does: one
  * another org uses is transferred to the platform, ruling P3-19). The org's own skill carries the
@@ -220,6 +220,10 @@ function Facts({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
           { k: t("version"), v: tv("version", { version: skill.currentVersion }) },
           { k: t("files"), v: String(skill.versions[0]?.files.length ?? 0) },
           { k: t("updated"), v: <DateTime value={skill.updatedAt} /> },
+          // skills default-on spec §10: on for every agent unless one turns it off
+          ...(skill.agentsOff !== undefined
+            ? [{ k: t("agents"), v: t("agentsOff", { n: skill.agentsOff }) }]
+            : []),
         ]}
       />
       {ownSkill(skill) && <ShareSwitch orgId={orgId} skill={skill} />}

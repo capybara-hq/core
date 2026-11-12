@@ -110,6 +110,7 @@ beforeEach(async () => {
     fallback: null,
     modelParams: {},
     fallbackParams: {},
+    disabledSkills: [],
     disabledTools: builtinsOff(...SCHEDULE_TOOL_NAMES, "CurrentTime"),
     toolPolicies: {},
   };
