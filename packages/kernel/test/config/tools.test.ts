@@ -51,6 +51,10 @@ describe("tools 配置段", () => {
       { idleTimeoutMs: 10 },
       { maxBytesPerRun: 1 },
       { gatewayUrl: "not a url" },
+      { gatewayUrl: "ftp://k.internal" },
+      { gatewayUrl: "https://k.internal/git" },
+      { gatewayUrl: "https://u:p@k.internal" },
+      { gatewayUrl: "https://k.internal/?a=1" },
     ]) {
       expect(KernelConfigSchema.safeParse({ ...base, tools: { git } }).success).toBe(false);
     }

@@ -971,12 +971,26 @@ export const KernelConfigSchema = z.object({
               }),
             ),
           gatewayUrl: z
-            .url()
+            .url({ protocol: /^https?$/ })
+            .refine(
+              (u) => {
+                const x = URL.canParse(u) ? new URL(u) : null;
+                return (
+                  x !== null &&
+                  x.pathname === "/" &&
+                  !x.search &&
+                  !x.hash &&
+                  !x.username &&
+                  !x.password
+                );
+              },
+              { message: "must be an origin: no path, query, fragment or credentials" },
+            )
             .optional()
             .meta(
               meta({
                 description:
-                  "Origin of the kernel as sandboxes reach it, e.g. https://kernel.internal:8080; when unset the kernel uses http.publicUrl",
+                  "Origin (http or https, no path, query or credentials) of the kernel as sandboxes reach it, e.g. https://kernel.internal:8080; when unset the kernel uses http.publicUrl",
               }),
             ),
           maxBytesPerRun: z
