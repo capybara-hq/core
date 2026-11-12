@@ -98,21 +98,21 @@ The row commits or rolls back with the business write.
 
 - **Fast path.** For a row due now (no `runAt`, or one already reached), `add` also registers an
   `afterCommit` hint that asks the local `OutboxDispatcher` to deliver the rows this transaction
-  wrote, right after the commit, on whatever replica role wrote
-  them (it is a producer, not a consumer, so the api role may do it). It claims the rows with
-  `SELECT … FOR UPDATE SKIP LOCKED`, adds the jobs to BullMQ, and deletes the rows in the same short
-  transaction. This keeps today's latency. The hint starts the dispatch detached and returns at once
-  (the commit's caller never waits on Redis). It never queues behind an outage: it skips the pass,
-  leaving the rows to the relay, when a kernel queue's Redis connection is not ready (checked without
-  waiting), or when 4 fast-path passes already run in the process (a local resource bound, no shared
-  state). So a Redis outage cannot take the PG pool.
-- **Relay.** A `@LockedInterval` job under `WorkerModule` (every 2 s, **designer's call**) claims due
-  rows (`next_attempt_at <= now()`, not dead; never by `run_at`, see delayed jobs) in batches of 500
-  with `SKIP LOCKED` and does the same. It is the only backstop: whatever the fast path did not deliver (a crash, Redis down) it
-  delivers on its next tick.
-- **Redis calls inside the claim transaction.** The dispatcher adds the BullMQ jobs while holding row
-  locks on outbox rows only (never on business rows), then deletes the rows and commits. This is the
-  one sanctioned exception to "no Redis inside a transaction", and it lives in one file. A crash
+  wrote, right after the commit, on whatever replica role wrote them (it is a producer, not a
+  consumer, so the api role may do it). It claims the rows with `SELECT … FOR UPDATE SKIP LOCKED`,
+  adds the jobs to BullMQ, and deletes the rows in the same short transaction. This keeps today's
+  latency. The hint starts the dispatch detached and returns at once (the commit's caller never
+  waits on Redis). It never queues behind an outage: it skips the pass, leaving the rows to the
+  relay, when a kernel queue's Redis connection is not ready (checked without waiting), or when 4
+  fast-path passes already run in the process (a local resource bound, no shared state). So a Redis
+  outage cannot take the PG pool.
+- **Relay.** A `@LockedInterval` job under `WorkerModule` (every 2 s, **designer's call**) claims
+  due rows (`next_attempt_at <= now()`, not dead; never by `run_at`, see delayed jobs) in batches of
+  500 with `SKIP LOCKED` and does the same. It is the only backstop: whatever the fast path did not
+  deliver (a crash, Redis down) it delivers on its next tick.
+- **Redis calls inside the claim transaction.** The dispatcher adds the BullMQ jobs while holding
+  row locks on outbox rows only (never on business rows), then deletes the rows and commits. This is
+  the one sanctioned exception to "no Redis inside a transaction", and it lives in one file. A crash
   after the add and before the commit leaves the rows; the next attempt adds again, which BullMQ
   ignores while the job id exists, and which the job's own idempotency covers after it was removed.
   The adds of one pass share one 2000 ms deadline, so a claim transaction holds its locks and its
@@ -213,7 +213,8 @@ The run path is the largest user of recovery today, so it is spelled out.
 
 - **Starting a run.** The decision `ensureRunIn` makes (new run row) and the outbox row for its job
   commit together. The read-back of the job, `deleteQueued` on a failed add and the "queued without
-  a job" orphan test are deleted: a queued run always has its job owed.
+  a job" orphan test are deleted: a queued run always has its job owed. A trigger's first run's
+  job id is `runJobId`; a later run of the same trigger gets `<runJobId>-<n>`, kept in `runs.job_id`.
 - **Sending a message.** The message transaction also writes an `ensure-run` outbox job
   (`ensure-run-<conv>-<seq>`) with `runAt = now + 30 s` (**designer's call**: a backstop, not a
   second immediate call), and the request still calls `ensureRun` right after the commit as today.
