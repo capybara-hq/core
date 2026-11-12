@@ -30,7 +30,7 @@ import { RunJobsModule } from "../runtime/run-jobs.js";
 import { RunOrphanCheck } from "../runtime/run-orphan-check.job.js";
 import { RuntimeWorkersModule } from "../runtime/run-processors.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
-import { UsageReportModule, UsageSweepJob } from "../runtime/usage-report.js";
+import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxSweepJobs } from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduledTaskFireModule } from "../schedules/fire.js";
@@ -88,7 +88,6 @@ export class WorkerModule {
       providers: [
         // the one repair of a run nobody runs (transactional outbox spec §8.3)
         RunOrphanCheck,
-        UsageSweepJob,
         AttachmentCleanupJob,
         StoragePurgeJob,
         SandboxSweepJobs,

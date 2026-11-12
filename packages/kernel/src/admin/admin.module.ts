@@ -10,7 +10,7 @@ import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
-import { UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
+import { UsageReportModule } from "../runtime/usage-report.js";
 import { AdminHealthService } from "./health.service.js";
 import { OutboxDeadService } from "./outbox-dead.service.js";
 import { AdminOverviewService } from "./overview.service.js";
@@ -38,7 +38,7 @@ import { AdminUsageService } from "./usage.service.js";
     RunJobsModule,
     ChannelsModule,
     TitlesModule,
-    UsageReportJobsModule,
+    UsageReportModule,
     EvalsModule,
     // the price table of the usage aggregate
     ModelsModule,

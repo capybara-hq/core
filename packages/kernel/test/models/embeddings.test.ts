@@ -8,7 +8,6 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ModelEmbeddings } from "../../src/models/embeddings.js";
-import { ModelUsageJobs } from "../../src/runtime/usage-report.js";
 import { embedConsumer } from "../fixtures/plugins/embed-consumer/index.js";
 import { embedProbe } from "../fixtures/plugins/model-embed-probe/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -259,7 +258,7 @@ describe("ctx.models.embed", { timeout: 60_000 }, () => {
   });
 });
 
-describe("ctx.models.embed: time limits, aborts, the usage enqueue", { timeout: 60_000 }, () => {
+describe("ctx.models.embed: time limits and aborts", { timeout: 60_000 }, () => {
   it("a batch over models.embedTimeoutMs is aborted and fails with a timeout ModelError", async () => {
     await map(PROBE);
     embedProbe().hang = true;
@@ -301,33 +300,6 @@ describe("ctx.models.embed: time limits, aborts, the usage enqueue", { timeout: 
     );
     expect((e as Error).message).toBe("gone");
     expect(embedProbe().calls).toEqual([]);
-  });
-
-  it("embed does not wait for the usage enqueue (a hanging or failing enqueue)", async () => {
-    await map(PROBE);
-    const jobs = k.app.get(ModelUsageJobs);
-    const original = jobs.enqueue;
-    let reached = 0;
-    try {
-      jobs.enqueue = () => {
-        reached++;
-        return new Promise<void>(() => {}); // never settles (Redis unreachable)
-      };
-      const out = await Promise.race([
-        ctx().models.embed({ orgId, purpose: PURPOSE, input: ["t1"] }),
-        new Promise<"stuck">((r) => setTimeout(() => r("stuck"), 3_000)),
-      ]);
-      expect(out).not.toBe("stuck");
-      jobs.enqueue = async () => {
-        reached++;
-        throw new Error("redis down");
-      };
-      await ctx().models.embed({ orgId, purpose: PURPOSE, input: ["t2"] });
-      await waitFor(async () => reached === 2, 5_000, "both enqueues attempted");
-    } finally {
-      jobs.enqueue = original;
-    }
-    expect(await db.selectFrom("model_usage").selectAll().execute()).toHaveLength(2);
   });
 });
 

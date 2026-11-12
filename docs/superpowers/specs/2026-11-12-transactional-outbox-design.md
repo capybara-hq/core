@@ -232,8 +232,8 @@ The run path is the largest user of recovery today, so it is spelled out.
   outbox. When the run is still `running` (the decision raced `suspend`), nothing more is written:
   `suspend`'s existing re-check (`runtime/waits.ts:225-232`) sees the decided wait and does not
   suspend. So the transition is never outside a transaction and no extra job hop exists. The
-  in-process `approval.decided` / `question.answered` events stay as hints for IM cards; the IM card
-  update itself is owed (§8.1, IM delivery).
+  in-process `approval.decided` / `question.answered` events stay as domain events with no kernel
+  subscriber; the IM card update is owed by the decision's event append (§8.1, IM delivery).
 - **Sub-agents.** `commitDispatch` writes the child run and its job together. A child's terminal
   transaction writes its delivery to the parent (or a `deliver-to-parent` job) and the parent's
   `ensure-run` job. A run's terminal transaction closes its open `Agent` calls and writes

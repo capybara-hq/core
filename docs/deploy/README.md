@@ -354,10 +354,10 @@ otherwise.
 - **Usage reporting (`usage.report` hooks).** When an extension registers a `usage.report` hook, every
   model call's usage event is delivered to it through the BullMQ queue `cap-kernel-usage-report`,
   processed by the `worker` role (so deployments with such extensions need a worker, and Redis).
-  - A job per usage event, retried up to 5 times (2 s doubling) on any replica. A maintenance job
-    re-offers recent usage events every minute so a lost enqueue is caught up; the job ids dedupe it.
-  - Redis retention: completed jobs are kept for `hooks.usageReportKeepHours` (default 24, at least 1)
-    and at most 100 000; failed jobs (given up, or a target that was dropped because it cannot take
+  - A job per usage event, retried up to 5 times (2 s doubling) on any replica. The job is owed in
+    the outbox with the usage event, so a crash or a Redis outage delays it, never loses it. Usage
+    written while no enabled extension declares `usage.report` is not reported later.
+  - Redis retention: completed jobs are kept for 24 hours and at most 100 000; failed jobs (given up, or a target that was dropped because it cannot take
     deliveries) are kept for 7 days and at most 100 000. A failed job can be retried by hand: its
     pending list holds only the extensions that did not get the event.
   - `hooks.usageReportConcurrency` (default 16 jobs per worker replica) is read when the worker

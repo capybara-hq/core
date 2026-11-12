@@ -70,7 +70,8 @@ describe("渠道队列优先级（行为）", () => {
       return c;
     };
     const queue = new Queue<ChannelJobData>(CHANNEL_QUEUE_NAME, { connection: conn() });
-    const jobs = new ChannelJobs(db, queue, { on: () => () => {} }, log);
+    // no outbox and no transaction: this test only enqueues hints and inbound jobs
+    const jobs = new ChannelJobs(db, queue, { on: () => () => {} }, log, {} as never, {} as never);
     const outbound = new ChannelOutbound(
       db,
       // 投递任务读到投递行后订阅总线：这里记下处理顺序，第 1 条卡在门闸上占着并发槽

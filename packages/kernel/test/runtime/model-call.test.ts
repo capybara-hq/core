@@ -1465,12 +1465,14 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
   it("compaction: model.request and model.response fire with purpose compaction; its usage is logged and reported (I-1)", async () => {
     await longHistory();
     const { seen, hooks } = fakeHooks();
-    const enqueued: number[] = [];
+    const owed: number[] = [];
     const r = await hookedStep(
       {
         ...deps,
         hooks,
-        usageReport: { enqueue: async (_c, seq) => void enqueued.push(seq) },
+        stepLog: stepLogFor(db, eventLog, async (_c, events) => {
+          for (const e of events) if (e.type === "usage") owed.push(e.seq);
+        }),
       },
       small(),
     );
@@ -1500,7 +1502,8 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
     const summary = (await ofType("compaction_summary"))[0];
     // written in the same append as the compaction outcome, before the step's model_call
     expect(usage[0]?.seq).toBe((summary?.seq ?? 0) + 1);
-    expect(enqueued).toEqual(usage.map((u) => u.seq));
+    // each usage event's report is owed in the transaction that wrote it
+    expect(owed).toEqual(usage.map((u) => u.seq));
   });
 
   it("compaction denied by a policy hook: compaction_failed with a generic reason, raw detail only in audit; the step goes on (I-1)", async () => {

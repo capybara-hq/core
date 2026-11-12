@@ -21,8 +21,9 @@ export interface KernelEventMap {
   "extension.org-disabled": { orgId: string; plugin: string };
   /**
    * A person decided a tool call approval (after the commit, exactly once: only the decision that
-   * changed it from pending). The decision's transaction resumed the run; the event updates IM
-   * cards (its IM delivery is enqueued), and a lost one is re-derived by the next append.
+   * changed it from pending). The decision's transaction resumed the run and, for a conversation
+   * with a channel target, owed the IM delivery that updates the card (with its `approval_decided`
+   * append); the event itself is only the decision's announcement.
    */
   "approval.decided": {
     id: string;
@@ -34,8 +35,7 @@ export interface KernelEventMap {
   };
   /**
    * A person answered a tool call's input request, or skipped it with a message (after the commit,
-   * exactly once). Same
-   * consumers and the same re-derivation as `approval.decided`.
+   * exactly once). The same transaction contract as `approval.decided`.
    */
   "question.answered": {
     id: string;
@@ -46,24 +46,12 @@ export interface KernelEventMap {
     outcome: "answered" | "skipped";
   };
   /**
-   * EventAppended: a conversation's event log advanced to `toSeq` (after the commit, from
-   * `EventLog.notify`, right after the bus publish). The channel outbound delivery enqueues a job
-   * for a conversation with an IM target; a lost event is re-derived by the next append's (and the
-   * finished delivery job re-checks the log for content it has not delivered).
-   */
-  "conversation.event-appended": { conversationId: string; toSeq: number };
-  /**
    * A run started executing on this replica (its first start, a resume, or a takeover after a
    * stall), after it took the conversation lock and an org quota slot. The channel outbound
-   * enqueues the conversation's IM delivery; a lost event is re-derived by the run's next append.
+   * enqueues the conversation's IM delivery at once (a hint: the run's appends owe it, transactional
+   * outbox spec §8.1).
    */
   "run.started": { conversationId: string; runId: string };
-  /**
-   * A stop of a run waiting on a person was handled (`RunControl.abortWaiting`, whether or not it
-   * still waited): its approval and question cards change, so the channel outbound enqueues the
-   * conversation's IM delivery (re-derived by the next append when lost).
-   */
-  "run.wait-stopped": { conversationId: string; runId: string };
   /**
    * The `run-orphan-check` failed an orphaned run (after the commit): the waits stop its active
    * fork sub-agent at once (background sub-agents keep running, agent map spec §5.4). A lost event
@@ -82,12 +70,6 @@ export interface KernelEventMap {
    * event is re-derived by the next `ensureRun` (a message, the end of a run, a page opening).
    */
   "background_task.finished": { conversationId: string };
-  /**
-   * An extension's `ctx.models.embed` call wrote a `model_usage` row (after the commit, spec B
-   * §5.4). The usage reporter enqueues its `usage.report` delivery; a lost event is re-derived by
-   * the usage sweep (rows whose `reported_at` is still null).
-   */
-  "model_usage.recorded": { id: string };
 }
 
 /** The payload's id for the failure log (`approvalId` / `questionId`, as the old hooks logged). */

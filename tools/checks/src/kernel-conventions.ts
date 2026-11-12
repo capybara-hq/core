@@ -368,22 +368,31 @@ export const KC_PENDING: KcPending = {
     {
       path: "packages/kernel/src/channels/actions.ts",
       max: 1,
-      reason: "moves to the outbox in PR 3",
+      reason:
+        "a card click's thread delivery hint (the decision's appends owe their own): settled in PR 7",
     },
     {
       path: "packages/kernel/src/channels/inbound.ts",
-      max: 2,
-      reason: "moves to the outbox in PR 3",
+      max: 1,
+      reason: "the directory sync enqueue: moves to the outbox in PR 5",
     },
-    { path: "packages/kernel/src/channels/jobs.ts", max: 2, reason: "moves to the outbox in PR 3" },
+    {
+      path: "packages/kernel/src/channels/jobs.ts",
+      max: 2,
+      reason:
+        "the deliver hint (run.started, follow-ups, a connection's catch-up; appends owe the " +
+        "delivery) and the inbound add an un-acked platform event owes: settled in PR 7",
+    },
     {
       path: "packages/kernel/src/channels/outbound.ts",
       max: 2,
-      reason: "moves to the outbox in PR 3",
+      reason:
+        "a delivery job's own follow-ups (a failure fails the job, which BullMQ retries): " +
+        "settled in PR 7",
     },
     {
       path: "packages/kernel/src/conversations/titles.ts",
-      max: 3,
+      max: 1,
       reason: "moves to the outbox in PR 3",
     },
     { path: "packages/kernel/src/evals/jobs.ts", max: 1, reason: "moves to the outbox in PR 7" },
@@ -398,24 +407,9 @@ export const KC_PENDING: KcPending = {
       reason: "moves to the outbox in PR 5",
     },
     {
-      path: "packages/kernel/src/runtime/model-call.ts",
-      max: 3,
-      reason: "moves to the outbox in PR 3",
-    },
-    {
       path: "packages/kernel/src/runtime/run-queue.ts",
       max: 1,
       reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/runtime/usage-report-jobs.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 3",
-    },
-    {
-      path: "packages/kernel/src/runtime/usage-report.ts",
-      max: 3,
-      reason: "moves to the outbox in PR 3",
     },
     { path: "packages/kernel/src/sandbox/jobs.ts", max: 2, reason: "moves to the outbox in PR 5" },
     {
@@ -432,11 +426,6 @@ export const KC_PENDING: KcPending = {
       path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
       max: 1,
       reason: "moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/tools/builtins/web/extract.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 3",
     },
     { path: "packages/kernel/src/tools/drift.ts", max: 2, reason: "moves to the outbox in PR 7" },
   ],

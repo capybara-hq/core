@@ -27,6 +27,7 @@ import { SingleProviderGuard } from "./single-provider.js";
 import { ReplicaStatusStore } from "./sources.js";
 import { ExtensionStateModule } from "./state.module.js";
 import { ExtensionAvailability } from "./unavailable.js";
+import { UsageSubscribersModule } from "./usage-subscribers.js";
 
 /**
  * The extensions domain: the extension host (it builds each `ctx` from the injected kernel
@@ -45,6 +46,8 @@ import { ExtensionAvailability } from "./unavailable.js";
     ExtensionStateModule,
     // ctx.models: the embeddings broker (models domain, below the host through ExtensionStateModule)
     ModelsModule,
+    // the lifecycle clears the `usage.report` subscriber cache on PLUGINS_CHANGED
+    UsageSubscribersModule,
   ],
   providers: [
     PluginInstallLock,

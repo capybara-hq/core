@@ -13,7 +13,10 @@ export interface OutboxJobSpec {
    * BullMQ options the dispatcher adds the job with over the queue defaults
    * (`QUEUE_JOB_DEFAULTS`); the job id and the delay always come from the row.
    */
-  opts?: Pick<JobsOptions, "attempts" | "backoff" | "removeOnComplete" | "removeOnFail">;
+  opts?: Pick<
+    JobsOptions,
+    "attempts" | "backoff" | "priority" | "removeOnComplete" | "removeOnFail"
+  >;
 }
 
 /**
@@ -84,6 +87,42 @@ export const OUTBOX_JOBS = {
     opts: {
       attempts: 5,
       backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `runtime/usage-report-jobs.ts` USAGE_REPORT_JOB: owed with the usage it reports (a `usage`
+  // event or a `model_usage` row) while some plugin subscribes, under `usageReportJobId` /
+  // `modelUsageJobId` (spec §8.1)
+  "usage-report": {
+    queue: "cap-kernel-usage-report",
+    idempotent:
+      "handlers are idempotent by eventId (the event's `<conversationId>/<seq>` or the model_usage row id), and the job's `pending` list keeps a retry from reaching plugins already served",
+    processedIn: "packages/kernel/src/runtime/run-processors.ts",
+    // first attempt plus 5 retries, 2 s doubling (F11); finished jobs kept a day so a re-add of the
+    // same id (a crash between the add and the row's delete) dedupes; failed ones a week; both
+    // capped by count (I-2: a long outage of a billing endpoint cannot grow Redis)
+    opts: {
+      attempts: 6,
+      backoff: { type: "exponential", delay: 2_000 },
+      removeOnComplete: { age: 24 * 3600, count: 100_000 },
+      removeOnFail: { age: 7 * 86_400, count: 100_000 },
+    },
+  },
+  // `channels/deliver-job.ts` DELIVER_JOB: owed by every event append of a conversation with a
+  // channel target (a reply, an approval decision, a question answer, a wait stop) and by binding
+  // a conversation to its target, under `deliverJobId` (spec §8.1)
+  deliver: {
+    queue: "cap-kernel-channels",
+    idempotent:
+      "a delivery resumes from the conversation's delivered seq under a per-conversation lock and sends with idempotency keys, so a second job sends nothing twice",
+    processedIn: "packages/kernel/src/channels/channels.module.ts",
+    // the platform's retry-after, else exponential (the processor's `deliver` backoff strategy);
+    // behind inbound jobs; removed once done, so a later append's id is never deduped away
+    opts: {
+      attempts: 8,
+      backoff: { type: "deliver" },
+      priority: 10,
       removeOnComplete: true,
       removeOnFail: true,
     },

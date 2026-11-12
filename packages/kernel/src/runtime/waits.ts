@@ -109,7 +109,7 @@ export class Waits implements OnApplicationShutdown {
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     /** The resume of a waiting run, in the caller's transaction ({@link resume}). */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
-    @Inject(KernelEvents) private readonly events: KernelEvents,
+    @Inject(KernelEvents) events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
     /** Stops a finished sub-agent run's background tasks ({@link childFinished}). */
     @Inject(BackgroundTaskStopper)
@@ -725,13 +725,8 @@ export class Waits implements OnApplicationShutdown {
     ).sort((a, b) => (level.get(a.conversation_id) ?? 0) - (level.get(b.conversation_id) ?? 0));
     for (const r of runs) {
       try {
-        if (await this.stopRun(r.conversation_id, r.id, r.status, byAccountId)) {
-          // its approval / question cards changed (RunControl.abortWaiting's event)
-          await this.events.emit("run.wait-stopped", {
-            conversationId: r.conversation_id,
-            runId: r.id,
-          });
-        }
+        // a stopped wait's card updates are owed by its transaction's appends (outbox spec §8.1)
+        await this.stopRun(r.conversation_id, r.id, r.status, byAccountId);
       } catch (err) {
         this.log.error("cannot stop a sub-agent run of the tree", { runId: r.id, err });
       }

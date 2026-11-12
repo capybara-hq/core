@@ -101,8 +101,9 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  *
  * An answer resumes its waiting run in the answer's transaction (`RunResume.resumeIn`, after the
  * question row: lock order conversation, question, then run; transactional outbox spec §6). It is
- * announced after the commit as the domain event `question.answered` (exactly once), a hint for
- * the IM card. Events are appended in the context's transaction (`EventLog.appendIn`).
+ * announced after the commit as the domain event `question.answered` (exactly once; no kernel
+ * subscriber: the IM card update is owed by the `question_answered` append, transactional outbox
+ * spec §8.1). Events are appended in the context's transaction (`EventLog.appendIn`).
  */
 @Injectable()
 export class QuestionsService {

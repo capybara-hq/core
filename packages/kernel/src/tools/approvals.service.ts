@@ -320,7 +320,8 @@ function canHandle(
  * A decision resumes its waiting run in the decision's transaction (`RunResume.resumeIn`, after the
  * decided row: lock order approval, then run; transactional outbox spec §6). It is announced after
  * the commit as the domain event `approval.decided` (exactly once: only the decision that changed
- * the row from pending), a hint for the IM card. Events are appended in the context's transaction
+ * the row from pending; no kernel subscriber: the IM card update is owed by the `approval_decided`
+ * append, transactional outbox spec §8.1). Events are appended in the context's transaction
  * (`EventLog.appendIn`) and published after the commit.
  */
 @Injectable()
@@ -1308,7 +1309,8 @@ export class ApprovalsService {
    * `approval_decided{skipped}` by the author; access stays blocked. Returns the skipped records and
    * the highest seq written per conversation; the caller resumes their waiting runs in this
    * transaction once every skipped row is locked (`ConversationsService.skipWaitsIn`), and notifies
-   * and emits `approval.decided{skipped}` (the IM card's hint) after the commit.
+   * and emits the domain event `approval.decided{skipped}` after the commit (its IM card update is
+   * owed by the append, transactional outbox spec §8.1).
    */
   @Transactional({ propagation: "mandatory" })
   async skipNetworkIn(

@@ -15,6 +15,7 @@ import {
 import { MAX_STALLED_COUNT, RunWorker } from "./run-worker.js";
 import { RuntimeModule } from "./runtime.module.js";
 import {
+  type USAGE_REPORT_JOB,
   USAGE_REPORT_QUEUE,
   UsageReporter,
   type UsageReportJob,
@@ -80,6 +81,12 @@ export class SubagentRunsProcessor extends WorkerHost<Worker<RunJobData, RunResu
   }
 }
 
+/**
+ * A delivery job: the usage report queue carries only {@link USAGE_REPORT_JOB} jobs (the outbox
+ * registry's `usage-report`).
+ */
+type UsageJob = Job<UsageReportJob, void, typeof USAGE_REPORT_JOB>;
+
 /** The consumer of `cap-kernel-usage-report`: {@link UsageReporter}. */
 @Injectable()
 export class UsageReportProcessor extends WorkerHost<Worker<UsageReportJob>> {
@@ -87,7 +94,7 @@ export class UsageReportProcessor extends WorkerHost<Worker<UsageReportJob>> {
     super();
   }
 
-  process(job: Job<UsageReportJob>, token?: string): Promise<void> {
+  process(job: UsageJob, token?: string): Promise<void> {
     return runJob(USAGE_REPORT_QUEUE, job, () => this.reporter.process(job, token));
   }
 

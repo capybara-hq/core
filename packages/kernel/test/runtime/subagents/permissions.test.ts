@@ -11,11 +11,10 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { UsageReporter } from "../../../src/runtime/usage-report.js";
+import { StepLog } from "../../../src/runtime/step-log.js";
 import {
   openBarrier,
   type ScriptRule,
@@ -770,7 +769,10 @@ describe("hooks and usage reports of a sub-agent", () => {
         budget_run_id: run.id,
       })
       .execute();
-    const [usage] = await k.app.get(EventLog).append(child, [
+    // written through the step writes, which owe its usage.report delivery with it
+    const {
+      written: [usage],
+    } = await k.app.get(StepLog).appendReported(child, [
       {
         type: "usage",
         runId: wakeRun,
@@ -786,7 +788,6 @@ describe("hooks and usage reports of a sub-agent", () => {
       },
     ]);
     if (!usage) throw new Error("usage not appended");
-    await k.app.get(UsageReporter).enqueue(child, usage.seq);
     const id = `${child}/${usage.seq}`;
     type Delivery = { calls: number; last: UsageReportPayload | null };
     const got = await waitFor(

@@ -1291,7 +1291,8 @@ export class ConversationsService {
   /**
    * After the commit: announces each skipped question (`question.answered`, outcome `skipped`) and
    * network ask (`approval.decided`, status `skipped`; a sub-agent's conversation is notified
-   * first), so its IM card updates (channel jobs); the run resumed in the message's transaction.
+   * first) as domain events with no kernel subscriber: the IM card updates are owed by the skips'
+   * appends (transactional outbox spec §8.1); the run resumed in the message's transaction.
    */
   async announceSkipped(skipped: ReplySkips): Promise<void> {
     for (const q of skipped.questions) {

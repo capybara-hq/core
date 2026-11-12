@@ -1,19 +1,31 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
+import type { ChannelTarget, InboundEvent, Logger } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { OUTBOX_JOBS } from "../infra/outbox/registry.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import {
+  CHANNEL_QUEUE_NAME,
+  DELIVER_JOB,
+  type DeliverJobData,
+  deliverJobId,
+  oweDelivery,
+} from "./deliver-job.js";
 
-/** 渠道队列（出站投递与入站任务，不含 `:`），只在 worker 角色上消费。 */
-export const CHANNEL_QUEUE_NAME = "cap-kernel-channels";
-/** 投递任务名。 */
-export const DELIVER_JOB = "deliver";
-/** 投递任务 id（不含 `:`）：同一会话、同一日志位置只排一个任务。 */
-export const deliverJobId = (conversationId: string, seq: number) =>
-  `deliver-${conversationId}-${seq}`;
+export {
+  CHANNEL_QUEUE_NAME,
+  DELIVER_JOB,
+  type DeliverJobData,
+  deliverJobId,
+  oweDelivery,
+} from "./deliver-job.js";
+
 /**
  * 结束后复核排的任务 id：每次唯一（带随机后缀，不含 `:`）。不能复用 `deliver-<会话>-<seq>`——同 id 的任务
  * 可能正因锁被占而即将直接结束，BullMQ 会把新任务去重进它，于是没人投递。
@@ -30,11 +42,7 @@ export function idempotencyKey(raw: string): string {
 }
 
 /** 可重试失败（限流、5xx、网络、超时）的总尝试次数。 */
-export const DELIVER_ATTEMPTS = 8;
-
-export interface DeliverJobData {
-  conversationId: string;
-}
+export const DELIVER_ATTEMPTS = OUTBOX_JOBS.deliver.opts.attempts;
 
 /** 入站任务（Ruling A21）：插件 `onEvent` 收到的事件，原样排进队列由 worker 处理。 */
 export interface InboundJobData {
@@ -51,7 +59,7 @@ export const INBOUND_JOB = "inbound";
  * 用户发来的消息不能排在它们后面。
  */
 export const INBOUND_PRIORITY = 1;
-export const DELIVER_PRIORITY = 10;
+export const DELIVER_PRIORITY = OUTBOX_JOBS.deliver.opts.priority;
 /** 入站任务的总尝试次数（处理失败由 BullMQ 指数退避重试：1s、2s、4s、8s）。 */
 export const INBOUND_ATTEMPTS = 5;
 const INBOUND_BACKOFF_MS = 1000;
@@ -67,10 +75,12 @@ export const inboundJobId = (connectionId: string, messageId: string) =>
  * The producer side of the channel queue `cap-kernel-channels` (any role): delivery jobs for a
  * conversation with an IM target, inbound jobs (Ruling A21), and the catch-up of a connection that
  * can deliver again. Its consumer is {@link ChannelOutbound} through the `@Processor` of the worker
- * role. Delivery jobs follow the kernel's domain events (spec §3b): every published log advance
- * (`conversation.event-appended`), a run starting here (`run.started`), a stopped wait
- * (`run.wait-stopped`), a decided approval and an answered question (their cards change). Each is
- * lost-tolerant: the next append enqueues again, and a finished delivery job re-checks the log.
+ * role. A delivery is owed (transactional outbox spec §8.1): every event append of a conversation
+ * with a channel target adds its deliver job to the outbox in the append's transaction (a reply, an
+ * approval decision, a question answer, a wait stop all append), and {@link bind} owes the first
+ * one with the target. The direct {@link enqueue} is left for hints and catch-ups: a run starting
+ * here (`run.started`, so its streaming drafts start at once), a finished delivery job's re-check,
+ * a card click's thread and a connection that can deliver again.
  */
 @Injectable()
 export class ChannelJobs implements OnApplicationShutdown {
@@ -83,22 +93,59 @@ export class ChannelJobs implements OnApplicationShutdown {
     @Inject(getQueueToken(CHANNEL_QUEUE_NAME)) private readonly queue: Queue<ChannelJobData>,
     @Inject(KernelEvents) events: Pick<KernelEvents, "on">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "error">,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {
     queue.on("error", (err) => this.log.error("channel outbound queue error", { err }));
-    const soon = ({ conversationId }: { conversationId: string }) =>
-      this.enqueueSoon(conversationId);
     this.unsubscribe = [
-      events.on("conversation.event-appended", soon),
-      events.on("run.started", soon),
-      events.on("run.wait-stopped", soon),
-      events.on("approval.decided", soon),
-      events.on("question.answered", soon),
+      events.on("run.started", ({ conversationId }) => this.enqueueSoon(conversationId)),
     ];
   }
 
   /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
   onApplicationShutdown(): void {
     for (const off of this.unsubscribe) off();
+  }
+
+  /**
+   * Makes `target` (on `connectionId`) the conversation's delivery target and owes its delivery
+   * from the current log position, in one transaction. A new target starts delivering after
+   * `seq` (the message that bound it); a known one keeps its progress. The conversation row is
+   * locked first, as an append locks it: an append either committed before (its events are below
+   * the owed position) or reads the target (and owes its own job).
+   */
+  @Transactional()
+  async bind(
+    orgId: string,
+    conversationId: string,
+    connectionId: string,
+    target: ChannelTarget,
+    seq: number,
+  ): Promise<void> {
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!conv) return;
+    await this.db
+      .insertInto("channel_deliveries")
+      .values({
+        conversation_id: conversationId,
+        connection_id: connectionId,
+        target: JSON.stringify(target),
+        last_seq: seq,
+      })
+      .onConflict((oc) =>
+        oc.column("conversation_id").doUpdateSet({
+          connection_id: connectionId,
+          target: JSON.stringify(target),
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    await oweDelivery(this.outbox, { conversationId, orgId, seq: Number(conv.last_seq) });
   }
 
   /** 会话有 IM 投递目标时排一个出站任务，不等入队完成；失败只记日志。 */
@@ -108,7 +155,10 @@ export class ChannelJobs implements OnApplicationShutdown {
     );
   }
 
-  /** 会话有 IM 投递目标时投递一个出站任务（同一日志位置重复调用只排一个）；已关闭时什么都不做。 */
+  /**
+   * A hint (not owed work, see the class): a delivery job for a conversation with an IM target (one
+   * per log position; `followUp` gets a fresh id); does nothing once closed.
+   */
   async enqueue(conversationId: string, opts: { followUp?: boolean } = {}): Promise<void> {
     if (this.closed) return;
     const row = await this.db
@@ -122,14 +172,10 @@ export class ChannelJobs implements OnApplicationShutdown {
       DELIVER_JOB,
       { conversationId },
       {
+        ...OUTBOX_JOBS.deliver.opts,
         jobId: opts.followUp
           ? followUpJobId(conversationId, Number(row.last_seq))
           : deliverJobId(conversationId, Number(row.last_seq)),
-        attempts: DELIVER_ATTEMPTS,
-        backoff: { type: "deliver" },
-        priority: DELIVER_PRIORITY,
-        removeOnComplete: true,
-        removeOnFail: true,
       },
     );
   }
