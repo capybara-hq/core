@@ -319,6 +319,59 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
     ]);
   });
 
+  it("the super admin deleting an org-owned plugin owes its cleanup: the extension and its name claim go", async () => {
+    const itemId = await confirmedV1("own-sa-rm");
+    expect((await installRow("own-sa-rm"))?.desired_state).toBe("enabled");
+    const d = await env.root({ method: "DELETE", url: `/api/v1/admin/catalog/items/${itemId}` });
+    expect(d.statusCode, d.body).toBe(204);
+    // the removal's transaction owed the cleanup job, which takes the extension out
+    await waitFor(
+      async () => (await installRow("own-sa-rm")) === undefined,
+      30_000,
+      "own-sa-rm uninstalled by the cleanup job",
+    );
+    await waitFor(
+      async () =>
+        (await env.db
+          .selectFrom("extension_name_owners")
+          .select("name")
+          .where("name", "=", "own-sa-rm")
+          .executeTakeFirst()) === undefined,
+      30_000,
+      "own-sa-rm name claim released",
+    );
+  });
+
+  it("a cleanup that uninstalled but did not release the claim releases it when run again", async () => {
+    const itemId = await confirmedV1("own-gap");
+    const claim = await env.db
+      .selectFrom("extension_name_owners")
+      .selectAll()
+      .where("name", "=", "own-gap")
+      .executeTakeFirstOrThrow();
+    const d = await env.root({ method: "DELETE", url: `/api/v1/admin/catalog/items/${itemId}` });
+    expect(d.statusCode, d.body).toBe(204);
+    await waitFor(
+      async () => (await installRow("own-gap")) === undefined,
+      30_000,
+      "own-gap uninstalled",
+    );
+    // the gap: the extension is gone but its claim is back (a run that stopped in between)
+    await env.db
+      .insertInto("extension_name_owners")
+      .values(claim)
+      .onConflict((oc) => oc.doNothing())
+      .execute();
+    await env.k.app.get(OwnedPluginCleanup).run(itemId);
+    expect(
+      await env.db
+        .selectFrom("extension_name_owners")
+        .select("name")
+        .where("name", "=", "own-gap")
+        .executeTakeFirst(),
+    ).toBeUndefined();
+  });
+
   it("delete a shared plugin transfers it", async () => {
     const itemId = await confirmedV1("own-tx");
     await sharedWithB(itemId, "own-tx-notes");

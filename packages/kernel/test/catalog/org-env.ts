@@ -25,7 +25,11 @@ import {
   skillOf,
 } from "../../src/catalog/catalog-content.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
-import { PLUGIN_SCOPE_QUEUE, SCOPE_BACKSTOP_JOB } from "../../src/catalog/scope-sync.js";
+import {
+  PLUGIN_SCOPE_QUEUE,
+  SCOPE_BACKSTOP_DELAY,
+  SCOPE_BACKSTOP_JOB,
+} from "../../src/catalog/scope-sync.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -64,6 +68,9 @@ const DEP_PROVIDER = fakeExtensionEntry("fake-dep-provider");
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
+
+/** The scope sync backstop's delay in these tests: an hour, longer than any test file. */
+export const TEST_SCOPE_BACKSTOP_DELAY_MS = 60 * 60_000;
 
 /** The bearer the fake MCP server requires. */
 export const MCP_TOKEN = "tok-123";
@@ -164,7 +171,11 @@ export async function startOrgEnv(
   const k = await startKernel(config, {
     env: {},
     ...(overrides.logger !== undefined && { logger: overrides.logger }),
-    ...(overrides.kernelOverrides !== undefined && { overrides: overrides.kernelOverrides }),
+    overrides: [
+      // a confirmation's scope sync backstop never fires within a test file (ruling R24)
+      { provide: SCOPE_BACKSTOP_DELAY, useValue: TEST_SCOPE_BACKSTOP_DELAY_MS },
+      ...(overrides.kernelOverrides ?? []),
+    ],
   });
   const accounts = accountsFor(db);
   const rootId = (

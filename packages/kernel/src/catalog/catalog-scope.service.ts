@@ -280,6 +280,7 @@ export class CatalogScopeService {
         "owner_org_id",
         "awaiting_confirmation",
         "pending_version",
+        "scope",
       ])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
@@ -313,9 +314,6 @@ export class CatalogScopeService {
         if (e instanceof ApiError && e.code === "extension.not_found") return false;
         throw e;
       });
-    // The backstop before the deploy's first write (ruling R24): a crash before the post-deploy
-    // add below still converges the orgs
-    await this.oweBackstop(itemId);
     if (!installed) {
       if ((await this.extensions.packageReviewHash(sha256)) !== permissionsHash) throw stale();
       await this.ops.install(item.name, sha256, actor, opts.actorTokenId, {
@@ -336,6 +334,10 @@ export class CatalogScopeService {
       // Already approved but not enabled yet: carry on to the enable; else nothing to confirm
       if (!disabled || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
     }
+    // The permissions are confirmed (a stale hash refused above): the backstop before the enable
+    // (ruling R24), so a crash before the post-deploy add below still converges the orgs; only
+    // when the item's scope turns it on by itself, as the import's commit
+    if (item.scope !== "optional") await this.oweBackstop(itemId);
     // An occupied single-provider point leaves it installed disabled (the admin view says why)
     if (disabled) await this.ops.enableUnlessOccupied(item.name, actor, opts.actorTokenId);
     await this.oweSync(itemId);
@@ -609,9 +611,10 @@ export class CatalogScopeService {
   /**
    * An extension a confirmation installed whose item was removed or replaced meanwhile is taken
    * out again (disabled, uninstalled; P3-21), and the name claim released when the item is gone
-   * (ruling P3-37). Inline and best effort (a failure is logged); a removed item's cleanup job
-   * (`owned-plugin-cleanup-<itemId>`, idempotent) is owed as well, so a failed take-out is
-   * retried (pre-flight F9).
+   * (ruling P3-37), in one transaction ({@link takeOutIn}). Inline (a failure is logged): when the
+   * take-out fails, a removed item's cleanup job (`owned-plugin-cleanup-<itemId>`, idempotent) is
+   * owed instead, so the job retries it (pre-flight F9). That owe is the last resort: when it
+   * fails too (PG unavailable) nothing retries the take-out, and it is logged as an error.
    */
   private async takeOut(
     itemId: string,
@@ -620,16 +623,44 @@ export class CatalogScopeService {
     opts: ActorOpts,
   ): Promise<void> {
     try {
-      await this.ops.disable(name, actor, opts.actorTokenId);
-      await this.ops.uninstall(name, actor, opts.actorTokenId);
-      await this.releaseIfGone(itemId, name);
+      await this.takeOutIn(itemId, name, actor, opts);
+      return;
     } catch (err) {
       this.log.error("taking out the extension of a removed org upload failed", { name, err });
     }
     try {
       await this.oweCleanupIfGone(itemId);
     } catch (err) {
-      this.log.warn("owing the owned plugin cleanup failed", { itemId, err });
+      this.log.error("owing the owned plugin cleanup failed; the take-out is not retried", {
+        itemId,
+        err,
+      });
+    }
+  }
+
+  /**
+   * {@link takeOut}'s transaction, in the global lock order (ruling P3-50): the super admin lock,
+   * the item row, then the extension's install lock (taken by the disable): disabled,
+   * uninstalled, and the name claim released when the item is gone.
+   */
+  @Transactional()
+  private async takeOutIn(
+    itemId: string,
+    name: string,
+    actor: string,
+    opts: ActorOpts,
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor);
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select(["deleted_at", "package_name"])
+      .where("id", "=", itemId)
+      .forUpdate()
+      .executeTakeFirst();
+    await this.ops.disable(name, actor, opts.actorTokenId);
+    await this.ops.uninstall(name, actor, opts.actorTokenId);
+    if (row === undefined || row.deleted_at !== null) {
+      await releaseExtensionClaim(this.db, name, row?.package_name ?? null);
     }
   }
 
@@ -646,20 +677,6 @@ export class CatalogScopeService {
       .where("deleted_at", "is not", null)
       .executeTakeFirst();
     if (gone !== undefined) await oweOwnedPluginCleanup(this.outbox, itemId);
-  }
-
-  /** Releases the name claim of a removed item (nothing installed under it any more). */
-  @Transactional()
-  private async releaseIfGone(itemId: string, name: string): Promise<void> {
-    const row = await this.db
-      .selectFrom("catalog_items")
-      .select(["deleted_at", "package_name"])
-      .where("id", "=", itemId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (row === undefined || row.deleted_at !== null) {
-      await releaseExtensionClaim(this.db, name, row?.package_name ?? null);
-    }
   }
 
   /** The item is still live and pending with `version` (row lock), else 409 (P3-21). */
@@ -1136,7 +1153,7 @@ export class CatalogScopeService {
 
   /**
    * Owes the delayed backstop of the item's sync in a transaction of its own (ruling R24): a
-   * permissions confirm writes nothing of the scope service's before its deploy.
+   * permissions confirm writes nothing of the scope service's before its enable.
    */
   @Transactional()
   private async oweBackstop(itemId: string): Promise<void> {

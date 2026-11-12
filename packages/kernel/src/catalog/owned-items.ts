@@ -15,7 +15,6 @@ import { addPlatformNotice } from "../inbox/platform-notices.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
@@ -36,7 +35,6 @@ import {
   pluginFactsOf,
   switchOf,
 } from "./component-state.js";
-import { oweOwnedPluginCleanup } from "./job-ids.js";
 import { type OwnedRef, orgsUsing } from "./ownership.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { ScopeStillWanted } from "./scope-state.js";
@@ -132,8 +130,6 @@ export class OwnedItems {
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     /** The owner's org skill row, soft-deleted after its promoted platform row leaves it. */
     @Inject(SkillsService) private readonly skills: SkillsService,
-    /** The removed plugin's cleanup job (`owned-plugin-cleanup-<itemId>`, P3-20), owed. */
-    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -482,8 +478,8 @@ export class OwnedItems {
    * directly rather than through the guarded scope writer (ruling P3-27); platform notice
    * `ownership_transferred`, audit `catalog.ownership_transferred`, the scope sync owed with it
    * (it uninstalls the former owner's install). Otherwise -> `removed`: the soft delete of
-   * `catalog.remove` ({@link CatalogService.removeIn}) and, owed with it, the cleanup job
-   * `owned-plugin-cleanup-<itemId>` that takes its extension out; an owner delete
+   * `catalog.remove` ({@link CatalogService.removeIn}, which owes the cleanup job
+   * `owned-plugin-cleanup-<itemId>` that takes its extension out); an owner delete
    * (`owner_deleted`) also uninstalls it in the owner org through the normal uninstall, keeping the
    * connectors it created as the org's own (ruling P3-41). A first upload still waiting is never
    * transferred. A gone or platform item -> 404.
@@ -510,8 +506,9 @@ export class OwnedItems {
     const others = item.awaiting_confirmation ? [] : await orgsUsing(t, ref, { except: owner });
     if (others.length === 0) {
       await this.catalog.removeIn(actor, item.id, { ...opts, reason });
+      // removeIn owes the cleanup job of a confirmed plugin (a first upload still waiting has
+      // nothing installed: its name claim is released there)
       if (reason === "owner_deleted") await this.uninstallInOwner(owner, actor, item.id, opts);
-      await this.enqueueCleanup(item.id);
       return "removed";
     }
     // A transfer leaves none of its themes `all` (an `all` scope is narrowed, P3-39): refused
@@ -862,12 +859,6 @@ export class OwnedItems {
         itemId,
       });
     }
-  }
-
-  /** Owes the removed plugin's cleanup in the removal's transaction (transactional outbox §8.1). */
-  @Transactional({ propagation: "mandatory" })
-  async enqueueCleanup(itemId: string): Promise<void> {
-    await oweOwnedPluginCleanup(this.outbox, itemId);
   }
 
   private async computeDelete(orgId: string, item: OwnedRow): Promise<OwnedDeletePreview> {

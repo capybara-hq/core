@@ -21,6 +21,11 @@ export const SCOPE_ORG_JOB = "scope-org";
 export const SCOPE_BACKSTOP_JOB = "scope-item-backstop";
 /** How long after the confirmation's commit the backstop runs (the deploy has finished by then). */
 export const SCOPE_BACKSTOP_DELAY_MS = 5 * 60_000;
+/**
+ * Optional provider (a test seam): the backstop's delay (ms) instead of
+ * {@link SCOPE_BACKSTOP_DELAY_MS}, so a long test file never has a backstop fire in a later test.
+ */
+export const SCOPE_BACKSTOP_DELAY = Symbol("SCOPE_BACKSTOP_DELAY");
 
 /** One item job per scope version (no `:`: item ids are UUIDs). */
 export const scopeItemJobId = (itemId: string, version: number): string =>
@@ -47,14 +52,14 @@ export type ScopeJob =
 
 /**
  * Owes the item's scope sync in the transaction in context, once per scope version (read in that
- * transaction, so after its own bump); `backstop` owes the delayed backstop instead. A missing item
- * owes nothing.
+ * transaction, so after its own bump); `backstop` owes the delayed backstop instead, due
+ * `backstopDelayMs` later (default {@link SCOPE_BACKSTOP_DELAY_MS}). A missing item owes nothing.
  */
 export async function oweScopeItem(
   outbox: Pick<OutboxService, "add">,
   db: KernelSchemaDb,
   itemId: string,
-  opts: { backstop?: boolean } = {},
+  opts: { backstop?: boolean; backstopDelayMs?: number } = {},
 ): Promise<void> {
   const row = await db
     .selectFrom("catalog_items")
@@ -68,7 +73,7 @@ export async function oweScopeItem(
       name: SCOPE_BACKSTOP_JOB,
       jobId: scopeBackstopJobId(itemId, row.scope_version),
       data: { kind: "item", itemId, backstop: true },
-      runAt: new Date(Date.now() + SCOPE_BACKSTOP_DELAY_MS),
+      runAt: new Date(Date.now() + (opts.backstopDelayMs ?? SCOPE_BACKSTOP_DELAY_MS)),
     });
     return;
   }

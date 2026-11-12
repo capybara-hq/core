@@ -1,5 +1,5 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { KernelSchemaDb, ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";
@@ -19,6 +19,8 @@ import { wantedOn } from "./scope.js";
 import {
   oweScopeItem,
   PLUGIN_SCOPE_QUEUE,
+  SCOPE_BACKSTOP_DELAY,
+  SCOPE_BACKSTOP_DELAY_MS,
   SCOPE_ITEM_JOB,
   SCOPE_ORG_JOB,
   type ScopeJob,
@@ -63,6 +65,7 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
 
 export {
   PLUGIN_SCOPE_QUEUE,
+  SCOPE_BACKSTOP_DELAY,
   SCOPE_BACKSTOP_DELAY_MS,
   SCOPE_BACKSTOP_JOB,
   SCOPE_ITEM_JOB,
@@ -132,6 +135,10 @@ export class PluginScopeSync {
     @Inject(LockService) private readonly locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The backstop's delay (a test seam; default {@link SCOPE_BACKSTOP_DELAY_MS}). */
+    @Optional()
+    @Inject(SCOPE_BACKSTOP_DELAY)
+    private readonly backstopDelayMs: number = SCOPE_BACKSTOP_DELAY_MS,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -154,7 +161,10 @@ export class PluginScopeSync {
    */
   @Transactional({ propagation: "mandatory" })
   async enqueueBackstop(itemId: string): Promise<void> {
-    await oweScopeItem(this.outbox, this.db, itemId, { backstop: true });
+    await oweScopeItem(this.outbox, this.db, itemId, {
+      backstop: true,
+      backstopDelayMs: this.backstopDelayMs,
+    });
   }
 
   /** Owes the sync of every item in an org, in the transaction that creates the org. */

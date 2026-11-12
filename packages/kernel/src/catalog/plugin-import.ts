@@ -14,7 +14,7 @@ import {
   type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
@@ -129,7 +129,7 @@ import {
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
-import { oweScopeItem } from "./scope-jobs.js";
+import { oweScopeItem, SCOPE_BACKSTOP_DELAY, SCOPE_BACKSTOP_DELAY_MS } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
@@ -628,6 +628,10 @@ export class PluginImport {
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
     /** The scope sync's backstop, owed by the confirm's commit (ruling R24). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The backstop's delay (a test seam; default `SCOPE_BACKSTOP_DELAY_MS`). */
+    @Optional()
+    @Inject(SCOPE_BACKSTOP_DELAY)
+    private readonly backstopDelayMs: number = SCOPE_BACKSTOP_DELAY_MS,
   ) {
     this.files = storage;
   }
@@ -1657,7 +1661,10 @@ export class PluginImport {
         .where("id", "=", itemId)
         .executeTakeFirstOrThrow();
       if (item.scope !== "optional") {
-        await oweScopeItem(this.outbox, t, itemId, { backstop: true });
+        await oweScopeItem(this.outbox, t, itemId, {
+          backstop: true,
+          backstopDelayMs: this.backstopDelayMs,
+        });
       }
     }
     return {

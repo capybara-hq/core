@@ -4,7 +4,6 @@ import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js"
 import {
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
-  SCOPE_BACKSTOP_DELAY_MS,
   SCOPE_BACKSTOP_JOB,
   SCOPE_ITEM_JOB,
   SCOPE_ORG_JOB,
@@ -19,7 +18,14 @@ import {
 } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { outboxJobOptions } from "../../src/infra/outbox/registry.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
-import { type OrgEnv, resetOrgCatalog, seedPlugin, setScope, startOrgEnv } from "./org-env.js";
+import {
+  type OrgEnv,
+  resetOrgCatalog,
+  seedPlugin,
+  setScope,
+  startOrgEnv,
+  TEST_SCOPE_BACKSTOP_DELAY_MS,
+} from "./org-env.js";
 import { skillPlugin } from "./packages.js";
 
 /**
@@ -297,7 +303,7 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", { timeout: 
       .executeTakeFirstOrThrow();
     expect(
       new Date(row.run_at as Date).getTime() - new Date(row.created_at).getTime(),
-    ).toBeGreaterThan(SCOPE_BACKSTOP_DELAY_MS - 60_000);
+    ).toBeGreaterThan(TEST_SCOPE_BACKSTOP_DELAY_MS - 60_000);
     expect(await liveOrgs(itemId)).toEqual([]);
     // its time comes: the orgs converge
     await relay();
