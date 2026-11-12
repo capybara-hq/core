@@ -99,6 +99,23 @@ describe("PolicyStore", () => {
     expect(errors[1]).toMatch(/tier must be "strict", "dev" or "open"/);
   });
 
+  it("an invalid file turns the sandbox back on when the last good policy had none", () => {
+    writePolicy(dir, { ...withDomains(["a.com"]), tier: "open", isolation: "none" });
+    const errors: string[] = [];
+    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
+    expect(store.current().isolation).toBe("none");
+    writeFileSync(policyPath(dir), "{nope");
+    const kept = store.current();
+    expect(kept).toMatchObject({ tier: "open", isolation: "sandbox", allowedDomains: ["a.com"] });
+    // the same object until the file changes (readers tell reloads by identity)
+    expect(store.current()).toBe(kept);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/keeping the last valid policy with the sandbox on/);
+    // a fixed file applies as written
+    writePolicy(dir, { ...withDomains(["a.com"]), tier: "open", isolation: "none" });
+    expect(store.current().isolation).toBe("none");
+  });
+
   it("a bad version reported once is reported again when it comes back later", () => {
     writePolicy(dir, withDomains(["a.com"]));
     const errors: string[] = [];

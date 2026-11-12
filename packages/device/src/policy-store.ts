@@ -52,8 +52,8 @@ export class PolicyStore {
 
   /**
    * The policy now: re-reads policy.json when it changed (or appeared, or vanished: defaults).
-   * An invalid file keeps the last good policy, never a looser one, and is reported once per
-   * version.
+   * An invalid file keeps the last good policy, never a looser one, with the sandbox turned back
+   * on (a broken file never keeps commands running unsandboxed), and is reported once per version.
    */
   current(): Policy {
     const version = versionOf(this.file);
@@ -64,9 +64,14 @@ export class PolicyStore {
       this.version = version;
       this.reportedBad = undefined;
     } catch (e) {
+      // A new object only when it narrows: readers tell a reload by identity.
+      if (this.policy.isolation === "none") this.policy = { ...this.policy, isolation: "sandbox" };
       if (this.reportedBad !== version) {
         this.reportedBad = version;
-        this.err(`${(e as Error).message}; keeping the last valid policy until the file is fixed`);
+        this.err(
+          `${(e as Error).message}; keeping the last valid policy with the sandbox on until the ` +
+            "file is fixed",
+        );
       }
     }
     return this.policy;
