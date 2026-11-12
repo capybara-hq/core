@@ -213,6 +213,15 @@ function inputBlocks(): ReactNode {
       <RefBlock id="input-disabled" width={720} pad itemWidth={320}>
         <NameField value="研究助手" disabled />
       </RefBlock>
+      <RefBlock id="input-action" width={720} pad itemWidth={400}>
+        <Field
+          label="添加域名"
+          help="完整主机名（files.example.com）或通配符（*.example.com）。"
+          action={<Button>添加</Button>}
+        >
+          <Input defaultValue="" placeholder="*.example.com" />
+        </Field>
+      </RefBlock>
     </>
   );
 }

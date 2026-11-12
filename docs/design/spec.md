@@ -775,6 +775,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - Focus: `accent` border + 3px `focus-ring` halo (§2.5); error: `fail` border; disabled: `line` border, `hover` ground, `disabled` text. Hover and focus transition border and halo over `motion.hover`.
 - Prefix / suffix use `faint` / `muted` icons (such as `search`, `chevron-down`, `⌘K`).
 - Field: label on top (`body` `ink`), help and error below (`small`; error `fail` with `circle-alert` 12), `space.1` between them.
+- Field with an action (`Field.action`): a control that acts on the field's value (the device page's 「添加」 button after the host input) sits after the control on the control's own line, `space.2` apart, vertically centred on it; the control takes the rest of the width, the action keeps its own. The help, error and count stay below the whole line, so the action lines up with the control, never with the label or the help. Never a separate row of a Field and a Button (the button would sit level with the help text).
 - A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
 - Textareas are plain, as the signed reference: no line-number gutter and no resize grip (`resize: none`). Code-like input (prompts, JSON) keeps lines unwrapped in the mono font (`code`); read-only code is shown by CodeBlock (§6.9).
 - Stepper: `− value +`, with square buttons at the step's height on both sides.
@@ -783,7 +784,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - Reset to default: when a field has been set by the user, a ghost small link "Reset to default" with the `refresh` icon appears on the right of the label row; clicking clears the value and returns to the default display.
 
 <!-- states: input -->
-States: `default`, `focus`, `error`, `disabled`
+States: `default`, `focus`, `error`, `disabled`, `action`
 
 <!-- size-table: input -->
 | Part | State | Property | Value |
@@ -804,6 +805,8 @@ States: `default`, `focus`, `error`, `disabled`
 | input | disabled | background-color | color.hover |
 | input | disabled | border-top-color | color.line |
 | input-control | disabled | color | color.disabled |
+| field-control | action | column-gap | space.2 |
+| input | action | height | control.default |
 
 <!-- states: select -->
 States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
