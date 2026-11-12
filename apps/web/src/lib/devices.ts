@@ -73,11 +73,19 @@ export interface DeviceSandboxChange {
   kind: "policy" | "tier" | "isolation";
   add: string[];
   remove: string[];
-  /** The tier set (`to: null`: follow the org's default); null when it did not change. */
-  tier: { to: SandboxTier | null } | null;
+  /**
+   * The tier set (`to: null`: follow the org's default; `from` only for a change made on the
+   * machine); null when it did not change.
+   */
+  tier: { from?: SandboxTier | null; to: SandboxTier | null } | null;
   isolation: "sandbox" | "none" | null;
+  /** The localhost access now (changed on the machine); null when it did not change. */
+  localhost: "on" | "off-proxy-detected" | "off" | null;
+  /** Whether the machine takes the platform's changes now; null when it did not change. */
+  remoteGrants: "owner" | "off" | null;
   /** The deciding account's display name (null once the account is gone). */
   by: string | null;
+  /** `device`: made on the machine itself (`capybara-device policy ...`, or reported). */
   via: "web" | "im" | "device";
   /** The machine answered with the policy as written (false: the answer never came). */
   confirmed: boolean;

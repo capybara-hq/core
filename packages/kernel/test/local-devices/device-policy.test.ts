@@ -224,6 +224,106 @@ describe("DevicePolicyService.apply", () => {
     ]);
   });
 
+  it("lists the platform's op once, however the machine reports it, and the owner's own change as the machine's", async () => {
+    const d = await device();
+    let machine: FakeMachine | undefined;
+    const apply = applying(POLICY);
+    // the machine reports the new summary by itself before it answers the op
+    const answer = (req: KernelReq): Answer => {
+      const a = apply(req);
+      if (req.op === "policy" && a?.ok) {
+        machine?.send({ type: "policy", policy: (a.result as { policy: unknown }).policy });
+      }
+      return a;
+    };
+    machine = await connect(d, answer, FEATURES);
+    const out = await policies.apply({
+      orgId,
+      deviceId: d.deviceId,
+      change: { add: ["files.slack.com"] },
+      source: source(d.accountId),
+    });
+    expect(out).toMatchObject({ applied: true });
+    const applied = { ...POLICY, allowedDomains: ["pypi.org", "files.slack.com"] };
+    // reported again after the answer: no change
+    machine.send({ type: "policy", policy: applied });
+    // the owner on the machine: `policy set tier open`, `policy set remoteGrants off`,
+    // `policy add allowedDomains github.com`, `policy remove allowedDomains pypi.org`
+    const own: DeviceLocalPolicySummary = {
+      ...applied,
+      tier: "open",
+      effectiveTier: "open",
+      localhost: "on",
+      remoteGrants: "off",
+      allowedDomains: ["files.slack.com", "github.com"],
+    };
+    machine.send({ type: "policy", policy: own });
+    machine.send({ type: "policy", policy: own });
+    await waitFor(
+      async () => (await policies.summary(d.deviceId))?.policy?.remoteGrants === "off",
+      10_000,
+      "own change recorded",
+    );
+    const audits = await auditsOf(d.deviceId);
+    expect(audits.map((a) => a.detail)).toEqual([
+      {
+        add: ["files.slack.com"],
+        remove: [],
+        by: d.accountId,
+        via: "web",
+        approvalId: "ap-1",
+        confirmed: true,
+      },
+      {
+        add: ["github.com"],
+        remove: ["pypi.org"],
+        tier: "open",
+        tierFrom: null,
+        localhost: "on",
+        remoteGrants: "off",
+        by: d.accountId,
+        via: "device",
+        machineId: d.machineId,
+        approvalId: null,
+        confirmed: true,
+      },
+    ]);
+    expect(audits[1]?.actor_account_id).toBe(d.accountId);
+    // the device page lists both, newest first, with where each was made
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
+    expect(recent).toEqual([
+      expect.objectContaining({
+        kind: "policy",
+        add: ["github.com"],
+        remove: ["pypi.org"],
+        tier: { from: null, to: "open" },
+        localhost: "on",
+        remoteGrants: "off",
+        isolation: null,
+        via: "device",
+        confirmed: true,
+      }),
+      expect.objectContaining({
+        kind: "policy",
+        add: ["files.slack.com"],
+        tier: null,
+        localhost: null,
+        remoteGrants: null,
+        via: "web",
+      }),
+    ]);
+    // nothing left pending once the answer is recorded
+    expect(
+      (
+        await db
+          .selectFrom("device_machines")
+          .select("pending_policy_ops")
+          .where("id", "=", d.machineId)
+          .executeTakeFirstOrThrow()
+      ).pending_policy_ops,
+    ).toEqual([]);
+  });
+
   it("a program without policyOp is unsupported and is sent nothing", async () => {
     const d = await device();
     const machine = await connect(d, applying(POLICY), { features: ["networkReport"] });

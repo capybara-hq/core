@@ -2,6 +2,7 @@ import {
   type DeviceFeature,
   type DeviceLocalPolicySummary,
   isSandboxTier,
+  type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp", "tiers"];
@@ -59,4 +60,101 @@ export function isolationOf(v: unknown): "sandbox" | "none" | null {
     return (v as { isolation?: unknown }).isolation === "sandbox" ? "sandbox" : "none";
   }
   return "none";
+}
+
+/**
+ * What changed between two local policy summaries, in the owner's terms (the device page's change
+ * list, sandbox dev tiers spec §10.4): hosts added to and removed from the allowlist, the chosen
+ * tier (`null`: follows the org's default), the localhost access, the isolation and whether the
+ * machine accepts the platform's changes. Facts the owner does not set (the effective tier, unix
+ * sockets) are left out. Each field is present only when it changed.
+ */
+export interface LocalPolicyDiff {
+  add: string[];
+  remove: string[];
+  tier?: { from: SandboxTier | null; to: SandboxTier | null };
+  localhost?: DeviceLocalPolicySummary["localhost"];
+  isolation?: DeviceLocalPolicySummary["isolation"];
+  remoteGrants?: DeviceLocalPolicySummary["remoteGrants"];
+}
+
+/** The {@link LocalPolicyDiff} from `prev` to `next`; null when nothing the owner sets changed. */
+export function localPolicyDiff(
+  prev: DeviceLocalPolicySummary,
+  next: DeviceLocalPolicySummary,
+): LocalPolicyDiff | null {
+  const before = new Set(prev.allowedDomains);
+  const after = new Set(next.allowedDomains);
+  const d: LocalPolicyDiff = {
+    add: [...after].filter((h) => !before.has(h)).sort(),
+    remove: [...before].filter((h) => !after.has(h)).sort(),
+  };
+  const fromTier = prev.tier ?? null;
+  const toTier = next.tier ?? null;
+  if (fromTier !== toTier) d.tier = { from: fromTier, to: toTier };
+  if (prev.localhost !== next.localhost) d.localhost = next.localhost;
+  if (prev.isolation !== next.isolation) d.isolation = next.isolation;
+  if (prev.remoteGrants !== next.remoteGrants) d.remoteGrants = next.remoteGrants;
+  const changed =
+    d.add.length > 0 ||
+    d.remove.length > 0 ||
+    d.tier !== undefined ||
+    d.localhost !== undefined ||
+    d.isolation !== undefined ||
+    d.remoteGrants !== undefined;
+  return changed ? d : null;
+}
+
+/**
+ * A `policy` op the platform sent to a machine whose answer may not be recorded yet (kept on the
+ * machine's row, `pending_policy_ops`): the change asked for, and until when (epoch ms) a summary
+ * the machine reports by itself may still be that op's.
+ */
+export interface PendingPolicyOp {
+  id: string;
+  add: string[];
+  remove: string[];
+  /** Present when the op set the tier (null: follow the org's default). */
+  tier?: SandboxTier | null;
+  isolation?: "sandbox";
+  until: number;
+}
+
+/** The pending ops stored on a machine row (malformed entries dropped). */
+export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
+  if (!Array.isArray(v)) return [];
+  const hosts = (x: unknown) =>
+    Array.isArray(x) ? x.filter((h): h is string => typeof h === "string") : [];
+  const out: PendingPolicyOp[] = [];
+  for (const e of v) {
+    if (typeof e !== "object" || e === null) continue;
+    const o = e as Record<string, unknown>;
+    if (typeof o.id !== "string" || typeof o.until !== "number") continue;
+    out.push({
+      id: o.id,
+      add: hosts(o.add),
+      remove: hosts(o.remove),
+      ...("tier" in o && { tier: isSandboxTier(o.tier) ? o.tier : null }),
+      ...(o.isolation === "sandbox" && { isolation: "sandbox" as const }),
+      until: o.until,
+    });
+  }
+  return out;
+}
+
+/**
+ * Whether `diff` is what the platform's `op` did (its answer, or the machine's own report of it
+ * before the answer was recorded): hosts within the op's, the tier the op set, and only what a
+ * tier change moves with it (the isolation back to `sandbox`, the localhost access). The device
+ * page then lists the change once, as the platform's.
+ */
+export function opExplains(op: PendingPolicyOp, diff: LocalPolicyDiff): boolean {
+  if (!diff.add.every((h) => op.add.includes(h))) return false;
+  if (!diff.remove.every((h) => op.remove.includes(h))) return false;
+  if (diff.tier !== undefined && (op.tier === undefined || diff.tier.to !== op.tier)) return false;
+  if (diff.isolation !== undefined && op.isolation === undefined && op.tier === undefined) {
+    return false;
+  }
+  if (diff.localhost !== undefined && op.tier === undefined) return false;
+  return diff.remoteGrants === undefined;
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type DeviceFeature,
   type DeviceLocalPolicySummary,
@@ -6,6 +7,7 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -15,11 +17,17 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
-import { isolationOf } from "./policy-summary.js";
+import { isolationOf, type PendingPolicyOp } from "./policy-summary.js";
 import { LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
 export const POLICY_DEADLINE_MS = 30_000;
+
+/**
+ * How long a sent op may still explain a summary the machine reports by itself: its deadline and
+ * the reconnect grace, with room for an answer that comes only with the next hello.
+ */
+const PENDING_OP_MS = POLICY_DEADLINE_MS + 5 * 60_000;
 
 /** The prefix the relay puts before a machine's `policy`-kind refusal. */
 const REFUSED_PREFIX = "Refused by the machine's local policy: ";
@@ -102,6 +110,17 @@ export class DevicePolicyService {
       return { applied: false, reason: "offline", message: OFFLINE_MESSAGE };
     }
     const args: DevicePolicyArgs = { ...input.change, source: input.source };
+    // noted before it is sent: the machine may report the change by itself (a `policy` frame)
+    // before its answer is recorded, and the device page lists it once, as the platform's
+    const opId = randomUUID();
+    await this.notePending(machine.id, {
+      id: opId,
+      add: input.change.add ?? [],
+      remove: input.change.remove ?? [],
+      ...(input.change.tier !== undefined && { tier: input.change.tier }),
+      ...(input.change.isolation !== undefined && { isolation: input.change.isolation }),
+      until: Date.now() + PENDING_OP_MS,
+    });
     let policy: DeviceLocalPolicySummary;
     try {
       ({ policy } = await this.relay.call(input.deviceId, "policy", args, {
@@ -113,11 +132,14 @@ export class DevicePolicyService {
       if (e instanceof ApiError && e.code === "device.offline") {
         // the op was sent and the wait ran out: the machine may still apply it, so the attempt is
         // audited unconfirmed; its next hello reports the policy as it is
-        await this.record({ ...input, machineId: machine.id, policy: null });
+        await this.record({ ...input, machineId: machine.id, opId, policy: null });
+      } else {
+        // refused or failed: nothing changed, so it explains no later change
+        await this.dropPending(machine.id, opId);
       }
       return this.notApplied(input.deviceId, e);
     }
-    await this.record({ ...input, machineId: machine.id, policy });
+    await this.record({ ...input, machineId: machine.id, opId, policy });
     return { applied: true, policy };
   }
 
@@ -127,6 +149,31 @@ export class DevicePolicyService {
   ): Promise<{ features: DeviceFeature[]; policy: DeviceLocalPolicySummary | null } | null> {
     const m = await this.machines.activeFor(deviceId);
     return m === null ? null : { features: m.features, policy: m.localPolicy };
+  }
+
+  /** Adds `op` to the machine's pending ops, dropping the expired ones. */
+  @Transactional()
+  private async notePending(machineId: string, op: PendingPolicyOp): Promise<void> {
+    await this.db
+      .updateTable("device_machines")
+      .set({
+        pending_policy_ops: sql<string>`(
+          SELECT coalesce(jsonb_agg(e), '[]'::jsonb) FROM jsonb_array_elements(pending_policy_ops) e
+          WHERE (e->>'until')::bigint > ${Date.now()}
+        ) || jsonb_build_array(${JSON.stringify(op)}::jsonb)`,
+      })
+      .where("id", "=", machineId)
+      .execute();
+  }
+
+  /** Removes the pending op `opId` from the machine's row. */
+  @Transactional()
+  private async dropPending(machineId: string, opId: string): Promise<void> {
+    await this.db
+      .updateTable("device_machines")
+      .set({ pending_policy_ops: withoutOp(opId) })
+      .where("id", "=", machineId)
+      .execute();
   }
 
   /**
@@ -140,6 +187,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     machineId: string;
+    opId: string;
     change: Omit<DevicePolicyArgs, "source">;
     source: DevicePolicyArgs["source"];
     actorTokenId?: string;
@@ -160,7 +208,11 @@ export class DevicePolicyService {
       if (input.policy.isolation !== before) isolationNow = input.policy.isolation;
       await this.db
         .updateTable("device_machines")
-        .set({ local_policy: JSON.stringify(input.policy) })
+        // answered: the op no longer explains a summary the machine reports
+        .set({
+          local_policy: JSON.stringify(input.policy),
+          pending_policy_ops: withoutOp(input.opId),
+        })
         .where("id", "=", input.machineId)
         .where("revoked_at", "is", null)
         .execute();
@@ -210,6 +262,13 @@ export class DevicePolicyService {
     };
   }
 }
+
+/** The machine's pending ops without `opId` (an expired one left for the next note to drop). */
+const withoutOp = (opId: string) =>
+  sql<string>`(
+    SELECT coalesce(jsonb_agg(e), '[]'::jsonb) FROM jsonb_array_elements(pending_policy_ops) e
+    WHERE e->>'id' <> ${opId}
+  )`;
 
 /**
  * Hosts the platform may send: an approval's `add` takes exact hosts only (a card never grants a

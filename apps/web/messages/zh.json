@@ -1714,6 +1714,10 @@
         "remove": "移除 {hosts}",
         "tier": "级别改为{tier}",
         "tierFollow": "改为跟随组织默认",
+        "tierFrom": "级别从{from}改为{to}",
+        "followDefault": "组织默认",
+        "localhost": "本机端口：{value}",
+        "remoteGrants": "接受平台修改：{value}",
         "isolation": {
           "none": "不使用沙箱",
           "sandbox": "恢复沙箱"
@@ -1723,7 +1727,7 @@
         "via": {
           "web": "网页",
           "im": "IM",
-          "device": "机器上报"
+          "device": "本机"
         },
         "unconfirmed": "机器未确认"
       },
