@@ -15,7 +15,10 @@ import { GitTickets } from "./tickets.js";
 
 /** The Redis hash of a run's fetch counters: fields `<host>/<repo>|n` and `<host>/<repo>|bytes`. */
 export const gitFetchKey = (runId: string): string => `git-fetch:${runId}`;
-/** Counters of a run that never ends cleanly (a lost end hook) expire after this. */
+/**
+ * Counters of a run that never ends cleanly (a lost end hook) expire after this. A fetch still in
+ * flight after the run ended writes a counter nobody summarises: it expires by this TTL too.
+ */
 export const FETCH_COUNTER_TTL_SECONDS = 24 * 60 * 60;
 
 /** Adds one fetch request and its bytes to the run's counters (atomic, with a TTL). */

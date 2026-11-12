@@ -298,7 +298,7 @@ function meterStream(meter: ByteMeter, touch: () => void): Transform {
 interface PushAudit {
   /** Ref names only. */
   refs: string[];
-  /** `ok` | `refused:<reason>` | `upstream:<status>` | `error`. */
+  /** `ok` | `empty` (no ref commands) | `refused:<reason>` | `upstream:<status>` | `error`. */
   result?: string;
 }
 
@@ -595,7 +595,8 @@ export class GitGateway {
         }
         const refs = parsed.commands.map((cmd: RefCommand) => cmd.ref);
         push.refs = refs;
-        push.result = "error";
+        // a flush-only request updates nothing: not an attempt, not an error
+        push.result = refs.length === 0 ? "empty" : "error";
         if (refs.length > 0) {
           const decision = await this.decide(binding, source, target);
           fields.push = decision.reason;

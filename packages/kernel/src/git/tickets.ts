@@ -183,6 +183,10 @@ export class GitTickets {
   }
 }
 
+/**
+ * Both scripts below build ticket keys from {@link TICKET_KEY_PREFIX} instead of declaring them in
+ * KEYS, so they assume a non-Cluster Redis / Valkey (one node, or Sentinel).
+ */
 const TICKET_KEY_PREFIX = "git-ticket:";
 
 /**

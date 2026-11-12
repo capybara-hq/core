@@ -787,6 +787,16 @@ async function auditRows(action: string, runId: string) {
   return rows.filter((r) => (r.detail as { runId?: string }).runId === runId);
 }
 
+/** The detail of the single audit row of an action for a run. */
+async function auditDetail(
+  action: string,
+  runId: string,
+): Promise<{ result?: string; refs?: string[] }> {
+  const rows = await auditRows(action, runId);
+  expect(rows).toHaveLength(1);
+  return (rows[0]?.detail ?? {}) as { result?: string; refs?: string[] };
+}
+
 /** Ends a run the way the runtime does (terminal status committed, then the afterCommit hook). */
 async function finishRun(
   conversationId: string,
@@ -859,14 +869,12 @@ describe("run end, audit and revocation", { timeout: 30_000 }, () => {
     for (const r of [denied, asked]) {
       await expect.poll(async () => (await auditRows("git.push", r.runId)).length).toBe(1);
     }
-    const [d] = await auditRows("git.push", denied.runId);
-    expect((d?.detail as { result: string }).result).toMatch(/^refused:/);
-    expect((d?.detail as { refs: string[] }).refs).toEqual(["refs/heads/main"]);
-    const [a] = await auditRows("git.push", asked.runId);
-    expect((a?.detail as { result: string }).result).toMatch(/^refused:/);
-    expect((a?.detail as { result: string }).result).not.toBe(
-      (d?.detail as { result: string }).result,
-    );
+    const d = await auditDetail("git.push", denied.runId);
+    expect(d.result).toMatch(/^refused:/);
+    expect(d.refs).toEqual(["refs/heads/main"]);
+    const a = await auditDetail("git.push", asked.runId);
+    expect(a.result).toMatch(/^refused:/);
+    expect(a.result).not.toBe(d.result);
 
     // upstream error: the host answers 500 to the pack
     await db.updateTable("connectors").set({ git_push_policy: "allow" }).execute();
@@ -875,8 +883,7 @@ describe("run end, audit and revocation", { timeout: 30_000 }, () => {
     const f = await rawPost(RECEIVE, failing.ticket, [pushBody()]);
     expect(f.status).toBe(502);
     await expect.poll(async () => (await auditRows("git.push", failing.runId)).length).toBe(1);
-    const [u] = await auditRows("git.push", failing.runId);
-    expect((u?.detail as { result: string }).result).toBe("upstream:500");
+    expect((await auditDetail("git.push", failing.runId)).result).toBe("upstream:500");
 
     // no row carries a token, a ticket or a Basic value
     const everything = JSON.stringify(
@@ -916,8 +923,9 @@ describe("run end, audit and revocation", { timeout: 30_000 }, () => {
       org_id: orgId,
       detail: { conversationId, host: "github.com", repo: "acme/app", count: posts("acme/app") },
     });
-    expect((app?.detail as { count: number }).count).toBeGreaterThanOrEqual(2);
-    expect((app?.detail as { bytes: number }).bytes).toBeGreaterThan(0);
+    const appDetail = (app?.detail ?? {}) as Record<string, number>;
+    expect(appDetail.count).toBeGreaterThanOrEqual(2);
+    expect(appDetail.bytes).toBeGreaterThan(0);
     expect(rows.find((r) => r.target === "github.com/acme/other")?.detail).toMatchObject({
       count: posts("acme/other"),
     });
