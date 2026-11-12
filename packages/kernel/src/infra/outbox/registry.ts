@@ -109,9 +109,9 @@ export const OUTBOX_JOBS = {
       removeOnFail: { age: 7 * 86_400, count: 100_000 },
     },
   },
-  // `channels/jobs.ts` DELIVER_JOB: owed by every event append of a conversation with a channel
-  // target (a reply, an approval decision, a question answer, a wait stop) and by binding a
-  // conversation to its target, under `deliverJobId` (spec §8.1)
+  // `channels/deliver-job.ts` DELIVER_JOB: owed by every event append of a conversation with a
+  // channel target (a reply, an approval decision, a question answer, a wait stop) and by binding
+  // a conversation to its target, under `deliverJobId` (spec §8.1)
   deliver: {
     queue: "cap-kernel-channels",
     idempotent:

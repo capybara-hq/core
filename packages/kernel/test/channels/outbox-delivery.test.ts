@@ -276,6 +276,32 @@ describe("IM delivery is owed (transactional outbox §8.1)", { timeout: 60_000 }
     );
   });
 
+  it("binding a conversation to an IM target owes its delivery at the current log position", async () => {
+    failing = true;
+    const agentId = await createAgent(owner, orgId);
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:before the bind");
+    await waitForTerminal(db, conv);
+    const last = await lastSeq(conv);
+    expect(await owedOf(conv)).toEqual([]);
+    await k.app
+      .get(ChannelJobs)
+      .bind(orgId, conv, connId, { chatId: "dm-bind", chatType: "dm" }, 1);
+    expect(await lastSeq(conv)).toBe(last);
+    expect((await owedOf(conv)).map((r) => r.job_id)).toEqual([deliverJobId(conv, last)]);
+    const d = await db
+      .selectFrom("channel_deliveries")
+      .select(["last_seq", "connection_id"])
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect({ seq: Number(d.last_seq), connection: d.connection_id }).toEqual({
+      seq: 1,
+      connection: connId,
+    });
+    // the owed row is cleared so later tests see no rows of this conversation
+    await db.deleteFrom("outbox").where("job_id", "=", deliverJobId(conv, last)).execute();
+  });
+
   it("a web-only conversation writes no outbox row on append", async () => {
     failing = true;
     const agentId = await createAgent(owner, orgId);

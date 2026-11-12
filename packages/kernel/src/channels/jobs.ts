@@ -10,14 +10,22 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { OUTBOX_JOBS } from "../infra/outbox/registry.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import {
+  CHANNEL_QUEUE_NAME,
+  DELIVER_JOB,
+  type DeliverJobData,
+  deliverJobId,
+  oweDelivery,
+} from "./deliver-job.js";
 
-/** 渠道队列（出站投递与入站任务，不含 `:`），只在 worker 角色上消费。 */
-export const CHANNEL_QUEUE_NAME = "cap-kernel-channels";
-/** 投递任务名。 */
-export const DELIVER_JOB = "deliver";
-/** 投递任务 id（不含 `:`）：同一会话、同一日志位置只排一个任务。 */
-export const deliverJobId = (conversationId: string, seq: number) =>
-  `deliver-${conversationId}-${seq}`;
+export {
+  CHANNEL_QUEUE_NAME,
+  DELIVER_JOB,
+  type DeliverJobData,
+  deliverJobId,
+  oweDelivery,
+} from "./deliver-job.js";
+
 /**
  * 结束后复核排的任务 id：每次唯一（带随机后缀，不含 `:`）。不能复用 `deliver-<会话>-<seq>`——同 id 的任务
  * 可能正因锁被占而即将直接结束，BullMQ 会把新任务去重进它，于是没人投递。
@@ -35,10 +43,6 @@ export function idempotencyKey(raw: string): string {
 
 /** 可重试失败（限流、5xx、网络、超时）的总尝试次数。 */
 export const DELIVER_ATTEMPTS = OUTBOX_JOBS.deliver.opts.attempts;
-
-export interface DeliverJobData {
-  conversationId: string;
-}
 
 /** 入站任务（Ruling A21）：插件 `onEvent` 收到的事件，原样排进队列由 worker 处理。 */
 export interface InboundJobData {
@@ -66,24 +70,6 @@ const INBOUND_BACKOFF_MS = 1000;
  */
 export const inboundJobId = (connectionId: string, messageId: string) =>
   `inbound-${connectionId}-${createHash("sha256").update(messageId).digest("base64url").slice(0, 22)}`;
-
-/**
- * Owes the conversation's delivery job for the log position `seq` in the transaction in context
- * (transactional outbox spec §8.1): the caller knows the conversation has a channel target. Shares
- * the job id of {@link ChannelJobs.enqueue}, so a hint for the same position is deduped by BullMQ.
- */
-export function oweDelivery(
-  outbox: Pick<OutboxService, "add">,
-  d: { conversationId: string; orgId: string; seq: number },
-): Promise<boolean> {
-  return outbox.add<DeliverJobData>({
-    queue: CHANNEL_QUEUE_NAME,
-    name: DELIVER_JOB,
-    jobId: deliverJobId(d.conversationId, d.seq),
-    data: { conversationId: d.conversationId },
-    orgId: d.orgId,
-  });
-}
 
 /**
  * The producer side of the channel queue `cap-kernel-channels` (any role): delivery jobs for a

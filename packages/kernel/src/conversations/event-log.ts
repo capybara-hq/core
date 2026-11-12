@@ -1,6 +1,6 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
-import { oweDelivery } from "../channels/jobs.js";
+import { oweDelivery } from "../channels/deliver-job.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
