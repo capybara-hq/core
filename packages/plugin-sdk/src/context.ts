@@ -16,7 +16,7 @@ export interface ContextRequest {
   source: ConversationSource;
   /** The trigger account's role in the org. */
   role: "owner" | "admin" | "member" | "guest";
-  /** The account that owns the agent. */
+  /** The conversation's owner (`conversations.account_id`); `accountId` is the run's trigger account. */
   ownerAccountId: string;
   ownerName: string;
   /** Keys of the tools the agent has in this run. */

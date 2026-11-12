@@ -80,6 +80,7 @@ look like `channel@1`: name and major version. The registered points:
 | `connector` | multi | no | Speaks one protocol (MCP, OpenAPI) to external systems and exposes their tools to agents. |
 | `file-preview` | multi | yes | Renders previews of files of given types in the conversation UI. |
 | `web-search` | multi | yes | Searches the web for the WebSearch tool; each org picks a default provider. |
+| `context` | multi | yes | Adds text to the model's context at run start in conversations of orgs that enable it. |
 | `web-fetch` | multi | yes | Fetches and extracts web pages for the WebFetch tool; each org picks a default provider. |
 <!-- /generated -->
 

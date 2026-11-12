@@ -345,6 +345,7 @@ calls included: a replay makes none); `usage.report` and an extension's embeddin
   even when the drop happened on an earlier attempt; its `pending` then lists only the dropped
   extensions, so a manual retry of the job reaches them and never the extensions already served.
   Declare `usage.report` only when you always register the handler.
+- **Lifecycle hooks** (`org.member_removed`, `agent.deleted`, `org.deleted`; `LIFECYCLE_HOOKS`, `extensions/lifecycle-hooks.ts`) are observe-only notices that something was removed, delivered **at least once** from durable rows through the queue `cap-kernel-lifecycle` (retries on any replica), so handlers must be idempotent. They are delivered **regardless of org enablement** and of the org's config validity (the extension may hold data for an org that has since switched it off), and the handler's `call.config` is the platform deployment config, never an org's effective config.
 - **`tool.preExecute`** runs after the tool policy and approval and before `tool_call_started`; a
   denial becomes the call's `tool_result` (text `Tool call blocked by the "<plugin>" policy hook:
   ...`). **`tool.postExecute`** gets the result as the model sees it (after output spilling), and is
@@ -360,6 +361,7 @@ calls included: a replay makes none); `usage.report` and an extension's embeddin
   `tool.postExecute` with its result. A policy denial inside a sub-agent fails only that sub-agent.
 - **`usage.report` also covers full-run eval replays** (`conversationKind: "eval"`); single-step
   replays and judge calls are not reported, and no other hook fires in a replay.
+- **`context@1` providers** (`ContextProvider`, `plugin-context.service.ts`, `runtime/context/plugin-context.ts`; memory spec §6) add text to the model's context at run start. They are called only in `chat` conversations (not eval replays or sub-agents), once per run, for orgs where the extension is enabled with valid config, with the effective org `config`. A call fails open: it is limited to `CONTEXT_LIMITS` (2 s, 32 KB), and a timeout, error or oversize result adds nothing. The text goes into the log as a `plugin_context` event (no `DriftReason`) only when its hash differs from the last one recorded for that plugin; a provider loaded on a replica that no longer serves the org yields an empty event, so the text is dropped rather than stale.
 - Hooks live on the extension instance: an upgrade or disable drains in-flight hook calls like tool
   calls, and a policy hook whose instance was revoked mid-call reruns once on the extension's new
   generation instead of failing the call.
