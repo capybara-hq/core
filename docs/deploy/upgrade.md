@@ -335,7 +335,8 @@ image. Migration 0118 then creates the extension in `public` when the server off
 installed yet.
 
 pgvector is recommended, not required. On a server without it, or when the migrating role may not
-create extensions, 0118 only raises a notice and succeeds; plugins fall back (the memory plugin
+create extensions, or a managed server's allow-list refuses it, 0118 only raises a notice and
+succeeds; plugins fall back (the memory plugin
 stores embeddings as `real[]` and ranks them in the plugin). To enable it later on a managed
 PostgreSQL, run `CREATE EXTENSION vector SCHEMA public` as a role allowed to: an extension in
 another schema is not visible to plugin schemas and counts as absent.

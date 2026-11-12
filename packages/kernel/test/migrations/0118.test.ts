@@ -111,7 +111,28 @@ describe("0118_pgvector on a server with pgvector", () => {
       await c.query(TEXT);
       return n;
     });
-    expect(notices.some((m) => /pgvector/.test(m))).toBe(true);
+    expect(notices.some((m) => /pgvector not installed.*SQLSTATE 42501/.test(m))).toBe(true);
+    expect(await vectorSchema(db.url)).toBeNull();
+  }, 180_000);
+
+  it("only raises a notice when the server refuses CREATE EXTENSION as not supported", async () => {
+    // Stands in for a managed server's allow-list (e.g. Azure Flexible Server): an event trigger
+    // in this throwaway database rejects CREATE EXTENSION with feature_not_supported (0A000).
+    const db = track(await startTestPostgres());
+    const notices = await withClient(db.url, async (c, n) => {
+      await c.query(`create function refuse_extensions() returns event_trigger language plpgsql as $$
+        begin
+          raise exception 'extension not allow-listed' using errcode = 'feature_not_supported';
+        end $$`);
+      await c.query(`create event trigger refuse_extensions on ddl_command_start
+        when tag in ('CREATE EXTENSION') execute function refuse_extensions()`);
+      await expect(c.query("create extension vector schema public")).rejects.toMatchObject({
+        code: "0A000",
+      });
+      await c.query(TEXT);
+      return n;
+    });
+    expect(notices.some((m) => /pgvector not installed.*SQLSTATE 0A000/.test(m))).toBe(true);
     expect(await vectorSchema(db.url)).toBeNull();
   }, 180_000);
 });
