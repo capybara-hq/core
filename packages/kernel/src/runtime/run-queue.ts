@@ -632,6 +632,51 @@ export class RunQueue {
     });
   }
 
+  /**
+   * Ends a `queued` run in PG before any worker started it (an offboarded member's run, ruling
+   * R27): with the conversation lock free, under the conversation row lock, a run still `queued`
+   * is finished `aborted` with `run_aborted` (`consumed_seq` at least to its trigger), so a job
+   * that runs later finds it finished and starts nothing. True when it did; false when a worker
+   * holds the conversation (it hears the stop) or the run is no longer queued. The caller writes
+   * the stop marker first, so a worker that takes the conversation meanwhile still stops.
+   */
+  async abortQueued(
+    conversationId: string,
+    runId: string,
+    byAccountId: string | null,
+  ): Promise<boolean> {
+    if ((await this.lock.holder(conversationId)) !== null) return false;
+    const toSeq = await this.abortQueuedIn(conversationId, runId, byAccountId);
+    if (toSeq === null) return false;
+    await notifyFinished(this.eventLog, conversationId, toSeq, "aborted");
+    await this.dropCheckpoints(runId);
+    return true;
+  }
+
+  @Transactional({ propagation: "requires_new" })
+  private async abortQueuedIn(
+    conversationId: string,
+    runId: string,
+    byAccountId: string | null,
+  ): Promise<number | null> {
+    const t = this.db;
+    const conv = await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirst();
+    const active = await this.activeRun(t, conversationId);
+    if (!conv || !active || active.id !== runId || active.status !== "queued") return null;
+    return this.finisher.finishIn({
+      conversationId,
+      runId,
+      status: "aborted",
+      consumed: null,
+      event: { type: "run_aborted", payload: { byAccountId, reason: "user" } },
+    });
+  }
+
   /** 会话当前未结束的运行（调用方已持有会话行锁）。 */
   private activeRun(t: KernelSchemaDb, conversationId: string): Promise<ActiveRunRow | undefined> {
     return t

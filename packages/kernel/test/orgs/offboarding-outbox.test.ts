@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
@@ -16,6 +18,7 @@ import {
 } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { Offboarding } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { RUN_JOB, RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -254,6 +257,61 @@ describe("offboarding owes its run stops and device destroys", () => {
     expect(await owed("run-stop")).toEqual([]);
     await waitFor(async () => (await runStatus(runId)) === "aborted", 15_000, "run aborted");
   });
+
+  it("an offboarded member's queued run is aborted in PG and never starts later (ruling R27)", async () => {
+    const orgId = await createOrg(owner, `Queued ${randomUUID().slice(0, 6)}`);
+    const leaver = await member(orgId);
+    const agentId = await insertAgent(orgId, leaver.id);
+    const conv = await insertConversation(orgId, agentId, leaver.id);
+    const runId = randomUUID();
+    await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+      VALUES (${runId}, ${conv}, 'queued', 1, ${leaver.id}, 0)`.execute(raw);
+    // its job is held (delayed an hour): no worker has started it
+    const connection = new Redis(rd.url, { maxRetriesPerRequest: null });
+    const runs = new Queue(RUN_QUEUE_NAME, { connection });
+    try {
+      const job = await runs.add(
+        RUN_JOB,
+        { runId, conversationId: conv },
+        { jobId: runJobId(conv, 0), delay: 3_600_000 },
+      );
+
+      failing = true;
+      await removeMember(orgId, leaver.id);
+      expect(await runStatus(runId)).toBe("queued");
+      await relay();
+      await waitFor(async () => (await runStatus(runId)) === "aborted", 15_000, "run aborted");
+      // the stop marker is gone (an hour's TTL is not what keeps it from starting)
+      await connection.del(`capk:run-abort:${runId}`);
+
+      // the held job runs now: it finds the run finished and starts nothing
+      await job.promote();
+      await waitFor(
+        async () => (await runs.getJobState(job.id as string)) !== "delayed",
+        15_000,
+        "the job left the delayed set",
+      );
+      await waitFor(
+        async () =>
+          ["completed", "failed", "unknown"].includes(await runs.getJobState(job.id as string)),
+        15_000,
+        "the job finished",
+      );
+      expect(await runStatus(runId)).toBe("aborted");
+      const types = (
+        await db
+          .selectFrom("conversation_events")
+          .select("type")
+          .where("conversation_id", "=", conv)
+          .execute()
+      ).map((e) => e.type);
+      expect(types).toContain("run_aborted");
+      expect(types).not.toContain("run_started");
+    } finally {
+      await runs.close();
+      connection.disconnect();
+    }
+  }, 30_000);
 
   it("their devices are destroyed with the fast path disabled", async () => {
     const orgId = await createOrg(owner, `Devs ${randomUUID().slice(0, 6)}`);

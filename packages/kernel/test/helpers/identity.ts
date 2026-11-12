@@ -173,6 +173,7 @@ const noWaits = {
 const noRuns: OffboardingRunControl = {
   abortWaiting: async () => false,
   abortIfOrphaned: async () => false,
+  abortQueued: async () => false,
   requestAbort: async () => {},
 };
 

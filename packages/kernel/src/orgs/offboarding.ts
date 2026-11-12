@@ -58,6 +58,7 @@ export interface OffboardingRunControl {
     runId: string,
     byAccountId: string | null,
   ): Promise<boolean>;
+  abortQueued(conversationId: string, runId: string, byAccountId: string | null): Promise<boolean>;
   requestAbort(runId: string, byAccountId: string | null): Promise<void>;
 }
 
@@ -459,8 +460,8 @@ export class Offboarding {
   /**
    * The `run-stop` job (`MaintenanceProcessor`): stops a departed member's run the way the
    * conversation's stop does (`POST .../abort`), by no account: a waiting run is aborted directly,
-   * an orphan is finished directly, any other active run is asked to stop through Redis (its replica
-   * ends it; a run not started yet reads the stop when it starts). A finished run is left alone. No
+   * a queued run is ended in PG (ruling R27: it never starts later, however long it was held), an
+   * orphan is finished directly, a running run is asked to stop through Redis (its replica ends it). A finished run is left alone. No
    * new run follows, as after a person's stop: the departed member's queued messages were deleted.
    * A failure throws (the job is retried).
    */
@@ -476,6 +477,24 @@ export class Offboarding {
       run.status === "waiting" &&
       (await ctl.abortWaiting(data.conversationId, data.runId, null))
     ) {
+      return;
+    }
+    if (run.status === "queued") {
+      // a queued run may wait for hours: it is ended in PG, never left to the stop marker's TTL
+      // (ruling R27); the marker first, so a worker that takes it meanwhile stops too
+      await ctl.requestAbort(data.runId, null);
+      if (await ctl.abortQueued(data.conversationId, data.runId, null)) return;
+      // a worker took it (now running) or it moved on: the marker stops it; re-read and go on
+      const now = await this.db
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", data.runId)
+        .executeTakeFirst();
+      if (now?.status === "queued") {
+        throw new Error(`run ${data.runId} is still queued; the run-stop job retries`);
+      }
+      if (now?.status !== "waiting") return;
+      await ctl.abortWaiting(data.conversationId, data.runId, null);
       return;
     }
     if (await ctl.abortIfOrphaned(data.conversationId, data.runId, null)) return;

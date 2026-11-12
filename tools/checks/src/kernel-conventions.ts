@@ -270,6 +270,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "transactions, so there is no kernel row for the job to be owed by",
   },
   {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/sandbox/jobs.ts",
+    within: "resetFiles",
+    reason:
+      "a files reset is a request-time action with no database write that owes it: the request " +
+      "fails when the add fails, so it is not owed work (ruling R28)",
+  },
+  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -383,12 +391,6 @@ export const KC_PENDING: KcPending = {
       path: "packages/kernel/src/runtime/run-queue.ts",
       max: 1,
       reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/sandbox/jobs.ts",
-      max: 1,
-      reason:
-        "the files reset a request enqueues directly (no transaction owes it): not in PR 5's tasks",
     },
     {
       path: "packages/kernel/src/schedules/fire.ts",
