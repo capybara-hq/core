@@ -172,7 +172,7 @@ function OptionsGroup({
                     />
                     <span className="cb-options-text">{it.label}</span>
                     {it.tag ? <span className="cb-cmenu-tag">{it.tag}</span> : null}
-                    {it.badge ? <Badge tone="warn">{it.badge}</Badge> : null}
+                    {it.badge ? <Badge tone={it.badgeTone ?? "warn"}>{it.badge}</Badge> : null}
                     <span className="cb-grow" />
                     {it.checked ? (
                       <span className="cb-options-check">

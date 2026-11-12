@@ -27,45 +27,83 @@ export interface DeviceMachine {
   lastSeenAt: string | null;
 }
 
-/** A local device's network policy as its machine last reported it (kernel `DeviceLocalPolicySummary`). */
+/** A sandbox level (sandbox dev tiers spec §5): 严格 / 开发 / 开放. */
+export type SandboxTier = "strict" | "dev" | "open";
+
+/** The tiers from the narrowest up. */
+export const SANDBOX_TIERS: readonly SandboxTier[] = ["strict", "dev", "open"];
+
+/** Whether tier `a` is above tier `b`. */
+export const tierAbove = (a: SandboxTier, b: SandboxTier): boolean =>
+  SANDBOX_TIERS.indexOf(a) > SANDBOX_TIERS.indexOf(b);
+
+/** A local device's policy as its machine last reported it (kernel `DeviceLocalPolicySummary`). */
 export interface DeviceNetworkPolicy {
-  /**
-   * The tier the device owner chose (absent = follows the org). `open`: the local policy no longer
-   * narrows (「不限网络」); the org's egress still applies.
-   */
-  tier?: "strict" | "dev" | "open";
+  /** The tier the device owner chose on the machine (absent = follows the org's default). */
+  tier?: SandboxTier;
   /** The tier the device ran its last command at. */
-  effectiveTier: "strict" | "dev" | "open";
+  effectiveTier: SandboxTier;
   isolation: "sandbox" | "none";
+  /**
+   * Whether `dev` lets commands reach local servers on this machine: `off-proxy-detected` when a
+   * local proxy or Docker TCP port was found (the proxy guard), `off` in `strict`.
+   */
   localhost: "on" | "off-proxy-detected" | "off";
+  /** Unix sockets: `roots` under the device's roots, `all-masked` (Linux: masked), `off`. */
   unixSockets: "roots" | "all-masked" | "off";
   allowedDomains: string[];
   /** `off`: the machine refuses every widening from the deployment (set only on the machine). */
   remoteGrants: "owner" | "off";
 }
 
-/** One change of a device's network policy (kernel `DevicePolicyChangeView`), newest first. */
-export interface DevicePolicyChange {
-  at: string;
-  add: string[];
-  remove: string[];
-  network: "allowlist" | "open" | null;
-  /** The deciding account's display name (null once the account is gone). */
-  by: string | null;
-  via: "web" | "im";
-  /** The machine answered with the policy as written (false: the answer never came). */
-  confirmed: boolean;
-}
-
 /**
  * A local device's network facts (network ask-to-allow spec §5.4, §7): the program's features
- * (`policyOp`: it takes policy changes from the deployment), its policy summary (null when it
- * reported none) and the recent changes.
+ * (`policyOp`: it takes policy changes from the deployment; `tiers`: it knows the sandbox levels)
+ * and its policy summary (null when it reported none).
  */
 export interface DeviceNetwork {
   features: string[];
   policy: DeviceNetworkPolicy | null;
-  recent: DevicePolicyChange[];
+}
+
+/** One sandbox change of a device (kernel `DeviceSandboxChangeView`), newest first. */
+export interface DeviceSandboxChange {
+  at: string;
+  /** `policy`: a local policy change; `tier`: a cloud device's tier; `isolation`: reported. */
+  kind: "policy" | "tier" | "isolation";
+  add: string[];
+  remove: string[];
+  /** The tier set (`to: null`: follow the org's default); null when it did not change. */
+  tier: { to: SandboxTier | null } | null;
+  isolation: "sandbox" | "none" | null;
+  /** The deciding account's display name (null once the account is gone). */
+  by: string | null;
+  via: "web" | "im" | "device";
+  /** The machine answered with the policy as written (false: the answer never came). */
+  confirmed: boolean;
+}
+
+/** A device's sandbox level as its owner sees it (kernel `DeviceSandboxView`, spec §11.1). */
+export interface DeviceSandbox {
+  /** The tier the owner chose; null follows the org's default. */
+  tier: SandboxTier | null;
+  /** The tier its commands run at. */
+  effectiveTier: SandboxTier;
+  /** The highest tier the device may reach (the org's and the platform's max). */
+  ceiling: SandboxTier;
+  /** Which ceiling lowered the chosen tier; null when none did. */
+  cappedBy: "org" | "platform" | null;
+  /** The org's default tier for devices that choose none. */
+  defaultTier: SandboxTier;
+  /** The org and the platform let a local device run without a sandbox. */
+  allowUnsandboxed: boolean;
+  /** `none`: a local device runs its commands without a sandbox (set on the machine). */
+  isolation: "sandbox" | "none";
+  /** A cloud device's new tier applies at its next use, files kept. */
+  pendingNextUse: boolean;
+  /** A cloud device's new tier waits for a file reset. */
+  pendingFilesReset: boolean;
+  recent: DeviceSandboxChange[];
 }
 
 export interface Device {
@@ -97,6 +135,8 @@ export interface Device {
    * none connected (absent from older kernels).
    */
   network?: DeviceNetwork | null;
+  /** Its sandbox level (absent from older kernels). */
+  sandbox?: DeviceSandbox;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; resetting the files makes it usable again. */
   filesLost: boolean;
@@ -195,16 +235,33 @@ export const revokeDeviceMachine = (orgId: string, id: string) =>
 export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
 
-/** Whether the device's local policy is 「不限网络」 (tier `open`), as its machine reported. */
-export const deviceNetworkOpen = (e: Pick<Device, "network">): boolean =>
-  e.network?.policy?.tier === "open";
+/**
+ * The mark a device carries in lists and pickers (spec §11.1): 不使用沙箱 (`fail`) when it runs
+ * without a sandbox, 开放 (`warn`) when its commands run at the open level; none otherwise.
+ */
+export function deviceSandboxMark(
+  e: Pick<Device, "sandbox">,
+): { kind: "unsandboxed"; tone: "fail" } | { kind: "open"; tone: "warn" } | null {
+  const s = e.sandbox;
+  if (s === undefined) return null;
+  if (s.isolation === "none") return { kind: "unsandboxed", tone: "fail" };
+  if (s.effectiveTier === "open") return { kind: "open", tone: "warn" };
+  return null;
+}
 
-/** A change of a device's network policy by its owner (`POST …/devices/:id/policy`). */
+/** Whether a device has a level card above its ceiling (the page then says who caps it). */
+export const deviceCapped = (e: Pick<Device, "sandbox"> | undefined): boolean =>
+  e?.sandbox !== undefined && e.sandbox.ceiling !== "open";
+
+/** A change of a local device's policy by its owner (`POST …/devices/:id/policy`). */
 export interface DevicePolicyPatch {
   /** Hosts to allow (wildcards `*.` allowed); at most {@link MAX_POLICY_HOSTS}. */
   add?: string[];
   remove?: string[];
-  network?: "allowlist" | "open";
+  /** The tier to set; null follows the org's default. */
+  tier?: SandboxTier | null;
+  /** Only ever `sandbox`: turning the sandbox off happens on the machine alone. */
+  isolation?: "sandbox";
 }
 
 /** The most hosts one policy change adds. */
@@ -215,4 +272,11 @@ export const updateDevicePolicy = (orgId: string, id: string, patch: DevicePolic
   apiFetch<{ policy: DeviceNetworkPolicy }>(`${org(orgId)}/${enc(id)}/policy`, {
     method: "POST",
     body: JSON.stringify(patch),
+  });
+
+/** Sets a cloud device's tier (`PATCH …/devices/:id`; null follows the org's default). */
+export const setDeviceTier = (orgId: string, id: string, tier: SandboxTier | null) =>
+  apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ tier }),
   });

@@ -223,6 +223,7 @@ export function ContextSection({
   model,
   sandbox,
   sandboxBadge,
+  sandboxBadgeTone = "warn",
   connectors,
   lastRun,
   total,
@@ -231,8 +232,10 @@ export function ContextSection({
   ratio: number;
   model: string;
   sandbox?: string;
-  /** An attention mark after the model · sandbox line, as a `warn` Badge (「不限网络」). */
+  /** An attention mark after the model · sandbox line, as a `warn` Badge (「开放」). */
   sandboxBadge?: string;
+  /** The mark's tone: `fail` for a danger mark (「不使用沙箱」); default `warn`. */
+  sandboxBadgeTone?: "warn" | "fail";
   connectors: string[];
   /** The last run's line ("上次运行 · <model> · <duration> · <tokens>"), worded by the page. */
   lastRun?: string;
@@ -260,7 +263,7 @@ export function ContextSection({
         {sandboxBadge ? (
           <>
             {" "}
-            <Badge tone="warn">{sandboxBadge}</Badge>
+            <Badge tone={sandboxBadgeTone}>{sandboxBadge}</Badge>
           </>
         ) : null}
       </div>

@@ -54,9 +54,9 @@ export type ObjectCardLoaded = {
   description?: string;
   /**
    * One mono line; as a list, the parts are joined with " · " and a `{ label, tone: "warn" }` part
-   * is drawn in `warn` (as ObjectRow's meta).
+   * is drawn in `warn` (as ObjectRow's meta), a `tone: "fail"` one in `fail`.
    */
-  meta?: string | (string | { label: string; tone: "warn" })[];
+  meta?: string | (string | { label: string; tone: "warn" | "fail" })[];
   /**
    * The object's state at the head's right (运行中, 出错, 已停用): a mono `small` label, `ok` /
    * `warn` / `fail` in their color, `muted` in `faint` (as ObjectRow's state, §6.17).
