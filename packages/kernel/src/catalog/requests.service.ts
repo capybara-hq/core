@@ -18,11 +18,11 @@ import { orgAllows } from "../local-devices/network-grants.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import {
-  effectiveSandboxEgress,
   ORG_SANDBOX_ALLOW_HOSTS_MAX,
   OrgSettingsService,
   readOrgSettings,
 } from "../orgs/settings.service.js";
+import { baseSandboxEgress } from "../sandbox/tiers.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
@@ -358,7 +358,8 @@ export class CatalogRequestsService {
         "The organization has sandbox network turned off; ask an admin to turn it on first.",
       );
     }
-    const effective = effectiveSandboxEgress(
+    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
+    const effective = baseSandboxEgress(
       { egress: deployment.mode, allowHosts: deployment.allowHosts },
       settings.sandboxEgress,
     );
@@ -855,7 +856,8 @@ export class CatalogRequestsService {
         "The organization has sandbox network turned off; turn it on in the organization settings first",
       );
     }
-    const effective = effectiveSandboxEgress(
+    // the org's base list: the hosts a strict device reaches (the tiers only widen it)
+    const effective = baseSandboxEgress(
       { egress: deployment.mode, allowHosts: deployment.allowHosts },
       current,
     );

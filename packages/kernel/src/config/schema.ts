@@ -1,7 +1,9 @@
 import { isIP } from "node:net";
 import {
+  DEV_HOSTS,
   DOCUMENT_MEDIA_TYPES,
   IMAGE_MEDIA_TYPES,
+  tierAtMost,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -1510,12 +1512,17 @@ export const KernelConfigSchema = z.object({
               }),
             ),
           egress: z
-            .enum(["none", "allowlist", "open"])
+            .enum(["none", "allowlist"], {
+              error: (iss) =>
+                iss.input === "open"
+                  ? 'sandbox.limits.egress no longer takes "open": open egress is the open sandbox tier now; set sandbox.tiers.max to "open" (and egress to "allowlist")'
+                  : undefined,
+            })
             .default("allowlist")
             .meta(
               meta({
                 description:
-                  "Outbound network from cloud device instances: none, allowlist (only allowHosts) or open; applies to instances created after the change, existing ones keep theirs until destroyed",
+                  'Outbound network of sandboxed devices: none (no tier reaches the network, the kill switch) or allowlist (strict reaches allowHosts, dev adds devHosts, open reaches any public host). Open egress is the open tier: set sandbox.tiers.max to "open"',
               }),
             ),
           allowHosts: z
@@ -1534,6 +1541,60 @@ export const KernelConfigSchema = z.object({
                   "Hosts cloud device instances may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
+          devHosts: z
+            .array(z.string())
+            .default([...DEV_HOSTS])
+            .superRefine((hosts, ctx) => {
+              hosts.forEach((h, i) => {
+                for (const message of validateAllowHost(h)) {
+                  ctx.addIssue({ code: "custom", path: [i], message: `${h}: ${message}` });
+                }
+              });
+            })
+            .meta(
+              meta({
+                description:
+                  "Hosts the dev sandbox tier adds to the allowlist (package registries, source hosts, tool downloads) when egress is allowlist; same format as allowHosts",
+              }),
+            ),
+        })
+        .prefault({} as never),
+      tiers: z
+        .object({
+          max: z
+            .enum(["strict", "dev", "open"])
+            .default("dev")
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Highest sandbox tier any organization may reach: strict (the allowlist only), dev (adds devHosts and local development affordances) or open (any public host); organizations and devices choose at most this",
+              }),
+            ),
+          default: z
+            .enum(["strict", "dev", "open"])
+            .default("dev")
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Sandbox tier of a device whose owner chose none, unless its organization sets its own default; at most sandbox.tiers.max",
+              }),
+            ),
+          allowUnsandboxed: z
+            .boolean()
+            .default(true)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Whether a local device may run commands without a sandbox (its owner's local choice); it only applies where the organization's ceiling is open, and an organization may forbid it",
+              }),
+            ),
+        })
+        .refine((t) => tierAtMost(t.default, t.max), {
+          message: "sandbox.tiers.default must not be above sandbox.tiers.max",
+          path: ["default"],
         })
         .prefault({} as never),
     })

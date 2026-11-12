@@ -254,6 +254,44 @@ describe("org settings", () => {
     expect(pre).toBeDefined();
   });
 
+  it("sandboxTier changes only when they narrow the org's sandbox level (a person raises it)", async () => {
+    const o = op("org-settings.update");
+    const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
+    // the platform defaults (max dev, default dev): lowering is fine, raising is not
+    expect(await pre({ sandboxTier: { max: "strict" } })).toEqual({ ok: true });
+    const r = (await run("org-settings.update", { sandboxTier: { max: "strict" } })) as {
+      settings: { sandboxTier?: unknown };
+    };
+    expect(r.settings.sandboxTier).toEqual({ max: "strict" });
+    for (const input of [
+      { sandboxTier: null },
+      { sandboxTier: { max: "dev" } },
+      { sandboxTier: { default: "dev" } },
+    ]) {
+      expect(await pre(input), JSON.stringify(input)).toMatchObject({
+        ok: false,
+        code: "org.sandbox_tier_not_allowed",
+        message: "Raising the sandbox level needs a person in the organization settings.",
+      });
+      await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
+    }
+    // the same effective level in another shape is no raise
+    await run("org-settings.update", { sandboxTier: { max: "strict", default: "strict" } });
+    // above the platform: the shared refusal
+    expect(await pre({ sandboxTier: { max: "open" } })).toMatchObject({
+      ok: false,
+      code: "org.sandbox_tier_not_allowed",
+    });
+    // a person may raise it again
+    const back = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { sandboxTier: null },
+    });
+    expect(back.statusCode, back.body).toBe(200);
+    expect(back.json().settings).not.toHaveProperty("sandboxTier");
+  });
+
   it("turning platformTool off applies from the next call and tells the person", async () => {
     const o = op("org-settings.update");
     const input = o.input.parse({ platformTool: "off" });

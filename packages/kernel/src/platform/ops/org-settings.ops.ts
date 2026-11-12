@@ -34,7 +34,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.get",
         description:
-          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress and wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per list slot, the extension contributions the org hides and their order; per single slot, the contribution that replaces the built-in as use, null for the built-in; a slot not listed follows the platform), the deployment's sandbox egress default and the sandbox cpu / memory limits in effect.",
+          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress, sandboxTier ({ max, default, allowUnsandboxed }: the org's sandbox levels strict < dev < open) and wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), uiArrangement (per list slot, the extension contributions the org hides and their order; per single slot, the contribution that replaces the built-in as use, null for the built-in; a slot not listed follows the platform), the deployment's sandbox egress default and sandbox tiers, and the sandbox cpu / memory limits in effect.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
@@ -49,7 +49,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.update",
         description:
-          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress or wakeOnBackgroundTask so they follow the deployment again. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
+          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress, sandboxTier or wakeOnBackgroundTask so they follow the deployment again. sandboxTier ({ max, default, allowUnsandboxed }, replaced whole) may only lower the org's sandbox level here: a change that raises the highest or default tier, or allows unsandboxed devices, is refused and needs a person in the organization settings on the web. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. uiArrangement: { <slot>: { hidden, order } } (a list slot) or { <slot>: { use } } (a single slot: shell.brand, conversation.empty, conversation.composer.frame) replaces that slot's entry, where hidden, order and use name contribution keys <extension>/<contribution> (hidden ones are not listed in the web UI but their pages still open by URL; use null is the built-in); null for a slot makes it follow the platform again; platform.page is refused. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
         input: OrgSettingsPatchSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
           message: "give at least one setting",
         }),
@@ -63,6 +63,10 @@ export class OrgSettingsOperations implements OnModuleInit {
             next: "This deployment disables sandbox network access, so the org can only set sandboxEgress to none; ask the super admin to change sandbox.limits.egress.",
           },
           {
+            code: "org.sandbox_tier_not_allowed",
+            next: "Through this tool the org's sandbox level may only be lowered, never above the platform's sandbox.tiers (org-settings.get shows both); to raise it, ask an org admin to change it in the organization settings on the web.",
+          },
+          {
             code: "theme.not_available",
             next: "Pick a theme id that themes.list shows for this org, or null to follow the platform.",
           },
@@ -71,7 +75,11 @@ export class OrgSettingsOperations implements OnModuleInit {
             next: "Fix the setting as the message says (org-settings.get shows the current values).",
           },
         ],
-        precheck: (i) => precheckBy(async () => this.settings.check(i)),
+        precheck: (i, ctx) =>
+          precheckBy(async () => {
+            this.settings.check(i);
+            this.settings.assertTierNarrows(await this.settings.get(ctx.orgId), i);
+          }),
         summary: async (i, ctx) => {
           const { theme, ...rest } = i;
           const parts = Object.entries(rest)
@@ -119,6 +127,8 @@ export class OrgSettingsOperations implements OnModuleInit {
             ctx.actorAccountId,
             undefined,
             viaAgent("org-settings.update", ctx),
+            // a person raises the sandbox level, never an agent (sandbox dev tiers spec §7.2)
+            { tierOnlyNarrows: true },
           );
           const note =
             input.platformTool === undefined

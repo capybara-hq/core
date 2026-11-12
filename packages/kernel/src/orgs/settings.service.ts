@@ -1,4 +1,9 @@
-import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import {
+  type SandboxLimits,
+  type SandboxTier,
+  tierAtMost,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { z } from "zod";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -9,6 +14,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
 import {
@@ -27,7 +33,10 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。
  * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
  * - `sandboxEgress`：组织的沙箱出站（Ruling M19 / D6），缺省跟随部署的 `sandbox.limits.egress` + `allowHosts`。
- *   见 {@link effectiveSandboxEgress}。存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
+ *   See `baseSandboxEgress` (sandbox/tiers.ts). 存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
+ * - `sandboxTier`: the org's sandbox tier ceiling, default and unsandboxed switch (sandbox dev tiers
+ *   spec §4.1), each absent = follow the platform (`sandbox.tiers`); never above the platform. An
+ *   invalid stored value reads as `{ max: "strict" }` (narrower, never wider).
  * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
@@ -66,6 +75,23 @@ export const SandboxEgressSettingSchema = z
   .strict();
 
 export type SandboxEgressSetting = z.infer<typeof SandboxEgressSettingSchema>;
+
+const TierSchema = z.enum(["strict", "dev", "open"]) satisfies z.ZodType<SandboxTier>;
+
+/**
+ * The org's sandbox tier setting (sandbox dev tiers spec §4.1): `max` the highest tier its devices
+ * may reach, `default` the tier of a device that chose none, `allowUnsandboxed` false forbids
+ * unsandboxed local devices. Each absent = follow the platform's `sandbox.tiers`.
+ */
+export const SandboxTierSettingSchema = z
+  .object({
+    max: TierSchema.optional(),
+    default: TierSchema.optional(),
+    allowUnsandboxed: z.boolean().optional(),
+  })
+  .strict();
+
+export type SandboxTierSetting = z.infer<typeof SandboxTierSettingSchema>;
 
 /**
  * The org's theme setting (themes spec §7): `id` a theme on in the org (a `platform_themes` id),
@@ -143,6 +169,8 @@ export const OrgSettingsSchema = z.object({
   sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("allow"),
   platformTool: z.enum(["on", "read-only", "off"]).default("on").catch("on"),
   sandboxEgress: SandboxEgressSettingSchema.optional().catch({ mode: "none" }),
+  /** The org's sandbox tiers (sandbox dev tiers spec §4.1); absent follows the platform. */
+  sandboxTier: SandboxTierSettingSchema.optional().catch({ max: "strict" }),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
   /** The org's default time zone (run context spec §3.3); absent = UTC. */
@@ -170,6 +198,11 @@ export const OrgSettingsPatchSchema = z
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /** null 清除（恢复跟随部署默认）。 */
     sandboxEgress: SandboxEgressSettingSchema.nullable().optional(),
+    /**
+     * The org's sandbox tiers, replaced whole (fields left out follow the platform); never above
+     * the platform (`org.sandbox_tier_not_allowed`). null clears it.
+     */
+    sandboxTier: SandboxTierSettingSchema.nullable().optional(),
     /** The org's default time zone (IANA); null clears it (UTC). */
     timeZone: IanaTimeZone.nullable().optional(),
     /**
@@ -188,24 +221,6 @@ export const OrgSettingsPatchSchema = z
   .strict();
 
 export type OrgSettingsPatch = z.infer<typeof OrgSettingsPatchSchema>;
-
-/** 部署的沙箱出站（`sandbox.limits.egress` + `allowHosts`）。 */
-export type DeploymentEgress = Pick<SandboxLimits, "egress" | "allowHosts">;
-
-/**
- * 组织实际生效的沙箱出站：没有组织设置 → 部署默认；`none` → 只有回环；`allowlist` → 组织的白名单
- * （省略时用部署的），但部署是 `none` 时仍为 `none`（组织永远不比部署放得更开，部署改成 none 后存量设置也随之收紧）。
- */
-export function effectiveSandboxEgress(
-  deployment: DeploymentEgress,
-  org: SandboxEgressSetting | undefined,
-): DeploymentEgress {
-  if (org === undefined)
-    return { egress: deployment.egress, allowHosts: [...deployment.allowHosts] };
-  if (org.mode === "none" || deployment.egress === "none")
-    return { egress: "none", allowHosts: [] };
-  return { egress: "allowlist", allowHosts: [...(org.allowHosts ?? deployment.allowHosts)] };
-}
 
 /** Whether a finished background task wakes an idle conversation: the org's setting, else the deployment's. */
 export function effectiveWakeOnBackgroundTask(
@@ -240,7 +255,14 @@ export interface OrgSandboxLimits {
 
 /** 设置页展示用的部署默认值（`GET` 一并返回）。 */
 export interface OrgSettingsDeployment {
-  sandboxEgress: { mode: SandboxLimits["egress"]; allowHosts: string[] };
+  sandboxEgress: { mode: "none" | "allowlist"; allowHosts: string[] };
+  /** The platform's tiers (`sandbox.tiers`) and the dev hosts the dev tier adds. */
+  sandboxTiers: {
+    max: SandboxTier;
+    default: SandboxTier;
+    allowUnsandboxed: boolean;
+    devHosts: string[];
+  };
 }
 
 /** 按值比较（`sandboxEgress` 是对象）；键序由 schema 固定。 */
@@ -266,6 +288,9 @@ export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promis
   return parseOrgSettings(row?.settings);
 }
 
+const sandboxTierNotAllowed = (message: string): ApiError =>
+  new ApiError("org.sandbox_tier_not_allowed", message);
+
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
 @Injectable()
 export class OrgSettingsService {
@@ -279,9 +304,15 @@ export class OrgSettingsService {
 
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   deployment(): OrgSettingsDeployment {
-    const lim = this.config.get().sandbox.limits;
+    const { limits: lim, tiers } = this.config.get().sandbox;
     return {
       sandboxEgress: { mode: lim.egress, allowHosts: [...lim.allowHosts] },
+      sandboxTiers: {
+        max: tiers.max,
+        default: tiers.default,
+        allowUnsandboxed: tiers.allowUnsandboxed,
+        devHosts: [...lim.devHosts],
+      },
     };
   }
 
@@ -321,6 +352,26 @@ export class OrgSettingsService {
         "This deployment disables sandbox network access (sandbox.limits.egress is none); an organization can only set sandboxEgress to none",
       );
     }
+    const t = patch.sandboxTier;
+    if (t != null) {
+      const platform = this.config.get().sandbox.tiers;
+      if (t.max !== undefined && !tierAtMost(t.max, platform.max)) {
+        throw sandboxTierNotAllowed(
+          `The platform allows sandbox tiers up to ${platform.max}; sandboxTier.max cannot be ${t.max}`,
+        );
+      }
+      const max = t.max ?? platform.max;
+      if (t.default !== undefined && !tierAtMost(t.default, max)) {
+        throw sandboxTierNotAllowed(
+          `sandboxTier.default (${t.default}) cannot be above the organization's highest tier (${max})`,
+        );
+      }
+      if (t.allowUnsandboxed === true && !platform.allowUnsandboxed) {
+        throw sandboxTierNotAllowed(
+          "The platform does not allow unsandboxed devices (sandbox.tiers.allowUnsandboxed is false); sandboxTier.allowUnsandboxed cannot be true",
+        );
+      }
+    }
   }
 
   async update(
@@ -330,9 +381,36 @@ export class OrgSettingsService {
     actorTokenId?: string,
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
+    /** `tierOnlyNarrows`: refuse a `sandboxTier` change that widens the effective tiers. */
+    opts?: { tierOnlyNarrows?: boolean },
   ): Promise<OrgSettings> {
     this.check(patch);
-    return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail);
+    return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
+  }
+
+  /** The effective sandbox policy for the org's settings and a device's own tier (null = none). */
+  sandboxPolicy(settings: OrgSettings, deviceTier: SandboxTier | null): EffectiveSandboxPolicy {
+    return effectiveSandboxPolicy(this.config.get().sandbox, settings, deviceTier);
+  }
+
+  /**
+   * Refuses a `sandboxTier` patch that would raise the org's effective ceiling or default, or
+   * allow unsandboxed devices where they were not (the Platform tool may only narrow, spec §7.2).
+   */
+  assertTierNarrows(before: OrgSettings, patch: OrgSettingsPatch): void {
+    if (patch.sandboxTier === undefined) return;
+    const after = { ...before, sandboxTier: patch.sandboxTier ?? undefined };
+    const b = this.sandboxPolicy(before, null);
+    const a = this.sandboxPolicy(after, null);
+    if (
+      !tierAtMost(a.ceiling, b.ceiling) ||
+      !tierAtMost(a.defaultTier, b.defaultTier) ||
+      (a.allowUnsandboxed && !b.allowUnsandboxed)
+    ) {
+      throw sandboxTierNotAllowed(
+        "Raising the sandbox level needs a person in the organization settings.",
+      );
+    }
   }
 
   @Transactional()
@@ -342,6 +420,7 @@ export class OrgSettingsService {
     actorAccountId: string,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
+    opts: { tierOnlyNarrows?: boolean } | undefined,
   ): Promise<OrgSettings> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
     const row = await this.db
@@ -351,6 +430,8 @@ export class OrgSettingsService {
       .executeTakeFirstOrThrow();
     const stored = asObject(row.settings);
     const before = parseOrgSettings(stored);
+    // under the org lock, so the comparison is with the value the write replaces
+    if (opts?.tierOnlyNarrows) this.assertTierNarrows(before, patch);
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
@@ -374,6 +455,11 @@ export class OrgSettingsService {
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
     }
     if (after.sandboxEgress === undefined) delete after.sandboxEgress;
+    // an empty sandboxTier is the same as none: follow the platform
+    if (after.sandboxTier !== undefined && Object.keys(after.sandboxTier).length === 0) {
+      delete after.sandboxTier;
+    }
+    if (after.sandboxTier === undefined) delete after.sandboxTier;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
@@ -387,6 +473,7 @@ export class OrgSettingsService {
     // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
     const {
       sandboxEgress: _old,
+      sandboxTier: _oldTier,
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
       theme: _oldTheme,

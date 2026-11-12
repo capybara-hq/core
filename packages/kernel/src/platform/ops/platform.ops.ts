@@ -6,7 +6,7 @@ import { AccountsService } from "../../identity/accounts.js";
 import { PreferencesSchema } from "../../identity/me.schemas.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
-import { effectiveSandboxEgress, OrgSettingsService } from "../../orgs/settings.service.js";
+import { OrgSettingsService } from "../../orgs/settings.service.js";
 import { resolveEffectiveSkills } from "../../skills/catalog.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import { SANDBOX_TOOL_NAMES } from "../../tools/builtin-names.js";
@@ -131,7 +131,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills in its catalog now by name with their plugin (every skill on in the org unless the agent turns it off, its own and builtin plugins' skills always; manual-only skills are not in the catalog), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
+          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills in its catalog now by name with their plugin (every skill on in the org unless the agent turns it off, its own and builtin plugins' skills always; manual-only skills are not in the catalog), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the sandbox level (tier) and network mode of a new device, and its profile (avatar, description, quick actions). Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -148,11 +148,8 @@ export class PlatformOperationsProvider implements OnModuleInit {
             (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
           );
           const org = await this.settings.get(ctx.orgId);
-          const dep = this.settings.deployment().sandboxEgress;
-          const egress = effectiveSandboxEgress(
-            { egress: dep.mode, allowHosts: dep.allowHosts },
-            org.sandboxEgress,
-          );
+          // a new device's level: the org's default tier and its network
+          const policy = this.settings.sandboxPolicy(org, null);
           return {
             id: agent.id,
             name: d.name,
@@ -167,7 +164,9 @@ export class PlatformOperationsProvider implements OnModuleInit {
             skills,
             disabledSkills: d.disabledSkills ?? [],
             subagents: d.subagents ?? null,
-            sandbox: sandbox ? { enabled: true, egress: egress.egress } : { enabled: false },
+            sandbox: sandbox
+              ? { enabled: true, tier: policy.tier, egress: policy.egress }
+              : { enabled: false },
             profile: {
               avatar: agent.profile.avatar,
               description: agent.profile.description,

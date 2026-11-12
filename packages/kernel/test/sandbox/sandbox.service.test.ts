@@ -240,12 +240,12 @@ describe("组织出站设置（Ruling M19）", () => {
     });
   });
 
-  it("部署为 none 时组织的 allowlist 不放宽；部署 open 时组织 allowlist 收窄；非法存量按 none", async () => {
+  it("a deployment at none keeps an org allowlist at none; an org allowlist replaces the deployment's; an invalid stored value reads as none", async () => {
     const s = service();
     await setEgress({ mode: "allowlist", allowHosts: ["example.com"] });
     config.sandbox.limits.egress = "none";
     expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
-    config.sandbox.limits.egress = "open";
+    config.sandbox.limits.egress = "allowlist";
     expect(await limitsOf(s, await newDevice())).toMatchObject({
       egress: "allowlist",
       allowHosts: ["example.com"],

@@ -35,6 +35,7 @@ export const ERROR_CODES = {
   "org.last_owner": 409,
   "org.owner_required": 403,
   "org.sandbox_egress_not_allowed": 400,
+  "org.sandbox_tier_not_allowed": 400,
   "member.not_found": 404,
   "member.already_exists": 409,
   "member.anonymous_guest": 409,

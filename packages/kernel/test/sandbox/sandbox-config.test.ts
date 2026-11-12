@@ -1,3 +1,4 @@
+import { DEV_HOSTS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { SANDBOX_LOCK_TTL_MS } from "../../src/sandbox/sandbox.service.js";
@@ -36,7 +37,9 @@ describe("配置 sandbox", () => {
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
       ],
+      devHosts: [...DEV_HOSTS],
     });
+    expect(c.sandbox.tiers).toEqual({ max: "dev", default: "dev", allowUnsandboxed: true });
   });
 
   it("allowHosts 每项用 validateAllowHost 校验：IP、单段名、带协议 / 端口都拒绝", () => {
@@ -62,9 +65,12 @@ describe("配置 sandbox", () => {
     expect(ok.sandbox.limits.egress).toBe("none");
   });
 
-  it("egress 只认 none / allowlist / open", () => {
+  it('egress takes only none / allowlist; "open" points to sandbox.tiers.max', () => {
     expect(
       KernelConfigSchema.safeParse({ ...base, sandbox: { limits: { egress: "all" } } }).success,
     ).toBe(false);
+    const open = KernelConfigSchema.safeParse({ ...base, sandbox: { limits: { egress: "open" } } });
+    expect(open.success).toBe(false);
+    expect(open.error?.issues[0]?.message).toContain('set sandbox.tiers.max to "open"');
   });
 });

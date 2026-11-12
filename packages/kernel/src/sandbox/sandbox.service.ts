@@ -34,11 +34,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import {
-  effectiveSandboxEgress,
-  effectiveSandboxLimits,
-  readOrgSettings,
-} from "../orgs/settings.service.js";
+import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import {
   type SandboxLease,
@@ -53,6 +49,7 @@ import {
   type SandboxProviderEntry,
   SandboxProviders,
 } from "./providers.js";
+import { effectiveSandboxPolicy } from "./tiers.js";
 
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
@@ -238,8 +235,8 @@ function tagged<P>(
  * Sandbox config problems to tell operators at startup (English log lines):
  * - `runtime.maxRunSeconds` below `sandbox.limits.maxCommandSeconds`: long commands are cut by the
  *   run time limit (Ruling M20);
- * - `sandbox.limits.egress` is open but the current provider plugin has no `allowOpenEgress`: every
- *   instance creation is refused.
+ * - `sandbox.tiers.max` is open but the current provider plugin sets `openEgress: "off"`: every
+ *   creation of an open-tier instance is refused.
  * With both time limits at their defaults (900 < 7200, a known trade-off) it is only info; warn
  * when an operator changed one and they still disagree.
  */
@@ -248,12 +245,13 @@ export function sandboxConfigWarnings(
   providerPlugin?: string,
 ): { level: "info" | "warn"; message: string }[] {
   const out: { level: "info" | "warn"; message: string }[] = [];
-  if (cfg.sandbox.limits.egress === "open" && providerPlugin !== undefined) {
-    const pc = cfg.extensionConfig[providerPlugin] as { allowOpenEgress?: unknown } | undefined;
-    if (pc?.allowOpenEgress !== true) {
+  if (cfg.sandbox.tiers.max === "open" && providerPlugin !== undefined) {
+    // absent means the plugin's default ("proxy"), which creates open instances
+    const pc = cfg.extensionConfig[providerPlugin] as { openEgress?: unknown } | undefined;
+    if (pc?.openEgress === "off") {
       out.push({
         level: "warn",
-        message: `sandbox.limits.egress is "open" but extensionConfig."${providerPlugin}".allowOpenEgress is not true: the ${providerPlugin} plugin refuses to create sandboxes with open egress; set allowOpenEgress to true (trusted environments only) or use "allowlist" or "none"`,
+        message: `sandbox.tiers.max is "open" but extensionConfig."${providerPlugin}".openEgress is "off": the ${providerPlugin} plugin refuses to create cloud devices in the open tier; set openEgress to "proxy" (or "direct" for trusted deployments only), or lower sandbox.tiers.max to "dev"`,
       });
     }
   }
@@ -452,12 +450,16 @@ export class SandboxService {
    */
   async orgLimits(orgId: string): Promise<SandboxLimits> {
     const cfg = this.config.get().sandbox;
-    const egress = effectiveSandboxEgress(
-      cfg.limits,
-      (await readOrgSettings(this.db.db, orgId)).sandboxEgress,
-    );
+    // Tiers are not applied to devices yet (task C1): every device runs `strict`.
+    const policy = effectiveSandboxPolicy(cfg, await readOrgSettings(this.db.db, orgId), "strict");
     const sized = effectiveSandboxLimits(
-      { ...cfg.limits, ...egress, tier: "strict", devHosts: [] },
+      {
+        ...cfg.limits,
+        egress: policy.egress,
+        allowHosts: policy.allowHosts,
+        tier: "strict",
+        devHosts: [],
+      },
       await readSandboxLimitOverride(this.db.db, orgId),
     );
     return {
@@ -466,7 +468,6 @@ export class SandboxService {
       diskMb: sized.diskMb,
       egress: sized.egress,
       allowHosts: sized.allowHosts,
-      // Tiers are not applied yet: every device runs `strict`.
       tier: sized.tier,
       devHosts: sized.devHosts,
     };

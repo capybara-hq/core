@@ -433,6 +433,12 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       },
       deployment: {
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
+        sandboxTiers: {
+          max: "dev",
+          default: "dev",
+          allowUnsandboxed: true,
+          devHosts: baseCfg.sandbox.limits.devHosts,
+        },
       },
       // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
@@ -587,9 +593,75 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect(await none.update(orgId, { sandboxEgress: { mode: "none" } }, ownerId)).toMatchObject({
       sandboxEgress: { mode: "none" },
     });
-    expect(none.deployment()).toEqual({
-      sandboxEgress: { mode: "none", allowHosts: baseCfg.sandbox.limits.allowHosts },
+    expect(none.deployment().sandboxEgress).toEqual({
+      mode: "none",
+      allowHosts: baseCfg.sandbox.limits.allowHosts,
     });
+  });
+
+  it("sandboxTier: never above the platform, default at most max, unsandboxed only where the platform allows; null clears; an invalid stored value reads as max strict", async () => {
+    const patch = (sandboxTier: unknown) =>
+      req({ method: "PATCH", url: settingsUrl(), payload: { sandboxTier } });
+    for (const bad of [{ max: "wide" }, { extra: 1 }, { allowUnsandboxed: "yes" }]) {
+      const r = await patch(bad);
+      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
+      expect(r.json().error.code).toBe("validation_failed");
+    }
+    // the platform default max is dev
+    for (const bad of [{ max: "open" }, { default: "open" }, { max: "strict", default: "dev" }]) {
+      const r = await patch(bad);
+      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
+      expect(r.json().error.code).toBe("org.sandbox_tier_not_allowed");
+    }
+    const ok = await patch({ max: "dev", default: "strict", allowUnsandboxed: false });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().settings.sandboxTier).toEqual({
+      max: "dev",
+      default: "strict",
+      allowUnsandboxed: false,
+    });
+    const cleared = await patch(null);
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().settings).not.toHaveProperty("sandboxTier");
+    // an empty object is the same as following the platform
+    expect((await patch({})).json().settings).not.toHaveProperty("sandboxTier");
+
+    const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
+    const open = orgSettingsFor(db, () => ({
+      sandbox: {
+        ...baseCfg.sandbox,
+        tiers: { max: "open", default: "dev", allowUnsandboxed: false },
+      },
+    }));
+    expect(await open.update(orgId, { sandboxTier: { max: "open" } }, ownerId)).toMatchObject({
+      sandboxTier: { max: "open" },
+    });
+    expect(
+      await open
+        .update(orgId, { sandboxTier: { max: "open", allowUnsandboxed: true } }, ownerId)
+        .catch((e: unknown) => e),
+    ).toMatchObject({ code: "org.sandbox_tier_not_allowed" });
+    expect(open.deployment().sandboxTiers).toMatchObject({
+      max: "open",
+      default: "dev",
+      allowUnsandboxed: false,
+    });
+    expect(open.sandboxPolicy(await open.get(orgId), null)).toMatchObject({
+      tier: "dev",
+      ceiling: "open",
+      allowUnsandboxed: false,
+    });
+
+    // a stored value this version cannot read narrows to strict, never widens
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ sandboxTier: { max: "everything" } }) })
+      .where("id", "=", orgId)
+      .execute();
+    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.sandboxTier).toEqual({
+      max: "strict",
+    });
+    await patch(null);
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {
