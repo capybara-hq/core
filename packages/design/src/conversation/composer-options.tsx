@@ -1,6 +1,7 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type JSX, useId, useState } from "react";
 import { Button, IconButton } from "../controls/button";
+import { Badge } from "../display/basic";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { PickerProps } from "./composer";
@@ -171,6 +172,7 @@ function OptionsGroup({
                     />
                     <span className="cb-options-text">{it.label}</span>
                     {it.tag ? <span className="cb-cmenu-tag">{it.tag}</span> : null}
+                    {it.badge ? <Badge tone="warn">{it.badge}</Badge> : null}
                     <span className="cb-grow" />
                     {it.checked ? (
                       <span className="cb-options-check">

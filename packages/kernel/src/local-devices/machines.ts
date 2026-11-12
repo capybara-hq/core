@@ -1,5 +1,11 @@
 import { randomBytes } from "node:crypto";
-import type { DeviceHello, DeviceStopArgs, ExtensionContext } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceFeature,
+  DeviceHello,
+  DeviceLocalPolicySummary,
+  DeviceStopArgs,
+  ExtensionContext,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { audit } from "../identity/audit.js";
@@ -13,6 +19,7 @@ import type { KernelLogger } from "../log.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
+import { deviceFeaturesOf, localPolicyOf } from "./policy-summary.js";
 import { LocalDeviceRelay } from "./relay.js";
 
 /** The machine credential's prefix (`cap_dev_` plus 32 random bytes, base64url). */
@@ -41,6 +48,10 @@ export interface ActiveMachine {
   programVersion: string | null;
   lastSeenAt: Date | null;
   createdAt: Date;
+  /** The features its program reported in its last hello (known ones only). */
+  features: DeviceFeature[];
+  /** Its local network policy as last reported (hello or `policy` op); null when unknown. */
+  localPolicy: DeviceLocalPolicySummary | null;
 }
 
 /**
@@ -181,7 +192,9 @@ export class MachinesService {
    * {@link issue} already counted the reset) but serves another directory or mode (other roots,
    * ruling R23), the device's files are other files: `fs_resets` moves on (maintainer
    * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
-   * never said hello has no known roots: nothing to compare.
+   * never said hello has no known roots: nothing to compare. The reported features (known ones
+   * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
+   * program downgraded to one without them is no longer sent what it cannot do.
    */
   @Transactional()
   async recordHello(machineId: string, hello: DeviceHello): Promise<void> {
@@ -227,6 +240,8 @@ export class MachinesService {
         mode: hello.mode,
         roots: JSON.stringify(hello.roots),
         session_isolation: hello.sessionIsolation,
+        features: deviceFeaturesOf(hello.features),
+        local_policy: jsonOrNull(localPolicyOf(hello.policy)),
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)
@@ -343,6 +358,8 @@ export class MachinesService {
         "program_version",
         "last_seen_at",
         "created_at",
+        "features",
+        "local_policy",
       ])
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
@@ -358,6 +375,8 @@ export class MachinesService {
           programVersion: r.program_version,
           lastSeenAt: r.last_seen_at,
           createdAt: r.created_at,
+          features: deviceFeaturesOf(r.features),
+          localPolicy: localPolicyOf(r.local_policy),
         }
       : null;
   }
@@ -386,6 +405,8 @@ export class MachinesService {
     }
   }
 }
+
+const jsonOrNull = (v: unknown): string | null => (v === null ? null : JSON.stringify(v));
 
 /** Two machine rows (or a login) name the same machine: same name, OS and arch. */
 function sameMachine(

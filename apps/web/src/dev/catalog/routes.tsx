@@ -80,6 +80,8 @@ export const REFERENCE_COMPONENTS = [
   "tool-row",
   "diff-block",
   "approval-block",
+  // what a command was refused that no card lifts (network ask spec §6.5)
+  "network-facts",
   "question-block",
   "connect-block",
   "queued-message",

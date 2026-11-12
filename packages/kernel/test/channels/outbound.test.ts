@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ChannelCard, ChannelTarget } from "@capybara-hq/plugin-sdk";
 import {
@@ -18,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -923,6 +925,251 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       "guest question skipped",
     );
     await settled(await convOf(anonId, chat));
+  });
+});
+
+describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", { timeout: 40_000 }, () => {
+  /**
+   * A network ask on a run that waits on an echo approval (the echo keeps the run waiting while
+   * the ask is decided), for the device owner `requestedFor`. Returns the ask's card message.
+   */
+  async function networkAsk(
+    conn: string,
+    app: string,
+    chat: string,
+    msg: ReturnType<typeof group>,
+    /** The device owner; `starter`: the run's starter (the shared guest account for a guest). */
+    requestedFor: string,
+    hosts: string[],
+  ) {
+    im.push(conn, msg);
+    const conversationId = await convOf(conn, chat);
+    const echo = await waitForEvent(db, conversationId, (e) => e.type === "approval_requested");
+    const echoId = (echo.payload as { approvalId: string }).approvalId;
+    await waitFor(
+      async () => sentTo(app, chat).find((s) => (cardOf(s) as { id?: string })?.id === echoId),
+      10_000,
+      "echo approval card",
+    );
+    const runId = echo.runId as string;
+    const owner =
+      requestedFor === "starter"
+        ? ((
+            await db
+              .selectFrom("runs")
+              .select("trigger_account_id")
+              .where("id", "=", runId)
+              .executeTakeFirstOrThrow()
+          ).trigger_account_id as string)
+        : requestedFor;
+    // a network ask is for the owner of a live device of the org
+    const deviceId = randomUUID();
+    await db
+      .insertInto("devices")
+      .values({
+        id: deviceId,
+        org_id: orgId,
+        owner_kind: "personal",
+        owner_account_id: owner,
+        name: `Laptop ${deviceId.slice(0, 4)}`,
+        source: "local",
+        provider: "local",
+      })
+      .execute();
+    const ask = await k.app.get(ApprovalsService).requestNetwork({
+      orgId,
+      conversationId,
+      runId,
+      step: 1,
+      callId: `net-${randomUUID().slice(0, 8)}`,
+      requestedFor: owner,
+      detail: {
+        deviceId,
+        hosts: hosts.map((host) => ({ host, port: 443 })),
+        command: "curl -fsSL https://files.slack.com/x -H 'Authorization: app-secret-1234567'",
+        description: "Download the file",
+        result: { content: "curl: (56) CONNECT tunnel failed, response 403", isError: true },
+      },
+      scopes: ["once", "always"],
+    });
+    const cardMsg = await waitFor(
+      async () => sentTo(app, chat).find((s) => (cardOf(s) as { id?: string })?.id === ask.id),
+      10_000,
+      "network ask card",
+    );
+    await cardRecorded(db, cardMsg);
+    return { conversationId, echoId, askId: ask.id, owner, cardMsg };
+  }
+
+  /** Denies the echo approval as `sender` so the run finishes, then waits for the delivery. */
+  async function finish(conn: string, sender: string, echoId: string, cardMsg: FakeChannelSent) {
+    im.push(
+      conn,
+      cardAction(
+        `fin-${echoId.slice(0, 8)}`,
+        sender,
+        { cardKind: "approval", cardId: echoId, action: "deny" },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(async () => (await approvalStatus(echoId)) === "denied", 10_000, "echo denied");
+  }
+
+  it("the card names the hosts and the command, labels its scopes; the owner's click allows once and the card updates; another member's click changes nothing", async () => {
+    const chat = "grp-net-1";
+    const { conversationId, echoId, askId, cardMsg } = await networkAsk(
+      connId,
+      "cli_out",
+      chat,
+      group("net1", "u-owner", ECHO, { chatId: chat }),
+      ownerId,
+      ["files.slack.com", "slack-edge.com"],
+    );
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "approval" }>;
+    expect(cardMsg.message.text).toBe("The agent wants to reach 2 domains. Allow?");
+    expect(card).toMatchObject({
+      kind: "approval",
+      id: askId,
+      title: "The agent wants to reach 2 domains. Allow?",
+      toolName: "Bash",
+      agentName: "Helper",
+      state: "pending",
+      scopes: ["once", "always"],
+      scopeLabels: { once: "Allow this time", always: "Always allow on this device" },
+      webUrl: `https://cap.example/chat/${conversationId}`,
+    });
+    // the hosts, the command (the connection's secret redacted) and that the decision covers all
+    expect(card.inputPreview.split("\n")).toEqual([
+      "files.slack.com",
+      "slack-edge.com",
+      "",
+      expect.stringMatching(/^curl -fsSL https:\/\/files\.slack\.com\/x/),
+      "",
+      "This decision applies to all the domains above",
+    ]);
+    expect(card.inputPreview).not.toContain("app-secret-1234567");
+
+    // another member of the org clicks: only the device owner decides a network ask
+    const updatesBefore = updatesOf(cardMsg.messageId).length;
+    const n = im.sent.length;
+    im.push(
+      connId,
+      cardAction(
+        "net1-x",
+        "u-member",
+        { cardKind: "approval", cardId: askId, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+    );
+    const reply = await waitFor(async () => im.sent.slice(n)[0], 10_000, "explanation");
+    expect(reply.message.text).toBe("You can't handle this request.");
+    await sleep(300);
+    expect(await approvalStatus(askId)).toBe("pending");
+    expect(updatesOf(cardMsg.messageId)).toHaveLength(updatesBefore);
+
+    // the owner allows it this time: every host asked, decided via the IM
+    im.push(
+      connId,
+      cardAction(
+        "net1-a",
+        "u-owner",
+        { cardKind: "approval", cardId: askId, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(async () => (await approvalStatus(askId)) === "approved", 10_000, "approved");
+    const a = await db
+      .selectFrom("approvals")
+      .select(["scope", "detail"])
+      .where("id", "=", askId)
+      .executeTakeFirstOrThrow();
+    expect(a.scope).toBe("once");
+    expect(a.detail).toMatchObject({
+      grantedHosts: ["files.slack.com", "slack-edge.com"],
+      outcome: "once",
+    });
+    const audit = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "device.network_allowed")
+      .where(sql<boolean>`detail->>'approvalId' = ${askId}`)
+      .executeTakeFirstOrThrow();
+    expect(audit.detail).toMatchObject({ via: "im", by: ownerId });
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "approved",
+        ),
+      10_000,
+      "card approved",
+    );
+    expect(cardOf(up)).toMatchObject({ id: askId, state: "approved", decidedBy: "Owner" });
+    await finish(connId, "u-owner", echoId, cardMsg);
+    await settled(conversationId);
+  });
+
+  it("a reply from the run's starter skips the ask and the card turns skipped", async () => {
+    const chat = "grp-net-2";
+    const { conversationId, echoId, askId, cardMsg } = await networkAsk(
+      connId,
+      "cli_out",
+      chat,
+      group("net2", "u-owner", ECHO, { chatId: chat }),
+      ownerId,
+      ["files.slack.com"],
+    );
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "approval" }>;
+    expect(card.title).toBe("The agent wants to reach files.slack.com. Allow?");
+    // one host: no line about deciding for all of them
+    expect(card.inputPreview).not.toContain("This decision applies");
+    im.push(
+      connId,
+      group("net2-r", "u-owner", "echo:never mind", { chatId: chat, threadId: "net2" }),
+    );
+    await waitFor(async () => (await approvalStatus(askId)) === "skipped", 20_000, "skipped");
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "skipped",
+        ),
+      20_000,
+      "card skipped",
+    );
+    expect(cardOf(up)).toMatchObject({ kind: "approval", id: askId, state: "skipped" });
+    await finish(connId, "u-owner", echoId, cardMsg);
+    await settled(conversationId);
+  });
+
+  it("an anonymous guest never decides a network ask, even in their own thread for the guest account's device", async () => {
+    const chat = "grp-net-anon";
+    // the worst case: the ask is the shared guest account's own (a guest cannot own a device,
+    // but the IM refuses before the owner check)
+    const { conversationId, echoId, askId, owner, cardMsg } = await networkAsk(
+      anonId,
+      "cli_anon",
+      chat,
+      group("net3", "u-anon-a", ECHO, { chatId: chat }),
+      "starter",
+      ["files.slack.com"],
+    );
+    const n = im.sent.length;
+    im.push(
+      anonId,
+      cardAction(
+        "net3-a",
+        "u-anon-a",
+        { cardKind: "approval", cardId: askId, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+    );
+    const refused = await waitFor(async () => im.sent.slice(n)[0], 10_000, "refusal");
+    expect(refused.message.text).toBe("You can't handle this request.");
+    await sleep(300);
+    expect(await approvalStatus(askId)).toBe("pending");
+    // denied outside the IM; the guest finishes the run
+    await k.app.get(ApprovalsService).decide(orgId, askId, owner, { decision: "deny" });
+    await finish(anonId, "u-anon-a", echoId, cardMsg);
+    await settled(conversationId);
   });
 });
 

@@ -252,8 +252,9 @@ export type ChannelCard = {
     agentName: string;
     inputPreview: string;
     scopes: ("once" | "session" | "always")[];
+    scopeLabels?: Partial<Record<"once" | "session" | "always", string>>;
     expiresAt: string;
-    state: "pending" | "approved" | "denied" | "expired" | "cancelled";
+    state: "pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped";
     decidedBy?: string;
     denyReason?: string;
     webUrl: string;
@@ -721,6 +722,7 @@ export interface DeviceExecArgs {
     command: string;
     cwd?: string;
     env?: Record<string, string>;
+    grants?: DeviceExecGrants;
     limits: SandboxLimits;
     maxOutputBytes: number;
     tag: string;
@@ -728,7 +730,20 @@ export interface DeviceExecArgs {
 }
 
 // @public
+export interface DeviceExecGrants {
+    hosts: string[];
+    source: {
+        kind: "run" | "task";
+        id: string;
+        accountId: string;
+    };
+}
+
+// @public
 export type DeviceExecResult = ExecResult;
+
+// @public
+export type DeviceFeature = "networkReport" | "policyOp";
 
 // @public
 export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
@@ -736,8 +751,10 @@ export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
 // @public
 export interface DeviceHello {
     arch: string;
+    features?: DeviceFeature[];
     mode: "os" | "docker";
     os: "darwin" | "linux";
+    policy?: DeviceLocalPolicySummary;
     programVersion: string;
     protocol: number;
     roots: SandboxRoots;
@@ -754,7 +771,17 @@ export interface DeviceKillTaggedArgs {
 }
 
 // @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop";
+export interface DeviceLocalPolicySummary {
+    allowedDomains: string[];
+    network: DeviceNetworkMode;
+    remoteGrants: DeviceRemoteGrants;
+}
+
+// @public
+export type DeviceNetworkMode = "allowlist" | "open";
+
+// @public
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy";
 
 // @public
 export interface DeviceOpResults {
@@ -762,10 +789,29 @@ export interface DeviceOpResults {
     exec: DeviceExecResult;
     killAll: null;
     killTagged: null;
+    policy: DevicePolicyResult;
     readFile: DeviceReadFileResult;
     stat: DeviceStatResult;
     stop: null;
     writeFile: DeviceWriteFileResult;
+}
+
+// @public
+export interface DevicePolicyArgs {
+    add?: string[];
+    network?: DeviceNetworkMode;
+    remove?: string[];
+    source: {
+        approvalId?: string;
+        accountId: string;
+        accountName: string;
+        via: "web" | "im";
+    };
+}
+
+// @public
+export interface DevicePolicyResult {
+    policy: DeviceLocalPolicySummary;
 }
 
 // @public
@@ -784,6 +830,9 @@ export type DeviceReadFileResult = {
     dataB64: string;
     truncated: boolean;
 } | null;
+
+// @public
+export type DeviceRemoteGrants = "owner" | "off";
 
 // @public
 export type DeviceRes = {
@@ -1018,6 +1067,9 @@ export const escapeSkillInvocationTags: (s: string) => string;
 // @public
 export interface ExecResult {
     exitCode: number | null;
+    network?: {
+        blocked: NetworkBlockedHost[];
+    };
     stderr: string;
     stdout: string;
     timedOut: boolean;
@@ -1725,6 +1777,9 @@ export type MarketplaceSource = {
 };
 
 // @public
+export const MAX_NETWORK_BLOCKED_HOSTS = 20;
+
+// @public
 export const MEDIA_LIMITS: {
     readonly imageBytes: 5242880;
     readonly documentBytes: 33554432;
@@ -1944,6 +1999,16 @@ export interface ModelUsage {
     inputTokens: number;
     outputTokens: number;
 }
+
+// @public
+export interface NetworkBlockedHost {
+    host: string;
+    layer: NetworkBlockLayer;
+    port: number;
+}
+
+// @public
+export type NetworkBlockLayer = "device" | "org" | "address" | "unknown";
 
 // @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
@@ -2449,6 +2514,7 @@ export const SANDBOX_TAG_RE: RegExp;
 export interface SandboxActor {
     accountId: string;
     conversationId: string;
+    runId?: string;
 }
 
 // @public

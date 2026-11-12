@@ -1,5 +1,6 @@
 import {
   DEVICE_PROTOCOL_VERSION,
+  type DeviceFeature,
   type DeviceHello,
   type DeviceRes,
   type KernelReq,
@@ -8,7 +9,8 @@ import {
 import WebSocket from "ws";
 import type { CommandLog } from "./command-log.js";
 import type { Executor } from "./exec/types.js";
-import { logEntryFor, runOp } from "./server-ops.js";
+import type { PolicyStore } from "./policy-store.js";
+import { logEntryFor, policySummary, serveOp } from "./server-ops.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
@@ -32,6 +34,11 @@ const BACKOFF_MAX_MS = 60_000;
 
 export interface ConnectOptions {
   log?: CommandLog;
+  /**
+   * The local policy the executor reads: its summary goes in each hello, and the `policy` op
+   * edits it. Without it the device does not offer the `policy` op.
+   */
+  policy?: PolicyStore;
   err?: (line: string) => void;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   random?: () => number;
@@ -196,9 +203,10 @@ export function connect(
     }
     const ctl = new AbortController();
     running.set(req.id, ctl);
-    void runOp(executor, req, ctl.signal).then((res) => {
+    const ctx = opts.policy !== undefined ? { policy: opts.policy } : {};
+    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail }) => {
       running.delete(req.id);
-      opts.log?.append(logEntryFor(req, res, new Date(now())));
+      opts.log?.append(logEntryFor(req, res, new Date(now()), detail));
       if (cancelled.has(req.id)) {
         // The kernel is no longer waiting for this one.
       } else if (req.op === "stop") {
@@ -254,16 +262,27 @@ export function connect(
     else if (frame.type === "cancel") handleCancel(frame.id);
   };
 
-  const hello = (): DeviceHello => ({
-    type: "hello",
-    protocol: DEVICE_PROTOCOL_VERSION,
-    programVersion: opts.programVersion ?? PROGRAM_VERSION,
-    os: process.platform === "darwin" ? "darwin" : "linux",
-    arch: process.arch,
-    mode: executor.mode,
-    roots: executor.roots,
-    sessionIsolation: false,
-  });
+  /**
+   * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
+   * mode has no per-host view); the policy summary is the store's policy now.
+   */
+  const hello = (): DeviceHello => {
+    const features: DeviceFeature[] = [];
+    if (executor.mode === "os") features.push("networkReport");
+    if (opts.policy !== undefined) features.push("policyOp");
+    return {
+      type: "hello",
+      protocol: DEVICE_PROTOCOL_VERSION,
+      programVersion: opts.programVersion ?? PROGRAM_VERSION,
+      os: process.platform === "darwin" ? "darwin" : "linux",
+      arch: process.arch,
+      mode: executor.mode,
+      roots: executor.roots,
+      sessionIsolation: false,
+      features,
+      ...(opts.policy !== undefined && { policy: policySummary(opts.policy.current()) }),
+    };
+  };
 
   let attempt = 0;
   /** When a failing connection was last reported; reset once a connection stays up. */

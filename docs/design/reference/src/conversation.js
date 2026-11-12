@@ -306,6 +306,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const toolKey = (k) => `<span class="r-faint r-small r-tkey">${esc(k)}</span>`;
 
   function approval(o) {
+    if (String(o.state).startsWith("network")) return networkApproval(o);
     const A = H.approval;
     const W = H.decided;
     if (o.state === "approved")
@@ -326,6 +327,67 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       actions = `<div class="r-card-actions">${buttons}${btn("拒绝…", "default")}<span class="r-card-note">${esc(A.policy)}</span></div>`;
     }
     return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${summary}${args}${actions}</div>`;
+  }
+
+  // The network ask (spec §6.16.11, network ask spec §6.5): hosts, the refused command, the
+  // checked hosts, 这次允许 (primary) / 这台设备一直允许 with their hints, and its decided lines.
+  const registrable = (h) => h.split(".").slice(-2).join(".");
+  const netHost = (h) =>
+    `<span class="r-net-host"><strong>${esc(registrable(h))}</strong><code class="r-code">${esc(h)}</code></span>`;
+  function networkApproval(o) {
+    const N = H.network;
+    const W = H.decided;
+    const decided = {
+      "network-allowed": ["check", "已允许（这次）", W.who, "", W.approved.at],
+      "network-always": ["check", "已允许（这台设备）", W.who, "", W.approved.at],
+      "network-fallback": ["check", "已允许（这次）", W.who, "设备离线，已按这次允许", W.approved.at],
+      "network-denied": ["x", "已拒绝", W.who, `「${W.denied.reason}」`, W.denied.at],
+      "network-skipped": ["x", "已跳过", W.who, "", W.denied.at],
+    }[o.state];
+    if (decided) {
+      const [ic, word, who, note, at] = decided;
+      return `<div class="r-tline">${icon(ic, 12)}<span class="r-tlabel">${esc(word)} <span class="r-faint">${esc(N.host)} · ${esc(who)}</span>${note ? `<span class="r-muted"> · ${esc(note)}</span>` : ""}<span class="r-faint"> · ${esc(at)}</span></span></div>`;
+    }
+    const many = o.state === "network-hosts";
+    const once = o.state === "network-once";
+    const title = many
+      ? `智能体想访问 ${N.hosts.length} 个域名，允许吗？`
+      : `智能体想访问 <code class="r-code">${esc(N.host)}</code>，允许吗？`;
+    const body = many
+      ? "这条命令被这台设备的网络规则拦下了。"
+      : `这条命令被这台设备的网络规则拦下了：${esc(N.description)}`;
+    const hosts = many
+      ? `<div class="r-net-hosts" role="group" aria-label="域名">${N.hosts
+          .map(
+            (h) =>
+              `<label class="r-net-check"><span class="r-net-box" aria-hidden="true">${icon("check", 12)}</span>${netHost(h)}</label>`,
+          )
+          .join("")}</div>`
+      : `<div class="r-net-hosts">${netHost(N.host)}</div>`;
+    const choice = (label, variant, hint) =>
+      `<span class="r-choice">${btn(label, variant)}<span class="r-muted r-small" data-part="scope-hint">${hint}</span></span>`;
+    const always = once
+      ? ""
+      : choice(
+          "这台设备一直允许",
+          "default",
+          '写入这台设备的本地策略，之后的命令都可以访问；可在设备页或用 <code class="r-code">capybara-device policy</code> 撤销',
+        );
+    const actions = `<div class="r-card-actions" data-hints>${choice("这次允许", "primary", "到智能体这次回复结束为止有效")}${always}${btn("拒绝", "default")}</div>`;
+    const remoteOff = once
+      ? `<div class="r-muted r-small" data-part="network-remote-off">这台设备不接受远程修改；要一直允许，请在设备上运行 <code class="r-code">capybara-device policy add allowedDomains ${esc(N.host)}</code></div>`
+      : "";
+    return `<div class="r-card" data-pending role="group"><div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>${title}</strong></div><div>${body}</div><pre class="r-net-cmd">${esc(N.command)}</pre>${hosts}${actions}${remoteOff}</div>`;
+  }
+
+  // Network facts (spec §6.16.11a): the org and address layers, one info callout each.
+  function networkFacts(o) {
+    const N = H.network;
+    const text =
+      o.state === "org"
+        ? `<code class="r-code">${esc(N.orgHost)}</code> 不在组织的网络白名单里，只有组织管理员能添加。`
+        : `<code class="r-code">${esc(N.addressHost)}</code>：这个地址指向内网或本机，智能体的命令不能访问。`;
+    return `<section class="r-callout" data-part="callout" data-tone="info" role="note">${icon("circle-alert", 16)}<span class="r-callout-text" data-part="callout-text"><span class="r-net-fact" data-part="network-fact">${text}</span></span></section>`;
   }
 
   function question(o) {
@@ -982,6 +1044,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return col(`<div class="r-tline" role="button" aria-expanded="true">${toolLabel(t)}${chev(true)}</div><div class="r-tbox">${diffBlock(t, { truncated: o.state === "truncated" })}</div>`);
     },
     "approval-block": (o) => col(approval(o)),
+    "network-facts": (o) => col(networkFacts(o)),
     "question-block": (o) => col(question(o)),
     "connect-block": (o) => col(connect(o)),
     "queued-message": (o) => col(queued(o)),

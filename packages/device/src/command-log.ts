@@ -9,6 +9,11 @@ export interface CommandLogEntry {
   tag: string | null;
   actor: { accountId: string } | null;
   exitCode: number | null;
+  /**
+   * An audit line: a policy change from the deployment (`policy add a.com by <name> (<id>) via
+   * web, approval <id>`) or the grants an exec was given (`grants run <id> by <id>: a.com`).
+   */
+  detail?: string;
 }
 
 /** One JSON line per operation in `<stateDir>/commands.log`; rotated to `commands.log.1` at 10 MiB. */

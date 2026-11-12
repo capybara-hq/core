@@ -87,6 +87,13 @@ export {
   approvalArgs,
   ConnectBlock,
   type ConnectBlockProps,
+  clipCommand,
+  NETWORK_COMMAND_MAX,
+  type NetworkAsk,
+  NetworkBlockedFacts,
+  type NetworkBlockedFactsProps,
+  type NetworkFact,
+  type NetworkFallback,
   type QuestionAnswer,
   QuestionBlock,
   type QuestionBlockProps,
@@ -129,6 +136,7 @@ export {
   QuickActions,
   type QuickActionsProps,
 } from "./quick-actions";
+export { registrableDomain } from "./registrable";
 export { RunRow, type RunRowProps, type RunRowStatus } from "./run-row";
 export {
   AgentCallBlock,

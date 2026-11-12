@@ -40,7 +40,9 @@ interface SandboxProvider {
   killAll(h, signal): Promise<void>;
   readonly concurrentExec: true;              // required: exec / readFile / writeFile / stat run concurrently on one instance
   killTagged(h, tags, signal): Promise<void>; // required: kill only the exec commands labelled with one of tags
-  exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal, tag, actor }): Promise<ExecResult>;  // actor = { accountId, conversationId }
+  exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal, tag, actor }): Promise<ExecResult>;  // actor = { accountId, conversationId, runId? }
+  // ExecResult.network?.blocked (optional): hosts the provider's egress refused, with the layer; the kernel
+  // recomputes the org layer and may ask the device owner (network ask-to-allow spec §4)
   readFile(h, path, { maxBytes, signal }): Promise<{ data; truncated } | null>;  // missing or a directory → null
   writeFile(h, path, data, signal): Promise<void>;                               // parent directories are created automatically
   stat(h, path, signal): Promise<{ size; isDir } | null>;

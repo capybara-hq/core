@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceHello,
   DeviceProtocolError,
+  MAX_NETWORK_BLOCKED_HOSTS,
   parseDeviceFrame,
   parseOpResult,
   rootsOf,
@@ -192,5 +194,211 @@ describe("device protocol", () => {
       DeviceProtocolError,
     );
     expect(() => parseOpResult("create", null)).toThrow(DeviceProtocolError);
+  });
+
+  describe("network reports (exec result)", () => {
+    const base = { exitCode: 1, stdout: "", stderr: "", truncated: false, timedOut: false };
+
+    it("works without network and keeps a valid report", () => {
+      expect(parseOpResult("exec", base)).toEqual(base);
+      const blocked = [
+        { host: "files.slack.com", port: 443, layer: "device" },
+        { host: "api.foo.com", port: 80, layer: "org" },
+        { host: "10.0.0.5", port: 22, layer: "address" },
+        { host: "[::1]", port: 443, layer: "address" },
+        { host: "weird.example.org", port: 8080, layer: "unknown" },
+      ];
+      expect(parseOpResult("exec", { ...base, network: { blocked } })).toEqual({
+        ...base,
+        network: { blocked },
+      });
+    });
+
+    it("drops entries with an unknown layer, a bad host or a bad port", () => {
+      const r = parseOpResult("exec", {
+        ...base,
+        network: {
+          blocked: [
+            { host: "ok.example.com", port: 443, layer: "device" },
+            { host: "ok.example.com", port: 443, layer: "planet" },
+            { host: "10.0.0.5", port: 443, layer: "device" },
+            { host: "localhost", port: 443, layer: "org" },
+            { host: "", port: 443, layer: "address" },
+            { host: "a.example.com", port: 0, layer: "device" },
+            { host: "a.example.com", port: 65536, layer: "device" },
+            { host: "a.example.com", port: 1.5, layer: "device" },
+            { host: "a.example.com", port: "443", layer: "device" },
+            "x",
+            null,
+          ],
+        },
+      });
+      expect(r.network).toEqual({
+        blocked: [{ host: "ok.example.com", port: 443, layer: "device" }],
+      });
+    });
+
+    it("drops a malformed report without failing the result", () => {
+      for (const network of ["x", null, [], { blocked: "x" }, { blocked: {} }]) {
+        const r = parseOpResult("exec", { ...base, network });
+        expect(r, JSON.stringify(network)).toEqual(base);
+        expect("network" in r).toBe(false);
+      }
+    });
+
+    it(`cuts the report to ${MAX_NETWORK_BLOCKED_HOSTS} hosts`, () => {
+      const blocked = Array.from({ length: 30 }, (_, i) => ({
+        host: `h${i}.example.com`,
+        port: 443,
+        layer: "device",
+      }));
+      const r = parseOpResult("exec", { ...base, network: { blocked } });
+      expect(r.network?.blocked).toHaveLength(MAX_NETWORK_BLOCKED_HOSTS);
+      expect(r.network?.blocked[0]?.host).toBe("h0.example.com");
+    });
+  });
+
+  describe("hello features and policy summary", () => {
+    const summary = {
+      network: "allowlist",
+      allowedDomains: ["files.slack.com", "*.github.com"],
+      remoteGrants: "owner",
+    };
+    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+
+    it("still parses a hello without them", () => {
+      const h = parseHello(hello);
+      expect(h.features).toBeUndefined();
+      expect(h.policy).toBeUndefined();
+    });
+
+    it("keeps known features and a valid policy summary", () => {
+      const h = parseHello({
+        ...hello,
+        features: ["networkReport", "teleport", "policyOp", 3],
+        policy: summary,
+      });
+      expect(h.features).toEqual(["networkReport", "policyOp"]);
+      expect(h.policy).toEqual(summary);
+      expect(
+        parseHello({ ...hello, policy: { ...summary, network: "open" } }).policy?.network,
+      ).toBe("open");
+    });
+
+    it("ignores malformed features and policy summaries", () => {
+      expect(parseHello({ ...hello, features: "networkReport" }).features).toBeUndefined();
+      for (const policy of [
+        "x",
+        null,
+        { ...summary, network: "wide" },
+        { ...summary, remoteGrants: "anyone" },
+        { ...summary, allowedDomains: [1] },
+        { ...summary, allowedDomains: "a.com" },
+        { network: "allowlist", remoteGrants: "off" },
+      ]) {
+        expect(parseHello({ ...hello, policy }).policy, JSON.stringify(policy)).toBeUndefined();
+      }
+    });
+  });
+
+  describe("the policy op", () => {
+    const source = { accountId: "acc_1", accountName: "Ann", via: "web" };
+
+    it("validates the args", () => {
+      const goods: unknown[] = [
+        { source },
+        { add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
+        { remove: ["a.example.com"], network: "allowlist", source },
+        { network: "open", source },
+        { add: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
+      ];
+      for (const args of goods) {
+        expect(parse(req("policy", args), "kernel")().type, JSON.stringify(args)).toBe("req");
+      }
+      const bads: unknown[] = [
+        {},
+        { add: ["a.example.com"] },
+        { add: "a.example.com", source },
+        { add: [1], source },
+        { remove: [null], source },
+        { add: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
+        { remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
+        { network: "wide", source },
+        { source: { ...source, via: "pat" } },
+        { source: { ...source, accountId: 1 } },
+        { source: { accountId: "acc_1", via: "web" } },
+        { source: { ...source, approvalId: 1 } },
+        { source: "x" },
+      ];
+      for (const args of bads) {
+        expect(parse(req("policy", args), "kernel"), JSON.stringify(args)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
+
+    it("validates the result", () => {
+      const policy = {
+        network: "allowlist",
+        allowedDomains: ["a.example.com"],
+        remoteGrants: "off",
+      };
+      expect(parseOpResult("policy", { policy })).toEqual({ policy });
+      for (const bad of [
+        null,
+        {},
+        { policy: { ...policy, network: "x" } },
+        { policy: { ...policy, allowedDomains: [1] } },
+        { policy: { ...policy, remoteGrants: "x" } },
+      ]) {
+        expect(() => parseOpResult("policy", bad), JSON.stringify(bad)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
+  });
+
+  describe("exec grants and run id", () => {
+    const grants = {
+      hosts: ["a.example.com"],
+      source: { kind: "run", id: "run_1", accountId: "a" },
+    };
+
+    it("accepts exec args with and without grants and runId", () => {
+      const goods: unknown[] = [
+        { ...exec, grants },
+        { ...exec, grants: { ...grants, source: { ...grants.source, kind: "task" } } },
+        { ...exec, grants: { ...grants, hosts: [] } },
+        { ...exec, actor: { ...exec.actor, runId: "run_1" } },
+      ];
+      for (const args of goods) {
+        expect(parse(req("exec", args), "kernel")().type, JSON.stringify(args)).toBe("req");
+      }
+    });
+
+    it("rejects malformed grants and runId", () => {
+      const bads: unknown[] = [
+        { ...exec, grants: "x" },
+        { ...exec, grants: { hosts: "a.example.com", source: grants.source } },
+        { ...exec, grants: { hosts: [1], source: grants.source } },
+        {
+          ...exec,
+          grants: {
+            hosts: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`),
+            source: grants.source,
+          },
+        },
+        { ...exec, grants: { hosts: [] } },
+        { ...exec, grants: { ...grants, source: { ...grants.source, kind: "forever" } } },
+        { ...exec, grants: { ...grants, source: { kind: "run", accountId: "a" } } },
+        { ...exec, grants: { ...grants, source: { kind: "run", id: "r" } } },
+        { ...exec, actor: { ...exec.actor, runId: 1 } },
+      ];
+      for (const args of bads) {
+        expect(parse(req("exec", args), "kernel"), JSON.stringify(args)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
   });
 });

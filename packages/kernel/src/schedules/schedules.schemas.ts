@@ -42,9 +42,12 @@ export const ScheduleEffort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 /** An end time as an ISO 8601 timestamp with an offset (`2026-12-31T00:00:00Z`). */
 const ExpiresAt = z.string().datetime({ offset: true });
 
-/** A tool the creator pre-approves for the task. */
+/**
+ * A tool the creator pre-approves for the task, or a domain as `network:<host>` (network
+ * ask-to-allow spec §8.1: one exact host; a host name is at most 253 characters).
+ */
 export const ScheduleGrantInput = z
-  .object({ toolKey: z.string().trim().min(1).max(200), connectorId: Id.optional() })
+  .object({ toolKey: z.string().trim().min(1).max(270), connectorId: Id.optional() })
   .strict();
 
 const Name = z.string().trim().min(1).max(SCHEDULE_NAME_MAX);
@@ -108,7 +111,7 @@ export const ScheduleRunsQuery = z
 export const ScheduleGrantsBody = z
   .object({ grants: z.array(ScheduleGrantInput).min(1).max(50) })
   .strict();
-export const ScheduleGrantParams = z.object({ id: Id, toolKey: z.string().min(1).max(200) });
+export const ScheduleGrantParams = z.object({ id: Id, toolKey: z.string().min(1).max(270) });
 
 export class ScheduleCreateBodyDto extends createZodDto(ScheduleCreateBody, "ScheduleCreateBody") {}
 export class ScheduleUpdateBodyDto extends createZodDto(ScheduleUpdateBody, "ScheduleUpdateBody") {}

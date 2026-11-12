@@ -14,8 +14,15 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
+import { orgAllows } from "../local-devices/network-grants.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
+import {
+  effectiveSandboxEgress,
+  ORG_SANDBOX_ALLOW_HOSTS_MAX,
+  OrgSettingsService,
+  readOrgSettings,
+} from "../orgs/settings.service.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
@@ -24,8 +31,32 @@ import { PluginImport } from "./plugin-import.js";
 import type { RequestActorOpts } from "./request-rules.js";
 import { itemsSeenBy } from "./scope-state.js";
 
-export type CatalogRequestKind = "access" | "import" | "enable" | "connector_setup";
+export type CatalogRequestKind =
+  | "access"
+  | "import"
+  | "enable"
+  | "connector_setup"
+  | "network_allowlist";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+/**
+ * What a `network_allowlist` request asks for (network ask-to-allow spec §5.3): the hosts (sorted,
+ * lowercased, exact) and the conversation and agent of the blocked command, when the member gave
+ * them. Stored in `catalog_requests.detail`; the member's note is the request's `note`.
+ */
+export interface NetworkRequestDetail {
+  hosts: string[];
+  conversationId: string | null;
+  agentId: string | null;
+}
+
+/** A member's network request input (`POST /orgs/:orgId/catalog-requests/network`). */
+export interface NetworkRequestInput {
+  hosts: string[];
+  note?: string | undefined;
+  conversationId?: string | undefined;
+  agentId?: string | undefined;
+}
 
 /** A pending connector a `connector_setup` request waits for (ruling P4-T6-5). */
 export interface SetupRequestConnector {
@@ -76,6 +107,8 @@ export interface CatalogRequestView {
    * other kinds.
    */
   connectors: SetupRequestConnector[] | null;
+  /** The hosts, conversation and agent of a `network_allowlist` request; null for other kinds. */
+  network: NetworkRequestDetail | null;
   status: CatalogRequestStatus;
   note: string;
   /** The optional reason of a rejection. */
@@ -95,6 +128,9 @@ export interface CatalogDecision {
   approve: boolean;
   reason?: string | undefined;
 }
+
+/** The most pending `network_allowlist` requests one member may have in an org. */
+export const NETWORK_REQUESTS_PENDING_MAX = 10;
 
 /** 申请列表一次最多返回的条数。 */
 export const CATALOG_REQUESTS_LIST_MAX = 200;
@@ -117,6 +153,12 @@ const pendingExists = () =>
     "This organization already has a pending request of this kind for it",
   );
 
+const deploymentEgressNone = () =>
+  new ApiError(
+    "catalog.request_invalid",
+    "The platform turned sandbox network off; only a super admin can turn it on",
+  );
+
 /** A unique violation (the partial index of pending requests). */
 const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
@@ -125,7 +167,7 @@ const isUniqueViolation = (e: unknown) =>
 const DEPLOYMENT_KINDS = ["access", "import"] as const;
 
 /** The org-level kinds (decided by the org admins). */
-const ORG_KINDS = ["enable", "connector_setup"] as const;
+const ORG_KINDS = ["enable", "connector_setup", "network_allowlist"] as const;
 
 /**
  * Catalog requests under plugin scope (spec §5.1). Three kinds, one pending request per (org,
@@ -141,7 +183,9 @@ const ORG_KINDS = ["enable", "connector_setup"] as const;
  * - `connector_setup` (ruling P4-7): one per agent (`agent_id`, `pending_keys`), asking the org
  *   admins to set up an agent's pending connectors; written by the agents module
  *   (`PendingConnectorRequests`), closed by binding (`approved`) or the agent's deletion
- *   (`cancelled`); here it is listed and rejected.
+ *   (`cancelled`); here it is listed and rejected;
+ * - `network_allowlist` (network ask-to-allow spec §5.3): a member asks the org admins to add hosts
+ *   to the org's sandbox egress allowlist; approving merges them into the org's `sandboxEgress`.
  * A rejection stores an optional reason. Decided requests show in the requester's inbox until
  * dismissed. No in-process state.
  */
@@ -157,6 +201,8 @@ export class CatalogRequestsService {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    /** Approving a network request writes the org's `sandboxEgress` through the settings path. */
+    @Inject(OrgSettingsService) private readonly orgSettings: OrgSettingsService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Serializes the approvals of one `import` request (`@WithLock`). */
     @Inject(LockService) readonly lockService: LockService,
@@ -273,6 +319,138 @@ export class CatalogRequestsService {
   }
 
   /**
+   * A member asks the org admins to allow hosts in the org's sandbox egress (`POST /orgs/:orgId/
+   * catalog-requests/network`, `catalog.request`; spec §5.3). The hosts arrive validated (exact,
+   * lowercased) and are deduped and sorted here. The deployment egress `none` ->
+   * `catalog.request_invalid` (only a super admin can turn sandbox network on); the org's own
+   * egress `none` -> `catalog.request_invalid`; {@link NETWORK_REQUESTS_PENDING_MAX} pending
+   * requests of the member already -> `catalog.request_invalid`; every host already
+   * allowed by the org's effective egress -> `catalog.request_invalid`; a conversation or agent not
+   * in the org -> `catalog.request_invalid`. A pending request of the same requester for the same
+   * host set is returned as is (no second request). Audits `catalog.requested`.
+   */
+  async requestNetwork(
+    orgId: string,
+    actor: string,
+    input: NetworkRequestInput,
+    opts: RequestActorOpts = {},
+  ): Promise<CatalogRequestView> {
+    const id = await this.writeNetworkRequest(orgId, actor, input, opts);
+    return this.view(id);
+  }
+
+  @Transactional()
+  private async writeNetworkRequest(
+    orgId: string,
+    actor: string,
+    input: NetworkRequestInput,
+    opts: RequestActorOpts,
+  ): Promise<string> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
+    const hosts = [...new Set(input.hosts.map((h) => h.toLowerCase()))].sort();
+    const deployment = this.orgSettings.deployment().sandboxEgress;
+    if (deployment.mode === "none") throw deploymentEgressNone();
+    const settings = await readOrgSettings(t, orgId);
+    if (settings.sandboxEgress?.mode === "none") {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "The organization has sandbox network turned off; ask an admin to turn it on first.",
+      );
+    }
+    const effective = effectiveSandboxEgress(
+      { egress: deployment.mode, allowHosts: deployment.allowHosts },
+      settings.sandboxEgress,
+    );
+    if (hosts.every((h) => orgAllows(h, effective))) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "This organization's sandbox network already allows these hosts; nothing to request",
+      );
+    }
+    if (input.conversationId !== undefined) {
+      const c = await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", input.conversationId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!c) {
+        throw new ApiError(
+          "catalog.request_invalid",
+          "The conversation is not in this organization",
+        );
+      }
+    }
+    if (input.agentId !== undefined) {
+      const a = await t
+        .selectFrom("agents")
+        .select("id")
+        .where("id", "=", input.agentId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!a) {
+        throw new ApiError("catalog.request_invalid", "The agent is not in this organization");
+      }
+    }
+    // The same requester asking for the same hosts again gets the pending request back (the org
+    // row lock above serializes concurrent asks)
+    const existing = await t
+      .selectFrom("catalog_requests")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("kind", "=", "network_allowlist")
+      .where("requested_by", "=", actor)
+      .where("status", "=", "pending")
+      .where(sql<boolean>`detail -> 'hosts' = ${JSON.stringify(hosts)}::jsonb`)
+      .executeTakeFirst();
+    if (existing) return existing.id;
+    const pending = await t
+      .selectFrom("catalog_requests")
+      .select(sql<string>`count(*)`.as("n"))
+      .where("org_id", "=", orgId)
+      .where("kind", "=", "network_allowlist")
+      .where("requested_by", "=", actor)
+      .where("status", "=", "pending")
+      .executeTakeFirstOrThrow();
+    if (Number(pending.n) >= NETWORK_REQUESTS_PENDING_MAX) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "You have too many pending domain requests; wait for an admin to handle them.",
+      );
+    }
+    const detail: NetworkRequestDetail = {
+      hosts,
+      conversationId: input.conversationId ?? null,
+      agentId: input.agentId ?? null,
+    };
+    const id = randomUUID();
+    await t
+      .insertInto("catalog_requests")
+      .values({
+        id,
+        org_id: orgId,
+        item_id: null,
+        kind: "network_allowlist",
+        // still written for the old NOT NULL / CHECK, never read
+        stage: "org",
+        detail: JSON.stringify(detail),
+        requested_by: actor,
+        note: input.note ?? "",
+      })
+      .execute();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "catalog.requested",
+      target: id,
+      detail: { kind: "network_allowlist", hosts, ...opts.auditDetail },
+    });
+    return id;
+  }
+
+  /**
    * An org admin asks for a marketplace entry to be imported (`POST /orgs/:orgId/
    * marketplace-requests`, `catalog.decide`). The deployment setting `orgMarketplaceBrowse` off ->
    * `catalog.marketplace_browse_disabled`; the marketplace or the entry / version missing ->
@@ -378,10 +556,11 @@ export class CatalogRequestsService {
   }
 
   /**
-   * An org admin decides a member's `enable` or `connector_setup` request (`catalog.decide`). Not
-   * this org's request of those kinds -> `catalog.request_not_found`; decided ->
-   * `catalog.request_decided`. Approving an `enable` request switches the item on in the org as the
-   * deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
+   * An org admin decides a member's `enable`, `network_allowlist` or `connector_setup` request
+   * (`catalog.decide`). Not this org's request of those kinds -> `catalog.request_not_found`;
+   * decided -> `catalog.request_decided`. Approving a `network_allowlist` request merges its hosts
+   * into the org's `sandboxEgress` (`approveNetwork`). Approving an `enable` request switches the
+   * item on in the org as the deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
    * needs, leave the request pending); the install itself resolves the request. A
    * `connector_setup` request is approved only by binding its connectors (ruling P4-T6-6):
    * approving it -> `catalog.request_invalid`. Rejecting stores the reason. Audits
@@ -397,15 +576,25 @@ export class CatalogRequestsService {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
     if (decision.approve) {
       const itemId = await this.pendingOrgRequest(orgId, actor, requestId);
-      await this.orgCatalog.setSwitch(orgId, actor, itemId, { enabled: true }, opts.actorTokenId);
+      // a network request is approved inside the decision (writeDecision), under the row lock
+      if (itemId !== null) {
+        await this.orgCatalog.setSwitch(orgId, actor, itemId, { enabled: true }, opts.actorTokenId);
+      }
     }
     await this.writeDecision(requestId, actor, decision, opts, { orgId });
     return this.view(requestId);
   }
 
-  /** The item of a pending `enable` request of the org (the decider re-checked). */
+  /**
+   * The item of a pending `enable` request of the org, null for a `network_allowlist` one (the
+   * decider re-checked).
+   */
   @Transactional()
-  private async pendingOrgRequest(orgId: string, actor: string, requestId: string) {
+  private async pendingOrgRequest(
+    orgId: string,
+    actor: string,
+    requestId: string,
+  ): Promise<string | null> {
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.decide");
     const row = await this.db
       .selectFrom("catalog_requests")
@@ -422,6 +611,7 @@ export class CatalogRequestsService {
         "A connector setup request is resolved by binding the agent's connectors; reject it to refuse",
       );
     }
+    if (row.kind === "network_allowlist") return null;
     if (row.item_id === null) throw requestNotFound();
     return row.item_id;
   }
@@ -577,7 +767,7 @@ export class CatalogRequestsService {
     else await this.adminLock.lockAndAuthorize(actor);
     let q = t
       .selectFrom("catalog_requests")
-      .select(["id", "org_id", "item_id", "kind", "status", "decided_by"])
+      .select(["id", "org_id", "item_id", "kind", "status", "decided_by", "detail"])
       .where("id", "=", requestId);
     q =
       "orgId" in side
@@ -604,6 +794,9 @@ export class CatalogRequestsService {
         .executeTakeFirst();
       if (!org || org.deleted_at !== null) throw requestNotFound();
       await this.scope.addOrg(actor, row.item_id, row.org_id, { ...opts, requestId });
+    }
+    if (decision.approve && row.kind === "network_allowlist") {
+      await this.approveNetwork(row.org_id, actor, requestId, row.detail, opts);
     }
     // An `import` request whose entry is in the catalog already: the org joins that item's list
     const grantItem = "grantItem" in side ? side.grantItem : undefined;
@@ -634,6 +827,55 @@ export class CatalogRequestsService {
         ...(!decision.approve && decision.reason !== undefined && { reason: decision.reason }),
       },
     });
+  }
+
+  /**
+   * Approves a `network_allowlist` request inside its decision's transaction: the hosts the org's
+   * effective egress does not allow yet are added to the org's `sandboxEgress.allowHosts` through
+   * {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`). An org
+   * following the deployment default starts from the deployment's list (it keeps its own list from
+   * then on). The deployment egress `none`, or the org's `none` -> `catalog.request_invalid`; more
+   * than {@link ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts -> `catalog.request_invalid`. Hosts all allowed
+   * already: nothing is written.
+   */
+  private async approveNetwork(
+    orgId: string,
+    actor: string,
+    requestId: string,
+    detail: unknown,
+    opts: RequestActorOpts,
+  ): Promise<void> {
+    const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
+    const deployment = this.orgSettings.deployment().sandboxEgress;
+    if (deployment.mode === "none") throw deploymentEgressNone();
+    const current = (await readOrgSettings(this.db, orgId)).sandboxEgress;
+    if (current?.mode === "none") {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "The organization has sandbox network turned off; turn it on in the organization settings first",
+      );
+    }
+    const effective = effectiveSandboxEgress(
+      { egress: deployment.mode, allowHosts: deployment.allowHosts },
+      current,
+    );
+    const missing = hosts.filter((h) => !orgAllows(h, effective));
+    if (missing.length === 0) return;
+    const base = current?.allowHosts ?? deployment.allowHosts;
+    const allowHosts = [...new Set([...base, ...missing])];
+    if (allowHosts.length > ORG_SANDBOX_ALLOW_HOSTS_MAX) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        `The organization's sandbox allowlist would exceed ${ORG_SANDBOX_ALLOW_HOSTS_MAX} hosts; remove some in the organization settings first`,
+      );
+    }
+    await this.orgSettings.update(
+      orgId,
+      { sandboxEgress: { mode: "allowlist", allowHosts } },
+      actor,
+      opts.actorTokenId,
+      { requestId },
+    );
   }
 
   /**
@@ -683,8 +925,8 @@ export class CatalogRequestsService {
 
   /**
    * The inbox: when the account is an org admin of the org (the role read live), the members'
-   * pending `enable` requests and the pending `connector_setup` requests, newest first; otherwise
-   * none.
+   * pending `enable` and `network_allowlist` requests and the pending `connector_setup` requests,
+   * newest first; otherwise none.
    */
   async listForOrgAdmin(orgId: string, accountId: string): Promise<CatalogRequestView[]> {
     const m = await this.db
@@ -710,7 +952,7 @@ export class CatalogRequestsService {
       rows.filter((r) =>
         r.kind === "connector_setup"
           ? r.agent_id !== null && r.agent_deleted_at === null
-          : r.item_id !== null && seen.has(r.item_id),
+          : r.kind === "network_allowlist" || (r.item_id !== null && seen.has(r.item_id)),
       ),
     );
   }
@@ -811,6 +1053,7 @@ export class CatalogRequestsService {
           "r.decided_by",
           "r.decided_at",
           "r.staging_id",
+          "r.detail",
           "r.created_at",
         ])
     );
@@ -864,6 +1107,20 @@ function setupFields(
   };
 }
 
+/** The detail of a `network_allowlist` request; null for other kinds. */
+function networkFields(r: {
+  kind: CatalogRequestKind;
+  detail: unknown;
+}): NetworkRequestDetail | null {
+  if (r.kind !== "network_allowlist") return null;
+  const d = (r.detail ?? {}) as Partial<NetworkRequestDetail>;
+  return {
+    hosts: Array.isArray(d.hosts) ? d.hosts.filter((h) => typeof h === "string") : [],
+    conversationId: typeof d.conversationId === "string" ? d.conversationId : null,
+    agentId: typeof d.agentId === "string" ? d.agentId : null,
+  };
+}
+
 type RequestRow = {
   id: string;
   org_id: string;
@@ -887,6 +1144,7 @@ type RequestRow = {
   decided_by: string | null;
   decided_at: Date | null;
   staging_id: string | null;
+  detail: unknown;
   created_at: Date;
 };
 
@@ -908,6 +1166,7 @@ function toView(
         ? { marketplaceId: r.marketplace_id, name: r.entry_name, version: r.entry_version }
         : null,
     ...setupFields(r, templateNames),
+    network: networkFields(r),
     status: r.status,
     note: r.note,
     reason: r.reason,

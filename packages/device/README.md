@@ -43,14 +43,17 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]`, `start`, `stop`, `drain`, `policy [show|set <key> <value>]` and
+`status [--json]`, `start`, `stop`, `drain`,
+`policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
 `service install|uninstall`.
 
 State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the
 deployment's reconnect grace and frame limit: a result larger than the frame limit is answered
 with an error instead) and `policy.json` (a file with wrong field types stops `start` with an
-error naming it).
+error naming it; once running, the program re-reads the file when it changes, and a broken edit
+keeps the last valid policy and logs one error). Changes made with `capybara-device policy` take
+`policy.json.lock`, so two writers never lose an update; keys this version does not know are kept.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`.
 
@@ -59,12 +62,100 @@ bubblewrap; Linux needs `bwrap` and `socat`): writes only under `workspace/` and
 `skills/` read only, `~/.ssh`, cloud CLI credentials, `~/.netrc`, `~/.gnupg`, browser profiles and
 this program's state directory unreadable. Network is limited to the domains of the local policy
 that the device's egress also allows; with an empty policy (the default) commands reach no
-network at all. Only you edit the policy, the platform can never widen it:
+network at all. You edit the policy locally; the deployment can change it only as described in
+[Changes from the deployment](#changes-from-the-deployment):
 
 ```bash
 capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
-capybara-device policy show   # changes apply at the next start
+capybara-device policy add allowedDomains files.slack.com
+capybara-device policy remove allowedDomains files.slack.com
+capybara-device policy show
 ```
+
+Changes apply at the next command; a running program does not need a restart. `add` and `remove`
+work on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name
+(optionally `*.` for subdomains, never the apex), never an IP address or an internal name.
+
+When a command is refused a domain, the program says why. Clients that print the proxy's answer
+show a reason such as `capybara: files.slack.com is not in this device's allowed domains`, and
+after the command its stderr ends with a trailer naming each refused host (at most 20) and who can
+lift it:
+
+```text
+[capybara-device] Network access was blocked:
+- files.slack.com:443: not in this device's allowed domains. Only the device owner can allow it (capybara-device policy add allowedDomains files.slack.com, or the device page).
+- api.foo.com:443: not in the organization's network allowlist. Only an organization admin can add it.
+- 10.0.0.5:22: a private or local address; commands can never reach it.
+```
+
+The trailer is part of the command's output, so the agent reads it too. It comes after the
+output the deployment asked for (`maxOutputBytes`), so stderr can exceed that cap by the trailer's
+lines (at most 21).
+
+In OS mode each command's result also carries the refused hosts and their layers, so the
+deployment can ask the device owner on the spot (the device announces this in its hello, together
+with a summary of its local policy: `network`, `allowedDomains` and `remoteGrants`).
+
+### Network open
+
+`network` in `policy.json` is `allowlist` (default) or `open`. Under `open` the local policy stops
+narrowing: a command may reach exactly what the organization allows (its allowlist; any public host
+when the organization's egress is open; nothing when it is none). Loopback, private addresses and
+internal names stay refused. When the organization is open too, the program lets a command reach
+any public host only while a command started that way is running (the sandbox runtime cannot list
+"any host" per command, so it is allowed process-wide meanwhile; turning `network` back to
+`allowlist` takes effect at once). With nothing narrowing it, a command can upload files to any outside
+site the organization allows, and prompt injection can make an agent do that: turn it on only on
+your own development machine, with agents and material you trust.
+
+```bash
+capybara-device policy set network open --yes   # no network limit on this device
+capybara-device policy set network allowlist     # back to allowedDomains
+```
+
+`set network open` prints the risk and changes nothing without a confirmation: `--yes`, or, on a
+terminal, an answer of `y` at the prompt (without a terminal and without `--yes` it exits with
+status 2). `set network allowlist` is always accepted. The device's owner can also switch it on the
+device page, behind the same risk text, while `remoteGrants` is `owner`.
+
+### Changes from the deployment
+
+`remoteGrants` in `policy.json` decides whether the deployment may widen this device's network
+policy on the device owner's decision (an approval answered in a signed-in web or IM session, or
+the device page):
+
+- `owner` (default): the device accepts the `policy` operation's additions to `allowedDomains`
+  (an approval adds an exact host; the device page may add a `*.` wildcard) and `network: open`,
+  and adds a run's or a scheduled task's granted hosts to a command's list. Grants are exact hosts
+  and never go beyond the organization's egress.
+- `off`: the device refuses every widening from the deployment (additions, `network: open`, run and
+  task grants) with "This device does not accept network changes from the deployment; allow it
+  locally: capybara-device policy add allowedDomains <host>".
+
+Narrowing (removing hosts, `network: allowlist`) is always accepted. Every host is validated like
+a local one, the change is written under `policy.json.lock`, and it applies at the next command.
+`remoteGrants` itself is set only locally: `capybara-device policy set remoteGrants owner|off`
+(or in `policy.json`). Each change from the deployment is
+recorded in the local command log (`commands.log`, next to `policy.json`) with who decided it,
+and so is a refused attempt and the grants a command was given:
+
+```text
+{"op":"policy","detail":"policy add files.slack.com by Ada Lovelace (acc_123) via web, approval apr_456",...}
+{"op":"policy","detail":"policy refused network open by Ada Lovelace (acc_123) via web",...}
+{"op":"exec","detail":"grants run run_789 by acc_123: files.slack.com",...}
+```
+
+Docker mode has no per-domain allowlist (a container has either no network or the whole
+internet), so a Docker-mode device refuses every widening from the deployment ("This device runs
+commands in Docker mode, which cannot limit network access per domain; switch the device to OS mode
+to allow single domains."), reports no refused hosts and ignores grants; narrowing still applies.
+`capybara-device policy add allowedDomains` on a Docker-mode device warns that any allowed domain
+opens the whole internet.
+
+Limit to know: commands of one device run as the same user, and the sandbox runtime ties a
+command's list (including its run grants) to the proxy credentials it hands that command. Another
+command running at the same time on the same device could reuse them, so a run's grants may be
+usable by a concurrent command of another run on that device: same owner, same device.
 
 Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.

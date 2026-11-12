@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SandboxLimits, SandboxRoots } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceExecGrants,
+  type SandboxLimits,
+  type SandboxRoots,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import type { Policy } from "./state.js";
 
 /**
@@ -57,32 +62,76 @@ export function implicitWritePaths(home: string = homedir()): string[] {
 }
 
 /** True when the allowlist entry `pattern` admits every host `host` names (`host` may be a wildcard). */
-function covers(pattern: string, host: string): boolean {
+export function covers(pattern: string, host: string): boolean {
   if (pattern === host) return true;
   // `*.x.com` admits `a.x.com` and `*.a.x.com`, never the apex `x.com`.
   return pattern.startsWith("*.") && host.endsWith(pattern.slice(1));
 }
 
 /**
- * The domains one command may reach: what the device's egress allows, cut to the local
- * policy. The cloud can only narrow it: an empty policy allows nothing, whatever the egress.
+ * The entry {@link effectiveEgress} returns when a command may reach any public host (the device
+ * is `open` and so is the org). sandbox-runtime 0.0.81 matches `*` as any host but refuses it in a
+ * per-command list, so the OS executor never registers it: its ask callback allows instead.
  */
-export function effectiveEgress(
-  policy: Pick<Policy, "allowedDomains">,
-  limits: Pick<SandboxLimits, "egress" | "allowHosts">,
+export const ANY_HOST = "*";
+
+type Limits = Pick<SandboxLimits, "egress" | "allowHosts">;
+
+/**
+ * The granted hosts that apply to one command: none unless the local `remoteGrants` is `owner`;
+ * only valid exact hosts (no wildcards, addresses or internal names), lowercased and deduped; and
+ * only those the org's egress admits (any host when it is `open`, none when it is `none`).
+ */
+export function grantedHosts(
+  policy: Pick<Policy, "remoteGrants">,
+  limits: Limits,
+  grants: Pick<DeviceExecGrants, "hosts"> | undefined,
 ): string[] {
-  const local = policy.allowedDomains.map((d) => d.toLowerCase());
+  if (grants === undefined || policy.remoteGrants !== "owner") return [];
   if (limits.egress === "none") return [];
-  if (limits.egress === "open") return [...new Set(local)];
   const out = new Set<string>();
-  for (const raw of limits.allowHosts) {
+  for (const raw of grants.hosts) {
+    if (typeof raw !== "string") continue;
     const host = raw.toLowerCase();
-    for (const p of local) {
-      // The intersection of two entries is the narrower one, if either contains the other.
-      if (covers(p, host)) out.add(host);
-      else if (covers(host, p)) out.add(p);
+    if (host.startsWith("*.") || validateAllowHost(host).length > 0) continue;
+    if (limits.egress === "open" || limits.allowHosts.some((p) => covers(p.toLowerCase(), host))) {
+      out.add(host);
     }
   }
+  return [...out];
+}
+
+/**
+ * The domains one command may reach: what the device's egress allows, cut to the local policy,
+ * plus the command's grants ({@link grantedHosts}). The cloud can only narrow the local policy;
+ * an empty `allowlist` policy allows nothing but the grants. A policy `open` stops narrowing: the
+ * org's list, or {@link ANY_HOST} when the org is open too.
+ */
+export function effectiveEgress(
+  policy: Pick<Policy, "allowedDomains" | "network" | "remoteGrants">,
+  limits: Limits,
+  grants?: Pick<DeviceExecGrants, "hosts">,
+): string[] {
+  if (limits.egress === "none") return [];
+  if (policy.network === "open") {
+    if (limits.egress === "open") return [ANY_HOST];
+    return [...new Set(limits.allowHosts.map((h) => h.toLowerCase()))];
+  }
+  const local = policy.allowedDomains.map((d) => d.toLowerCase());
+  const out = new Set<string>();
+  if (limits.egress === "open") {
+    for (const d of local) out.add(d);
+  } else {
+    for (const raw of limits.allowHosts) {
+      const host = raw.toLowerCase();
+      for (const p of local) {
+        // The intersection of two entries is the narrower one, if either contains the other.
+        if (covers(p, host)) out.add(host);
+        else if (covers(host, p)) out.add(p);
+      }
+    }
+  }
+  for (const h of grantedHosts(policy, limits, grants)) out.add(h);
   return [...out];
 }
 

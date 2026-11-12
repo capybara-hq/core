@@ -3,9 +3,25 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { resolve } from "node:path";
-import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import type { DeviceExecArgs, ExecResult, SandboxRoots } from "@capybara-hq/plugin-sdk";
-import { effectiveEgress, srtConfig } from "../policy.js";
+import {
+  type SandboxAskCallback,
+  SandboxManager,
+  type SandboxRuntimeConfig,
+} from "@anthropic-ai/sandbox-runtime";
+import type {
+  DeviceExecArgs,
+  ExecResult,
+  SandboxLimits,
+  SandboxRoots,
+} from "@capybara-hq/plugin-sdk";
+import {
+  type BlockedHost,
+  blockedHosts,
+  denyReason,
+  isPublicName,
+  networkTrailer,
+} from "../network.js";
+import { ANY_HOST, effectiveEgress, grantedHosts, srtConfig } from "../policy.js";
 import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
@@ -89,7 +105,8 @@ function pidAlive(pid: number): boolean {
 export interface OsExecutorOptions {
   /** The device directory (from login). */
   dir: string;
-  policy: Policy;
+  /** The local policy now (read at each command, so a change applies without a restart). */
+  policy: () => Policy;
   /** The home whose secret paths are denied (default: the user's home). */
   home?: string;
   /** More paths commands may not read (this program's state directory). */
@@ -118,6 +135,16 @@ export class OsExecutor implements Executor {
   private pruneTimer: NodeJS.Timeout | undefined;
   private readonly guard: RootGuard;
   private readonly files: HostFiles;
+  /**
+   * The limits of the latest command. The ask callback has no command id; a device belongs to one
+   * org, so these stand for the org's egress when it explains a refusal.
+   */
+  private lastLimits: Pick<SandboxLimits, "egress" | "allowHosts"> | undefined;
+  /**
+   * Commands spawned while nothing narrowed them (policy `open`, their limits `open`) and still
+   * running. The ask callback allows any public name only while one runs.
+   */
+  private readonly openCommands = new Set<string>();
 
   constructor(private readonly opts: OsExecutorOptions) {
     const dir = resolve(opts.dir);
@@ -131,7 +158,7 @@ export class OsExecutor implements Executor {
 
   /** The configuration the sandbox is initialized with (no domains: those are per command). */
   config(): SandboxRuntimeConfig {
-    return srtConfig(this.opts.policy, this.roots, [], {
+    return srtConfig(this.opts.policy(), this.roots, [], {
       ...(this.opts.home !== undefined && { home: this.opts.home }),
       ...(this.opts.denyRead !== undefined && { denyRead: this.opts.denyRead }),
     });
@@ -139,6 +166,37 @@ export class OsExecutor implements Executor {
 
   async ensureRoot(): Promise<"ok" | "gone"> {
     return this.guard.ensure();
+  }
+
+  /**
+   * The sandbox's ask callback, reached only for a host no list allows. sandbox-runtime refuses `*`
+   * in a per-command list, so a command that may reach any host (device policy `open`, its limits
+   * `open`) is allowed here: a public name is allowed while such a command runs and the policy
+   * and latest limits still say so (narrowing takes effect at once). The callback has no command
+   * id, so a concurrent command of the same device may ride along meanwhile; the file helper never
+   * opens it. Otherwise it refuses, with a reason clients that print the proxy's status phrase
+   * show (spec §9.1).
+   */
+  readonly askCallback: SandboxAskCallback = async ({ host }) => {
+    const policy = this.opts.policy();
+    const limits = this.lastLimits;
+    if (
+      this.openCommands.size > 0 &&
+      limits !== undefined &&
+      effectiveEgress(policy, limits).includes(ANY_HOST) &&
+      isPublicName(host)
+    ) {
+      return true;
+    }
+    return { allow: false, reason: denyReason(host, limits, policy) };
+  };
+
+  /** The classified network refusals of one command (read before it unregisters). */
+  private blockedFor(commandId: string, limits: SandboxLimits, policy: Policy): BlockedHost[] {
+    const lines = SandboxManager.getSandboxViolationStore()
+      .getViolationsForCommand(commandId)
+      .map((v) => v.line);
+    return blockedHosts(lines, limits, policy);
   }
 
   /** The marker value of a tag's processes. */
@@ -190,8 +248,10 @@ export class OsExecutor implements Executor {
     );
     // The kernel may have cancelled while the wrap was prepared.
     o.signal?.throwIfAborted();
-    if (o.egress.length > 0) {
-      SandboxManager.registerCommandNetworkLists(commandId, { allowedDomains: o.egress });
+    // "*" (any host) is refused in a per-command list: the ask callback allows those hosts.
+    const listed = o.egress.filter((d) => d !== ANY_HOST);
+    if (listed.length > 0) {
+      SandboxManager.registerCommandNetworkLists(commandId, { allowedDomains: listed });
     }
     let child: ChildProcess;
     try {
@@ -248,13 +308,23 @@ export class OsExecutor implements Executor {
   async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
     signal.throwIfAborted();
     const cwd = await this.files.inside(args.cwd ?? this.roots.workspace, "cwd");
+    // Read once: the command's lists and the explanation of its refusals use the same policy.
+    const policy = this.opts.policy();
+    this.lastLimits = args.limits;
+    // A granted host the command still could not reach is not the device's doing.
+    const judged: Policy = {
+      ...policy,
+      allowedDomains: [...policy.allowedDomains, ...grantedHosts(policy, args.limits, args.grants)],
+    };
+    const egress = effectiveEgress(policy, args.limits, args.grants);
     const { child, commandId } = await this.spawnSandboxed(args.command, {
       cwd,
       ...(args.env !== undefined && { env: args.env }),
       tag: args.tag,
-      egress: effectiveEgress(this.opts.policy, args.limits),
+      egress,
       signal,
     });
+    if (egress.includes(ANY_HOST)) this.openCommands.add(commandId);
     return new Promise<ExecResult>((resolvePromise, reject) => {
       const cap = new OutputCap(args.maxOutputBytes);
       let timedOut = false;
@@ -286,12 +356,21 @@ export class OsExecutor implements Executor {
           group.exited = true;
           group.onKill = undefined;
         }
+        this.openCommands.delete(commandId);
         SandboxManager.unregisterCommandNetworkLists(commandId);
         SandboxManager.cleanupAfterCommand();
       };
       const finish = (): void => {
         if (settled || exit === undefined) return;
         settled = true;
+        // Before cleanup: the violations are looked up by the command's id.
+        let blocked: BlockedHost[] = [];
+        try {
+          blocked = this.blockedFor(commandId, args.limits, judged);
+        } catch {
+          // The explanation is best effort: the command's result always comes back.
+        }
+        const trailer = networkTrailer(blocked);
         cleanup();
         child.stdout?.destroy();
         child.stderr?.destroy();
@@ -300,12 +379,17 @@ export class OsExecutor implements Executor {
         else if (exitCode === null && exit.sig !== null) {
           exitCode = 128 + (osConstants.signals[exit.sig] ?? 0);
         }
+        let stderr = cap.text("stderr");
+        if (trailer !== "") {
+          stderr += `${stderr === "" || stderr.endsWith("\n") ? "" : "\n"}${trailer}`;
+        }
         resolvePromise({
           exitCode,
           stdout: cap.text("stdout"),
-          stderr: cap.text("stderr"),
+          stderr,
           truncated: cap.truncated,
           timedOut,
+          ...(blocked.length > 0 && { network: { blocked } }),
         });
       };
       child.stdout?.on("data", (b: Buffer) => cap.push("stdout", b));
@@ -456,8 +540,12 @@ export async function createOsExecutor(opts: OsExecutorOptions): Promise<OsExecu
   const available = sandboxAvailability();
   if (!available.ok) throw new Error(available.reason);
   const executor = new OsExecutor(opts);
-  // No ask callback: a destination outside the lists is refused, never prompted.
-  await SandboxManager.initialize(executor.config());
+  // The ask callback never allows: a destination outside the lists is refused, with a reason
+  // when this runtime carries one (an older runtime would read any answer object as an allow).
+  await SandboxManager.initialize(
+    executor.config(),
+    SandboxManager.askCallbackDenyReason === true ? executor.askCallback : undefined,
+  );
   await executor.killLeftovers();
   return executor;
 }

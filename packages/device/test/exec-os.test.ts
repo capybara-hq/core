@@ -49,7 +49,7 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
     base = tmp("device-os-");
     dir = join(base, "env");
     mkdirSync(dir);
-    ex = new OsExecutor({ dir, policy: DEFAULT_POLICY });
+    ex = new OsExecutor({ dir, policy: () => DEFAULT_POLICY });
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
 
@@ -71,7 +71,7 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
     expect(await ex.ensureRoot()).toBe("gone");
     expect(existsSync(dir)).toBe(false);
     // A fresh process (new executor) finds the directory missing too.
-    expect(await new OsExecutor({ dir, policy: DEFAULT_POLICY }).ensureRoot()).toBe("gone");
+    expect(await new OsExecutor({ dir, policy: () => DEFAULT_POLICY }).ensureRoot()).toBe("gone");
   });
 
   it("a root removed under a marked directory is gone, never recreated empty", async () => {
@@ -81,7 +81,7 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
       expect(await ex.ensureRoot()).toBe("gone");
       expect(existsSync(join(dir, root))).toBe(false);
       // A fresh process sees the marker and the missing root: still gone.
-      expect(await new OsExecutor({ dir, policy: DEFAULT_POLICY }).ensureRoot()).toBe("gone");
+      expect(await new OsExecutor({ dir, policy: () => DEFAULT_POLICY }).ensureRoot()).toBe("gone");
       mkdirSync(join(dir, root));
     }
   });
@@ -197,6 +197,8 @@ describe.skipIf(!availability.ok)(
     let fakeHome: string;
     let state: string;
     let ex: OsExecutor;
+    /** Domains the local policy gains while the executor runs (a live policy change). */
+    let extraDomains: string[] = [];
     const never = new AbortController().signal;
 
     beforeAll(async () => {
@@ -212,7 +214,10 @@ describe.skipIf(!availability.ok)(
       mkdirSync(dir);
       ex = await createOsExecutor({
         dir,
-        policy: { ...DEFAULT_POLICY, allowedDomains: ["one.example.com", "two.example.com"] },
+        policy: () => ({
+          ...DEFAULT_POLICY,
+          allowedDomains: ["one.example.com", "two.example.com", ...extraDomains],
+        }),
         home: fakeHome,
         denyRead: [state],
       });
@@ -493,6 +498,42 @@ describe.skipIf(!availability.ok)(
         expect(r.stderr).toMatch(/403/);
       });
 
+      it("a host the device does not allow gets the device trailer", async () => {
+        const r = await ex.exec(
+          execArgs(curl("github.com"), { limits: { ...LIMITS, egress: "open" } }),
+          never,
+        );
+        expect(r.stderr).toContain(
+          "[capybara-device] Network access was blocked:\n" +
+            "- github.com:443: not in this device's allowed domains. Only the device owner can " +
+            "allow it (capybara-device policy add allowedDomains github.com, or the device page).",
+        );
+      });
+
+      it("a host the org does not allow gets the org trailer", async () => {
+        const r = await ex.exec(execArgs(curl("one.example.com")), never);
+        expect(r.stderr).toContain(
+          "- one.example.com:443: not in the organization's network allowlist. " +
+            "Only an organization admin can add it.",
+        );
+        expect(r.stderr).not.toContain("not in this device's allowed domains");
+      });
+
+      it("a policy change applies at the next command, without a restart", async () => {
+        const open = { limits: { ...LIMITS, egress: "open" as const } };
+        // `.invalid` never resolves: once allowed, the proxy fails the lookup, connecting nowhere.
+        const before = await ex.exec(execArgs(curl("allowed.invalid"), open), never);
+        expect(before.stderr).toContain("- allowed.invalid:443: not in this device's allowed");
+        extraDomains = ["allowed.invalid"];
+        try {
+          const after = await ex.exec(execArgs(curl("allowed.invalid"), open), never);
+          expect(after.exitCode).not.toBe(0);
+          expect(after.stderr).not.toContain("[capybara-device]");
+        } finally {
+          extraDomains = [];
+        }
+      }, 30_000);
+
       it("two concurrent commands each get only their own allow list", async () => {
         const allow = (h: string): SandboxLimits => ({
           ...LIMITS,
@@ -524,7 +565,7 @@ describe.skipIf(!availability.ok || process.platform !== "linux")(
     beforeAll(async () => {
       base = tmp("device-ns-");
       mkdirSync(join(base, "env"));
-      ex = await createOsExecutor({ dir: join(base, "env"), policy: DEFAULT_POLICY });
+      ex = await createOsExecutor({ dir: join(base, "env"), policy: () => DEFAULT_POLICY });
       await ex.ensureRoot();
     }, 60_000);
     afterAll(async () => {

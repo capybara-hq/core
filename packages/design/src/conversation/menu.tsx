@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Badge } from "../display/basic";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
@@ -29,6 +30,8 @@ export type ConvMenuEntry =
       icon?: IconName | ReactNode;
       /** A tag after the label ("agent 默认"). */
       tag?: string;
+      /** An attention mark after the tag, as a `warn` Badge ("不限网络"). */
+      badge?: string;
       /** A choice of a set: a `menuitemradio` with `aria-checked` and a `check` at its end. */
       checked?: boolean;
       /** Draw the `check` at the end of the checked item (default true; the panel switcher omits it). */
@@ -211,6 +214,7 @@ function Entry({
               {e.tag}
             </span>
           ) : null}
+          {e.badge ? <Badge tone="warn">{e.badge}</Badge> : null}
           {e.checked !== undefined ? (
             <>
               <span className="cb-cmenu-grow" />

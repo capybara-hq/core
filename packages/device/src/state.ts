@@ -1,15 +1,22 @@
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
+  linkSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { DeviceNetworkMode, DeviceRemoteGrants } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -33,6 +40,17 @@ export interface Policy {
   allowCredentials: string[];
   cpu: number | null;
   memoryMb: number | null;
+  /**
+   * `allowlist` (default): commands reach only `allowedDomains`, within the org's egress.
+   * `open`: the local policy stops narrowing; commands reach what the org allows.
+   */
+  network: DeviceNetworkMode;
+  /**
+   * `owner` (default): the deployment may widen this policy (the `policy` op's `add` and
+   * `network: "open"`, an exec's run or task grants) on the device owner's decision. `off`: only
+   * narrowing changes from the deployment are accepted. Set only locally.
+   */
+  remoteGrants: DeviceRemoteGrants;
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -43,6 +61,8 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
+  network: "allowlist",
+  remoteGrants: "owner",
 };
 
 type Env = Record<string, string | undefined>;
@@ -60,6 +80,11 @@ export function credentialPath(dir: string): string {
 
 export function policyPath(dir: string): string {
   return join(dir, "policy.json");
+}
+
+/** The lock file that serializes read-modify-writes of policy.json across processes. */
+export function policyLockPath(dir: string): string {
+  return join(dir, "policy.json.lock");
 }
 
 /** The default working directory of a device: `~/capybara-device/<deviceId>`. */
@@ -127,10 +152,20 @@ const isStringList = (v: unknown): v is string[] =>
 const isCeiling = (v: unknown): v is number | null =>
   v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
 
+const POLICY_KEYS: readonly string[] = Object.keys(DEFAULT_POLICY);
+
 /** The local policy (defaults when absent). Throws, naming the file, on bad JSON or field types. */
 export function readPolicy(dir: string): Policy {
+  return readPolicyFile(dir).policy;
+}
+
+/**
+ * The local policy plus the file's keys this version does not know (kept on every write, so an
+ * older program never drops a newer one's settings). Throws like {@link readPolicy}.
+ */
+export function readPolicyFile(dir: string): { policy: Policy; extra: Record<string, unknown> } {
   const file = policyPath(dir);
-  if (!existsSync(file)) return { ...DEFAULT_POLICY };
+  if (!existsSync(file)) return { policy: { ...DEFAULT_POLICY }, extra: {} };
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
@@ -147,14 +182,150 @@ export function readPolicy(dir: string): Policy {
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
   if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
+  if (policy.network !== "allowlist" && policy.network !== "open") {
+    throw bad("network", '"allowlist" or "open"');
+  }
+  if (policy.remoteGrants !== "owner" && policy.remoteGrants !== "off") {
+    throw bad("remoteGrants", '"owner" or "off"');
+  }
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) if (!POLICY_KEYS.includes(k)) extra[k] = v;
   return {
-    allowedDomains: policy.allowedDomains,
-    allowCredentials: policy.allowCredentials,
-    cpu: policy.cpu,
-    memoryMb: policy.memoryMb,
+    policy: {
+      allowedDomains: policy.allowedDomains,
+      allowCredentials: policy.allowCredentials,
+      cpu: policy.cpu,
+      memoryMb: policy.memoryMb,
+      network: policy.network,
+      remoteGrants: policy.remoteGrants,
+    },
+    extra,
   };
 }
 
-export function writePolicy(dir: string, policy: Policy): void {
-  writePrivate(policyPath(dir), `${JSON.stringify(policy, null, 2)}\n`);
+/** Writes policy.json atomically (owner-only); `extra` are unknown keys to keep. */
+export function writePolicy(
+  dir: string,
+  policy: Policy,
+  extra: Record<string, unknown> = {},
+): void {
+  writePrivate(policyPath(dir), `${JSON.stringify({ ...extra, ...policy }, null, 2)}\n`);
+}
+
+/** A lock file older than this is left over by a crashed process and is taken over. */
+const POLICY_LOCK_STALE_MS = 10_000;
+const POLICY_LOCK_WAIT_MS = 2_000;
+const POLICY_LOCK_RETRY_MS = 25;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Whether the pid written in a lock file names a running process (EPERM: someone else's). */
+function holderAlive(lock: string): boolean {
+  let pid: number;
+  try {
+    pid = Number(readFileSync(lock, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Takes a stale lock out of the way atomically: renames it aside (only one taker can), then
+ * checks the renamed file is the one judged stale. If a fresh lock was renamed instead, it is
+ * linked back (unless a new one exists already). The caller then retries the exclusive create.
+ */
+function takeOver(lock: string, judged: { ino: number; mtimeMs: number }): void {
+  const aside = `${lock}.${process.pid}.${randomBytes(6).toString("hex")}.stale`;
+  try {
+    renameSync(lock, aside);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
+  try {
+    const st = statSync(aside);
+    if (st.ino !== judged.ino || st.mtimeMs !== judged.mtimeMs) {
+      try {
+        linkSync(aside, lock);
+      } catch {
+        // A new lock exists already; its holder goes on.
+      }
+    }
+  } finally {
+    rmSync(aside, { force: true });
+  }
+}
+
+/**
+ * Runs `fn` holding policy.json.lock (created with O_EXCL), so a read-modify-write of the policy
+ * by this program and a concurrent `capybara-device policy` never loses an update. A lock older
+ * than 10 s whose holder pid no longer runs is stale and taken over; a held one is retried for
+ * about 2 s, then this throws. The lock is removed at the end only while it is still this
+ * holder's file.
+ */
+export function withPolicyLock<T>(
+  dir: string,
+  fn: () => T,
+  opts: { waitMs?: number; now?: () => number } = {},
+): T {
+  const lock = policyLockPath(dir);
+  const now = opts.now ?? Date.now;
+  const deadline = Date.now() + (opts.waitMs ?? POLICY_LOCK_WAIT_MS);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (;;) {
+    let fd: number;
+    try {
+      fd = openSync(lock, "wx", 0o600);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      let st: { ino: number; mtimeMs: number };
+      try {
+        st = statSync(lock);
+      } catch {
+        // Released between the open and the stat: try again at once.
+        continue;
+      }
+      if (now() - st.mtimeMs >= POLICY_LOCK_STALE_MS && !holderAlive(lock)) {
+        takeOver(lock, st);
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `${lock} is held by another capybara-device process; try again in a moment ` +
+            `(delete the file if no other capybara-device is running)`,
+        );
+      }
+      sleepSync(POLICY_LOCK_RETRY_MS);
+      continue;
+    }
+    let ino: number;
+    try {
+      writeSync(fd, String(process.pid));
+      ino = fstatSync(fd).ino;
+    } catch (e) {
+      closeSync(fd);
+      rmSync(lock, { force: true });
+      throw e;
+    }
+    try {
+      return fn();
+    } finally {
+      try {
+        // Another process may have taken the lock over meanwhile: leave its file alone.
+        if (statSync(lock).ino === ino) rmSync(lock, { force: true });
+      } catch {
+        // Already gone.
+      }
+      closeSync(fd);
+    }
+  }
 }

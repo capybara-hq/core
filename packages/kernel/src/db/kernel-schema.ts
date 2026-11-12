@@ -562,7 +562,7 @@ export interface ApprovalsTable {
   input: Json<unknown>;
   requested_for: string | null;
   approver_role: string | null;
-  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled">;
+  status: Generated<"pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped">;
   scope: "once" | "session" | "always" | null;
   decided_by: string | null;
   decided_at: TsNullable;
@@ -584,6 +584,10 @@ export interface ApprovalsTable {
     ("once" | "session" | "always")[] | null | undefined,
     ("once" | "session" | "always")[] | null
   >;
+  /** 0114: what is asked: a tool call ('tool') or a refused network domain ('network'). */
+  kind: Generated<"tool" | "network">;
+  /** 0114: a network ask's hosts, command, kept result and outcome (null for tool approvals). */
+  detail: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0010_tools.sql：AskUserQuestion 提问。 */
@@ -1024,6 +1028,10 @@ export interface DeviceMachinesTable {
   last_seen_at: TsNullable;
   created_at: Ts;
   revoked_at: TsNullable;
+  /** 0114: the features the program reported in its hello (`networkReport`, `policyOp`). */
+  features: ColumnType<string[], string[] | undefined, string[]>;
+  /** 0114: the program's local network policy summary (hello, refreshed by each `policy` op). */
+  local_policy: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */
@@ -1937,6 +1945,14 @@ export interface PluginImportStagingTable {
 
 type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
+/** 0077 / 0085 / 0115: the kinds of a catalog request. */
+type CatalogRequestKindCol =
+  | "access"
+  | "import"
+  | "enable"
+  | "connector_setup"
+  | "network_allowlist";
+
 /**
  * 0037, renamed in 0042, kinds since 0077: an org's catalog requests. `stage` (org / deployment) is
  * still written (`enable` -> org, else deployment) but no longer read.
@@ -1948,11 +1964,12 @@ export interface CatalogRequestsTable {
   item_id: NullableCol<string>;
   version: NullableCol<string>;
   /** 0077: what the request asks for (spec §5.1). */
-  kind: ColumnType<
-    "access" | "import" | "enable" | "connector_setup",
-    "access" | "import" | "enable" | "connector_setup" | undefined,
-    "access" | "import" | "enable" | "connector_setup"
-  >;
+  kind: ColumnType<CatalogRequestKindCol, CatalogRequestKindCol | undefined, CatalogRequestKindCol>;
+  /**
+   * 0115: what a `network_allowlist` request asks for (`{ hosts, conversationId, agentId }`); null
+   * for other kinds.
+   */
+  detail: ColumnType<unknown | null, string | null | undefined, string | null>;
   /** 0085: the agent of a `connector_setup` request (cascades with the agent). */
   agent_id: NullableCol<string>;
   /** 0085: the template connector keys a `connector_setup` request still waits for. */

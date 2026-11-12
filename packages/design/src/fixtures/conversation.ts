@@ -489,6 +489,15 @@ export const HITL_FIXTURE: {
   question: { question: string; options: string[]; selected: number; other: string };
   questionUrl: { question: string; url: string };
   connect: { service: string; reason: string; note: string };
+  /** A network ask (network ask spec §6.5): one host, several hosts, and the org / address facts. */
+  network: {
+    host: string;
+    hosts: string[];
+    command: string;
+    description: string;
+    orgHost: string;
+    addressHost: string;
+  };
   decided: {
     who: string;
     approved: { tool: string; toolKey: string; at: string; scope: string };
@@ -525,6 +534,15 @@ export const HITL_FIXTURE: {
     service: "Acme 文档",
     reason: "连接 Acme 文档 后才能读取这个文件",
     note: "用你自己的账号授权，只对你生效",
+  },
+  network: {
+    host: "files.slack.com",
+    hosts: ["files.slack.com", "registry.npmjs.org", "files.slack.com.evil.io"],
+    command:
+      "curl -sSL -o export.zip https://files.slack.com/files-pri/T0123/export.zip && unzip -o export.zip -d export",
+    description: "下载 Slack 导出的对账文件",
+    orgHost: "api.foo.com",
+    addressHost: "10.0.0.5",
   },
   decided: {
     who: "grant",

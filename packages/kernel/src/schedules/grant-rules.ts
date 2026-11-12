@@ -1,3 +1,9 @@
+import {
+  type DeviceLocalPolicySummary,
+  type SandboxLimits,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
+import { orgAllows } from "../local-devices/network-grants.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { isFixedAsk } from "../tools/fixed-ask.js";
 import type { ResolvedTool } from "../tools/registry.js";
@@ -19,14 +25,20 @@ export interface GrantContext {
  * Why a tool can't be a task's grant, as a code the UI words: `forbidden` (the org's
  * `forbiddenTools`), `not_grantable` (by design: a Platform call that changes the agent's
  * skills, or any other per-call key such as `Platform:<operation>`), `not_available` (not one of the agent's tools now), `needs_role` (a
- * `requiredRole` above the creator's), `fixed_ask` (always asks a person).
+ * `requiredRole` above the creator's), `fixed_ask` (always asks a person). A network grant
+ * (`network:<host>`, {@link networkGrantRefusal}) adds `needs_admin` (outside the org's network
+ * allowlist: only an org admin can add the host) and `device_refuses` (the task's device takes no
+ * network grants from the deployment: `remoteGrants` off); an invalid or wildcard host is
+ * `not_grantable`.
  */
 export type GrantRefusalCode =
   | "forbidden"
   | "not_grantable"
   | "not_available"
   | "needs_role"
-  | "fixed_ask";
+  | "fixed_ask"
+  | "needs_admin"
+  | "device_refuses";
 
 /**
  * Why `toolKey` cannot be one of a task's grants, or null when it can: the creator could approve
@@ -87,4 +99,60 @@ export function grantRefusal(
   ctx: GrantContext,
 ): string | null {
   return grantRefusalOf(toolKey, tool, ctx)?.message ?? null;
+}
+
+/** The prefix of a network grant's key (network ask-to-allow spec §8.1). */
+export const NETWORK_GRANT_PREFIX = "network:";
+
+/** The `spec_hash` a network grant is stored with (no tool definition behind it; plan P-D7). */
+export const NETWORK_GRANT_SPEC_HASH = "network";
+
+/** Whether a grant key is a network grant (`network:<host>`). */
+export const isNetworkGrantKey = (key: string): boolean => key.startsWith(NETWORK_GRANT_PREFIX);
+
+/** The host of a network grant key (`network:<host>`). */
+export const networkGrantHost = (key: string): string => key.slice(NETWORK_GRANT_PREFIX.length);
+
+/** What {@link networkGrantRefusal} checks a host against. */
+export interface NetworkGrantContext {
+  /** The org's effective sandbox egress now (`SandboxService.orgLimits`). */
+  limits: Pick<SandboxLimits, "egress" | "allowHosts">;
+  /**
+   * The local policy summary of the task's device (its active machine); null or undefined when
+   * the task has no device that can be determined or its machine is not connected: the device
+   * rule is then skipped (the device still refuses at the command, and the run notes it).
+   */
+  deviceSummary?: DeviceLocalPolicySummary | null;
+}
+
+/**
+ * Why `host` cannot be one of a task's network grants (network ask-to-allow spec §8.1), or null
+ * when it can: `not_grantable` (not an exact, valid host name: no wildcard, no address),
+ * `needs_admin` (the org's effective egress does not admit it: only an org admin can add it),
+ * `device_refuses` (the task's device reports `remoteGrants: "off"`). The host is compared as given
+ * (callers lower-case it first).
+ */
+export function networkGrantRefusal(
+  host: string,
+  ctx: NetworkGrantContext,
+): { code: GrantRefusalCode; message: string } | null {
+  if (host.startsWith("*.") || validateAllowHost(host).length > 0) {
+    return {
+      code: "not_grantable",
+      message: `${host} cannot be approved for a scheduled task: give one exact domain name (no wildcard, no IP address or local name)`,
+    };
+  }
+  if (!orgAllows(host, ctx.limits)) {
+    return {
+      code: "needs_admin",
+      message: `${host} is not in the organization's network allowlist; only an organization admin can add it`,
+    };
+  }
+  if (ctx.deviceSummary?.remoteGrants === "off") {
+    return {
+      code: "device_refuses",
+      message: `The task's device does not accept network grants from the deployment; its owner can allow ${host} locally: capybara-device policy add allowedDomains ${host}`,
+    };
+  }
+  return null;
 }

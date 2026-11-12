@@ -308,6 +308,44 @@ describe("/schedules/new", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/schedules/s9"));
   });
 
+  it("Network access: domains become network:<host> grants; a refusal shows the kernel's reason", async () => {
+    resetNavigation("/schedules/new");
+    const calls = stubApi({
+      ...common,
+      [`POST ${BASE}`]: () =>
+        json(400, {
+          error: {
+            code: "schedule.grant_not_allowed",
+            message: "network:api.example.com: only an org admin can allow this host",
+          },
+        }),
+      [`GET ${BASE}`]: ok({ items: [] }),
+    });
+    await renderRouteWithCache("/schedules/new", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: E.form.name }), "Export");
+    await user.type(screen.getByRole("textbox", { name: E.form.prompt }), "Export it");
+    const domain = screen.getByRole("textbox", { name: E.form.domain });
+    await user.type(domain, "*.example.com");
+    await user.click(screen.getByRole("button", { name: E.form.addDomain }));
+    expect(screen.getByText(E.form.networkWildcard)).toBeTruthy();
+    await user.clear(domain);
+    await user.type(domain, "API.example.com{enter}");
+    const list = within(screen.getByRole("list", { name: E.form.networkLabel }));
+    expect(list.getByText("api.example.com")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: E.form.create }));
+    const body = bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE)) as Record<
+      string,
+      unknown
+    >;
+    expect(body.grants).toEqual([{ toolKey: "network:api.example.com" }]);
+    expect(await screen.findByText(E.form.networkRefused)).toBeTruthy();
+    expect(screen.getByText(/only an org admin can allow this host/)).toBeTruthy();
+    // removing it from the list
+    await user.click(list.getByRole("button", { name: E.form.remove }));
+    expect(screen.getByText(E.form.networkEmpty)).toBeTruthy();
+  });
+
   it("a chat target fixes the agent to its connection's and goes in the body", async () => {
     resetNavigation("/schedules/new");
     const calls = stubApi({
@@ -531,6 +569,49 @@ describe("/schedules/[id]", () => {
     expect(bodyOf(calls.find((c) => c.url.endsWith("/grants") && c.method === "POST"))).toEqual({
       grants: [{ toolKey: "Bash" }],
     });
+  });
+
+  it("a domain the latest run was refused is added as a network grant; granted domains are listed apart", async () => {
+    const calls = stubApi({
+      ...routes(),
+      [`GET ${BASE}/s1/runs`]: ok({
+        items: [run({ id: "r3", missingGrants: ["network:files.slack.com"] })],
+      }),
+      [`GET ${BASE}/s1/grants`]: ok({
+        items: [
+          { toolKey: "WebSearch", specHash: "h", connectorId: null, stale: false },
+          { toolKey: "network:api.example.com", specHash: "network", connectorId: null },
+        ],
+      }),
+      [`POST ${BASE}/s1/grants`]: (c) =>
+        json(200, {
+          items: (bodyOf(c) as { grants: { toolKey: string }[] }).grants.map((g) => ({
+            ...g,
+            specHash: "network",
+            connectorId: null,
+          })),
+        }),
+      [`DELETE ${BASE}/s1/grants/${encodeURIComponent("network:api.example.com")}`]: () =>
+        new Response(null, { status: 204 }),
+      [`GET ${ORG}/inbox`]: ok({ items: [], truncated: false }),
+      [`GET ${ORG}/inbox/count`]: ok({ count: 0, more: false }),
+    });
+    await renderRouteWithCache("/schedules/s1", lastStubRoutes());
+    const domains = within(await screen.findByRole("list", { name: E.form.networkLabel }));
+    expect(domains.getByText("api.example.com")).toBeTruthy();
+    // the tools list does not show the domain
+    const tools = within(screen.getByRole("list", { name: E.form.toolsLabel }));
+    expect(tools.queryByText(/api\.example\.com/)).toBeNull();
+    const missing = within(screen.getByRole("list", { name: E.form.networkMissing }));
+    const user = userEvent.setup();
+    await user.click(missing.getByRole("button", { name: E.form.addMissing }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/grants") && c.method === "POST"))).toEqual({
+        grants: [{ toolKey: "network:files.slack.com" }],
+      }),
+    );
+    await user.click(domains.getByRole("button", { name: E.form.remove }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
   });
 
   it("delete asks first, then leaves for the list", async () => {

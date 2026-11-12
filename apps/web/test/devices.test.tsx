@@ -610,3 +610,193 @@ describe("local devices (environments spec §6, §9)", () => {
     expect(dialog.textContent).toContain(E.detail.deleteLocalHint.replace("{name}", "Laptop"));
   });
 });
+
+describe("device network (network ask-to-allow spec §7)", () => {
+  const N = E.network;
+  const MACHINE = {
+    id: "m1",
+    name: "grant-mbp",
+    os: "darwin",
+    mode: "os",
+    programVersion: "0.1.0",
+    lastSeenAt: T,
+  };
+  const policy = (over: Record<string, unknown> = {}) => ({
+    network: "allowlist",
+    allowedDomains: ["files.example.com"],
+    remoteGrants: "owner",
+    ...over,
+  });
+  const local = (
+    net: { features?: string[]; policy?: unknown; recent?: unknown[] } = {},
+    over: Record<string, unknown> = {},
+  ) =>
+    env("e1", "Laptop", {
+      source: "local",
+      provider: "@local",
+      online: true,
+      machine: MACHINE,
+      network: {
+        features: ["networkReport", "policyOp"],
+        policy: policy(),
+        recent: [],
+        ...net,
+      },
+      ...over,
+    });
+
+  it("removes a domain: the change goes to the machine and the device is read again", async () => {
+    let removed = false;
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local(removed ? { policy: policy({ allowedDomains: [] }) } : {}) }),
+      [`POST ${BASE}/e1/policy`]: () => {
+        removed = true;
+        return json(200, { policy: policy({ allowedDomains: [] }) });
+      },
+    });
+    const { client } = await renderDetail();
+    client.setQueryData(["org", "o1", "devices"], list([local()]));
+    expect(await screen.findByText("files.example.com")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: N.removeLabel.replace("{host}", "files.example.com") }),
+    );
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    const post = calls.find((c) => c.method === "POST");
+    expect(bodyOf(post)).toEqual({ remove: ["files.example.com"] });
+    expect(await screen.findByText(N.domainsEmpty)).toBeTruthy();
+    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
+  });
+
+  it("adds a wildcard domain and refuses an invalid one before sending", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
+      [`POST ${BASE}/e1/policy`]: () =>
+        json(200, { policy: policy({ allowedDomains: ["files.example.com", "*.slack.com"] }) }),
+    });
+    await renderDetail();
+    const user = userEvent.setup();
+    const input = await screen.findByRole("textbox", { name: N.add });
+    await user.type(input, "https://slack.com");
+    await user.click(screen.getByRole("button", { name: N.addSubmit }));
+    expect(await screen.findByText(N.hostInvalid)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    await user.clear(input);
+    await user.type(input, "*.Slack.com");
+    await user.click(screen.getByRole("button", { name: N.addSubmit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ add: ["*.slack.com"] });
+  });
+
+  it("turning 不限网络 on asks first with the risk text; turning it off does not", async () => {
+    let open = false;
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local({ policy: policy({ network: open ? "open" : "allowlist" }) }) }),
+      [`POST ${BASE}/e1/policy`]: (req) => {
+        open = (bodyOf(req) as { network: string }).network === "open";
+        return json(200, { policy: policy({ network: open ? "open" : "allowlist" }) });
+      },
+    });
+    await renderDetail({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("switch", { name: "不限网络" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(
+      "不限网络后，智能体在这台设备上运行的命令可以访问组织允许的任何地址",
+    );
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: "开启不限网络" }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ network: "open" });
+    await vi.waitFor(() =>
+      expect(screen.getByRole("switch", { name: "不限网络" }).getAttribute("aria-checked")).toBe(
+        "true",
+      ),
+    );
+    // the machine section marks it too
+    expect(screen.getAllByText("不限网络").length).toBeGreaterThan(1);
+    await user.click(screen.getByRole("switch", { name: "不限网络" }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({ network: "allowlist" });
+  });
+
+  it("remoteGrants off disables adding and 不限网络 with the command to run on the machine", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local({ policy: policy({ remoteGrants: "off" }) }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(N.remoteGrantsOffHint)).toBeTruthy();
+    expect(screen.getByText(N.remoteGrantsOff)).toBeTruthy();
+    expect((screen.getByRole("switch", { name: N.open }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
+    // narrowing is still accepted
+    expect(
+      (
+        screen.getByRole("button", {
+          name: N.removeLabel.replace("{host}", "files.example.com"),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("a program without policyOp says to upgrade it; recent changes list who, where and unconfirmed", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local({
+            features: ["networkReport"],
+            recent: [
+              {
+                at: T,
+                add: ["files.slack.com"],
+                remove: [],
+                network: null,
+                by: "Grant",
+                via: "im",
+                confirmed: false,
+              },
+            ],
+          }),
+        }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(N.upgrade)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Remove files\.example\.com/ })).toBeNull();
+    expect(screen.getByText(N.recent.add.replace("{hosts}", "files.slack.com"))).toBeTruthy();
+    expect(screen.getByText(/Grant · IM/)).toBeTruthy();
+    expect(screen.getByText(N.recent.unconfirmed)).toBeTruthy();
+  });
+
+  it("a refused change shows why with the machine's message", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
+      [`POST ${BASE}/e1/policy`]: () =>
+        json(409, {
+          error: {
+            code: "device.policy_refused",
+            message: "change it on the machine: capybara-device policy add allowedDomains a.com",
+          },
+        }),
+    });
+    await renderDetail();
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole("textbox", { name: N.add }), "a.com");
+    await user.click(screen.getByRole("button", { name: N.addSubmit }));
+    expect(await screen.findByText(en.errors.device.policy_refused)).toBeTruthy();
+    expect(screen.getByText(/capybara-device policy add allowedDomains a\.com/)).toBeTruthy();
+  });
+
+  it("a Docker-mode machine says it has no per-domain control", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local({}, { machine: { ...MACHINE, mode: "docker" } }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(N.dockerNote)).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
+  });
+});

@@ -64,6 +64,26 @@ export interface FileSystemHandle {
 export interface SandboxActor {
   accountId: string;
   conversationId: string;
+  /**
+   * The run the command serves. The kernel uses it to route run grants (network hosts allowed
+   * for the rest of a run) to a connected device; informational for other providers.
+   */
+  runId?: string;
+}
+
+/**
+ * The layer that refused a network host: `device` (the org allows it, the device's local policy
+ * does not), `org` (not in the org's effective egress), `address` (an IP literal or a name that
+ * points to a private or local address; never grantable), `unknown`.
+ */
+export type NetworkBlockLayer = "device" | "org" | "address" | "unknown";
+
+/** A host a command was refused, as the provider reports it. */
+export interface NetworkBlockedHost {
+  /** The host as the proxy saw it (IPv6 literals bracketed). */
+  host: string;
+  port: number;
+  layer: NetworkBlockLayer;
 }
 
 /** Result of a command. */
@@ -74,6 +94,12 @@ export interface ExecResult {
   stderr: string;
   truncated: boolean;
   timedOut: boolean;
+  /**
+   * Network refusals during the command (optional for every provider): at most
+   * `MAX_NETWORK_BLOCKED_HOSTS` hosts, deduped by host. The kernel recomputes the `org` layer
+   * itself and never trusts a provider's word that the org allows a host.
+   */
+  network?: { blocked: NetworkBlockedHost[] };
 }
 
 /**

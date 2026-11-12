@@ -139,17 +139,24 @@ export interface TaskRun {
   status: TaskRunStatus;
   skipReason: TaskRunSkipReason | null;
   error: string | null;
-  /** Tool keys refused for lack of a grant; `connection:<slug>` for a connector to connect. */
+  /**
+   * Tool keys refused for lack of a grant; `connection:<slug>` for a connector to connect;
+   * `network:<host>` for a domain the run was refused.
+   */
   missingGrants: string[];
 }
 
+/**
+ * A tool the task may use without asking, or a domain (`toolKey: "network:<host>"`, `specHash:
+ * "network"`, no connector: its unattended runs may reach the host on the task's device).
+ */
 export interface ScheduledTaskGrant {
   toolKey: string;
   specHash: string;
   connectorId: string | null;
   /**
    * The tool changed since it was approved: the approval no longer applies (spec §7); null when
-   * the kernel could not read the agent's tools just now.
+   * the kernel could not read the agent's tools just now. Always false for a domain.
    */
   stale?: boolean | null;
 }
@@ -170,6 +177,7 @@ export interface ScheduleCreateBody {
   model?: ModelRef;
   effort?: ScheduleEffort;
   expiresAt?: string | null;
+  /** Tools by key, domains as `network:<host>` (one exact host). */
   grants?: { toolKey: string }[];
 }
 
