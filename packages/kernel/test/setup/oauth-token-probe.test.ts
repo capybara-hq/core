@@ -110,6 +110,29 @@ describe("the token endpoint probe", { timeout: 30_000 }, () => {
     expect(slack.tokenRequests.at(-1)?.error).toBe("invalid_client_id");
   });
 
+  it("GitHub dialect (200 with an error): bad_verification_code → ok; incorrect_client_credentials → failing", async () => {
+    const cases: [unknown, string][] = [
+      [
+        { error: "bad_verification_code", error_description: "The code passed is incorrect." },
+        "ok",
+      ],
+      [{ error: "incorrect_client_credentials", error_description: "wrong" }, "failing"],
+    ];
+    for (const [body, status] of cases) {
+      const s = await fixedServer(200, JSON.stringify(body));
+      try {
+        const r = await probe(client({ issuer: "" }, { tokenEndpoint: s.url }));
+        expect(r.status, JSON.stringify(body)).toBe(status);
+        expect(r.reason).toEqual(
+          status === "ok" ? PROBE_TEXTS.accepted : PROBE_TEXTS.clientRefused,
+        );
+        expect(texts(r)).not.toContain("wrong");
+      } finally {
+        await s.stop();
+      }
+    }
+  });
+
   it("a refused client (invalid_client, unauthorized_client, bad_client_secret, bare 401) → failing", async () => {
     // a wrong secret on an RFC 6749 server: 401 invalid_client
     expect(await probe(client(oauth, { clientSecret: "wrong-secret-0123456789" }))).toEqual({
