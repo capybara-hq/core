@@ -17,7 +17,7 @@ export const MAX_BLOCKED_HOSTS = 20;
 
 type Limits = Pick<SandboxLimits, "egress" | "allowHosts">;
 /** The local policy fields that decide network access (`network` arrives with remote grants). */
-type NetworkPolicy = Pick<Policy, "allowedDomains"> & { network?: "allowlist" | "open" };
+type NetworkPolicy = Pick<Policy, "allowedDomains" | "tier">;
 
 // The proxy's line in @anthropic-ai/sandbox-runtime 0.0.81 (`recordOutboundDeny`):
 // `deny network-outbound <host>:<port> (<reason>)`. Pinned by test/network.test.ts.
@@ -85,7 +85,7 @@ function orgAllows(host: string, limits: Limits): boolean {
 }
 
 function deviceAllows(host: string, policy: NetworkPolicy): boolean {
-  return policy.network === "open" || admittedBy(policy.allowedDomains, host);
+  return policy.tier === "open" || admittedBy(policy.allowedDomains, host);
 }
 
 /**

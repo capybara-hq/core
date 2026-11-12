@@ -64,7 +64,10 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  network: "allowlist",
+  effectiveTier: "strict",
+  isolation: "sandbox",
+  localhost: "off",
+  unixSockets: "off",
   allowedDomains: [],
   remoteGrants: "owner",
 };

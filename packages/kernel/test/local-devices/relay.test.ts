@@ -50,7 +50,15 @@ const targets = {
 const log = createLogger("error", { write: () => {} });
 
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
-const LIMITS = { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] };
+const LIMITS = {
+  cpu: 1,
+  memoryMb: 512,
+  diskMb: 1024,
+  egress: "none",
+  allowHosts: [],
+  tier: "strict",
+  devHosts: [],
+};
 const execArgs = {
   command: "echo hi",
   timeoutMs: 1000,

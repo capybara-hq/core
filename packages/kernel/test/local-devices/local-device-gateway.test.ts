@@ -41,7 +41,15 @@ import { FakeMachine, refusal } from "./fake-machine.js";
 
 const MAX_FRAME_BYTES = 64 * 1024;
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
-const LIMITS = { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] };
+const LIMITS = {
+  cpu: 1,
+  memoryMb: 512,
+  diskMb: 1024,
+  egress: "none",
+  allowHosts: [],
+  tier: "strict",
+  devHosts: [],
+};
 const execArgs = {
   command: "echo hi",
   timeoutMs: 1000,

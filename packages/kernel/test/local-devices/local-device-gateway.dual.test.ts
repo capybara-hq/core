@@ -30,7 +30,15 @@ const execArgs = {
   maxOutputBytes: 1000,
   tag: "t1",
   actor: { accountId: "a", conversationId: "c" },
-  limits: { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] },
+  limits: {
+    cpu: 1,
+    memoryMb: 512,
+    diskMb: 1024,
+    egress: "none",
+    allowHosts: [],
+    tier: "strict",
+    devHosts: [],
+  },
 };
 
 let h: Harness | undefined;

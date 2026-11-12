@@ -83,7 +83,15 @@ export function execArgs(command: string, tag = "t1"): DeviceExecArgs {
     maxOutputBytes: 1000,
     tag,
     actor: { accountId: "acc", conversationId: "conv" },
-    limits: { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] },
+    limits: {
+      cpu: 1,
+      memoryMb: 512,
+      diskMb: 1024,
+      egress: "none",
+      allowHosts: [],
+      tier: "strict",
+      devHosts: [],
+    },
   };
 }
 

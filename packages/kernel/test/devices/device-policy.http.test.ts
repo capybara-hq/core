@@ -34,7 +34,10 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  network: "allowlist",
+  effectiveTier: "strict",
+  isolation: "sandbox",
+  localhost: "off",
+  unixSockets: "off",
   allowedDomains: ["pypi.org"],
   remoteGrants: "owner",
 };
@@ -155,8 +158,8 @@ function applying(start: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
   let now = start;
   return (req) => {
     if (req.op !== "policy") return { ok: true, result: null };
-    const a = req.args as { add?: string[]; remove?: string[]; network?: "allowlist" | "open" };
-    if (((a.add?.length ?? 0) > 0 || a.network === "open") && now.remoteGrants !== "owner") {
+    const a = req.args as { add?: string[]; remove?: string[]; tier?: "strict" | "dev" | "open" };
+    if (((a.add?.length ?? 0) > 0 || a.tier === "open") && now.remoteGrants !== "owner") {
       return {
         ok: false,
         error: { kind: "policy", message: "This device does not accept network changes" },
@@ -165,7 +168,12 @@ function applying(start: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
     const domains = new Set(now.allowedDomains);
     for (const h of a.add ?? []) domains.add(h);
     for (const h of a.remove ?? []) domains.delete(h);
-    now = { ...now, allowedDomains: [...domains], network: a.network ?? now.network };
+    const tier = a.tier ?? now.tier;
+    now = {
+      ...now,
+      allowedDomains: [...domains],
+      ...(tier !== undefined && { tier, effectiveTier: tier === "open" ? "open" : "strict" }),
+    };
     return { ok: true, result: { policy: now } };
   };
 }
@@ -213,12 +221,13 @@ describe("POST /devices/:id/policy", () => {
     expect(removed.statusCode, removed.body).toBe(200);
     const opened = await post(d.req, d.deviceId, { network: "open" });
     expect(opened.statusCode, opened.body).toBe(200);
-    expect((opened.json() as { policy: DeviceLocalPolicySummary }).policy.network).toBe("open");
+    expect((opened.json() as { policy: DeviceLocalPolicySummary }).policy.tier).toBe("open");
     const narrowed = await post(d.req, d.deviceId, { network: "allowlist" });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
     expect(narrowed.json()).toEqual({
       policy: {
-        network: "allowlist",
+        ...POLICY,
+        tier: "strict",
         allowedDomains: ["files.slack.com", "*.npmjs.org"],
         remoteGrants: "owner",
       },

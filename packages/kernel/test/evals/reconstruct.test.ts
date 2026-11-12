@@ -1652,7 +1652,14 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       machine.send({
         ...HELLO,
         features: ["networkReport", "policyOp"],
-        policy: { network: "allowlist", allowedDomains: [], remoteGrants: "owner" },
+        policy: {
+          effectiveTier: "strict",
+          isolation: "sandbox",
+          localhost: "off",
+          unixSockets: "off",
+          allowedDomains: [],
+          remoteGrants: "owner",
+        },
       });
       await waitFor(
         async () =>

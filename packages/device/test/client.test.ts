@@ -110,7 +110,10 @@ describe("client", () => {
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.features).toEqual(["networkReport", "policyOp"]);
     expect(hello.policy).toEqual({
-      network: "allowlist",
+      effectiveTier: "strict",
+      isolation: "sandbox",
+      localhost: "off",
+      unixSockets: "off",
       allowedDomains: ["a.com"],
       remoteGrants: "owner",
     });
@@ -141,7 +144,10 @@ describe("client", () => {
     kernel.sockets[0]?.close(1001);
     const again = await kernel.waitFor("reconnect", () => kernel.of("hello", 1)[0]);
     expect(again.policy).toEqual({
-      network: "allowlist",
+      effectiveTier: "strict",
+      isolation: "sandbox",
+      localhost: "off",
+      unixSockets: "off",
       allowedDomains: ["a.com", "files.slack.com"],
       remoteGrants: "off",
     });
@@ -153,7 +159,7 @@ describe("client", () => {
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");
     expect(hello.features).toEqual(["policyOp"]);
-    expect(hello.policy).toMatchObject({ network: "allowlist", remoteGrants: "owner" });
+    expect(hello.policy).toMatchObject({ effectiveTier: "strict", remoteGrants: "owner" });
   });
 
   it("without a policy store the hello offers no policy op and no summary", async () => {

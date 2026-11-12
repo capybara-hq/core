@@ -159,7 +159,8 @@ export class DevicePolicyService {
       detail: {
         add: change.add ?? [],
         remove: change.remove ?? [],
-        network: change.network ?? null,
+        // Shown on the device page as the old network switch until the page shows tiers.
+        network: change.tier === undefined ? null : change.tier === "open" ? "open" : "allowlist",
         by: source.accountId,
         via: source.via,
         approvalId: source.approvalId ?? null,

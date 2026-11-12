@@ -65,6 +65,8 @@ const LIMITS: SandboxLimits = {
   diskMb: 1024,
   egress: "allowlist",
   allowHosts: ["files.slack.com"],
+  tier: "strict",
+  devHosts: [],
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -280,7 +282,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
   it("network open with an org allowlist registers the org's list", async () => {
     const ex = await make();
     await ex.ensureRoot();
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     await ex.exec(execArgs("true"), never);
     expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["files.slack.com"]);
     await ex.dispose();
@@ -294,7 +296,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       port: number;
     }) => Promise<unknown>;
     const denied = { allow: false };
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     const open = { ...LIMITS, egress: "open" as const, allowHosts: [] };
     // No open command running: denied.
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
@@ -309,9 +311,9 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       expect(await ask({ host, port: 443 }), host).toMatchObject(denied);
     }
     // Narrowing applies at once, also to the running command.
-    policy = { ...policy, network: "allowlist" };
+    policy = { ...policy, tier: "strict" };
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
     await running;
     // The command ended: nothing open runs any more.
@@ -326,7 +328,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       host: string;
       port: number;
     }) => Promise<unknown>;
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     const running = ex.exec(execArgs("sleep 0.5"), never);
     await new Promise((r) => setTimeout(r, 150));
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
@@ -339,7 +341,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
   it("remoteGrants does not matter for a device that is open already", async () => {
     const ex = await make();
     await ex.ensureRoot();
-    policy = { ...policy, network: "open", remoteGrants: "off" };
+    policy = { ...policy, tier: "open", remoteGrants: "off" };
     await ex.exec(execArgs("true"), never);
     expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["files.slack.com"]);
     await ex.dispose();

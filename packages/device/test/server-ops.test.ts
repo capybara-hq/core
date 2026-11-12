@@ -110,7 +110,10 @@ describe("the policy op", () => {
       ok: true,
       result: {
         policy: {
-          network: "allowlist",
+          effectiveTier: "strict",
+          isolation: "sandbox",
+          localhost: "off",
+          unixSockets: "off",
           allowedDomains: ["a.com", "files.slack.com"],
           remoteGrants: "owner",
         },
@@ -134,15 +137,27 @@ describe("the policy op", () => {
     });
   });
 
-  it("removes hosts ignoring case and switches network", async () => {
+  it("removes hosts ignoring case and switches the tier", async () => {
     seed({ allowedDomains: ["A.com", "b.com"] });
-    const { res, detail } = await policyOp({ remove: ["a.com"], network: "open" });
+    const { res, detail } = await policyOp({ remove: ["a.com"], tier: "open" });
     expect(res).toMatchObject({
       ok: true,
-      result: { policy: { network: "open", allowedDomains: ["b.com"], remoteGrants: "owner" } },
+      result: {
+        policy: { tier: "open", effectiveTier: "open", allowedDomains: ["b.com"] },
+      },
     });
-    expect(readPolicy(dir).network).toBe("open");
-    expect(detail).toBe("policy remove a.com; network open by Ada (acc_1) via web, approval apr_1");
+    expect(readPolicy(dir).tier).toBe("open");
+    expect(detail).toBe("policy remove a.com; tier open by Ada (acc_1) via web, approval apr_1");
+  });
+
+  it("tier null follows the org again; isolation may only turn the sandbox on", async () => {
+    seed({ tier: "dev" });
+    const { res } = await policyOp({ tier: null, isolation: "sandbox" });
+    expect(res).toMatchObject({ ok: true, result: { policy: { isolation: "sandbox" } } });
+    expect(readPolicy(dir).tier).toBeUndefined();
+    expect(JSON.parse(readFileSync(policyPath(dir), "utf8"))).not.toHaveProperty("tier");
+    const off = await policyOp({ isolation: "none" });
+    expect(off.res).toMatchObject({ ok: false });
   });
 
   it("under remoteGrants off refuses every widening and changes nothing", async () => {
@@ -150,7 +165,8 @@ describe("the policy op", () => {
     const before = readFileSync(policyPath(dir), "utf8");
     for (const [args, what] of [
       [{ add: ["b.com"] }, "add b.com"],
-      [{ network: "open" }, "network open"],
+      [{ tier: "open" }, "tier open"],
+      [{ tier: "dev" }, "tier dev"],
       // A request with any widening is refused whole, its narrowing part too.
       [{ add: ["b.com"], remove: ["a.com"] }, "add b.com; remove a.com"],
       [{ add: ["a.com"] }, "add a.com"],
@@ -173,13 +189,13 @@ describe("the policy op", () => {
   });
 
   it("in docker mode refuses every widening: the container cannot limit single domains", async () => {
-    seed({ allowedDomains: ["a.com", "b.com"], network: "open" });
+    seed({ allowedDomains: ["a.com", "b.com"], tier: "open" });
     const docker = new FakeExecutor();
     (docker as { mode: string }).mode = "docker";
     const before = readFileSync(policyPath(dir), "utf8");
     for (const args of [
       { add: ["c.com"] },
-      { network: "open" },
+      { tier: "open" },
       { add: ["c.com"], remove: ["a.com"] },
     ]) {
       const { res, detail } = await serveOp(docker, r("policy", { source, ...args }), never, {
@@ -201,22 +217,22 @@ describe("the policy op", () => {
     // Narrowing still applies.
     const { res } = await serveOp(
       docker,
-      r("policy", { source, remove: ["a.com"], network: "allowlist" }),
+      r("policy", { source, remove: ["a.com"], tier: "strict" }),
       never,
       { policy: store },
     );
     expect(res).toMatchObject({
       ok: true,
-      result: { policy: { network: "allowlist", allowedDomains: ["b.com"] } },
+      result: { policy: { tier: "strict", allowedDomains: ["b.com"] } },
     });
   });
 
   it("under remoteGrants off always applies narrowing", async () => {
-    seed({ allowedDomains: ["a.com", "b.com"], network: "open", remoteGrants: "off" });
-    const { res } = await policyOp({ remove: ["a.com"], network: "allowlist" });
+    seed({ allowedDomains: ["a.com", "b.com"], tier: "open", remoteGrants: "off" });
+    const { res } = await policyOp({ remove: ["a.com"], tier: "strict" });
     expect(res).toMatchObject({
       ok: true,
-      result: { policy: { network: "allowlist", allowedDomains: ["b.com"], remoteGrants: "off" } },
+      result: { policy: { tier: "strict", allowedDomains: ["b.com"], remoteGrants: "off" } },
     });
   });
 

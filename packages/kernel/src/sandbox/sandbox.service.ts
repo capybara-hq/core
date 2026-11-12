@@ -457,7 +457,7 @@ export class SandboxService {
       (await readOrgSettings(this.db.db, orgId)).sandboxEgress,
     );
     const sized = effectiveSandboxLimits(
-      { ...cfg.limits, ...egress },
+      { ...cfg.limits, ...egress, tier: "strict", devHosts: [] },
       await readSandboxLimitOverride(this.db.db, orgId),
     );
     return {
@@ -466,6 +466,9 @@ export class SandboxService {
       diskMb: sized.diskMb,
       egress: sized.egress,
       allowHosts: sized.allowHosts,
+      // Tiers are not applied yet: every device runs `strict`.
+      tier: sized.tier,
+      devHosts: sized.devHosts,
     };
   }
 

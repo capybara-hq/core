@@ -280,6 +280,8 @@ describe("lazy creation", () => {
       diskMb: 5120,
       egress: "allowlist",
       allowHosts: config.sandbox.limits.allowHosts,
+      tier: "strict",
+      devHosts: [],
     };
     const meta = await fakeSandboxMeta(root, a.h.id);
     expect(meta).toEqual({
@@ -1108,7 +1110,15 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
 });
 
 describe("leftovers of interrupted creates and of other providers (fix round 1)", () => {
-  const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
+  const tiny = {
+    cpu: 1,
+    memoryMb: 1,
+    diskMb: 1,
+    egress: "none",
+    allowHosts: [],
+    tier: "strict",
+    devHosts: [],
+  } as const;
   const name = () => `cap-device-${envId}`;
 
   it("a create that crashed before its handle was recorded is destroyed by name; the file system stays", async () => {
@@ -1117,12 +1127,12 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     const p = provider as SandboxProvider;
     const fs = await p.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       signal: signal(),
     });
     const h = await p.create({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       fileSystem: fs,
       signal: signal(),
     });
@@ -1141,7 +1151,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     const p = provider as SandboxProvider;
     await p.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
@@ -1180,7 +1190,15 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
 });
 
 describe("provider switch during a create", () => {
-  const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
+  const tiny = {
+    cpu: 1,
+    memoryMb: 1,
+    diskMb: 1,
+    egress: "none",
+    allowHosts: [],
+    tier: "strict",
+    devHosts: [],
+  } as const;
   const name = () => `cap-device-${envId}`;
 
   it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the device over", async () => {
@@ -1189,7 +1207,7 @@ describe("provider switch during a create", () => {
     // the previous provider's create ended after createFileSystem, before the handle was written
     await old.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)

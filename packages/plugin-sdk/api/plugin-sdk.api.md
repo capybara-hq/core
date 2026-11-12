@@ -405,6 +405,9 @@ export function clientCssProblem(css: string, assets: ReadonlySet<string>): stri
 export function clipMediaName(name: string, max?: number): string;
 
 // @public
+export function compareTiers(a: SandboxTier, b: SandboxTier): number;
+
+// @public
 export function compositeOver(color: string, ground: string): string | undefined;
 
 // @public
@@ -701,6 +704,9 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
+export const DEV_HOSTS: readonly string[];
+
+// @public
 export const DEVICE_PROTOCOL_VERSION = 1;
 
 // @public
@@ -743,7 +749,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp";
+export type DeviceFeature = "networkReport" | "policyOp" | "tiers";
 
 // @public
 export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
@@ -773,12 +779,13 @@ export interface DeviceKillTaggedArgs {
 // @public
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
-    network: DeviceNetworkMode;
+    effectiveTier: SandboxTier;
+    isolation: "sandbox" | "none";
+    localhost: "on" | "off-proxy-detected" | "off";
     remoteGrants: DeviceRemoteGrants;
+    tier?: SandboxTier;
+    unixSockets: "roots" | "all-masked" | "off";
 }
-
-// @public
-export type DeviceNetworkMode = "allowlist" | "open";
 
 // @public
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy";
@@ -799,7 +806,7 @@ export interface DeviceOpResults {
 // @public
 export interface DevicePolicyArgs {
     add?: string[];
-    network?: DeviceNetworkMode;
+    isolation?: "sandbox";
     remove?: string[];
     source: {
         approvalId?: string;
@@ -807,6 +814,7 @@ export interface DevicePolicyArgs {
         accountName: string;
         via: "web" | "im";
     };
+    tier?: SandboxTier | null;
 }
 
 // @public
@@ -1612,6 +1620,9 @@ export function isSafePackagePath(p: string): boolean;
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
 
 // @public
+export function isSandboxTier(v: unknown): v is SandboxTier;
+
+// @public
 export function isSecret(schema: z.ZodTypeAny): boolean;
 
 // @public
@@ -1807,6 +1818,9 @@ export type MergedScheme = {
 
 // @public
 export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
+
+// @public
+export function minTier(first: SandboxTier, ...rest: SandboxTier[]): SandboxTier;
 
 // @public
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
@@ -2511,6 +2525,9 @@ export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 export const SANDBOX_TAG_RE: RegExp;
 
 // @public
+export const SANDBOX_TIERS: readonly SandboxTier[];
+
+// @public
 export interface SandboxActor {
     accountId: string;
     conversationId: string;
@@ -2535,9 +2552,12 @@ export interface SandboxHandle {
 export interface SandboxLimits {
     allowHosts: string[];
     cpu: number;
+    defaultTier?: SandboxTier;
+    devHosts: string[];
     diskMb: number;
     egress: "none" | "allowlist" | "open";
     memoryMb: number;
+    tier: SandboxTier;
 }
 
 // @public
@@ -2571,6 +2591,7 @@ export interface SandboxProvider {
     }): Promise<ExecResult>;
     killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+    readonly limitsApplyAt?: "instance" | "fileSystem";
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -2585,6 +2606,7 @@ export interface SandboxProvider {
         isDir: boolean;
     } | null>;
     suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
     writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
 }
 
@@ -2594,6 +2616,9 @@ export interface SandboxRoots {
     tmp: string;
     workspace: string;
 }
+
+// @public
+export type SandboxTier = "strict" | "dev" | "open";
 
 // @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {
@@ -3220,6 +3245,9 @@ export interface ThemeSchemeOverride {
 
 // @public
 export const THINKING_VALUES: readonly string[];
+
+// @public
+export function tierAtMost(a: SandboxTier, b: SandboxTier): boolean;
 
 // @public
 export const TOOL_KEY_ARGS_MAX = 3;

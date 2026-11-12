@@ -49,7 +49,10 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  network: "allowlist",
+  effectiveTier: "strict",
+  isolation: "sandbox",
+  localhost: "off",
+  unixSockets: "off",
   allowedDomains: ["pypi.org"],
   remoteGrants: "owner",
 };

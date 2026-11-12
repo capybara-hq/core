@@ -35,6 +35,8 @@ const LIMITS: SandboxLimits = {
   diskMb: 1024,
   egress: "none",
   allowHosts: [],
+  tier: "strict",
+  devHosts: [],
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {

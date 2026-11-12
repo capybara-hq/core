@@ -110,6 +110,8 @@ export function approvalsFor(
         diskMb: 1024,
         egress: "open" as const,
         allowHosts: [],
+        tier: "strict" as const,
+        devHosts: [],
       }),
     },
   );

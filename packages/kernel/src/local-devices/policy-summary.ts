@@ -1,4 +1,8 @@
-import type { DeviceFeature, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceFeature,
+  type DeviceLocalPolicySummary,
+  isSandboxTier,
+} from "@capybara-hq/plugin-sdk";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp"];
 
@@ -19,12 +23,24 @@ export function deviceFeaturesOf(v: unknown): DeviceFeature[] {
 export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  if (o.network !== "allowlist" && o.network !== "open") return null;
+  if (o.tier !== undefined && !isSandboxTier(o.tier)) return null;
+  if (!isSandboxTier(o.effectiveTier)) return null;
+  if (o.isolation !== "sandbox" && o.isolation !== "none") return null;
+  if (o.localhost !== "on" && o.localhost !== "off-proxy-detected" && o.localhost !== "off") {
+    return null;
+  }
+  if (o.unixSockets !== "roots" && o.unixSockets !== "all-masked" && o.unixSockets !== "off") {
+    return null;
+  }
   if (o.remoteGrants !== "owner" && o.remoteGrants !== "off") return null;
   if (!Array.isArray(o.allowedDomains)) return null;
   if (!o.allowedDomains.every((d): d is string => typeof d === "string")) return null;
   return {
-    network: o.network,
+    ...(o.tier !== undefined && { tier: o.tier }),
+    effectiveTier: o.effectiveTier,
+    isolation: o.isolation,
+    localhost: o.localhost,
+    unixSockets: o.unixSockets,
     allowedDomains: [...o.allowedDomains],
     remoteGrants: o.remoteGrants,
   };

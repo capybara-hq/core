@@ -47,6 +47,8 @@ const LIMITS: SandboxLimits = {
   diskMb: 2048,
   egress: "allowlist",
   allowHosts: ["example.com"],
+  tier: "strict",
+  devHosts: [],
 };
 const ROOTS = {
   workspace: "/home/me/env/workspace",

@@ -466,7 +466,7 @@ function MachineSection({ device: e, onRevoke }: { device: Device; onRevoke(): v
             { k: t("machine.name"), v: m.name },
             { k: t("machine.os"), v: osLabel(m.os) },
             ...(m.mode !== null ? [{ k: t("machine.mode"), v: t(`mode.${m.mode}`) }] : []),
-            ...(e.network?.policy?.network === "open"
+            ...(e.network?.policy?.tier === "open"
               ? [{ k: t("network.title"), v: <Badge tone="warn">{t("network.open")}</Badge> }]
               : []),
             ...(m.programVersion !== null
@@ -571,7 +571,7 @@ function NetworkSection({ orgId, device: e }: { orgId: string; device: Device })
   const remoteOff = policy?.remoteGrants === "off";
   // widening (add, 不限网络 on) needs the machine to take it; narrowing is always sent
   const canWiden = canApply && policy !== null && !remoteOff && !docker;
-  const open = policy?.network === "open";
+  const open = policy?.tier === "open";
   const pending = change.isPending;
 
   const send = async (patch: DevicePolicyPatch, done: string) => {

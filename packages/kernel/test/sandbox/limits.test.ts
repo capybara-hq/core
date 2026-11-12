@@ -31,6 +31,8 @@ const DEPLOYMENT: SandboxLimits = {
   diskMb: 2048,
   egress: "allowlist",
   allowHosts: ["registry.npmjs.org"],
+  tier: "strict",
+  devHosts: [],
 };
 
 describe("effectiveSandboxLimits", () => {

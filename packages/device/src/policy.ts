@@ -104,16 +104,17 @@ export function grantedHosts(
 /**
  * The domains one command may reach: what the device's egress allows, cut to the local policy,
  * plus the command's grants ({@link grantedHosts}). The cloud can only narrow the local policy;
- * an empty `allowlist` policy allows nothing but the grants. A policy `open` stops narrowing: the
+ * an empty `allowedDomains` allows nothing but the grants. Tier `open` stops narrowing: the
  * org's list, or {@link ANY_HOST} when the org is open too.
  */
 export function effectiveEgress(
-  policy: Pick<Policy, "allowedDomains" | "network" | "remoteGrants">,
+  policy: Pick<Policy, "allowedDomains" | "tier" | "remoteGrants">,
   limits: Limits,
   grants?: Pick<DeviceExecGrants, "hosts">,
 ): string[] {
   if (limits.egress === "none") return [];
-  if (policy.network === "open") {
+  // Until tiers are applied per command, only `open` changes the network; any other tier is strict.
+  if (policy.tier === "open") {
     if (limits.egress === "open") return [ANY_HOST];
     return [...new Set(limits.allowHosts.map((h) => h.toLowerCase()))];
   }

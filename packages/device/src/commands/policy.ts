@@ -193,7 +193,8 @@ export function policyCommand(
               }
             }
           }
-          change = (p) => ({ ...p, network: value });
+          // Tier `open` is the old open network; `allowlist` is tier `strict`.
+          change = (p) => ({ ...p, tier: value === "open" ? "open" : "strict" });
           break;
         }
         case "remoteGrants": {

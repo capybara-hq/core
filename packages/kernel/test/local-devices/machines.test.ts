@@ -184,7 +184,10 @@ describe("MachinesService", () => {
       sessionIsolation: false,
     };
     const policy = {
-      network: "allowlist" as const,
+      effectiveTier: "strict" as const,
+      isolation: "sandbox" as const,
+      localhost: "off" as const,
+      unixSockets: "off" as const,
       allowedDomains: ["pypi.org"],
       remoteGrants: "owner" as const,
     };

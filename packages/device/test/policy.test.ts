@@ -26,6 +26,8 @@ const limits = (egress: SandboxLimits["egress"], allowHosts: string[] = []): San
   diskMb: 1024,
   egress,
   allowHosts,
+  tier: "strict",
+  devHosts: [],
 });
 const policy = (allowedDomains: string[]) => ({ ...DEFAULT_POLICY, allowedDomains });
 
@@ -61,7 +63,7 @@ describe("effectiveEgress: network open", () => {
   const open = (allowedDomains: string[] = []) => ({
     ...DEFAULT_POLICY,
     allowedDomains,
-    network: "open" as const,
+    tier: "open" as const,
   });
 
   it("is exactly the org's egress: its list, any host, or nothing", () => {
@@ -119,7 +121,7 @@ describe("effectiveEgress: grants", () => {
   });
 
   it("add nothing to a device that is already open", () => {
-    const p = { ...DEFAULT_POLICY, network: "open" as const };
+    const p = { ...DEFAULT_POLICY, tier: "open" as const };
     expect(effectiveEgress(p, limits("open"), grants("b.com"))).toEqual(["*"]);
     expect(effectiveEgress(p, limits("allowlist", ["b.com"]), grants("b.com"))).toEqual(["b.com"]);
   });
@@ -236,10 +238,10 @@ describe("policy command", () => {
   it("show prints network and remoteGrants", () => {
     writeFileSync(
       policyPath(dir),
-      JSON.stringify({ ...DEFAULT_POLICY, network: "open", remoteGrants: "off" }),
+      JSON.stringify({ ...DEFAULT_POLICY, tier: "open", remoteGrants: "off" }),
     );
     expect(run({ command: "policy", action: "show" })).toBe(0);
-    expect(JSON.parse(out[0] ?? "")).toMatchObject({ network: "open", remoteGrants: "off" });
+    expect(JSON.parse(out[0] ?? "")).toMatchObject({ tier: "open", remoteGrants: "off" });
   });
 
   it("set allowedDomains stores the list; show prints it", () => {
@@ -406,13 +408,13 @@ describe("policy set network and remoteGrants", () => {
     expect(out).toContain(OPEN_NETWORK_RISK);
     expect(err.join("\n")).toContain("capybara-device policy set network open --yes");
     expect(asked).toEqual([]);
-    expect(readPolicy(dir).network).toBe("allowlist");
+    expect(readPolicy(dir).tier).toBeUndefined();
   });
 
   it("open with --yes: prints the risk and opens", async () => {
     expect(await cli(["set", "network", "open", "--yes"])).toBe(0);
     expect(out).toContain(OPEN_NETWORK_RISK);
-    expect(readPolicy(dir).network).toBe("open");
+    expect(readPolicy(dir).tier).toBe("open");
     expect(asked).toEqual([]);
   });
 
@@ -421,7 +423,7 @@ describe("policy set network and remoteGrants", () => {
     expect(asked).toEqual([OPEN_NETWORK_PROMPT]);
     expect(out).toEqual([OPEN_NETWORK_RISK]);
     expect(err).toEqual([OPEN_NETWORK_NEEDS_YES]);
-    expect(readPolicy(dir).network).toBe("allowlist");
+    expect(readPolicy(dir).tier).toBeUndefined();
 
     out.length = 0;
     asked.length = 0;
@@ -429,15 +431,15 @@ describe("policy set network and remoteGrants", () => {
     expect(asked).toEqual([OPEN_NETWORK_PROMPT]);
     // the risk is shown once
     expect(out.filter((l) => l === OPEN_NETWORK_RISK)).toHaveLength(1);
-    expect(readPolicy(dir).network).toBe("open");
+    expect(readPolicy(dir).tier).toBe("open");
   });
 
   it("allowlist is always accepted, without a question", async () => {
-    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, network: "open" }));
+    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, tier: "open" }));
     expect(await cli(["set", "network", "allowlist"], { isTTY: true })).toBe(0);
     expect(asked).toEqual([]);
     expect(out).not.toContain(OPEN_NETWORK_RISK);
-    expect(readPolicy(dir).network).toBe("allowlist");
+    expect(readPolicy(dir).tier).toBe("strict");
   });
 
   it("network takes allowlist or open only", async () => {
@@ -449,13 +451,13 @@ describe("policy set network and remoteGrants", () => {
   it("remoteGrants takes owner or off; other fields are kept", async () => {
     writeFileSync(
       policyPath(dir),
-      JSON.stringify({ ...DEFAULT_POLICY, allowedDomains: ["a.com"], network: "open" }),
+      JSON.stringify({ ...DEFAULT_POLICY, allowedDomains: ["a.com"], tier: "open" }),
     );
     expect(await cli(["set", "remoteGrants", "off"])).toBe(0);
     expect(readPolicy(dir)).toMatchObject({
       remoteGrants: "off",
       allowedDomains: ["a.com"],
-      network: "open",
+      tier: "open",
     });
     expect(out.join("\n")).toMatch(/can no longer widen/);
     expect(await cli(["set", "remoteGrants", "owner"])).toBe(0);

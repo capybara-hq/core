@@ -7,7 +7,9 @@ import {
   type DeviceRes,
   type DeviceStatArgs,
   type DeviceWriteFileArgs,
+  isSandboxTier,
   type KernelReq,
+  tierAtMost,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { CommandLogEntry } from "./command-log.js";
@@ -63,8 +65,14 @@ export function logEntryFor(
 
 /** The summary the kernel keeps of a local policy (hello, `policy` op result). */
 export function policySummary(p: Policy): DeviceLocalPolicySummary {
+  // Until tiers are applied per command (and localhost / Unix sockets offered), the device runs
+  // tier `open` as the old open network and every other tier as `strict`.
   return {
-    network: p.network,
+    ...(p.tier !== undefined && { tier: p.tier }),
+    effectiveTier: p.tier === "open" ? "open" : "strict",
+    isolation: p.isolation,
+    localhost: "off",
+    unixSockets: "off",
     allowedDomains: [...p.allowedDomains],
     remoteGrants: p.remoteGrants,
   };
@@ -114,7 +122,7 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
 }
 
 /**
- * Applies a `policy` op to the local policy: refuses widening (`add`, `network: "open"`) in
+ * Applies a `policy` op to the local policy: refuses widening (`add`, a higher `tier`) in
  * Docker mode and unless `remoteGrants` is `owner`, as the file says under the lock; always applies narrowing; validates
  * every host; idempotent. Returns the result and the local audit line.
  */
@@ -127,18 +135,31 @@ function applyPolicyOp(
   const fromApproval = source.approvalId !== undefined;
   const add = [...new Set(opHosts(args.add, "add", fromApproval))];
   const remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
-  if (args.network !== undefined && args.network !== "allowlist" && args.network !== "open") {
-    throw new DeviceOpError("policy", `unknown network ${JSON.stringify(args.network)}`);
+  if (args.tier !== undefined && args.tier !== null && !isSandboxTier(args.tier)) {
+    throw new DeviceOpError("policy", `unknown tier ${JSON.stringify(args.tier)}`);
+  }
+  if (args.isolation !== undefined && args.isolation !== "sandbox") {
+    // Turning the sandbox off is decided on the machine only.
+    throw new DeviceOpError("policy", `isolation may only be set to "sandbox" from the deployment`);
   }
   const both = add.find((h) => remove.includes(h));
   if (both !== undefined) {
     throw new DeviceOpError("policy", `${both} is both added and removed`);
   }
-  const widens = add.length > 0 || args.network === "open";
+  // A tier above the file's, or following the org's default, may widen (the org's default is not
+  // known here): judged against the file under the lock below.
+  const widensTier = (p: Policy): boolean => {
+    const next = args.tier;
+    if (next === undefined || next === "strict") return false;
+    if (next === null) return p.tier !== undefined;
+    return p.tier === undefined || !tierAtMost(next, p.tier);
+  };
+  const widens = add.length > 0 || args.tier === "open";
   const parts: string[] = [];
   if (add.length > 0) parts.push(`add ${add.join(", ")}`);
   if (remove.length > 0) parts.push(`remove ${remove.join(", ")}`);
-  if (args.network !== undefined) parts.push(`network ${args.network}`);
+  if (args.tier !== undefined) parts.push(`tier ${args.tier ?? "org default"}`);
+  if (args.isolation !== undefined) parts.push(`isolation ${args.isolation}`);
   const by =
     `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
     `via ${clean(source.via, 10)}`;
@@ -148,15 +169,18 @@ function applyPolicyOp(
   if (widens && mode === "docker") throw new PolicyRefused(DOCKER_WIDENING_MESSAGE, refused);
   const next = store.update((p) => {
     // Judged against the file as it is now, inside the lock: a local `remoteGrants off` wins.
-    if (widens && p.remoteGrants !== "owner") {
+    if ((widens || widensTier(p)) && p.remoteGrants !== "owner") {
       throw new PolicyRefused(REMOTE_GRANTS_OFF_MESSAGE, refused);
     }
     const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
     const present = new Set(kept.map((d) => d.toLowerCase()));
+    const { tier: _old, ...rest } = p;
+    const tier = args.tier === undefined ? p.tier : (args.tier ?? undefined);
     return {
-      ...p,
+      ...rest,
+      ...(tier !== undefined && { tier }),
+      ...(args.isolation !== undefined && { isolation: args.isolation }),
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
-      network: args.network ?? p.network,
     };
   });
   return {

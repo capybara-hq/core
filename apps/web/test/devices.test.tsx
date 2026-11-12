@@ -622,7 +622,10 @@ describe("device network (network ask-to-allow spec §7)", () => {
     lastSeenAt: T,
   };
   const policy = (over: Record<string, unknown> = {}) => ({
-    network: "allowlist",
+    effectiveTier: "strict",
+    isolation: "sandbox",
+    localhost: "off",
+    unixSockets: "off",
     allowedDomains: ["files.example.com"],
     remoteGrants: "owner",
     ...over,
@@ -693,10 +696,10 @@ describe("device network (network ask-to-allow spec §7)", () => {
     let open = false;
     const calls = stubApi({
       [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({ policy: policy({ network: open ? "open" : "allowlist" }) }) }),
+        json(200, { device: local({ policy: policy({ tier: open ? "open" : "strict" }) }) }),
       [`POST ${BASE}/e1/policy`]: (req) => {
         open = (bodyOf(req) as { network: string }).network === "open";
-        return json(200, { policy: policy({ network: open ? "open" : "allowlist" }) });
+        return json(200, { policy: policy({ tier: open ? "open" : "strict" }) });
       },
     });
     await renderDetail({ locale: "zh" });

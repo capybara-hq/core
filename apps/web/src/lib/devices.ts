@@ -29,8 +29,16 @@ export interface DeviceMachine {
 
 /** A local device's network policy as its machine last reported it (kernel `DeviceLocalPolicySummary`). */
 export interface DeviceNetworkPolicy {
-  /** `open`: the local policy no longer narrows (「不限网络」); the org's egress still applies. */
-  network: "allowlist" | "open";
+  /**
+   * The tier the device owner chose (absent = follows the org). `open`: the local policy no longer
+   * narrows (「不限网络」); the org's egress still applies.
+   */
+  tier?: "strict" | "dev" | "open";
+  /** The tier the device ran its last command at. */
+  effectiveTier: "strict" | "dev" | "open";
+  isolation: "sandbox" | "none";
+  localhost: "on" | "off-proxy-detected" | "off";
+  unixSockets: "roots" | "all-masked" | "off";
   allowedDomains: string[];
   /** `off`: the machine refuses every widening from the deployment (set only on the machine). */
   remoteGrants: "owner" | "off";
@@ -187,9 +195,9 @@ export const revokeDeviceMachine = (orgId: string, id: string) =>
 export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
 
-/** Whether the device's local policy is 「不限网络」 (`network: "open"`), as its machine reported. */
+/** Whether the device's local policy is 「不限网络」 (tier `open`), as its machine reported. */
 export const deviceNetworkOpen = (e: Pick<Device, "network">): boolean =>
-  e.network?.policy?.network === "open";
+  e.network?.policy?.tier === "open";
 
 /** A change of a device's network policy by its owner (`POST …/devices/:id/policy`). */
 export interface DevicePolicyPatch {

@@ -508,7 +508,10 @@ export class DevicesService {
       change: {
         ...(change.add !== undefined && { add: change.add }),
         ...(change.remove !== undefined && { remove: change.remove }),
-        ...(change.network !== undefined && { network: change.network }),
+        // Until the route takes a tier: the old open network is tier `open`, allowlist `strict`.
+        ...(change.network !== undefined && {
+          tier: change.network === "open" ? ("open" as const) : ("strict" as const),
+        }),
       },
       source: { accountId: account.id, accountName: account.displayName, via: "web" },
     });

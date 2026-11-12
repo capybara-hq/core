@@ -69,7 +69,15 @@ describe("device protocol", () => {
 
   const parse = (o: unknown, from: "device" | "kernel") => () =>
     parseDeviceFrame(JSON.stringify(o), from);
-  const limits = { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] };
+  const limits = {
+    cpu: 1,
+    memoryMb: 512,
+    diskMb: 1024,
+    egress: "none",
+    allowHosts: [],
+    tier: "strict",
+    devHosts: [],
+  };
   const exec = {
     command: "ls",
     timeoutMs: 1000,
@@ -144,6 +152,12 @@ describe("device protocol", () => {
       ["exec", { ...exec, actor: { accountId: "a" } }],
       ["exec", { ...exec, limits: { ...limits, egress: "x" } }],
       ["exec", { ...exec, limits: { ...limits, allowHosts: [1] } }],
+      ["exec", { ...exec, limits: { ...limits, tier: undefined } }],
+      ["exec", { ...exec, limits: { ...limits, tier: "wide" } }],
+      ["exec", { ...exec, limits: { ...limits, devHosts: undefined } }],
+      ["exec", { ...exec, limits: { ...limits, devHosts: ["10.0.0.1"] } }],
+      ["exec", { ...exec, limits: { ...limits, devHosts: [1] } }],
+      ["exec", { ...exec, limits: { ...limits, defaultTier: "x" } }],
       ["exec", { ...exec, cwd: 1 }],
       ["exec", { ...exec, env: { A: 1 } }],
       ["readFile", { path: "/a", maxBytes: -1 }],
@@ -165,6 +179,13 @@ describe("device protocol", () => {
       ["stat", { path: "/a" }],
       ["killTagged", { tags: ["a"] }],
       ["create", { limits }],
+      [
+        "exec",
+        {
+          ...exec,
+          limits: { ...limits, tier: "open", defaultTier: "dev", devHosts: ["registry.npmjs.org"] },
+        },
+      ],
       ["stop", { reason: "deleted" }],
     ];
     for (const [op, args] of goods) expect(parse(req(op, args), "kernel")().type).toBe("req");
@@ -260,7 +281,10 @@ describe("device protocol", () => {
 
   describe("hello features and policy summary", () => {
     const summary = {
-      network: "allowlist",
+      effectiveTier: "strict",
+      isolation: "sandbox",
+      localhost: "off",
+      unixSockets: "roots",
       allowedDomains: ["files.slack.com", "*.github.com"],
       remoteGrants: "owner",
     };
@@ -275,14 +299,14 @@ describe("device protocol", () => {
     it("keeps known features and a valid policy summary", () => {
       const h = parseHello({
         ...hello,
-        features: ["networkReport", "teleport", "policyOp", 3],
+        features: ["networkReport", "teleport", "policyOp", "tiers", 3],
         policy: summary,
       });
-      expect(h.features).toEqual(["networkReport", "policyOp"]);
+      expect(h.features).toEqual(["networkReport", "policyOp", "tiers"]);
       expect(h.policy).toEqual(summary);
-      expect(
-        parseHello({ ...hello, policy: { ...summary, network: "open" } }).policy?.network,
-      ).toBe("open");
+      expect(h.policy?.tier).toBeUndefined();
+      const chosen = { ...summary, tier: "open", effectiveTier: "open", isolation: "none" };
+      expect(parseHello({ ...hello, policy: chosen }).policy).toEqual(chosen);
     });
 
     it("ignores malformed features and policy summaries", () => {
@@ -290,11 +314,15 @@ describe("device protocol", () => {
       for (const policy of [
         "x",
         null,
-        { ...summary, network: "wide" },
+        { ...summary, tier: "wide" },
+        { ...summary, effectiveTier: undefined },
+        { ...summary, isolation: "off" },
+        { ...summary, localhost: "yes" },
+        { ...summary, unixSockets: "some" },
         { ...summary, remoteGrants: "anyone" },
         { ...summary, allowedDomains: [1] },
         { ...summary, allowedDomains: "a.com" },
-        { network: "allowlist", remoteGrants: "off" },
+        { effectiveTier: "strict", remoteGrants: "off" },
       ]) {
         expect(parseHello({ ...hello, policy }).policy, JSON.stringify(policy)).toBeUndefined();
       }
@@ -308,8 +336,10 @@ describe("device protocol", () => {
       const goods: unknown[] = [
         { source },
         { add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
-        { remove: ["a.example.com"], network: "allowlist", source },
-        { network: "open", source },
+        { remove: ["a.example.com"], tier: "strict", source },
+        { tier: "open", source },
+        { tier: null, source },
+        { isolation: "sandbox", source },
         { add: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
       ];
       for (const args of goods) {
@@ -323,7 +353,10 @@ describe("device protocol", () => {
         { remove: [null], source },
         { add: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
         { remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
-        { network: "wide", source },
+        { tier: "wide", source },
+        { tier: 1, source },
+        { isolation: "none", source },
+        { isolation: null, source },
         { source: { ...source, via: "pat" } },
         { source: { ...source, accountId: 1 } },
         { source: { accountId: "acc_1", via: "web" } },
@@ -339,7 +372,11 @@ describe("device protocol", () => {
 
     it("validates the result", () => {
       const policy = {
-        network: "allowlist",
+        tier: "dev",
+        effectiveTier: "dev",
+        isolation: "sandbox",
+        localhost: "off-proxy-detected",
+        unixSockets: "all-masked",
         allowedDomains: ["a.example.com"],
         remoteGrants: "off",
       };
@@ -347,7 +384,9 @@ describe("device protocol", () => {
       for (const bad of [
         null,
         {},
-        { policy: { ...policy, network: "x" } },
+        { policy: { ...policy, tier: "x" } },
+        { policy: { ...policy, effectiveTier: undefined } },
+        { policy: { ...policy, isolation: "x" } },
         { policy: { ...policy, allowedDomains: [1] } },
         { policy: { ...policy, remoteGrants: "x" } },
       ]) {
