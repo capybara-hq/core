@@ -1,4 +1,5 @@
 import {
+  CONTEXT_LIMITS,
   type ContentBlock,
   DOCUMENT_MEDIA_TYPES,
   type Effort,
@@ -299,8 +300,11 @@ export const RunContextSchema = z.object({
 const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
   z.object({ type: z.literal(type), payload });
 
-/** The most UTF-8 bytes a `plugin_context` event's text may hold (memory spec §6.1). */
-export const PLUGIN_CONTEXT_MAX_BYTES = 32768;
+/**
+ * The most UTF-8 bytes a `plugin_context` event's text may hold (memory spec §6.1): the providers'
+ * limit, so the log takes every text a provider may return.
+ */
+export const PLUGIN_CONTEXT_MAX_BYTES: number = CONTEXT_LIMITS.maxBytes;
 
 /**
  * `plugin_context` (memory spec §6.1): the text a `context@1` provider added at a run start. Empty
