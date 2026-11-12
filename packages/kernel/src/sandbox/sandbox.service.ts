@@ -552,11 +552,15 @@ export class SandboxService {
    * (files kept). `pendingFilesReset`: the provider fixes limits at its file system
    * (`limitsApplyAt: "fileSystem"`) and cannot `update` them, so only a file reset applies them.
    * A local device (its machine applies the tier at each command) is never pending, and its
-   * `applied` is null.
+   * `applied` is null. `opts.policy`: the device's effective policy when the caller already read
+   * it ({@link devicePolicy}).
    */
-  async limitsState(device: { orgId: string; deviceId: string }): Promise<DeviceLimitsState> {
+  async limitsState(
+    device: { orgId: string; deviceId: string },
+    opts: { policy?: EffectiveSandboxPolicy } = {},
+  ): Promise<DeviceLimitsState> {
     const [policy, row, p] = await Promise.all([
-      this.devicePolicy(device),
+      opts.policy ?? this.devicePolicy(device),
       this.db
         .selectFrom("device_instances")
         .select(["provider", "status", "handle", "fs_status", "instance_limits"])
@@ -753,8 +757,9 @@ export class SandboxService {
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const env = ctx.deviceId;
     const holder = ctx.holderConversationId;
-    // decides the shared fast path only: the exclusive path reads it again under the lease
-    let want = await this.wantedLimits(ctx, p);
+    // decides the shared fast path only (read again before each shared lease is used): the
+    // exclusive path reads it again under the lease
+    const want = () => this.wantedLimits(ctx, p);
     let e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, null, want));
     try {
       try {
@@ -766,7 +771,6 @@ export class SandboxService {
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(env, prev);
-        want = await this.wantedLimits(ctx, p);
         e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, gone, want));
         // a reset seen on the first try still has to be told (it covers the restart)
         const info: EnteredInfo = prev.info.filesReset
@@ -840,6 +844,7 @@ export class SandboxService {
         .selectFrom("device_instances")
         .selectAll()
         .where("device_id", "=", ctx.deviceId)
+        .where("org_id", "=", ctx.orgId)
         .executeTakeFirst());
     if (r === undefined || r.fs_status !== "ready" || r.provider !== p.plugin) return false;
     const applied = readInstanceLimits(r.instance_limits).applied;
@@ -937,22 +942,26 @@ export class SandboxService {
    * Becomes a holder: loops until it has a shared lease on a running instance, or `sandbox.busy`.
    * An instance recorded `running` (with the current provider, not the `gone` instance) is used
    * under a shared lease; otherwise the exclusive lease (with intent) makes it run and is
-   * downgraded. One token serves both, so the waiter passes its own intent.
+   * downgraded. One token serves both, so the waiter passes its own intent. `wantNow` reads the
+   * limits this use wants ({@link wantedLimits}), again after each wait, so a tier narrowed
+   * during the wait is never used with the old, wider limits.
    */
   private async enter(
     ctx: SandboxUseContext,
     p: SandboxProviderEntry,
     signal: AbortSignal,
     gone: Instance | null,
-    want: SandboxLimits | null,
+    wantNow: () => Promise<SandboxLimits | null>,
   ): Promise<Entered> {
     const env = ctx.deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     let intent = false;
+    let want = await wantNow();
     try {
-      for (;;) {
+      for (let waited = false; ; waited = true) {
         if (signal.aborted) throw abortReason(signal);
+        if (waited) want = await wantNow();
         const row = await this.readRow(ctx);
         // an instance whose tier or egress must change goes through the exclusive lease
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>

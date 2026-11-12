@@ -426,7 +426,9 @@ export class OrgSettingsService {
    * - `sandboxTier`: the effective ceiling, default or unsandboxed switch rises, or a stored cap
    *   loosens (an absent `max` / `default` follows the platform, so it ranks above every tier and
    *   clearing a cap that equals today's platform value is a widening; an explicit
-   *   `allowUnsandboxed: false` stays false);
+   *   `allowUnsandboxed: false` stays false). A cleared `default` under a new `max` no higher than
+   *   the old default is no loosening: the default never exceeds the ceiling. The value is
+   *   replaced whole, so the refusal names the fields the patch would clear;
    * - `sandboxEgress`: the base list grows: from none to anything else, or to hosts (the
    *   deployment's when the org gives none) not all in the current list.
    */
@@ -436,16 +438,26 @@ export class OrgSettingsService {
       const prev = before.sandboxTier;
       const b = this.sandboxPolicy(before, null);
       const a = this.sandboxPolicy({ ...before, sandboxTier: next }, null);
+      // a cleared default follows the platform, capped by the ceiling: `max` bounds it then
+      const nextDefault =
+        next?.default === undefined && next?.max !== undefined ? next.max : next?.default;
       if (
         !tierAtMost(a.ceiling, b.ceiling) ||
         !tierAtMost(a.defaultTier, b.defaultTier) ||
         (a.allowUnsandboxed && !b.allowUnsandboxed) ||
         intentRank(next?.max) > intentRank(prev?.max) ||
-        intentRank(next?.default) > intentRank(prev?.default) ||
+        intentRank(nextDefault) > intentRank(prev?.default) ||
         (prev?.allowUnsandboxed === false && next?.allowUnsandboxed !== false)
       ) {
+        const cleared = (["max", "default", "allowUnsandboxed"] as const).filter(
+          (f) => prev?.[f] !== undefined && next?.[f] === undefined,
+        );
         throw sandboxTierNotAllowed(
-          "Raising the sandbox level needs a person in the organization settings.",
+          "Raising the sandbox level needs a person in the organization settings." +
+            (cleared.length === 0
+              ? ""
+              : ` sandboxTier is replaced whole: this change clears ${cleared.join(", ")}` +
+                " (which would then follow the platform); give the values to keep again."),
         );
       }
     }

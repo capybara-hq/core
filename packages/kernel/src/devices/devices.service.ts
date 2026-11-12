@@ -544,7 +544,7 @@ export class DevicesService {
    * spec §11.5): see {@link sandboxStateOf}, plus
    * - `network: "none"` when the org's or the platform's sandbox network is off;
    * - a cloud device whose new limits wait for a file reset: the tier and network its instance
-   *   still runs with (`limitsState(...).applied`);
+   *   still runs with (`limitsState(...).applied`; open with its network on when unrecorded);
    * - a local device: its machine's localhost and unix socket facts; in a scheduled run without
    *   a person (`runId`, {@link unattendedTierOf}) and without the task's `tier:open` grant its
    *   tier is capped at `dev`, as the exec args cap it;
@@ -583,10 +583,15 @@ export class DevicesService {
     let tier = s.effectiveTier;
     let networkOff = policyOf(s.tier).base.egress === "none";
     if (row.source === "cloud") {
-      const state = await this.sandbox.limitsState({ orgId, deviceId });
-      if (state.pendingFilesReset && state.applied !== null) {
-        tier = state.applied.tier;
-        networkOff = state.applied.egress === "none";
+      const state = await this.sandbox.limitsState(
+        { orgId, deviceId },
+        { policy: policyOf(row.tier) },
+      );
+      if (state.pendingFilesReset) {
+        // an unknown record (an instance made before records) may be wider: it counts as open
+        // with its network on, as the unattended gate counts it (`mayRunOpen`)
+        tier = state.applied?.tier ?? "open";
+        networkOff = state.applied?.egress === "none";
       }
     } else if (unattended !== null && !unattended.openGranted) {
       tier = minTier(tier, "dev");
@@ -1139,7 +1144,7 @@ export class DevicesService {
           const [limits, state] = await Promise.all([
             this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy }),
             r.source === "cloud"
-              ? this.sandbox.limitsState({ orgId, deviceId: r.id })
+              ? this.sandbox.limitsState({ orgId, deviceId: r.id }, { policy })
               : { pendingNextUse: false, pendingFilesReset: false },
           ]);
           return [r.id, { limits, state }] as const;

@@ -26,7 +26,7 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
  * Sandbox tiers on cloud devices (sandbox dev tiers spec §7.1, §11.4, §12): an instance records
@@ -292,6 +292,32 @@ describe("a changed tier on use", () => {
     expect(await ops("update")).toHaveLength(1);
   });
 
+  it("a tier narrowed while a use waits for the lease is applied before that use runs", async () => {
+    provider = fake({ updateMode: "updated" });
+    const leases = sandboxLeasesFor({ redis, log: {}, pollMs: 20 });
+    const s = sandboxServiceFor({
+      db,
+      redis,
+      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      config: () => config,
+      log,
+      lockPollMs: 20,
+      leases,
+    });
+    const first = await use(s);
+    // another holder (a sweep) has the device alone: the use reads its limits, then waits
+    const ex = await leases.tryExclusive(deviceId);
+    expect(ex).not.toBeNull();
+    const waiting = use(s);
+    await new Promise((r) => setTimeout(r, 150));
+    await setTier("strict");
+    await ex?.release();
+    const again = await waiting;
+    expect(again.h).toEqual(first.h);
+    expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
+    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
+  });
+
   it("a NULL record (an instance made before the upgrade) differs once", async () => {
     const s = service();
     await use(s);
@@ -352,6 +378,37 @@ describe("a failed limits change", () => {
     expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
     expect((await fakeSandboxMeta(root, again.h.id))?.limits.tier).toBe("strict");
     expect(warned.some((m) => m.includes("update failed"))).toBe(true);
+  });
+
+  it("an update aborted on a provider bound to instances suspends the instance instead of recreating it", async () => {
+    provider = fake({ updateMode: "throw" });
+    const s = service();
+    const first = await use(s);
+    await setTier("strict");
+    await setFakeSandboxDelays(root, { update: 5000 });
+    const ac = new AbortController();
+    const run = s
+      .withSandbox(
+        {
+          orgId,
+          deviceId,
+          holderConversationId: randomUUID(),
+          actor: { accountId, conversationId: randomUUID() },
+        },
+        async (h) => h,
+        ac.signal,
+      )
+      .catch((e: unknown) => e);
+    // aborted while the update runs: the instance may hold half-applied limits
+    await new Promise((r) => setTimeout(r, 200));
+    ac.abort();
+    expect(await run).toBeInstanceOf(Error);
+    await setFakeSandboxDelays(root, {});
+    expect(await ops("update")).toEqual([]);
+    expect(await ops("create")).toHaveLength(1);
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+    expect(await status()).toBe("suspended");
+    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
   });
 
   it("an update that fails on a provider bound to its file system suspends the instance and throws", async () => {

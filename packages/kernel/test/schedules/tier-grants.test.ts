@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   DeviceExecArgs,
+  DeviceFeature,
   DeviceLocalPolicySummary,
   KernelReq,
   NetworkBlockLayer,
@@ -66,6 +67,9 @@ describe("tierGrantRefusal", () => {
     expect(tierGrantRefusal("tier:open", { ceiling: "dev" })?.code).toBe("needs_admin");
     expect(tierGrantRefusal("tier:open", { ceiling: "strict" })?.code).toBe("needs_admin");
     expect(tierGrantRefusal("tier:dev", { ceiling: "open" })?.code).toBe("not_grantable");
+    expect(tierGrantRefusal("tier:open", { ceiling: "open", deviceReachesOpen: false })?.code).toBe(
+      "device_refuses",
+    );
     expect(isPolicyGrantKey("tier:open")).toBe(true);
     expect(isPolicyGrantKey("network:a.example.com")).toBe(true);
     expect(isPolicyGrantKey("Bash")).toBe(false);
@@ -165,7 +169,10 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Setup> {
+async function setup(
+  policy: Partial<DeviceLocalPolicySummary> = {},
+  features: DeviceFeature[] = ["networkReport", "policyOp", "tiers"],
+): Promise<Setup> {
   const login = `m-${randomUUID().slice(0, 8)}`;
   const accountId = (
     await accountsFor(db).createLocal({ login, password: PW, displayName: `Dev ${login}` })
@@ -192,7 +199,7 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
   await machine.opened;
   machine.send({
     ...HELLO,
-    features: ["networkReport", "policyOp"],
+    features,
     policy: dev.policy,
   } as typeof HELLO);
   await waitFor(
@@ -391,6 +398,26 @@ describe("adding the tier:open grant", { timeout: 60_000 }, () => {
     expect(res.statusCode).toBe(400);
     expect(codeOf(res)).toBe("schedule.grant_not_allowed");
     expect(res.body).toContain("only an organization admin");
+  });
+
+  it("is refused for a device whose program applies no sandbox levels", async () => {
+    const s = await setup({}, ["networkReport", "policyOp"]);
+    const res = await s.req({
+      method: "POST",
+      url: base(),
+      payload: {
+        agentId: s.agentId,
+        name: "Nightly",
+        prompt: "Fetch.",
+        trigger: { kind: "cron", expr: "0 9 * * *" },
+        mode: "new",
+        deviceId: s.deviceId,
+        grants: [{ toolKey: "tier:open" }],
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(codeOf(res)).toBe("schedule.grant_not_allowed");
+    expect(res.body).toContain("without sandbox levels");
   });
 });
 

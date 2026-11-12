@@ -1332,12 +1332,17 @@ export class ScheduledTasksService {
     const tiers = grants.filter((g) => isTierGrantKey(g.toolKey));
     if (tiers.length > 0) {
       if (source.fromSession !== true) throw grantNotAllowed(TIER_GRANT_NEEDS_PERSON);
-      const { ceiling } = await this.sandbox.devicePolicy({ orgId });
+      const [{ ceiling }, device] = await Promise.all([
+        this.sandbox.devicePolicy({ orgId }),
+        deviceId === null ? null : this.devicePolicy.summary(deviceId),
+      ]);
+      // a connected local machine whose program applies no tiers runs every command in strict
+      const deviceReachesOpen = device === null || device.features.includes("tiers");
       for (const g of tiers) {
         if (g.connectorId !== undefined) {
           throw grantNotAllowed(`${g.toolKey} is a sandbox level and comes from no connector`);
         }
-        const why = tierGrantRefusal(g.toolKey, { ceiling });
+        const why = tierGrantRefusal(g.toolKey, { ceiling, deviceReachesOpen });
         if (why !== null) throw grantNotAllowed(why.message);
         out.set(g.toolKey, {
           toolKey: g.toolKey,
@@ -1372,8 +1377,8 @@ export class ScheduledTasksService {
 
   /**
    * What a network grant is checked against (network ask-to-allow spec §8.1): the network of the
-   * org's sandbox ceiling now (sandbox dev tiers spec §4.2) and the local policy summary of the task's device (null without a device or a
-   * connected machine).
+   * org's sandbox ceiling now (sandbox dev tiers spec §4.2) and the local policy summary of the
+   * task's device (null without a device or a connected machine).
    */
   private async networkGrantContext(
     orgId: string,

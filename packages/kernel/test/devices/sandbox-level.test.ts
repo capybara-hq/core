@@ -265,5 +265,13 @@ describe("DevicesService.sandboxLevel", { timeout: 30_000 }, () => {
       isolation: "sandbox",
       network: "none",
     });
+    // an unrecorded instance may be wider: open, as the unattended gate counts it
+    vi.spyOn(k.app.get(SandboxService), "limitsState").mockResolvedValue({
+      applied: null,
+      effective: { tier: "strict", egress: "allowlist" },
+      pendingNextUse: false,
+      pendingFilesReset: true,
+    });
+    expect(await devices.sandboxLevel(orgId, id)).toEqual({ tier: "open", isolation: "sandbox" });
   });
 });

@@ -177,11 +177,13 @@ export const isPolicyGrantKey = (key: string): boolean =>
  * Why `key` cannot be a task's sandbox tier grant (sandbox dev tiers spec §11.4), or null when it
  * can: only `tier:open` is one (`not_grantable` otherwise), and only while the org's ceiling
  * (`ceiling`: its highest tier, cut to the platform's) is `open` (`needs_admin`: only an org admin
- * can raise it, within the platform's).
+ * can raise it, within the platform's), and only while the task's device can reach it
+ * (`deviceReachesOpen: false`, `device_refuses`: a local device whose program applies no tiers
+ * runs every command in `strict`).
  */
 export function tierGrantRefusal(
   key: string,
-  ctx: { ceiling: SandboxTier },
+  ctx: { ceiling: SandboxTier; deviceReachesOpen?: boolean },
 ): { code: GrantRefusalCode; message: string } | null {
   if (key !== TIER_OPEN_GRANT_KEY) {
     return {
@@ -193,6 +195,13 @@ export function tierGrantRefusal(
     return {
       code: "needs_admin",
       message: `The organization's highest sandbox level is ${ctx.ceiling}, so a scheduled task cannot allow the open level; only an organization admin can raise it`,
+    };
+  }
+  if (ctx.deviceReachesOpen === false) {
+    return {
+      code: "device_refuses",
+      message:
+        "The task's device runs a capybara-device program without sandbox levels, so its commands always run at the strict level; update the program on the device, then allow the open level",
     };
   }
   return null;

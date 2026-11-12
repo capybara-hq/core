@@ -546,6 +546,20 @@ describe("a device's sandbox tier (sandbox dev tiers spec §7.2)", () => {
     });
   });
 
+  it("another member or the org's owner setting the tier of my device gets not_found", async () => {
+    const me = await member();
+    const other = await member();
+    const env = await create(me.req, "Not yours");
+    for (const req of [other.req, owner]) {
+      const res = await patch(req, env.id, { tier: "strict" });
+      expect(res.statusCode, res.body).toBe(404);
+      expect(errCode(res)).toBe("device.not_found");
+    }
+    const mine = await me.req({ method: "GET", url: `${base()}/${env.id}` });
+    expect((mine.json() as { device: DeviceView }).device.sandbox.tier).toBeNull();
+    expect(await tierAudits(env.id)).toEqual([]);
+  });
+
   it("above the ceiling → 400 device.tier_not_allowed, naming the platform or the org", async () => {
     const me = await member();
     const env = await create(me.req, "Capped");

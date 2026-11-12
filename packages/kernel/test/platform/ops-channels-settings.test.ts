@@ -271,7 +271,9 @@ describe("org settings", () => {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
         code: "org.sandbox_tier_not_allowed",
-        message: "Raising the sandbox level needs a person in the organization settings.",
+        message: expect.stringMatching(
+          /^Raising the sandbox level needs a person in the organization settings\./,
+        ),
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
     }
@@ -305,7 +307,6 @@ describe("org settings", () => {
       { sandboxTier: null },
       { sandboxTier: {} },
       { sandboxTier: { default: "dev", allowUnsandboxed: false } },
-      { sandboxTier: { max: "dev", allowUnsandboxed: false } },
       { sandboxTier: { max: "dev", default: "dev" } },
     ]) {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
@@ -314,6 +315,17 @@ describe("org settings", () => {
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
     }
+    // the refusal names what a whole replacement would clear
+    expect(await pre({ sandboxTier: { max: "dev", default: "dev" } })).toMatchObject({
+      message: expect.stringContaining("this change clears allowUnsandboxed"),
+    });
+    // a cleared default under a max no higher than it never exceeds the old default
+    expect(await pre({ sandboxTier: { max: "dev", allowUnsandboxed: false } })).toEqual({
+      ok: true,
+    });
+    expect(await pre({ sandboxTier: { max: "strict", allowUnsandboxed: false } })).toEqual({
+      ok: true,
+    });
     // narrower stays fine
     await run("org-settings.update", {
       sandboxTier: { max: "dev", default: "strict", allowUnsandboxed: false },
