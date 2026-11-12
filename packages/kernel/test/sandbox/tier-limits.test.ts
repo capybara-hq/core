@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import { type SandboxProvider, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -15,15 +15,21 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { UNATTENDED_OPEN_TIER_ERROR } from "../../src/schedules/unattended.js";
-import { mapSandboxError } from "../../src/tools/builtins/sandbox/common.js";
+import {
+  mapSandboxError,
+  SANDBOX_CREATE_FAILED_TEXT,
+  sandboxTierRefusedText,
+} from "../../src/tools/builtins/sandbox/common.js";
 import {
   createFakeSandbox,
+  FAKE_REFUSAL_SECRET,
   type FakeSandboxOptions,
   fakeSandboxMeta,
   fakeSandboxState,
   readFakeSandboxLimits,
   readFakeSandboxOps,
   setFakeSandboxDelays,
+  setFakeSandboxRefuseOpenEgress,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -349,18 +355,71 @@ describe("a changed tier on use", () => {
       raw,
     );
   });
+});
 
-  it("warns when the provider does not create an open-tier instance", async () => {
-    const refusing = fake();
-    const p: SandboxProvider = Object.create(refusing);
-    p.create = async (args) => {
-      if (args.limits.egress === "open") throw new Error("open egress is off");
-      return refusing.create(args);
-    };
+describe("a provider that refuses the open tier (openEgress off, spec §5.3)", () => {
+  /** The refusal and the tool text it becomes; the provider's own message never reaches it. */
+  const refused = async (err: unknown) => {
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("sandbox.tier_refused");
+    expect((err as ApiError).details).toEqual([{ tier: "open" }]);
+    expect((err as Error).message).not.toContain(FAKE_REFUSAL_SECRET);
+    const tool = mapSandboxError(err, undefined) as Error;
+    expect(tool).toBeInstanceOf(ToolError);
+    expect(tool.message).toBe(sandboxTierRefusedText("open"));
+    expect(tool.message).not.toContain(FAKE_REFUSAL_SECRET);
+    expect(tool.message).not.toContain("openEgress");
+    expect(warned.some((m) => m.includes("refused an instance in the open tier"))).toBe(true);
+  };
+
+  it("a new instance at open: the create is refused with the tier error", async () => {
+    await setFakeSandboxRefuseOpenEgress(root, true);
     await setTier("open");
+    await refused(await use(service()).catch((e: unknown) => e));
+    // dev still works on the same provider
+    await setTier("dev");
+    expect((await use(service())).info).toMatchObject({ fresh: true });
+  });
+
+  it("a running instance moved to open: the failed update recreates, and that create is refused", async () => {
+    provider = fake({ updateMode: "updated" });
+    const s = service();
+    await use(s);
+    await setFakeSandboxRefuseOpenEgress(root, true);
+    await setTier("open");
+    await refused(await use(s).catch((e: unknown) => e));
+  });
+
+  it("limits fixed at the file system: a new file system at open is refused", async () => {
+    provider = fake({ limitsApplyAt: "fileSystem" });
+    await setFakeSandboxRefuseOpenEgress(root, true);
+    await setTier("open");
+    await refused(await use(service()).catch((e: unknown) => e));
+    expect(await ops("create-fs")).toEqual([]);
+  });
+
+  it("limits fixed at the file system: a refused update suspends the instance with the tier error", async () => {
+    provider = fake({ updateMode: "updated", limitsApplyAt: "fileSystem" });
+    const s = service();
+    await use(s);
+    await setFakeSandboxRefuseOpenEgress(root, true);
+    await setTier("open");
+    await refused(await use(s).catch((e: unknown) => e));
+    expect(await status()).toBe("suspended");
+    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+  });
+
+  it("any other create failure becomes sandbox.create_failed without the provider's message", async () => {
+    const failing = fake();
+    const p: SandboxProvider = Object.create(failing);
+    p.create = async () => {
+      throw new Error(`no image configured (${FAKE_REFUSAL_SECRET})`);
+    };
     const err = await use(service(() => p)).catch((e: unknown) => e);
-    expect((err as Error).message).toBe("open egress is off");
-    expect(warned.some((m) => m.includes("open tier"))).toBe(true);
+    expect((err as ApiError).code).toBe("sandbox.create_failed");
+    expect((err as Error).message).not.toContain(FAKE_REFUSAL_SECRET);
+    expect((mapSandboxError(err, undefined) as Error).message).toBe(SANDBOX_CREATE_FAILED_TEXT);
+    expect(warned).toContain("the sandbox provider failed to create a device's sandbox");
   });
 });
 

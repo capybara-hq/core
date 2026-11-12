@@ -397,7 +397,8 @@ describe("lazy creation", () => {
       },
     };
     const s = service(() => flaky);
-    await expect(use(s)).rejects.toThrow("docker down");
+    // the provider's own message stays in the log
+    await expect(use(s)).rejects.toMatchObject({ code: "sandbox.create_failed" });
     fail = false;
     const a = await use(s);
     expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
@@ -1015,7 +1016,8 @@ describe("restarted is sticky (fix round 1)", () => {
     await use(s);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
     fail = true;
-    await expect(use(s)).rejects.toThrow("docker down");
+    // the provider's own message stays in the log
+    await expect(use(s)).rejects.toMatchObject({ code: "sandbox.create_failed" });
     fail = false;
     expect((await use(s)).info).toEqual({
       fresh: true,

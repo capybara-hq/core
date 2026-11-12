@@ -68,6 +68,11 @@ import { z } from "zod";
  *   `update`. `limitsApplyAt` is declared as given. Every limits a `create-fs`, `create` or
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
+ * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
+ *   call): like sandbox-docker / sandbox-e2b with `openEgress: "off"`, limits with egress `open`
+ *   make `create`, `update` and (with `limitsApplyAt: "fileSystem"`) `createFileSystem` throw an
+ *   ordinary error whose message carries {@link FAKE_REFUSAL_SECRET}, so tests can check that it
+ *   never reaches the model.
  *
  * `exec` runs the command with `/bin/sh -c` in the instance's directories: `/workspace`, `/skills`
  * and `/tmp` in the command are replaced by their host directories and mapped back in the output;
@@ -80,6 +85,9 @@ const Deployment = z.object({
   updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
   limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
 });
+
+/** A stand-in for a provider setting in the refusal's message (see the file header). */
+export const FAKE_REFUSAL_SECRET = "fake-secret-0c1d2e";
 
 /** How the fake applies new limits (see the file header). */
 export interface FakeSandboxOptions {
@@ -417,6 +425,13 @@ export async function setFakeSandboxFault(
   else await writeFile(join(root, "fault.json"), JSON.stringify(fault));
 }
 
+/** Makes the fake refuse open egress, as a provider set to `openEgress: "off"` does (or stop). */
+export async function setFakeSandboxRefuseOpenEgress(root: string, on: boolean): Promise<void> {
+  await mkdir(root, { recursive: true });
+  if (on) await writeFile(join(root, "refuse-open-egress"), "");
+  else await rm(join(root, "refuse-open-egress"), { force: true });
+}
+
 /** The error of a fault, shaped like node's socket errors. */
 function faultError(f: FakeSandboxFault): Error {
   const syscall = f.syscall ?? (f.code === "ECONNRESET" ? "read" : "connect");
@@ -507,6 +522,20 @@ export function createFakeSandbox(
   mkdirSync(rootDir, { recursive: true });
   const root = realpathSync(rootDir);
   const binDir = join(root, "bin");
+  /** Throws the open-egress refusal when the fake is set to refuse it (see the file header). */
+  const refuseOpen = async (limits: SandboxLimits) => {
+    if (limits.egress !== "open") return;
+    if (
+      await stat(join(root, "refuse-open-egress")).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      throw new Error(
+        `Sandbox egress "open" is refused: the sandbox-fake setting openEgress is "off" (token ${FAKE_REFUSAL_SECRET})`,
+      );
+    }
+  };
   writeShims(binDir);
   const log = (line: string) => appendFile(join(root, "ops.log"), `${line}\n`);
   const logLimits = (e: FakeSandboxLimitsEntry) =>
@@ -604,6 +633,7 @@ export function createFakeSandbox(
 
     async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {
       await delay("create", signal);
+      if (options.limitsApplyAt === "fileSystem") await refuseOpen(limits);
       const existing = await fsIdByName(name);
       if (existing !== null) return { id: existing };
       const byName = await stat(join(root, "fs-ids-by-name")).then(
@@ -634,6 +664,7 @@ export function createFakeSandbox(
 
     async create({ name, image, limits, fileSystem, signal }) {
       await delay("create", signal);
+      await refuseOpen(limits);
       if (!(await stat(fileSystemDir(root, fileSystem.id)).catch(() => null))) {
         throw new FileSystemGoneError(`fake file system ${fileSystem.id} is gone`);
       }
@@ -853,6 +884,7 @@ export function createFakeSandbox(
       if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
       await logLimits({ op: "update", id: h.id, limits });
       await log(`update ${h.id} ${mode}`);
+      await refuseOpen(limits);
       if (mode === "throw") throw new Error("fake update failed");
       if (mode === "updated") {
         await writeFile(

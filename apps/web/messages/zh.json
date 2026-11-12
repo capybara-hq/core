@@ -321,7 +321,9 @@
       "file_invalid_path": "路径必须是沙箱内的绝对路径。",
       "file_not_found": "沙箱里没有这个文件。",
       "file_is_directory": "这个路径是目录，请指定一个文件。",
-      "file_too_large": "文件过大。"
+      "file_too_large": "文件过大。",
+      "tier_refused": "云端沙箱无法以该设备的沙箱级别运行。请降低设备的级别，或联系组织管理员或超级管理员。",
+      "create_failed": "无法创建云端沙箱。请重试；如果一直失败，请让超级管理员检查沙箱扩展的设置。"
     },
     "device": {
       "not_found": "该设备不存在或已被删除。",
