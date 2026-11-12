@@ -313,6 +313,9 @@ export class CatalogScopeService {
         if (e instanceof ApiError && e.code === "extension.not_found") return false;
         throw e;
       });
+    // The backstop before the deploy's first write (ruling R24): a crash before the post-deploy
+    // add below still converges the orgs
+    await this.oweBackstop(itemId);
     if (!installed) {
       if ((await this.extensions.packageReviewHash(sha256)) !== permissionsHash) throw stale();
       await this.ops.install(item.name, sha256, actor, opts.actorTokenId, {
@@ -722,6 +725,9 @@ export class CatalogScopeService {
       target: itemId,
       detail: { name: named.name, version, ownerOrgId: owner },
     });
+    // The confirmation's commit owes the sync's backstop (ruling R24); the immediate sync follows
+    // the platform components
+    await this.sync.enqueueBackstop(itemId);
   }
 
   /**
@@ -1126,6 +1132,15 @@ export class CatalogScopeService {
   @Transactional()
   private async oweSync(itemId: string): Promise<void> {
     await this.enqueue(itemId);
+  }
+
+  /**
+   * Owes the delayed backstop of the item's sync in a transaction of its own (ruling R24): a
+   * permissions confirm writes nothing of the scope service's before its deploy.
+   */
+  @Transactional()
+  private async oweBackstop(itemId: string): Promise<void> {
+    await this.sync.enqueueBackstop(itemId);
   }
 
   /**

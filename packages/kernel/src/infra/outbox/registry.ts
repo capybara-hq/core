@@ -140,6 +140,23 @@ export const OUTBOX_JOBS = {
     // add of the same id is not swallowed
     opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
   },
+  // `catalog/scope-jobs.ts` SCOPE_BACKSTOP_JOB: owed by a confirmation's commit (an import, a
+  // permissions confirm, an org upload's first version) with `runAt` 5 min on, under
+  // `scopeBackstopJobId`, so a crash before the post-deploy add still converges (ruling R24)
+  "scope-item-backstop": {
+    queue: "cap-kernel-plugin-scope",
+    idempotent:
+      "the sync converges each (item, org) from what it reads, as a scope-item job does, so a run after the immediate job changes nothing",
+    processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
+    // retried while the item's extension is not enabled on the deployment yet (the job throws):
+    // 1, 2, 4, 8 min; removed once done
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 60_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
   // `catalog/scope-sync.ts` SCOPE_ORG_JOB: owed by an org's creation, under `scopeOrgJobId`
   "scope-org": {
     queue: "cap-kernel-plugin-scope",

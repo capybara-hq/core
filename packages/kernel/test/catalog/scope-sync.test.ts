@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { getQueueToken } from "@nestjs/bullmq";
-import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "../../src/catalog/scope-state.js";
-import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { type OrgEnv, resetOrgCatalog, seedPlugin, setScope, startOrgEnv } from "./org-env.js";
+import {
+  type OrgEnv,
+  resetOrgCatalog,
+  scopeQueueIdle,
+  seedPlugin,
+  setScope,
+  startOrgEnv,
+} from "./org-env.js";
 
 /**
  * The plugin scope sync (spec §5): a worker job converges every org to the item's scope by
@@ -35,28 +40,13 @@ const sync = () => env.k.app.get(PluginScopeSync);
 /** Owes an item's sync in a transaction of its own (what a scope change does in its own). */
 const enqueueItem = (itemId: string) =>
   env.k.app.get(TransactionHost).run(() => sync().enqueueItem(itemId));
-const queue = () => env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
 
 /**
  * Waits until the scope queue has nothing owed (an outbox row the fast path has not delivered
  * yet), waiting, delayed or running.
  */
 async function idle(): Promise<void> {
-  await waitFor(
-    async () => {
-      const owed = await env.db
-        .selectFrom("outbox")
-        .select("id")
-        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
-        .where("dead_at", "is", null)
-        .execute();
-      if (owed.length > 0) return false;
-      const c = await queue().getJobCounts("waiting", "active", "delayed", "prioritized");
-      return Object.values(c).every((n) => n === 0);
-    },
-    30_000,
-    "scope queue idle",
-  );
+  await waitFor(() => scopeQueueIdle(env), 30_000, "scope queue idle");
 }
 
 /** The live installs of an item, as the orgs they are in. */

@@ -270,13 +270,6 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "transactions, so there is no kernel row for the job to be owed by",
   },
   {
-    rule: "kc-enqueue-via-outbox",
-    path: "packages/kernel/src/infra/queue/add-job-once.ts",
-    reason:
-      "the CLI adds one job from a process that has no kernel database transaction and hosts " +
-      "no queue of its own",
-  },
-  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:

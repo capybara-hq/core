@@ -10,14 +10,16 @@ import {
   PLUGIN_SCOPE_CONCURRENCY,
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
+  SCOPE_BACKSTOP_JOB,
   SCOPE_ITEM_JOB,
   SCOPE_ORG_JOB,
   type ScopeJob,
 } from "./scope-sync.js";
 
 /**
- * The consumer of {@link PLUGIN_SCOPE_QUEUE}: {@link PluginScopeSync} runs the `scope-item` and
- * `scope-org` jobs the outbox delivers (any other name fails the job).
+ * The consumer of {@link PLUGIN_SCOPE_QUEUE}: {@link PluginScopeSync} runs the `scope-item`,
+ * `scope-item-backstop` and `scope-org` jobs the outbox delivers (any other name fails the job; a
+ * backstop whose extension is not deployed yet throws, so BullMQ retries it).
  */
 @Injectable()
 export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
@@ -32,7 +34,7 @@ export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
 
   process(job: Job<ScopeJob>): Promise<void> {
     return runJob(PLUGIN_SCOPE_QUEUE, job, () => {
-      if (job.name !== SCOPE_ITEM_JOB && job.name !== SCOPE_ORG_JOB) {
+      if (!([SCOPE_ITEM_JOB, SCOPE_BACKSTOP_JOB, SCOPE_ORG_JOB] as string[]).includes(job.name)) {
         throw new Error(`unknown plugin scope job ${job.name}`);
       }
       return this.sync.process(job.data, this.stopping.signal);

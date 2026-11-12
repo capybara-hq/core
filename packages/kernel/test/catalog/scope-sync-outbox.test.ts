@@ -3,8 +3,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import {
   PLUGIN_SCOPE_QUEUE,
+  PluginScopeSync,
+  SCOPE_BACKSTOP_DELAY_MS,
+  SCOPE_BACKSTOP_JOB,
   SCOPE_ITEM_JOB,
   SCOPE_ORG_JOB,
+  scopeBackstopJobId,
   scopeItemJobId,
   scopeOrgJobId,
 } from "../../src/catalog/scope-sync.js";
@@ -13,13 +17,15 @@ import {
   OUTBOX_DISPATCH_FAILS,
   OutboxDispatcher,
 } from "../../src/infra/outbox/outbox.dispatcher.js";
+import { outboxJobOptions } from "../../src/infra/outbox/registry.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
 import { type OrgEnv, resetOrgCatalog, seedPlugin, setScope, startOrgEnv } from "./org-env.js";
 import { skillPlugin } from "./packages.js";
 
 /**
  * Transactional outbox spec §8.1 (catalog rows): a scope change, a new org and an ownership
- * transfer owe the plugin scope sync in their own transaction. The fast path is disabled for the
+ * transfer owe the plugin scope sync in their own transaction; a confirmation's commit owes a
+ * delayed backstop (ruling R24). The fast path is disabled for the
  * scope queue (`OUTBOX_DISPATCH_FAILS`, while `failing` is set), so what converges the orgs got
  * there through an owed row an explicit relay pass delivered.
  */
@@ -62,12 +68,15 @@ const owed = () =>
     .orderBy("id")
     .execute();
 
-/** Lets the scope queue's adds succeed and runs one relay pass over the owed rows. */
+/**
+ * Lets the scope queue's adds succeed and runs one relay pass over the owed rows, each due now (a
+ * backstop's `runAt` brought forward).
+ */
 async function relay(): Promise<void> {
   failing = false;
   await env.db
     .updateTable("outbox")
-    .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
+    .set({ next_attempt_at: sql<Date>`now()` as unknown as Date, run_at: null })
     .where("queue", "=", PLUGIN_SCOPE_QUEUE)
     .execute();
   await env.k.app.get(OutboxDispatcher).dispatchDue(500);
@@ -225,7 +234,8 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", { timeout: 
       payload: { previewHash: (p.json() as { previewHash: string }).previewHash },
     });
     expect(d.statusCode, d.body).toBe(204);
-    expect(await owed()).toEqual([
+    // (the upload's backstop may still be owed too: only the transfer's job is checked)
+    expect((await owed()).filter((r) => r.job_name === SCOPE_ITEM_JOB)).toEqual([
       {
         job_name: SCOPE_ITEM_JOB,
         job_id: scopeItemJobId(itemId, await scopeVersion(itemId)),
@@ -242,5 +252,95 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", { timeout: 
       "the former owner's install removed",
     );
     expect(await owed()).toEqual([]);
+  });
+
+  it("a crash between an import's commit and its post-deploy add: the backstop converges the orgs", async () => {
+    // the confirm's process dies after the deploy, before it owes the immediate sync
+    const svc = env.k.app.get(CatalogScopeService) as unknown as {
+      oweSync: (itemId: string) => Promise<void>;
+    };
+    const oweSync = svc.oweSync;
+    svc.oweSync = async () => {};
+    failing = true;
+    let itemId: string;
+    try {
+      const p = await env.root({
+        method: "POST",
+        url: "/api/v1/admin/catalog/import/file",
+        headers: { "content-type": "application/octet-stream" },
+        payload: Buffer.from(await skillPlugin("owed-backstop")),
+      });
+      expect(p.statusCode, p.body).toBe(200);
+      const c = await env.root({
+        method: "POST",
+        url: `/api/v1/admin/catalog/imports/${p.json().stagingId}/confirm`,
+        payload: { reviewHash: p.json().review.reviewHash, scope: "all" },
+      });
+      expect(c.statusCode, c.body).toBe(201);
+      itemId = (c.json() as { item: { id: string } }).item.id;
+    } finally {
+      svc.oweSync = oweSync;
+    }
+    // only the backstop the commit owed, due five minutes on; nothing installed
+    expect(await owed()).toEqual([
+      {
+        job_name: SCOPE_BACKSTOP_JOB,
+        job_id: scopeBackstopJobId(itemId, await scopeVersion(itemId)),
+        data: { kind: "item", itemId, backstop: true },
+        org_id: null,
+      },
+    ]);
+    const row = await env.db
+      .selectFrom("outbox")
+      .select(["run_at", "created_at"])
+      .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+      .executeTakeFirstOrThrow();
+    expect(
+      new Date(row.run_at as Date).getTime() - new Date(row.created_at).getTime(),
+    ).toBeGreaterThan(SCOPE_BACKSTOP_DELAY_MS - 60_000);
+    expect(await liveOrgs(itemId)).toEqual([]);
+    // its time comes: the orgs converge
+    await relay();
+    const all = await liveOrgIds();
+    await waitFor(
+      async () => (await liveOrgs(itemId)).join() === all.join(),
+      30_000,
+      "installed in every org by the backstop",
+    );
+    expect(await owed()).toEqual([]);
+  });
+
+  it("a backstop whose extension is not deployed throws for a BullMQ retry and records no failure", async () => {
+    // retried with backoff, bounded by its attempts
+    expect(outboxJobOptions(SCOPE_BACKSTOP_JOB)).toMatchObject({ attempts: 5 });
+    const itemId = await seedPlugin(env, {
+      name: "owed-ghost",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    await setScope(env, itemId, "all");
+    const sync = env.k.app.get(PluginScopeSync);
+    await expect(sync.process({ kind: "item", itemId, backstop: true })).rejects.toThrow(
+      /not enabled on the deployment yet/,
+    );
+    expect(await liveOrgs(itemId)).toEqual([]);
+    expect(
+      await env.db
+        .selectFrom("plugin_scope_sync_failures")
+        .select("code")
+        .where("item_id", "=", itemId)
+        .execute(),
+    ).toEqual([]);
+    // an extension loaded here (config-declared: no install record) passes the check
+    const loaded = await seedPlugin(env, {
+      name: "fake-tools-ui",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    await expect(
+      sync.process({ kind: "item", itemId: loaded, backstop: true }),
+    ).resolves.toBeUndefined();
   });
 });

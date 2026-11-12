@@ -10,13 +10,21 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import type { OneJob } from "../infra/queue/add-job-once.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
 import { isUsable } from "./ownership.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
 import { wantedOn } from "./scope.js";
+import {
+  oweScopeItem,
+  PLUGIN_SCOPE_QUEUE,
+  SCOPE_ITEM_JOB,
+  SCOPE_ORG_JOB,
+  type ScopeJob,
+  scopeOrgJobId,
+  scopeRetryJobId,
+} from "./scope-jobs.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
 
 /**
@@ -46,42 +54,32 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * (`scope-item-<itemId>-<scope_version>`, every org), one per org (`scope-org-<orgId>`, every item,
  * owed by the org's creation). Both are owed in the outbox by the transaction that changes what
  * they converge to (transactional outbox spec §8.1), so none is lost; a migration that changes a
- * scope inserts its outbox rows itself. Both are removed when done, so the next add with the same
+ * scope inserts its outbox rows itself. A confirmation (import, permissions, org upload) owes the
+ * immediate item job after its deploy and, in its commit, a backstop `scope-item-backstop` due
+ * five minutes later (ruling R24) that waits, retrying, for the extension to be enabled. Both are removed when done, so the next add with the same
  * id is not swallowed. Pairs of one org are serialized across replicas by a Redis lock per org; the
  * installer's org row lock and its one-live-install rule are the backstop.
  */
 
-/** The scope sync queue (no `:` in the name). */
-export const PLUGIN_SCOPE_QUEUE = "cap-kernel-plugin-scope";
-/** The job converging one item in every org. */
-export const SCOPE_ITEM_JOB = "scope-item";
-/** The job converging every item in one org. */
-export const SCOPE_ORG_JOB = "scope-org";
-/** One item job per scope version (no `:`: item ids are UUIDs). */
-export const scopeItemJobId = (itemId: string, version: number): string =>
-  `scope-item-${itemId}-${version}`;
-/** One org job at a time per org. */
-export const scopeOrgJobId = (orgId: string): string => `scope-org-${orgId}`;
-/**
- * The delayed retry `n` of an item job whose extension this replica had not loaded yet (ruling
- * P3-38); deterministic, so replicas deferring the same item add it once.
- */
-export const scopeRetryJobId = (itemId: string, version: number, n: number): string =>
-  `scope-item-${itemId}-${version}-r${n}`;
+export {
+  PLUGIN_SCOPE_QUEUE,
+  SCOPE_BACKSTOP_DELAY_MS,
+  SCOPE_BACKSTOP_JOB,
+  SCOPE_ITEM_JOB,
+  SCOPE_ORG_JOB,
+  type ScopeJob,
+  scopeBackstopJobId,
+  scopeItemJobId,
+  scopeOrgJobId,
+  scopeRetryJobId,
+} from "./scope-jobs.js";
+
 /** How many delayed retries an item job gets while its extension is not loaded here (P3-38). */
 export const SCOPE_LOAD_RETRIES = 6;
 /** The delay of each such retry. */
 export const SCOPE_LOAD_RETRY_DELAY_MS = 5_000;
 /** How long a pair waits for this replica's reconcile before deferring (P3-38). */
 export const SCOPE_RECONCILE_WAIT_MS = 10_000;
-
-/**
- * The job's data. `retry`: the item job's delayed retry number (P3-38); at
- * {@link SCOPE_LOAD_RETRIES} an extension still not loaded is a failure as before.
- */
-export type ScopeJob =
-  | { kind: "item"; itemId: string; retry?: number }
-  | { kind: "org"; orgId: string };
 
 /**
  * Awaits this replica's extension reconcile for at most `ms` (a slower one carries on in the
@@ -106,23 +104,6 @@ export async function reconcileWithin(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-/**
- * The item job of a scope version with its BullMQ options, for the CLI, which adds it directly
- * (it has no outbox; {@link PluginScopeSync.enqueueItem} owes the same job id).
- */
-export function scopeItemJob(itemId: string, version: number): OneJob<ScopeJob> {
-  return {
-    name: SCOPE_ITEM_JOB,
-    data: { kind: "item", itemId },
-    opts: {
-      jobId: scopeItemJobId(itemId, version),
-      attempts: 1,
-      removeOnComplete: true,
-      removeOnFail: true,
-    },
-  };
 }
 
 /**
@@ -163,18 +144,17 @@ export class PluginScopeSync {
    */
   @Transactional({ propagation: "mandatory" })
   async enqueueItem(itemId: string): Promise<void> {
-    const row = await this.db
-      .selectFrom("catalog_items")
-      .select("scope_version")
-      .where("id", "=", itemId)
-      .executeTakeFirst();
-    if (!row) return;
-    await this.outbox.add<ScopeJob>({
-      queue: PLUGIN_SCOPE_QUEUE,
-      name: SCOPE_ITEM_JOB,
-      jobId: scopeItemJobId(itemId, row.scope_version),
-      data: { kind: "item", itemId },
-    });
+    await oweScopeItem(this.outbox, this.db, itemId);
+  }
+
+  /**
+   * Owes the delayed backstop of the item's sync (ruling R24) in the transaction in context: a
+   * confirmation owes it before (or with) its deploy, so a crash before its post-deploy add still
+   * converges the orgs.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async enqueueBackstop(itemId: string): Promise<void> {
+    await oweScopeItem(this.outbox, this.db, itemId, { backstop: true });
   }
 
   /** Owes the sync of every item in an org, in the transaction that creates the org. */
@@ -189,8 +169,12 @@ export class PluginScopeSync {
     });
   }
 
-  /** One job: every org of an item, or every item of an org; `signal` stops between pairs. */
+  /**
+   * One job: every org of an item, or every item of an org; `signal` stops between pairs. A
+   * backstop job first checks the item's extension is deployed ({@link assertDeployed}).
+   */
   async process(data: ScopeJob, signal?: AbortSignal): Promise<void> {
+    if (data.kind === "item" && data.backstop === true) await this.assertDeployed(data.itemId);
     const pairs: [string, string][] =
       data.kind === "item"
         ? (
@@ -230,6 +214,50 @@ export class PluginScopeSync {
         this.log.warn("enqueueing a delayed plugin scope sync failed", { itemId, err });
       }
     }
+  }
+
+  /**
+   * A backstop job (ruling R24) runs only once the item's extension is loaded here or enabled on
+   * the deployment; otherwise it throws, so BullMQ retries it with its backoff (bounded by its
+   * attempts) and no pair records a `catalog.not_deployed` failure that nothing would retry. An item without an
+   * extension, or one no longer live (deleted, disabled, still waiting, builtin), passes: its pairs
+   * converge (or change nothing) as for an immediate job.
+   */
+  private async assertDeployed(itemId: string): Promise<void> {
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select([
+        "builtin",
+        "disabled",
+        "deleted_at",
+        "awaiting_confirmation",
+        "latest_version",
+        "platform_synced_version",
+      ])
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    if (!item || item.builtin || !isUsable(item)) return;
+    const version = item.platform_synced_version ?? item.latest_version;
+    const v = await this.db
+      .selectFrom("catalog_item_versions")
+      .select("manifest")
+      .where("item_id", "=", itemId)
+      .where("version", "=", version)
+      .executeTakeFirst();
+    const m = v?.manifest as PluginManifest | undefined;
+    if (!m?.extension) return;
+    // loaded here (a config-declared extension has no install record), or enabled on the
+    // deployment (a replica that has not loaded it yet defers as P3-38 says)
+    if (this.registry.manifests().some((x) => x.name === m.name)) return;
+    const install = await this.db
+      .selectFrom("extension_installs")
+      .select("desired_state")
+      .where("name", "=", m.name)
+      .executeTakeFirst();
+    if (install?.desired_state === "enabled") return;
+    throw new Error(
+      `the extension ${m.name} of catalog item ${itemId} is not enabled on the deployment yet; the scope sync backstop is retried`,
+    );
   }
 
   /**

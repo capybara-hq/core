@@ -25,7 +25,7 @@ import {
   skillOf,
 } from "../../src/catalog/catalog-content.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
-import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
+import { PLUGIN_SCOPE_QUEUE, SCOPE_BACKSTOP_JOB } from "../../src/catalog/scope-sync.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -209,6 +209,28 @@ export async function startOrgEnv(
       s3 = undefined;
     },
   };
+}
+
+/**
+ * Whether the scope queue has nothing to do: no owed outbox row (one the fast path or the relay
+ * has not delivered yet) and no waiting, running or delayed job. A confirmation's backstop
+ * (`scope-item-backstop`, due five minutes later, ruling R24) is left out: it only repeats the
+ * immediate sync.
+ */
+export async function scopeQueueIdle(env: OrgEnv): Promise<boolean> {
+  const owed = await env.db
+    .selectFrom("outbox")
+    .select("id")
+    .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+    .where("job_name", "!=", SCOPE_BACKSTOP_JOB)
+    .where("dead_at", "is", null)
+    .execute();
+  if (owed.length > 0) return false;
+  const queue = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
+  const c = await queue.getJobCounts("waiting", "active", "prioritized");
+  if (Object.values(c).some((n) => n > 0)) return false;
+  const delayed = await queue.getDelayed();
+  return delayed.every((j) => j.name === SCOPE_BACKSTOP_JOB);
 }
 
 /** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */

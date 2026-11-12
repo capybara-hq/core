@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { getQueueToken } from "@nestjs/bullmq";
-import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
 import { createOrg, enableConnectorExtensions, waitFor } from "../helpers/runs.js";
 import {
   importSkill,
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
+  scopeQueueIdle,
   seedPlugin,
   setBuiltin,
   startOrgEnv,
@@ -40,26 +38,10 @@ beforeEach(async () => {
 });
 
 const base = "/api/v1/admin/catalog/items";
-const queue = () => env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
 
 /** Waits until the scope queue has nothing owed, waiting, delayed or running. */
 async function idle(): Promise<void> {
-  await waitFor(
-    async () => {
-      // an owed row the fast path has not delivered yet is not idle
-      const owed = await env.db
-        .selectFrom("outbox")
-        .select("id")
-        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
-        .where("dead_at", "is", null)
-        .execute();
-      if (owed.length > 0) return false;
-      const c = await queue().getJobCounts("waiting", "active", "delayed", "prioritized");
-      return Object.values(c).every((n) => n === 0);
-    },
-    30_000,
-    "scope queue idle",
-  );
+  await waitFor(() => scopeQueueIdle(env), 30_000, "scope queue idle");
 }
 
 type Preview = {

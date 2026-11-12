@@ -60,6 +60,7 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
@@ -128,6 +129,7 @@ import {
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
+import { oweScopeItem } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
@@ -624,6 +626,8 @@ export class PluginImport {
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
     /** The client build of a dropped org upload's package is deleted with it. */
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
+    /** The scope sync's backstop, owed by the confirm's commit (ruling R24). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {
     this.files = storage;
   }
@@ -1643,6 +1647,18 @@ export class PluginImport {
         .execute();
       await markVersionApplied(t, itemId, staged.version);
       await releaseExtensionClaim(t, m.name, existing.package_name);
+    }
+    // The commit owes the scope sync's backstop (ruling R24) when the item's scope turns it on by
+    // itself: the caller owes the immediate sync after the deploy, which a crash may lose
+    if (!pending) {
+      const item = await t
+        .selectFrom("catalog_items")
+        .select("scope")
+        .where("id", "=", itemId)
+        .executeTakeFirstOrThrow();
+      if (item.scope !== "optional") {
+        await oweScopeItem(this.outbox, t, itemId, { backstop: true });
+      }
     }
     return {
       itemId,
