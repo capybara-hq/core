@@ -24,8 +24,36 @@ describe("tools 配置段", () => {
       driftIntervalHours: 24,
       maxResultReadChars: 20000,
       oauthAllowInsecureLoopback: false,
+      git: {
+        enabled: true,
+        maxBytesPerRun: 5368709120,
+        idleTimeoutMs: 60000,
+        maxConcurrentPerOrg: 8,
+        ticketTtlSeconds: 900,
+      },
     });
     expect(c.http.publicUrl).toBeUndefined();
+  });
+
+  it("tools.git: partial override, bounds and gatewayUrl", () => {
+    const c = KernelConfigSchema.parse({ ...base, tools: { git: { maxConcurrentPerOrg: 2 } } });
+    expect(c.tools.git.maxConcurrentPerOrg).toBe(2);
+    expect(c.tools.git.enabled).toBe(true);
+    expect(c.tools.git.gatewayUrl).toBeUndefined();
+    const url = KernelConfigSchema.parse({
+      ...base,
+      tools: { git: { gatewayUrl: "https://k.internal:8080" } },
+    });
+    expect(url.tools.git.gatewayUrl).toBe("https://k.internal:8080");
+    for (const git of [
+      { ticketTtlSeconds: 1 },
+      { maxConcurrentPerOrg: 0 },
+      { idleTimeoutMs: 10 },
+      { maxBytesPerRun: 1 },
+      { gatewayUrl: "not a url" },
+    ]) {
+      expect(KernelConfigSchema.safeParse({ ...base, tools: { git } }).success).toBe(false);
+    }
   });
 
   it("部分覆盖时其余字段保持默认", () => {

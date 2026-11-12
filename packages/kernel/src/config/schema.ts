@@ -958,6 +958,77 @@ export const KernelConfigSchema = z.object({
               "Allow OAuth discovery, registration and token endpoints over plain http on loopback hosts (development and tests only; production requires https)",
           }),
         ),
+      git: z
+        .object({
+          enabled: z
+            .boolean()
+            .default(true)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Serve the git gateway that lets sandboxes clone and push over HTTPS with run tickets; when off the gateway refuses every request",
+              }),
+            ),
+          gatewayUrl: z
+            .url()
+            .optional()
+            .meta(
+              meta({
+                description:
+                  "Origin of the kernel as sandboxes reach it, e.g. https://kernel.internal:8080; when unset the kernel uses http.publicUrl",
+              }),
+            ),
+          maxBytesPerRun: z
+            .number()
+            .int()
+            .min(1048576)
+            .max(107374182400)
+            .default(5368709120)
+            .meta(
+              meta({
+                description:
+                  "Maximum bytes the git gateway transfers (both directions) for one run, between 1 MiB and 100 GiB (default 5 GiB)",
+              }),
+            ),
+          idleTimeoutMs: z
+            .number()
+            .int()
+            .min(1000)
+            .max(3600000)
+            .default(60000)
+            .meta(
+              meta({
+                description:
+                  "A git gateway request that moves no data for this many milliseconds is aborted, between 1000 and 3600000",
+              }),
+            ),
+          maxConcurrentPerOrg: z
+            .number()
+            .int()
+            .min(1)
+            .max(1000)
+            .default(8)
+            .meta(
+              meta({
+                description:
+                  "Maximum git gateway requests in flight at once for one org, between 1 and 1000",
+              }),
+            ),
+          ticketTtlSeconds: z
+            .number()
+            .int()
+            .min(60)
+            .max(86400)
+            .default(900)
+            .meta(
+              meta({
+                description:
+                  "Lifetime in seconds of a run ticket for the git gateway; renewed while the run lives, between 60 and 86400",
+              }),
+            ),
+        })
+        .prefault({} as never),
     })
     .default({
       timeoutMs: 60000,
@@ -972,6 +1043,13 @@ export const KernelConfigSchema = z.object({
       driftIntervalHours: 24,
       maxResultReadChars: 20000,
       oauthAllowInsecureLoopback: false,
+      git: {
+        enabled: true,
+        maxBytesPerRun: 5368709120,
+        idleTimeoutMs: 60000,
+        maxConcurrentPerOrg: 8,
+        ticketTtlSeconds: 900,
+      },
     }),
   channels: z
     .object({
