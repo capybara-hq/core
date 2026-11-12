@@ -881,11 +881,32 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
     await user.click(radio(en.devices.tier.open));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(S.openRisk);
+    expect(dialog.textContent).toContain(S.openRiskCloud);
+    expect(dialog.textContent).not.toContain(S.openRisk);
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
     await user.click(within(dialog).getByRole("button", { name: S.openConfirmSubmit }));
     await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
     expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({ tier: "open" });
+  });
+
+  it("following an open default asks first, then sends tier null", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local({ tier: "dev", defaultTier: "open" }, { tier: "dev" }),
+        }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
+    });
+    await renderDetail();
+    await screen.findByRole("radiogroup", { name: S.title });
+    const user = userEvent.setup();
+    await user.click(radio(S.follow.replace("{tier}", en.devices.tier.open)));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(S.openRisk);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: S.openConfirmSubmit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ tier: null });
   });
 
   it("choosing follow-default sends tier null", async () => {
@@ -977,6 +998,9 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     expect(code.textContent).toContain("capybara-device policy set tier open");
     expect(screen.getByRole("button", { name: "复制" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "恢复沙箱" })).toBeNull();
+    // copying and choosing levels never send isolation none (spec §14 Q1)
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "复制" }));
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
@@ -993,10 +1017,17 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     });
     await renderDetail({ locale: "zh" });
     const restore = await screen.findByRole("button", { name: "恢复沙箱" });
-    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("不使用沙箱");
-    await userEvent.setup().click(restore);
+    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("已开启");
+    expect(screen.getByText("这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(restore);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ isolation: "sandbox" });
+    await user.click(radio("严格"));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
+    expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({ tier: "strict" });
+    // no request ever turns the sandbox off
+    expect(calls.some((c) => String(c.body ?? "").includes('"none"'))).toBe(false);
   });
 
   it("a Docker-mode or capped device has no 不使用沙箱 row", async () => {

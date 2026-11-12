@@ -76,7 +76,8 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
   const t = useTranslations("devices.sandbox");
   const tt = useTranslations("devices.tier");
   const toast = useToast();
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  // the choice waiting for the open-level confirm ("open", or null when the default is open)
+  const [confirming, setConfirming] = useState<{ next: SandboxTier | null } | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
   // who caps a card above the ceiling: the org settings say (members may read them)
   const settingsQ = orgSettingsQuery(orgId);
@@ -191,11 +192,18 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
           disabled={pending || localBlock !== null}
           onChange={(v) => {
             const next = v === FOLLOW ? null : (v as SandboxTier);
-            if (next === "open") setConfirmOpen(true);
-            else void send(next);
+            // following an open default reaches 开放 too: ask first either way
+            if (next === "open" || (next === null && s.defaultTier === "open")) {
+              setConfirming({ next });
+            } else void send(next);
           }}
           options={options}
         />
+        {s.isolation === "none" && (
+          <Text variant="small" tone="muted">
+            {t("isolationResetNote")}
+          </Text>
+        )}
         <KeyValue
           keyWidth="14ch"
           rows={[
@@ -255,13 +263,14 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
         {failure !== null && <ApiErrorDetail error={failure} open />}
         <RecentChanges recent={s.recent} />
       </Stack>
-      {confirmOpen && (
+      {confirming !== null && (
         <OpenTierDialog
+          local={local}
           pending={pending}
-          onClose={() => setConfirmOpen(false)}
+          onClose={() => setConfirming(null)}
           onConfirm={async () => {
-            await send("open");
-            setConfirmOpen(false);
+            await send(confirming.next);
+            setConfirming(null);
           }}
         />
       )}
@@ -290,7 +299,7 @@ function UnsandboxedRow({
     <Stack gap={8}>
       <Stack direction="row" gap={8} align="center">
         <Text variant="h3">{t("unsandboxed")}</Text>
-        {on && <Badge tone="fail">{t("unsandboxed")}</Badge>}
+        {on && <Badge tone="fail">{t("unsandboxedOnMark")}</Badge>}
       </Stack>
       {on ? (
         <>
@@ -358,10 +367,13 @@ function RecentChanges({ recent }: { recent: DeviceSandboxChange[] }) {
  * Cancel.
  */
 function OpenTierDialog({
+  local,
   pending,
   onClose,
   onConfirm,
 }: {
+  /** A local device's risk text speaks of the person's own machine; a cloud one's does not. */
+  local: boolean;
   pending: boolean;
   onClose(): void;
   onConfirm(): Promise<void>;
@@ -392,7 +404,7 @@ function OpenTierDialog({
         </>
       }
     >
-      <Text variant="prose">{t("openRisk")}</Text>
+      <Text variant="prose">{t(local ? "openRisk" : "openRiskCloud")}</Text>
     </Dialog>
   );
 }

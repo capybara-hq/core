@@ -1734,7 +1734,10 @@
           "device": "reported by the machine"
         },
         "unconfirmed": "Not confirmed by the machine"
-      }
+      },
+      "openRiskCloud": "At the open level, agent commands on this cloud device can reach any public address and port, including uploading files and data to outside sites. Prompt injection can make an agent do that. Turn it on only with agents and material you trust.",
+      "unsandboxedOnMark": "On",
+      "isolationResetNote": "This device runs without a sandbox now. Changing its level here turns the sandbox back on."
     }
   },
   "nav": {
@@ -2445,7 +2448,7 @@
       "default": "Default for new devices",
       "defaultHelp": "Used by devices that choose no level; at most the highest level.",
       "allowUnsandboxed": "Let members' devices run without a sandbox",
-      "allowUnsandboxedHint": "Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
+      "allowUnsandboxedHint": "Allowed by default when the highest level is open. Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
     }
   },
   "configForm": {
