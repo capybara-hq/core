@@ -459,6 +459,19 @@
 .cb-field-reset:hover {
   color: var(--cb-ink);
 }
+/* a control with its action on one line (an input and its 「添加」 button, spec §6.2) */
+.cb-field-control {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-field-control > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cb-field-control > :not(:first-child) {
+  flex: none;
+}
 .cb-field-help {
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);

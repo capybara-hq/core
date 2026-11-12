@@ -505,6 +505,8 @@ describe("a device's sandbox tier (sandbox dev tiers spec §7.2)", () => {
         remove: [],
         tier: { to: "strict" },
         isolation: null,
+        localhost: null,
+        remoteGrants: null,
         by: expect.any(String),
         via: "web",
         confirmed: true,

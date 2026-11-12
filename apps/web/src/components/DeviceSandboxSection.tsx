@@ -342,17 +342,34 @@ function UnsandboxedRow({
 /** The device's recent sandbox changes: what, when, by whom and from where; unconfirmed marked. */
 function RecentChanges({ recent }: { recent: DeviceSandboxChange[] }) {
   const t = useTranslations("devices.sandbox.recent");
+  const ts = useTranslations("devices.sandbox");
+  const tn = useTranslations("devices.network");
   const tt = useTranslations("devices.tier");
   const zone = useTimeZone();
   if (recent.length === 0) return null;
+  const tierName = (tier: SandboxTier | null) => (tier === null ? t("followDefault") : tt(tier));
+  const tierChange = (c: { from?: SandboxTier | null; to: SandboxTier | null }) =>
+    c.from !== undefined
+      ? t("tierFrom", { from: tierName(c.from), to: tierName(c.to) })
+      : c.to === null
+        ? t("tierFollow")
+        : t("tier", { tier: tt(c.to) });
   const what = (c: DeviceSandboxChange) =>
     [
       ...(c.add.length > 0 ? [t("add", { hosts: c.add.join(", ") })] : []),
       ...(c.remove.length > 0 ? [t("remove", { hosts: c.remove.join(", ") })] : []),
-      ...(c.tier !== null
-        ? [c.tier.to === null ? t("tierFollow") : t("tier", { tier: tt(c.tier.to) })]
+      ...(c.tier !== null ? [tierChange(c.tier)] : []),
+      ...(c.localhost != null
+        ? [t("localhost", { value: ts(`localhostValue.${c.localhost}`) })]
         : []),
       ...(c.isolation !== null ? [t(`isolation.${c.isolation}`)] : []),
+      ...(c.remoteGrants != null
+        ? [
+            t("remoteGrants", {
+              value: tn(c.remoteGrants === "owner" ? "remoteGrantsOwner" : "remoteGrantsOff"),
+            }),
+          ]
+        : []),
     ].join(" · ");
   return (
     <ItemList
@@ -362,7 +379,10 @@ function RecentChanges({ recent }: { recent: DeviceSandboxChange[] }) {
         title: what(c) || t("none"),
         meta: [
           formatDateTime(c.at, "full", zone),
-          ...(c.via === "device" ? [] : [c.by ?? t("unknownBy")]),
+          // a report of the machine names nobody; a change made on it, its owner
+          ...(c.via === "device" && (c.kind !== "policy" || c.by === null)
+            ? []
+            : [c.by ?? t("unknownBy")]),
           t(`via.${c.via}`),
         ].join(" · "),
         ...(c.confirmed ? {} : { status: { label: t("unconfirmed") } }),

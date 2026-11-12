@@ -649,33 +649,33 @@ function NetworkSection({ orgId, device: e }: { orgId: string; device: Device })
                   : {}),
               }))}
             />
-            <Stack direction="row" gap={8} align="end">
-              <Field
-                label={t("add")}
-                help={canWiden ? t("addHelp") : t("addDisabled")}
-                {...(hostError !== undefined ? { error: hostError } : {})}
-              >
-                <Input
-                  value={host}
-                  maxLength={253}
-                  placeholder="*.example.com"
-                  disabled={!canWiden || pending}
-                  onChange={(ev) => {
-                    setHost(ev.target.value);
-                    setHostError(undefined);
-                  }}
-                  onKeyDown={(ev) => {
-                    if (ev.key === "Enter") void add();
-                  }}
-                />
-              </Field>
-              <Button
-                disabled={!canWiden || pending || host.trim() === ""}
-                onClick={() => void add()}
-              >
-                {t("addSubmit")}
-              </Button>
-            </Stack>
+            <Field
+              label={t("add")}
+              help={canWiden ? t("addHelp") : t("addDisabled")}
+              {...(hostError !== undefined ? { error: hostError } : {})}
+              action={
+                <Button
+                  disabled={!canWiden || pending || host.trim() === ""}
+                  onClick={() => void add()}
+                >
+                  {t("addSubmit")}
+                </Button>
+              }
+            >
+              <Input
+                value={host}
+                maxLength={253}
+                placeholder="*.example.com"
+                disabled={!canWiden || pending}
+                onChange={(ev) => {
+                  setHost(ev.target.value);
+                  setHostError(undefined);
+                }}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") void add();
+                }}
+              />
+            </Field>
           </>
         )}
         {failure !== null && <ApiErrorDetail error={failure} open />}
