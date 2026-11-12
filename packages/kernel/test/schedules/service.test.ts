@@ -18,6 +18,7 @@ import {
   grantRefusalOf,
   ScheduledTasksService,
 } from "../../src/schedules/scheduled-tasks.service.js";
+import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { ScheduleTrigger } from "../../src/schedules/types.js";
 import type { ResolvedTool } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
@@ -652,5 +653,161 @@ describe("ScheduledTasksService", () => {
       pausedBy: null,
       nextRunAt: null,
     });
+  });
+});
+
+describe("ScheduledTasksService.calendar", () => {
+  const DAY = 86_400_000;
+  /** A week around now in UTC (whole days). */
+  const week = (over: Partial<{ all: boolean; taskId: string; from: Date; to: Date }> = {}) => {
+    const today = Math.floor(Date.now() / DAY) * DAY;
+    return {
+      from: new Date(today - 2 * DAY),
+      to: new Date(today + 5 * DAY),
+      timeZone: "UTC",
+      ...over,
+    };
+  };
+  /** A finished run of the task two days ago at 09:00 UTC, with the details only its creator sees. */
+  const pastRun = async (taskId: string) => {
+    const at = new Date(Math.floor(Date.now() / DAY) * DAY - 2 * DAY + 9 * 3_600_000);
+    const store = k.app.get(ScheduledTaskStore);
+    const run = await store.insertRun(db, {
+      id: randomUUID(),
+      taskId,
+      orgId,
+      scheduledFor: at,
+      trial: false,
+      status: "failed",
+      firedAt: at,
+      conversationId: null,
+    });
+    await store.updateRun(db, run?.id ?? "", {
+      error: "The model failed",
+      missingGrants: ["Bash"],
+    });
+    return run?.id;
+  };
+
+  it("a member reads their own tasks only; all is for org admins", async () => {
+    const mine = await svc.create(orgId, aliceId, daily());
+    const theirs = await svc.create(orgId, bobId, daily({ name: "Bob's" }));
+    const runId = await pastRun(mine.id);
+    await pastRun(theirs.id);
+    const a = await svc.calendar(orgId, me(aliceId), week());
+    expect(a.tasks.map((t) => t.id)).toEqual([mine.id]);
+    expect(new Set(a.items.map((i) => i.taskId))).toEqual(new Set([mine.id]));
+    expect(a.items.find((i) => i.kind === "run")).toMatchObject({
+      id: runId,
+      status: "failed",
+      error: "The model failed",
+      missingGrants: 1,
+    });
+    expect(await codeOf(svc.calendar(orgId, me(aliceId), week({ all: true })))).toBe("forbidden");
+  });
+
+  it("an admin's all sees every task, without another member's conversation, error or grants", async () => {
+    const mine = await svc.create(orgId, adminId, daily({ name: "Admin's" }));
+    const theirs = await svc.create(orgId, aliceId, daily());
+    await pastRun(mine.id);
+    await pastRun(theirs.id);
+    const a = await svc.calendar(orgId, me(adminId, "admin"), week({ all: true }));
+    expect(a.tasks.map((t) => t.id).sort()).toEqual([mine.id, theirs.id].sort());
+    const runs = a.items.filter((i) => i.kind === "run");
+    expect(runs.find((r) => r.taskId === theirs.id)).toMatchObject({
+      status: "failed",
+      conversationId: null,
+      error: null,
+      missingGrants: null,
+    });
+    expect(runs.find((r) => r.taskId === mine.id)).toMatchObject({
+      error: "The model failed",
+      missingGrants: 1,
+    });
+    // without all an admin reads their own; with taskId any task of the org
+    expect((await svc.calendar(orgId, me(adminId), week())).tasks.map((t) => t.id)).toEqual([
+      mine.id,
+    ]);
+    const one = await svc.calendar(orgId, me(adminId), {
+      ...week({ taskId: theirs.id }),
+      to: new Date(week().from.getTime() + 2 * DAY),
+    });
+    expect(one.items.find((i) => i.kind === "run")).toMatchObject({ error: null });
+  });
+
+  it("taskId must be a task the caller may see", async () => {
+    const theirs = await svc.create(orgId, bobId, daily());
+    const range = { ...week({ taskId: theirs.id }), to: new Date(week().from.getTime() + DAY) };
+    expect(await codeOf(svc.calendar(orgId, me(aliceId), range))).toBe("schedule.not_found");
+    expect(await codeOf(svc.calendar(orgId, me(aliceId), { ...range, taskId: randomUUID() }))).toBe(
+      "schedule.not_found",
+    );
+    expect((await svc.calendar(orgId, me(bobId), range)).collapsed).toEqual([]);
+  });
+
+  it("a creator demoted to guest still reads their own", async () => {
+    const t = await svc.create(orgId, aliceId, daily());
+    await db
+      .updateTable("memberships")
+      .set({ role: "guest" })
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", aliceId)
+      .execute();
+    expect((await svc.calendar(orgId, me(aliceId), week())).tasks.map((x) => x.id)).toEqual([t.id]);
+    expect(await codeOf(svc.calendar(orgId, me(guestId), week({ all: true })))).toBe("forbidden");
+  });
+
+  it("the first occurrence is next_run_at - jitter, and its at is next_run_at", async () => {
+    const t = await svc.create(orgId, aliceId, daily());
+    const a = await svc.calendar(orgId, me(aliceId), week());
+    const first = a.items.find((i) => i.kind === "occurrence");
+    const next = t.nextRunAt?.getTime() ?? 0;
+    expect(first).toEqual({
+      kind: "occurrence",
+      taskId: t.id,
+      scheduledFor: new Date(next - t.jitterSeconds * 1000).toISOString(),
+      at: new Date(next).toISOString(),
+    });
+  });
+
+  it("deleted tasks are hidden; paused tasks and an org turned off have runs but no occurrences", async () => {
+    const gone = await svc.create(orgId, aliceId, daily({ name: "Gone" }));
+    await pastRun(gone.id);
+    await svc.remove(orgId, me(aliceId), gone.id);
+    const paused = await svc.create(orgId, aliceId, daily({ name: "Paused" }));
+    await pastRun(paused.id);
+    await svc.pause(orgId, me(aliceId), paused.id);
+    const live = await svc.create(orgId, aliceId, daily({ name: "Live" }));
+    const a = await svc.calendar(orgId, me(aliceId), week());
+    expect(a.tasks.map((t) => t.id).sort()).toEqual([paused.id, live.id].sort());
+    expect(a.items.filter((i) => i.taskId === paused.id).map((i) => i.kind)).toEqual(["run"]);
+    expect(a.items.some((i) => i.taskId === live.id && i.kind === "occurrence")).toBe(true);
+    await setSchedules({ enabled: false });
+    const off = await svc.calendar(orgId, me(aliceId), week());
+    expect(off.items.map((i) => i.kind)).toEqual(["run"]);
+  });
+
+  it("refuses a range that is not forward or too long", async () => {
+    const from = new Date("2026-11-09T00:00:00Z");
+    const q = (to: Date, taskId?: string) => ({
+      from,
+      to,
+      timeZone: "UTC",
+      ...(taskId !== undefined && { taskId }),
+    });
+    expect(await codeOf(svc.calendar(orgId, me(aliceId), q(from)))).toBe("validation_failed");
+    expect(await codeOf(svc.calendar(orgId, me(aliceId), q(new Date(from.getTime() - DAY))))).toBe(
+      "validation_failed",
+    );
+    expect(
+      await codeOf(svc.calendar(orgId, me(aliceId), q(new Date(from.getTime() + 43 * DAY + 1)))),
+    ).toBe("validation_failed");
+    await svc.calendar(orgId, me(aliceId), q(new Date(from.getTime() + 43 * DAY)));
+    const t = await svc.create(orgId, aliceId, daily());
+    expect(
+      await codeOf(
+        svc.calendar(orgId, me(aliceId), q(new Date(from.getTime() + 2 * DAY + 1), t.id)),
+      ),
+    ).toBe("validation_failed");
   });
 });

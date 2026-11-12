@@ -367,6 +367,31 @@ export class ScheduledTaskStore {
     return rows.map(toRun);
   }
 
+  /**
+   * The runs of these tasks with `scheduled_for` in `[from, to)`, trial included, by tick, at most
+   * `limit` (the calendar; `scheduled_task_runs_task_idx` per task).
+   */
+  async listRunsBetween(
+    t: KernelSchemaDb,
+    taskIds: readonly string[],
+    from: Date,
+    to: Date,
+    limit: number,
+  ): Promise<TaskRun[]> {
+    if (taskIds.length === 0) return [];
+    const rows = await t
+      .selectFrom("scheduled_task_runs")
+      .selectAll()
+      .where("task_id", "in", [...taskIds])
+      .where("scheduled_for", ">=", from)
+      .where("scheduled_for", "<", to)
+      .orderBy("scheduled_for")
+      .orderBy("id")
+      .limit(limit)
+      .execute();
+    return rows.map(toRun);
+  }
+
   async listGrants(t: KernelSchemaDb, taskId: string): Promise<ScheduledTaskGrant[]> {
     const rows = await t
       .selectFrom("scheduled_task_grants")
