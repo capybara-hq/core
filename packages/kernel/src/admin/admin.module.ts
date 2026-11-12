@@ -12,6 +12,7 @@ import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
 import { AdminHealthService } from "./health.service.js";
+import { OutboxDeadService } from "./outbox-dead.service.js";
 import { AdminOverviewService } from "./overview.service.js";
 import { PlatformAuditService } from "./platform-audit.service.js";
 import { SetupService } from "./setup.service.js";
@@ -20,7 +21,8 @@ import { AdminUsageService } from "./usage.service.js";
 
 /**
  * Deployment administration: the setup wizard, the platform-level audit log and the admin overview
- * with its health read and seven-day usage aggregate (its controllers are the api role's, `ApiModule`).
+ * with its health read, seven-day usage aggregate and dead outbox rows (its controllers are the api
+ * role's, `ApiModule`).
  */
 @Module({
   imports: [
@@ -47,6 +49,7 @@ import { AdminUsageService } from "./usage.service.js";
     AdminOverviewService,
     AdminHealthService,
     AdminUsageService,
+    OutboxDeadService,
   ],
   exports: [
     SetupService,
@@ -54,6 +57,7 @@ import { AdminUsageService } from "./usage.service.js";
     AdminOverviewService,
     AdminHealthService,
     AdminUsageService,
+    OutboxDeadService,
   ],
 })
 export class AdminModule {}

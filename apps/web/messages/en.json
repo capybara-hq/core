@@ -3570,7 +3570,8 @@
           "inbox": "Inbox",
           "extensions": "Extensions",
           "updates": "Plugin updates",
-          "providers": "Model providers"
+          "providers": "Model providers",
+          "outbox": "Background work that could not be queued"
         },
         "inboxTypes": {
           "catalog_request": "Catalog requests",
@@ -3593,6 +3594,17 @@
         "problems": {
           "list_failed": "Model list failed",
           "no_chat_model": "No usable chat model"
+        },
+        "outbox": {
+          "count": "{n, plural, one {# job} other {# jobs}}",
+          "retry": "Retry",
+          "discard": "Discard",
+          "cancel": "Cancel",
+          "discardTitle": "Discard this background work?",
+          "discardHint": "{job} will never run. Retry it instead if the work is still needed.",
+          "retried": "Queued again.",
+          "alreadyOwed": "The same work was already queued; this copy was discarded.",
+          "discarded": "Discarded."
         },
         "retry": "Retry"
       },
@@ -3843,7 +3855,9 @@
         "modelPriceUpdated": "Changed a model price",
         "modelPriceDeleted": "Deleted a model price",
         "modelPurposeMapped": "Changed a purpose's default model",
-        "modelDisabledSet": "Changed the models switched off on the platform"
+        "modelDisabledSet": "Changed the models switched off on the platform",
+        "outboxRetried": "Retried background work that could not be queued",
+        "outboxDiscarded": "Discarded background work that could not be queued"
       }
     },
     "accounts": {

@@ -3558,7 +3558,8 @@
           "inbox": "收件箱",
           "extensions": "扩展",
           "updates": "插件更新",
-          "providers": "模型供应商"
+          "providers": "模型供应商",
+          "outbox": "无法排入队列的后台任务"
         },
         "inboxTypes": {
           "catalog_request": "平台目录申请",
@@ -3581,6 +3582,17 @@
         "problems": {
           "list_failed": "列模型失败",
           "no_chat_model": "没有可用的对话模型"
+        },
+        "outbox": {
+          "count": "{n} 项任务",
+          "retry": "重试",
+          "discard": "丢弃",
+          "cancel": "取消",
+          "discardTitle": "丢弃这项后台任务？",
+          "discardHint": "{job} 将不会再运行。如果仍需要这项工作，请改为重试。",
+          "retried": "已重新排入队列。",
+          "alreadyOwed": "同一任务已在队列中，这份副本已丢弃。",
+          "discarded": "已丢弃。"
         },
         "retry": "重试"
       },
@@ -3831,7 +3843,9 @@
         "modelPriceUpdated": "修改了模型价格",
         "modelPriceDeleted": "删除了模型价格",
         "modelPurposeMapped": "修改了用途的默认模型",
-        "modelDisabledSet": "修改了平台停用的模型"
+        "modelDisabledSet": "修改了平台停用的模型",
+        "outboxRetried": "重试了无法排入队列的后台任务",
+        "outboxDiscarded": "丢弃了无法排入队列的后台任务"
       }
     },
     "accounts": {

@@ -278,7 +278,8 @@ const ROUTES: Routes = {
         },
       ],
       providers: [],
-      more: { extensions: 0, updates: 0, providers: 0 },
+      outbox: [],
+      more: { extensions: 0, updates: 0, providers: 0, outbox: 0 },
       unavailable: [],
     }),
   "GET /api/v1/admin/overview/usage": () =>
