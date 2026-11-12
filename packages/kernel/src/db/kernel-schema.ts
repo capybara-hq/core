@@ -306,7 +306,7 @@ export interface ConversationsTable {
   /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
   scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
-   * 0119: where the conversation comes from, set at creation and never changed. Required on insert
+   * 0120: where the conversation comes from, set at creation and never changed. Required on insert
    * (the column's `web` default is not relied on: a forgotten source must not read as web).
    */
   source: ColumnType<ConversationSource, ConversationSource, never>;
@@ -1301,7 +1301,7 @@ export interface UsageReportSweepTable {
 }
 
 /**
- * 0120: one lifecycle hook delivery (`org.member_removed`, `agent.deleted`, `org.deleted`) to one
+ * 0121: one lifecycle hook delivery (`org.member_removed`, `agent.deleted`, `org.deleted`) to one
  * subscribing plugin; delivered by the `cap-kernel-lifecycle` queue (`extensions/lifecycle-hooks.ts`).
  */
 export interface LifecycleDeliveriesTable {

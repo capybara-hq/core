@@ -3,7 +3,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /**
  * Where a conversation comes from (memory plugin spec §6.2), stored on its row at creation
- * (`conversations.source`, migration 0119) and never changed. A missing conversation throws
+ * (`conversations.source`, migration 0120) and never changed. A missing conversation throws
  * rather than guessing a source (a guess could offer a group chat what only a DM may see).
  */
 export async function conversationSourceOf(

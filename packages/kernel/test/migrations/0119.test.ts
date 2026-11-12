@@ -1,120 +1,155 @@
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startTestPostgres } from "@capybara-hq/testing";
-import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  startPostgresContainer,
+  startTestPostgres,
+  type TestContainer,
+} from "@capybara-hq/testing";
+import pg from "pg";
+import { afterAll, describe, expect, it } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
-import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0119_conversation_source.sql (memory plugin spec §6.2): conversations gain `source`, backfilled
- * from the rows that existed: `kind = 'subagent'` → subagent, a conversation with a channel thread
- * row of any archive state → channel_dm (only `dm:` keys) or channel_group, a group conversation whose
- * thread is still to bind → channel_group (its delivery's target), the rest → web. Migrates to the
- * migration before it, seeds, then runs 0119 (twice: idempotent).
+ * 0119_pgvector.sql (memory plugin spec §6.4): installs pgvector in `public` when the server offers
+ * it and the migrating role may create it; otherwise it is a no-op (a notice at most), so a managed
+ * PostgreSQL without pgvector, or without the right to create it, still migrates.
  */
-const FILE = "0119_conversation_source.sql";
+const FILE = "0119_pgvector.sql";
+const TEXT = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
 
-let pg: Awaited<ReturnType<typeof startTestPostgres>>;
-let db: ReturnType<typeof createDb>;
 const dirs: string[] = [];
+const stops: (() => Promise<void>)[] = [];
 
-const copyMigrations = (pred: (f: string) => boolean) => {
+const migrationsThrough = (last: string) => {
   const dir = mkdtempSync(join(tmpdir(), "cap-mig-"));
   dirs.push(dir);
   for (const f of readdirSync(KERNEL_MIGRATIONS_DIR)) {
-    if (f.endsWith(".sql") && pred(f)) copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(dir, f));
+    if (f.endsWith(".sql") && f <= last) copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(dir, f));
   }
   return dir;
 };
 
-const conversation = (id: string, kind = "chat", parent: string | null = null) =>
-  sql`insert into capybara.conversations (id, org_id, agent_id, account_id, kind,
-      parent_conversation_id)
-    values (${id}, 'o1', 'ag1', 'a1', ${kind}, ${parent})`.execute(db);
+const track = (c: TestContainer) => {
+  stops.push(() => c.stop());
+  return c;
+};
 
-const thread = (id: string, conv: string, key: string, archived: boolean) =>
-  sql`insert into capybara.channel_threads (id, connection_id, chat_id, thread_key, account_id,
-      conversation_id, archived_at)
-    values (${id}, 'cc1', 'chat-1', ${key}, 'a1', ${conv},
-      ${archived ? sql`now()` : sql`null`})`.execute(db);
+/** Run `fn` on one connection to `url`, collecting the server notices it raises. */
+async function withClient<T>(
+  url: string,
+  fn: (c: pg.Client, notices: string[]) => Promise<T>,
+): Promise<T> {
+  const client = new pg.Client({ connectionString: url });
+  const notices: string[] = [];
+  client.on("notice", (n) => notices.push(n.message ?? ""));
+  await client.connect();
+  try {
+    return await fn(client, notices);
+  } finally {
+    await client.end();
+  }
+}
 
-beforeAll(async () => {
-  pg = await startTestPostgres();
-  db = createDb(pg.url, 3);
-  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE) });
-  await sql`insert into capybara.accounts (id, display_name) values ('a1', 'A')`.execute(db);
-  await sql`insert into capybara.orgs (id, slug, name) values ('o1', 'o1', 'O')`.execute(db);
-  await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
-    values ('ag1', 'o1', 'a1', 'org', 1)`.execute(db);
-  await sql`insert into capybara.channel_connections (id, org_id, plugin, name, agent_id,
-      created_by)
-    values ('cc1', 'o1', 'chan', 'chan', 'ag1', 'a1')`.execute(db);
-  await conversation("c-web");
-  await conversation("c-dm-archived");
-  await thread("t1", "c-dm-archived", "dm:u1", true);
-  await conversation("c-dm");
-  await thread("t2", "c-dm", "dm:u1", false);
-  await conversation("c-group");
-  await thread("t3", "c-group", "om_123", false);
-  await conversation("c-group-archived");
-  await thread("t4", "c-group-archived", "om_456", true);
-  // a DM row and a group row on one conversation: a group's (the safer source)
-  await conversation("c-mixed");
-  await thread("t5", "c-mixed", "dm:u2", true);
-  await thread("t6", "c-mixed", "om_789", false);
-  // a scheduled group run whose thread binds at its first post, which has not happened yet
-  await conversation("c-group-pending");
-  await sql`insert into capybara.channel_deliveries (conversation_id, connection_id, target,
-      pending_thread_account_id)
-    values ('c-group-pending', 'cc1', '{"chatId":"chat-1","chatType":"group"}', 'a1')`.execute(db);
-  await conversation("c-sub", "subagent", "c-web");
-  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+const vectorSchema = (url: string) =>
+  withClient(url, async (c) => {
+    const r = await c.query<{ schema: string }>(
+      "select extnamespace::regnamespace::text as schema from pg_extension where extname = 'vector'",
+    );
+    return r.rows[0]?.schema ?? null;
+  });
 
 afterAll(async () => {
-  await db?.destroy();
-  await pg?.stop();
+  // Every client is ended by withClient / migrate before this runs; only the databases and
+  // containers themselves are left. Stopped one at a time, newest first.
+  for (const stop of stops.reverse()) await stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-const sources = async () =>
-  Object.fromEntries(
-    (
-      await sql<{ id: string; source: string }>`select id, source
-        from capybara.conversations order by id`.execute(db)
-    ).rows.map((r) => [r.id, r.source]),
-  );
+describe("0119_pgvector on a server with pgvector", () => {
+  it("installs vector in public, visible from a plugin schema", async () => {
+    const db = track(await startTestPostgres());
+    await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
+    expect(await vectorSchema(db.url)).toBe("public");
+    await withClient(db.url, async (c) => {
+      await c.query("create schema plugin_x");
+      await c.query("set search_path = plugin_x, public");
+      const r = await c.query<{ d: number }>("select '[1,2]'::vector <=> '[1,3]'::vector as d");
+      expect(r.rows[0]?.d).toBeGreaterThan(0);
+      // idempotent: the file runs again without error and changes nothing
+      await c.query(`set search_path to capybara, public; ${TEXT}`);
+    });
+    expect(await vectorSchema(db.url)).toBe("public");
+  }, 180_000);
 
-const EXPECTED = {
-  "c-dm": "channel_dm",
-  "c-dm-archived": "channel_dm",
-  "c-group": "channel_group",
-  "c-group-archived": "channel_group",
-  "c-group-pending": "channel_group",
-  "c-mixed": "channel_group",
-  "c-sub": "subagent",
-  "c-web": "web",
-};
+  it("leaves an extension a DBA installed in another schema where it is", async () => {
+    const db = track(await startTestPostgres());
+    await withClient(db.url, async (c) => {
+      await c.query("create schema other");
+      await c.query("create extension vector schema other");
+    });
+    await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
+    expect(await vectorSchema(db.url)).toBe("other");
+  }, 180_000);
 
-describe("0119_conversation_source", () => {
-  it("backfills each existing conversation's source, archived thread rows included", async () => {
-    expect(await sources()).toEqual(EXPECTED);
-  });
+  it("only raises a notice for a role that may not create extensions", async () => {
+    const db = track(await startTestPostgres());
+    const role = `cap_noext_${Math.random().toString(36).slice(2, 10)}`;
+    await withClient(db.url, (c) => c.query(`create role ${role} login password 'p'`));
+    const url = new URL(db.url);
+    url.username = role;
+    url.password = "p";
+    let notices: string[];
+    try {
+      notices = await withClient(url.toString(), async (c, n) => {
+        const r = await c.query<{ create: boolean }>(
+          "select has_database_privilege(current_database(), 'CREATE') as create",
+        );
+        expect(r.rows[0]?.create).toBe(false);
+        await c.query(TEXT);
+        return n;
+      });
+    } finally {
+      // Roles are cluster-wide (the shared server outlives this file): drop it here, while the
+      // database is still there, not in afterAll, where it would race the database's drop.
+      await withClient(db.url, (c) => c.query(`drop role if exists ${role}`));
+    }
+    expect(notices.some((m) => /pgvector not installed.*SQLSTATE 42501/.test(m))).toBe(true);
+    expect(await vectorSchema(db.url)).toBeNull();
+  }, 180_000);
 
-  it("is idempotent: running the file again changes nothing", async () => {
-    const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
-    await sql.raw(`set search_path to capybara; ${text}`).execute(db);
-    expect(await sources()).toEqual(EXPECTED);
-  });
+  it("only raises a notice when the server refuses CREATE EXTENSION as not supported", async () => {
+    // Stands in for a managed server's allow-list (e.g. Azure Flexible Server): an event trigger
+    // in this throwaway database rejects CREATE EXTENSION with feature_not_supported (0A000).
+    const db = track(await startTestPostgres());
+    const notices = await withClient(db.url, async (c, n) => {
+      await c.query(`create function refuse_extensions() returns event_trigger language plpgsql as $$
+        begin
+          raise exception 'extension not allow-listed' using errcode = 'feature_not_supported';
+        end $$`);
+      await c.query(`create event trigger refuse_extensions on ddl_command_start
+        when tag in ('CREATE EXTENSION') execute function refuse_extensions()`);
+      await expect(c.query("create extension vector schema public")).rejects.toMatchObject({
+        code: "0A000",
+      });
+      await c.query(TEXT);
+      return n;
+    });
+    expect(notices.some((m) => /pgvector not installed.*SQLSTATE 0A000/.test(m))).toBe(true);
+    expect(await vectorSchema(db.url)).toBeNull();
+  }, 180_000);
+});
 
-  it("new rows default to web and an unknown source is refused", async () => {
-    await conversation("c-new");
-    expect((await sources())["c-new"]).toBe("web");
-    await expect(
-      sql`update capybara.conversations set source = 'email' where id = 'c-new'`.execute(db),
-    ).rejects.toThrow(/conversations_source_check/);
-  });
+describe("0119_pgvector on a server without pgvector", () => {
+  it("succeeds and installs nothing", async () => {
+    const db = track(await startPostgresContainer({ image: "postgres:17" }));
+    await migrate(db.url, { schema: "capybara", dir: migrationsThrough(FILE) });
+    expect(await vectorSchema(db.url)).toBeNull();
+    const available = await withClient(db.url, async (c) => {
+      const r = await c.query("select 1 from pg_available_extensions where name = 'vector'");
+      return r.rowCount;
+    });
+    expect(available).toBe(0);
+  }, 180_000);
 });
