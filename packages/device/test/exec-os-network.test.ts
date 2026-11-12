@@ -1,4 +1,14 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
@@ -439,6 +449,53 @@ describe("OsExecutor tiers (mocked runtime)", () => {
     await ex.dispose();
   });
 
+  it("before the first command the sandbox and the file helper run at strict", async () => {
+    policy = { ...policy, tier: "dev" };
+    const ex = await make();
+    await ex.ensureRoot();
+    const init = sbx.initialize.mock.calls[0]?.[0] as { filesystem: { allowWrite: string[] } };
+    expect(init.filesystem.allowWrite).not.toContain(join(base, "env", "cache"));
+    await ex.writeFile(join(ex.roots.workspace, "a.txt"), Buffer.from("hi"));
+    expect(sbx.updateConfig).not.toHaveBeenCalled();
+    expect(existsSync(join(base, "env", "cache"))).toBe(false);
+    await ex.dispose();
+  });
+
+  it("a cache folder a command replaced with a file or a link is made again", async () => {
+    policy = { ...policy, tier: "dev" };
+    const ex = await make();
+    await ex.ensureRoot();
+    const cache = join(base, "env", "cache");
+    await ex.exec(execArgs("true"), never);
+    rmSync(join(cache, "npm"), { recursive: true });
+    writeFileSync(join(cache, "npm"), "not a folder");
+    rmSync(join(cache, "pip"), { recursive: true });
+    symlinkSync(join(base, "elsewhere"), join(cache, "pip"));
+    const r = await ex.exec(execArgs('printf "%s" "$npm_config_cache"'), never);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe(join(cache, "npm"));
+    expect(lstatSync(join(cache, "npm")).isDirectory()).toBe(true);
+    expect(lstatSync(join(cache, "pip")).isDirectory()).toBe(true);
+    expect(existsSync(join(base, "elsewhere"))).toBe(false);
+    await ex.dispose();
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "the socket directory is made again when it is gone (macOS prunes /tmp)",
+    async () => {
+      policy = { ...policy, tier: "dev" };
+      const ex = await make();
+      await ex.ensureRoot();
+      const first = (await ex.exec(execArgs('printf "%s" "$TMPDIR"'), never)).stdout;
+      expect(first.startsWith(`${base}/cap-`)).toBe(true);
+      rmSync(first, { recursive: true });
+      const again = (await ex.exec(execArgs('printf "%s" "$TMPDIR"'), never)).stdout;
+      expect(again).toBe(first);
+      expect(statSync(first).mode & 0o777).toBe(0o700);
+      await ex.dispose();
+    },
+  );
+
   it("runs the proxy guard at creation and again only when the policy is reloaded", async () => {
     policy = { ...policy, tier: "dev" };
     const ex = await make();
@@ -468,12 +525,15 @@ describe("OsExecutor tiers (mocked runtime)", () => {
       const init = sbx.initialize.mock.calls[0]?.[0] as {
         network: { allowLocalBinding: boolean; allowUnixSockets?: string[] };
       };
-      expect(init.network.allowLocalBinding).toBe(false);
-      expect(init.network.allowUnixSockets).toHaveLength(3);
+      // before any command: strict
+      expect(init.network.allowUnixSockets).toBeUndefined();
+      await ex.exec(execArgs("true"), never);
+      expect(config(0).network.allowLocalBinding).toBe(false);
+      expect(config(0).network.allowUnixSockets).toHaveLength(3);
       expect(ex.tierFacts().localhost).toBe("off-proxy-detected");
       policy = { ...policy, localhost: "allow" };
       await ex.exec(execArgs("true"), never);
-      expect(config(0).network.allowLocalBinding).toBe(true);
+      expect(config(1).network.allowLocalBinding).toBe(true);
       expect(ex.tierFacts().localhost).toBe("on");
       await ex.dispose();
     },

@@ -11,7 +11,15 @@ describe("sandbox-runtime Chrome sysctl patch", () => {
     const require = createRequire(import.meta.url);
     const root = dirname(require.resolve("@anthropic-ai/sandbox-runtime/package.json"));
     const source = readFileSync(join(root, "dist/sandbox/macos-sandbox-utils.js"), "utf8");
-    expect(source).toContain('(sysctl-name "hw.product")');
-    expect(source).toContain('(sysctl-name "kern.hv_vmm_present")');
+    // The profile generator is not exported: check the lines sit inside the `(allow sysctl-read`
+    // block (it ends at the first line that is only `)`), not in sysctl-write or elsewhere.
+    const start = source.indexOf("'(allow sysctl-read',");
+    expect(start).toBeGreaterThan(0);
+    const end = source.indexOf("')',", start);
+    expect(end).toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    expect(block).toContain(`'  (sysctl-name "hw.product")',`);
+    expect(block).toContain(`'  (sysctl-name "kern.hv_vmm_present")',`);
+    expect(source.indexOf('(sysctl-name "hw.product")', end)).toBe(-1);
   });
 });

@@ -28,7 +28,6 @@ import {
   type EgressLimits,
   effectiveEgress,
   grantedHosts,
-  provisionalTier,
   srtConfig,
   type TierFacts,
   tierFacts,
@@ -187,13 +186,11 @@ export class OsExecutor implements Executor {
   }
 
   /**
-   * The tier commands run at now: the device's choice cut to the latest exec's ceiling, or before
-   * any exec the owner's choice (else `dev`).
+   * The tier of work that has no limits of its own (the file helper): the device's choice cut to
+   * the latest exec's ceiling, `strict` before any exec (no ceiling known yet).
    */
   tier(policy: Policy = this.opts.policy()): SandboxTier {
-    return this.lastLimits === undefined
-      ? provisionalTier(policy)
-      : deviceTier(policy, this.lastLimits);
+    return this.lastLimits === undefined ? "strict" : deviceTier(policy, this.lastLimits);
   }
 
   /** What the tier gives on this machine now (for the policy summary). */
@@ -209,13 +206,13 @@ export class OsExecutor implements Executor {
     return this.proxy;
   }
 
-  /**
-   * The sandbox configuration for the policy and the latest limits (no domains: those are per
-   * command).
-   */
-  config(policy: Policy = this.opts.policy()): SandboxRuntimeConfig {
+  /** The sandbox configuration for the policy at `tier` (no domains: those are per command). */
+  config(
+    policy: Policy = this.opts.policy(),
+    tier: SandboxTier = this.tier(policy),
+  ): SandboxRuntimeConfig {
     return srtConfig(policy, this.roots, [], {
-      tier: this.tier(policy),
+      tier,
       ...(this.opts.home !== undefined && { home: this.opts.home }),
       ...(this.opts.denyRead !== undefined && { denyRead: this.opts.denyRead }),
       proxyDetected: this.proxy.detected,
@@ -228,8 +225,8 @@ export class OsExecutor implements Executor {
    * Installs {@link config} when the policy or the tier changed it, so the change applies at the
    * next command without a restart. The runtime reads its global configuration at each wrap.
    */
-  private applyConfig(policy: Policy): void {
-    const config = this.config(policy);
+  private applyConfig(policy: Policy, tier: SandboxTier): void {
+    const config = this.config(policy, tier);
     const json = JSON.stringify(config);
     if (json === this.installed) return;
     if (this.installed !== undefined) SandboxManager.updateConfig(config);
@@ -242,8 +239,9 @@ export class OsExecutor implements Executor {
   }
 
   /**
-   * macOS: makes the short socket directory (0700); a path taken by something else leaves the
-   * device without one (commands then use the tmp root). Called once, at creation.
+   * macOS: makes the short socket directory (0700) at creation, and again before a `dev` / `open`
+   * command when it is gone (macOS prunes /tmp). A path taken by something else leaves the
+   * device without one: commands then use the tmp root.
    */
   prepareSocketDir(): void {
     if (process.platform !== "darwin") return;
@@ -316,12 +314,20 @@ export class OsExecutor implements Executor {
       tag: string;
       egress: string[];
       policy: Policy;
+      tier: SandboxTier;
       signal?: AbortSignal;
       stdin?: boolean;
     },
   ): Promise<Spawned> {
     const exports: string[] = [];
-    const dev = this.tier(o.policy) !== "strict";
+    const dev = o.tier !== "strict";
+    if (
+      dev &&
+      process.platform === "darwin" &&
+      (this.socketDir === undefined || !existsSync(this.socketDir))
+    ) {
+      this.prepareSocketDir();
+    }
     // dev / open on macOS: the short socket directory, where unix sockets are allowed.
     const tmp = dev && this.socketDir !== undefined ? this.socketDir : this.roots.tmp;
     const inner: Record<string, string> = {
@@ -346,7 +352,7 @@ export class OsExecutor implements Executor {
         throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
       exports.push(`export ${k}=${shellQuote(v)}`);
     }
-    this.applyConfig(o.policy);
+    this.applyConfig(o.policy, o.tier);
     const commandId = randomBytes(16).toString("base64url");
     const wrapped = await SandboxManager.wrapWithSandbox(
       `${exports.join("\n")}\n${script}`,
@@ -433,6 +439,7 @@ export class OsExecutor implements Executor {
       tag: args.tag,
       egress,
       policy,
+      tier: deviceTier(policy, args.limits),
       signal,
     });
     if (egress.includes(ANY_HOST)) this.openCommands.add(commandId);
@@ -546,6 +553,7 @@ export class OsExecutor implements Executor {
       tag: "fs-helper",
       egress: [],
       policy: this.opts.policy(),
+      tier: this.tier(),
       stdin: data !== undefined,
     });
     const chunks: Buffer[] = [];

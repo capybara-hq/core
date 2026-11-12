@@ -75,17 +75,23 @@ describe("proxy guard", () => {
 
   it("probes the common proxy and Docker TCP ports", async () => {
     expect(PROXY_PORTS).toEqual([7890, 7891, 7897, 1080, 1087, 8118, 9050, 9150, 2375, 2376]);
-    const probed: number[] = [];
+    const probed: string[] = [];
     const r = await detectLocalProxy({
       ...nothing,
       platform: "darwin",
-      probe: async (p) => {
-        probed.push(p);
-        return p === 2375;
+      probe: async (p, host) => {
+        probed.push(`${host} ${p}`);
+        return (p === 2375 && host === "127.0.0.1") || (p === 7890 && host === "::1");
       },
     });
-    expect(probed).toEqual([...PROXY_PORTS]);
-    expect(r).toEqual({ detected: true, reasons: ["a listener on 127.0.0.1:2375"] });
+    expect(probed).toEqual([
+      ...PROXY_PORTS.map((p) => `127.0.0.1 ${p}`),
+      ...PROXY_PORTS.map((p) => `::1 ${p}`),
+    ]);
+    expect(r).toEqual({
+      detected: true,
+      reasons: ["a listener on 127.0.0.1:2375", "a listener on [::1]:7890"],
+    });
   });
 
   it("reports the system proxy and the environment, and nothing when all is quiet", async () => {

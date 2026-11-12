@@ -32,8 +32,8 @@ export interface ProxyGuardDeps {
   env?: Record<string, string | undefined>;
   /** `scutil --proxy`'s output, or undefined when it cannot run (default: runs it on macOS). */
   scutil?: () => Promise<string | undefined>;
-  /** Whether something accepts TCP connections on 127.0.0.1:`port` (default: a short connect). */
-  probe?: (port: number) => Promise<boolean>;
+  /** Whether something accepts TCP connections on `host`:`port` (default: a short connect). */
+  probe?: (port: number, host: string) => Promise<boolean>;
   ports?: readonly number[];
 }
 
@@ -93,10 +93,17 @@ function runScutil(): Promise<string | undefined> {
   });
 }
 
-/** Whether something accepts a TCP connection on 127.0.0.1:`port` within a short time. */
-export function probeLoopbackPort(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
+/** The loopback addresses probed: a proxy may listen on either. */
+export const PROBE_HOSTS: readonly string[] = Object.freeze(["127.0.0.1", "::1"]);
+
+/** Whether something accepts a TCP connection on `host`:`port` within a short time. */
+export function probeLoopbackPort(
+  port: number,
+  host = "127.0.0.1",
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = connect({ host: "127.0.0.1", port });
+    const socket = connect({ host, port });
     const done = (open: boolean): void => {
       socket.destroy();
       resolve(open);
@@ -109,8 +116,9 @@ export function probeLoopbackPort(port: number, timeoutMs = PROBE_TIMEOUT_MS): P
 
 /**
  * Looks for a local forwarding proxy: the system proxy (macOS `scutil --proxy`), loopback proxy
- * variables in the program's environment, and a listener on {@link PROXY_PORTS}. Never throws:
- * a check that cannot run finds nothing.
+ * variables in the program's environment, and a listener on {@link PROXY_PORTS} of 127.0.0.1 or
+ * ::1. A proxy configured only through a PAC file (automatic proxy configuration) is not read.
+ * Never throws: a check that cannot run finds nothing.
  */
 export async function detectLocalProxy(deps: ProxyGuardDeps = {}): Promise<ProxyGuardResult> {
   const platform = deps.platform ?? process.platform;
@@ -122,11 +130,13 @@ export async function detectLocalProxy(deps: ProxyGuardDeps = {}): Promise<Proxy
     }
   }
   for (const v of loopbackProxyEnv(deps.env ?? process.env)) reasons.push(`environment ${v}`);
-  const probe = deps.probe ?? ((port: number) => probeLoopbackPort(port));
+  const probe = deps.probe ?? ((port: number, host: string) => probeLoopbackPort(port, host));
   const ports = deps.ports ?? PROXY_PORTS;
-  const open = await Promise.all(ports.map((p) => probe(p).catch(() => false)));
-  ports.forEach((p, i) => {
-    if (open[i]) reasons.push(`a listener on 127.0.0.1:${p}`);
+  const targets = PROBE_HOSTS.flatMap((host) => ports.map((port) => ({ host, port })));
+  const open = await Promise.all(targets.map((t) => probe(t.port, t.host).catch(() => false)));
+  targets.forEach((t, i) => {
+    const where = t.host.includes(":") ? `[${t.host}]` : t.host;
+    if (open[i]) reasons.push(`a listener on ${where}:${t.port}`);
   });
   return { detected: reasons.length > 0, reasons };
 }

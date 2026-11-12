@@ -115,8 +115,15 @@ to that ceiling: a device set to `open` in an organization that allows at most `
 | Package caches | none | `<dir>/cache/` | same as `dev` |
 
 In every tier commands keep `HOME` = `workspace/`, writes stay inside the device directory (plus
-the socket directory), the secret paths stay unreadable, and loopback, private addresses and
-internal names stay refused by the network proxy.
+the socket directory), the secret paths stay unreadable, and the network proxy refuses loopback,
+private addresses and internal names as destinations. Local servers are a separate permission:
+at `dev` and `open` on macOS a command may listen on and connect to this machine's localhost
+directly (below), never through the proxy.
+
+The tier sets what the device adds to its own list; the organization's ceiling only cuts. So a
+device at `strict` under a `dev` ceiling still reaches a dev host (say `registry.npmjs.org`) when
+its owner listed it in `allowedDomains`: `strict` means "only what I listed", not "less than the
+organization's strict list".
 
 ```bash
 capybara-device policy set tier dev            # or strict
@@ -136,7 +143,8 @@ meanwhile; a lower tier takes effect at once). The device's owner can also raise
 device page, behind the same risk text, while `remoteGrants` is `owner`.
 
 An older `policy.json` with `network` is read without it (the device follows the organization's
-default) and loses the key at the next change; `start` says so once when it held `network: open`.
+default) and loses the key at the next change; `start` says so at each start while it held
+`network: open`. Any `capybara-device policy set` writes the file again and so clears the notice.
 
 #### Local servers, sockets and caches at `dev` and `open`
 
@@ -145,9 +153,12 @@ default) and loses the key at the next change; `start` says so once when it held
   forwards past the network allowlist (Clash and the like) or Docker's TCP API, so the program
   looks for one when it starts and whenever `policy.json` changes: the system proxy
   (`scutil --proxy`), `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` pointing at loopback in its own
-  environment, and a listener on 127.0.0.1 ports 7890, 7891, 7897, 1080, 1087, 8118, 9050, 9150,
-  2375 or 2376. When it finds one, commands get no localhost and `policy show` says why. To allow
-  it anyway: `capybara-device policy set localhost allow` (back with `localhost auto`).
+  environment, and a listener on 127.0.0.1 or ::1 ports 7890, 7891, 7897, 1080, 1087, 8118, 9050,
+  9150, 2375 or 2376. When it finds one, commands get no localhost and `policy show` says why. A
+  proxy set up only through a PAC file (automatic proxy configuration) or on another port is not
+  found: if you run one, keep `localhost auto` and consider tier `strict`. To allow localhost
+  despite a detected proxy: `capybara-device policy set localhost allow` (back with
+  `localhost auto`).
 - **Local servers (Linux).** The sandbox has its own network namespace: a server listens and
   answers inside the command (and its children), never reachable from the host's browser.
 - **Unix sockets (macOS).** Allowed under `workspace/`, `tmp/` and a short socket directory
@@ -172,17 +183,20 @@ default) and loses the key at the next change; `start` says so once when it held
 mode, commands run directly on this computer as you: your real `HOME`, `PATH`, environment,
 caches, credentials (SSH keys, cloud accounts, keychain), Docker and any network, like a coding
 agent with its sandbox off. They still start in `workspace/`, and the platform's file tools still
-stay inside the device's directories. Prompt injection can make an agent delete files or send your
-credentials away: turn it on only on your own development machine, with agents and material you
-fully trust.
+stay inside the device's directories. Such commands can also read this program's own credential
+(`credential.json`): if you suspect misuse, run `capybara-device logout` and log in again, which
+revokes it. Prompt injection can make an agent delete files or send your credentials away: turn it
+on only on your own development machine, with agents and material you fully trust.
 
 ```bash
-capybara-device policy set isolation none --yes   # needs tier open as well
+capybara-device policy set tier open --yes        # first: an explicit local tier open
+capybara-device policy set isolation none --yes
 capybara-device policy set isolation sandbox      # back to the sandbox
 ```
 
-It is set only on this machine: `set isolation none` prints the risk and needs `--yes` or a `y` at
-the prompt, and the device refuses it from the deployment whatever `remoteGrants` says (turning it
+It is set only on this machine: `set isolation none` is refused unless `tier` is set to `open` in
+`policy.json` (following the organization's default is not enough), prints the risk and needs
+`--yes` or a `y` at the prompt, and the device refuses it from the deployment whatever `remoteGrants` says (turning it
 back to `sandbox` from the deployment is accepted). A Docker-mode device refuses it. The platform
 or the organization may refuse to use a device that runs without a sandbox; its owner then turns
 the sandbox back on.
@@ -254,7 +268,8 @@ and unix sockets; `isolation none` is refused.
 Docker mode has no domain allowlist: a command has either no network (`--network none`) or the
 default bridge, with the whole internet and this machine's network. It gets the bridge only when
 the local `allowedDomains` holds a domain the device's egress allows, or the tier is `open` and the
-organization allows network; the dev hosts of tier `dev` do not open it. Use OS mode to limit
+organization allows any host (under an organization allowlist, `open` counts only the explicit
+local domains, like the lower tiers); the dev hosts of tier `dev` do not open it. Use OS mode to limit
 commands to single domains.
 
 ## Running at login

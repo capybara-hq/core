@@ -85,12 +85,19 @@ describe("docker tiers", () => {
     // a local domain the ceiling refuses does not count
     expect(bridgeNetwork({ ...DEFAULT_POLICY, allowedDomains: ["b.com"] }, allow)).toBe(false);
     const openCeiling = { ...allow, tier: "open" as const };
-    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, openCeiling)).toBe(true);
+    // open under an allowlist ceiling: the bridge would reach past the list, so only explicit
+    // local domains count
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, openCeiling)).toBe(false);
+    expect(
+      bridgeNetwork({ ...DEFAULT_POLICY, tier: "open", allowedDomains: ["a.com"] }, openCeiling),
+    ).toBe(true);
+    const anyHost = { ...openCeiling, egress: "open" as const };
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, anyHost)).toBe(true);
     // tier open asked for but the ceiling is dev: as dev
     expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, allow)).toBe(false);
-    expect(
-      bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, { ...openCeiling, egress: "none" }),
-    ).toBe(false);
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, { ...anyHost, egress: "none" })).toBe(
+      false,
+    );
   });
 });
 

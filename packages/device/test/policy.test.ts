@@ -614,7 +614,7 @@ describe("policy set tier, isolation, localhost and remoteGrants", () => {
 
   it("the unsandboxed risk text is the spec's English text", () => {
     expect(UNSANDBOXED_RISK_TEXT).toBe(
-      "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust.",
+      "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust. Such commands can also read this program's own credential: if you suspect misuse, run capybara-device logout and log in again.",
     );
   });
 
@@ -668,7 +668,18 @@ describe("policy set tier, isolation, localhost and remoteGrants", () => {
     expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
   });
 
+  it("isolation none needs tier open set locally first, even with --yes", async () => {
+    expect(await cli(["set", "isolation", "none", "--yes"])).toBe(2);
+    expect(err.join("\n")).toContain("capybara-device policy set tier open --yes");
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, tier: "dev" }));
+    expect(await cli(["set", "isolation", "none", "--yes"])).toBe(2);
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+    expect(out).not.toContain(UNSANDBOXED_RISK_TEXT);
+  });
+
   it("isolation none needs --yes and prints the unsandboxed risk; sandbox never asks", async () => {
+    writeFileSync(policyPath(dir), JSON.stringify({ ...DEFAULT_POLICY, tier: "open" }));
     expect(await cli(["set", "isolation", "none"])).toBe(2);
     expect(out).toContain(UNSANDBOXED_RISK_TEXT);
     expect(err.join("\n")).toContain("capybara-device policy set isolation none --yes");
@@ -677,7 +688,7 @@ describe("policy set tier, isolation, localhost and remoteGrants", () => {
     expect(await cli(["set", "isolation", "none", "--yes"])).toBe(0);
     expect(out).toContain(UNSANDBOXED_RISK_TEXT);
     expect(readPolicy(dir).isolation).toBe("none");
-    expect(out.join("\n")).toMatch(/The tier is not open yet/);
+    expect(out.join("\n")).toMatch(/without a sandbox/);
     out.length = 0;
     expect(await cli(["set", "isolation", "sandbox"], { isTTY: true })).toBe(0);
     expect(asked).toEqual([]);

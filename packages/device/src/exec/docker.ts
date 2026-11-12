@@ -10,6 +10,7 @@ import {
   type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 import {
+  ANY_HOST,
   deviceTier,
   type EgressLimits,
   effectiveEgress,
@@ -76,10 +77,13 @@ export function shmSize(tier: SandboxTier, memoryMb: number | null): string | un
  * Whether a command gets the default bridge (spec §5.2 table). Docker mode has no domain filter,
  * and the bridge reaches the host and the intranet, so only an explicit choice opens it: the
  * device's own allowed domains within the ceiling (as `strict` computes them; the dev hosts do
- * not count), or tier `open` with a ceiling that allows any host.
+ * not count), or tier `open` with a ceiling that allows any host (an allowlist ceiling at `open`
+ * counts only its explicit local domains, like the lower tiers).
  */
 export function bridgeNetwork(policy: Policy, limits: EgressLimits): boolean {
-  if (deviceTier(policy, limits) === "open") return effectiveEgress(policy, limits).length > 0;
+  if (deviceTier(policy, limits) === "open" && effectiveEgress(policy, limits).includes(ANY_HOST)) {
+    return true;
+  }
   return effectiveEgress({ ...policy, tier: "strict" }, limits).length > 0;
 }
 

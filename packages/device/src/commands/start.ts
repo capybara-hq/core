@@ -24,7 +24,8 @@ export interface StartDeps {
 /** Printed at start while policy.json still has the legacy `network: "open"` (spec §12). */
 export const LEGACY_NETWORK_NOTICE =
   "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` " +
-  "to keep an unlimited network.";
+  "to keep an unlimited network. Any `capybara-device policy set` removes the old key and this " +
+  "notice.";
 
 /** `start`: connect and serve in the foreground until stopped, drained, revoked or replaced. */
 export async function start(deps: StartDeps): Promise<number> {

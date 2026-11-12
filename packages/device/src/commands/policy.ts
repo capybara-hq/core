@@ -42,7 +42,9 @@ export const UNSANDBOXED_RISK_TEXT =
   "Without a sandbox, agent commands run on this computer as you: they can read and write all " +
   "your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any " +
   "network. Prompt injection can make an agent delete files or send your credentials away. " +
-  "Turn it on only on your own development machine, with agents and material you fully trust.";
+  "Turn it on only on your own development machine, with agents and material you fully trust. " +
+  "Such commands can also read this program's own credential: if you suspect misuse, run " +
+  "capybara-device logout and log in again.";
 
 /** A change that asks first: its risk text, the prompt, and the refusal without a confirmation. */
 export interface PolicyRisk {
@@ -125,6 +127,11 @@ export const DOCKER_NETWORK_NOTE =
 export const DOCKER_ISOLATION_REFUSED =
   "This device runs commands in Docker mode, where they always run in a container; " +
   "isolation none works in OS mode only.";
+
+/** Refusal of `set isolation none` while the local tier is not explicitly `open`. */
+export const ISOLATION_NEEDS_OPEN =
+  "Nothing changed. Running without a sandbox needs tier open set on this device first: " +
+  "capybara-device policy set tier open --yes";
 
 /** Whether this machine is logged in in Docker mode (false when unknown). */
 function dockerMode(stateDir: string): boolean {
@@ -294,6 +301,11 @@ export async function policyCommand(
             err(DOCKER_ISOLATION_REFUSED);
             return 2;
           }
+          // Only an explicit local tier open: the org's default can change under the device.
+          if (v === "none" && store.current().tier !== "open") {
+            err(ISOLATION_NEEDS_OPEN);
+            return 2;
+          }
           change = (p) => ({ ...p, isolation: v });
           break;
         }
@@ -372,10 +384,7 @@ export async function policyCommand(
   if (key === "isolation") {
     out(
       next.isolation === "none"
-        ? "While the tier is open, commands run on this computer without a sandbox." +
-            (next.tier === "open"
-              ? ""
-              : " The tier is not open yet: run capybara-device policy set tier open --yes.")
+        ? "While the tier is open, commands run on this computer without a sandbox."
         : "Commands run in the sandbox.",
     );
   }

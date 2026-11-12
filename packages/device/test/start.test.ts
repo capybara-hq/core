@@ -54,7 +54,7 @@ describe("start: legacy policy notice", () => {
     const out = await run();
     expect(out.filter((l) => l === LEGACY_NETWORK_NOTICE)).toHaveLength(1);
     expect(LEGACY_NETWORK_NOTICE).toBe(
-      "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` to keep an unlimited network.",
+      "policy.json: `network` is replaced by `tier`; run `capybara-device policy set tier open` to keep an unlimited network. Any `capybara-device policy set` removes the old key and this notice.",
     );
   });
 

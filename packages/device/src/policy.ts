@@ -269,7 +269,7 @@ export interface SrtConfigOptions {
  * localhost unless the proxy guard found a local forwarding proxy (`localhost: allow` overrides)
  * and use unix sockets under the tmp root, the workspace and the socket directory. On Linux unix
  * sockets stay blocked (srt can only allow all of them there, the host daemons' included) and the
- * sandbox's own network namespace gives it a loopback anyway. Every unix socket is never allowed.
+ * sandbox's own network namespace gives it a loopback anyway. `allowAllUnixSockets` is never set.
  */
 export function srtConfig(
   policy: Policy,

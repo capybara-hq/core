@@ -591,7 +591,6 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
   () => {
     let base: string;
     let ex: OsExecutor;
-    let socketDir = "";
     const never = new AbortController().signal;
     const DEV: SandboxLimits = { ...LIMITS, tier: "dev", defaultTier: "dev" };
     const node = `'${process.execPath}'`;
@@ -602,9 +601,12 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
     beforeAll(async () => {
       base = tmp("device-dev-");
       mkdirSync(join(base, "env"));
+      mkdirSync(join(base, "s"));
       ex = await createOsExecutor({
         dir: join(base, "env"),
         policy: () => DEFAULT_POLICY,
+        // Not the real /private/tmp: a test leaves nothing behind there.
+        socketBase: join(base, "s"),
         detectProxy: async () => ({ detected: false, reasons: [] }),
       });
       await ex.ensureRoot();
@@ -612,14 +614,11 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
     afterAll(async () => {
       await ex?.dispose();
       if (base) rmSync(base, { recursive: true, force: true });
-      if (socketDir.startsWith("/private/tmp/cap-"))
-        rmSync(socketDir, { recursive: true, force: true });
     });
 
     it("TMPDIR is the short socket directory, where a unix socket works", async () => {
       const r = await ex.exec(execArgs('printf "%s" "$TMPDIR"', { limits: DEV }), never);
-      socketDir = r.stdout;
-      expect(socketDir).toMatch(/^\/private\/tmp\/cap-[0-9a-f]{8}$/);
+      expect(r.stdout).toMatch(new RegExp(`^${join(base, "s")}/cap-[0-9a-f]{8}$`));
       const s = await ex.exec(
         execArgs(echo(`process.env.TMPDIR+'/s.sock'`), { limits: DEV }),
         never,

@@ -1,4 +1,15 @@
-import { chmodSync, constants, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
@@ -39,15 +50,38 @@ const CACHE_DIRS: readonly (readonly [string, string])[] = [
 ];
 
 /**
+ * Makes one cache folder a real directory: a file or a link a sandboxed command put in its place
+ * is removed (never followed) and the folder made again. False when it still cannot be made.
+ */
+function ensureCacheFolder(path: string): boolean {
+  try {
+    const st = lstatSync(path);
+    if (st.isDirectory()) return true;
+    // unlink, not rm: rm skips a link whose target is missing.
+    unlinkSync(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false;
+  }
+  try {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The cache variables of `dev` / `open` (spec §5.2.1), each pointing at a folder of `root`
- * (`MAVEN_OPTS` as `-Dmaven.repo.local=<folder>`). With `create`, the folders are made on demand.
- * A command's own value wins: callers apply the request's environment after these.
+ * (`MAVEN_OPTS` as `-Dmaven.repo.local=<folder>`). With `create`, the folders are made on demand;
+ * a folder that cannot be made (a command replaced it with something this program cannot remove)
+ * leaves its variable out, so one broken cache never stops the next command. A command's own
+ * value wins: callers apply the request's environment after these.
  */
 export function cacheEnv(root: string, opts: { create?: boolean } = {}): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, sub] of CACHE_DIRS) {
     const path = join(root, sub);
-    if (opts.create === true) mkdirSync(path, { recursive: true, mode: 0o700 });
+    if (opts.create === true && !ensureCacheFolder(path)) continue;
     out[name] = name === "MAVEN_OPTS" ? `-Dmaven.repo.local=${path}` : path;
   }
   return out;
@@ -64,25 +98,35 @@ export function socketDirPath(dirKey: string, base = "/private/tmp"): string {
 
 /**
  * Creates the socket directory (mode 0700), or checks an existing one is a real directory of this
- * user and makes it 0700 again. Returns undefined when the path is taken by something else (another
- * user's directory or a link in the shared /tmp): commands then use the tmp root.
+ * user and makes it 0700 again. The check and the mode change go through one descriptor opened
+ * without following links, so a link swapped in meanwhile (the shared /tmp is sticky, not
+ * private) is refused, never followed. Returns undefined when the path is taken by something else
+ * (another user's directory, a file or a link): commands then use the tmp root.
  */
-export function prepareSocketDir(path: string): string | undefined {
+export function prepareSocketDir(
+  path: string,
+  uid: number | undefined = process.getuid?.(),
+): string | undefined {
   try {
     mkdirSync(path, { mode: 0o700 });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
   }
+  let fd: number;
   try {
-    const st = lstatSync(path);
-    const uid = process.getuid?.();
-    if (!st.isDirectory() || st.isSymbolicLink() || (uid !== undefined && st.uid !== uid)) {
-      return undefined;
-    }
-    chmodSync(path, 0o700);
+    fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch {
+    return undefined;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) return undefined;
+    if ((st.mode & 0o777) !== 0o700) fchmodSync(fd, 0o700);
     return path;
   } catch {
     return undefined;
+  } finally {
+    closeSync(fd);
   }
 }
 
