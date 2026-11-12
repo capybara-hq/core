@@ -325,3 +325,17 @@ there, changing the list needs a restart, and installing an extension with the s
 3. Install the package (admin console, or `capybara extensions install …`) and enable it. The extension
    schema, secrets, org config and approval record carry over. If the new package asks for no
    permissions beyond the approved ones, it loads right away.
+
+### pgvector in the compose image (migration 0118)
+
+The compose files now run `pgvector/pgvector:pg17` instead of `postgres:17`. It is the official
+PostgreSQL 17 image with the pgvector extension added, so it opens an existing `pgdata` volume as
+is: `docker compose pull && docker compose up -d` recreates the `postgres` container on the new
+image. Migration 0118 then creates the extension in `public` when the server offers it and none is
+installed yet.
+
+pgvector is recommended, not required. On a server without it, or when the migrating role may not
+create extensions, 0118 only raises a notice and succeeds; plugins fall back (the memory plugin
+stores embeddings as `real[]` and ranks them in the plugin). To enable it later on a managed
+PostgreSQL, run `CREATE EXTENSION vector SCHEMA public` as a role allowed to: an extension in
+another schema is not visible to plugin schemas and counts as absent.
