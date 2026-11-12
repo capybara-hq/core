@@ -104,12 +104,14 @@ export function approvalsFor(
     undefined as never,
     // no sandbox config here: an org's egress is open (a trial's network grants are kept)
     {
-      orgLimits: async () => ({
+      ceilingLimits: async () => ({
         cpu: 1,
         memoryMb: 512,
         diskMb: 1024,
         egress: "open" as const,
         allowHosts: [],
+        tier: "strict" as const,
+        devHosts: [],
       }),
     },
   );

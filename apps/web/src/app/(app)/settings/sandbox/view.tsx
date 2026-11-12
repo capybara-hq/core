@@ -1,12 +1,15 @@
 "use client";
 
 import {
+  Disclosure,
   Field,
   FormSection,
   KeyValue,
   RadioGroup,
+  Select,
   SettingsPage,
   Stack,
+  SwitchField,
   Text,
   Textarea,
   useToast,
@@ -19,6 +22,7 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
+import { SANDBOX_TIERS, type SandboxTier, tierAbove } from "../../../../lib/devices";
 import {
   canUpdateOrg,
   type OrgSettings,
@@ -26,6 +30,7 @@ import {
   type OrgSettingsResponse,
   parseHostList,
   type SandboxEgressSetting,
+  type SandboxTierSetting,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -37,7 +42,10 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
- * sandbox tools (run directly / ask for approval), sandbox egress (follow the deployment / custom
+ * sandbox tools (run directly / ask for approval), the sandbox levels (sandbox dev tiers spec
+ * §11.2: 最高级别 as three cards, 开放 disabled with 平台未开放 when the platform's max is lower and
+ * carrying the risk text; 新设备默认 at most the highest; 允许成员的设备不使用沙箱 under 开放 when
+ * the platform allows it), sandbox egress (follow the deployment / custom
  * allowlist / no network, ruling M19) and sandbox resources (cpu / memory, read-only: super
  * admins override them per organization in the deployment settings, C19). Members can see, admins
  * can change; changes show an ActionRow. The org-settings PATCH is shared with the general page:
@@ -61,6 +69,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const ts = useTranslations("sandboxSettings");
+  const td = useTranslations("devices.tier");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -73,6 +82,9 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     sandboxToolPolicy?: NonNullable<OrgSettings["sandboxToolPolicy"]>;
     egressMode?: EgressMode;
     hostsText?: string;
+    tierMax?: SandboxTier;
+    tierDefault?: SandboxTier;
+    allowUnsandboxed?: boolean;
   }>({});
   // The answer is the new settings; the read-only parts it leaves out keep their cached values.
   const update = useAppMutation({
@@ -94,9 +106,8 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     if (prefilled !== null || loaded === null || !manage || allowHosts.length === 0) return;
     const deploymentEgress = loaded.deployment?.sandboxEgress;
     const own = loaded.settings.sandboxEgress;
-    // no list to add to: the platform has no network, or the org follows an open platform
+    // no list to add to: the platform has no network
     if (deploymentEgress === undefined || deploymentEgress.mode === "none") return;
-    if (own === undefined && deploymentEgress.mode === "open") return;
     const base = own?.allowHosts ?? deploymentEgress.allowHosts;
     const added = allowHosts.filter((h) => !base.includes(h));
     if (added.length === 0) {
@@ -131,6 +142,11 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
               fields: [{ control: "radio-cards", options: 2, help: !manage }],
               title: t("sandbox.title"),
               description: t("sandbox.description"),
+            },
+            {
+              fields: [{ control: "radio-cards", options: 3 }, { control: "select" }],
+              title: t("tiers.title"),
+              description: t("tiers.description"),
             },
             {
               fields: [{ control: "radio-cards", options: 3, help: true }],
@@ -171,14 +187,40 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
       : egressMode === "none"
         ? { mode: "none" }
         : { mode: "allowlist", allowHosts: hosts };
+  // The levels: the org's own setting over the platform's (absent = follow the platform)
+  const platformTiers = deployment?.sandboxTiers;
+  const ownTier = saved.sandboxTier;
+  const savedMax = ownTier?.max ?? platformTiers?.max ?? "dev";
+  const tierMax = draft.tierMax ?? savedMax;
+  const clampTo = (tier: SandboxTier, max: SandboxTier) => (tierAbove(tier, max) ? max : tier);
+  const savedDefault = clampTo(ownTier?.default ?? platformTiers?.default ?? "dev", savedMax);
+  const tierDefault = clampTo(draft.tierDefault ?? savedDefault, tierMax);
+  const savedAllow = ownTier?.allowUnsandboxed ?? platformTiers?.allowUnsandboxed ?? false;
+  const allowUnsandboxed = draft.allowUnsandboxed ?? savedAllow;
+  const tierChanged =
+    tierMax !== savedMax || tierDefault !== savedDefault || allowUnsandboxed !== savedAllow;
+  // Only the fields the person set, kept explicit once changed; a default above the new highest
+  // level comes down with it.
+  const tierValue: SandboxTierSetting = {
+    ...ownTier,
+    ...(draft.tierMax !== undefined || ownTier?.max !== undefined ? { max: tierMax } : {}),
+    ...(draft.tierDefault !== undefined ||
+    ownTier?.default !== undefined ||
+    tierDefault !== savedDefault
+      ? { default: tierDefault }
+      : {}),
+    ...(draft.allowUnsandboxed !== undefined ? { allowUnsandboxed } : {}),
+  };
   // Only the changed fields
   const patch: OrgSettingsPatch = {
+    ...(tierChanged ? { sandboxTier: tierValue } : {}),
     ...(sandboxPolicy !== (saved.sandboxToolPolicy ?? "allow")
       ? { sandboxToolPolicy: sandboxPolicy }
       : {}),
     ...(egressChanged ? { sandboxEgress: egressValue } : {}),
   };
   const unsaved = Object.keys(patch).length;
+  const devHosts = platformTiers?.devHosts ?? [];
   const dirty = unsaved > 0;
 
   async function save() {
@@ -243,6 +285,63 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
           )}
         </Stack>
       </FormSection>
+      {platformTiers !== undefined && (
+        <FormSection
+          id="sandbox-tiers"
+          title={t("tiers.title")}
+          description={t("tiers.description")}
+        >
+          <Stack gap={12}>
+            <RadioGroup
+              label={t("tiers.max")}
+              variant="card"
+              value={tierMax}
+              disabled={!manage}
+              onChange={(v) => setDraft((d) => ({ ...d, tierMax: v as SandboxTier }))}
+              options={SANDBOX_TIERS.map((tier) => {
+                const closed = tierAbove(tier, platformTiers.max);
+                return {
+                  value: tier,
+                  label: td(tier),
+                  description: closed ? t("tiers.platformClosed") : t(`tiers.${tier}Hint`),
+                  ...(closed ? { disabled: true } : {}),
+                };
+              })}
+            />
+            {tierMax === "open" && platformTiers.allowUnsandboxed && (
+              <Stack gap={4}>
+                <SwitchField
+                  label={t("tiers.allowUnsandboxed")}
+                  checked={allowUnsandboxed}
+                  disabled={!manage}
+                  onChange={(next) => setDraft((d) => ({ ...d, allowUnsandboxed: next }))}
+                />
+                <Text variant="small" tone="muted">
+                  {t("tiers.allowUnsandboxedHint")}
+                </Text>
+              </Stack>
+            )}
+            <Field label={t("tiers.default")} help={t("tiers.defaultHelp")}>
+              <Select
+                value={tierDefault}
+                disabled={!manage}
+                onChange={(ev) =>
+                  setDraft((d) => ({ ...d, tierDefault: ev.target.value as SandboxTier }))
+                }
+                options={SANDBOX_TIERS.filter((tier) => !tierAbove(tier, tierMax)).map((tier) => ({
+                  value: tier,
+                  label: td(tier),
+                }))}
+              />
+            </Field>
+            {!manage && (
+              <Text variant="small" tone="muted">
+                {t("readonly")}
+              </Text>
+            )}
+          </Stack>
+        </FormSection>
+      )}
       {deployment !== undefined && (
         <FormSection
           id="sandbox-egress"
@@ -285,6 +384,16 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
                 />
               </Field>
             )}
+            {devHosts.length > 0 &&
+              tierMax !== "strict" &&
+              (egressMode === "allowlist" ||
+                (egressMode === "default" && deployment.sandboxEgress.mode === "allowlist")) && (
+                <Disclosure summary={t("egress.devHosts", { count: devHosts.length })}>
+                  <Text variant="small" tone="muted">
+                    {devHosts.join(", ")}
+                  </Text>
+                </Disclosure>
+              )}
             {egressMode === "allowlist" && prefilled !== null && prefilled.length > 0 && (
               <Text variant="small" tone="muted">
                 {t("egress.prefilled", { hosts: prefilled.join(", ") })}

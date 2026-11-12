@@ -22,6 +22,7 @@ import {
 } from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import { UNSANDBOXED_NOT_ALLOWED_ERROR } from "../../../local-devices/local-device-provider.js";
 import { devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import {
@@ -30,6 +31,10 @@ import {
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../../../sandbox/unreachable.js";
+import {
+  UNATTENDED_OPEN_TIER_ERROR,
+  UNATTENDED_UNSANDBOXED_ERROR,
+} from "../../../schedules/unattended.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 
@@ -47,7 +52,8 @@ export interface SandboxToolDeps {
    * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
    * conversation's device can run without a cloud provider (ruling R8).
    */
-  devices: Pick<ConversationDevices, "forTool"> & Partial<Pick<ConversationDevices, "usableNow">>;
+  devices: Pick<ConversationDevices, "forTool"> &
+    Partial<Pick<ConversationDevices, "usableNow" | "sandboxLevel">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -470,6 +476,12 @@ async function copyAttachments(
 }
 
 /**
+ * A device that runs commands without a sandbox the org does not allow (sandbox dev tiers spec
+ * §4.3): the kernel's `device.unsandboxed_not_allowed` text plus what the model can do.
+ */
+const UNSANDBOXED_TEXT = `${UNSANDBOXED_NOT_ALLOWED_ERROR} Ask the user to do that, or to start a new conversation on another device.`;
+
+/**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
  * (the pipeline reports a generic tool failure). A provider that cannot be reached becomes a
  * fixed text (providers never write model-visible text) with `kind: "unavailable"`, and its raw
@@ -504,6 +516,11 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
+    if (e.code === "device.unsandboxed_not_allowed" && detail?.reason === "unattended") {
+      return new ToolError(UNATTENDED_UNSANDBOXED_ERROR);
+    }
+    if (e.code === "device.unsandboxed_not_allowed") return new ToolError(UNSANDBOXED_TEXT);
+    if (e.code === "device.tier_not_granted") return new ToolError(UNATTENDED_OPEN_TIER_ERROR);
   }
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
@@ -545,7 +562,7 @@ export async function inSandbox<T>(
       },
       async (h, p, info, signal) => {
         const s: SandboxSession = { deviceId, h, roots: info.roots, p, signal };
-        await recordDevicePaths(deps, ctx, info.roots);
+        await recordDevicePaths(deps, ctx, deviceId, info.roots);
         const notices: string[] = [];
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
@@ -565,20 +582,25 @@ export async function inSandbox<T>(
 }
 
 /**
- * Environments spec §13.1, ruling R22: the calling conversation's log (the log its model reads; a
- * sub-agent's own too) gets an `device_paths` event on its first sandbox call, the default
- * roots included, and again whenever the held instance's roots differ from the latest recorded
- * ones; always before the call's result. One indexed read per call (migration 0094); parallel
- * calls that saw the same latest event write one event (its idempotency key).
+ * Environments spec §13.1, ruling R22; sandbox dev tiers spec §11.5: the calling conversation's
+ * log (the log its model reads; a sub-agent's own too) gets a `device_paths` event on its first
+ * sandbox call, the default roots included, and again whenever the held instance's roots or the
+ * device's sandbox level (tier, isolation) differ from the latest recorded ones; always before the
+ * call's result. Two indexed reads per call (migration 0094, the device's row); parallel calls
+ * that saw the same latest event write one event (its idempotency key).
  */
 async function recordDevicePaths(
-  deps: Pick<SandboxToolDeps, "eventLog">,
+  deps: Pick<SandboxToolDeps, "eventLog" | "devices">,
   ctx: BuiltinCallContext,
+  deviceId: string,
   roots: SandboxRoots,
 ): Promise<void> {
   if (!deps.eventLog.latestOfType) return;
-  const latest = await deps.eventLog.latestOfType(ctx.conversationId, "device_paths");
-  const change = devicePathsChange(latest, roots, ctx.runId);
+  const [latest, level] = await Promise.all([
+    deps.eventLog.latestOfType(ctx.conversationId, "device_paths"),
+    deps.devices.sandboxLevel?.(ctx.orgId, deviceId, ctx.runId) ?? null,
+  ]);
+  const change = devicePathsChange(latest, roots, ctx.runId, level ?? undefined);
   if (change) await deps.eventLog.append(ctx.conversationId, [change]);
 }
 

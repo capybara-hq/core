@@ -16,11 +16,13 @@ import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  bridgeNetwork,
   containerName,
   containerUser,
   DockerExecutor,
   SANDBOX_IMAGE,
   SANDBOX_IMAGE_TAG,
+  shmSize,
 } from "../src/exec/docker.js";
 import { prepareDeviceDir } from "../src/exec/shared.js";
 import { DeviceOpError } from "../src/exec/types.js";
@@ -35,6 +37,11 @@ const LIMITS: SandboxLimits = {
   diskMb: 1024,
   egress: "none",
   allowHosts: [],
+  // What the kernel sends by default: the dev ceiling and default (the dev hosts never open the
+  // bridge in Docker mode).
+  tier: "dev",
+  defaultTier: "dev",
+  devHosts: ["registry.npmjs.org"],
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -54,6 +61,43 @@ describe("docker executor constants", () => {
     expect(SANDBOX_IMAGE_TAG).toBe("0.1.0-rc.5");
     expect(SANDBOX_IMAGE).toBe("ghcr.io/capybara-hq/capybara-sandbox:0.1.0-rc.5");
     expect(containerName("env_1")).toBe("capybara-device-env_1");
+  });
+});
+
+describe("docker tiers", () => {
+  it("shm: default in strict; a quarter of memory up to 1 GiB in dev and open", () => {
+    expect(shmSize("strict", 4096)).toBeUndefined();
+    expect(shmSize("dev", null)).toBe("1g");
+    expect(shmSize("dev", 2048)).toBe("512m");
+    expect(shmSize("open", 8192)).toBe("1024m");
+    // never below Docker's own default
+    expect(shmSize("dev", 128)).toBe("64m");
+  });
+
+  it("the bridge only for explicit local domains or tier open; dev hosts never count", () => {
+    const allow = {
+      ...LIMITS,
+      egress: "allowlist" as const,
+      allowHosts: ["a.com", "registry.npmjs.org"],
+    };
+    expect(bridgeNetwork(DEFAULT_POLICY, allow)).toBe(false);
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, allowedDomains: ["a.com"] }, allow)).toBe(true);
+    // a local domain the ceiling refuses does not count
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, allowedDomains: ["b.com"] }, allow)).toBe(false);
+    const openCeiling = { ...allow, tier: "open" as const };
+    // open under an allowlist ceiling: the bridge would reach past the list, so only explicit
+    // local domains count
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, openCeiling)).toBe(false);
+    expect(
+      bridgeNetwork({ ...DEFAULT_POLICY, tier: "open", allowedDomains: ["a.com"] }, openCeiling),
+    ).toBe(true);
+    const anyHost = { ...openCeiling, egress: "open" as const };
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, anyHost)).toBe(true);
+    // tier open asked for but the ceiling is dev: as dev
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, allow)).toBe(false);
+    expect(bridgeNetwork({ ...DEFAULT_POLICY, tier: "open" }, { ...anyHost, egress: "none" })).toBe(
+      false,
+    );
   });
 });
 
@@ -259,6 +303,21 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     ).trim();
     expect(out).toBe(`1500000000 ${256 * 1024 * 1024}`);
   });
+
+  it("sizes /dev/shm per tier and recreates the container when the tier changes", async () => {
+    let policy = { ...DEFAULT_POLICY, memoryMb: 2048 };
+    const tiered = new DockerExecutor({ dir, deviceId: envId, policy: () => policy });
+    const shm = () =>
+      execFileSync("docker", ["inspect", "-f", "{{.HostConfig.ShmSize}}", containerName(envId)], {
+        encoding: "utf8",
+      }).trim();
+    await tiered.exec(execArgs("true"), live);
+    expect(shm()).toBe(String(512 * 1024 * 1024));
+    policy = { ...policy, tier: "strict" };
+    await tiered.exec(execArgs("true"), live);
+    expect(shm()).toBe(String(64 * 1024 * 1024));
+    await tiered.dispose();
+  }, 30_000);
 
   it("killTagged stops only that tag", async () => {
     const a = ex.exec(execArgs("sleep 60", { tag: "a", timeoutMs: 60_000 }), live);

@@ -12,10 +12,17 @@ import {
 const limits = (
   egress: SandboxLimits["egress"],
   allowHosts: string[] = [],
-): Pick<SandboxLimits, "egress" | "allowHosts"> => ({ egress, allowHosts });
-const policy = (allowedDomains: string[], network?: "allowlist" | "open") => ({
+  tier: SandboxLimits["tier"] = "open",
+  devHosts: string[] = [],
+): Pick<SandboxLimits, "egress" | "allowHosts" | "tier" | "devHosts"> => ({
+  egress,
+  allowHosts,
+  tier,
+  devHosts,
+});
+const policy = (allowedDomains: string[], tier?: "strict" | "dev" | "open") => ({
   allowedDomains,
-  ...(network !== undefined && { network }),
+  ...(tier !== undefined && { tier }),
 });
 
 describe("parseNetworkViolation (sandbox-runtime 0.0.81 line format)", () => {
@@ -102,7 +109,15 @@ describe("classifyHost", () => {
     ).toBe("device");
   });
 
-  it("a device whose network is open is never the refusing layer", () => {
+  it("a dev device admits the dev hosts; strict does not; the ceiling cuts open", () => {
+    const l = limits("allowlist", ["registry.npmjs.org"], "open", ["registry.npmjs.org"]);
+    expect(classifyHost("registry.npmjs.org", notListed, l, policy([], "dev"))).toBe("unknown");
+    expect(classifyHost("registry.npmjs.org", notListed, l, policy([], "strict"))).toBe("device");
+    const capped = limits("allowlist", ["a.com"], "strict");
+    expect(classifyHost("a.com", notListed, capped, policy([], "open"))).toBe("device");
+  });
+
+  it("a device whose tier is open is never the refusing layer", () => {
     expect(classifyHost("a.com", notListed, limits("open"), policy([], "open"))).toBe("unknown");
     expect(
       classifyHost("a.com", notListed, limits("allowlist", ["b.com"]), policy([], "open")),

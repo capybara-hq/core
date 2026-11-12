@@ -1,13 +1,16 @@
 import {
   type DeviceLocalPolicySummary,
   type SandboxLimits,
+  type SandboxTier,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { orgAllows } from "../local-devices/network-grants.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { isFixedAsk } from "../tools/fixed-ask.js";
 import type { ResolvedTool } from "../tools/registry.js";
-import { changesAgentSkills } from "./unattended.js";
+import { changesAgentSkills, TIER_GRANT_SPEC_HASH, TIER_OPEN_GRANT_KEY } from "./unattended.js";
+
+export { TIER_GRANT_SPEC_HASH, TIER_OPEN_GRANT_KEY };
 
 /**
  * The one rule for what can be a scheduled task's grant (spec §7): the task form and
@@ -115,7 +118,10 @@ export const networkGrantHost = (key: string): string => key.slice(NETWORK_GRANT
 
 /** What {@link networkGrantRefusal} checks a host against. */
 export interface NetworkGrantContext {
-  /** The org's effective sandbox egress now (`SandboxService.orgLimits`). */
+  /**
+   * The network of the org's sandbox ceiling now (`SandboxService.ceilingLimits`): the most a
+   * device's command may reach.
+   */
   limits: Pick<SandboxLimits, "egress" | "allowHosts">;
   /**
    * The local policy summary of the task's device (its active machine); null or undefined when
@@ -152,6 +158,50 @@ export function networkGrantRefusal(
     return {
       code: "device_refuses",
       message: `The task's device does not accept network grants from the deployment; its owner can allow ${host} locally: capybara-device policy add allowedDomains ${host}`,
+    };
+  }
+  return null;
+}
+
+/** The prefix of a sandbox tier grant's key (sandbox dev tiers spec §11.4): only `tier:open` exists. */
+export const TIER_GRANT_PREFIX = "tier:";
+
+/** Whether a grant key is a sandbox tier grant (`tier:<tier>`). */
+export const isTierGrantKey = (key: string): boolean => key.startsWith(TIER_GRANT_PREFIX);
+
+/** Whether a grant key names no tool: a network grant or a sandbox tier grant. */
+export const isPolicyGrantKey = (key: string): boolean =>
+  isNetworkGrantKey(key) || isTierGrantKey(key);
+
+/**
+ * Why `key` cannot be a task's sandbox tier grant (sandbox dev tiers spec §11.4), or null when it
+ * can: only `tier:open` is one (`not_grantable` otherwise), and only while the org's ceiling
+ * (`ceiling`: its highest tier, cut to the platform's) is `open` (`needs_admin`: only an org admin
+ * can raise it, within the platform's), and only while the task's device can reach it
+ * (`deviceReachesOpen: false`, `device_refuses`: a local device whose program applies no tiers
+ * runs every command in `strict`).
+ */
+export function tierGrantRefusal(
+  key: string,
+  ctx: { ceiling: SandboxTier; deviceReachesOpen?: boolean },
+): { code: GrantRefusalCode; message: string } | null {
+  if (key !== TIER_OPEN_GRANT_KEY) {
+    return {
+      code: "not_grantable",
+      message: `${key} cannot be approved for a scheduled task; the only sandbox level a task can allow is ${TIER_OPEN_GRANT_KEY}`,
+    };
+  }
+  if (ctx.ceiling !== "open") {
+    return {
+      code: "needs_admin",
+      message: `The organization's highest sandbox level is ${ctx.ceiling}, so a scheduled task cannot allow the open level; only an organization admin can raise it`,
+    };
+  }
+  if (ctx.deviceReachesOpen === false) {
+    return {
+      code: "device_refuses",
+      message:
+        "The task's device runs a capybara-device program without sandbox levels, so its commands always run at the strict level; update the program on the device, then allow the open level",
     };
   }
   return null;

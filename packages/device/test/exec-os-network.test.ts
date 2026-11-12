@@ -1,4 +1,15 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
@@ -10,6 +21,7 @@ const sbx = vi.hoisted(() => {
   const state = {
     askCallbackDenyReason: true as boolean,
     initialize: vi.fn(async (_config: unknown, _ask?: unknown) => {}),
+    updateConfig: vi.fn((_config: unknown) => {}),
     commandIds: [] as string[],
     violations: new Map<string, string[]>(),
     /** The violations the next wrapped command will have. */
@@ -29,6 +41,7 @@ vi.mock("@anthropic-ai/sandbox-runtime", () => ({
     isSupportedPlatform: () => true,
     checkDependencies: () => ({ errors: [], warnings: [] }),
     initialize: sbx.initialize,
+    updateConfig: sbx.updateConfig,
     wrapWithSandbox: async (
       command: string,
       _shell: string,
@@ -65,6 +78,9 @@ const LIMITS: SandboxLimits = {
   diskMb: 1024,
   egress: "allowlist",
   allowHosts: ["files.slack.com"],
+  // The ceiling; the device's own tier decides (none set and no org default: strict).
+  tier: "open",
+  devHosts: [],
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -90,6 +106,8 @@ beforeEach(() => {
   policy = { ...DEFAULT_POLICY };
   sbx.askCallbackDenyReason = true;
   sbx.initialize.mockClear();
+  sbx.updateConfig.mockClear();
+  proxyChecks = 0;
   sbx.commandIds.length = 0;
   sbx.violations.clear();
   sbx.pending = undefined;
@@ -98,7 +116,17 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
-const make = () => createOsExecutor({ dir: join(base, "env"), policy: () => policy });
+let proxyChecks = 0;
+const make = () =>
+  createOsExecutor({
+    dir: join(base, "env"),
+    policy: () => policy,
+    socketBase: base,
+    detectProxy: async () => {
+      proxyChecks++;
+      return { detected: false, reasons: [] };
+    },
+  });
 const never = new AbortController().signal;
 
 describe("OsExecutor network explanations (mocked runtime)", () => {
@@ -280,7 +308,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
   it("network open with an org allowlist registers the org's list", async () => {
     const ex = await make();
     await ex.ensureRoot();
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     await ex.exec(execArgs("true"), never);
     expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["files.slack.com"]);
     await ex.dispose();
@@ -294,7 +322,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       port: number;
     }) => Promise<unknown>;
     const denied = { allow: false };
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     const open = { ...LIMITS, egress: "open" as const, allowHosts: [] };
     // No open command running: denied.
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
@@ -309,9 +337,9 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       expect(await ask({ host, port: 443 }), host).toMatchObject(denied);
     }
     // Narrowing applies at once, also to the running command.
-    policy = { ...policy, network: "allowlist" };
+    policy = { ...policy, tier: "strict" };
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject(denied);
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     expect(await ask({ host: "anything.example.org", port: 443 })).toBe(true);
     await running;
     // The command ended: nothing open runs any more.
@@ -326,7 +354,7 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
       host: string;
       port: number;
     }) => Promise<unknown>;
-    policy = { ...policy, network: "open" };
+    policy = { ...policy, tier: "open" };
     const running = ex.exec(execArgs("sleep 0.5"), never);
     await new Promise((r) => setTimeout(r, 150));
     expect(await ask({ host: "anything.example.org", port: 443 })).toMatchObject({ allow: false });
@@ -339,9 +367,212 @@ describe("OsExecutor network explanations (mocked runtime)", () => {
   it("remoteGrants does not matter for a device that is open already", async () => {
     const ex = await make();
     await ex.ensureRoot();
-    policy = { ...policy, network: "open", remoteGrants: "off" };
+    policy = { ...policy, tier: "open", remoteGrants: "off" };
     await ex.exec(execArgs("true"), never);
     expect(sbx.registered.at(-1)?.allowedDomains).toEqual(["files.slack.com"]);
     await ex.dispose();
   });
+});
+
+describe("OsExecutor tiers (mocked runtime)", () => {
+  const env = async (ex: Awaited<ReturnType<typeof make>>, limits: SandboxLimits = LIMITS) => {
+    const r = await ex.exec(
+      execArgs(
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion
+        'printf "%s\\n" "$TMPDIR" "${MAC_CHROMIUM_TMPDIR:-unset}" "${npm_config_cache:-unset}" "${MAVEN_OPTS:-unset}"',
+        { limits },
+      ),
+      never,
+    );
+    return r.stdout.split("\n").slice(0, 4);
+  };
+  const config = (n: number) =>
+    sbx.updateConfig.mock.calls[n]?.[0] as {
+      network: { allowLocalBinding: boolean; allowUnixSockets?: string[] };
+      filesystem: { allowWrite: string[] };
+    };
+
+  it("strict: TMPDIR is the tmp root and no caches; dev: socket dir and caches", async () => {
+    const ex = await make();
+    await ex.ensureRoot();
+    const dir = join(base, "env");
+    const [tmp, chromium, npm] = await env(ex);
+    expect(tmp).toBe(join(dir, "tmp"));
+    expect(npm).toBe("unset");
+    if (process.platform === "darwin") expect(chromium).toBe(join(dir, "tmp"));
+
+    policy = { ...policy, tier: "dev" };
+    const [devTmp, devChromium, devNpm, maven] = await env(ex);
+    expect(devNpm).toBe(join(dir, "cache", "npm"));
+    expect(maven).toBe(`-Dmaven.repo.local=${join(dir, "cache", "maven")}`);
+    expect(statSync(join(dir, "cache", "npm")).isDirectory()).toBe(true);
+    if (process.platform === "darwin") {
+      const socketDir = devTmp as string;
+      expect(socketDir).toMatch(new RegExp(`^${base}/cap-[0-9a-f]{8}$`));
+      expect(devChromium).toBe(socketDir);
+      expect(statSync(socketDir).mode & 0o777).toBe(0o700);
+    } else {
+      expect(devTmp).toBe(join(dir, "tmp"));
+    }
+    await ex.dispose();
+  });
+
+  it("a command's own cache variable wins", async () => {
+    policy = { ...policy, tier: "dev" };
+    const ex = await make();
+    await ex.ensureRoot();
+    const r = await ex.exec(
+      execArgs('printf "%s" "$npm_config_cache"', { env: { npm_config_cache: "/mine" } }),
+      never,
+    );
+    expect(r.stdout).toBe("/mine");
+    await ex.dispose();
+  });
+
+  it("a tier change reaches the sandbox at the next command; an unchanged one is not reapplied", async () => {
+    policy = { ...policy, tier: "strict" };
+    const ex = await make();
+    await ex.ensureRoot();
+    await ex.exec(execArgs("true"), never);
+    // initialized for strict (the owner's choice); the command's limits change nothing
+    expect(sbx.updateConfig).not.toHaveBeenCalled();
+    policy = { ...policy, tier: "dev" };
+    await ex.exec(execArgs("true"), never);
+    expect(sbx.updateConfig).toHaveBeenCalledTimes(1);
+    expect(config(0).filesystem.allowWrite).toContain(join(base, "env", "cache"));
+    await ex.exec(execArgs("true"), never);
+    expect(sbx.updateConfig).toHaveBeenCalledTimes(1);
+    // a lower ceiling cuts the tier back to strict
+    await ex.exec(execArgs("true", { limits: { ...LIMITS, tier: "strict" } }), never);
+    expect(sbx.updateConfig).toHaveBeenCalledTimes(2);
+    expect(config(1).filesystem.allowWrite).not.toContain(join(base, "env", "cache"));
+    expect(ex.tierFacts().effectiveTier).toBe("strict");
+    await ex.dispose();
+  });
+
+  it("before the first command the sandbox and the file helper run at strict", async () => {
+    policy = { ...policy, tier: "dev" };
+    const ex = await make();
+    await ex.ensureRoot();
+    const init = sbx.initialize.mock.calls[0]?.[0] as { filesystem: { allowWrite: string[] } };
+    expect(init.filesystem.allowWrite).not.toContain(join(base, "env", "cache"));
+    await ex.writeFile(join(ex.roots.workspace, "a.txt"), Buffer.from("hi"));
+    expect(sbx.updateConfig).not.toHaveBeenCalled();
+    expect(existsSync(join(base, "env", "cache"))).toBe(false);
+    await ex.dispose();
+  });
+
+  it("a cache folder a command replaced is left out, and a linked cache root is remade", async () => {
+    policy = { ...policy, tier: "dev" };
+    const ex = await make();
+    await ex.ensureRoot();
+    const cache = join(base, "env", "cache");
+    await ex.exec(execArgs("true"), never);
+    rmSync(join(cache, "npm"), { recursive: true });
+    writeFileSync(join(cache, "npm"), "not a folder");
+    const show = 'printf "%s|%s|%s" "$npm_config_cache" "$PIP_CACHE_DIR" "$UV_CACHE_DIR"';
+    let r = await ex.exec(execArgs(show), never);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe(`|${join(cache, "pip")}|${join(cache, "uv")}`);
+    expect(lstatSync(join(cache, "npm")).isFile()).toBe(true);
+    // the whole root replaced with a link to a host folder: the link goes, the folder stays
+    const victim = join(base, "elsewhere");
+    mkdirSync(victim);
+    writeFileSync(join(victim, "npm"), "x");
+    rmSync(cache, { recursive: true });
+    symlinkSync(victim, cache);
+    r = await ex.exec(execArgs(show), never);
+    expect(r.stdout).toBe(`${join(cache, "npm")}|${join(cache, "pip")}|${join(cache, "uv")}`);
+    expect(lstatSync(cache).isDirectory()).toBe(true);
+    expect(readdirSync(victim)).toEqual(["npm"]);
+    await ex.dispose();
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "the socket directory is made again when it is gone (macOS prunes /tmp)",
+    async () => {
+      policy = { ...policy, tier: "dev" };
+      const ex = await make();
+      await ex.ensureRoot();
+      const first = (await ex.exec(execArgs('printf "%s" "$TMPDIR"'), never)).stdout;
+      expect(first.startsWith(`${base}/cap-`)).toBe(true);
+      rmSync(first, { recursive: true });
+      const again = (await ex.exec(execArgs('printf "%s" "$TMPDIR"'), never)).stdout;
+      expect(again).toBe(first);
+      expect(statSync(first).mode & 0o777).toBe(0o700);
+      await ex.dispose();
+    },
+  );
+
+  it("runs the proxy guard at creation, when the policy is reloaded and when it is stale", async () => {
+    policy = { ...policy, tier: "dev" };
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const ex = await make();
+      await ex.ensureRoot();
+      expect(proxyChecks).toBe(1);
+      await ex.exec(execArgs("true"), never);
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(1);
+      // the store hands out a new object for each new version of policy.json
+      policy = { ...policy };
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(2);
+      // a proxy started later: the guard runs again once its result is 30 s old
+      now += 29_000;
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(2);
+      now += 1_000;
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(3);
+      await ex.dispose();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a proxy guard that fails counts as a proxy found", async () => {
+    const ex = await createOsExecutor({
+      dir: join(base, "env"),
+      policy: () => policy,
+      socketBase: base,
+      detectProxy: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(ex.proxyGuard()).toEqual({
+      detected: true,
+      reasons: ["the localhost proxy guard failed: boom"],
+    });
+    await ex.dispose();
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "macOS dev: a detected proxy turns local binding off unless localhost is allow",
+    async () => {
+      policy = { ...policy, tier: "dev" };
+      const ex = await createOsExecutor({
+        dir: join(base, "env"),
+        policy: () => policy,
+        socketBase: base,
+        detectProxy: async () => ({ detected: true, reasons: ["a listener on 127.0.0.1:7890"] }),
+      });
+      await ex.ensureRoot();
+      const init = sbx.initialize.mock.calls[0]?.[0] as {
+        network: { allowLocalBinding: boolean; allowUnixSockets?: string[] };
+      };
+      // before any command: strict
+      expect(init.network.allowUnixSockets).toBeUndefined();
+      await ex.exec(execArgs("true"), never);
+      expect(config(0).network.allowLocalBinding).toBe(false);
+      expect(config(0).network.allowUnixSockets).toHaveLength(3);
+      expect(ex.tierFacts().localhost).toBe("off-proxy-detected");
+      policy = { ...policy, localhost: "allow" };
+      await ex.exec(execArgs("true"), never);
+      expect(config(1).network.allowLocalBinding).toBe(true);
+      expect(ex.tierFacts().localhost).toBe("on");
+      await ex.dispose();
+    },
+  );
 });

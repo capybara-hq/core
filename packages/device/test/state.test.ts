@@ -1,12 +1,22 @@
-import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type Credential,
   credentialPath,
+  DEFAULT_POLICY,
   readCredential,
   readPolicy,
+  readPolicyFile,
   stateDir,
   writeCredential,
   writePolicy,
@@ -98,22 +108,58 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
-      network: "allowlist",
+      isolation: "sandbox",
+      localhost: "auto",
       remoteGrants: "owner",
     });
+    expect(readPolicy(dir)).not.toHaveProperty("tier");
     writePolicy(dir, {
       allowedDomains: ["a.test"],
       allowCredentials: [],
       cpu: 2,
       memoryMb: null,
-      network: "open",
+      tier: "open",
+      isolation: "none",
+      localhost: "allow",
       remoteGrants: "off",
     });
     expect(readPolicy(dir)).toMatchObject({
       allowedDomains: ["a.test"],
-      network: "open",
+      tier: "open",
+      isolation: "none",
+      localhost: "allow",
       remoteGrants: "off",
     });
+  });
+
+  it("ignores the legacy keys, reports a legacy open network and drops them on write", () => {
+    const file = join(dir, "policy.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        allowedDomains: ["a.test"],
+        network: "open",
+        allowLocalBinding: true,
+        allowUnixSockets: ["/tmp/x.sock"],
+        future: 1,
+      }),
+    );
+    const got = readPolicyFile(dir);
+    expect(got.legacyNetworkOpen).toBe(true);
+    expect(got.policy).toEqual({ ...DEFAULT_POLICY, allowedDomains: ["a.test"] });
+    expect(got.extra).toEqual({ future: 1 });
+    writePolicy(dir, got.policy, { ...got.extra, network: "open" });
+    const written = JSON.parse(readFileSync(file, "utf8"));
+    expect(written).not.toHaveProperty("network");
+    expect(written).not.toHaveProperty("allowLocalBinding");
+    expect(written).not.toHaveProperty("allowUnixSockets");
+    expect(written.future).toBe(1);
+    expect(readPolicyFile(dir).legacyNetworkOpen).toBe(false);
+    writeFileSync(file, JSON.stringify({ network: "allowlist" }));
+    expect(readPolicyFile(dir).legacyNetworkOpen).toBe(false);
+    // a legacy value of any type is ignored, never an error
+    writeFileSync(file, JSON.stringify({ network: 42 }));
+    expect(readPolicy(dir)).toEqual(DEFAULT_POLICY);
   });
 
   it("readPolicy names the file on bad JSON and on wrong field types", () => {
@@ -127,8 +173,10 @@ describe("state", () => {
       [{ cpu: "2" }, "cpu"],
       [{ cpu: 0 }, "cpu"],
       [{ memoryMb: -1 }, "memoryMb"],
-      [{ network: "any" }, "network"],
-      [{ network: null }, "network"],
+      [{ tier: "any" }, "tier"],
+      [{ tier: null }, "tier"],
+      [{ isolation: "off" }, "isolation"],
+      [{ localhost: true }, "localhost"],
       [{ remoteGrants: "always" }, "remoteGrants"],
       [{ remoteGrants: true }, "remoteGrants"],
     ] as const) {
@@ -143,7 +191,8 @@ describe("state", () => {
       allowCredentials: [],
       cpu: 1.5,
       memoryMb: null,
-      network: "allowlist",
+      isolation: "sandbox",
+      localhost: "auto",
       remoteGrants: "owner",
     });
   });

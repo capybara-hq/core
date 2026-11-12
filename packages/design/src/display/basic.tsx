@@ -8,8 +8,11 @@ export function Badge({
   tone = "default",
   children,
 }: {
-  /** `warn`: an attention mark ("敏感"), the word in warn with no box (spec §2.4). */
-  tone?: "default" | "accent" | "warn" | "count";
+  /**
+   * `warn`: an attention mark ("敏感"), the word in warn with no box (spec §2.4); `fail`: a danger
+   * mark (a device that runs without a sandbox), the word in fail with no box.
+   */
+  tone?: "default" | "accent" | "warn" | "fail" | "count";
   children?: ReactNode;
 }) {
   return (

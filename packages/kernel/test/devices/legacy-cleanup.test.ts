@@ -33,7 +33,15 @@ const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
 
-const limits = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none" as const, allowHosts: [] };
+const limits = {
+  cpu: 1,
+  memoryMb: 1,
+  diskMb: 1,
+  egress: "none" as const,
+  allowHosts: [],
+  tier: "strict" as const,
+  devHosts: [],
+};
 const sig = () => AbortSignal.timeout(10_000);
 
 let pgc: TestContainer;

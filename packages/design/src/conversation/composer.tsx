@@ -80,8 +80,10 @@ export type PickerItem = {
   checked?: boolean;
   /** Not choosable; its `tag` then says why ("未配置"). */
   disabled?: boolean;
-  /** An attention mark after the tag, as a `warn` Badge (a device's 「不限网络」). */
+  /** An attention mark after the tag, as a `warn` Badge (a device's 「开放」). */
   badge?: string;
+  /** The badge's tone: `fail` for a danger mark (a device's 「不使用沙箱」); default `warn`. */
+  badgeTone?: "warn" | "fail";
 };
 
 export type PickerProps = {
@@ -140,6 +142,7 @@ export function Picker({
         label: it.label,
         ...(it.tag ? { tag: it.tag } : {}),
         ...(it.badge ? { badge: it.badge } : {}),
+        ...(it.badgeTone ? { badgeTone: it.badgeTone } : {}),
         checked: it.checked === true,
         ...(it.disabled ? { disabled: true } : {}),
         onSelect: () => onPick(it.id),

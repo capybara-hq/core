@@ -1,6 +1,9 @@
-import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
-import { devicePathsChange } from "../runtime/context/device-paths.js";
+import {
+  type DevicePathsPayload,
+  devicePathsChange,
+  devicePathsLevel,
+} from "../runtime/context/device-paths.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
 import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
 import {
@@ -37,13 +40,13 @@ export interface RecordedCall {
   /** The recorded call used release-candidate names; `toolKey` and `inputKey` are already the current ones. */
   legacy?: true;
   /**
-   * The roots of the latest `device_paths` event the original run had logged by this call's
-   * step (environments spec §13.1, ruling R22): set on every recorded call from the step where an
-   * event was logged onward. A replay that matches the call writes the event when the eval
-   * conversation's latest one differs, so a candidate whose first sandbox call lands in another
-   * step still gets the line, once.
+   * The payload (roots, and the sandbox level when recorded) of the latest `device_paths` event
+   * the original run had logged by this call's step (environments spec §13.1, ruling R22): set on
+   * every recorded call from the step where an event was logged onward. A replay that matches the
+   * call writes the event when the eval conversation's latest one differs, so a candidate whose
+   * first sandbox call lands in another step still gets the line, once.
    */
-  devicePaths?: SandboxRoots;
+  devicePaths?: DevicePathsPayload;
 }
 
 /**
@@ -183,16 +186,17 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
   }
   // a device_paths event belongs to the step of the assistant message before it, and holds
   // for that step's calls and every later step's (until the next one)
-  const pathsOf = new Map<number, SandboxRoots>();
+  const pathsOf = new Map<number, DevicePathsPayload>();
   const assistants = own.filter((e) => e.type === "assistant_message").map((e) => e.seq);
-  let current: SandboxRoots | undefined;
+  let current: DevicePathsPayload | undefined;
   let next = 0;
   for (const [i, a] of assistants.entries()) {
     const end = assistants[i + 1] ?? Number.POSITIVE_INFINITY;
     for (; next < own.length && (own[next] as { seq: number }).seq < end; next++) {
       const e = own[next] as { seq: number; type: string; payload: unknown };
       if (e.type === "device_paths" && e.seq > a) {
-        current = (e.payload as { roots: SandboxRoots }).roots;
+        const p = e.payload as DevicePathsPayload;
+        current = { roots: p.roots, ...devicePathsLevel(p) };
       }
     }
     if (current !== undefined) pathsOf.set(a, current);
@@ -294,8 +298,9 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
           ? null
           : devicePathsChange(
               await eventLog.latestOfType(ctx.conversationId, "device_paths"),
-              paths,
+              paths.roots,
               ctx.runId,
+              devicePathsLevel(paths),
             );
       await eventLog.append(ctx.conversationId, [
         ...(change ? [change] : []),

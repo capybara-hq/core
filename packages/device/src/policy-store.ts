@@ -15,7 +15,9 @@ function versionOf(file: string): string {
 /**
  * The device's local policy as the running program sees it. Commands read {@link current} at
  * each exec, so a change applies at the next command without a restart, whether this program
- * wrote it ({@link update}) or someone ran `capybara-device policy` meanwhile.
+ * wrote it ({@link update}) or someone ran `capybara-device policy` meanwhile. Each new version
+ * is a new object, so a reader can tell a reload by identity (the OS executor reruns its
+ * localhost proxy guard then).
  */
 export class PolicyStore {
   private policy: Policy;
@@ -24,6 +26,11 @@ export class PolicyStore {
   private reportedBad: string | undefined;
   private readonly file: string;
   private readonly err: (line: string) => void;
+  /**
+   * policy.json had the legacy `network: "open"` when the store was made (start prints a notice;
+   * the key is dropped at the next write).
+   */
+  readonly legacyNetworkOpen: boolean;
 
   constructor(
     private readonly dir: string,
@@ -33,13 +40,20 @@ export class PolicyStore {
     this.err = opts.err ?? (() => {});
     this.version = versionOf(this.file);
     // Without an initial policy, an unreadable file throws here: the program does not start.
-    this.policy = opts.initial ?? readPolicyFile(dir).policy;
+    if (opts.initial !== undefined) {
+      this.policy = opts.initial;
+      this.legacyNetworkOpen = false;
+    } else {
+      const read = readPolicyFile(dir);
+      this.policy = read.policy;
+      this.legacyNetworkOpen = read.legacyNetworkOpen;
+    }
   }
 
   /**
    * The policy now: re-reads policy.json when it changed (or appeared, or vanished: defaults).
-   * An invalid file keeps the last good policy, never a looser one, and is reported once per
-   * version.
+   * An invalid file keeps the last good policy, never a looser one, with the sandbox turned back
+   * on (a broken file never keeps commands running unsandboxed), and is reported once per version.
    */
   current(): Policy {
     const version = versionOf(this.file);
@@ -50,9 +64,14 @@ export class PolicyStore {
       this.version = version;
       this.reportedBad = undefined;
     } catch (e) {
+      // A new object only when it narrows: readers tell a reload by identity.
+      if (this.policy.isolation === "none") this.policy = { ...this.policy, isolation: "sandbox" };
       if (this.reportedBad !== version) {
         this.reportedBad = version;
-        this.err(`${(e as Error).message}; keeping the last valid policy until the file is fixed`);
+        this.err(
+          `${(e as Error).message}; keeping the last valid policy with the sandbox on until the ` +
+            "file is fixed",
+        );
       }
     }
     return this.policy;

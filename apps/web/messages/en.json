@@ -126,7 +126,8 @@
       "last_owner": "An organization must keep at least one org owner.",
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
-      "slug_taken": "This slug is already used by another organization."
+      "slug_taken": "This slug is already used by another organization.",
+      "sandbox_tier_not_allowed": "The platform doesn't allow this sandbox level setting."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -333,8 +334,12 @@
       "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
-      "policy_refused": "This device does not accept this network change from the platform. Change it on the machine.",
-      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
+      "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
+      "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
+      "tier_on_device": "A local device's sandbox level is kept on its machine: change it on the device page, or run capybara-device policy set tier on the machine.",
+      "unsandboxed_not_allowed": "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with capybara-device policy set isolation sandbox.",
+      "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
@@ -1627,9 +1632,6 @@
     "network": {
       "title": "Network",
       "description": "Which domains commands on this machine may reach, on top of what the organization allows.",
-      "open": "No network limit",
-      "openOnHint": "Commands reach anything the organization allows. Turning it off goes back to the domains below.",
-      "openOffHint": "Commands reach only the domains below, within what the organization allows.",
       "remoteGrants": "Changes from the platform",
       "remoteGrantsOwner": "Accepted from you",
       "remoteGrantsOff": "Not accepted",
@@ -1649,29 +1651,94 @@
       "hostPresent": "This domain is already allowed.",
       "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
       "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
-      "unknown": "The machine has not reported its network settings yet.",
-      "opened": "No network limit is on.",
-      "closed": "The network limit is back on.",
-      "confirmTitle": "Turn off the network limit on this device?",
-      "confirmSubmit": "Turn off the limit",
+      "unknown": "The machine has not reported its network settings yet."
+    },
+    "tier": {
+      "strict": "Strict",
+      "dev": "Development",
+      "open": "Open"
+    },
+    "mark": {
+      "open": "Open",
+      "unsandboxed": "No sandbox"
+    },
+    "sandbox": {
+      "title": "Sandbox level",
+      "description": "How wide the sandbox is for commands on this device, up to the highest level the organization and the platform allow.",
+      "follow": "Follow the organization default ({tier})",
+      "followHint": "Changes when the organization changes its default level.",
+      "hint": {
+        "strict": "Only allowed domains; no local ports or unix sockets.",
+        "dev": "Also common developer hosts, local ports and unix sockets; for everyday development.",
+        "open": "Any public address and port."
+      },
+      "capped": {
+        "org": "Organization allows up to: {tier}",
+        "platform": "Platform allows up to: {tier}",
+        "any": "Allowed up to: {tier}"
+      },
+      "effective": "Effective level",
+      "lower": {
+        "org": "The organization allows up to {tier}.",
+        "platform": "The platform allows up to {tier}.",
+        "program": "The device program on this machine doesn't know sandbox levels, so commands run at the strict level. Upgrade capybara-device on the machine."
+      },
+      "pendingNextUse": "Takes effect at the next use; files are kept.",
+      "pendingFilesReset": "Takes effect after the files are reset.",
+      "changed": "Sandbox level set to {tier}.",
+      "followed": "The device now follows the organization default.",
+      "remoteOff": "This machine takes no raise from the platform. To raise the level, run on the machine:",
+      "unknown": "The machine has not reported its sandbox level yet.",
+      "noMachine": "Connect a machine to change the sandbox level.",
+      "upgrade": "The device program on this machine can't change its sandbox level from the platform. Upgrade capybara-device on the machine.",
+      "localhost": "Local ports",
+      "localhostValue": {
+        "on": "Reachable",
+        "off-proxy-detected": "Off: a local proxy or Docker port was found",
+        "off": "Not reachable"
+      },
+      "localhostOverride": "To allow local ports anyway, run on the machine:",
+      "unixSockets": "Unix sockets",
+      "unixSocketsValue": {
+        "roots": "Within the device's directories",
+        "all-masked": "Available, system daemon sockets hidden",
+        "off": "Not available"
+      },
+      "linuxNote": "On Linux the development level opens unix sockets only when the device program can hide the system daemons' sockets; otherwise they stay off.",
+      "openConfirmTitle": "Set this device to the open level?",
+      "openConfirmSubmit": "Set to open",
+      "openRisk": "At the open level, agent commands on this device can reach any public address and port, including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
       "cancel": "Cancel",
-      "risk": "With no network limit, agent commands on this device can reach any address the organization allows (any public address if the organization has no limit), including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
+      "unsandboxed": "No sandbox",
+      "unsandboxedOffHint": "Only on this machine: the platform can't turn it on for you. Run on the machine:",
+      "unsandboxedRisk": "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust.",
+      "unsandboxedOn": "Commands on this device run on the computer as you, without a sandbox.",
+      "unsandboxedNotAllowed": "The organization doesn't allow devices without a sandbox, so agents can't use this device until the sandbox is back on.",
+      "restore": "Turn the sandbox back on",
+      "restored": "The sandbox is back on.",
       "recent": {
         "title": "Recent changes",
         "add": "Added {hosts}",
         "remove": "Removed {hosts}",
-        "network": {
-          "open": "No network limit on",
-          "allowlist": "Network limit back on"
+        "tier": "Level set to {tier}",
+        "tierFollow": "Set to follow the organization default",
+        "isolation": {
+          "none": "No sandbox",
+          "sandbox": "Sandbox back on"
         },
         "none": "No change",
         "unknownBy": "Unknown account",
         "via": {
           "web": "web",
-          "im": "IM"
+          "im": "IM",
+          "device": "reported by the machine"
         },
         "unconfirmed": "Not confirmed by the machine"
-      }
+      },
+      "openRiskCloud": "At the open level, agent commands on this cloud device can reach any public address and port, including uploading files and data to outside sites. Prompt injection can make an agent do that. Turn it on only with agents and material you trust.",
+      "unsandboxedOnMark": "On",
+      "unsandboxedRefused": "The device is set to run without a sandbox, but the current level is below open, so it refuses every command. Turn the sandbox back on to use it.",
+      "isolationResetNote": "This device runs without a sandbox now. Changing its level here turns the sandbox back on."
     }
   },
   "nav": {
@@ -2340,8 +2407,7 @@
       "default": "Deployment default",
       "defaultHint": {
         "allowlist": "Allowlist set by the deployment ({count} hosts).",
-        "none": "The deployment disables sandbox network access.",
-        "open": "The deployment allows any outbound network."
+        "none": "The deployment disables sandbox network access."
       },
       "allowlist": "Custom allowlist",
       "allowlistHint": "Only the hosts below; replaces the deployment list.",
@@ -2350,7 +2416,8 @@
       "hosts": "Allowed hosts",
       "hostsHelp": "One host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names; at most 200.",
       "newOnly": "Changes apply to sandboxes created afterwards; existing sandboxes keep their network settings until they are destroyed.",
-      "prefilled": "Added {hosts} from a blocked command. Save to allow it."
+      "prefilled": "Added {hosts} from a blocked command. Save to allow it.",
+      "devHosts": "The development level also allows common developer hosts ({count})"
     },
     "limits": {
       "title": "Sandbox resources",
@@ -2370,6 +2437,19 @@
       "title": "Default time zone",
       "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
       "label": "Default time zone"
+    },
+    "tiers": {
+      "title": "Sandbox levels",
+      "description": "The highest level devices in the organization may use, and the level new devices start at. Members can choose any level up to the highest on their own devices.",
+      "max": "Highest level",
+      "strictHint": "Only the hosts the network setting below allows; no local ports or unix sockets.",
+      "devHint": "Also common developer hosts, local ports and unix sockets; for everyday development.",
+      "openHint": "Any public address and port. Agent commands can send files and data to any outside site, and prompt injection can make an agent do that. Allow it only with agents and material you fully trust.",
+      "platformClosed": "Not enabled by the platform",
+      "default": "Default for new devices",
+      "defaultHelp": "Used by devices that choose no level; at most the highest level.",
+      "allowUnsandboxed": "Let members' devices run without a sandbox",
+      "allowUnsandboxedHint": "Allowed by default when the highest level is open. Members still turn the sandbox off by running a command on their own computer. Without it, commands can read and write every file and credential on that computer."
     }
   },
   "configForm": {

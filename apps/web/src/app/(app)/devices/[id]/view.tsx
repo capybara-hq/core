@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Badge,
   Button,
   ContentSection,
   DangerConfirm,
@@ -10,20 +9,18 @@ import {
   Dialog,
   Field,
   formatBytes,
-  formatDateTime,
   Input,
   ItemList,
   KeyValue,
   Stack,
-  SwitchField,
   Text,
-  useTimeZone,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiErrorDetail } from "../../../../components/ApiErrorDetail";
+import { DeviceSandboxSection } from "../../../../components/DeviceSandboxSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -33,7 +30,6 @@ import { useRouter } from "../../../../i18n/navigation";
 import { osLabel } from "../../../../lib/device-sign-in";
 import {
   type Device,
-  type DevicePolicyChange,
   type DevicePolicyPatch,
   deleteDevice,
   deviceState,
@@ -63,7 +59,9 @@ import NotFound from "../../not-found";
  * files are back) and 删除 (typing its name; the files are deleted with it, a destructive item of
  * the ⋯ menu; deleting 个人设备 says a new empty one is created the next time one is needed). A
  * local device never offers 重建文件 (the kernel refuses it): its files-lost note tells
- * the person to run `capybara-device logout`, then `capybara-device login` on the machine. From
+ * the person to run `capybara-device logout`, then `capybara-device login` on the machine. Every
+ * device has the 沙箱级别 section (`DeviceSandboxSection`); a cloud device whose new level waits for
+ * a file reset offers 重建文件 too. From
  * the query cache (the layout prefetched it on a first load); a device the kernel does not
  * find is the not-found state.
  */
@@ -81,7 +79,10 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const [resetting, setResetting] = useState(false);
   const read = usePageQuery({
     ...deviceQuery(orgId, id),
-    refetchInterval: (q) => (resetting && q.state.data?.device.filesLost ? RESET_POLL_MS : false),
+    refetchInterval: (q) => {
+      const d = q.state.data?.device;
+      return resetting && (d?.filesLost || d?.sandbox?.pendingFilesReset) ? RESET_POLL_MS : false;
+    },
   });
   const tabs = {
     label: t("detail.tabsLabel"),
@@ -163,7 +164,7 @@ function Detail({
           title: name,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...(e.filesLost && e.available && !local
+            ...((e.filesLost || e.sandbox?.pendingFilesReset === true) && e.available && !local
               ? [
                   {
                     label: t("detail.resetFiles"),
@@ -238,6 +239,7 @@ function Detail({
               </Text>
             </>
           )}
+          <DeviceSandboxSection orgId={orgId} device={e} />
           {local && <MachineSection device={e} onRevoke={() => setOpen("revoke")} />}
           {local && e.machine !== null && e.network != null && (
             <NetworkSection orgId={orgId} device={e} />
@@ -466,9 +468,6 @@ function MachineSection({ device: e, onRevoke }: { device: Device; onRevoke(): v
             { k: t("machine.name"), v: m.name },
             { k: t("machine.os"), v: osLabel(m.os) },
             ...(m.mode !== null ? [{ k: t("machine.mode"), v: t(`mode.${m.mode}`) }] : []),
-            ...(e.network?.policy?.network === "open"
-              ? [{ k: t("network.title"), v: <Badge tone="warn">{t("network.open")}</Badge> }]
-              : []),
             ...(m.programVersion !== null
               ? [{ k: t("machine.programVersion"), v: versionLabel(m.programVersion) }]
               : []),
@@ -545,19 +544,17 @@ function RevokeDialog({
 /**
  * A local device's network (owner only: the page is the owner's; network ask-to-allow spec §7):
  * the machine's local allowlist with 移除 each (narrowing, always accepted), an add field that
- * takes `*.` wildcards, the 「不限网络」 switch (turning it on asks first with the risk text; off
- * needs no confirmation), whether the machine takes changes from the platform (`remoteGrants`, set
- * only on the machine: off disables the widening controls with the command to run there) and the
- * recent changes. A program without the `policyOp` feature must be upgraded first; a Docker-mode
- * machine can't limit single domains. Each change is sent to the machine, which answers with the
- * policy as written.
+ * takes `*.` wildcards and whether the machine takes changes from the platform (`remoteGrants`, set
+ * only on the machine: off disables the widening controls with the command to run there). The
+ * level (formerly 「不限网络」) and the recent changes are the 沙箱级别 section's. A program without
+ * the `policyOp` feature must be upgraded first; a Docker-mode machine can't limit single domains.
+ * Each change is sent to the machine, which answers with the policy as written.
  */
 function NetworkSection({ orgId, device: e }: { orgId: string; device: Device }) {
   const t = useTranslations("devices.network");
   const toast = useToast();
   const [host, setHost] = useState("");
   const [hostError, setHostError] = useState<string>();
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [failure, setFailure] = useState<unknown>(null);
   const change = useAppMutation({
     fn: (patch: DevicePolicyPatch) => updateDevicePolicy(orgId, e.id, patch),
@@ -569,9 +566,8 @@ function NetworkSection({ orgId, device: e }: { orgId: string; device: Device })
   const canApply = network.features.includes("policyOp");
   const docker = e.machine?.mode === "docker";
   const remoteOff = policy?.remoteGrants === "off";
-  // widening (add, 不限网络 on) needs the machine to take it; narrowing is always sent
+  // widening (add) needs the machine to take it; narrowing is always sent
   const canWiden = canApply && policy !== null && !remoteOff && !docker;
-  const open = policy?.network === "open";
   const pending = change.isPending;
 
   const send = async (patch: DevicePolicyPatch, done: string) => {
@@ -619,20 +615,6 @@ function NetworkSection({ orgId, device: e }: { orgId: string; device: Device })
           </Text>
         ) : (
           <>
-            <Stack gap={4}>
-              <SwitchField
-                label={t("open")}
-                checked={open}
-                disabled={pending || !canApply || (!open && !canWiden)}
-                onChange={(next) => {
-                  if (next) setConfirmOpen(true);
-                  else void send({ network: "allowlist" }, t("closed"));
-                }}
-              />
-              <Text variant="small" tone="muted">
-                {t(open ? "openOnHint" : "openOffHint")}
-              </Text>
-            </Stack>
             <KeyValue
               keyWidth="14ch"
               rows={[
@@ -697,90 +679,7 @@ function NetworkSection({ orgId, device: e }: { orgId: string; device: Device })
           </>
         )}
         {failure !== null && <ApiErrorDetail error={failure} open />}
-        <RecentChanges recent={network.recent} />
       </Stack>
-      {confirmOpen && (
-        <OpenNetworkDialog
-          pending={pending}
-          onClose={() => setConfirmOpen(false)}
-          onConfirm={async () => {
-            await send({ network: "open" }, t("opened"));
-            setConfirmOpen(false);
-          }}
-        />
-      )}
     </ContentSection>
-  );
-}
-
-/** The device's recent policy changes: what, when, by whom and from where; unconfirmed marked. */
-function RecentChanges({ recent }: { recent: DevicePolicyChange[] }) {
-  const t = useTranslations("devices.network");
-  const zone = useTimeZone();
-  if (recent.length === 0) return null;
-  const what = (c: DevicePolicyChange) =>
-    [
-      ...(c.add.length > 0 ? [t("recent.add", { hosts: c.add.join(", ") })] : []),
-      ...(c.remove.length > 0 ? [t("recent.remove", { hosts: c.remove.join(", ") })] : []),
-      ...(c.network !== null ? [t(`recent.network.${c.network}`)] : []),
-    ].join(" · ");
-  return (
-    <ItemList
-      label={t("recent.title")}
-      rows={recent.map((c, i) => ({
-        id: `${c.at}:${i}`,
-        title: what(c) || t("recent.none"),
-        meta: [
-          formatDateTime(c.at, "full", zone),
-          c.by ?? t("recent.unknownBy"),
-          t(`recent.via.${c.via}`),
-        ].join(" · "),
-        ...(c.confirmed ? {} : { status: { label: t("recent.unconfirmed") } }),
-      }))}
-    />
-  );
-}
-
-/**
- * Turning 「不限网络」 on: the risk text (spec §7) first, then the change is sent to the machine.
- * A dangerous dialog that starts on Cancel.
- */
-function OpenNetworkDialog({
-  pending,
-  onClose,
-  onConfirm,
-}: {
-  pending: boolean;
-  onClose(): void;
-  onConfirm(): Promise<void>;
-}) {
-  const t = useTranslations("devices.network");
-  return (
-    <Dialog
-      open
-      danger
-      initialFocus="cancel"
-      onOpenChange={(o) => {
-        if (!o && !pending) onClose();
-      }}
-      title={t("confirmTitle")}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            {t("cancel")}
-          </Button>
-          <Button
-            variant="danger-solid"
-            loading={pending}
-            disabled={pending}
-            onClick={() => void onConfirm()}
-          >
-            {t("confirmSubmit")}
-          </Button>
-        </>
-      }
-    >
-      <Text variant="prose">{t("risk")}</Text>
-    </Dialog>
   );
 }

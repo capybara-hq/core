@@ -10,7 +10,14 @@ import WebSocket from "ws";
 import type { CommandLog } from "./command-log.js";
 import type { Executor } from "./exec/types.js";
 import type { PolicyStore } from "./policy-store.js";
-import { logEntryFor, policySummary, serveOp } from "./server-ops.js";
+import {
+  logEntryFor,
+  type OpContext,
+  policySummary,
+  type SeenState,
+  serveOp,
+  summaryFacts,
+} from "./server-ops.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
@@ -44,6 +51,8 @@ export interface ConnectOptions {
   random?: () => number;
   now?: () => number;
   programVersion?: string;
+  /** The platform the policy summary describes (default: this process's; for tests). */
+  platform?: NodeJS.Platform;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
   stableMs?: number;
   /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
@@ -110,6 +119,14 @@ export function connect(
   let exitAfterStop: { exit: number; message?: string } | undefined;
   let session: ((end: SessionEnd) => void) | undefined;
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** What the requests of this run have seen (the latest exec's tier limits), over reconnects. */
+  const seen: SeenState = {};
+  const ctx: OpContext = {
+    seen,
+    ...(opts.policy !== undefined && { policy: opts.policy }),
+    ...(opts.platform !== undefined && { platform: opts.platform }),
+  };
 
   const running = new Map<string, AbortController>();
   /** Requests the kernel gave up on: never started, or their result is dropped. */
@@ -203,10 +220,9 @@ export function connect(
     }
     const ctl = new AbortController();
     running.set(req.id, ctl);
-    const ctx = opts.policy !== undefined ? { policy: opts.policy } : {};
-    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail }) => {
+    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail, run }) => {
       running.delete(req.id);
-      opts.log?.append(logEntryFor(req, res, new Date(now()), detail));
+      opts.log?.append(logEntryFor(req, res, new Date(now()), detail, run));
       if (cancelled.has(req.id)) {
         // The kernel is no longer waiting for this one.
       } else if (req.op === "stop") {
@@ -264,12 +280,14 @@ export function connect(
 
   /**
    * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
-   * mode has no per-host view); the policy summary is the store's policy now.
+   * mode has no per-host view); the device applies tiers (`limits.tier` / `defaultTier` /
+   * `devHosts`); the policy summary is the store's policy now, with the latest ceiling seen.
    */
   const hello = (): DeviceHello => {
     const features: DeviceFeature[] = [];
     if (executor.mode === "os") features.push("networkReport");
     if (opts.policy !== undefined) features.push("policyOp");
+    features.push("tiers");
     return {
       type: "hello",
       protocol: DEVICE_PROTOCOL_VERSION,
@@ -280,7 +298,9 @@ export function connect(
       roots: executor.roots,
       sessionIsolation: false,
       features,
-      ...(opts.policy !== undefined && { policy: policySummary(opts.policy.current()) }),
+      ...(opts.policy !== undefined && {
+        policy: policySummary(opts.policy.current(), summaryFacts(executor, ctx)),
+      }),
     };
   };
 

@@ -26,6 +26,10 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "models.embedTimeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
+  // Sandbox tiers are read at every device use, org settings read and Platform call.
+  "sandbox.tiers.max": () => {},
+  "sandbox.tiers.default": () => {},
+  "sandbox.tiers.allowUnsandboxed": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
   // The local device relay reads the reconnect grace at every disconnect and token response.

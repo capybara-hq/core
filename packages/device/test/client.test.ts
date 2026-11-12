@@ -70,13 +70,24 @@ describe("client", () => {
     const res = await kernel.waitFor("res", () => kernel.of("res")[0]);
     expect(res).toEqual({ type: "res", id: "r1", ok: true, result: OK_EXEC });
     const line = JSON.parse(readFileSync(join(dir, "commands.log"), "utf8").trim());
-    expect(Object.keys(line).sort()).toEqual(["actor", "exitCode", "op", "tag", "time"]);
+    expect(Object.keys(line).sort()).toEqual([
+      "actor",
+      "exitCode",
+      "isolation",
+      "op",
+      "tag",
+      "tier",
+      "time",
+    ]);
+    // Every exec records its tier and isolation.
     expect(line).toEqual({
       time: expect.any(String),
       op: "exec",
       tag: "t1",
       actor: { accountId: "acc" },
       exitCode: 0,
+      tier: "strict",
+      isolation: "sandbox",
     });
   });
 
@@ -106,11 +117,15 @@ describe("client", () => {
 
   it("hello carries the features and the local policy; a policy op shows on the next hello", async () => {
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
-    start({ policy: new PolicyStore(dir) });
+    start({ policy: new PolicyStore(dir), platform: "darwin" });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp"]);
+    expect(hello.features).toEqual(["networkReport", "policyOp", "tiers"]);
+    // No exec seen yet: the owner's choice, else dev (every org's default unless changed).
     expect(hello.policy).toEqual({
-      network: "allowlist",
+      effectiveTier: "dev",
+      isolation: "sandbox",
+      localhost: "on",
+      unixSockets: "roots",
       allowedDomains: ["a.com"],
       remoteGrants: "owner",
     });
@@ -138,10 +153,16 @@ describe("client", () => {
       allowedDomains: ["a.com", "files.slack.com"],
       remoteGrants: "off",
     });
+    // An exec meanwhile tells the device its ceiling: the next hello reports the tier it runs at.
+    kernel.send(0, req("e1", "exec", execArgs("now")));
+    await kernel.waitFor("exec", () => kernel.of("res").find((x) => x.id === "e1"));
     kernel.sockets[0]?.close(1001);
     const again = await kernel.waitFor("reconnect", () => kernel.of("hello", 1)[0]);
     expect(again.policy).toEqual({
-      network: "allowlist",
+      effectiveTier: "strict",
+      isolation: "sandbox",
+      localhost: "off",
+      unixSockets: "off",
       allowedDomains: ["a.com", "files.slack.com"],
       remoteGrants: "off",
     });
@@ -152,14 +173,18 @@ describe("client", () => {
     start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");
-    expect(hello.features).toEqual(["policyOp"]);
-    expect(hello.policy).toMatchObject({ network: "allowlist", remoteGrants: "owner" });
+    expect(hello.features).toEqual(["policyOp", "tiers"]);
+    expect(hello.policy).toMatchObject({
+      effectiveTier: "dev",
+      isolation: "sandbox",
+      remoteGrants: "owner",
+    });
   });
 
   it("without a policy store the hello offers no policy op and no summary", async () => {
     start();
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport"]);
+    expect(hello.features).toEqual(["networkReport", "tiers"]);
     expect(hello.policy).toBeUndefined();
   });
 

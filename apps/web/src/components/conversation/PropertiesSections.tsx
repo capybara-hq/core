@@ -21,7 +21,7 @@ import type {
   SubagentView,
   ToolInfo,
 } from "../../lib/conversations";
-import { deviceNetworkOpen, deviceState } from "../../lib/devices";
+import { deviceSandboxMark, deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
 import { myRole, roleAtLeast } from "../../lib/members";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -189,13 +189,14 @@ export function ContextSection({
             name: nameOf(device.data),
             state: te(`state.${deviceState(device.data)}`),
           });
+  const mark = device.data != null ? deviceSandboxMark(device.data) : null;
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
       {...(deviceText !== undefined ? { sandbox: deviceText } : {})}
-      {...(device.data != null && deviceNetworkOpen(device.data)
-        ? { sandboxBadge: te("network.open") }
+      {...(mark !== null
+        ? { sandboxBadge: te(`mark.${mark.kind}`), sandboxBadgeTone: mark.tone }
         : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}

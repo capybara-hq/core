@@ -126,7 +126,8 @@
       "last_owner": "组织至少要保留一个组织所有者。",
       "owner_required": "只有组织所有者可以执行这个操作。",
       "creation_disabled": "本部署关闭了新建组织。",
-      "slug_taken": "该 slug 已被其他组织使用。"
+      "slug_taken": "该 slug 已被其他组织使用。",
+      "sandbox_tier_not_allowed": "平台不允许这个沙箱级别设置。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -333,8 +334,12 @@
       "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
-      "policy_refused": "这台设备不接受平台的这次网络修改，请在机器上修改。",
-      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。"
+      "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
+      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
+      "tier_not_allowed": "这个沙箱级别超出了组织或平台允许的最高级别。",
+      "tier_on_device": "本地设备的沙箱级别保存在机器上，请在设备页面修改，或在机器上运行 capybara-device policy set tier。",
+      "unsandboxed_not_allowed": "这台设备不使用沙箱运行命令，组织不允许这样做。设备所有者可以在机器上运行 capybara-device policy set isolation sandbox 恢复沙箱。",
+      "tier_not_granted": "这个定时任务没有开放级别的授权，不能使用开放级别的设备。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
@@ -1615,9 +1620,6 @@
     "network": {
       "title": "网络",
       "description": "在组织允许的范围内，这台机器上的命令还能访问哪些域名。",
-      "open": "不限网络",
-      "openOnHint": "命令可以访问组织允许的任何地址。关闭后回到下面的域名列表。",
-      "openOffHint": "命令只能访问下面的域名，且不超出组织允许的范围。",
       "remoteGrants": "接受平台修改",
       "remoteGrantsOwner": "接受你的修改",
       "remoteGrantsOff": "不接受",
@@ -1637,29 +1639,94 @@
       "hostPresent": "这个域名已经允许。",
       "upgrade": "这台机器上的设备程序不支持从平台修改网络设置。请在机器上升级 capybara-device。",
       "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
-      "unknown": "机器还没有上报它的网络设置。",
-      "opened": "已开启不限网络。",
-      "closed": "已恢复网络限制。",
-      "confirmTitle": "这台设备不限网络？",
-      "confirmSubmit": "开启不限网络",
+      "unknown": "机器还没有上报它的网络设置。"
+    },
+    "tier": {
+      "strict": "严格",
+      "dev": "开发",
+      "open": "开放"
+    },
+    "mark": {
+      "open": "开放",
+      "unsandboxed": "不使用沙箱"
+    },
+    "sandbox": {
+      "title": "沙箱级别",
+      "description": "这台设备上的命令在多宽的沙箱里运行，不超过组织和平台允许的最高级别。",
+      "follow": "跟随组织默认（{tier}）",
+      "followHint": "组织修改默认级别时，这台设备随之改变。",
+      "hint": {
+        "strict": "只能访问允许的域名，不能访问本机端口和 Unix 套接字。",
+        "dev": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
+        "open": "可以访问任何公网地址和端口。"
+      },
+      "capped": {
+        "org": "组织最高允许：{tier}",
+        "platform": "平台最高允许：{tier}",
+        "any": "最高允许：{tier}"
+      },
+      "effective": "实际级别",
+      "lower": {
+        "org": "组织最高只允许{tier}。",
+        "platform": "平台最高只允许{tier}。",
+        "program": "这台机器上的设备程序不支持沙箱级别，命令按严格级别运行。请在机器上升级 capybara-device。"
+      },
+      "pendingNextUse": "下次使用时生效，文件保留。",
+      "pendingFilesReset": "重置文件后生效。",
+      "changed": "沙箱级别已改为{tier}。",
+      "followed": "已改为跟随组织默认。",
+      "remoteOff": "这台机器不接受平台提高级别。要提高级别，在机器上运行：",
+      "unknown": "机器还没有上报它的沙箱级别。",
+      "noMachine": "连接机器后才能修改沙箱级别。",
+      "upgrade": "这台机器上的设备程序不支持从平台修改沙箱级别。请在机器上升级 capybara-device。",
+      "localhost": "本机端口",
+      "localhostValue": {
+        "on": "可访问",
+        "off-proxy-detected": "已关闭：检测到本机代理或 Docker 端口",
+        "off": "不可访问"
+      },
+      "localhostOverride": "要仍然允许访问本机端口，在机器上运行：",
+      "unixSockets": "Unix 套接字",
+      "unixSocketsValue": {
+        "roots": "设备目录内可用",
+        "all-masked": "可用，系统守护进程的套接字已隐藏",
+        "off": "不可用"
+      },
+      "linuxNote": "在 Linux 上，只有设备程序能隐藏系统守护进程的套接字时，开发级别才开放 Unix 套接字；否则保持关闭。",
+      "openConfirmTitle": "把这台设备设为开放级别？",
+      "openConfirmSubmit": "设为开放",
+      "openRisk": "开放级别下，智能体在这台设备上运行的命令可以访问任何公网地址和端口，包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
       "cancel": "取消",
-      "risk": "不限网络后，智能体在这台设备上运行的命令可以访问组织允许的任何地址（组织也不限时，就是任何公网地址），包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
+      "unsandboxed": "不使用沙箱",
+      "unsandboxedOffHint": "只能在这台机器上开启，平台无法替你打开。在机器上运行：",
+      "unsandboxedRisk": "不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行：能读写你的所有文件、使用你的登录凭据（SSH 密钥、云账号、钥匙串）、Docker 和任意网络。提示注入能让智能体删除文件或把凭据发出去。只在你自己的开发机上、并且完全信任所用的智能体和资料时开启。",
+      "unsandboxedOn": "这台设备的命令直接以你的身份在这台电脑上运行，没有沙箱。",
+      "unsandboxedNotAllowed": "组织不允许不使用沙箱的设备，智能体暂时不能使用这台设备。恢复沙箱后即可继续使用。",
+      "restore": "恢复沙箱",
+      "restored": "已恢复沙箱。",
       "recent": {
         "title": "最近的修改",
         "add": "添加 {hosts}",
         "remove": "移除 {hosts}",
-        "network": {
-          "open": "开启不限网络",
-          "allowlist": "恢复网络限制"
+        "tier": "级别改为{tier}",
+        "tierFollow": "改为跟随组织默认",
+        "isolation": {
+          "none": "不使用沙箱",
+          "sandbox": "恢复沙箱"
         },
         "none": "没有改动",
         "unknownBy": "未知账号",
         "via": {
           "web": "网页",
-          "im": "IM"
+          "im": "IM",
+          "device": "机器上报"
         },
         "unconfirmed": "机器未确认"
-      }
+      },
+      "openRiskCloud": "开放级别下，智能体在这台云端设备上运行的命令可以访问任何公网地址和端口，包括把文件和数据上传到外部网站。提示注入能让智能体这样做。只在信任所用的智能体和资料时开启。",
+      "unsandboxedOnMark": "已开启",
+      "unsandboxedRefused": "这台设备在本机上被设为不使用沙箱，但当前级别低于开放，命令会被拒绝。恢复沙箱后才能使用。",
+      "isolationResetNote": "这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。"
     }
   },
   "nav": {
@@ -2328,8 +2395,7 @@
       "default": "跟随部署默认",
       "defaultHint": {
         "allowlist": "部署设置的白名单（{count} 个主机）。",
-        "none": "部署已禁止沙箱联网。",
-        "open": "部署允许任意出站网络。"
+        "none": "部署已禁止沙箱联网。"
       },
       "allowlist": "自定义白名单",
       "allowlistHint": "只放行下面的主机，替换部署的清单。",
@@ -2338,7 +2404,8 @@
       "hosts": "允许的主机",
       "hostsHelp": "每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称；最多 200 个。",
       "newOnly": "改动只对之后新建的沙箱生效；已有的沙箱沿用原来的网络设置，直到被销毁。",
-      "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。"
+      "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。",
+      "devHosts": "开发级别还会放行常用开发域名（{count} 个）"
     },
     "limits": {
       "title": "沙箱资源",
@@ -2358,6 +2425,19 @@
       "title": "默认时区",
       "description": "成员没有设置自己的时区、又不是从浏览器发消息时（如 IM 里的消息、匿名访客），智能体按这个时区判断「今天」。",
       "label": "默认时区"
+    },
+    "tiers": {
+      "title": "沙箱级别",
+      "description": "组织内设备最高能用到哪个级别，以及新设备默认用哪个级别。成员可以在自己的设备上选择不超过最高级别的级别。",
+      "max": "最高级别",
+      "strictHint": "只能访问下面网络设置允许的主机，不能访问本机端口和 Unix 套接字。",
+      "devHint": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
+      "openHint": "可以访问任何公网地址和端口。智能体的命令能把文件和数据发到任何外部网站，提示注入能让智能体这样做。只在完全信任所用的智能体和资料时开放。",
+      "platformClosed": "平台未开放",
+      "default": "新设备默认",
+      "defaultHelp": "设备没有自选级别时使用，不能高于最高级别。",
+      "allowUnsandboxed": "允许成员的设备不使用沙箱",
+      "allowUnsandboxedHint": "最高级别为开放时默认允许。成员仍要在自己的电脑上运行命令才能关闭沙箱。关闭后，命令能读写他们电脑上的所有文件和登录凭据。"
     }
   },
   "configForm": {

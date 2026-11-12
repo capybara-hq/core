@@ -1652,7 +1652,14 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       machine.send({
         ...HELLO,
         features: ["networkReport", "policyOp"],
-        policy: { network: "allowlist", allowedDomains: [], remoteGrants: "owner" },
+        policy: {
+          effectiveTier: "strict",
+          isolation: "sandbox",
+          localhost: "off",
+          unixSockets: "off",
+          allowedDomains: [],
+          remoteGrants: "owner",
+        },
       });
       await waitFor(
         async () =>
@@ -1857,6 +1864,45 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
       }
     }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+describe("reconstructRequest: sandbox level (sandbox dev tiers spec §11.5)", {
+  timeout: 120_000,
+}, () => {
+  it("a device whose tier changes between runs: two device_paths lines, each in the requests, zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "Bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "echo one", description: "One" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const { device_id: deviceId } = await db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const patched = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/devices/${deviceId}`,
+      payload: { tier: "strict" },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    const again = { command: "echo two", description: "Two" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(again)}`);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const levels = (await eventsOf(db, conv)).flatMap((e) =>
+      e.type === "device_paths" ? [e.payload.tier] : [],
+    );
+    expect(levels).toEqual(["dev", "strict"]);
+    const last = JSON.stringify(sent.at(-1));
+    expect(last).toContain("Sandbox level: development.");
+    expect(last).toContain("Sandbox level: strict.");
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
   });
 });
 

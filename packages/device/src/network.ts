@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
-import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
-import { covers } from "./policy.js";
+import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { covers, deviceHosts, deviceTier, type EgressLimits, provisionalTier } from "./policy.js";
 import type { Policy } from "./state.js";
 
 /** What refused a host (spec §3). */
@@ -15,9 +15,9 @@ export interface BlockedHost {
 /** At most this many blocked hosts are reported per command. */
 export const MAX_BLOCKED_HOSTS = 20;
 
-type Limits = Pick<SandboxLimits, "egress" | "allowHosts">;
-/** The local policy fields that decide network access (`network` arrives with remote grants). */
-type NetworkPolicy = Pick<Policy, "allowedDomains"> & { network?: "allowlist" | "open" };
+type Limits = EgressLimits;
+/** The local policy fields that decide network access. */
+type NetworkPolicy = Pick<Policy, "allowedDomains" | "tier">;
 
 // The proxy's line in @anthropic-ai/sandbox-runtime 0.0.81 (`recordOutboundDeny`):
 // `deny network-outbound <host>:<port> (<reason>)`. Pinned by test/network.test.ts.
@@ -84,8 +84,15 @@ function orgAllows(host: string, limits: Limits): boolean {
   return admittedBy(limits.allowHosts, host);
 }
 
-function deviceAllows(host: string, policy: NetworkPolicy): boolean {
-  return policy.network === "open" || admittedBy(policy.allowedDomains, host);
+/**
+ * Whether the device's own tier admits `host` (spec §4.2): `open` admits every host, `dev` its
+ * `allowedDomains` and the dev hosts, `strict` its `allowedDomains`. Without limits (nothing run
+ * yet) the owner's choice, else `dev`, stands with no dev hosts known.
+ */
+function deviceAllows(host: string, policy: NetworkPolicy, limits: Limits | undefined): boolean {
+  const tier = limits === undefined ? provisionalTier(policy) : deviceTier(policy, limits);
+  const list = deviceHosts(policy, tier, limits?.devHosts ?? []);
+  return list === undefined || admittedBy(list, host);
 }
 
 /**
@@ -102,7 +109,7 @@ export function classifyHost(
   const h = normalizeHost(host);
   if (isAddress(h, reason)) return "address";
   if (!orgAllows(h, limits)) return "org";
-  if (!deviceAllows(h, policy)) return "device";
+  if (!deviceAllows(h, policy, limits)) return "device";
   return "unknown";
 }
 
@@ -169,7 +176,7 @@ export function denyReason(
   let layer: BlockedLayer;
   if (limits !== undefined) layer = classifyHost(h, "", limits, policy);
   else if (isAddress(h, "")) layer = "address";
-  else layer = deviceAllows(h, policy) ? "unknown" : "device";
+  else layer = deviceAllows(h, policy, undefined) ? "unknown" : "device";
   switch (layer) {
     case "device":
       return `capybara: ${host} is not in this device's allowed domains`;

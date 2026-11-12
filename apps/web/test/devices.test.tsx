@@ -2,6 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import zh from "../messages/zh.json";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -622,13 +623,16 @@ describe("device network (network ask-to-allow spec §7)", () => {
     lastSeenAt: T,
   };
   const policy = (over: Record<string, unknown> = {}) => ({
-    network: "allowlist",
+    effectiveTier: "strict",
+    isolation: "sandbox",
+    localhost: "off",
+    unixSockets: "off",
     allowedDomains: ["files.example.com"],
     remoteGrants: "owner",
     ...over,
   });
   const local = (
-    net: { features?: string[]; policy?: unknown; recent?: unknown[] } = {},
+    net: { features?: string[]; policy?: unknown } = {},
     over: Record<string, unknown> = {},
   ) =>
     env("e1", "Laptop", {
@@ -639,7 +643,6 @@ describe("device network (network ask-to-allow spec §7)", () => {
       network: {
         features: ["networkReport", "policyOp"],
         policy: policy(),
-        recent: [],
         ...net,
       },
       ...over,
@@ -689,41 +692,7 @@ describe("device network (network ask-to-allow spec §7)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ add: ["*.slack.com"] });
   });
 
-  it("turning 不限网络 on asks first with the risk text; turning it off does not", async () => {
-    let open = false;
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({ policy: policy({ network: open ? "open" : "allowlist" }) }) }),
-      [`POST ${BASE}/e1/policy`]: (req) => {
-        open = (bodyOf(req) as { network: string }).network === "open";
-        return json(200, { policy: policy({ network: open ? "open" : "allowlist" }) });
-      },
-    });
-    await renderDetail({ locale: "zh" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("switch", { name: "不限网络" }));
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(
-      "不限网络后，智能体在这台设备上运行的命令可以访问组织允许的任何地址",
-    );
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: "开启不限网络" }));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ network: "open" });
-    await vi.waitFor(() =>
-      expect(screen.getByRole("switch", { name: "不限网络" }).getAttribute("aria-checked")).toBe(
-        "true",
-      ),
-    );
-    // the machine section marks it too
-    expect(screen.getAllByText("不限网络").length).toBeGreaterThan(1);
-    await user.click(screen.getByRole("switch", { name: "不限网络" }));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({ network: "allowlist" });
-  });
-
-  it("remoteGrants off disables adding and 不限网络 with the command to run on the machine", async () => {
+  it("remoteGrants off disables adding with the command to run on the machine", async () => {
     stubApi({
       [`GET ${BASE}/e1`]: () =>
         json(200, { device: local({ policy: policy({ remoteGrants: "off" }) }) }),
@@ -731,7 +700,6 @@ describe("device network (network ask-to-allow spec §7)", () => {
     await renderDetail();
     expect(await screen.findByText(N.remoteGrantsOffHint)).toBeTruthy();
     expect(screen.getByText(N.remoteGrantsOff)).toBeTruthy();
-    expect((screen.getByRole("switch", { name: N.open }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
     // narrowing is still accepted
     expect(
@@ -743,32 +711,13 @@ describe("device network (network ask-to-allow spec §7)", () => {
     ).toBe(false);
   });
 
-  it("a program without policyOp says to upgrade it; recent changes list who, where and unconfirmed", async () => {
+  it("a program without policyOp says to upgrade it", async () => {
     stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local({
-            features: ["networkReport"],
-            recent: [
-              {
-                at: T,
-                add: ["files.slack.com"],
-                remove: [],
-                network: null,
-                by: "Grant",
-                via: "im",
-                confirmed: false,
-              },
-            ],
-          }),
-        }),
+      [`GET ${BASE}/e1`]: () => json(200, { device: local({ features: ["networkReport"] }) }),
     });
     await renderDetail();
     expect(await screen.findByText(N.upgrade)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Remove files\.example\.com/ })).toBeNull();
-    expect(screen.getByText(N.recent.add.replace("{hosts}", "files.slack.com"))).toBeTruthy();
-    expect(screen.getByText(/Grant · IM/)).toBeTruthy();
-    expect(screen.getByText(N.recent.unconfirmed)).toBeTruthy();
   });
 
   it("a refused change shows why with the machine's message", async () => {
@@ -798,5 +747,394 @@ describe("device network (network ask-to-allow spec §7)", () => {
     await renderDetail();
     expect(await screen.findByText(N.dockerNote)).toBeTruthy();
     expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
+  });
+});
+
+describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
+  const S = E.sandbox;
+  const SETTINGS = "/api/v1/orgs/o1/settings";
+  const MACHINE = {
+    id: "m1",
+    name: "grant-mbp",
+    os: "darwin",
+    mode: "os",
+    programVersion: "0.1.0",
+    lastSeenAt: T,
+  };
+  const sandbox = (over: Record<string, unknown> = {}) => ({
+    tier: null,
+    effectiveTier: "dev",
+    ceiling: "open",
+    cappedBy: null,
+    defaultTier: "dev",
+    allowUnsandboxed: true,
+    isolation: "sandbox",
+    pendingNextUse: false,
+    pendingFilesReset: false,
+    recent: [],
+    ...over,
+  });
+  const policy = (over: Record<string, unknown> = {}) => ({
+    effectiveTier: "dev",
+    isolation: "sandbox",
+    localhost: "on",
+    unixSockets: "roots",
+    allowedDomains: [],
+    remoteGrants: "owner",
+    ...over,
+  });
+  const cloud = (sb: Record<string, unknown> = {}, over: Record<string, unknown> = {}) =>
+    env("e1", "Build box", { sandbox: sandbox(sb), ...over });
+  const local = (
+    sb: Record<string, unknown> = {},
+    pol: Record<string, unknown> = {},
+    over: Record<string, unknown> = {},
+  ) =>
+    env("e1", "Laptop", {
+      source: "local",
+      provider: "@local",
+      online: true,
+      machine: MACHINE,
+      network: { features: ["networkReport", "policyOp", "tiers"], policy: policy(pol) },
+      sandbox: sandbox(sb),
+      ...over,
+    });
+  const orgSettings = (platformMax: string) =>
+    json(200, {
+      settings: { toolSearch: "on", sandboxTier: { max: "dev" } },
+      deployment: {
+        sandboxEgress: { mode: "allowlist", allowHosts: [] },
+        sandboxTiers: { max: platformMax, default: "dev", allowUnsandboxed: true, devHosts: [] },
+      },
+    });
+  const radio = (name: string) =>
+    screen.getByRole("radio", {
+      name: new RegExp(`^${name.replace(/[()]/g, "\\$&")}`),
+    }) as HTMLInputElement;
+
+  it("a card above the org's ceiling is disabled with 组织最高允许; follow-default is checked", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () => json(200, { device: cloud({ ceiling: "dev" }) }),
+      [`GET ${SETTINGS}`]: () => orgSettings("open"),
+    });
+    await renderDetail({ locale: "zh" });
+    await screen.findByRole("radiogroup", { name: "沙箱级别" });
+    expect(radio("跟随组织默认（开发）").checked).toBe(true);
+    expect(radio("开放").disabled).toBe(true);
+    expect(screen.getByText("组织最高允许：开发")).toBeTruthy();
+    expect(radio("开发").disabled).toBe(false);
+  });
+
+  it("a card above the platform's ceiling says 平台最高允许 (first paint, no browser read)", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () => json(200, { device: cloud({ ceiling: "dev" }) }),
+      [`GET ${SETTINGS}`]: () => orgSettings("dev"),
+    });
+    await renderDetail({ locale: "zh" });
+    expectNoFirstPaintFetch();
+    expect(await screen.findByText("平台最高允许：开发")).toBeTruthy();
+  });
+
+  it("each capped card names the ceiling that caps it", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: cloud({ ceiling: "strict", defaultTier: "strict", effectiveTier: "strict" }),
+        }),
+      [`GET ${SETTINGS}`]: () => orgSettings("dev"),
+    });
+    await renderDetail({ locale: "zh" });
+    expect(await screen.findByText("组织最高允许：严格")).toBeTruthy();
+    expect(screen.getByText("平台最高允许：开发")).toBeTruthy();
+    expect(radio("开发").disabled).toBe(true);
+    expect(radio("开放").disabled).toBe(true);
+  });
+
+  it("a lower effective level says why", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: cloud({
+            tier: "open",
+            effectiveTier: "dev",
+            ceiling: "dev",
+            cappedBy: "platform",
+          }),
+        }),
+      [`GET ${SETTINGS}`]: () => orgSettings("dev"),
+    });
+    await renderDetail({ locale: "zh" });
+    expect(await screen.findByText("平台最高只允许开发。")).toBeTruthy();
+  });
+
+  it("a cloud device's level is a PATCH; 开放 asks first with the risk text", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () => json(200, { device: cloud() }),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
+    });
+    const { client } = await renderDetail();
+    client.setQueryData(["org", "o1", "devices"], list([cloud()]));
+    const user = userEvent.setup();
+    await screen.findByRole("radiogroup", { name: S.title });
+    await user.click(radio(en.devices.tier.strict));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ tier: "strict" });
+    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
+    await user.click(radio(en.devices.tier.open));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(S.openRiskCloud);
+    expect(dialog.textContent).not.toContain(S.openRisk);
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: S.openConfirmSubmit }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({ tier: "open" });
+  });
+
+  it("following an open default asks first, then sends tier null", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local({ tier: "dev", defaultTier: "open" }, { tier: "dev" }),
+        }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
+    });
+    await renderDetail();
+    await screen.findByRole("radiogroup", { name: S.title });
+    const user = userEvent.setup();
+    await user.click(radio(S.follow.replace("{tier}", en.devices.tier.open)));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(S.openRisk);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: S.openConfirmSubmit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ tier: null });
+  });
+
+  it("choosing follow-default sends tier null", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: cloud({ tier: "strict", effectiveTier: "strict" }) }),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
+    });
+    await renderDetail();
+    await screen.findByRole("radiogroup", { name: S.title });
+    await userEvent.setup().click(radio(S.follow.replace("{tier}", en.devices.tier.dev)));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ tier: null });
+  });
+
+  it("cloud pending notes: next use keeps the files; a file reset offers 重建文件", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: cloud({ pendingNextUse: true, pendingFilesReset: true }) }),
+    });
+    await renderDetail({ locale: "zh" });
+    expect(await screen.findByText("下次使用时生效，文件保留。")).toBeTruthy();
+    expect(screen.getByText("重置文件后生效。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重建文件" })).toBeTruthy();
+  });
+
+  it("a local device's level goes to the machine; the dev facts of this machine are listed", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local({}, { localhost: "off-proxy-detected" }) }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ tier: "strict" }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(S.localhostValue["off-proxy-detected"])).toBeTruthy();
+    expect(screen.getByText(S.unixSocketsValue.roots)).toBeTruthy();
+    expect(screen.getByText("capybara-device policy set localhost allow")).toBeTruthy();
+    await userEvent.setup().click(radio(en.devices.tier.strict));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ tier: "strict" });
+  });
+
+  it("remoteGrants off: raising is disabled with the CLI command; narrowing stays", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local(
+            { tier: "dev", effectiveTier: "dev" },
+            { tier: "dev", remoteGrants: "off" },
+          ),
+        }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(S.remoteOff)).toBeTruthy();
+    expect(
+      screen.getByText("capybara-device policy set tier <strict|dev|open|default>"),
+    ).toBeTruthy();
+    expect(radio(en.devices.tier.open).disabled).toBe(true);
+    expect(radio(en.devices.tier.strict).disabled).toBe(false);
+  });
+
+  it("a program without tiers says it runs strict and to upgrade", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local(
+            { effectiveTier: "strict" },
+            {},
+            {
+              network: { features: ["networkReport", "policyOp"], policy: policy() },
+            },
+          ),
+        }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(S.lower.program)).toBeTruthy();
+    expect(radio(en.devices.tier.strict).disabled).toBe(true);
+  });
+
+  it("不使用沙箱 off: the risk text and the local commands, nothing sent", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local({ tier: "open", effectiveTier: "open" }, { tier: "open" }) }),
+    });
+    await renderDetail({ locale: "zh" });
+    expect(
+      await screen.findByText(/不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行/),
+    ).toBeTruthy();
+    const code = screen.getByText(/capybara-device policy set isolation none/);
+    expect(code.textContent).toContain("capybara-device policy set tier open");
+    expect(screen.getByRole("button", { name: "复制" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "恢复沙箱" })).toBeNull();
+    // copying and choosing levels never send isolation none (spec §14 Q1)
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("不使用沙箱 on: a danger mark and 恢复沙箱 sends isolation sandbox", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local(
+            { tier: "open", effectiveTier: "open", isolation: "none" },
+            { tier: "open", isolation: "none" },
+          ),
+        }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ tier: "open" }) }),
+    });
+    await renderDetail({ locale: "zh" });
+    const restore = await screen.findByRole("button", { name: "恢复沙箱" });
+    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("已开启");
+    expect(screen.getByText("这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(restore);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ isolation: "sandbox" });
+    await user.click(radio("严格"));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
+    expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({ tier: "strict" });
+    // no request ever turns the sandbox off
+    expect(calls.some((c) => String(c.body ?? "").includes('"none"'))).toBe(false);
+  });
+
+  it("不使用沙箱 refused: the machine says none while the level is below open", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local(
+            { tier: "open", effectiveTier: "dev", isolation: "sandbox", cappedBy: "org" },
+            { tier: "open", effectiveTier: "dev", isolation: "none" },
+          ),
+        }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ isolation: "sandbox" }) }),
+    });
+    await renderDetail({ locale: "zh" });
+    const restore = await screen.findByRole("button", { name: "恢复沙箱" });
+    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("已开启");
+    expect(screen.getByText(zh.devices.sandbox.unsandboxedRefused)).toBeTruthy();
+    await userEvent.setup().click(restore);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ isolation: "sandbox" });
+  });
+
+  it("a Docker-mode or capped device has no 不使用沙箱 row", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local(
+            { tier: "open", effectiveTier: "open" },
+            { tier: "open" },
+            {
+              machine: { ...MACHINE, mode: "docker" },
+            },
+          ),
+        }),
+    });
+    await renderDetail();
+    await screen.findByRole("radiogroup", { name: S.title });
+    expect(screen.queryByText(S.unsandboxedRisk)).toBeNull();
+  });
+
+  it("recent changes list levels, isolation and hosts with who, where and unconfirmed", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: local({
+            allowUnsandboxed: false,
+            recent: [
+              {
+                at: T,
+                kind: "policy",
+                add: ["files.slack.com"],
+                remove: [],
+                tier: { to: "dev" },
+                isolation: null,
+                by: "Grant",
+                via: "im",
+                confirmed: false,
+              },
+              {
+                at: T,
+                kind: "isolation",
+                add: [],
+                remove: [],
+                tier: null,
+                isolation: "none",
+                by: null,
+                via: "device",
+                confirmed: true,
+              },
+            ],
+          }),
+        }),
+    });
+    await renderDetail();
+    expect(
+      await screen.findByText(
+        `${S.recent.add.replace("{hosts}", "files.slack.com")} · ${S.recent.tier.replace("{tier}", en.devices.tier.dev)}`,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(/Grant · IM/)).toBeTruthy();
+    expect(screen.getByText(S.recent.unconfirmed)).toBeTruthy();
+    expect(screen.getByText(S.recent.isolation.none)).toBeTruthy();
+    expect(screen.getByText(new RegExp(S.recent.via.device))).toBeTruthy();
+  });
+
+  it("device cards mark 开放 (warn) and 不使用沙箱 (danger)", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([
+            cloud({ tier: "open", effectiveTier: "open" }),
+            local({ effectiveTier: "open", isolation: "none" }, {}, { id: "e2" }),
+            env("e3", "Plain", { sandbox: sandbox() }),
+          ]),
+        ),
+    });
+    await renderList({ locale: "zh" });
+    await screen.findByText("Laptop");
+    const parts = [...document.querySelectorAll(".cb-object-card-meta-part")].map((n) => [
+      n.textContent,
+      n.getAttribute("data-tone"),
+    ]);
+    expect(parts).toEqual([
+      ["开放", "warn"],
+      ["不使用沙箱", "fail"],
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { SandboxTier } from "./devices";
 import type { ScheduledTasksSettings } from "./schedules";
 import type { UiArrangementEntry } from "./ui";
 
@@ -6,6 +7,17 @@ import type { UiArrangementEntry } from "./ui";
 export interface SandboxEgressSetting {
   mode: "none" | "allowlist";
   allowHosts?: string[];
+}
+
+/**
+ * The org's sandbox levels (sandbox dev tiers spec §4.1): `max` the highest level its devices may
+ * reach, `default` the level of a device that chose none, `allowUnsandboxed` whether members'
+ * devices may run without a sandbox. Each absent = follow the platform.
+ */
+export interface SandboxTierSetting {
+  max?: SandboxTier;
+  default?: SandboxTier;
+  allowUnsandboxed?: boolean;
 }
 
 /**
@@ -22,6 +34,8 @@ export interface OrgSettings {
   /** 旧内核没有这个字段：缺省按 allow。 */
   sandboxToolPolicy?: "allow" | "ask";
   sandboxEgress?: SandboxEgressSetting;
+  /** The org's sandbox levels; absent = follow the platform. */
+  sandboxTier?: SandboxTierSetting;
   /** An older kernel leaves it out: read as on. */
   platformTool?: "on" | "read-only" | "off";
   /** The org's default time zone (IANA) for senders without one of their own; absent = UTC. */
@@ -43,7 +57,14 @@ export interface OrgThemeSetting {
 
 /** 部署默认值（旧内核不返回）。 */
 export interface OrgSettingsDeployment {
-  sandboxEgress: { mode: "none" | "allowlist" | "open"; allowHosts: string[] };
+  sandboxEgress: { mode: "none" | "allowlist"; allowHosts: string[] };
+  /** The platform's sandbox levels and the developer hosts the dev level adds. */
+  sandboxTiers: {
+    max: SandboxTier;
+    default: SandboxTier;
+    allowUnsandboxed: boolean;
+    devHosts: string[];
+  };
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */
@@ -61,13 +82,15 @@ export interface OrgSettingsResponse {
 
 /** PATCH 体：`sandboxEgress: null` 恢复跟随部署默认。 */
 export type OrgSettingsPatch = Partial<
-  Omit<OrgSettings, "sandboxEgress" | "timeZone" | "theme" | "scheduledTasks">
+  Omit<OrgSettings, "sandboxEgress" | "sandboxTier" | "timeZone" | "theme" | "scheduledTasks">
 > & {
   /** The scheduled-task fields to change; the rest keep their value. */
   scheduledTasks?: Partial<ScheduledTasksSettings>;
   /** null clears the theme setting (follow the platform, allowed). */
   theme?: OrgThemeSetting | null;
   sandboxEgress?: SandboxEgressSetting | null;
+  /** null clears it (follow the platform). */
+  sandboxTier?: SandboxTierSetting | null;
   /** null clears the default (UTC). */
   timeZone?: string | null;
   /** Per slot: the entry replaces the org's, null removes it (follow the platform). */

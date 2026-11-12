@@ -763,7 +763,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     // summary again (the model keeps using the real paths)
     const paths = devicePathsAt(events, after);
     if (paths) {
-      messages.push({ role: "system", content: devicePathsText(paths.payload.roots) });
+      messages.push({ role: "system", content: devicePathsText(paths.payload) });
     }
     // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
@@ -835,7 +835,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // the instance's directories (environments spec §13.1): logged during a step's tool call,
       // so rendered after that step's tool results
       case "device_paths":
-        messages.push({ role: "system", content: devicePathsText(e.payload.roots) });
+        messages.push({ role: "system", content: devicePathsText(e.payload) });
         break;
       // hook_denied is not model-visible: the model sees only the denied tool call's tool_result
       // (and nothing for a denied model request), so request building skips it

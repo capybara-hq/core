@@ -120,7 +120,14 @@ describe("network ask (dual replica)", () => {
     machine.send({
       ...HELLO,
       features: ["networkReport", "policyOp"],
-      policy: { network: "allowlist", allowedDomains: [], remoteGrants: "owner" },
+      policy: {
+        effectiveTier: "strict",
+        isolation: "sandbox",
+        localhost: "off",
+        unixSockets: "off",
+        allowedDomains: [],
+        remoteGrants: "owner",
+      },
     });
     await waitFor(
       async () =>

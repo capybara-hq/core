@@ -95,7 +95,10 @@ const ROUTES: Routes = {
   [`GET ${O}/settings`]: () =>
     json(200, {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
-      deployment: { sandboxEgress: { mode: "open", allowHosts: [] } },
+      deployment: {
+        sandboxEgress: { mode: "allowlist", allowHosts: [] },
+        sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true, devHosts: [] },
+      },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
     }),
   [`GET ${O}/members`]: () => json(200, { members: MEMBERS }),

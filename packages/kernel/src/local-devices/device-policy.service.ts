@@ -15,6 +15,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
+import { isolationOf } from "./policy-summary.js";
 import { LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
@@ -29,15 +30,16 @@ export type PolicyChangeOutcome =
   | { applied: false; reason: "offline" | "refused" | "unsupported"; message: string };
 
 const OFFLINE_MESSAGE =
-  "The device's machine is offline, so its network policy was not changed. Start capybara-device on it.";
+  "The device's machine is offline, so its policy was not changed. Start capybara-device on it.";
 const UNSUPPORTED_MESSAGE =
-  "The device's capybara-device program cannot change its network policy from the platform. Update capybara-device on the machine.";
+  "The device's capybara-device program cannot change its policy from the platform. Update capybara-device on the machine.";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Changes a local device's network policy on its machine (network ask-to-allow spec §5.2): the
- * kernel→device `policy` op over the {@link LocalDeviceRelay}. The machine is the authority: it
+ * Changes a local device's policy on its machine (network ask-to-allow spec §5.2; sandbox dev
+ * tiers spec §7.3: its hosts, its `tier`, and `isolation` back to `sandbox`): the kernel→device
+ * `policy` op over the {@link LocalDeviceRelay}. The machine is the authority: it
  * refuses widening unless its owner allows remote grants, validates every host and answers with
  * the policy as written, which the kernel then keeps on the active machine's row (§5.4) and
  * audits as `device.policy_changed`.
@@ -129,7 +131,9 @@ export class DevicePolicyService {
 
   /**
    * Keeps the policy the machine wrote on its row and audits the change (`confirmed`); with no
-   * policy (the answer never came) only audits the attempt, unconfirmed.
+   * policy (the answer never came) only audits the attempt, unconfirmed. The detail's `isolation`
+   * is the one asked for, or the one the machine now reports when it changed (a tier change turns
+   * the sandbox back on).
    */
   @Transactional()
   private async record(input: {
@@ -141,7 +145,19 @@ export class DevicePolicyService {
     actorTokenId?: string;
     policy: DeviceLocalPolicySummary | null;
   }): Promise<void> {
+    // the isolation the machine reports now, when it differs from the stored one: a tier change
+    // turns an unsandboxed device's sandbox back on without asking for it (spec §5.4, §10.4)
+    let isolationNow: "sandbox" | "none" | undefined;
     if (input.policy !== null) {
+      const prev = await this.db
+        .selectFrom("device_machines")
+        .select("local_policy")
+        .where("id", "=", input.machineId)
+        .where("revoked_at", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      const before = isolationOf(prev?.local_policy) ?? "sandbox";
+      if (input.policy.isolation !== before) isolationNow = input.policy.isolation;
       await this.db
         .updateTable("device_machines")
         .set({ local_policy: JSON.stringify(input.policy) })
@@ -159,7 +175,11 @@ export class DevicePolicyService {
       detail: {
         add: change.add ?? [],
         remove: change.remove ?? [],
-        network: change.network ?? null,
+        // only when set (null: follow the org's default); the device page lists the change
+        ...(change.tier !== undefined && { tier: change.tier }),
+        ...((isolationNow ?? change.isolation) !== undefined && {
+          isolation: isolationNow ?? change.isolation,
+        }),
         by: source.accountId,
         via: source.via,
         approvalId: source.approvalId ?? null,

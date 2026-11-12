@@ -10,7 +10,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { DeviceView } from "../../src/devices/devices.service.js";
+import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -448,6 +450,183 @@ describe("devices API", () => {
     expect((running.json() as { device: DeviceView }).device.instance).toMatchObject({
       status: "running",
       lastUsedAt: expect.any(String),
+    });
+  });
+});
+
+describe("a device's sandbox tier (sandbox dev tiers spec §7.2)", () => {
+  const patch = (req: Req, id: string, payload: Record<string, unknown>) =>
+    req({ method: "PATCH", url: `${base()}/${id}`, payload });
+  const tierAudits = (id: string) =>
+    db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "detail"])
+      .where("target", "=", id)
+      .where("action", "=", "device.tier_changed")
+      .orderBy("at")
+      .orderBy("id")
+      .execute();
+  const setOrgTier = async (sandboxTier: unknown) => {
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { sandboxTier },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  };
+
+  it("a new cloud device follows the org's default; its owner sets, keeps and clears its tier", async () => {
+    const me = await member();
+    const env = await create(me.req, "Tiered");
+    expect(env.sandbox).toEqual({
+      tier: null,
+      effectiveTier: "dev",
+      ceiling: "dev",
+      cappedBy: null,
+      defaultTier: "dev",
+      allowUnsandboxed: false,
+      isolation: "sandbox",
+      pendingNextUse: false,
+      pendingFilesReset: false,
+      recent: [],
+    });
+    expect(env.limits.tier).toBe("dev");
+
+    const set = await patch(me.req, env.id, { tier: "strict" });
+    expect(set.statusCode, set.body).toBe(200);
+    const view = (set.json() as { device: DeviceView }).device;
+    expect(view.sandbox).toMatchObject({ tier: "strict", effectiveTier: "strict" });
+    expect(view.limits.tier).toBe("strict");
+    expect(view.sandbox.recent).toEqual([
+      {
+        at: expect.any(String),
+        kind: "tier",
+        add: [],
+        remove: [],
+        tier: { to: "strict" },
+        isolation: null,
+        by: expect.any(String),
+        via: "web",
+        confirmed: true,
+      },
+    ]);
+    // the same tier again changes nothing; a rename and a tier in one request
+    expect((await patch(me.req, env.id, { tier: "strict" })).statusCode).toBe(200);
+    const both = await patch(me.req, env.id, { name: "Tiered 2", tier: null });
+    expect(both.statusCode, both.body).toBe(200);
+    expect((both.json() as { device: DeviceView }).device).toMatchObject({
+      name: "Tiered 2",
+      sandbox: { tier: null, effectiveTier: "dev" },
+    });
+    expect(await tierAudits(env.id)).toEqual([
+      { actor_account_id: me.id, detail: { from: null, to: "strict" } },
+      { actor_account_id: me.id, detail: { from: "strict", to: null } },
+    ]);
+  });
+
+  it("a used instance is pending until its next use", { timeout: 60_000 }, async () => {
+    const me = await member();
+    const env = await create(me.req, "Used");
+    const conversationId = randomUUID();
+    await sandbox.withSandbox(
+      {
+        orgId,
+        deviceId: env.id,
+        holderConversationId: conversationId,
+        actor: { accountId: me.id, conversationId },
+      },
+      async () => null,
+      ctl(),
+    );
+    const set = await patch(me.req, env.id, { tier: "strict" });
+    expect(set.statusCode, set.body).toBe(200);
+    expect((set.json() as { device: DeviceView }).device.sandbox).toMatchObject({
+      pendingNextUse: true,
+      pendingFilesReset: false,
+    });
+  });
+
+  it("another member or the org's owner setting the tier of my device gets not_found", async () => {
+    const me = await member();
+    const other = await member();
+    const env = await create(me.req, "Not yours");
+    for (const req of [other.req, owner]) {
+      const res = await patch(req, env.id, { tier: "strict" });
+      expect(res.statusCode, res.body).toBe(404);
+      expect(errCode(res)).toBe("device.not_found");
+    }
+    const mine = await me.req({ method: "GET", url: `${base()}/${env.id}` });
+    expect((mine.json() as { device: DeviceView }).device.sandbox.tier).toBeNull();
+    expect(await tierAudits(env.id)).toEqual([]);
+  });
+
+  it("above the ceiling → 400 device.tier_not_allowed, naming the platform or the org", async () => {
+    const me = await member();
+    const env = await create(me.req, "Capped");
+    const open = await patch(me.req, env.id, { tier: "open" });
+    expect(open.statusCode, open.body).toBe(400);
+    expect(errCode(open)).toBe("device.tier_not_allowed");
+    expect((open.json() as { error: { message: string } }).error.message).toBe(
+      "The platform allows sandbox levels up to dev; this device cannot be set to open.",
+    );
+    await setOrgTier({ max: "strict" });
+    try {
+      const dev = await patch(me.req, env.id, { tier: "dev" });
+      expect(dev.statusCode, dev.body).toBe(400);
+      expect((dev.json() as { error: { message: string } }).error.message).toBe(
+        "Your organization allows sandbox levels up to strict; this device cannot be set to dev.",
+      );
+      // a device following the default (dev) is cut by the org
+      const view = await me.req({ method: "GET", url: `${base()}/${env.id}` });
+      expect((view.json() as { device: DeviceView }).device.sandbox).toMatchObject({
+        tier: null,
+        effectiveTier: "strict",
+        ceiling: "strict",
+        cappedBy: "org",
+        defaultTier: "strict",
+      });
+    } finally {
+      await setOrgTier(null);
+    }
+    expect(await tierAudits(env.id)).toEqual([]);
+  });
+
+  it("an API token cannot set it (a rename still works); a local device's tier is its machine's", async () => {
+    const me = await member();
+    const env = await create(me.req, "Tokened");
+    const { token } = await apiTokensFor(db).createPersonal(me.id, { name: "cli" });
+    const viaPat = (payload: Record<string, unknown>) =>
+      k.http.inject({
+        method: "PATCH",
+        url: `${base()}/${env.id}`,
+        headers: { authorization: `Bearer ${token}`, "x-capybara-csrf": "1" },
+        payload,
+      });
+    const tier = await viaPat({ tier: "strict" });
+    expect(tier.statusCode, tier.body).toBe(403);
+    expect(errCode(tier)).toBe("auth.session_required");
+    const renamed = await viaPat({ name: "By token" });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    expect(await tierAudits(env.id)).toEqual([]);
+
+    for (const payload of [{}, { tier: "max" }, { tier: "open", x: 1 }]) {
+      const res = await patch(me.req, env.id, payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+
+    const local = await k.app
+      .get(TransactionHost)
+      .run(() => k.app.get(DevicesService).createLocal(orgId, me.id, "Laptop"));
+    const res = await patch(me.req, local.id, { tier: "strict" });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(errCode(res)).toBe("device.tier_on_device");
+    // a local device without a machine runs strict until its program reports tiers
+    const view = await me.req({ method: "GET", url: `${base()}/${local.id}` });
+    expect((view.json() as { device: DeviceView }).device.sandbox).toMatchObject({
+      tier: null,
+      effectiveTier: "strict",
+      isolation: "sandbox",
     });
   });
 });

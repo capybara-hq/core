@@ -84,7 +84,10 @@ const ROUTES: Routes = {
   [`GET ${O}/settings`]: () =>
     json(200, {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
-      deployment: { sandboxEgress: { mode: "open", allowHosts: [] } },
+      deployment: {
+        sandboxEgress: { mode: "allowlist", allowHosts: [] },
+        sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true, devHosts: [] },
+      },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
     }),
   [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
@@ -204,8 +207,8 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it.each([
     // the radio cards of tool search; the read-only note only for a member
     ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
-    // the tool policy and egress radios, the resources' key-value
-    ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, items: 0, switches: 0 }],
+    // the tool policy, sandbox level and egress radios, the resources' key-value
+    ["/settings/sandbox", `GET ${O}/settings`, { radios: 3, kv: 1, items: 0, switches: 0 }],
     // the 用途默认 tab: the kernel's six purposes as item rows, each with its model select
     [
       "/settings/models?tab=purposes",

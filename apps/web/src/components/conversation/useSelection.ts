@@ -8,8 +8,8 @@ import type { ModelRef, Selection } from "../../lib/conversations";
 import {
   type Device,
   type DeviceList,
-  deviceNetworkOpen,
   devicePickable,
+  deviceSandboxMark,
   deviceState,
 } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
@@ -235,6 +235,11 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
     usable(list.defaultId) ??
     list.items.find(devicePickable)?.id;
   const current = list.items.find((e) => e.id === id);
+  // 开放 (warn) or 不使用沙箱 (danger) after the tag (sandbox dev tiers spec §11.1)
+  const markOf = (e: Device) => {
+    const mark = deviceSandboxMark(e);
+    return mark === null ? {} : { badge: te(`mark.${mark.kind}`), badgeTone: mark.tone };
+  };
   const tagOf = (e: Device) => {
     const state = deviceState(e);
     if (state === "unavailable" || state === "filesLost" || state === "offline")
@@ -254,7 +259,7 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
             label: nameOf(e),
             checked: e.id === id,
             ...tagOf(e),
-            ...(deviceNetworkOpen(e) ? { badge: te("network.open") } : {}),
+            ...markOf(e),
           })),
         },
       ],

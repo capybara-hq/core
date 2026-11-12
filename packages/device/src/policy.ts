@@ -2,8 +2,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type DeviceExecGrants,
+  minTier,
   type SandboxLimits,
   type SandboxRoots,
+  type SandboxTier,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { Policy } from "./state.js";
@@ -75,6 +77,70 @@ export function covers(pattern: string, host: string): boolean {
  */
 export const ANY_HOST = "*";
 
+/** The tier fields of an exec's limits: the org's ceiling and its default. */
+export type TierLimits = Pick<SandboxLimits, "tier" | "defaultTier">;
+
+/**
+ * The tier this device runs a command at (spec §4.4): the owner's choice, or the org's default
+ * when there is none (`strict` when the kernel sent no default either), cut to the ceiling the
+ * kernel sends in `limits.tier`.
+ */
+export function deviceTier(policy: Pick<Policy, "tier">, limits: TierLimits): SandboxTier {
+  return minTier(policy.tier ?? limits.defaultTier ?? "strict", limits.tier);
+}
+
+/**
+ * The tier before any exec was seen (no ceiling known yet): the owner's choice, else `dev`, the
+ * default of every org unless changed. Used for the sandbox's first configuration only; the next
+ * command applies its own limits.
+ */
+export function provisionalTier(policy: Pick<Policy, "tier">): SandboxTier {
+  return policy.tier ?? "dev";
+}
+
+/** What a tier really gives on this machine (the device page and `policy show`). */
+export interface TierFacts {
+  effectiveTier: SandboxTier;
+  /** Whether sandboxed commands may listen on and reach localhost. */
+  localhost: "on" | "off-proxy-detected" | "off";
+  /** Unix sockets: within the device's directories, every socket with the host's masked, none. */
+  unixSockets: "roots" | "all-masked" | "off";
+}
+
+/**
+ * The facts of the device's tier (spec §5.2.3, §7.3). `limits` undefined means no exec was seen
+ * yet: the owner's choice, else `dev`, uncapped. `isolation: none` is reported separately (these
+ * describe the sandboxed tier).
+ *
+ * - Docker mode: the container has its own loopback and sockets in every tier.
+ * - OS mode, Linux: the sandbox has its own network namespace, so its loopback always works (not
+ *   reachable from the host); unix sockets stay blocked (srt cannot limit them by path there).
+ * - OS mode, macOS: `strict` has neither; `dev` / `open` get unix sockets under the device's
+ *   directories and localhost unless a local forwarding proxy was detected and the owner did not
+ *   set `localhost: allow`.
+ */
+export function tierFacts(
+  policy: Policy,
+  limits: TierLimits | undefined,
+  opts: { platform?: NodeJS.Platform; proxyDetected: boolean; mode: "os" | "docker" },
+): TierFacts {
+  const effectiveTier = limits === undefined ? provisionalTier(policy) : deviceTier(policy, limits);
+  if (opts.mode === "docker") return { effectiveTier, localhost: "on", unixSockets: "all-masked" };
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "darwin") return { effectiveTier, localhost: "on", unixSockets: "off" };
+  if (effectiveTier === "strict") return { effectiveTier, localhost: "off", unixSockets: "off" };
+  return {
+    effectiveTier,
+    localhost: localBinding(policy, opts.proxyDetected) ? "on" : "off-proxy-detected",
+    unixSockets: "roots",
+  };
+}
+
+/** macOS `dev` / `open`: local binding, unless a local proxy was found and not overridden. */
+function localBinding(policy: Pick<Policy, "localhost">, proxyDetected: boolean): boolean {
+  return policy.localhost === "allow" || !proxyDetected;
+}
+
 type Limits = Pick<SandboxLimits, "egress" | "allowHosts">;
 
 /**
@@ -101,23 +167,46 @@ export function grantedHosts(
   return [...out];
 }
 
+/** The limits {@link effectiveEgress} reads: the ceiling's network and tiers, and the dev hosts. */
+export type EgressLimits = Pick<
+  SandboxLimits,
+  "egress" | "allowHosts" | "tier" | "defaultTier" | "devHosts"
+>;
+
 /**
- * The domains one command may reach: what the device's egress allows, cut to the local policy,
- * plus the command's grants ({@link grantedHosts}). The cloud can only narrow the local policy;
- * an empty `allowlist` policy allows nothing but the grants. A policy `open` stops narrowing: the
- * org's list, or {@link ANY_HOST} when the org is open too.
+ * The hosts the device itself admits at `tier` (before the ceiling): its `allowedDomains`, plus
+ * the dev hosts in `dev`. Undefined for `open`: the device admits every host.
+ */
+export function deviceHosts(
+  policy: Pick<Policy, "allowedDomains">,
+  tier: SandboxTier,
+  devHosts: readonly string[],
+): string[] | undefined {
+  if (tier === "open") return undefined;
+  const local = policy.allowedDomains.map((d) => d.toLowerCase());
+  if (tier === "dev") for (const d of devHosts) local.push(d.toLowerCase());
+  return [...new Set(local)];
+}
+
+/**
+ * The domains one command may reach (spec §4.2), with `t` = {@link deviceTier} and the ceiling's
+ * hosts (`limits.allowHosts`, or any host when `limits.egress` is `open`):
+ * - `strict`: ceiling ∩ `allowedDomains` (an empty list allows nothing but the grants);
+ * - `dev`: ceiling ∩ (`allowedDomains` ∪ `limits.devHosts`);
+ * - `open`: the ceiling itself ({@link ANY_HOST} when it is `open`);
+ * plus the command's grants ({@link grantedHosts}). The cloud can only narrow the local policy.
  */
 export function effectiveEgress(
-  policy: Pick<Policy, "allowedDomains" | "network" | "remoteGrants">,
-  limits: Limits,
+  policy: Pick<Policy, "allowedDomains" | "tier" | "remoteGrants">,
+  limits: EgressLimits,
   grants?: Pick<DeviceExecGrants, "hosts">,
 ): string[] {
   if (limits.egress === "none") return [];
-  if (policy.network === "open") {
+  const local = deviceHosts(policy, deviceTier(policy, limits), limits.devHosts ?? []);
+  if (local === undefined) {
     if (limits.egress === "open") return [ANY_HOST];
     return [...new Set(limits.allowHosts.map((h) => h.toLowerCase()))];
   }
-  const local = policy.allowedDomains.map((d) => d.toLowerCase());
   const out = new Set<string>();
   if (limits.egress === "open") {
     for (const d of local) out.add(d);
@@ -145,26 +234,77 @@ export interface SrtConfig {
   network: {
     allowedDomains: string[];
     deniedDomains: string[];
+    /** macOS: bind and accept on local ports, connect to any port on localhost. */
+    allowLocalBinding: boolean;
+    /** macOS only: the paths under which unix sockets may be bound and connected to. */
+    allowUnixSockets?: string[];
   };
 }
 
+/** What {@link srtConfig} needs besides the policy and the roots. */
+export interface SrtConfigOptions {
+  /** The tier the commands run at (default `strict`). */
+  tier?: SandboxTier;
+  /** The home whose secret paths are denied (default: the user's home). */
+  home?: string;
+  /** More paths commands may not read (this program's state directory). */
+  denyRead?: string[];
+  platform?: NodeJS.Platform;
+  /** The proxy guard found a local forwarding proxy (macOS `dev` / `open` then skip localhost). */
+  proxyDetected?: boolean;
+  /** macOS: the short socket directory (`TMPDIR` in `dev` / `open`). */
+  socketDir?: string;
+  /** The device's package caches (`<dir>/cache`), writable in `dev` / `open`. */
+  cacheDir?: string;
+}
+
 /**
- * The sandbox-runtime configuration: writes only under the workspace and tmp roots (the runtime's
- * implicit write paths denied), skills read only, the secret paths (plus `opts.denyRead`, such as this program's own state directory)
- * unreadable, and network limited to `egress`.
+ * The sandbox-runtime configuration (spec §5.1, §5.2.3): writes only under the workspace and tmp
+ * roots (the runtime's implicit write paths denied), skills read only, the secret paths (plus
+ * `opts.denyRead`, such as this program's own state directory) unreadable, and network limited to
+ * `egress`.
+ *
+ * `strict` stops there: no local binding, no unix sockets. `dev` and `open` also write the
+ * package caches and (macOS) the short socket directory; on macOS they may listen on and reach
+ * localhost unless the proxy guard found a local forwarding proxy (`localhost: allow` overrides)
+ * and use unix sockets under the tmp root, the workspace and the socket directory. On Linux unix
+ * sockets stay blocked (srt can only allow all of them there, the host daemons' included) and the
+ * sandbox's own network namespace gives it a loopback anyway. `allowAllUnixSockets` is never set.
  */
 export function srtConfig(
-  _policy: Policy,
+  policy: Policy,
   roots: SandboxRoots,
   egress: string[],
-  opts: { home?: string; denyRead?: string[] } = {},
+  opts: SrtConfigOptions = {},
 ): SrtConfig {
+  const platform = opts.platform ?? process.platform;
+  const tier = opts.tier ?? "strict";
+  const darwin = platform === "darwin";
+  const dev = tier !== "strict";
+  const socketDir = darwin && dev ? opts.socketDir : undefined;
   return {
     filesystem: {
       denyRead: [...deniedSecretPaths(opts.home), ...(opts.denyRead ?? [])],
-      allowWrite: [roots.workspace, roots.tmp],
+      allowWrite: [
+        roots.workspace,
+        roots.tmp,
+        ...(socketDir !== undefined ? [socketDir] : []),
+        ...(dev && opts.cacheDir !== undefined ? [opts.cacheDir] : []),
+      ],
       denyWrite: [roots.skills, ...implicitWritePaths()],
     },
-    network: { allowedDomains: [...egress], deniedDomains: [] },
+    network: {
+      allowedDomains: [...egress],
+      deniedDomains: [],
+      allowLocalBinding: darwin && dev && localBinding(policy, opts.proxyDetected === true),
+      ...(darwin &&
+        dev && {
+          allowUnixSockets: [
+            roots.tmp,
+            roots.workspace,
+            ...(socketDir !== undefined ? [socketDir] : []),
+          ],
+        }),
+    },
   };
 }

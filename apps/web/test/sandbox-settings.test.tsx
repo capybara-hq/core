@@ -7,6 +7,7 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { optionLabels, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -310,5 +311,113 @@ describe("沙箱设置（SettingsPage）", () => {
       expect(def).toHaveProperty("checked", true);
       expect(actionRow("en")).toBeNull();
     });
+  });
+});
+
+describe("沙箱级别 (sandbox dev tiers spec §11.2)", () => {
+  const TIERS = (max: string, allowUnsandboxed = true) => ({
+    sandboxEgress: { mode: "allowlist", allowHosts: ["registry.npmjs.org"] },
+    sandboxTiers: {
+      max,
+      default: "dev",
+      allowUnsandboxed,
+      devHosts: ["github.com", "proxy.golang.org"],
+    },
+  });
+  const radio = (name: string) =>
+    screen.getByRole("radio", { name: new RegExp(`^${name}`) }) as HTMLInputElement;
+  const stub = (deployment: unknown, settings: Record<string, unknown> = {}) => {
+    let current: Record<string, unknown> = { toolSearch: "on", ...settings };
+    return stubApi({
+      [`GET ${SETTINGS}`]: () => json(200, { settings: current, deployment }),
+      [`PATCH ${SETTINGS}`]: (c) => {
+        current = { ...current, ...(bodyOf(c) as object) };
+        return json(200, { settings: current, deployment });
+      },
+    });
+  };
+
+  it("开放 is disabled with 平台未开放 when the platform's max is lower; lowering the max brings the default down", async () => {
+    const calls = stub(TIERS("dev"));
+    await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale: "zh" });
+    await screen.findByRole("radiogroup", { name: "最高级别" });
+    expect(radio("开放").disabled).toBe(true);
+    expect(screen.getByText("平台未开放")).toBeTruthy();
+    expect(radio("开发").checked).toBe(true);
+    // the switch belongs under 开放, which the platform keeps closed
+    expect(screen.queryByRole("switch", { name: "允许成员的设备不使用沙箱" })).toBeNull();
+    const user = userEvent.setup();
+    // the dev hosts only matter from the development level up
+    expect(screen.queryByText(/开发级别还会放行常用开发域名/)).not.toBeNull();
+    await user.click(radio("严格"));
+    expect(screen.queryByText(/开发级别还会放行常用开发域名/)).toBeNull();
+    expect(await optionLabels(screen.getByRole("combobox", { name: "新设备默认" }), user)).toEqual([
+      "严格",
+    ]);
+    await user.click(
+      within(actionRow("zh") as HTMLElement).getByRole("button", { name: zh.orgSettings.save }),
+    );
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      sandboxTier: { max: "strict", default: "strict" },
+    });
+  });
+
+  it("开放 carries the risk text; under it the unsandboxed switch saves with the max", async () => {
+    const calls = stub(TIERS("open"));
+    await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+    const t = en.orgSettings.tiers;
+    await screen.findByRole("radiogroup", { name: t.max });
+    expect(screen.getByText(t.openHint)).toBeTruthy();
+    // the org follows the platform's open max: the open card is already chosen
+    expect(radio(en.devices.tier.open).checked).toBe(true);
+    const user = userEvent.setup();
+    const sw = screen.getByRole("switch", { name: t.allowUnsandboxed });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    await user.click(sw);
+    await pickOption(screen.getByRole("combobox", { name: t.default }), "open", user);
+    await user.click(
+      within(actionRow("en") as HTMLElement).getByRole("button", { name: en.orgSettings.save }),
+    );
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      sandboxTier: { default: "open", allowUnsandboxed: false },
+    });
+  });
+
+  it("a platform that forbids unsandboxed devices shows no switch under 开放", async () => {
+    stub(TIERS("open", false), { sandboxTier: { max: "open" } });
+    await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+    await screen.findByRole("radiogroup", { name: en.orgSettings.tiers.max });
+    expect(radio(en.devices.tier.open).checked).toBe(true);
+    expect(
+      screen.queryByRole("switch", { name: en.orgSettings.tiers.allowUnsandboxed }),
+    ).toBeNull();
+  });
+
+  it("a member reads the levels without changing them", async () => {
+    stub(TIERS("open"));
+    await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), {
+      me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }] },
+    });
+    await screen.findByRole("radiogroup", { name: en.orgSettings.tiers.max });
+    expect(radio(en.devices.tier.strict).disabled).toBe(true);
+    expect(radio(en.devices.tier.open).disabled).toBe(true);
+  });
+
+  it("under the allowlist, the dev hosts are one line with the list in a disclosure", async () => {
+    stub(TIERS("dev"));
+    await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale: "zh" });
+    const summary = await screen.findByRole("button", {
+      name: "开发级别还会放行常用开发域名（2 个）",
+    });
+    expect(screen.queryByText("github.com, proxy.golang.org")).toBeNull();
+    await userEvent.setup().click(summary);
+    expect(screen.getByText("github.com, proxy.golang.org")).toBeTruthy();
+  });
+
+  it("the network section offers no open choice", async () => {
+    stub(TIERS("open"));
+    await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+    const group = await screen.findByRole("radiogroup", { name: en.orgSettings.egress.title });
+    expect(within(group).getAllByRole("radio")).toHaveLength(3);
   });
 });

@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import type { DeviceExecArgs, ExecResult, SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { type WebSocket, WebSocketServer } from "ws";
-import type { Executor } from "../src/exec/types.js";
+import type { ExecHooks, Executor } from "../src/exec/types.js";
 
 /** A stand-in for the kernel's `/device/connect` gateway, as the program sees it. */
 export class FakeKernel {
@@ -83,7 +83,15 @@ export function execArgs(command: string, tag = "t1"): DeviceExecArgs {
     maxOutputBytes: 1000,
     tag,
     actor: { accountId: "acc", conversationId: "conv" },
-    limits: { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] },
+    limits: {
+      cpu: 1,
+      memoryMb: 512,
+      diskMb: 1024,
+      egress: "none",
+      allowHosts: [],
+      tier: "strict",
+      devHosts: [],
+    },
   };
 }
 
@@ -106,7 +114,12 @@ export class FakeExecutor implements Executor {
     this.gates.get(command)?.();
   }
 
-  exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
+  /** When set, exec waits for it before its `beforeSpawn` hook (a slow start). */
+  startGate: Promise<void> | undefined;
+
+  async exec(args: DeviceExecArgs, signal: AbortSignal, hooks?: ExecHooks): Promise<ExecResult> {
+    await this.startGate;
+    hooks?.beforeSpawn?.();
     this.started.push(args.command);
     return new Promise((resolve, reject) => {
       if (args.command === "now") return resolve(OK_EXEC);

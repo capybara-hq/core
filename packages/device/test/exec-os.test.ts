@@ -145,6 +145,8 @@ const LIMITS: SandboxLimits = {
   diskMb: 1024,
   egress: "none",
   allowHosts: [],
+  tier: "strict",
+  devHosts: [],
 };
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
@@ -581,5 +583,65 @@ describe.skipIf(!availability.ok || process.platform !== "linux")(
       expect(r.stdout).toContain("started");
       await waitFor(async () => (await findMarked((v) => v === ex.markerOf("ns"))).length === 0);
     }, 20_000);
+  },
+);
+
+describe.skipIf(!availability.ok || process.platform !== "darwin")(
+  "OsExecutor on macOS: tier dev",
+  () => {
+    let base: string;
+    let ex: OsExecutor;
+    const never = new AbortController().signal;
+    const DEV: SandboxLimits = { ...LIMITS, tier: "dev", defaultTier: "dev" };
+    const node = `'${process.execPath}'`;
+    // Listens on `addr` (a port 0 on loopback, or a socket path), connects back, prints the reply.
+    const echo = (addr: string) =>
+      `${node} -e "const n=require('net');const s=n.createServer(c=>c.end('hi')).on('error',e=>{console.log('ERR '+e.code);process.exit(0)});s.listen(${addr},()=>{const a=s.address();n.connect(typeof a==='string'?a:a.port,'127.0.0.1').on('data',d=>{console.log(String(d));process.exit(0)}).on('error',e=>{console.log('ERR '+e.code);process.exit(0)})})"`;
+
+    beforeAll(async () => {
+      base = tmp("device-dev-");
+      mkdirSync(join(base, "env"));
+      mkdirSync(join(base, "s"));
+      ex = await createOsExecutor({
+        dir: join(base, "env"),
+        policy: () => DEFAULT_POLICY,
+        // Not the real /private/tmp: a test leaves nothing behind there.
+        socketBase: join(base, "s"),
+        detectProxy: async () => ({ detected: false, reasons: [] }),
+      });
+      await ex.ensureRoot();
+    }, 60_000);
+    afterAll(async () => {
+      await ex?.dispose();
+      if (base) rmSync(base, { recursive: true, force: true });
+    });
+
+    it("TMPDIR is the short socket directory, where a unix socket works", async () => {
+      const r = await ex.exec(execArgs('printf "%s" "$TMPDIR"', { limits: DEV }), never);
+      expect(r.stdout).toMatch(new RegExp(`^${join(base, "s")}/cap-[0-9a-f]{8}$`));
+      const s = await ex.exec(
+        execArgs(echo(`process.env.TMPDIR+'/s.sock'`), { limits: DEV }),
+        never,
+      );
+      expect(s.stdout.trim()).toBe("hi");
+    }, 30_000);
+
+    it("a local server listens and answers on loopback; strict refuses it", async () => {
+      const r = await ex.exec(execArgs(echo("0,'127.0.0.1'"), { limits: DEV }), never);
+      expect(r.stdout.trim()).toBe("hi");
+      const strict = await ex.exec(execArgs(echo("0,'127.0.0.1'")), never);
+      expect(strict.stdout.trim()).toMatch(/^ERR/);
+    }, 30_000);
+
+    it("package caches are writable under the device's cache folder", async () => {
+      const r = await ex.exec(
+        execArgs('mkdir -p "$npm_config_cache/x" && echo ok > "$npm_config_cache/x/f" && echo ok', {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(r.stdout.trim()).toBe("ok");
+      expect(readFileSync(join(base, "env", "cache", "npm", "x", "f"), "utf8")).toBe("ok\n");
+    }, 30_000);
   },
 );

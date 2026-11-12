@@ -11,6 +11,7 @@ import {
   AGENTS,
   CONV,
   DEVICES,
+  envView,
   ev,
   FakeEventSource,
   LIMITS,
@@ -1245,6 +1246,40 @@ describe("the conversation page's server gate", () => {
     const none = await renderChatRoute({ routes: {}, me: { ...ME, currentOrgId: null } });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(document.querySelector('[data-template="ConversationPage"]')).toBeNull();
+  });
+});
+
+describe("the properties panel's device mark", () => {
+  it("a device without a sandbox (or one refused for it) carries the fail tone", async () => {
+    const sandbox = {
+      tier: null,
+      effectiveTier: "dev",
+      ceiling: "dev",
+      cappedBy: "org",
+      defaultTier: "dev",
+      allowUnsandboxed: false,
+      isolation: "none",
+      pendingNextUse: false,
+      pendingFilesReset: false,
+      recent: [],
+    };
+    const device = envView("e1", "Laptop", { sandbox });
+    api({
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { deviceId: "e1" })),
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}/device`]: () => json(200, { device }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChat();
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    const badge = await vi.waitFor(() => {
+      const b = props.querySelector(".cb-badge");
+      if (b === null) throw new Error("no mark yet");
+      return b;
+    });
+    expect(badge.textContent).toBe(en.devices.mark.unsandboxed);
+    expect(badge.getAttribute("data-tone")).toBe("fail");
+    window.history.replaceState(null, "", "/");
   });
 });
 

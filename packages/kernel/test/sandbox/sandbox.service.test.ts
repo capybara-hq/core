@@ -221,6 +221,10 @@ describe("组织出站设置（Ruling M19）", () => {
       WHERE id = ${org}`.execute(raw);
   const limitsOf = async (s: SandboxService, id = envId) =>
     (await fakeSandboxMeta(root, (await use(s, id)).h.id))?.limits;
+  // these cases are about the org's base list: the strict tier sends it unchanged
+  beforeEach(() => {
+    config.sandbox.tiers.default = "strict";
+  });
 
   it("组织 none → 创建时 egress none；allowlist + 主机 → 替换部署白名单；省略主机 → 沿用部署的", async () => {
     const s = service();
@@ -240,12 +244,12 @@ describe("组织出站设置（Ruling M19）", () => {
     });
   });
 
-  it("部署为 none 时组织的 allowlist 不放宽；部署 open 时组织 allowlist 收窄；非法存量按 none", async () => {
+  it("a deployment at none keeps an org allowlist at none; an org allowlist replaces the deployment's; an invalid stored value reads as none", async () => {
     const s = service();
     await setEgress({ mode: "allowlist", allowHosts: ["example.com"] });
     config.sandbox.limits.egress = "none";
     expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
-    config.sandbox.limits.egress = "open";
+    config.sandbox.limits.egress = "allowlist";
     expect(await limitsOf(s, await newDevice())).toMatchObject({
       egress: "allowlist",
       allowHosts: ["example.com"],
@@ -257,13 +261,20 @@ describe("组织出站设置（Ruling M19）", () => {
     });
   });
 
-  it("改设置只影响之后新建的沙箱：已有的沿用创建时的出站", async () => {
+  it("a changed host list reaches only later instances; a changed egress mode recreates the instance on its next use", async () => {
     const s = service();
     const first = await use(s);
+    await setEgress({ mode: "allowlist", allowHosts: ["example.com"] });
+    const same = await use(s);
+    expect(same.h).toEqual(first.h);
+    expect((await fakeSandboxMeta(root, same.h.id))?.limits.allowHosts).toEqual(
+      config.sandbox.limits.allowHosts,
+    );
     await setEgress({ mode: "none" });
     const again = await use(s);
-    expect(again.h).toEqual(first.h);
-    expect((await fakeSandboxMeta(root, again.h.id))?.limits.egress).toBe("allowlist");
+    expect(again.h).not.toEqual(first.h);
+    expect(again.info).toMatchObject({ fresh: true, restarted: true });
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.egress).toBe("none");
   });
 });
 
@@ -274,12 +285,17 @@ describe("lazy creation", () => {
     expect(await ops()).toEqual([]);
     const a = await use(s);
     expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
+    // the default tier is dev: the base list plus the dev hosts
     const limits = {
       cpu: 1,
       memoryMb: 2048,
       diskMb: 5120,
       egress: "allowlist",
-      allowHosts: config.sandbox.limits.allowHosts,
+      allowHosts: [
+        ...new Set([...config.sandbox.limits.allowHosts, ...config.sandbox.limits.devHosts]),
+      ],
+      tier: "dev",
+      devHosts: config.sandbox.limits.devHosts,
     };
     const meta = await fakeSandboxMeta(root, a.h.id);
     expect(meta).toEqual({
@@ -1108,7 +1124,15 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
 });
 
 describe("leftovers of interrupted creates and of other providers (fix round 1)", () => {
-  const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
+  const tiny = {
+    cpu: 1,
+    memoryMb: 1,
+    diskMb: 1,
+    egress: "none",
+    allowHosts: [],
+    tier: "strict",
+    devHosts: [],
+  } as const;
   const name = () => `cap-device-${envId}`;
 
   it("a create that crashed before its handle was recorded is destroyed by name; the file system stays", async () => {
@@ -1117,12 +1141,12 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     const p = provider as SandboxProvider;
     const fs = await p.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       signal: signal(),
     });
     const h = await p.create({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       fileSystem: fs,
       signal: signal(),
     });
@@ -1141,7 +1165,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     const p = provider as SandboxProvider;
     await p.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
@@ -1180,7 +1204,15 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
 });
 
 describe("provider switch during a create", () => {
-  const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
+  const tiny = {
+    cpu: 1,
+    memoryMb: 1,
+    diskMb: 1,
+    egress: "none",
+    allowHosts: [],
+    tier: "strict",
+    devHosts: [],
+  } as const;
   const name = () => `cap-device-${envId}`;
 
   it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the device over", async () => {
@@ -1189,7 +1221,7 @@ describe("provider switch during a create", () => {
     // the previous provider's create ended after createFileSystem, before the handle was written
     await old.createFileSystem({
       name: name(),
-      limits: { ...tiny, allowHosts: [] },
+      limits: { ...tiny, allowHosts: [], devHosts: [] },
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)

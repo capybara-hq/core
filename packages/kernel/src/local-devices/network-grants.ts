@@ -8,7 +8,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
-import { taskGrantsRunOf } from "../schedules/unattended.js";
+import { appendMissingGrant, taskGrantsRunOf, unattendedTierOf } from "../schedules/unattended.js";
+import { deviceFeaturesOf, isolationOf } from "./policy-summary.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -214,6 +215,44 @@ export class NetworkGrants {
       .slice(0, MAX_GRANT_HOSTS);
     if (hosts.length === 0) return undefined;
     return { hosts, source: { kind: "task", id: task.taskId, accountId: task.accountId } };
+  }
+
+  /**
+   * The tier rule of an unattended run on `deviceId` (sandbox dev tiers spec §11.4), read fresh:
+   * null for an attended run; otherwise the task run and whether the task grants `tier:open` on
+   * this device (`unattendedTierOf`).
+   */
+  async unattendedTier(input: {
+    runId: string;
+    deviceId: string;
+  }): Promise<{ taskRunId: string; openGranted: boolean } | null> {
+    return await unattendedTierOf(this.db.db, input.runId, input.deviceId);
+  }
+
+  /** Records `key` in the task run's `missing_grants` (once). */
+  async recordMissing(taskRunId: string, key: string): Promise<void> {
+    await appendMissingGrant(this.db.db, taskRunId, key);
+  }
+
+  /**
+   * Whether the device's active machine runs commands without a sandbox
+   * (`device_machines.local_policy.isolation`, read fresh at each exec, spec §4.3), read from the
+   * stored JSON's isolation field alone ({@link isolationOf}). Fails closed for a program that
+   * applies tiers (feature `tiers`, which always sends a summary): no summary or any isolation but
+   * `sandbox` counts as unsandboxed. False without a machine, or for an older program without
+   * tiers (it has no unsandboxed mode).
+   */
+  async unsandboxed(deviceId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select(["local_policy", "features"])
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (row === undefined) return false;
+    const isolation = isolationOf(row.local_policy);
+    if (isolation !== null) return isolation === "none";
+    return deviceFeaturesOf(row.features).includes("tiers");
   }
 
   /** The runs of the tree whose budget run is `root`. */

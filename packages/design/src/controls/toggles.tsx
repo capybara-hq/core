@@ -56,7 +56,8 @@ export function RadioGroup({
   disabled?: boolean;
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: ReactNode; description?: ReactNode }[];
+  /** `disabled`: this option alone can't be chosen (its description then says why). */
+  options: { value: string; label: ReactNode; description?: ReactNode; disabled?: boolean }[];
   variant?: "plain" | "card";
   label: string;
 }) {
@@ -76,14 +77,14 @@ export function RadioGroup({
           className="cb-radio"
           data-variant={variant}
           data-state={o.value === value ? "checked" : "unchecked"}
-          data-disabled={disabled ? "true" : undefined}
+          data-disabled={disabled || o.disabled ? "true" : undefined}
         >
           <input
             type="radio"
             name={name}
             value={o.value}
             checked={o.value === value}
-            disabled={disabled}
+            disabled={disabled || o.disabled}
             onChange={() => onChange(o.value)}
           />
           <span className="cb-box" aria-hidden="true" />

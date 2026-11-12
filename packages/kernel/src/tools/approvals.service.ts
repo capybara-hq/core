@@ -339,7 +339,7 @@ export class ApprovalsService {
     /** One decision of a network ask at a time, across replicas (the op is sent before the transaction). */
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ceilingLimits">,
   ) {}
 
   /**
@@ -1109,7 +1109,7 @@ export class ApprovalsService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (task?.account_id !== decidedBy) return;
-    const limits = await this.sandbox.orgLimits(a.orgId);
+    const limits = await this.sandbox.ceilingLimits(a.orgId);
     const summary = await this.policies.summary(a.detail.deviceId);
     for (const host of hosts) {
       if (networkGrantRefusal(host, { limits, deviceSummary: summary?.policy ?? null }) !== null) {
