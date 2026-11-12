@@ -30,6 +30,22 @@ describe("checkOutboxRegistry", () => {
     ]);
   });
 
+  it("reports an add whose resolvable queue is not one of its entry's queues", () => {
+    const root = fixture("queue");
+    const file = join(root, "packages/kernel/src/runtime/owes.ts");
+    const want = readFileSync(file, "utf8")
+      .split("\n")
+      .flatMap((t, i) => (t.includes("// expect: outbox-registry") ? [i + 1] : []));
+    const got = checkOutboxRegistry(root);
+    expect(got.map((f) => [relative(root, f.file), f.line])).toEqual(
+      want.map((line) => [relative(root, file), line]),
+    );
+    expect(got.map((f) => f.message)).toEqual([
+      'job "bg-wake" is owed on queue "cap-kernel-runs", but its OUTBOX_JOBS entry lists "cap-kernel-maintenance"',
+      'job "run" is owed on queue "cap-kernel-maintenance", but its OUTBOX_JOBS entry lists "cap-kernel-runs", "cap-kernel-subagent-runs"',
+    ]);
+  });
+
   it("passes the real registry", () => {
     expect(existsSync(join(repoRoot, "packages/kernel/src/infra/outbox/registry.ts"))).toBe(true);
     expect(checkOutboxRegistry(repoRoot)).toEqual([]);

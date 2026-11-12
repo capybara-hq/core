@@ -574,25 +574,50 @@ const isAfterCommitCall = (a: Node) =>
   a.type === "CallExpression" &&
   (nameOf(a.callee) === "afterCommit" || memberCall(a)?.prop === "afterCommit");
 
+/** A name that ends in "queue" (`queue`, `runQueue`, `getQueue`); `queuedIds` is not one. */
+const QUEUE_NAME = /(^|[a-z0-9_])queue$/i;
+/** A holder of queues a queue is picked from: `queues.get(name)`, `queues[name]`. */
+const QUEUES_HOLDER = /(^|[a-z0-9_])queues$/i;
 /**
- * A job added to a BullMQ queue by hand: `.add(` / `.addBulk(` on a value named like a queue or
- * declared as a BullMQ `Queue`, or `.enqueue(` on a jobs / queue facade (`this.enqueue(` helpers
- * and stream controllers are not: the helper's own add is reported where it is).
+ * The kernel's enqueuing facades by field name: `RunJobs` / `ChannelJobs` (`jobs`), a queue
+ * facade, the channel `outbound`, `directorySync`. Any other `.enqueue(` receiver (a stream
+ * controller, a mailer) is not a BullMQ add.
+ */
+const ENQUEUE_FACADE = /jobs|queue|outbound|sync/i;
+
+/** The last name of `a.b.c` (`c`) or of a plain identifier. */
+const lastNameOf = (n: Node): string | undefined =>
+  n.type === "MemberExpression" && !n.computed ? nameOf(n.property) : nameOf(n);
+
+/**
+ * A job added to a BullMQ queue by hand: `.add(` / `.addBulk(` on a value named like a queue
+ * (ending in "queue", or the result of a call so named) or declared as a BullMQ `Queue`, on a
+ * queue picked from a holder of queues (`this.queues.get(name).add(`, `queues[name].add(`), or
+ * `.enqueue(` on a jobs / queue facade ({@link ENQUEUE_FACADE}; `this.enqueue(` helpers are not:
+ * the helper's own add is reported where it is).
  */
 function isEnqueue(mc: { object: Node; prop: string }, queueTyped: ReadonlySet<string>): boolean {
   const obj = unwrap(mc.object);
-  const last = obj.type === "MemberExpression" ? nameOf(obj.property) : nameOf(obj);
+  const last = lastNameOf(obj);
   if (mc.prop === "add" || mc.prop === "addBulk") {
-    const callee = obj.type === "CallExpression" ? unwrap(obj.callee as Node) : undefined;
-    const named = callee
-      ? callee.type === "MemberExpression"
-        ? nameOf(callee.property)
-        : nameOf(callee)
-      : last;
-    return named !== undefined && (/queue/i.test(named) || queueTyped.has(named));
+    if (obj.type === "MemberExpression" && obj.computed) {
+      const holder = lastNameOf(unwrap(obj.object as Node));
+      return holder !== undefined && QUEUES_HOLDER.test(holder);
+    }
+    if (obj.type === "CallExpression") {
+      const callee = unwrap(obj.callee as Node);
+      if (callee.type === "MemberExpression" && !callee.computed) {
+        const picked = nameOf(callee.property);
+        const holder = lastNameOf(unwrap(callee.object as Node));
+        if (picked === "get" && holder !== undefined && QUEUES_HOLDER.test(holder)) return true;
+      }
+      const named = lastNameOf(callee);
+      return named !== undefined && (QUEUE_NAME.test(named) || queueTyped.has(named));
+    }
+    return last !== undefined && (QUEUE_NAME.test(last) || queueTyped.has(last));
   }
   if (mc.prop === "enqueue") {
-    return obj.type !== "ThisExpression" && last !== undefined && last !== "controller";
+    return obj.type !== "ThisExpression" && last !== undefined && ENQUEUE_FACADE.test(last);
   }
   return false;
 }

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Finding,
@@ -373,10 +373,18 @@ function readRoles(file: string): Map<string, string> {
 }
 
 /** The `<METHOD> <path>` keys of every kernel HTTP route under `root` (the parity test's list). */
+/**
+ * Whether a file can declare routes: a `@Controller` decorator names `Controller` in the text, so
+ * a file without the word is skipped unparsed (about 60 of the kernel's 700 files have it; parsing
+ * them all made the parity test slow).
+ */
+const mayDeclareRoutes = (file: string): boolean =>
+  file.endsWith(".ts") && readFileSync(file, "utf8").includes("Controller");
+
 export function kernelRoutes(root: string): Set<string> {
   const keys = new Set<string>();
   for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {
-    if (isTest || !file.endsWith(".ts")) continue;
+    if (isTest || !mayDeclareRoutes(file)) continue;
     const p = parseFile(file);
     if (isParseError(p)) continue;
     for (const r of readRoutes(p, [])) keys.add(r.key);
@@ -396,7 +404,7 @@ export function checkPlatformOps(root: string): Finding[] {
     if (isTest) continue;
     const isOps = /\/platform\/ops\/[^/]+\.ops\.ts$/.test(file);
     const isExclusions = file === exclusionsFile;
-    const isController = file.endsWith(".ts");
+    const isController = mayDeclareRoutes(file);
     if (!isOps && !isExclusions && !isController) continue;
     const p = parseFile(file);
     if (isParseError(p)) {

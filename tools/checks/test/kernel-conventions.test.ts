@@ -78,7 +78,7 @@ describe("checkKernelConventions", () => {
     const f = checkKernelConventions(root, {
       pending: {
         "kc-enqueue-via-outbox": [
-          { path: "packages/kernel/src/runtime/enqueuer.service.ts", max: 4 },
+          { path: "packages/kernel/src/runtime/enqueuer.service.ts", max: 6 },
           { path: "packages/kernel/src/runtime/moved.service.ts", max: 1 },
         ],
       },
