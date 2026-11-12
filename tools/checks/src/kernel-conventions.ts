@@ -579,11 +579,11 @@ const QUEUE_NAME = /(^|[a-z0-9_])queue$/i;
 /** A holder of queues a queue is picked from: `queues.get(name)`, `queues[name]`. */
 const QUEUES_HOLDER = /(^|[a-z0-9_])queues$/i;
 /**
- * The kernel's enqueuing facades by field name: `RunJobs` / `ChannelJobs` (`jobs`), a queue
- * facade, the channel `outbound`, `directorySync`. Any other `.enqueue(` receiver (a stream
+ * The kernel's enqueuing facades by the end of their field name: `RunJobs` / `ChannelJobs`
+ * (`jobs`), a queue facade, the channel `outbound`, `directorySync`. Any other `.enqueue(` receiver (a stream
  * controller, a mailer) is not a BullMQ add.
  */
-const ENQUEUE_FACADE = /jobs|queue|outbound|sync/i;
+const ENQUEUE_FACADE = /(jobs|queue|outbound|sync)$/i;
 
 /** The last name of `a.b.c` (`c`) or of a plain identifier. */
 const lastNameOf = (n: Node): string | undefined =>

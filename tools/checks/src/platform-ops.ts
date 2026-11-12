@@ -372,7 +372,6 @@ function readRoles(file: string): Map<string, string> {
   return roles;
 }
 
-/** The `<METHOD> <path>` keys of every kernel HTTP route under `root` (the parity test's list). */
 /**
  * Whether a file can declare routes: a `@Controller` decorator names `Controller` in the text, so
  * a file without the word is skipped unparsed (about 60 of the kernel's 700 files have it; parsing
@@ -381,6 +380,7 @@ function readRoles(file: string): Map<string, string> {
 const mayDeclareRoutes = (file: string): boolean =>
   file.endsWith(".ts") && readFileSync(file, "utf8").includes("Controller");
 
+/** The `<METHOD> <path>` keys of every kernel HTTP route under `root` (the parity test's list). */
 export function kernelRoutes(root: string): Set<string> {
   const keys = new Set<string>();
   for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {

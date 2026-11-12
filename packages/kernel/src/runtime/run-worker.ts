@@ -683,14 +683,13 @@ export class RunWorker {
         agent = started.agent;
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
-      } else if (await this.runEnded(conversationId, runId)) {
-        // a retried start (its run_started is there) read `queued` before the conversation lock:
-        // a stop that ended the run meanwhile wins, so no catalog or run context is recorded
-        // after its end
-        return "finished";
       }
-      // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
-      await this.skillsCatalog.record(
+      // Skills catalog snapshot (ruling M17): written before the run is running, and again on a
+      // crash retry (deduped by its idem key). Both records re-read the run under the conversation
+      // and run row locks in their append transactions: a stop that ended it meanwhile (a retried
+      // start reads `queued` before any lock) wins, nothing is appended after its end, and the run
+      // never starts.
+      const catalogged = await this.skillsCatalog.record(
         {
           orgId: conv.org_id,
           agentId: conv.agent_id,
@@ -700,9 +699,10 @@ export class RunWorker {
         },
         { log: this.log },
       );
+      if (!catalogged) return "finished";
       // run context (spec §5): after the catalog, before the run is running, so before any
       // compaction and model call; a retried run start finds its event or no change
-      await this.runContext.record({
+      const contexted = await this.runContext.record({
         orgId: conv.org_id,
         conversationId,
         runId,
@@ -716,6 +716,7 @@ export class RunWorker {
           },
         }),
       });
+      if (!contexted) return "finished";
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db
@@ -949,12 +950,6 @@ export class RunWorker {
       .forUpdate()
       .executeTakeFirst();
     return !row || TERMINAL_STATUSES.has(row.status);
-  }
-
-  /** {@link endedUnderLocks} in its own transaction (a retried start's re-check). */
-  @Transactional({ propagation: "requires_new" })
-  private async runEnded(conversationId: string, runId: string): Promise<boolean> {
-    return this.endedUnderLocks(conversationId, runId);
   }
 
   /**

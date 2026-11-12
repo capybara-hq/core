@@ -32,15 +32,8 @@ export const runQueueNameFor = (
 /** 未结束的运行状态（waiting：等人处理审批 / 输入请求，没有任务、不占会话锁与配额）。 */
 export const ACTIVE_RUN_STATUSES = ["queued", "running", "waiting"] as const;
 
-/** 运行的终态。 */
-export type TerminalStatus = "completed" | "failed" | "aborted";
-
-/** The terminal run statuses (here, not in `run-finish.ts`, which the sub-agent modules import). */
-export const TERMINAL_STATUSES: ReadonlySet<string> = new Set<TerminalStatus>([
-  "completed",
-  "failed",
-  "aborted",
-]);
+// The terminal run statuses (here, not in `run-finish.ts`, which the sub-agent modules import)
+export { TERMINAL_STATUSES, type TerminalStatus } from "./run-status.js";
 
 /**
  * Locks a run's approval and input request rows (`FOR UPDATE`, in id order) in the caller's

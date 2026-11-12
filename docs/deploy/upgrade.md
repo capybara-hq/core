@@ -108,12 +108,13 @@ SELECT pg_size_pretty(pg_relation_size('capybara.conversation_events')) AS event
 
 Migration `0040_usage_report_sweep.sql` builds `conversation_events_usage_idx`, a partial index on
 `conversation_events (created_at) WHERE type = 'usage'`, **non-concurrently inside the migration
-transaction** (the same class of note as 0027 / 0028 above). A plain `CREATE INDEX` blocks **writes**
-to `conversation_events` until it finishes: new messages and agent runs stall, reads continue. It also
-creates the small `usage_report_sweep` table (migration `0120_drop_usage_report_sweep.sql` drops
-it again: usage reports are owed through the transactional outbox since). This only matters for deployments that ran `main`
-before 0.1.0 and have large event logs; run the upgrade off-peak and estimate from the size query
-above. New installs migrate an empty table.
+transaction** (the same class of note as 0027 / 0028 above). A plain `CREATE INDEX` blocks
+**writes** to `conversation_events` until it finishes: new messages and agent runs stall, reads
+continue. It also creates the small `usage_report_sweep` table, which migration
+`0120_drop_usage_report_sweep.sql` drops again now that usage reports go through the transactional
+outbox. This only matters for deployments that ran `main` before 0.1.0 and have large event logs;
+run the upgrade off-peak and estimate from the size query above. New installs migrate an empty
+table.
 
 ### 0.1.0: IM long connections move to the gateway role
 

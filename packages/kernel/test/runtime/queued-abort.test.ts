@@ -14,6 +14,7 @@ import { RUN_STOP_JOB } from "../../src/orgs/offboarding.js";
 import { RunContextService } from "../../src/runtime/run-context.service.js";
 import { RunControl } from "../../src/runtime/run-control.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { SkillsCatalogService } from "../../src/skills/catalog.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -297,7 +298,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
     expect(await afterAbort(conv, runId)).toEqual([]);
   }, 60_000);
 
-  it("a resume job that read it as queued before the stop records no catalog or run context", async () => {
+  it("a resume job that read it as queued before the stop appends no catalog or run context", async () => {
     const conv = await createConv(req, orgId, askerId);
     const runId = await resumedQueued(req, conv);
     const catalog = vi.spyOn(k.app.get(SkillsCatalogService), "record");
@@ -313,12 +314,56 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       expect(await runStatus(runId)).toBe("aborted");
       const forRun = (calls: unknown[][]) =>
         calls.filter((c) => (c[0] as { runId?: string }).runId === runId);
-      expect(forRun(catalog.mock.calls)).toEqual([]);
+      // the catalog's transaction re-reads the run under the locks: ended, nothing appended
+      const tried = catalog.mock.calls.flatMap((c, i) =>
+        (c[0] as { runId?: string }).runId === runId ? [catalog.mock.results[i]?.value] : [],
+      );
+      expect(await Promise.all(tried)).toEqual(tried.map(() => false));
       expect(forRun(context.mock.calls)).toEqual([]);
       expect(await afterAbort(conv, runId)).toEqual([]);
     } finally {
       catalog.mockRestore();
       context.mockRestore();
+    }
+  }, 60_000);
+
+  it("a stop that saw the lock free and ends the run after the worker took it: nothing is recorded after run_aborted", async () => {
+    const conv = await createConv(req, orgId, askerId);
+    const runId = await resumedQueued(req, conv);
+    const service = k.app.get(SkillsCatalogService);
+    const real = service.record.bind(service);
+    const { name } = await db
+      .selectFrom("orgs")
+      .select("name")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    // the worker holds the conversation lock and is about to record: a stop that read the lock
+    // free before the worker took it now runs its PG half (`abortQueued` past its holder check);
+    // a resumed run has its started_at, so the first-start refusal does not keep it
+    const catalog = vi.spyOn(service, "record").mockImplementationOnce(async (input, opts) => {
+      // biome-ignore lint/suspicious/noExplicitAny: the stop's private PG half
+      const stopped = await (k.app.get(RunQueue) as any).abortQueuedIn(conv, runId, null);
+      expect(stopped).not.toBeNull();
+      // a changed context: an append after the end would show as a run_context event
+      await db
+        .updateTable("orgs")
+        .set({ name: `${name} renamed` })
+        .where("id", "=", orgId)
+        .execute();
+      return real(input, opts);
+    });
+    const context = vi.spyOn(k.app.get(RunContextService), "record");
+    try {
+      await deliverResume(runId);
+      expect(catalog).toHaveBeenCalledTimes(1);
+      expect(await runStatus(runId)).toBe("aborted");
+      // the catalog's transaction saw the end: no run context record was even tried
+      expect(context).not.toHaveBeenCalled();
+      expect(await afterAbort(conv, runId)).toEqual([]);
+    } finally {
+      catalog.mockRestore();
+      context.mockRestore();
+      await db.updateTable("orgs").set({ name }).where("id", "=", orgId).execute();
     }
   }, 60_000);
 

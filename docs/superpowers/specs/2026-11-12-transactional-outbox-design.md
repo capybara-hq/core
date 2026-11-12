@@ -214,7 +214,8 @@ The run path is the largest user of recovery today, so it is spelled out.
 - **Starting a run.** The decision `ensureRunIn` makes (new run row) and the outbox row for its job
   commit together. The read-back of the job, `deleteQueued` on a failed add and the "queued without
   a job" orphan test are deleted: a queued run always has its job owed. A trigger's first run's
-  job id is `runJobId`; a later run of the same trigger gets `<runJobId>-<n>`, kept in `runs.job_id`.
+  job id is `runJobId`; a later run of the same trigger gets `<runJobId>-<n>`, kept in
+  `runs.job_id`.
 - **Sending a message.** The message transaction also writes an `ensure-run` outbox job
   (`ensure-run-<conv>-<seq>`) with `runAt = now + 30 s` (**designer's call**: a backstop, not a
   second immediate call), and the request still calls `ensureRun` right after the commit as today.

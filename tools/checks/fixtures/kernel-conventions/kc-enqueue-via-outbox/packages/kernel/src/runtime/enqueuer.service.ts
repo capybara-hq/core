@@ -11,6 +11,8 @@ export class Enqueuer {
     @Inject(MAINT) private readonly maintenance: Pick<Queue, "add">,
     @Inject(QUEUES) private readonly queues: Map<string, Queue>,
     @Inject(Mailer) private readonly mailer: Mailer,
+    @Inject(Writer) private readonly asyncWriter: Writer,
+    @Inject(Report) private readonly jobsReport: Report,
   ) {}
 
   @Transactional()
@@ -37,5 +39,8 @@ export class Enqueuer {
     queuedIds.add("run-1");
     // `.enqueue(` on anything but a jobs / queue facade is not a BullMQ add
     this.mailer.enqueue({ to: "a@example.com" });
+    // a name that only contains "sync" / "jobs" / "queue" is no facade either
+    this.asyncWriter.enqueue("chunk");
+    this.jobsReport.enqueue("row");
   }
 }
