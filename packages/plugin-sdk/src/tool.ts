@@ -10,6 +10,12 @@ export interface ToolAnnotations {
   requiresUserInteraction?: boolean;
 }
 
+/** Where a conversation comes from; a tool may limit itself to some of these. */
+export const CONVERSATION_SOURCES = ["web", "channel_dm", "channel_group", "subagent"] as const;
+
+/** A conversation source (see {@link CONVERSATION_SOURCES}). */
+export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -36,6 +42,11 @@ export interface ToolSpec {
    * model and not part of the definition fingerprint.
    */
   keyArgs?: string[];
+  /**
+   * The conversation sources this tool is offered in; absent = every source. A non-empty list of
+   * {@link CONVERSATION_SOURCES}.
+   */
+  sources?: ConversationSource[];
 }
 
 /** Longest {@link ToolSpec.title}, in code points. */
@@ -189,6 +200,12 @@ export interface ToolCallContext {
    * always passes it.
    */
   config?: unknown;
+  /** Where the conversation comes from. The kernel always passes it. */
+  source?: ConversationSource;
+  /** The account that owns the agent. The kernel always passes it; `accountId` stays the run's trigger account. */
+  ownerAccountId?: string;
+  /** The trigger account's role in the org. The kernel always passes it. */
+  role?: "owner" | "admin" | "member" | "guest";
 }
 
 export type ToolHandler = (
@@ -234,6 +251,14 @@ export function validateToolSpec(spec: ToolSpec): string[] {
     out.push('defaultPolicy must be "allow" or "ask"');
   if (typeof spec?.inputSchema === "object" && spec.inputSchema !== null)
     out.push(...validateToolPresentation(spec));
+  const sources: unknown = spec?.sources;
+  if (
+    sources !== undefined &&
+    (!Array.isArray(sources) ||
+      sources.length === 0 ||
+      sources.some((s) => !(CONVERSATION_SOURCES as readonly unknown[]).includes(s)))
+  )
+    out.push(`sources must be a non-empty list of ${CONVERSATION_SOURCES.join(", ")}`);
   return out;
 }
 

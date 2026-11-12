@@ -37,6 +37,12 @@ export const AGENT_TEMPLATE_LIMITS: {
 export const AGENT_TEMPLATE_NAME_RE: RegExp;
 
 // @public
+export interface AgentDeletedPayload {
+    agentId: string;
+    orgId: string;
+}
+
+// @public
 export interface AgentTemplate {
     connectors?: AgentTemplateConnector[];
     description: string;
@@ -695,7 +701,49 @@ export type ContentBlock =
 };
 
 // @public
+export const CONTEXT_EXTENSION_POINT = "context@1";
+
+// @public
+export const CONTEXT_LIMITS: {
+    readonly timeoutMs: 2000;
+    readonly maxBytes: 32768;
+};
+
+// @public
+export interface ContextProvider {
+    provide(req: ContextRequest): Promise<ContextResult>;
+}
+
+// @public
+export interface ContextRequest {
+    accountId: string;
+    agentId: string;
+    agentName: string;
+    config: unknown;
+    conversationId: string;
+    orgId: string;
+    ownerAccountId: string;
+    ownerName: string;
+    role: "owner" | "admin" | "member" | "guest";
+    runId: string;
+    signal: AbortSignal;
+    source: ConversationSource;
+    tools: string[];
+}
+
+// @public
+export type ContextResult = {
+    text: string;
+} | null;
+
+// @public
 export function contrastRatio(fg: string, bg: string): number;
+
+// @public
+export const CONVERSATION_SOURCES: readonly ["web", "channel_dm", "channel_group", "subagent"];
+
+// @public
+export type ConversationSource = (typeof CONVERSATION_SOURCES)[number];
 
 // @public
 export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
@@ -1411,7 +1459,7 @@ export function hasControlChars(s: string): boolean;
 export function hasShellInjection(body: string): boolean;
 
 // @public
-export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
+export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
 
 // @public
 export interface HookCall {
@@ -1470,15 +1518,18 @@ export interface HookParentScope {
 
 // @public
 export interface HookPayloads {
+    "agent.deleted": AgentDeletedPayload;
     "model.request": ModelRequestHookPayload;
     "model.response": ModelResponseHookPayload;
+    "org.deleted": OrgDeletedPayload;
+    "org.member_removed": OrgMemberRemovedPayload;
     "tool.postExecute": ToolPostHookPayload;
     "tool.preExecute": ToolPreHookPayload;
     "usage.report": UsageReportPayload;
 }
 
 // @public
-export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
+export const HOOKS_AVAILABLE: readonly ["model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report", "org.member_removed", "agent.deleted", "org.deleted"];
 
 // @public
 export interface HookScope {
@@ -1662,6 +1713,9 @@ export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
 }
+
+// @public
+export const LIFECYCLE_HOOKS: readonly ["org.member_removed", "agent.deleted", "org.deleted"];
 
 // @public
 export type Locale = "zh" | "en";
@@ -2087,6 +2141,11 @@ export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess):
 export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
 
 // @public
+export interface OrgDeletedPayload {
+    orgId: string;
+}
+
+// @public
 export interface OrgEmbedClaims extends EmbedClaimsBase {
     agentId?: string;
     conversationId?: string;
@@ -2094,6 +2153,12 @@ export interface OrgEmbedClaims extends EmbedClaimsBase {
     orgId: string;
     role: UiRole;
     scope: "org";
+}
+
+// @public
+export interface OrgMemberRemovedPayload {
+    accountId: string;
+    orgId: string;
 }
 
 // @public
@@ -3273,11 +3338,14 @@ export interface ToolCallContext {
     config?: unknown;
     conversationId: string;
     orgId: string;
+    ownerAccountId?: string;
     resume?: {
         state: unknown;
         answer: FormAnswer | null;
     };
+    role?: "owner" | "admin" | "member" | "guest";
     signal: AbortSignal;
+    source?: ConversationSource;
 }
 
 // @public
@@ -3360,6 +3428,7 @@ export interface ToolSpec {
     inputSchema: Record<string, unknown>;
     keyArgs?: string[];
     name: string;
+    sources?: ConversationSource[];
     title?: string;
 }
 

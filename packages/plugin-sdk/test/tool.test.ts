@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONNECTOR_EXTENSION_POINT,
+  type ConversationSource,
   defineExtension,
   EXTENSION_POINT_CARDINALITY,
   type InputForm,
@@ -46,6 +47,16 @@ describe("ToolError", () => {
 describe("validateToolSpec", () => {
   const ok = { name: "do_it-2", description: "Does it.", inputSchema: { type: "object" } };
   it("合法声明通过", () => expect(validateToolSpec(ok)).toEqual([]));
+  it("sources: a non-empty list of known conversation sources", () => {
+    expect(validateToolSpec({ ...ok, sources: ["web", "channel_dm"] })).toEqual([]);
+    expect(validateToolSpec({ ...ok, sources: [] }).join()).toMatch(/sources/);
+    expect(
+      validateToolSpec({ ...ok, sources: ["dm"] as unknown as ConversationSource[] }).join(),
+    ).toMatch(/sources/);
+    expect(
+      validateToolSpec({ ...ok, sources: "web" as unknown as ConversationSource[] }).join(),
+    ).toMatch(/sources/);
+  });
   it("非法名称 / 空描述被报告", () => {
     expect(validateToolSpec({ ...ok, name: "bad name" }).join()).toMatch(/name/);
     expect(validateToolSpec({ ...ok, name: "a".repeat(41) }).join()).toMatch(/name/);

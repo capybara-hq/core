@@ -11,7 +11,13 @@ export const HOOKS_AVAILABLE = [
   "tool.preExecute",
   "tool.postExecute",
   "usage.report",
+  "org.member_removed",
+  "agent.deleted",
+  "org.deleted",
 ] as const;
+
+/** Lifecycle mount points: observe-only notices that something was removed. */
+export const LIFECYCLE_HOOKS = ["org.member_removed", "agent.deleted", "org.deleted"] as const;
 
 /** A mount point that `ctx.hooks.on` accepts. */
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
@@ -215,6 +221,26 @@ export interface UsageReportPayload {
   occurredAt: string;
 }
 
+/**
+ * `org.member_removed`: an account left the org (removed, or the member deleted). Delivered through
+ * a queue at least once, only while the org has the plugin enabled; handlers must be idempotent.
+ */
+export interface OrgMemberRemovedPayload {
+  orgId: string;
+  accountId: string;
+}
+
+/** `agent.deleted`: an agent was deleted. Delivered like {@link OrgMemberRemovedPayload}. */
+export interface AgentDeletedPayload {
+  orgId: string;
+  agentId: string;
+}
+
+/** `org.deleted`: an org was deleted. Delivered like {@link OrgMemberRemovedPayload}. */
+export interface OrgDeletedPayload {
+  orgId: string;
+}
+
 /** Payload type of each mount point. */
 export interface HookPayloads {
   "model.request": ModelRequestHookPayload;
@@ -222,6 +248,9 @@ export interface HookPayloads {
   "tool.preExecute": ToolPreHookPayload;
   "tool.postExecute": ToolPostHookPayload;
   "usage.report": UsageReportPayload;
+  "org.member_removed": OrgMemberRemovedPayload;
+  "agent.deleted": AgentDeletedPayload;
+  "org.deleted": OrgDeletedPayload;
 }
 
 /**
