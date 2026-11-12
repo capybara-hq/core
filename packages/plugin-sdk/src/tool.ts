@@ -202,7 +202,7 @@ export interface ToolCallContext {
   config?: unknown;
   /** Where the conversation comes from. The kernel always passes it. */
   source?: ConversationSource;
-  /** The account that owns the agent. The kernel always passes it; `accountId` stays the run's trigger account. */
+  /** The conversation's owner (`conversations.account_id`). The kernel always passes it; `accountId` stays the run's trigger account. */
   ownerAccountId?: string;
   /** The trigger account's role in the org. The kernel always passes it. */
   role?: "owner" | "admin" | "member" | "guest";
