@@ -1,8 +1,9 @@
 # Git credentials for sandboxes
 
 - Date: 2026-11-12.
-- Status: draft, for review. Nothing is decided yet; calls are marked **(designer's call)** and the
-  open questions are in §13.
+- Status: approved (2026-11-12). The maintainer accepted every recommendation of §13 ("whatever
+  can be built and is safe and sound is right"); §13 now records them as decisions. Calls made here
+  are marked **(designer's call)**. Plan: `docs/superpowers/plans/2026-11-12-sandbox-git-credentials.md`.
 - Issue: capybara-hq/core#194.
 - Related: the GitHub connector templates (capybara-hq/plugins#76, PR #77), the sandbox
   development tiers (`2026-11-12-sandbox-dev-tiers-design.md`, issue #190, PR #191; this design
@@ -328,8 +329,8 @@ cleanup is an `afterCommit` step; the per-run byte counter is a Redis counter.
 the kernel returns the person's token, git uses it. Simpler: no relay, traffic goes straight to
 github.com, no kernel bandwidth. But the person's full token is in sandbox memory and printable
 (§3), for 8 hours or forever, for all their repositories, and it needs a binary in every image and
-on every device. Kept as a fallback mode only if §13 Q1 says the relay's bandwidth is unacceptable;
-then it would at least add exact-token redaction of Bash output and use only GitHub App
+on every device. Not built (§13 Q1). Were the relay's bandwidth ever unacceptable, a helper
+mode would at least add exact-token redaction of Bash output and use only GitHub App
 (expiring) tokens.
 
 Also considered: TLS interception in the egress proxy (inject `Authorization` for github.com).
@@ -339,8 +340,8 @@ ours to change into a MITM.
 ## 12. Generalisation and later
 
 - **GitHub Enterprise**: GHE.com data residency works through the template's editable URL and a
-  derived git host. GitHub Enterprise Server has no remote MCP server: a custom connector (e.g. a
-  `bearer` connector on connector-openapi, or a credential-only connector, §13 Q6) declares the GHES
+  derived git host. GitHub Enterprise Server has no remote MCP server: a custom connector (a credential-only
+  connector, §13 Q6) declares the GHES
   host as a git source.
 - **GitLab / Bitbucket / Gitea**: the gateway is host-agnostic; each needs only a git source with
   its host and Basic username. GitLab's MCP server or an OpenAPI connector can be that source.
@@ -348,26 +349,26 @@ ours to change into a MITM.
   credentials), commit signing (a kernel-side signing service, never a key in the sandbox),
   `gh` CLI support (an API relay with the same tickets), package registries.
 
-## 13. Open questions (with recommendations)
+## 13. Decisions (maintainer, 2026-11-12: every recommendation accepted)
 
-1. **Relay (gateway) or credential helper?** Recommend the **gateway** (§5): it is the only way the
+1. **Relay (gateway) or credential helper?** **Decided: the gateway** (§5): it is the only way the
    token stays out of the sandbox with GitHub's token types. Cost: clone traffic through the kernel.
-2. **Push policy default**: recommend `ask` per push (once / always-for-this-repo), consistent with
+2. **Push policy default**: decided: `ask` per push (once / always-for-this-repo), consistent with
    the template's write tools; unattended runs need a `git:push` task grant.
-3. **Org connections for git**: recommend personal only by default; an org connector used for git
+3. **Org connections for git**: decided: personal only by default; an org connector used for git
    only when an org admin turns it on, labeled as a bot identity everywhere.
-4. **Several sources for one host** (e.g. `github` and `github-pat` both connected): recommend the
+4. **Several sources for one host** (e.g. `github` and `github-pat` both connected): decided: the
    org admin picks one per host (org setting); default the OAuth template when both exist.
-5. **Unsandboxed local devices**: recommend no injection by default (host credentials), opt-in
+5. **Unsandboxed local devices**: decided: no injection by default (host credentials), opt-in
    `gitGateway: on` in the local policy.
-6. **Credential-only connectors** (GHES, GitLab without MCP): recommend a tiny `connector-git`
+6. **Credential-only connectors** (GHES, GitLab without MCP): decided: a tiny `connector-git`
    kind later (endpoint = host, no tools) rather than abusing an OpenAPI connector; not in phase 1.
-7. **Gateway origin for sandboxes**: recommend `tools.git.gatewayUrl` (default `http.publicUrl`)
+7. **Gateway origin for sandboxes**: decided: `tools.git.gatewayUrl` (default `http.publicUrl`)
    plus the `SandboxLimits.gateway` exception in the Docker proxy; E2B needs a public origin.
-8. **Commit identity**: recommend the GitHub noreply address and display name from the connection;
+8. **Commit identity**: decided: the GitHub noreply address and display name from the connection;
    the person can override in their account settings later.
 
-## 14. Phases (sketch, after review)
+## 14. Phases (detailed in the plan)
 
 1. Core: SDK `git` template field and `SandboxLimits.gateway`; kernel gateway route (fetch + push,
    policy, tickets, audit), Bash env injection and ticket redaction, `device_paths` line; device
