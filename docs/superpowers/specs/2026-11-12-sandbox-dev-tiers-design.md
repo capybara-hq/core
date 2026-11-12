@@ -603,8 +603,16 @@ the exclusive lease. Nothing in process memory. Every lookup is org-scoped as to
   the machine (checked every 2 s), the localhost proxy guard flipping, a new tier ceiling after an
   exec; the kernel stores it as it stores the hello's; a refused use of an unsandboxed device is
   logged (warn), not audited per call.
+- Changes made on the machine (2026-11-13): when a reported summary (frame or hello) differs from
+  the stored one in what the owner sets (tier, localhost, allowed domains, isolation, remote
+  grants), the kernel audits `device.policy_changed` with `via: "device"` (hosts added and
+  removed, `tier` with `tierFrom`, the changed fields), in place of `device.isolation_reported`.
+  A platform `policy` op is noted on the machine row (`pending_policy_ops`) before it is sent;
+  a reported change that op explains is left to the op's own audit, so a web change is listed
+  once. A summary reported again is no change (the machine row is locked while it is compared).
 - Device: the local command log records tier and isolation per command and every policy change.
-- Web: the device page's recent changes include tier and isolation changes.
+- Web: the device page's recent changes include tier and isolation changes, and those made on the
+  machine (source 本机, with the owner's name).
 
 ## 11. UI
 
