@@ -804,6 +804,8 @@ const SERVER_PURE = new Set([
   "isKernelUnavailable",
   "isSignedOut",
   "currentPath",
+  // a request cookie (a remembered view, calendar spec §4.1): no kernel read
+  "currentCookie",
   "PATH_HEADER",
   "dehydrateFor",
   "prefetchRoute",

@@ -1,4 +1,4 @@
-import { cloneElement, type ReactElement, useId } from "react";
+import { cloneElement, type ReactElement, type ReactNode, useId } from "react";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
@@ -10,6 +10,7 @@ export function Field({
   error,
   count,
   onReset,
+  action,
   children,
 }: {
   label: string;
@@ -19,6 +20,11 @@ export function Field({
   error?: string;
   count?: { value: number; max: number };
   onReset?: () => void;
+  /**
+   * A control that acts on the field's value (an 「添加」 button), drawn after the control on the
+   * control's own line (spec §6.2); the help, error and count stay below both.
+   */
+  action?: ReactNode;
   children: ReactElement<Record<string, unknown>>;
 }) {
   const t = useDesignT();
@@ -30,6 +36,12 @@ export function Field({
   const describedBy = [error ? errorId : help ? helpId : null, count ? countId : null]
     .filter(Boolean)
     .join(" ");
+  const control = cloneElement(children, {
+    id,
+    "aria-describedby": describedBy || undefined,
+    "aria-invalid": error ? true : undefined,
+    "aria-required": required ? true : undefined,
+  });
   return (
     <div className="cb-field" data-part="field" data-state={error ? "error" : undefined}>
       <div className="cb-field-head">
@@ -62,12 +74,14 @@ export function Field({
           </button>
         ) : null}
       </div>
-      {cloneElement(children, {
-        id,
-        "aria-describedby": describedBy || undefined,
-        "aria-invalid": error ? true : undefined,
-        "aria-required": required ? true : undefined,
-      })}
+      {action ? (
+        <div className="cb-field-control" data-part="field-control">
+          {control}
+          {action}
+        </div>
+      ) : (
+        control
+      )}
       {error ? (
         <div className="cb-field-error" data-part="field-error" id={errorId}>
           <Icon name="circle-alert" size={12} />

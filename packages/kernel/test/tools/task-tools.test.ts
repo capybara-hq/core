@@ -17,7 +17,10 @@ import { ApiError } from "../../src/errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
-import { taskReadScript } from "../../src/tools/builtins/sandbox/task-output.js";
+import {
+  subagentNotTaskText,
+  taskReadScript,
+} from "../../src/tools/builtins/sandbox/task-output.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -407,6 +410,47 @@ describe("TaskOutput", () => {
       }
     }
     expect((await store.get(t.id))?.status).toBe("running");
+  }, 60_000);
+
+  it("a sub-agent's agentId gets the sub-agent text (no polling); other ids stay not found", async () => {
+    const parent = await conversation();
+    const child = randomUUID();
+    const grandchild = randomUUID();
+    for (const [id, up] of [
+      [child, parent.conversationId],
+      [grandchild, child],
+    ] as const) {
+      await sql`INSERT INTO capybara.conversations
+          (id, org_id, agent_id, account_id, kind, parent_conversation_id)
+        VALUES (${id}, ${parent.orgId}, ${parent.agentId}, ${parent.accountId}, 'subagent',
+          ${up})`.execute(raw);
+    }
+    // the parent asks for its sub-agent and its sub-agent's sub-agent; the child for its own
+    const asks: [BuiltinCallContext, string][] = [
+      [ctxOf(parent), child],
+      [ctxOf(parent), grandchild.toUpperCase()],
+      [
+        ctxOf(parent, { conversationId: child, sandboxConversationId: parent.conversationId }),
+        grandchild,
+      ],
+    ];
+    for (const [ctx, id] of asks) {
+      for (const name of ["TaskOutput", "TaskStop"]) {
+        const e = await tool(name)
+          .run({ task_id: id }, ctx)
+          .catch((x: unknown) => x);
+        expect(e).toBeInstanceOf(ToolError);
+        expect((e as Error).message).toBe(subagentNotTaskText(id));
+      }
+    }
+    // an unrelated conversation (another tree) and a random uuid are just not found
+    const other = await conversation();
+    for (const id of [other.conversationId, randomUUID()]) {
+      for (const run of [output, stop]) {
+        const e = await run(parent, { task_id: id }).catch((x: unknown) => x);
+        expect((e as Error).message).toContain(`No background task ${id} in this conversation`);
+      }
+    }
   }, 60_000);
 });
 

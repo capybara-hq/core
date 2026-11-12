@@ -227,6 +227,34 @@ describe("Field + Input", () => {
   });
 });
 
+describe("Field action", () => {
+  it("draws the action on the control's line, the help below both", () => {
+    const { container } = zh(
+      <Field label="添加域名" help="完整主机名。" action={<Button>添加</Button>}>
+        <Input />
+      </Field>,
+    );
+    const input = screen.getByRole("textbox", { name: "添加域名" });
+    const line = container.querySelector('[data-part="field-control"]');
+    expect(line).not.toBeNull();
+    expect(line?.contains(input)).toBe(true);
+    expect(line?.contains(screen.getByRole("button", { name: "添加" }))).toBe(true);
+    const help = screen.getByText("完整主机名。");
+    expect(line?.contains(help)).toBe(false);
+    // the help comes after the line and still describes the control
+    expect(line?.compareDocumentPosition(help) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(input.getAttribute("aria-describedby")).toBe(help.id);
+  });
+  it("without an action the control stands alone", () => {
+    const { container } = zh(
+      <Field label="名称">
+        <Input />
+      </Field>,
+    );
+    expect(container.querySelector('[data-part="field-control"]')).toBeNull();
+  });
+});
+
 describe("其他输入", () => {
   it("Textarea code keeps lines unwrapped, Select renders options, Stepper steps", async () => {
     const onChange = vi.fn();

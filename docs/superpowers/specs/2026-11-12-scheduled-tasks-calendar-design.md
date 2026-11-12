@@ -87,7 +87,8 @@ Anti-goals (a failure even if it works):
 - The page head of `/schedules` keeps its title, description and 新建定时任务 primary. Its **tab
   row** holds 列表 / 日历 (decided, Q1): the design spec's tab row is the pattern for "pages
   with views" (§4.2 row 4), while `Segmented` is a control inside content (§6.4). The tabs change the
-  view with `onSelect` and a `router.replace` of the query, no reload.
+  view with `onSelect` and a `history.replaceState` of the query (implementation 2026-11-13: as
+  `useUrlParam`; Next keeps its search params in step, no server round trip), no reload.
 - URL: `/schedules` (list), `/schedules?view=calendar` (calendar), plus `&range=week|month`
   (absent = `week`), `&date=YYYY-MM-DD` (any day of the shown week or month, in the viewer's zone;
   absent = today) and `&scope=all` (admins; absent = mine). Every state is a URL, so a reload, Back
@@ -134,10 +135,11 @@ Guests get the existing no-access state (members up, as the list). The page's ot
   task run row has no end time; designer's call). A block shows the state icon, the time (mono),
   the task name (one line, ellipsis) and, when the height allows, the agent's name (`small`
   `muted`). In 全组织 the creator's name joins the agent (「研究助手 · 张三」).
-- **Overlap**: blocks whose half-hour slots overlap share the column side by side, up to three; a
-  cluster that needs more keeps two blocks and draws one 「+N」 in the third place, at the first
+- **Overlap**: blocks whose half-hour slots overlap share the column side by side, up to two; a
+  cluster that needs more keeps one block and draws one 「+N」 in the second place, at the first
   hidden item's slot, opening a Popover listing the hidden ones as buttons (designer's call;
-  implementation review 2026-11-12: two blocks and 「+N」 match the month's third line).
+  coordinator decision 2026-11-13: three side by side left about 51 px each at the 1120 content
+  width, only an icon and a clipped time 「09:0」).
 - **Dense lane**: under the day headers, one lane per day for collapsed tasks (§5.4). Each collapsed
   task-day is a one-line chip 「每小时 · 24 次」 / 「每 15 分钟 · 96 次」 with a state summary
   (「· 2 次失败」 in `fail` with `circle-x` when any failed). The lane is drawn only when the week
@@ -160,7 +162,9 @@ Guests get the existing no-access state (members up, as the list). The page's ot
 
 A `Sheet` (480, no scrim, the grid stays usable) opened from a block, a chip or a Popover item;
 its open item is in the URL hash (`#run=<taskRunId>`, `#at=<taskId>/<ISO tick>` for an occurrence,
-`#day=<taskId>/<YYYY-MM-DD>` for a collapsed chip) so a reload keeps it (designer's call). Content,
+`#day=<taskId>/<YYYY-MM-DD>` for a collapsed chip; an item opened from that chip keeps the day
+first, `#day=<taskId>/<YYYY-MM-DD>&run=<id>`, so its Back and a reload return to the day,
+implementation 2026-11-13) so a reload keeps it (designer's call). Content,
 as `Subsection variant="divided"` regions (design spec §6.7, one box, no cards):
 
 - **Status line** (no title): the state mark (icon + word) and the time in the viewer's zone, plus
@@ -461,7 +465,8 @@ is told by color alone.
   lands (`placeholderData: keepPreviousData`) with the toolbar's range label already updated and a
   dense `spinner` beside it, so the grid never flashes empty (designer's call).
 - **No tasks at all**: the page `EmptyState` as on the list (「还没有定时任务」 + 新建定时任务); the
-  tabs still switch.
+  tabs still switch. Org admins get the calendar instead (implementation 2026-11-13): their
+  全组织 switch must stay reachable, so an admin with no task of their own sees the empty week.
 - **Tasks, but nothing in the range**: the grid is drawn empty with a `panel` `EmptyState` centered
   over the grid body: 「本周没有运行」 / 「本月没有运行」, hint with the next planned run when there is
   one (from the tasks' `nextRunAt`), and the action 跳到下一次运行 that navigates to its range.
@@ -469,7 +474,8 @@ is told by color alone.
 - **Org turned scheduled tasks off**: the existing `warn` callout; past runs still show, no
   occurrences (§5.2).
 - **Error**: a failed first read is the page's `ErrorFrame`; a failed range change keeps the grid
-  with the in-grid load-failed line (「加载失败」 in `fail`, code · request id, 重试).
+  with the in-grid load-failed line (「加载失败」 in `fail`, the code, 重试; the component's `error`
+  carries no request id); a failed background refresh keeps the drawn answer under that line.
 - **Truncated**: the `warn` callout of §5.5.
 
 ## 9. Web wiring
@@ -510,7 +516,7 @@ is told by color alone.
 
 - Reference blocks in `docs/design/reference/src/` (dark and light, from `@capybara-hq/design/fixtures`
   with a fixed clock), state list `<!-- states: schedule-calendar -->`:
-  `week` (all five item states, overlap of three and a 「+N」, the now line), `week-dense` (the
+  `week` (all five item states, overlaps that end in a 「+N」, the now line), `week-dense` (the
   collapsed lane), `month` (three items and 「+N 项」, days outside the month), `agenda` (390 wide),
   `loading`, `empty`, `failed` (load-failed line), `selected`. A size table per §9.2 with the new
   layout tokens. PNGs are rendered only by the `reference-update` workflow.

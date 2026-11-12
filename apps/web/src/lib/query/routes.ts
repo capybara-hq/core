@@ -20,7 +20,9 @@ import { labelLocale } from "../extension-label";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
+import { dayIn, rangeBounds, SCHEDULES_VIEW_COOKIE, schedulesUrlOf } from "../schedule-calendar";
 import type { Me } from "../session";
+import { parseTimeZone, TIME_ZONE_COOKIE } from "../time";
 import type { UiContributionItem, UiLocale } from "../ui";
 import { identitiesQuery, preferencesQuery, toolGrantsQuery } from "./account";
 import {
@@ -96,6 +98,7 @@ import {
   chatTargetsQuery,
   conversationSchedulesQuery,
   grantableToolsQuery,
+  scheduleCalendarQuery,
   scheduleGrantsQuery,
   scheduleQuery,
   scheduleRunsQuery,
@@ -136,6 +139,10 @@ export interface RouteCtx {
   orgId: string | null;
   /** The page's UI locale (reads that render text in it, such as an extension view). */
   locale: UiLocale;
+  /** A cookie of the document request (the viewer's zone `cb-tz`, a remembered view). */
+  cookie: (name: string) => string | undefined;
+  /** The request's time (ms): what "today" is for a read keyed by days. */
+  now: number;
 }
 
 /**
@@ -1096,11 +1103,29 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/schedules",
     // Members up (guests get no access): my tasks, the agents that name them and the org's
-    // settings (turned off; sections).
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member")
-        ? []
-        : [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))],
+    // settings (turned off; sections). The calendar view (the address, else the remembered view)
+    // also needs the range it shows, keyed by the viewer's zone: only when the server knows it
+    // (the `cb-tz` cookie), else the view reads it on mount (calendar spec §9).
+    queries: ({ orgId, me, search, cookie, now }) => {
+      if (orgId === null || !atLeast(me, "member")) return [];
+      const base = [q(schedulesQuery(orgId)), q(agentsQuery(orgId)), q(orgSettingsQuery(orgId))];
+      const url = schedulesUrlOf(search, cookie(SCHEDULES_VIEW_COOKIE));
+      const timeZone = parseTimeZone(cookie(TIME_ZONE_COOKIE));
+      if (url.view !== "calendar" || timeZone === undefined) return base;
+      const all = url.scope === "all" && atLeast(me, "admin");
+      const date = url.date ?? dayIn(now, timeZone);
+      return [
+        ...base,
+        q(
+          scheduleCalendarQuery(orgId, {
+            ...rangeBounds(url.range, date, timeZone),
+            timeZone,
+            all,
+          }),
+        ),
+        ...(all ? [q(schedulesQuery(orgId, "all")), q(membersQuery(orgId))] : []),
+      ];
+    },
   },
   {
     pattern: "/schedules/new",

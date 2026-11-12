@@ -107,8 +107,11 @@ const STATE_ICON: Record<ScheduleCalendarState, IconName> = {
 
 /** One block is half an hour high; blocks whose half hours overlap share the column. */
 const SLOT = 30;
-/** At most three side by side; with more, the third place is 「+N」. */
-const MAX_LANES = 3;
+/**
+ * At most two side by side (three in a 154 px day column left about 51 px each: an icon and a
+ * clipped time); with more, the second place is 「+N」.
+ */
+const MAX_LANES = 2;
 /** The month cell lists three lines; with more, the third is 「+N 项」. */
 const MONTH_LINES = 3;
 /** Scroll to 07:00, or an hour before the earliest item when that is earlier. */
@@ -151,7 +154,8 @@ type Placed =
 
 /**
  * A day's blocks side by side: clusters of overlapping half hours, lanes assigned in time order;
- * a cluster that needs more than three lanes keeps two and puts the rest in 「+N」 (the third).
+ * a cluster that needs more than two lanes keeps the first and puts the rest in 「+N」 (the
+ * second).
  */
 function placeDay(items: ScheduleCalendarItem[]): Placed[] {
   const sorted = [...items].sort((a, b) => a.minute - b.minute || a.id.localeCompare(b.id));
@@ -212,7 +216,7 @@ function StateIcon({ state }: { state: ScheduleCalendarState }) {
 
 /**
  * The calendar of scheduled task runs (spec §6.40; scheduled tasks calendar design §4, §6, §7):
- * a week time grid (Monday first, 00–24, the now line, blocks of half an hour, three side by side
+ * a week time grid (Monday first, 00–24, the now line, blocks of half an hour, two side by side
  * then 「+N」, the dense lane), a 6 × 7 month grid (three lines then 「+N 项」) and the phone's
  * agenda (seven day buttons over the day's rows). The grid and the agenda are both drawn and CSS
  * shows the agenda below 640 (`range="agenda"` forces it). Plain props: the page places every

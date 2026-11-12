@@ -13,7 +13,11 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
+import {
+  BACKGROUND_LAUNCH_LINE,
+  type DeviceExecArgs,
+  type SandboxLimits,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createOsExecutor,
@@ -474,40 +478,67 @@ describe.skipIf(!availability.ok)(
     });
 
     it.runIf(process.platform === "darwin")(
-      "killTagged reaches background children after the command returned",
+      "what a call starts with & or nohup is killed when the call returns",
       async () => {
         const t0 = Date.now();
         const r = await ex.exec(
-          execArgs("sleep 1000 & echo $!; nohup sleep 1001 > /dev/null 2>&1 & echo $!; echo done", {
+          execArgs("sleep 300 & echo $!; nohup sleep 301 > /dev/null 2>&1 & echo $!; echo done", {
             tag: "bg",
           }),
           never,
         );
-        // A background child holding the pipes does not hold the result, and its clean exit stands.
+        // A background child holding the pipes does not hold the result, and the clean exit stands.
         expect(r.exitCode).toBe(0);
         expect(Date.now() - t0).toBeLessThan(5000);
         const pids = r.stdout.trim().split("\n").slice(0, 2).map(Number);
-        expect(pids.every(alive)).toBe(true);
-        await ex.killTagged(["other"]);
-        expect(pids.every(alive)).toBe(true);
-        await ex.killTagged(["bg"]);
-        await waitFor(() => pids.every((p) => !alive(p)));
+        expect(pids).toHaveLength(2);
+        // SIGKILLed before the result came back; only the reaping of the orphans may lag
+        await waitFor(() => pids.every((p) => !alive(p)), 2000);
+        expect(r.stdout).toContain("done");
       },
       20_000,
     );
 
     it.runIf(process.platform === "darwin")(
-      "killTagged reaches a child that left the process group (by the device marker)",
+      "a child that left the process group is killed after the call (by the exec's marker)",
       async () => {
         const node = process.execPath;
         const script = `const c=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},1e6)'],{detached:true,stdio:'ignore'});c.unref();console.log(c.pid)`;
         const r = await ex.exec(execArgs(`'${node}' -e "${script}"`, { tag: "esc" }), never);
         expect(r.exitCode).toBe(0);
         const pid = Number(r.stdout.trim());
-        expect(alive(pid)).toBe(true);
-        expect(await findMarked((v) => v === ex.markerOf("esc"))).toContain(pid);
-        await ex.killTagged(["esc"]);
+        expect(pid).toBeGreaterThan(0);
         await waitFor(() => !alive(pid));
+      },
+      20_000,
+    );
+
+    it.runIf(process.platform === "darwin")(
+      "a background task launch keeps what it detaches; killTagged still reaches it",
+      async () => {
+        const node = process.execPath;
+        const script = `const c=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},1e6)'],{detached:true,stdio:'ignore'});c.unref();console.log(c.pid)`;
+        const r = await ex.exec(
+          execArgs(
+            `${BACKGROUND_LAUNCH_LINE}\nsleep 302 > /dev/null 2>&1 & echo $!; '${node}' -e "${script}"`,
+            { tag: "launch" },
+          ),
+          never,
+        );
+        expect(r.exitCode).toBe(0);
+        const pids = r.stdout.trim().split("\n").map(Number);
+        expect(pids).toHaveLength(2);
+        // the reaper's scan would have run by now
+        await sleep(1500);
+        expect(pids.every(alive)).toBe(true);
+        // the left-the-group child is found by the tag's marker
+        expect(await findMarked((v) => v.startsWith(`${ex.markerOf("launch")}.`))).toContain(
+          pids[1],
+        );
+        await ex.killTagged(["other"]);
+        expect(pids.every(alive)).toBe(true);
+        await ex.killTagged(["launch"]);
+        await waitFor(() => pids.every((p) => !alive(p)));
       },
       20_000,
     );
@@ -618,7 +649,9 @@ describe.skipIf(!availability.ok || process.platform !== "linux")(
         new AbortController().signal,
       );
       expect(r.stdout).toContain("started");
-      await waitFor(async () => (await findMarked((v) => v === ex.markerOf("ns"))).length === 0);
+      await waitFor(
+        async () => (await findMarked((v) => v.startsWith(`${ex.markerOf("ns")}.`))).length === 0,
+      );
     }, 20_000);
   },
 );
@@ -679,6 +712,63 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       );
       expect(r.stdout.trim()).toBe("ok");
       expect(readFileSync(join(base, "env", "cache", "npm", "x", "f"), "utf8")).toBe("ok\n");
+    }, 30_000);
+
+    it("git works at dev (init, config, commit); .git/hooks stays unwritable", async () => {
+      const r = await ex.exec(
+        execArgs(
+          "rm -rf repo && git init -q repo && cd repo && git config user.name x && " +
+            "git config user.email x@example.com && git commit -q --allow-empty -m t && " +
+            "git remote add origin https://example.com/r.git && git log --format=%s && ls .git/hooks 2>/dev/null | wc -l",
+          { limits: DEV },
+        ),
+        never,
+      );
+      // /usr/bin/git is an xcrun shim whose cache lives outside the sandbox's writable paths
+      const stderr = r.stderr
+        .split("\n")
+        .filter((l) => l !== "" && !l.includes("xcrun_db"))
+        .join("\n");
+      expect(stderr).toBe("");
+      expect(r.exitCode).toBe(0);
+      // the commit's subject, and no sample hooks copied (the device's empty template)
+      expect(r.stdout.split("\n").map((l) => l.trim())).toEqual(["t", "0", ""]);
+      const hook = await ex.exec(
+        execArgs("mkdir -p repo/.git/hooks; echo 'echo pwned' > repo/.git/hooks/pre-commit", {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(hook.exitCode).not.toBe(0);
+      expect(existsSync(join(ex.roots.workspace, "repo/.git/hooks/pre-commit"))).toBe(false);
+      // a clone writes its config (origin, branch tracking) too
+      const clone = await ex.exec(
+        execArgs("rm -rf copy && git clone -q repo copy && git -C copy config remote.origin.url", {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(clone.exitCode).toBe(0);
+      expect(clone.stdout.trim()).toMatch(/\/repo$/);
+      // a hook path through a nested repository is denied too
+      const nested = await ex.exec(
+        execArgs("mkdir -p a/b/.git/hooks 2>/dev/null; echo x > a/b/.git/hooks/post-checkout", {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(nested.exitCode).not.toBe(0);
+    }, 30_000);
+
+    it("strict keeps .git/config unwritable", async () => {
+      const r = await ex.exec(
+        execArgs("rm -rf srepo && mkdir -p srepo/.git && echo '[core]' > srepo/.git/config"),
+        never,
+      );
+      expect(r.exitCode).not.toBe(0);
+      expect(existsSync(join(ex.roots.workspace, "srepo/.git/config"))).toBe(false);
+      const init = await ex.exec(execArgs("rm -rf srepo2 && git init -q srepo2"), never);
+      expect(init.exitCode).not.toBe(0);
     }, 30_000);
   },
 );

@@ -319,6 +319,10 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
+  /** A cloud sandbox provider refused the device's tier (its config refuses open egress). */
+  "sandbox.tier_refused": 409,
+  /** A cloud sandbox provider failed to create a device's sandbox for another reason. */
+  "sandbox.create_failed": 502,
   /** A sandbox file path the kernel reads is not absolute or not under the sandbox roots. */
   "sandbox.file_invalid_path": 422,
   /** No file at the sandbox path the kernel reads. */

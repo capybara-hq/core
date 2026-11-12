@@ -129,6 +129,30 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       await waitFor(async () => !(await alive(sid)));
     }, 30_000);
 
+    it("a foreground call's `sleep 300 &` is gone when it returns; a background task survives and stops", async () => {
+      const sid = await launch("bt_macdef", "sleep 300", 60);
+      const fg = await run("sleep 300 > /dev/null 2>&1 & echo $!");
+      expect(fg.exitCode).toBe(0);
+      const pid = Number(fg.stdout.trim());
+      expect(pid).toBeGreaterThan(0);
+      // the device reaped the foreground call's leftover (SIGKILL, then launchd reaps the orphan)
+      await waitFor(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      }, 3000);
+      // the background task was launched by an exec too, and outlived it and the later call
+      await sleep(1500);
+      expect(await alive(sid)).toBe(true);
+      expect(fileOf("bt_macdef", "exit")).toBeNull();
+      const term = await run(termScript("bt_macdef", sid));
+      expect(term.stdout.trim()).toBe("term");
+      await waitFor(async () => !(await alive(sid)));
+    }, 40_000);
+
     it("runs the command with bash and keeps it byte for byte", async () => {
       const command = `[[ 1 == 1 ]] && echo ok; echo {1..3}; echo 'q "d" $HOME \`x\`'`;
       await launch("bt_mac333", command, 60);

@@ -140,7 +140,8 @@ export const RECENT_POLICY_CHANGES = 10;
 
 /**
  * One sandbox change of a device, as its owner sees it on the device page (§10.4):
- * - `policy` (`device.policy_changed`): a local policy change sent to the machine;
+ * - `policy` (`device.policy_changed`): a local policy change sent to the machine (`web`, `im`),
+ *   or made on the machine by its owner (`device`, `capybara-device policy ...`);
  * - `tier` (`device.tier_changed`): a cloud device's tier set by its owner;
  * - `isolation` (`device.isolation_reported`): the machine reported running without a sandbox,
  *   or with one again.
@@ -151,13 +152,20 @@ export interface DeviceSandboxChangeView {
   /** Hosts added to / removed from the local allowlist (`policy` only; else empty). */
   add: string[];
   remove: string[];
-  /** The tier set (`to: null`: follow the org's default); null when the tier did not change. */
-  tier: { to: SandboxTier | null } | null;
+  /**
+   * The tier set (`to: null`: follow the org's default; `from`, the tier before, only for a change
+   * made on the machine); null when the tier did not change.
+   */
+  tier: { from?: SandboxTier | null; to: SandboxTier | null } | null;
   /** The isolation set or reported; null when it did not change. */
   isolation: "sandbox" | "none" | null;
+  /** The localhost access now (a change made on the machine only); null when it did not change. */
+  localhost: DeviceLocalPolicySummary["localhost"] | null;
+  /** Whether the machine takes the platform's changes now (made on the machine); null: unchanged. */
+  remoteGrants: DeviceLocalPolicySummary["remoteGrants"] | null;
   /** The deciding account's display name (null when the account is gone). */
   by: string | null;
-  /** `device`: reported by the machine itself (`isolation`). */
+  /** `device`: made or reported on the machine itself (a `policy` change, an `isolation`). */
   via: "web" | "im" | "device";
   /** The machine answered with the policy as written (false: the answer never came). */
   confirmed: boolean;
@@ -1396,7 +1404,16 @@ function sandboxChangeOf(
   const hosts = (v: unknown) =>
     Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
   const isolation = d.isolation === "sandbox" || d.isolation === "none" ? d.isolation : null;
-  const base = { at: at.toISOString(), add: [], remove: [], tier: null, isolation: null, by };
+  const base = {
+    at: at.toISOString(),
+    add: [],
+    remove: [],
+    tier: null,
+    isolation: null,
+    localhost: null,
+    remoteGrants: null,
+    by,
+  };
   if (action === "device.tier_changed") {
     return { ...base, kind: "tier", tier: { to: tierOrNull(d.to) }, via: "web", confirmed: true };
   }
@@ -1409,9 +1426,17 @@ function sandboxChangeOf(
     add: hosts(d.add),
     remove: hosts(d.remove),
     // the key is there only when the change set the tier (null: follow the org's default)
-    tier: "tier" in d ? { to: tierOrNull(d.tier) } : null,
+    tier:
+      "tier" in d
+        ? { ...("tierFrom" in d && { from: tierOrNull(d.tierFrom) }), to: tierOrNull(d.tier) }
+        : null,
     isolation,
-    via: d.via === "im" ? "im" : "web",
+    localhost:
+      d.localhost === "on" || d.localhost === "off-proxy-detected" || d.localhost === "off"
+        ? d.localhost
+        : null,
+    remoteGrants: d.remoteGrants === "owner" || d.remoteGrants === "off" ? d.remoteGrants : null,
+    via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
     confirmed: d.confirmed === true,
   };
 }

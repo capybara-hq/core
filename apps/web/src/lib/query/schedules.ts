@@ -1,6 +1,8 @@
 import { listConversations } from "../conversations";
 import {
+  type CalendarParams,
   getSchedule,
+  getScheduleCalendar,
   listChatTargets,
   listConversationSchedules,
   listGrantableTools,
@@ -16,6 +18,19 @@ export const schedulesQuery = (orgId: string, scope: "mine" | "all" = "mine") =>
   defineQuery({
     key: keys.org(orgId).schedules(scope),
     fn: () => listSchedules(orgId, scope === "all"),
+    freshness: "live",
+  });
+
+/**
+ * A calendar range of my runs and planned occurrences (`all`: the org's, org admins). Under the
+ * `schedulesAll()` prefix, so a pause, resume, run, edit or delete refreshes it.
+ */
+export const scheduleCalendarQuery = (orgId: string, p: CalendarParams) =>
+  defineQuery({
+    key: keys
+      .org(orgId)
+      .scheduleCalendar(p.all ? "all" : "mine", p.from, p.to, p.timeZone, p.taskId),
+    fn: () => getScheduleCalendar(orgId, p),
     freshness: "live",
   });
 

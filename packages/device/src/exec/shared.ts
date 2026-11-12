@@ -35,11 +35,14 @@ export function cacheRoot(dir: string): string {
   return join(dir, "cache");
 }
 
-/** Each cache variable of `dev` / `open` and its folder under the cache root. */
+/**
+ * Each cache variable of `dev` / `open` and its folder under the cache root. No pnpm store entry:
+ * pnpm 10 takes it only from `npm_config_store_dir`, and npm prints a warning about that unknown
+ * key on every command; pnpm keeps its store at its default under HOME (the workspace).
+ */
 const CACHE_DIRS: readonly (readonly [string, string])[] = [
   ["XDG_CACHE_HOME", "xdg"],
   ["npm_config_cache", "npm"],
-  ["npm_config_store_dir", "pnpm-store"],
   ["PIP_CACHE_DIR", "pip"],
   ["UV_CACHE_DIR", "uv"],
   ["CARGO_HOME", "cargo"],

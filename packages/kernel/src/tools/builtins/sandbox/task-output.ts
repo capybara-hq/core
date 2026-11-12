@@ -99,6 +99,7 @@ export interface TaskEnv {
   ifRunning: SandboxService["ifRunning"];
   devices: SandboxToolDeps["devices"];
   log: SandboxToolDeps["log"];
+  subagents?: SandboxToolDeps["subagents"];
 }
 
 /**
@@ -120,6 +121,7 @@ export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): P
     ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox),
     devices: deps.devices,
     log: deps.log,
+    ...(deps.subagents !== undefined && { subagents: deps.subagents }),
   };
 }
 
@@ -129,15 +131,38 @@ const notFound = (id: string): ToolError =>
   );
 
 /**
+ * A sub-agent's agentId passed as a task id (as Claude Code's TaskOutput allows for background
+ * agents): its report arrives on its own, so polling or sleeping for it only wastes the run.
+ */
+export const subagentNotTaskText = (id: string): string =>
+  `${clip(id, 40)} is a sub-agent, not a background task. Its report arrives in this conversation as a notification when it hands back or finishes. Don't poll or sleep for it: keep working or end your turn. Use SendMessage to give it more instructions.`;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** {@link notFound}, or {@link subagentNotTaskText} when `id` is a sub-agent of the caller's tree. */
+async function missingTask(env: TaskEnv, ctx: BuiltinCallContext, id: string): Promise<ToolError> {
+  const trimmed = id.trim();
+  if (
+    env.subagents !== undefined &&
+    UUID_RE.test(trimmed) &&
+    (await env.subagents.inTree(sandboxConversationOf(ctx), trimmed.toLowerCase()))
+  ) {
+    return new ToolError(subagentNotTaskText(trimmed));
+  }
+  return notFound(id);
+}
+
+/**
  * The task `id` when it belongs to the calling conversation; a task of another conversation (a
- * sub-agent's, when called from its parent) is not found, the same as an unknown id.
+ * sub-agent's, when called from its parent) is not found, the same as an unknown id. A sub-agent's
+ * agentId gets its own text ({@link subagentNotTaskText}).
  */
 export async function ownedTask(
   env: TaskEnv,
   ctx: BuiltinCallContext,
   id: string,
 ): Promise<BackgroundTaskRow> {
-  if (!TASK_ID_RE.test(id)) throw notFound(id);
+  if (!TASK_ID_RE.test(id)) throw await missingTask(env, ctx, id);
   const task = await env.store.get(id);
   if (!task || task.conversationId !== ctx.conversationId) throw notFound(id);
   return task;

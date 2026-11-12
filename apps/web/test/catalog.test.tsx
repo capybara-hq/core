@@ -23,6 +23,8 @@ const notFound = vi.hoisted(() =>
     throw new Error("NEXT_NOT_FOUND");
   }),
 );
+// the catalog draws the /schedules calendar page, whose view navigates through the app's router
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ notFound }));
 const connection = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("next/server", () => ({ connection }));

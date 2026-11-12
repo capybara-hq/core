@@ -1083,6 +1083,8 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
                 remove: [],
                 tier: { to: "dev" },
                 isolation: null,
+                localhost: null,
+                remoteGrants: null,
                 by: "Grant",
                 via: "im",
                 confirmed: false,
@@ -1094,7 +1096,22 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
                 remove: [],
                 tier: null,
                 isolation: "none",
+                localhost: null,
+                remoteGrants: null,
                 by: null,
+                via: "device",
+                confirmed: true,
+              },
+              {
+                at: T,
+                kind: "policy",
+                add: ["github.com"],
+                remove: [],
+                tier: { from: null, to: "open" },
+                isolation: null,
+                localhost: "on",
+                remoteGrants: "off",
+                by: "Owner",
                 via: "device",
                 confirmed: true,
               },
@@ -1111,7 +1128,22 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     expect(screen.getByText(/Grant · IM/)).toBeTruthy();
     expect(screen.getByText(S.recent.unconfirmed)).toBeTruthy();
     expect(screen.getByText(S.recent.isolation.none)).toBeTruthy();
-    expect(screen.getByText(new RegExp(S.recent.via.device))).toBeTruthy();
+    expect(screen.getAllByText(new RegExp(`· ${S.recent.via.device}$`))).toHaveLength(2);
+    // a change made on the machine: the tier's from and to, the localhost access and the remote
+    // grants, by its owner, on the machine
+    expect(
+      screen.getByText(
+        [
+          S.recent.add.replace("{hosts}", "github.com"),
+          S.recent.tierFrom
+            .replace("{from}", S.recent.followDefault)
+            .replace("{to}", en.devices.tier.open),
+          S.recent.localhost.replace("{value}", S.localhostValue.on),
+          S.recent.remoteGrants.replace("{value}", en.devices.network.remoteGrantsOff),
+        ].join(" · "),
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(new RegExp(`Owner · ${S.recent.via.device}$`))).toBeTruthy();
   });
 
   it("device cards mark 开放 (warn) and 不使用沙箱 (danger)", async () => {

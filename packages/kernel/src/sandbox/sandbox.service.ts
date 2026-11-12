@@ -53,6 +53,7 @@ import {
   sandboxBusy,
 } from "./leases.js";
 import {
+  isInternalProvider,
   LOCAL_PROVIDER,
   providerForDevice,
   type SandboxProviderEntry,
@@ -69,6 +70,7 @@ import {
   readInstanceLimits,
   sameApplied,
 } from "./tiers.js";
+import { SandboxProviderUnreachableError } from "./unreachable.js";
 
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
@@ -227,6 +229,68 @@ export const deviceFilesLost = (local = false): ApiError =>
         "device.files_lost",
         "The device's files are gone; reset its files from the devices page to start with an empty workspace.",
       );
+
+/**
+ * A cloud sandbox provider refused to make (or move) an instance with open egress, the open tier
+ * (409; sandbox dev tiers spec §5.3): above all a provider set to refuse it (sandbox-docker /
+ * sandbox-e2b `openEgress: "off"`). Details `[{ tier }]`. The provider's own error goes only to
+ * the log: it may name the provider's settings.
+ */
+export const sandboxTierRefused = (tier: SandboxTier): ApiError =>
+  new ApiError(
+    "sandbox.tier_refused",
+    `The cloud sandbox can't run this device at the ${tier} tier: the sandbox provider refused to create it there. An org admin can lower the tier on the device page or in the org's sandbox settings, or a super admin can allow it in the sandbox extension's settings.`,
+    [{ tier }],
+  );
+
+/**
+ * A cloud sandbox provider failed to make a device's file system or instance for another reason
+ * (502): often its deployment config (image, runtime, network), sometimes a passing fault. The
+ * provider's own error goes only to the log.
+ */
+export const sandboxCreateFailed = (): ApiError =>
+  new ApiError(
+    "sandbox.create_failed",
+    "The cloud sandbox provider could not create this device's sandbox. Retry; if it keeps failing, a super admin should check the sandbox extension's settings.",
+  );
+
+/**
+ * What a failed `createFileSystem` / `create` / `update` of a cloud provider becomes: an abort,
+ * a gone error, an unreachable provider and a kernel error stay as they are (their callers and the
+ * tools handle them); any other error is logged (warn, redacted) and replaced by
+ * {@link sandboxTierRefused} when `limits` ask for open egress (the only egress a provider's
+ * config refuses), else (a create) by {@link sandboxCreateFailed}; a failed `update` below open
+ * stays as it is. A kernel-internal provider (`@local`) keeps its own errors.
+ */
+function providerRefusal(
+  log: Pick<KernelLogger, "warn">,
+  err: unknown,
+  facts: { deviceId: string; provider: string; op: "createFileSystem" | "create" | "update" },
+  limits: SandboxLimits,
+  signal: AbortSignal,
+): unknown {
+  if (
+    signal.aborted ||
+    isInternalProvider(facts.provider) ||
+    isSandboxGoneError(err) ||
+    isFileSystemGoneError(err) ||
+    err instanceof SandboxProviderUnreachableError ||
+    err instanceof ApiError
+  ) {
+    return err;
+  }
+  if (limits.egress === "open") {
+    // spec §5.3: a provider set to refuse open egress (`openEgress: "off"`) fails here
+    log.warn(
+      "the sandbox provider refused an instance in the open tier; check its openEgress setting or lower sandbox.tiers.max",
+      { ...facts, tier: limits.tier, err },
+    );
+    return sandboxTierRefused(limits.tier);
+  }
+  if (facts.op === "update") return err;
+  log.warn("the sandbox provider failed to create a device's sandbox", { ...facts, err });
+  return sandboxCreateFailed();
+}
 
 /**
  * The row still records the instance `gone` (same handle and same `created_at`). Handles compare
@@ -1754,7 +1818,17 @@ export class SandboxService {
         ? row.fs_handle
         : null;
     if (fs === null) {
-      fs = await p.impl.createFileSystem({ name, limits, signal });
+      try {
+        fs = await p.impl.createFileSystem({ name, limits, signal });
+      } catch (err) {
+        throw providerRefusal(
+          this.log,
+          err,
+          { deviceId: id, provider: p.plugin, op: "createFileSystem" },
+          limits,
+          signal,
+        );
+      }
       // A lost lease fails this write and leaves the file system alone: createFileSystem returns
       // the existing one for a name, so the new holder may already use it, files and all.
       await this.fenced(held, id, fence, {
@@ -1776,14 +1850,13 @@ export class SandboxService {
       });
     } catch (err) {
       if (!isFileSystemGoneError(err)) {
-        if (limits.egress === "open" && !signal.aborted) {
-          // spec §5.3: a provider set to refuse open egress (`openEgress: "off"`) fails here
-          this.log.warn(
-            "the sandbox provider did not create an instance in the open tier; check its openEgress setting or lower sandbox.tiers.max",
-            { deviceId: id, provider: p.plugin, err },
-          );
-        }
-        throw err;
+        throw providerRefusal(
+          this.log,
+          err,
+          { deviceId: id, provider: p.plugin, op: "create" },
+          limits,
+          signal,
+        );
       }
       this.log.warn("device file system is gone at the provider; its files are lost", {
         deviceId: id,
@@ -1864,7 +1937,14 @@ export class SandboxService {
           // the instance may run with half-applied limits and cannot be recreated here: stop it,
           // so the next use resumes it and applies them again
           await this.quarantine(held, id, handle, p, fence);
-          throw err;
+          // a provider bound to its file system that refuses the new tier (E2B, `openEgress: "off"`)
+          throw providerRefusal(
+            this.log,
+            err,
+            { deviceId: id, provider: p.plugin, op: "update" },
+            want,
+            signal,
+          );
         } else {
           // a new instance gets the limits at create: recreate rather than trust a failed update
           this.log.warn("sandbox limits update failed; recreating the instance", {

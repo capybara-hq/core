@@ -1051,6 +1051,8 @@ export interface DeviceMachinesTable {
   features: ColumnType<string[], string[] | undefined, string[]>;
   /** 0114: the program's local network policy summary (hello, refreshed by each `policy` op). */
   local_policy: ColumnType<unknown | null, string | null | undefined, string | null>;
+  /** 0118: the `policy` ops sent whose answer is not recorded yet (`PendingPolicyOp[]`). */
+  pending_policy_ops: ColumnType<unknown, string | undefined, string>;
 }
 
 /** 0088_environments.sql, renamed in 0105: the device a member's new conversations use by default. */

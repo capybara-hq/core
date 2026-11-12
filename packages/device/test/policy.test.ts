@@ -249,7 +249,19 @@ describe("srtConfig", () => {
   it("writes only under workspace and tmp, skills read only, secrets unreadable", () => {
     const c = srtConfig(DEFAULT_POLICY, roots, ["b.com"], { home: "/h" });
     expect(c.filesystem.allowWrite).toEqual(["/e/workspace", "/e/tmp"]);
-    expect(c.filesystem.denyWrite).toEqual(["/e/skills", ...implicitWritePaths()]);
+    // git hooks and config under every writable root, wherever this program was started
+    const git = (r: string) => [
+      `${r}/.git/hooks/**`,
+      `${r}/**/.git/hooks/**`,
+      `${r}/.git/config`,
+      `${r}/**/.git/config`,
+    ];
+    expect(c.filesystem.denyWrite).toEqual([
+      "/e/skills",
+      ...implicitWritePaths(),
+      ...git("/e/workspace"),
+      ...git("/e/tmp"),
+    ]);
     expect(c.filesystem.denyRead).toEqual(deniedSecretPaths("/h"));
     expect(c.network).toEqual({
       allowedDomains: ["b.com"],
@@ -264,6 +276,30 @@ describe("srtConfig", () => {
     socketDir: "/private/tmp/cap-12345678",
     cacheDir: "/e/cache",
   };
+
+  it("dev and open allow writing .git/config (git works); strict does not", () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const strict = srtConfig(DEFAULT_POLICY, roots, [], { ...dev, tier: "strict", platform });
+      expect(strict.filesystem.allowGitConfig).toBe(false);
+      expect(strict.filesystem.denyWrite).toContain("/e/workspace/**/.git/config");
+      // a root that reads as a glob cannot be anchored: no pattern is built on it
+      const odd = srtConfig(DEFAULT_POLICY, { ...roots, workspace: "/e/w[1]" }, [], {
+        ...dev,
+        tier: "strict",
+        platform,
+      });
+      expect(odd.filesystem.denyWrite.some((d) => d.startsWith("/e/w[1]"))).toBe(false);
+      for (const tier of ["dev", "open"] as const) {
+        const c = srtConfig(DEFAULT_POLICY, roots, [], { ...dev, tier, platform });
+        expect(c.filesystem.allowGitConfig).toBe(true);
+        // hooks stay denied under every writable root, config is not
+        for (const root of c.filesystem.allowWrite) {
+          expect(c.filesystem.denyWrite).toContain(`${root}/**/.git/hooks/**`);
+          expect(c.filesystem.denyWrite).not.toContain(`${root}/**/.git/config`);
+        }
+      }
+    }
+  });
 
   it("strict: no local binding and no unix sockets on any platform", () => {
     for (const platform of ["darwin", "linux"] as const) {
