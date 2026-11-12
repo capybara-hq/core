@@ -15,12 +15,13 @@ import {
   type SandboxLimits,
   UNSANDBOXED_NOT_ALLOWED_MESSAGE,
 } from "@capybara-hq/plugin-sdk";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { HostExecutor } from "../src/exec/host.js";
 import { findMarked } from "../src/exec/procs.js";
 import { osRoots } from "../src/exec/shared.js";
 import {
   execIsolation,
+  FILE_OPS_DECISION_TTL_MS,
   policyUnsandboxed,
   SANDBOX_BACK_ON,
   SwitchingExecutor,
@@ -495,6 +496,29 @@ describe("SwitchingExecutor", () => {
     // a ceiling below open: the same
     await expect(ex.exec(tierArgs("dev"), never)).rejects.toMatchObject({ kind: "policy" });
     expect(await read()).toBe("sandboxed");
+  });
+
+  it("file operations follow a refused exec's limits and stop using the host when stale", async () => {
+    setup();
+    policy = { ...policy, tier: "open", isolation: "none" };
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      await ex.exec(tierArgs("open"), never);
+      expect(await read()).toBe("host");
+      // refused before the executor (as server-ops does): the limits still count
+      ex.noteLimits({ ...LIMITS, allowUnsandboxed: false });
+      expect(await read()).toBe("sandboxed");
+      await ex.exec(tierArgs("open"), never);
+      expect(await read()).toBe("host");
+      // no command for longer than the window: back to the sandboxed helper
+      now += FILE_OPS_DECISION_TTL_MS;
+      expect(await read()).toBe("host");
+      now += 1;
+      expect(await read()).toBe("sandboxed");
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("kills reach both executors' commands", async () => {

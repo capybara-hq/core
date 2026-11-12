@@ -7,6 +7,7 @@ import {
   PROXY_PORTS,
   parseScutilProxy,
   probeLoopbackPort,
+  redactProxyUserinfo,
 } from "../src/proxy-guard.js";
 
 // `scutil --proxy` on macOS with Clash's system proxy on.
@@ -162,6 +163,12 @@ describe("proxy guard", () => {
       "environment http_proxy=socks5://127.0.0.1:7891",
     ]);
     expect(r.reasons.join(" ")).not.toContain("s3cret");
+    // unencoded @, / and : in the password are hidden whole
+    expect(redactProxyUserinfo("http://user:p@ss/w:rd@127.0.0.1:7890")).toBe(
+      "http://***@127.0.0.1:7890",
+    );
+    expect(redactProxyUserinfo("user:p@ss@localhost:1080")).toBe("***@localhost:1080");
+    expect(redactProxyUserinfo("http://127.0.0.1:7890/path")).toBe("http://127.0.0.1:7890/path");
   });
 
   it("the TCP probe sees a listener and a closed port", async () => {

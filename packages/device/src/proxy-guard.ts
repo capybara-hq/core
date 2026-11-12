@@ -72,9 +72,17 @@ export function parseScutilProxy(text: string): string[] {
   return out;
 }
 
-/** `value` with the user and password of a proxy URL (`user:pass@`) replaced by `***@`. */
+/**
+ * `value` with the user and password of a proxy URL (`user:pass@`) replaced by `***@`. The
+ * userinfo ends at the last `@` before the host, so a password with an unencoded `@`, `/` or `:`
+ * is hidden whole.
+ */
 export function redactProxyUserinfo(value: string): string {
-  return value.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)?[^@/]*@/, "$1***@");
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(value)?.[0] ?? "";
+  const rest = value.slice(scheme.length);
+  // the host part never holds an `@`: everything before the last one is userinfo
+  const at = rest.lastIndexOf("@");
+  return at === -1 ? value : `${scheme}***@${rest.slice(at + 1)}`;
 }
 
 /**

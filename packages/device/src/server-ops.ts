@@ -352,6 +352,8 @@ export async function serveOp(
         // local log records it. Grants are judged on the same read.
         const policy = ctx.policy?.current();
         const run = execIsolation(policy ?? DEFAULT_POLICY, args.limits, executor.mode);
+        // Refused or not, these limits are the latest decision file operations follow.
+        executor.noteLimits?.(args.limits);
         if (run.refusal !== undefined) {
           return { ...errorAnswer(req, new DeviceOpError("policy", run.refusal)), run };
         }

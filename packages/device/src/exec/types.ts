@@ -57,6 +57,11 @@ export interface Executor {
    */
   proxyGuard?(): ProxyGuardResult;
   /**
+   * OS mode, an executor that can run without a sandbox: records an exec's limits, also of one
+   * refused before it reaches the executor, so file operations follow the latest decision.
+   */
+  noteLimits?(limits: DeviceExecArgs["limits"]): void;
+  /**
    * OS mode, an executor that can run without a sandbox: runs one command as `how` (decided by
    * the caller on `policy`, and logged by it) says, instead of deciding again in {@link exec}.
    */

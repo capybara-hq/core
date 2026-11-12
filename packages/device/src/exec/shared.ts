@@ -123,6 +123,9 @@ export function cacheEnv(root: string, opts: { create?: boolean } = {}): Record<
     out[name] = name === "MAVEN_OPTS" ? `-Dmaven.repo.local=${path}` : path;
   }
   // A concurrent command may have swapped the root meanwhile: then trust none of the folders.
+  // Accepted narrow race: a swap between ensureCacheRoot and a folder's mkdir makes that one
+  // fixed-name folder (mode 0700, empty) in the link's target. Nothing is removed or followed
+  // further, and this recheck of the root's device and inode drops every variable.
   if (create && realDirId(root) !== rootId) return {};
   return out;
 }

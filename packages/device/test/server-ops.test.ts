@@ -678,6 +678,11 @@ describe("tiers in the summary and the command log", () => {
     });
     expect(na.run).toMatchObject({ tier: "open", isolation: "none" });
     expect(ex.started).toHaveLength(before);
+    // a refused exec's limits still reach the executor (file operations follow them)
+    const noted: unknown[] = [];
+    (ex as { noteLimits?: unknown }).noteLimits = (l: unknown) => noted.push(l);
+    await serveOp(ex, r("exec", notAllowed), never, { policy: store });
+    expect(noted).toEqual([notAllowed.limits]);
     // Docker mode ignores isolation.
     const docker = new FakeExecutor();
     (docker as { mode: string }).mode = "docker";

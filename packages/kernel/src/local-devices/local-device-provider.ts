@@ -44,6 +44,12 @@ const NAME_PREFIX = "cap-device-";
  */
 export const UNSANDBOXED_NOT_ALLOWED_ERROR = UNSANDBOXED_NOT_ALLOWED_MESSAGE;
 
+/**
+ * The relay's error for a machine that refused a command with {@link UNSANDBOXED_NOT_ALLOWED_MESSAGE}
+ * (a `policy` error: the relay prefixes the machine's message, `relay.ts`).
+ */
+const MACHINE_UNSANDBOXED_REFUSAL = `Refused by the machine's local policy: ${UNSANDBOXED_NOT_ALLOWED_MESSAGE}`;
+
 /** The unattended run of an exec without the task's `tier:open` grant (spec §11.4). */
 interface UnattendedCap {
   taskRunId: string;
@@ -215,7 +221,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         return { exitCode: null, stdout: "", stderr: "", truncated: false, timedOut: false };
       }
       // the machine refused to run it unsandboxed (its local policy changed since it reported)
-      if (e instanceof ToolError && e.message.endsWith(UNSANDBOXED_NOT_ALLOWED_MESSAGE)) {
+      if (e instanceof ToolError && e.message === MACHINE_UNSANDBOXED_REFUSAL) {
         this.log.warn("the machine refused a command without a sandbox", {
           deviceId: h.id,
           reason: cap !== undefined ? "unattended" : "not_allowed",

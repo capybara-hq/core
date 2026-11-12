@@ -74,6 +74,16 @@ export function unsandboxedRefusal(policy: Pick<Policy, "tier">, tier: SandboxTi
   );
 }
 
+/**
+ * How long the latest command's limits decide file operations. The kernel judges the org's
+ * settings at each exec, and file operations carry no limits, so an unsandboxed decision older
+ * than this no longer counts: file operations fall back to the sandboxed helper, which reads and
+ * writes the same roots (only slower), until the next command decides again. A minute covers a
+ * turn's file operations around its commands while bounding how long an org's change (or a lower
+ * ceiling) takes to reach a device that runs no more commands.
+ */
+export const FILE_OPS_DECISION_TTL_MS = 60_000;
+
 /** How often the switching executor rereads the policy while it runs commands unsandboxed. */
 const WATCH_INTERVAL_MS = 1000;
 
@@ -99,8 +109,9 @@ export class SwitchingExecutor implements Executor {
   /** The policy asked for no sandbox when last checked. */
   private unsandboxed = false;
   private watch: NodeJS.Timeout | undefined;
-  /** The latest command's limits (file operations follow the decision they give). */
+  /** The latest command's limits and when they came (file operations follow their decision). */
   private lastLimits: ExecLimits | undefined;
+  private lastLimitsAt = 0;
 
   constructor(
     private readonly sandboxed: Executor,
@@ -142,11 +153,29 @@ export class SwitchingExecutor implements Executor {
     return none;
   }
 
-  /** The executor for file operations now: the commands' decision on the policy now. */
+  /**
+   * Records an exec's limits, refused ones included, so file operations follow the latest
+   * decision (see {@link FILE_OPS_DECISION_TTL_MS}).
+   */
+  noteLimits(limits: ExecLimits): void {
+    const { tier, defaultTier, allowUnsandboxed } = limits;
+    this.lastLimits = {
+      tier,
+      ...(defaultTier !== undefined && { defaultTier }),
+      ...(allowUnsandboxed !== undefined && { allowUnsandboxed }),
+    };
+    this.lastLimitsAt = Date.now();
+  }
+
+  /**
+   * The executor for file operations now: the commands' decision on the policy now and the latest
+   * exec's limits; the sandboxed helper before any exec or once those limits are stale.
+   */
   private async files(): Promise<Executor> {
     const policy = this.policy();
     await this.sync(policy);
     if (this.lastLimits === undefined) return this.sandboxed;
+    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return this.sandboxed;
     const how = execIsolation(policy, this.lastLimits, "os");
     return how.isolation === "none" && how.refusal === undefined ? this.host : this.sandboxed;
   }
@@ -170,12 +199,7 @@ export class SwitchingExecutor implements Executor {
     policy: Policy = this.policy(),
   ): Promise<ExecResult> {
     signal.throwIfAborted();
-    const { tier, defaultTier, allowUnsandboxed } = args.limits;
-    this.lastLimits = {
-      tier,
-      ...(defaultTier !== undefined && { defaultTier }),
-      ...(allowUnsandboxed !== undefined && { allowUnsandboxed }),
-    };
+    this.noteLimits(args.limits);
     await this.sync(policy);
     if (how.refusal !== undefined) throw new DeviceOpError("policy", how.refusal);
     if (how.isolation !== "none") return this.sandboxed.exec(args, signal);
