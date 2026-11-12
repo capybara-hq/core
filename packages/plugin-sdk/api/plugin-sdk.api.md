@@ -752,7 +752,7 @@ export type DeviceExecResult = ExecResult;
 export type DeviceFeature = "networkReport" | "policyOp" | "tiers";
 
 // @public
-export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
 export interface DeviceHello {
@@ -815,6 +815,12 @@ export interface DevicePolicyArgs {
         via: "web" | "im";
     };
     tier?: SandboxTier | null;
+}
+
+// @public
+export interface DevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
 }
 
 // @public

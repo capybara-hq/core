@@ -329,6 +329,22 @@ describe("device protocol", () => {
         expect(parseHello({ ...hello, policy }).policy, JSON.stringify(policy)).toBeUndefined();
       }
     });
+
+    it("a policy frame carries the summary now; only the device sends it", () => {
+      const frame = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device");
+      expect(frame({ type: "policy", policy: summary })).toEqual({
+        type: "policy",
+        policy: summary,
+      });
+      // an unreadable summary is dropped, never failing the connection
+      expect(frame({ type: "policy", policy: { ...summary, isolation: "off" } })).toEqual({
+        type: "policy",
+      });
+      expect(frame({ type: "policy" })).toEqual({ type: "policy" });
+      expect(() =>
+        parseDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "kernel"),
+      ).toThrow(DeviceProtocolError);
+    });
   });
 
   describe("the policy op", () => {

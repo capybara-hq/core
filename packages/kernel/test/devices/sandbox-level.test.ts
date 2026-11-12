@@ -8,6 +8,11 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import {
+  type DevicePathsPayload,
+  devicePathsChange,
+  devicePathsText,
+} from "../../src/runtime/context/device-paths.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { TIER_GRANT_SPEC_HASH, TIER_OPEN_GRANT_KEY } from "../../src/schedules/unattended.js";
@@ -206,6 +211,61 @@ describe("DevicesService.sandboxLevel", { timeout: 30_000 }, () => {
     expect(await devices.sandboxLevel(orgId, deviceId, randomUUID())).toMatchObject({
       tier: "open",
     });
+  });
+
+  it("a policy the machine pushes after its hello reaches the level and the next device_paths", async () => {
+    const deviceId = await localDevice({});
+    const machines = k.app.get(MachinesService);
+    const machineId = (await machines.activeFor(deviceId))?.id as string;
+    const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
+    const before = await devices.sandboxLevel(orgId, deviceId);
+    const first = devicePathsChange(undefined, roots, undefined, before ?? undefined);
+    expect(devicePathsText(first?.payload as DevicePathsPayload)).toContain(
+      "Local servers are blocked on this machine because a local proxy was detected",
+    );
+    // the owner ran `capybara-device policy set localhost allow`: the program pushes its summary
+    const summary: DeviceLocalPolicySummary = {
+      tier: "open",
+      effectiveTier: "open",
+      isolation: "sandbox",
+      localhost: "on",
+      unixSockets: "roots",
+      allowedDomains: [],
+      remoteGrants: "owner",
+    };
+    await machines.recordPolicy(machineId, summary);
+    expect((await machines.activeFor(deviceId))?.localPolicy).toEqual(summary);
+    const after = await devices.sandboxLevel(orgId, deviceId);
+    expect(after).toMatchObject({ localhost: "on" });
+    // the next sandbox call records a new device_paths event, which tells the model
+    const next = devicePathsChange(
+      { seq: 7, payload: first?.payload as DevicePathsPayload },
+      roots,
+      undefined,
+      after ?? undefined,
+    );
+    expect(next).not.toBeNull();
+    expect(devicePathsText(next?.payload as DevicePathsPayload)).toContain("Local servers work;");
+    // unchanged facts: none
+    expect(
+      devicePathsChange(
+        { seq: 8, payload: next?.payload as DevicePathsPayload },
+        roots,
+        undefined,
+        after ?? undefined,
+      ),
+    ).toBeNull();
+
+    // isolation reported as changed is audited as at a hello; an unreadable summary keeps it
+    await machines.recordPolicy(machineId, undefined, { ...summary, isolation: "none", x: 1 });
+    expect((await machines.activeFor(deviceId))?.localPolicy).toBeNull();
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("target", "=", deviceId)
+      .where("action", "=", "device.isolation_reported")
+      .execute();
+    expect(audits).toEqual([{ detail: { machineId, isolation: "none", previous: "sandbox" } }]);
   });
 
   it("an unsandboxed device capped below open keeps the sandbox", async () => {

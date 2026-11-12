@@ -597,8 +597,11 @@ the exclusive lease. Nothing in process memory. Every lookup is org-scoped as to
 
 - Kernel: `org.settings_updated` covers `sandboxTier` (before / after); `device.tier_changed`
   (cloud: by the owner; local: the `policy` op, recorded with the existing `device.policy_changed`
-  plus `tier`); `device.isolation_reported` when a device's hello first reports
-  `isolation: "none"` and when it returns to `sandbox`; a refused use of an unsandboxed device is
+  plus `tier`); `device.isolation_reported` when a device's hello or `policy` frame first reports
+  `isolation: "none"` and when it returns to `sandbox`. A connected program pushes a `policy`
+  frame (the summary now) whenever its summary changes while connected: its policy file edited on
+  the machine (checked every 2 s), the localhost proxy guard flipping, a new tier ceiling after an
+  exec; the kernel stores it as it stores the hello's; a refused use of an unsandboxed device is
   logged (warn), not audited per call.
 - Device: the local command log records tier and isolation per command and every policy change.
 - Web: the device page's recent changes include tier and isolation changes.

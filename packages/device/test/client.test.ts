@@ -168,6 +168,42 @@ describe("client", () => {
     });
   });
 
+  it("a policy changed on the machine is pushed while connected, once per change", async () => {
+    // a local proxy was found: localhost is off until the owner allows it
+    (exec as { proxyGuard?: () => unknown }).proxyGuard = () => ({ detected: true, reasons: [] });
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "dev" });
+    start({ policy: new PolicyStore(dir), platform: "darwin", policyCheckMs: 20 });
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.policy.localhost).toBe("off-proxy-detected");
+    // nothing changed: nothing is pushed
+    await new Promise((r) => setTimeout(r, 100));
+    expect(kernel.of("policy")).toEqual([]);
+
+    // `capybara-device policy set localhost allow` while the service runs
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "dev", localhost: "allow" });
+    const pushed = await kernel.waitFor("policy frame", () => kernel.of("policy")[0]);
+    expect(pushed.policy).toEqual({ ...hello.policy, localhost: "on" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(kernel.of("policy")).toHaveLength(1);
+
+    // a policy op's answer already carries the summary: no second copy follows
+    kernel.send(
+      0,
+      req("p1", "policy", {
+        add: ["files.slack.com"],
+        source: { accountId: "acc_1", accountName: "Ada", via: "web" },
+      }),
+    );
+    await kernel.waitFor("res", () => kernel.of("res").find((x) => x.id === "p1"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(kernel.of("policy")).toHaveLength(1);
+
+    // an exec brings a lower ceiling: the tier it runs at changes, pushed right after its result
+    kernel.send(0, req("e1", "exec", execArgs("now")));
+    const frame = await kernel.waitFor("exec push", () => kernel.of("policy")[1]);
+    expect(frame.policy).toMatchObject({ tier: "dev", effectiveTier: "strict" });
+  });
+
   it("a docker-mode hello offers the policy op but no network report", async () => {
     (exec as { mode: string }).mode = "docker";
     start({ policy: new PolicyStore(dir) });

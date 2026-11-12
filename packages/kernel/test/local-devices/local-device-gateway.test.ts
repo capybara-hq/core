@@ -217,6 +217,38 @@ describe("the hello's policy summary and the unsandboxed gate", () => {
     machine.close();
   });
 
+  it("a policy frame after the hello replaces the stored summary, in order", async () => {
+    const { m, machine } = await helloWith({
+      programVersion: "0.9.0",
+      features: ["networkReport", "policyOp", "tiers"],
+      policy: { ...SUMMARY, isolation: "sandbox", localhost: "off-proxy-detected" },
+    });
+    machine.send({ type: "policy", policy: { ...SUMMARY, isolation: "sandbox", localhost: "on" } });
+    machine.send({ type: "policy", policy: { ...SUMMARY, isolation: "none", localhost: "on" } });
+    await waitFor(
+      async () => (await machines.activeFor(m.deviceId))?.localPolicy?.isolation === "none",
+      10_000,
+      "policy recorded",
+    );
+    expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual({
+      ...SUMMARY,
+      isolation: "none",
+      localhost: "on",
+    });
+    expect(await k.app.get(NetworkGrants).unsandboxed(m.deviceId)).toBe(true);
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("detail")
+        .where("target", "=", m.deviceId)
+        .where("action", "=", "device.isolation_reported")
+        .execute(),
+    ).toEqual([{ detail: { machineId: m.machineId, isolation: "none", previous: "sandbox" } }]);
+    // the connection stays up
+    expect(machine.ws.readyState).toBe(machine.ws.OPEN);
+    machine.close();
+  });
+
   it("a valid summary with the sandbox on is sandboxed; a tiers program without one is not", async () => {
     const ok = await helloWith({
       programVersion: "0.9.0",

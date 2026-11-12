@@ -335,6 +335,43 @@ describe.skipIf(!availability.ok)(
       expect(w).toMatchObject({ exitCode: 3, stdout: "hi\n" });
     });
 
+    it("an asdf-style shim finds its install under the real home, read only", async () => {
+      const saved = process.env.ASDF_DATA_DIR;
+      delete process.env.ASDF_DATA_DIR;
+      try {
+        const asdf = join(fakeHome, ".asdf");
+        const install = join(asdf, "installs/fakepy/1.0/bin");
+        mkdirSync(install, { recursive: true });
+        mkdirSync(join(asdf, "shims"), { recursive: true });
+        writeFileSync(join(install, "fakepy"), "#!/bin/sh\necho fakepy 1.0\n");
+        // as asdf's shims do: the data directory defaults to $HOME/.asdf
+        writeFileSync(
+          join(asdf, "shims/fakepy"),
+          '#!/bin/sh\nd="$ASDF_DATA_DIR"\n[ -n "$d" ] || d="$HOME/.asdf"\n[ -x "$d/installs/fakepy/1.0/bin/fakepy" ] || { echo "unknown command: fakepy. Perhaps you have to reshim?" >&2; exit 126; }\nexec "$d/installs/fakepy/1.0/bin/fakepy"\n',
+        );
+        chmodSync(join(install, "fakepy"), 0o755);
+        chmodSync(join(asdf, "shims/fakepy"), 0o755);
+        const r = await ex.exec(
+          execArgs(`echo "$ASDF_DATA_DIR"; '${join(asdf, "shims/fakepy")}'`),
+          never,
+        );
+        expect(r).toMatchObject({ exitCode: 0, stderr: "" });
+        expect(r.stdout).toBe(`${asdf}\nfakepy 1.0\n`);
+        // the data directory is readable, never writable
+        const w = await ex.exec(execArgs('touch "$ASDF_DATA_DIR/written"'), never);
+        expect(w.exitCode).not.toBe(0);
+        expect(existsSync(join(asdf, "written"))).toBe(false);
+        // the request's own value wins
+        const own = await ex.exec(
+          execArgs('echo "$ASDF_DATA_DIR"', { env: { ASDF_DATA_DIR: "/own" } }),
+          never,
+        );
+        expect(own.stdout).toBe("/own\n");
+      } finally {
+        if (saved !== undefined) process.env.ASDF_DATA_DIR = saved;
+      }
+    });
+
     it("the request env applies only inside the sandbox", async () => {
       const ws = ex.roots.workspace;
       const marker = (n: string) => join(base, `escaped-${n}`);

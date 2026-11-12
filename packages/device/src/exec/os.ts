@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { constants as osConstants } from "node:os";
+import { homedir, constants as osConstants } from "node:os";
 import { resolve } from "node:path";
 import {
   type SandboxAskCallback,
@@ -50,6 +50,7 @@ import {
   RootGuard,
   shellQuote,
   socketDirPath,
+  toolHomeEnv,
 } from "./shared.js";
 import { DeviceOpError, type Executor } from "./types.js";
 
@@ -342,6 +343,9 @@ export class OsExecutor implements Executor {
       TERM: "dumb",
       HOME: this.roots.workspace,
       ...(process.env.USER !== undefined && { USER: process.env.USER }),
+      // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, at every
+      // tier: HOME is the workspace here. Read only; the request's values win.
+      ...toolHomeEnv(this.opts.home ?? homedir()),
       // dev / open: package caches under <dir>/cache; the command's own values win.
       ...(dev && cacheEnv(this.cacheDir, { create: true })),
       ...o.env,
