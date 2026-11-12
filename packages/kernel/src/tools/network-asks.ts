@@ -162,7 +162,7 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  * the rest:
  * - `address` and `org` layers: a note each (in an unattended run an `org` host is a missing grant);
  *   `unknown`: nothing (the device's trailer explains);
- * - `device` layer on a program without `policyOp`: nothing (no ask, the trailer explains);
+ * - `device` layer on a program without `policyOpId`: nothing (no ask, the trailer explains);
  * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
  * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
@@ -183,10 +183,11 @@ export function planNetworkAsk(
   const taskIgnored: string[] = [];
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
-  // a machine that reports blocked hosts and takes policy changes (Docker mode has no report)
+  // a machine that reports blocked hosts and takes policy changes under op ids (Docker mode has
+  // no report; a program without op ids cannot take 「一直允许」)
   const canAsk =
     ctx.device?.features.includes("networkReport") === true &&
-    ctx.device.features.includes("policyOp");
+    ctx.device.features.includes("policyOpId");
   // no run grant or policy change reaches a device whose owner turned remote grants off
   const remote = ctx.device?.policy?.remoteGrants !== "off";
   for (const b of hostsOf(blocked)) {

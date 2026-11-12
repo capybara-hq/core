@@ -107,7 +107,7 @@ export function DeviceSandboxSection({ orgId, device: e }: { orgId: string; devi
     ? null
     : e.machine === null || e.network == null
       ? "noMachine"
-      : !features.includes("policyOp") || !features.includes("tiers")
+      : !features.includes("policyOpId") || !features.includes("tiers")
         ? "upgrade"
         : policy === null
           ? "unknown"
@@ -339,7 +339,10 @@ function UnsandboxedRow({
   );
 }
 
-/** The device's recent sandbox changes: what, when, by whom and from where; unconfirmed marked. */
+/**
+ * The device's recent sandbox changes: what, when, by whom and from where; a change sent to the
+ * machine that it did not confirm, or that did not take effect, is marked.
+ */
 function RecentChanges({ recent }: { recent: DeviceSandboxChange[] }) {
   const t = useTranslations("devices.sandbox.recent");
   const ts = useTranslations("devices.sandbox");
@@ -385,7 +388,7 @@ function RecentChanges({ recent }: { recent: DeviceSandboxChange[] }) {
             : [c.by ?? t("unknownBy")]),
           t(`via.${c.via}`),
         ].join(" · "),
-        ...(c.confirmed ? {} : { status: { label: t("unconfirmed") } }),
+        ...(c.outcome === "applied" ? {} : { status: { label: t(`outcome.${c.outcome}`) } }),
       }))}
     />
   );

@@ -287,7 +287,7 @@ describe("POST /devices/:id/policy", () => {
       remoteGrants: null,
       by: `Name ${d.login}`,
       via: "web",
-      confirmed: true,
+      outcome: "applied",
     });
     expect(v.sandbox.recent[0]).toMatchObject({ kind: "policy", tier: { to: null } });
     expect(v.sandbox.recent[4]).toMatchObject({

@@ -448,6 +448,41 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     expect(screen.getByText(/已允许（这次）/)).toBeTruthy();
   });
 
+  it("the card shows why the device change was not confirmed", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: {
+            ...NET,
+            detail: { ...NET.detail, attempt: { outcome: "unknown", message: "x" } },
+          },
+        }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "zh" });
+    expect(await screen.findByText(zh.approval.network.attempt.unknown)).toBeTruthy();
+    // still pending: the owner may decide again
+    expect(screen.getByRole("button", { name: "这台设备一直允许" })).toBeTruthy();
+    cleanup();
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: {
+            ...NET,
+            detail: {
+              ...NET.detail,
+              attempt: { outcome: "failed", message: "Remote grants are off." },
+            },
+          },
+        }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "en" });
+    expect(
+      await screen.findByText(
+        en.approval.network.attempt.failed.replace("{message}", "Remote grants are off."),
+      ),
+    ).toBeTruthy();
+  });
+
   it("skipped: one line", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>

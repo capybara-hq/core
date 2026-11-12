@@ -226,7 +226,7 @@ describe("DevicePolicyService.apply", () => {
         add: ["files.slack.com"],
         tier: null,
         via: "web",
-        confirmed: true,
+        outcome: "applied",
       }),
     ]);
   });
@@ -307,7 +307,7 @@ describe("DevicePolicyService.apply", () => {
         remoteGrants: "off",
         isolation: null,
         via: "device",
-        confirmed: true,
+        outcome: "applied",
       }),
       expect.objectContaining({
         kind: "policy",

@@ -41,8 +41,9 @@ type PolicyChange = Omit<DevicePolicyArgs, "source" | "opId">;
 const REFUSED_PREFIX = "Refused by the machine's local policy: ";
 
 /**
- * Test seam (`KernelOverride`): called right after the `policy` op's call returned, before its
- * outcome is recorded; throwing stands for a crash between the call and the resolve transaction.
+ * Test seam (`KernelOverride`): called by {@link DevicePolicyService.send} right after the `policy`
+ * op's call returned, before its outcome is recorded (by `apply` or a network ask's decision);
+ * throwing stands for a crash between the call and the resolve transaction.
  * The kernel never provides it.
  */
 export const DEVICE_POLICY_AFTER_CALL = Symbol("DEVICE_POLICY_AFTER_CALL");
@@ -143,7 +144,6 @@ export class DevicePolicyService {
     if ("outcome" in begun) return begun.outcome;
     const { intent } = begun;
     const sent = await this.send(intent);
-    this.afterCall(intent.opId);
     const out = await this.settle(intent, sent.result);
     if (sent.notFound) throw deviceNotFound();
     // unknown: the caller is told what the call saw (offline, or an answer the machine did not
@@ -215,6 +215,17 @@ export class DevicePolicyService {
           "afterwards, in its own transaction.",
       );
     }
+    const sent = await this.call(intent);
+    this.afterCall(intent.opId);
+    return sent;
+  }
+
+  /** The `policy` op's call and its classification ({@link send}). */
+  private async call(intent: PolicyIntent): Promise<{
+    result: PolicyOpResult;
+    outcome: PolicyChangeOutcome;
+    notFound?: true;
+  }> {
     try {
       const { policy } = await this.relay.call(intent.deviceId, "policy", intent.args, {
         deadlineMs: POLICY_DEADLINE_MS,

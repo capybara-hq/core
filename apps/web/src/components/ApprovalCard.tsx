@@ -193,7 +193,9 @@ export function useDecide(orgId: string) {
  * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
  * hosts, the refused command, 「这次允许」 / 「这台设备一直允许」 / 「拒绝」 and the checked hosts in
  * the decision. Decided, it still reads the approval: the granted hosts and a fallback from
- * "always" to "this time" are only there.
+ * "always" to "this time" are only there. Pending after an "always" whose device change did not
+ * take effect or was not confirmed (`detail.attempt`, re-read on `approval_updated`), one line
+ * says why under the block.
  */
 export function ApprovalCard({
   orgId,
@@ -342,6 +344,13 @@ export function ApprovalCard({
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
       />
+      {state.kind === "pending" && detail?.attempt !== undefined && (
+        <Text variant="small" tone="warn">
+          {detail.attempt.outcome === "unknown"
+            ? t("network.attempt.unknown")
+            : t("network.attempt.failed", { message: detail.attempt.message })}
+        </Text>
+      )}
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
   );

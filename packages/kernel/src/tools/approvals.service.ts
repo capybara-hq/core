@@ -18,13 +18,18 @@ import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
-import { DevicePolicyService } from "../local-devices/device-policy.service.js";
+import {
+  DevicePolicyService,
+  type PolicyOpResult,
+} from "../local-devices/device-policy.service.js";
+import { type PendingPolicyOp, pendingPolicyOpsOf } from "../local-devices/policy-summary.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
@@ -83,7 +88,6 @@ export interface NetworkAskDetail {
   };
   /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
   grantedHosts?: string[];
-  /** What took effect: a run grant, the device's policy, or a run grant because the device did not apply it. */
   /**
    * What took effect: a run grant (`once`), the device's policy (`always`), a run grant because
    * the device could not be reached or lacks the feature (`once_fallback`), or nothing because the
@@ -92,6 +96,19 @@ export interface NetworkAskDetail {
   outcome?: "once" | "always" | "once_fallback" | "refused";
   /** Why 「一直允许」 did not reach the device's policy. */
   fallback?: "offline" | "refused" | "unsupported";
+  /**
+   * Set while the ask is still pending: the last 「一直允许」 whose device change was recorded only
+   * after a crash (transactional outbox spec §7.4) and did not take effect: `failed` (the device
+   * refused it, never received it or stopped while applying it) or `unknown` (the device did not
+   * answer; its next connection tells), with the reason. The owner may decide again.
+   */
+  attempt?: NetworkAskAttempt;
+}
+
+/** Why a pending network ask's last 「一直允许」 did not decide it ({@link NetworkAskDetail.attempt}). */
+export interface NetworkAskAttempt {
+  outcome: "failed" | "unknown";
+  message: string;
 }
 
 /** A network ask's detail as the API shows it: without the kept command result. */
@@ -224,7 +241,7 @@ export interface NetworkAskInput {
   callId: string;
   /** The device owner: the only person who may decide. */
   requestedFor: string;
-  detail: Omit<NetworkAskDetail, "grantedHosts" | "outcome" | "fallback">;
+  detail: Omit<NetworkAskDetail, "grantedHosts" | "outcome" | "fallback" | "attempt">;
   /** `["once", "always"]`, or `["once"]` when the device takes no remote grants. */
   scopes: ("once" | "always")[];
 }
@@ -256,6 +273,20 @@ export interface ToolGrantView {
 }
 
 const notFound = () => new ApiError("approval.not_found", "Approval not found");
+
+/**
+ * A decision refused before it wrote anything (the ask closed, expired or is not the account's to
+ * decide): the device op's outcome is still recorded in the same transaction.
+ */
+const refusedBeforeWrite = (e: unknown): e is ApiError =>
+  e instanceof ApiError &&
+  (e.code === "approval.already_decided" || e.code === "approval.not_found");
+
+/** A pending network ask's reason when its device change got no answer (`detail.attempt`). */
+const UNCONFIRMED_ATTEMPT =
+  "The device did not confirm the change to its network rules; its next connection tells whether it took effect.";
+/** A pending network ask's reason when its device change failed without a message. */
+const NOT_APPLIED_ATTEMPT = "The device did not apply the change to its network rules.";
 const iso = (v: Date | string): string => new Date(v).toISOString();
 const isRole = (v: string | null): v is OrgRole =>
   v !== null && (ORG_ROLES as readonly string[]).includes(v);
@@ -336,9 +367,12 @@ export class ApprovalsService {
     private readonly schedules: Pick<ScheduledTaskStore, "addGrant">,
     /** A trial approval is kept only for a tool the task may hold as a grant (its agent's tools). */
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "forAgent">,
-    /** 「这台设备一直允许」 sends the `policy` op to the device before the decision is recorded. */
+    /**
+     * 「这台设备一直允许」 records the device change's intent, sends the `policy` op, then records
+     * its outcome with the decision.
+     */
     @Inject(DevicePolicyService)
-    private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
+    private readonly policies: Pick<DevicePolicyService, "begin" | "send" | "settleIn" | "summary">,
     /** One decision of a network ask at a time, across replicas (the op is sent before the transaction). */
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
@@ -608,12 +642,13 @@ export class ApprovalsService {
    * A network ask's decision (network ask-to-allow spec §5.2), one at a time per ask across
    * replicas: only the device owner (`requested_for`) decides, in a signed-in session (a personal
    * access token is refused; the route already refuses service and embed tokens); the allowed
-   * hosts are a subset of those asked. 「这台设备一直允许」 sends the `policy` op first, outside any
-   * transaction; when the device cannot be reached or lacks the feature the decision is recorded
-   * as a run grant with the reason, and when the device refuses (its owner takes no remote grants)
-   * as `always` with outcome `refused` and nothing granted. Then {@link decideIn} records what took
-   * effect and the run resumes after the commit; a change the device applied after the ask closed
-   * is audited (`late`) and answered with a 409 that says so.
+   * hosts are a subset of those asked. 「这台设备一直允许」 goes through the device change's intent
+   * ({@link decideAlways}): when the device cannot be reached or lacks the feature the decision is
+   * recorded as a run grant with the reason, and when the device refuses (its owner takes no
+   * remote grants) as `always` with outcome `refused` and nothing granted; the decision and the
+   * op's outcome are one transaction. Every decision resumes the run in its transaction and is
+   * announced after the commit; a change the device applied after the ask closed is audited
+   * (`late`) and answered with a 409 that says so.
    */
   @WithLock({ key: "network-ask-#{1}", ttl: 60_000, waitTimeout: 45_000 })
   private async decideNetwork(
@@ -691,18 +726,9 @@ export class ApprovalsService {
       }
       network = { wanted: granted, granted, outcome: "once", via };
       if (scope === "always") {
-        const applied = await this.applyAlways(orgId, detail.deviceId, granted, {
-          approvalId: id,
-          accountId,
-          via,
-        });
-        network =
-          applied === null
-            ? { wanted: granted, granted, outcome: "always", via }
-            : applied === "refused"
-              ? // the device's owner takes no remote grants: nothing is allowed, not even this run
-                { wanted: granted, granted: [], outcome: "refused", fallback: applied, via }
-              : { wanted: granted, granted, outcome: "once_fallback", fallback: applied, via };
+        const decided = await this.decideAlways(orgId, ask, accountId, body, granted, via);
+        await this.announceDecided(decided.record, decided.toSeq);
+        return decided.record;
       }
     } else {
       if (body.hosts !== undefined) {
@@ -712,55 +738,247 @@ export class ApprovalsService {
       }
       network = { wanted: [], granted: [], outcome: null, via };
     }
-    let decided: { record: ApprovalRecord; toSeq: number };
-    try {
-      decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, network);
-    } catch (e) {
-      // the device took the hosts, but a reply, the expiry or a stop closed the ask meanwhile:
-      // the change stands (the owner chose it), so it is audited and said
-      if (
-        network.outcome === "always" &&
-        e instanceof ApiError &&
-        e.code === "approval.already_decided"
-      ) {
-        await this.auditLateAllow(orgId, ask, network);
-        throw new ApiError(
-          "approval.already_decided",
-          `The device now allows ${network.granted.join(", ")}; the request had already closed.`,
-        );
-      }
-      throw e;
-    }
+    const decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, network);
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
   }
 
-  /** `device.network_allowed` of a policy change that reached the device after the ask closed. */
-  @Transactional()
-  private async auditLateAllow(
+  /**
+   * 「这台设备一直允许」 (transactional outbox spec §7): the intent of the device change (naming the
+   * ask) is recorded, the `policy` op sent (no transaction open), then {@link settleNetworkOp}
+   * decides the ask and records the op's outcome in one transaction. When nothing could be sent
+   * (the device is offline, deleted, or its program lacks the feature) the decision is a run
+   * grant with the reason. The device's answer decides: applied → `always`; refused → `always`
+   * with outcome `refused`, nothing granted; no answer → a run grant (`once_fallback`, `offline`)
+   * while the op stays `unknown` for the machine's next hello or the resolver.
+   */
+  private async decideAlways(
     orgId: string,
     ask: ApprovalRecord,
+    accountId: string,
+    body: DecisionInput,
+    granted: string[],
+    via: DecisionVia,
+  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    const detail = ask.detail as NetworkAskDetail;
+    const accountName = (await this.displayNameOf(accountId)) ?? accountId;
+    let begun: Awaited<ReturnType<DevicePolicyService["begin"]>>;
+    try {
+      begun = await this.policies.begin({
+        orgId,
+        deviceId: detail.deviceId,
+        change: { add: granted },
+        source: { approvalId: ask.id, accountId, accountName, via },
+      });
+    } catch (e) {
+      // the device was deleted meanwhile: nothing to write to, the run cannot go on there either
+      if (!(e instanceof ApiError && e.code === "device.not_found")) throw e;
+      begun = { outcome: { applied: false, reason: "offline", message: e.message } };
+    }
+    if ("outcome" in begun) {
+      // nothing was sent: a run grant with the reason
+      const fallback = begun.outcome.applied ? "offline" : begun.outcome.reason;
+      return this.decideIn(orgId, ask.id, accountId, body, undefined, {
+        wanted: granted,
+        granted,
+        outcome: "once_fallback",
+        fallback,
+        via,
+      });
+    }
+    const { intent } = begun;
+    const sent = await this.policies.send(intent);
+    const network: NetworkDecision =
+      sent.result.outcome === "applied"
+        ? { wanted: granted, granted, outcome: "always", via }
+        : sent.result.outcome === "refused"
+          ? // the device's owner takes no remote grants: nothing is allowed, not even this run
+            { wanted: granted, granted: [], outcome: "refused", fallback: "refused", via }
+          : { wanted: granted, granted, outcome: "once_fallback", fallback: "offline", via };
+    const settled = await this.settleNetworkOp(orgId, ask.id, accountId, body, network, {
+      machineId: intent.machineId,
+      opId: intent.opId,
+      result: sent.result,
+    });
+    if ("decided" in settled) return settled.decided;
+    // the device took the hosts, but a reply, the expiry or a stop closed the ask meanwhile: the
+    // change stands (the owner chose it), audited late in the settle transaction, and said
+    if (settled.late && settled.closed.code === "approval.already_decided") {
+      throw new ApiError(
+        "approval.already_decided",
+        `The device now allows ${granted.join(", ")}; the request had already closed.`,
+      );
+    }
+    throw settled.closed;
+  }
+
+  /**
+   * The resolve transaction of a network ask's device change: the ask decided as `network` says
+   * ({@link decideTx}: lock order conversation → approval → run), then the op's outcome recorded
+   * (`DevicePolicyService.settleIn`: the machine's row). When the ask closed meanwhile (a reply,
+   * the expiry, a stop) only the op's outcome is recorded, and a change the device applied is
+   * audited `device.network_allowed` with `late: true` in the same transaction.
+   */
+  @Transactional()
+  private async settleNetworkOp(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
     network: NetworkDecision,
-  ): Promise<void> {
-    if (ask.detail === null) return;
+    op: { machineId: string; opId: string; result: PolicyOpResult },
+  ): Promise<
+    { decided: { record: ApprovalRecord; toSeq: number } } | { closed: ApiError; late: boolean }
+  > {
+    let decided: { record: ApprovalRecord; toSeq: number };
+    try {
+      decided = await this.decideTx(orgId, id, accountId, body, undefined, network);
+    } catch (e) {
+      // refused before any write (closed, expired, gone): the op's outcome is recorded anyway
+      if (!refusedBeforeWrite(e)) throw e;
+      const late = await this.settleClosedIn(id, op, network.via);
+      return { closed: e, late };
+    }
+    await this.policies.settleIn(op, op.result);
+    return { decided };
+  }
+
+  /**
+   * The op's outcome for an ask that is no longer pending (in the caller's transaction): recorded,
+   * and a change the device applied audited `device.network_allowed` `late` (the change stands:
+   * the owner chose it; no inverse change is sent). True when it was audited late.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async settleClosedIn(
+    approvalId: string,
+    op: { machineId: string; opId: string; result: PolicyOpResult },
+    via: DecisionVia,
+  ): Promise<boolean> {
+    const pendingOp = await this.pendingOpOf(op.machineId, op.opId);
+    const out = await this.policies.settleIn(op, op.result);
+    if (out === null || pendingOp === null || op.result.outcome !== "applied") return false;
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("id", "=", approvalId)
+      .executeTakeFirst();
+    if (!row) return false;
+    const ask = toRecord(row);
+    if (ask.detail === null) return false;
     await audit(this.db.db, {
-      actorAccountId: ask.requestedFor,
-      orgId,
+      actorAccountId: pendingOp.source.accountId,
+      orgId: ask.orgId,
       action: "device.network_allowed",
       target: ask.detail.deviceId,
       detail: {
         approvalId: ask.id,
         deviceId: ask.detail.deviceId,
-        hosts: network.granted,
+        hosts: pendingOp.add,
         scope: "always",
         outcome: "always",
         late: true,
-        by: ask.requestedFor,
-        via: network.via,
+        by: pendingOp.source.accountId,
+        via,
         conversationId: ask.conversationId,
         runId: ask.runId,
       },
     });
+    return true;
+  }
+
+  /** The live intent `opId` on machine `machineId` (null: settled already, or expired). */
+  private async pendingOpOf(machineId: string, opId: string): Promise<PendingPolicyOp | null> {
+    const r = await this.db
+      .selectFrom("device_machines")
+      .select("pending_policy_ops")
+      .where("id", "=", machineId)
+      .executeTakeFirst();
+    const op = pendingPolicyOpsOf(r?.pending_policy_ops).find((o) => o.id === opId);
+    return op === undefined || op.until <= Date.now() ? null : op;
+  }
+
+  /**
+   * The `device-op-resolve` job's outcome of an op that answers network ask `op.source.approvalId`
+   * (transactional outbox spec §7.4), in the resolver's transaction: under the ask's locks
+   * (conversation, then the approval) the op is read again (settled meanwhile: nothing to do).
+   * Applied, and the ask still pending → approved `always` by the op's account (`via` as it
+   * asked), the run resumed in this transaction as every decision does; the ask closed → audited
+   * `late`. Not applied (refused, never received, interrupted) or still unknown → the op's outcome
+   * recorded and the ask left pending with the reason (`detail.attempt`) and an `approval_updated`
+   * event so the card shows it: no person is there to fall back to a run grant (D2).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async settleFromResolver(
+    ref: { machineId: string; opId: string; approvalId: string },
+    result: PolicyOpResult,
+  ): Promise<void> {
+    const t = this.db.db;
+    const op = { machineId: ref.machineId, opId: ref.opId, result };
+    if (!(await this.lockConversationOf(ref.approvalId))) {
+      await this.policies.settleIn(op, result);
+      return;
+    }
+    const row = await t
+      .selectFrom("approvals")
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as("expired"))
+      .where("id", "=", ref.approvalId)
+      .forUpdate()
+      .executeTakeFirst();
+    const pendingOp = await this.pendingOpOf(ref.machineId, ref.opId);
+    if (row === undefined || pendingOp === null) {
+      await this.policies.settleIn(op, result);
+      return;
+    }
+    const ask = toRecord(row);
+    const open = ask.status === "pending" && !row.expired && ask.kind === "network";
+    const via = pendingOp.source.via;
+    if (result.outcome === "applied") {
+      if (!open) {
+        await this.settleClosedIn(ask.id, op, via);
+        return;
+      }
+      let decided: { record: ApprovalRecord; toSeq: number };
+      try {
+        decided = await this.decideTx(
+          ask.orgId,
+          ask.id,
+          pendingOp.source.accountId,
+          { decision: "approve", scope: "always" },
+          undefined,
+          { wanted: pendingOp.add, granted: pendingOp.add, outcome: "always", via },
+        );
+      } catch (e) {
+        // the op's account may no longer decide it (left the org): the change stands, late
+        if (!refusedBeforeWrite(e)) throw e;
+        await this.settleClosedIn(ask.id, op, via);
+        return;
+      }
+      await this.policies.settleIn(op, result);
+      afterCommit(() => this.announceDecided(decided.record, decided.toSeq));
+      return;
+    }
+    const out = await this.policies.settleIn(op, result);
+    if (out === null || !open || ask.detail === null) return;
+    const attempt: NetworkAskAttempt =
+      result.outcome === "unknown"
+        ? { outcome: "unknown", message: UNCONFIRMED_ATTEMPT }
+        : { outcome: "failed", message: out.applied ? NOT_APPLIED_ATTEMPT : out.message };
+    await t
+      .updateTable("approvals")
+      .set({ detail: JSON.stringify({ ...ask.detail, attempt } satisfies NetworkAskDetail) })
+      .where("id", "=", ask.id)
+      .execute();
+    const written = await this.eventLog.appendIn(ask.conversationId, [
+      {
+        type: "approval_updated",
+        runId: ask.runId,
+        idemKey: `approval_updated:${ask.id}:${ref.opId}:${attempt.outcome}`,
+        payload: { approvalId: ask.id, callId: ask.callId },
+      },
+    ]);
+    const toSeq = Math.max(...written.map((e) => e.seq));
+    afterCommit(() => this.eventLog.notify(ask.conversationId, toSeq));
   }
 
   /** The owner of a live device of the org (null: none, deleted, or of another org). */
@@ -773,32 +991,6 @@ export class ApprovalsService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     return d?.owner_account_id ?? null;
-  }
-
-  /**
-   * Adds the hosts to the device's local policy (the `policy` op; never inside a transaction).
-   * Null when it was applied, else why not: the decision falls back to a run grant.
-   */
-  private async applyAlways(
-    orgId: string,
-    deviceId: string,
-    hosts: string[],
-    source: { approvalId: string; accountId: string; via: DecisionVia },
-  ): Promise<"offline" | "refused" | "unsupported" | null> {
-    const accountName = (await this.displayNameOf(source.accountId)) ?? source.accountId;
-    try {
-      const out = await this.policies.apply({
-        orgId,
-        deviceId,
-        change: { add: hosts },
-        source: { ...source, accountName },
-      });
-      return out.applied ? null : out.reason;
-    } catch (e) {
-      // the device was deleted meanwhile: nothing to write to, the run cannot go on there either
-      if (e instanceof ApiError && e.code === "device.not_found") return "offline";
-      throw e;
-    }
   }
 
   /** After the commit: the decision's events reach the page, the run's waits and IM delivery. */
@@ -827,7 +1019,23 @@ export class ApprovalsService {
   // its own transaction (as the legacy one was): `approval.decided` is emitted only after the
   // decision committed, even when a caller has a transaction open
   @Transactional({ propagation: "requires_new" })
-  private async decideIn(
+  private decideIn(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    actorTokenId: string | undefined,
+    network?: NetworkDecision,
+  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    return this.decideTx(orgId, id, accountId, body, actorTokenId, network);
+  }
+
+  /**
+   * A decision in the caller's transaction: lock order conversation → approval → run (the resume).
+   * Refuses (`approval.already_decided`, `approval.not_found`, …) before any write.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async decideTx(
     orgId: string,
     id: string,
     accountId: string,
@@ -866,7 +1074,7 @@ export class ApprovalsService {
     if (locked.expired) {
       throw new ApiError("approval.already_decided", "Approval has expired");
     }
-    // a network ask is decided only through decideNetwork (its policy op went first)
+    // a network ask is decided only with what took effect (decideNetwork, the op's resolver)
     if ((before.kind === "network") !== (network !== undefined)) {
       throw new Error(`approval ${id} is of kind ${before.kind}`);
     }

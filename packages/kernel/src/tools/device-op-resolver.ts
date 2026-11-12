@@ -13,6 +13,7 @@ import {
   type PendingPolicyOp,
   pendingPolicyOpsOf,
 } from "../local-devices/policy-summary.js";
+import { ApprovalsService } from "./approvals.service.js";
 
 /**
  * The `device-op-resolve` job (transactional outbox spec §7): records what became of a device
@@ -27,8 +28,9 @@ import {
  * its log and its answer), once the op can no longer reach it → applied when the policy it
  * reports holds the change, else failed (`interrupted`); no answer (`offline`) → `unknown`, left
  * for the machine's next hello. It never sends the change
- * again (a widening after its ask closed is not allowed). In ToolsModule: resolving an op may
- * decide the network ask it answers (Task 19b).
+ * again (a widening after its ask closed is not allowed). An op that answers a network ask
+ * decides it when applied and the ask is still pending, else leaves it pending with the reason
+ * (`ApprovalsService.settleFromResolver`).
  */
 @Injectable()
 export class DeviceOpResolver {
@@ -37,6 +39,8 @@ export class DeviceOpResolver {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(DevicePolicyService)
     private readonly policies: Pick<DevicePolicyService, "outcomeOf" | "settleIn">,
+    @Inject(ApprovalsService)
+    private readonly approvals: Pick<ApprovalsService, "settleFromResolver">,
   ) {}
 
   async resolve(data: DeviceOpResolveData): Promise<void> {
@@ -51,7 +55,7 @@ export class DeviceOpResolver {
       op.reported !== undefined
         ? await this.reportedResult(row.device_id, op, op.reported.outcome)
         : statusResult(op, await this.policies.outcomeOf(row.device_id, op.id));
-    await this.settle(data, result);
+    await this.settle(data, op.source.approvalId, result);
   }
 
   /**
@@ -71,10 +75,18 @@ export class DeviceOpResolver {
     return { outcome: "refused", message: (message ?? REFUSED_MESSAGE).slice(0, MAX_MESSAGE) };
   }
 
-  /** The resolve transaction (the network ask's decision joins it in Task 19b). */
+  /**
+   * The resolve transaction: the op's outcome, and the network ask it answers decided or given
+   * the reason in the same transaction (`ApprovalsService.settleFromResolver`).
+   */
   @Transactional()
-  private async settle(data: DeviceOpResolveData, result: PolicyOpResult): Promise<void> {
-    await this.policies.settleIn(data, result);
+  private async settle(
+    data: DeviceOpResolveData,
+    approvalId: string | null,
+    result: PolicyOpResult,
+  ): Promise<void> {
+    if (approvalId === null) await this.policies.settleIn(data, result);
+    else await this.approvals.settleFromResolver({ ...data, approvalId }, result);
   }
 }
 

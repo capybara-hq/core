@@ -200,7 +200,7 @@ const networkAudits = (deviceId: string) =>
       "device.network_allowed",
       "device.network_denied",
     ])
-    .orderBy("at")
+    .orderBy("id")
     .execute();
 
 /** Connects the device's machine with the policy op and waits until its hello is recorded. */
@@ -366,10 +366,10 @@ describe("decide", () => {
     });
     const audits = await networkAudits(s.deviceId);
     expect(audits.map((x) => x.action)).toEqual([
-      "device.policy_changed",
       "device.network_allowed",
+      "device.policy_changed",
     ]);
-    expect(audits[1]?.detail).toMatchObject({
+    expect(audits[0]?.detail).toMatchObject({
       hosts: ["files.slack.com"],
       refused: ["api.github.com"],
       scope: "always",
@@ -435,44 +435,6 @@ describe("decide", () => {
       scope: "always",
       outcome: "refused",
       fallback: "refused",
-    });
-  });
-
-  it("「一直允许」 applied after the ask closed: audited as late, 409 saying what the device allows", async () => {
-    let now = POLICY;
-    const machine = await connect(() => undefined);
-    const a = await ask();
-    const pending = decide(a.id, {
-      decision: "approve",
-      scope: "always",
-      hosts: ["files.slack.com"],
-    });
-    const op = (await machine.next((f) => f.type === "req" && f.op === "policy")) as KernelReq;
-    // a reply, the expiry or a stop closes the ask while the device applies the change
-    await sql`UPDATE capybara.approvals SET status = 'cancelled', decided_at = now()
-      WHERE id = ${a.id}`.execute(raw);
-    now = { ...now, allowedDomains: [...now.allowedDomains, "files.slack.com"] };
-    machine.respond(op.id, { ok: true, result: { policy: now } });
-    const res = await pending;
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({
-      error: {
-        code: "approval.already_decided",
-        message: "The device now allows files.slack.com; the request had already closed.",
-      },
-    });
-    expect((await row(a.id)).status).toBe("cancelled");
-    const audits = await networkAudits(s.deviceId);
-    expect(audits.map((x) => x.action)).toEqual([
-      "device.policy_changed",
-      "device.network_allowed",
-    ]);
-    expect(audits[1]?.detail).toMatchObject({
-      approvalId: a.id,
-      hosts: ["files.slack.com"],
-      scope: "always",
-      outcome: "always",
-      late: true,
     });
   });
 

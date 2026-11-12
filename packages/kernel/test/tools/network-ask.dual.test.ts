@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { allowedOnceNote } from "../../src/tools/network-asks.js";
+import { allowedAlwaysNote } from "../../src/tools/network-asks.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -14,8 +14,9 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 /**
  * A network ask across replicas (network ask-to-allow spec §10.3, Review Focus 4): the command
  * runs on a worker against a device held by replica 0's gateway, the run parks, and the device
- * owner's decision sent to both replicas at once is taken once and resumes the run once; the
- * command is never run again.
+ * owner's 「这台设备一直允许」 sent to both replicas at once is taken once: one intent, one `policy`
+ * op, its outcome and the decision in one transaction, one resume; the command is never run
+ * again.
  */
 
 let h: Harness | undefined;
@@ -29,8 +30,17 @@ afterEach(async () => {
 
 type Json = Record<string, unknown>;
 
+const POLICY = {
+  effectiveTier: "strict",
+  isolation: "sandbox",
+  localhost: "off",
+  unixSockets: "off",
+  allowedDomains: [] as string[],
+  remoteGrants: "owner",
+} as const;
+
 describe("network ask (dual replica)", () => {
-  it("asked on one replica, decided on both at once: one decision, one resume, one exec", async () => {
+  it("asked on one replica, always-allowed on both at once: one policy op, one decision, one resume, one exec", async () => {
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE],
       roles: [
@@ -96,6 +106,10 @@ describe("network ask (dual replica)", () => {
       credential,
       (req: KernelReq) => {
         if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
+        if (req.op === "policy") {
+          const add = (req.args as { add?: string[] }).add ?? [];
+          return { ok: true, result: { policy: { ...POLICY, allowedDomains: add } } };
+        }
         if (req.op !== "exec") return { ok: true, result: null };
         const granted = (req.args as DeviceExecArgs).grants?.hosts ?? [];
         const blocked = granted.includes("files.example.com")
@@ -120,14 +134,7 @@ describe("network ask (dual replica)", () => {
     machine.send({
       ...HELLO,
       features: ["networkReport", "policyOp", "policyOpId"],
-      policy: {
-        effectiveTier: "strict",
-        isolation: "sandbox",
-        localhost: "off",
-        unixSockets: "off",
-        allowedDomains: [],
-        remoteGrants: "owner",
-      },
+      policy: POLICY,
     });
     await waitFor(
       async () =>
@@ -197,7 +204,7 @@ describe("network ask (dual replica)", () => {
       "run waiting",
     );
     // the owner decides on both replicas at once: one takes it
-    const decision = { decision: "approve", scope: "once" };
+    const decision = { decision: "approve", scope: "always" };
     const url = `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`;
     const both = await Promise.all([
       call(0, "POST", url, decision),
@@ -220,8 +227,26 @@ describe("network ask (dual replica)", () => {
     expect(count("network_blocked")).toBe(1);
     const result = evs.find((e) => e.type === "tool_result");
     expect(result?.type === "tool_result" && result.payload.content).toContain(
-      allowedOnceNote(["files.example.com"]),
+      allowedAlwaysNote(["files.example.com"]),
     );
+    // one intent, one op sent, one decision audited with the op's outcome
+    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toHaveLength(1);
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("target", "=", deviceId)
+      .where("action", "in", [
+        "device.policy_requested",
+        "device.policy_changed",
+        "device.network_allowed",
+      ])
+      .orderBy("id")
+      .execute();
+    expect(audits.map((x) => x.action)).toEqual([
+      "device.policy_requested",
+      "device.network_allowed",
+      "device.policy_changed",
+    ]);
     // the command ran once
     const curls = machine.frames.filter(
       (f) =>

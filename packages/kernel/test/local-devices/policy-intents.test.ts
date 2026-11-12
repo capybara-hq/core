@@ -482,10 +482,21 @@ describe("device policy intents", () => {
       "pypi.org",
       "files.slack.com",
     ]);
-    // the device page lists the change once
+    // the device page lists the change once applied, after the unconfirmed attempt
     const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
     expect(recent).toEqual([
-      expect.objectContaining({ kind: "policy", add: ["files.slack.com"], via: "web" }),
+      expect.objectContaining({
+        kind: "policy",
+        add: ["files.slack.com"],
+        via: "web",
+        outcome: "applied",
+      }),
+      expect.objectContaining({
+        kind: "policy",
+        add: ["files.slack.com"],
+        via: "web",
+        outcome: "unknown",
+      }),
     ]);
   });
 
@@ -572,6 +583,11 @@ describe("device policy intents", () => {
     ]);
     expect(audits[1]?.detail).toMatchObject({ reason: "refused", message: sim.refuse });
     expect((await policies.summary(d.deviceId))?.policy?.remoteGrants).toBe("off");
+    // the device page lists the change that did not take effect
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
+    expect(recent).toEqual([
+      expect.objectContaining({ kind: "policy", add: ["files.slack.com"], outcome: "failed" }),
+    ]);
   });
 
   it("an answer the kernel cannot read, or the machine's own error, is resolved, not refused", async () => {

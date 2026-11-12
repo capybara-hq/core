@@ -139,7 +139,8 @@ export const RECENT_POLICY_CHANGES = 10;
 /**
  * One sandbox change of a device, as its owner sees it on the device page (§10.4):
  * - `policy` (`device.policy_changed`): a local policy change sent to the machine (`web`, `im`),
- *   or made on the machine by its owner (`device`, `capybara-device policy ...`);
+ *   or made on the machine by its owner (`device`, `capybara-device policy ...`); one sent whose
+ *   answer never came (`device.policy_unknown`) or that failed (`device.policy_failed`) too;
  * - `tier` (`device.tier_changed`): a cloud device's tier set by its owner;
  * - `isolation` (`device.isolation_reported`): the machine reported running without a sandbox,
  *   or with one again.
@@ -166,10 +167,13 @@ export interface DeviceSandboxChangeView {
   /** `device`: made or reported on the machine itself (a `policy` change, an `isolation`). */
   via: "web" | "im" | "device";
   /**
-   * The change is known to be on the machine: always true (an op whose answer never came is
-   * audited `device.policy_unknown`, which the list leaves out until the machine reports it).
+   * What became of a `policy` change sent to the machine: `applied` (also every change made or
+   * reported on the machine, and every tier / isolation row); `unknown`, its answer never came
+   * (`device.policy_unknown`: an `applied` row follows when the machine reports it); `failed`,
+   * the machine refused it, never received it or stopped while applying it
+   * (`device.policy_failed`).
    */
-  confirmed: boolean;
+  outcome: "applied" | "unknown" | "failed";
 }
 
 /** A change of a local device's policy by its owner (`POST /devices/:id/policy`). */
@@ -1242,8 +1246,9 @@ export class DevicesService {
 
   /**
    * The last {@link RECENT_POLICY_CHANGES} sandbox changes of each device in the org (audit rows
-   * `device.policy_changed`, `device.tier_changed`, `device.isolation_reported`), newest first,
-   * with the deciding account's display name.
+   * `device.policy_changed`, `device.policy_unknown`, `device.policy_failed`,
+   * `device.tier_changed`, `device.isolation_reported`), newest first, with the deciding account's
+   * display name.
    */
   private async recentSandboxChanges(
     orgId: string,
@@ -1382,6 +1387,8 @@ const limitsView = (l: SandboxLimits): SandboxLimits => ({
 /** The audit actions a device's recent sandbox changes list. */
 const SANDBOX_CHANGE_ACTIONS = [
   "device.policy_changed",
+  "device.policy_unknown",
+  "device.policy_failed",
   "device.tier_changed",
   "device.isolation_reported",
 ] as const;
@@ -1410,10 +1417,16 @@ function sandboxChangeOf(
     by,
   };
   if (action === "device.tier_changed") {
-    return { ...base, kind: "tier", tier: { to: tierOrNull(d.to) }, via: "web", confirmed: true };
+    return {
+      ...base,
+      kind: "tier",
+      tier: { to: tierOrNull(d.to) },
+      via: "web",
+      outcome: "applied",
+    };
   }
   if (action === "device.isolation_reported") {
-    return { ...base, kind: "isolation", isolation, via: "device", confirmed: true };
+    return { ...base, kind: "isolation", isolation, via: "device", outcome: "applied" };
   }
   return {
     ...base,
@@ -1432,9 +1445,12 @@ function sandboxChangeOf(
         : null,
     remoteGrants: d.remoteGrants === "owner" || d.remoteGrants === "off" ? d.remoteGrants : null,
     via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
-    // only an applied op is audited `device.policy_changed` (an unanswered one is
-    // `device.policy_unknown`, not listed); a late one is confirmed too
-    confirmed: true,
+    outcome:
+      action === "device.policy_unknown"
+        ? "unknown"
+        : action === "device.policy_failed"
+          ? "failed"
+          : "applied",
   };
 }
 

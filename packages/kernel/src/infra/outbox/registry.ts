@@ -248,7 +248,7 @@ export const OUTBOX_JOBS = {
   "device-op-resolve": {
     queue: "cap-kernel-maintenance",
     idempotent:
-      "resolving an op whose entry is gone is a no-op (the entry is read under the machine row's lock); the resolver only reads the device, never sends a change",
+      "resolving an op whose entry is gone is a no-op (the entry is read under the machine row's lock, and under the network ask's lock for an op that answers one, so the ask is decided at most once); the resolver only reads the device, never sends a change",
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     // retried while PG or the device is briefly unreachable; removed once done
     opts: {

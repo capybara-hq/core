@@ -111,7 +111,10 @@ describe("planNetworkAsk with task grants", () => {
     unattendedAsk: "fail",
     forbiddenTools: [],
   };
-  const device = { features: ["networkReport", "policyOp"] as const, policy: POLICY };
+  const device = {
+    features: ["networkReport", "policyOp", "policyOpId"] as const,
+    policy: POLICY,
+  };
 
   it("a task-granted host the device still refused: the ignored note, no ask, no missing grant", () => {
     const plan = planNetworkAsk(
@@ -251,7 +254,7 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
   await machine.opened;
   machine.send({
     ...HELLO,
-    features: ["networkReport", "policyOp"],
+    features: ["networkReport", "policyOp", "policyOpId"],
     policy: dev.policy,
   } as typeof HELLO);
   await waitFor(

@@ -513,8 +513,8 @@ describe("not asked", { timeout: 60_000 }, () => {
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
   });
 
-  it("a program without policyOp: no ask, no note", async () => {
-    s = await setup({ features: ["networkReport"] });
+  it("a program without policyOpId: no ask, no note", async () => {
+    s = await setup({ features: ["networkReport", "policyOp"] });
     s.dev.blocking.set("files.example.com", "device");
     await post([curl(["files.example.com"])]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);

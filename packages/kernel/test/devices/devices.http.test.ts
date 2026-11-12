@@ -509,7 +509,7 @@ describe("a device's sandbox tier (sandbox dev tiers spec §7.2)", () => {
         remoteGrants: null,
         by: expect.any(String),
         via: "web",
-        confirmed: true,
+        outcome: "applied",
       },
     ]);
     // the same tier again changes nothing; a rename and a tier in one request
