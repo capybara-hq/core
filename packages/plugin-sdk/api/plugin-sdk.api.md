@@ -641,6 +641,7 @@ export interface ConnectorTemplateSpec {
     defaultToolPolicies?: Record<string, "allow" | "ask" | "deny">;
     editableEndpoint?: string[];
     endpoint: Record<string, unknown>;
+    git?: GitSource;
     icon?: string;
     ownership?: "org" | "personal";
     plugin: string;
@@ -1395,6 +1396,32 @@ export const FORBIDDEN_INSTALL_SCRIPTS: readonly ["preinstall", "install", "post
 
 // @public
 export type FormAnswer = Record<string, string | number | boolean | string[]>;
+
+// @public
+export const GIT_HOST_USERNAMES: {
+    readonly "github.com": "x-access-token";
+    readonly "*.ghe.com": "x-access-token";
+};
+
+// @public
+export const GIT_HOSTS_LIMITS: {
+    readonly hosts: 8;
+    readonly usernameChars: 64;
+};
+
+// @public
+export interface GitHostEntry {
+    host: string;
+    username: string;
+}
+
+// @public
+export interface GitSource {
+    hosts: GitHostEntry[];
+}
+
+// @public
+export const GitSourceSchema: z.ZodType<GitSource>;
 
 // @public
 export function hasControlChars(s: string): boolean;
@@ -2176,6 +2203,11 @@ export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null;
 export function parseExtensionPoint(ref: string): {
     name: string;
     major: number;
+};
+
+// @public
+export function parseGitSource(git: unknown): GitSource | {
+    errors: string[];
 };
 
 // @public
@@ -3653,6 +3685,9 @@ export function validateEmbedResult(req: EmbedRequest, info: ModelEmbeddingInfo,
 
 // @public
 export function validateFilePreviewProvider(p: unknown): string[];
+
+// @public
+export function validateGitSource(git: unknown, at?: string): string[];
 
 // @public
 export function validateInputForm(form: InputForm): string[];

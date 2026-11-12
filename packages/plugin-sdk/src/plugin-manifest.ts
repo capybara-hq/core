@@ -4,6 +4,7 @@ import { AGENT_TEMPLATE_LIMITS } from "./agent-template.js";
 import { type PluginClientSection, validateClientSection } from "./client-section.js";
 import { CONFIG_UI_LIMITS, type JsonSchema } from "./config-ui.js";
 import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
+import { GitSourceSchema } from "./git-hosts.js";
 import {
   CATALOG_ITEM_NAME_RE,
   CONNECTOR_TEMPLATE_LIMITS,
@@ -628,6 +629,7 @@ const template = z.strictObject({
   auth: z.record(z.string(), z.unknown()),
   ownership: z.enum(["org", "personal"]).optional(),
   defaultToolPolicies: z.record(z.string(), z.enum(["allow", "ask", "deny"])).optional(),
+  git: GitSourceSchema.optional(),
   icon: z.string().max(L.pathChars).optional(),
 });
 
