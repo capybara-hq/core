@@ -27,11 +27,16 @@ import {
 } from "../src/state.js";
 import { execArgs, FakeExecutor } from "./fake-kernel.js";
 
+let opSeq = 0;
+/** A request; a `policy` op gets a fresh op id unless it names one (each is a new change). */
 const r = (op: KernelReq["op"], args: unknown): KernelReq => ({
   type: "req",
   id: "x",
   op,
-  args,
+  args:
+    op === "policy" && typeof args === "object" && args !== null && !("opId" in args)
+      ? { opId: `op_${++opSeq}`, ...args }
+      : args,
   deadlineMs: 1000,
 });
 

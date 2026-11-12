@@ -230,6 +230,7 @@ describe("POST /devices/:id/policy", () => {
     const [req] = policyReqs(machine);
     expect(req?.args).toEqual({
       add: ["files.slack.com", "*.npmjs.org"],
+      opId: expect.any(String),
       // the owner's own change: no approval, so the machine accepts a wildcard
       source: { accountId: d.accountId, accountName: `Name ${d.login}`, via: "web" },
     });

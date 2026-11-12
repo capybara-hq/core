@@ -356,6 +356,7 @@ describe("decide", () => {
     const op = (await machine.next((f) => f.type === "req" && f.op === "policy")) as KernelReq;
     expect(op.args).toEqual({
       add: ["files.slack.com"],
+      opId: expect.any(String),
       source: {
         approvalId: a.id,
         accountId: s.accountId,

@@ -27,6 +27,9 @@ export const POLICY_DEADLINE_MS = 30_000;
  * How long a sent op may still explain a summary the machine reports by itself: its deadline and
  * the reconnect grace, with room for an answer that comes only with the next hello.
  */
+/** A policy change as callers ask for it: the op id and the source are added here. */
+type PolicyChange = Omit<DevicePolicyArgs, "source" | "opId">;
+
 const PENDING_OP_MS = POLICY_DEADLINE_MS + 5 * 60_000;
 
 /** The prefix the relay puts before a machine's `policy`-kind refusal. */
@@ -76,7 +79,7 @@ export class DevicePolicyService {
   async apply(input: {
     orgId: string;
     deviceId: string;
-    change: Omit<DevicePolicyArgs, "source">;
+    change: PolicyChange;
     source: DevicePolicyArgs["source"];
     actorTokenId?: string;
   }): Promise<PolicyChangeOutcome> {
@@ -109,10 +112,10 @@ export class DevicePolicyService {
     if (!(await this.relay.holderLive(input.deviceId))) {
       return { applied: false, reason: "offline", message: OFFLINE_MESSAGE };
     }
-    const args: DevicePolicyArgs = { ...input.change, source: input.source };
     // noted before it is sent: the machine may report the change by itself (a `policy` frame)
     // before its answer is recorded, and the device page lists it once, as the platform's
     const opId = randomUUID();
+    const args: DevicePolicyArgs = { ...input.change, opId, source: input.source };
     await this.notePending(machine.id, {
       id: opId,
       add: input.change.add ?? [],
@@ -188,7 +191,7 @@ export class DevicePolicyService {
     deviceId: string;
     machineId: string;
     opId: string;
-    change: Omit<DevicePolicyArgs, "source">;
+    change: PolicyChange;
     source: DevicePolicyArgs["source"];
     actorTokenId?: string;
     policy: DeviceLocalPolicySummary | null;
@@ -275,7 +278,7 @@ const withoutOp = (opId: string) =>
  * wildcard); the owner's own change on the device page (no approval) may add a wildcard (spec §7);
  * `remove` takes any valid entry (narrowing, a wildcard too).
  */
-function assertHosts(change: Omit<DevicePolicyArgs, "source">, fromApproval: boolean): void {
+function assertHosts(change: PolicyChange, fromApproval: boolean): void {
   const bad = (h: string) => typeof h !== "string" || validateAllowHost(h).length > 0;
   for (const h of change.add ?? []) {
     if (bad(h) || (fromApproval && h.startsWith("*."))) {

@@ -187,7 +187,11 @@ describe("DevicePolicyService.apply", () => {
     const want = { ...POLICY, allowedDomains: ["pypi.org", "files.slack.com"] };
     expect(out).toEqual({ applied: true, policy: want });
     const req = (await machine.next((f) => f.type === "req" && f.op === "policy")) as KernelReq;
-    expect(req.args).toEqual({ add: ["files.slack.com"], source: source(d.accountId) });
+    expect(req.args).toEqual({
+      add: ["files.slack.com"],
+      opId: expect.any(String),
+      source: source(d.accountId),
+    });
     expect(await policies.summary(d.deviceId)).toEqual({
       features: ["networkReport", "policyOp"],
       policy: want,

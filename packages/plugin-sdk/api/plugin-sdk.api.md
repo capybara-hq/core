@@ -752,7 +752,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp" | "tiers";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "tiers";
 
 // @public
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
@@ -766,6 +766,7 @@ export interface DeviceHello {
     policy?: DeviceLocalPolicySummary;
     programVersion: string;
     protocol: number;
+    recentOps?: DevicePolicyOpReport[];
     roots: SandboxRoots;
     sessionIsolation: boolean;
     type: "hello";
@@ -791,7 +792,7 @@ export interface DeviceLocalPolicySummary {
 }
 
 // @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy";
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus";
 
 // @public
 export interface DeviceOpResults {
@@ -800,6 +801,7 @@ export interface DeviceOpResults {
     killAll: null;
     killTagged: null;
     policy: DevicePolicyResult;
+    policyStatus: DevicePolicyStatus;
     readFile: DeviceReadFileResult;
     stat: DeviceStatResult;
     stop: null;
@@ -810,6 +812,7 @@ export interface DeviceOpResults {
 export interface DevicePolicyArgs {
     add?: string[];
     isolation?: "sandbox";
+    opId: string;
     remove?: string[];
     source: {
         approvalId?: string;
@@ -827,8 +830,29 @@ export interface DevicePolicyChanged {
 }
 
 // @public
+export type DevicePolicyOpOutcome = "applied" | "refused" | "started";
+
+// @public
+export interface DevicePolicyOpReport {
+    opId: string;
+    outcome: DevicePolicyOpOutcome;
+}
+
+// @public
 export interface DevicePolicyResult {
     policy: DeviceLocalPolicySummary;
+}
+
+// @public
+export interface DevicePolicyStatus {
+    message?: string;
+    outcome: DevicePolicyOpOutcome | "unknown";
+    policy?: DeviceLocalPolicySummary;
+}
+
+// @public
+export interface DevicePolicyStatusArgs {
+    opId: string;
 }
 
 // @public
@@ -1620,6 +1644,9 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
+export function isPolicyOpId(v: unknown): v is string;
+
+// @public
 export function isPublicHostname(host: string): boolean;
 
 // @public
@@ -1801,6 +1828,12 @@ export type MarketplaceSource = {
 
 // @public
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
+
+// @public
+export const MAX_POLICY_OP_ID_LENGTH = 128;
+
+// @public
+export const MAX_RECENT_POLICY_OPS = 100;
 
 // @public
 export const MEDIA_LIMITS: {

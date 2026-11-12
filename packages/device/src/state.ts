@@ -87,6 +87,11 @@ export function policyPath(dir: string): string {
   return join(dir, "policy.json");
 }
 
+/** The outcomes of the latest `policy` ops by op id (written under the policy lock). */
+export function policyOpsPath(dir: string): string {
+  return join(dir, "policy-ops.json");
+}
+
 /** The lock file that serializes read-modify-writes of policy.json across processes. */
 export function policyLockPath(dir: string): string {
   return join(dir, "policy.json.lock");
