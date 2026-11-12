@@ -16,8 +16,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
@@ -370,7 +368,6 @@ export class ConversationsService {
     @Inject(RunControlService) private readonly runs: RunControl,
     /** Resolves a switched-to model and its declared parameters (UI refresh B). */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
-    @Inject(KERNEL_LOGGER) readonly _log: Pick<KernelLogger, "warn">,
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
     private readonly content: Pick<ConnectorContent, "resolveAttachments">,

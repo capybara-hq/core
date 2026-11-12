@@ -95,9 +95,22 @@ describe("OutboxService.add", () => {
       { job_id: "a", data: { x: [1, 2] }, org_id: "org-1", run_at: runAt },
       { job_id: "b", data: { n: 1 }, org_id: null, run_at: null },
     ]);
-    // one call per transaction, with every row it inserted
+    // one call per transaction, with every row it inserted that is due now: the delayed row waits
+    // for the relay (ruling R20)
     expect(fastPath).toHaveBeenCalledTimes(1);
-    expect(fastPath).toHaveBeenCalledWith(stored.map((r) => r.id));
+    expect(fastPath).toHaveBeenCalledWith([stored[1]?.id]);
+  });
+
+  it("a transaction that owes only delayed jobs hands nothing to the fast path", async () => {
+    const outbox = outboxWith(true);
+    await host.run(() =>
+      outbox.add(job("later", { n: 1 }, { runAt: new Date(Date.now() + 30_000) })),
+    );
+    expect(await rows()).toHaveLength(1);
+    expect(fastPath).not.toHaveBeenCalled();
+    // a runAt already reached is due now
+    await host.run(() => outbox.add(job("due", { n: 1 }, { runAt: new Date(Date.now() - 1000) })));
+    expect(fastPath).toHaveBeenCalledTimes(1);
   });
 
   it("add inside a rolled-back transaction leaves no row", async () => {

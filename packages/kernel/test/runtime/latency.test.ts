@@ -6,6 +6,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { OUTBOX_FAST_PATH_SETTLED } from "../../src/infra/outbox/outbox.module.js";
 import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -18,27 +19,26 @@ import {
   type Req,
   runConfig,
   session,
-  sleep,
   startKernel,
   type TestKernel,
-  waitFor,
 } from "../helpers/runs.js";
 
 /**
  * The cost of the message → run-job-added path (transactional outbox spec §11 "Latency", ruling
  * R6): counted, not timed. A message to an idle conversation, on an api-only kernel (no worker
- * takes the job, no relay runs), from the request until the run's job is in BullMQ and the outbox
- * holds nothing for it. Every PG statement and Redis command issued on that path (the request, its
- * after-commit work and the outbox fast path, which all run in the request's async context) is
- * counted; periodic work of the kernel runs outside that context and is not.
+ * takes the job, no relay runs). Every PG statement and Redis command issued in the request's async
+ * context is counted: the request itself, its after-commit work, and the outbox fast-path passes it
+ * started, awaited through the `OUTBOX_FAST_PATH_SETTLED` seam. Periodic work of the kernel runs
+ * outside that context and is not counted.
  *
  * Before the outbox (main at 7cb12115f, measured once with this counter): 27 PG statements and 6
- * Redis commands. The outbox adds 10 statements and no command: in the message transaction the
- * ensure-run backstop's insert, in `ensureRun`'s transaction the run job's insert, and after each
- * commit one claim transaction of the fast path (BEGIN; SELECT … FOR UPDATE SKIP LOCKED; DELETE;
- * COMMIT: 4 statements). In Redis the run job's add stays one command, its read-back after the add
- * is gone and the backstop's delayed add is new. The p50 of the same path (100 sends, before and
- * after) is measured and reported with the PR, not asserted here (a timing is not deterministic).
+ * Redis commands. Now 34 and 4. PG: the ensure-run backstop's insert in the message transaction,
+ * the run job's insert and the duplicate-trigger count (R21, a PG read instead of a Redis one) in
+ * `ensureRun`'s transaction, and one claim transaction of the fast path for the run job (BEGIN;
+ * SELECT … FOR UPDATE SKIP LOCKED; DELETE; COMMIT). The backstop is delayed, so the relay delivers
+ * it, not this path (R20). Redis: the run job's add stays one command; its read-back after the add
+ * and the read of a job for the same trigger before it are gone. The p50 of the same path (100
+ * sends, before and after) is reported with the PR, not asserted (a timing is not deterministic).
  */
 
 let pgc: TestContainer;
@@ -51,13 +51,28 @@ let api: TestKernel;
 let req: Req;
 
 /** The counters of the request being measured (its async context). */
-const counting = new AsyncLocalStorage<{ pg: string[]; redis: string[] }>();
+const counting = new AsyncLocalStorage<Counts>();
+
+/** What one request issued, and the fast-path passes it started after its commits. */
+interface Counts {
+  pg: string[];
+  redis: string[];
+  passes: Promise<void>[];
+}
 const pgQuery = pg.Client.prototype.query;
 const redisSend = Redis.prototype.sendCommand;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  api = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
+  api = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }), {
+    // each detached fast-path pass, kept with the request that started it
+    overrides: [
+      {
+        provide: OUTBOX_FAST_PATH_SETTLED,
+        useValue: (pass: Promise<void>) => counting.getStore()?.passes.push(pass),
+      },
+    ],
+  });
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
@@ -91,24 +106,17 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-/** Counts one message's path to its run job; returns the statements and commands issued. */
-async function measure(orgId: string, agentId: string): Promise<{ pg: string[]; redis: string[] }> {
+/**
+ * Counts one message's path to its run job: what the request issued until its response, then what
+ * the fast-path passes it started issued until they settled (awaited through the seam; no quiet
+ * period is guessed). The run's job must then be in BullMQ.
+ */
+async function measure(orgId: string, agentId: string): Promise<Counts> {
   const convId = await createConv(req, orgId, agentId);
-  const c = { pg: [] as string[], redis: [] as string[] };
+  const c: Counts = { pg: [], redis: [], passes: [] };
   const seq = await counting.run(c, () => postMessage(req, orgId, convId, "echo:hi"));
-  await waitFor(() => runs.getJob(runJobId(convId, seq)), 10_000, "the run job added");
-  await waitFor(
-    async () =>
-      (await db.selectFrom("outbox").select("id").execute()).length === 0 ? true : undefined,
-    10_000,
-    "the outbox drained",
-  );
-  // the tail of the fast path (its commit) and the after-commit notifications settle
-  let n = -1;
-  while (n !== c.pg.length + c.redis.length) {
-    n = c.pg.length + c.redis.length;
-    await sleep(200);
-  }
+  await Promise.all(c.passes);
+  expect(await runs.getJob(runJobId(convId, seq))).toBeDefined();
   return c;
 }
 
@@ -121,18 +129,15 @@ describe("message → run job added", () => {
     const [a, b] = [await measure(orgId, agentId), await measure(orgId, agentId)];
     expect([b.pg.length, b.redis.length]).toEqual([a.pg.length, a.redis.length]);
     expect({ pg: a.pg.length, redis: a.redis.length }, JSON.stringify(a, null, 1)).toEqual({
-      pg: 27 + 10,
-      redis: 6,
+      pg: 27 + 7,
+      redis: 4,
     });
-    // the outbox's share: two inserts and two claim transactions
+    // the outbox's share: two inserts and one claim transaction (the run job's)
     const outbox = a.pg.filter((q) => /"capybara"\."outbox"/.test(q));
-    // (the fast path's claim runs beside the request's direct ensureRun: compared without order)
     expect(outbox.map((q) => q.split(" ")[0]).sort()).toEqual([
       "delete",
-      "delete",
       "insert",
       "insert",
-      "select",
       "select",
     ]);
   }, 60_000);

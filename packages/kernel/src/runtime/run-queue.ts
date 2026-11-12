@@ -274,18 +274,7 @@ export class RunQueue {
     const trigger = fork
       ? { seq: fork.seq, accountId: (fork.payload as { authorAccountId: string }).authorAccountId }
       : last;
-    // BullMQ 对重复的 jobId 静默忽略（add 返回的 Job 由调用方数据构造，看不出是否真的入队）：
-    // 先显式查同一触发点的任务；仍存在（例如属于刚结束、尚未从队列移除的运行）就不插入 runs 行。
-    const jobId = runJobId(conversationId, Number(trigger.seq));
-    const existing = await this.jobs.getJob(jobId);
-    if (existing) {
-      this.log.warn("run job for this trigger already exists; not enqueuing", {
-        conversationId,
-        jobId,
-        existingRunId: existing.data?.runId,
-      });
-      return null;
-    }
+    const jobId = await this.jobIdFor(conversationId, Number(trigger.seq));
     const agent = await t
       .selectFrom("agents")
       .select(["current_version", "deleted_at"])
@@ -294,7 +283,7 @@ export class RunQueue {
     // agent 已软删除：会话对任何人都不可见，不再为它起运行。
     if (agent.deleted_at !== null) return null;
     const runId = randomUUID();
-    if (!(await this.oweJob(conversationId, runId, jobId, "chat", conv.org_id))) return null;
+    if (!(await this.oweJob(conversationId, runId, jobId.id, "chat", conv.org_id))) return null;
     // scheduled tasks spec §4: a task's message makes the run unattended; a wake inherits it
     // from the run that produced its event; a person's message never does
     const taskRunId = await scheduledTaskRunAt(t, conversationId, trigger.seq);
@@ -307,6 +296,7 @@ export class RunQueue {
         agent_version: agent.current_version,
         trigger_account_id: trigger.accountId,
         trigger_seq: Number(trigger.seq),
+        job_id: jobId.recorded,
         // a chat conversation always has its person-triggered run before any wake (a wake event
         // comes from a run of it or of its tree); null would only make the wake run its own window
         budget_run_id: isWake ? await budgetWindowOf(t, conversationId) : null,
@@ -316,6 +306,29 @@ export class RunQueue {
     // the task run its message started follows this run from now on (spec §6)
     if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
     return runId;
+  }
+
+  /**
+   * The job id of a new run for `seq` (in {@link ensureRunIn}'s transaction, read from PG only):
+   * the trigger's `runJobId` for its first run; a later run of the same trigger (a run that hit its
+   * deadline leaves the messages it did not absorb unconsumed, R34) gets `<runJobId>-<n>`,
+   * recorded in `runs.job_id`, so its job is never taken for the earlier run's (BullMQ ignores an
+   * add under the id of a job it still holds).
+   */
+  private async jobIdFor(
+    conversationId: string,
+    seq: number,
+  ): Promise<{ id: string; recorded: string | null }> {
+    const prior = await this.db
+      .selectFrom("runs")
+      .select(sql<string>`count(*)`.as("n"))
+      .where("conversation_id", "=", conversationId)
+      .where("trigger_seq", "=", String(seq))
+      .executeTakeFirst();
+    const n = Number(prior?.n ?? 0);
+    if (n === 0) return { id: runJobId(conversationId, seq), recorded: null };
+    const id = `${runJobId(conversationId, seq)}-${n + 1}`;
+    return { id, recorded: id };
   }
 
   /**
@@ -384,16 +397,7 @@ export class RunQueue {
       ));
     if (wake?.kind === "later") st.wakeLater = wake;
     if (wake?.kind !== "wake") return null;
-    const jobId = runJobId(conversationId, wake.seq);
-    const existing = await this.jobs.getJob(jobId, runQueueNameFor("subagent"));
-    if (existing) {
-      this.log.warn("run job for this trigger already exists; not enqueuing", {
-        conversationId,
-        jobId,
-        existingRunId: existing.data?.runId,
-      });
-      return null;
-    }
+    const jobId = await this.jobIdFor(conversationId, wake.seq);
     const agent = await t
       .selectFrom("agents")
       .select(["current_version", "deleted_at"])
@@ -409,7 +413,9 @@ export class RunQueue {
       .limit(1)
       .executeTakeFirst();
     const runId = randomUUID();
-    if (!(await this.oweJob(conversationId, runId, jobId, "subagent", conv.org_id))) return null;
+    if (!(await this.oweJob(conversationId, runId, jobId.id, "subagent", conv.org_id))) {
+      return null;
+    }
     await t
       .insertInto("runs")
       .values({
@@ -419,6 +425,7 @@ export class RunQueue {
         agent_version: previous?.agent_version ?? agent.current_version,
         trigger_account_id: wake.triggerAccountId,
         trigger_seq: wake.seq,
+        job_id: jobId.recorded,
         budget_run_id: await budgetWindowOf(t, rootId),
         // a parent's message or a wake: unattended when the run behind it was (scheduled tasks §4)
         scheduled_task_run_id: await scheduledTaskRunAt(t, conversationId, wake.seq),

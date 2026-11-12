@@ -3,14 +3,24 @@ import { OutboxDispatcher } from "./outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH, type OutboxFastPath, OutboxService } from "./outbox.service.js";
 
 /**
+ * Test seam (`KernelOverride`): receives each detached fast-path pass, so a test can await what a
+ * request started after its commit (the kernel never provides it).
+ */
+export const OUTBOX_FAST_PATH_SETTLED = Symbol("OUTBOX_FAST_PATH_SETTLED");
+
+/**
  * The fast path (spec §3.3): starts the dispatcher on a committed transaction's rows and returns
  * at once, so the commit's caller never waits on Redis (R9). `dispatchOwn` never throws; what it
  * does not deliver stays for the relay.
  */
 export const outboxFastPath =
-  (dispatcher: Pick<OutboxDispatcher, "dispatchOwn">): OutboxFastPath =>
+  (
+    dispatcher: Pick<OutboxDispatcher, "dispatchOwn">,
+    settled?: (pass: Promise<void>) => void,
+  ): OutboxFastPath =>
   async (ids) => {
-    void dispatcher.dispatchOwn(ids);
+    const pass = dispatcher.dispatchOwn(ids);
+    settled?.(pass);
   };
 
 /**
@@ -27,7 +37,14 @@ export const outboxFastPath =
   providers: [
     OutboxService,
     OutboxDispatcher,
-    { provide: OUTBOX_FAST_PATH, inject: [OutboxDispatcher], useFactory: outboxFastPath },
+    {
+      provide: OUTBOX_FAST_PATH,
+      inject: [OutboxDispatcher, { token: OUTBOX_FAST_PATH_SETTLED, optional: true }],
+      useFactory: (
+        dispatcher: OutboxDispatcher,
+        settled: ((pass: Promise<void>) => void) | undefined,
+      ) => outboxFastPath(dispatcher, settled ?? undefined),
+    },
   ],
   exports: [OutboxService, OutboxDispatcher, OUTBOX_FAST_PATH],
 })

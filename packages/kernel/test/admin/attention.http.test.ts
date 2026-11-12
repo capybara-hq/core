@@ -14,6 +14,7 @@ import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import type { AdminExtensionView } from "../../src/extensions/permission-view.js";
 import { PlatformInboxService } from "../../src/inbox/platform-inbox.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { QUEUE_LOST_JOBS_KEY, QueueLostJobs } from "../../src/runtime/queue-lost-jobs.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE_B } from "../helpers/model-plugins.js";
@@ -235,6 +236,36 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
     expect(a.unavailable).toEqual(["providers"]);
     expect(a.extensions.length).toBeGreaterThan(0);
     expect(r.body).not.toContain("sk-SECRET");
+  });
+});
+
+describe("the run queue's lost jobs (transactional outbox spec §8.3)", { timeout: 60_000 }, () => {
+  it("lists one queue_lost_jobs item with the count and the last loss, counted in attentionTotal", async () => {
+    await redis.del(QUEUE_LOST_JOBS_KEY);
+    expect((await attention()).queue).toEqual([]);
+    const before = (await root({ method: "GET", url: "/api/v1/admin/overview" })).json() as {
+      attentionTotal: number;
+    };
+    try {
+      // what the run-orphan-check reports for two queued runs whose jobs the queue lost
+      await k.app.get(QueueLostJobs).report(2);
+      const a = await attention();
+      expect(a.queue).toEqual([{ kind: "queue_lost_jobs", count: 2, lastAt: expect.any(String) }]);
+      expect(Number.isNaN(Date.parse(a.queue[0]?.lastAt ?? ""))).toBe(false);
+      expect(a.more.queue).toBe(0);
+      expect(a.unavailable).toEqual([]);
+      // a later loss adds to the count
+      await k.app.get(QueueLostJobs).report(1);
+      expect((await attention()).queue[0]?.count).toBe(3);
+      const after = (await root({ method: "GET", url: "/api/v1/admin/overview" })).json() as {
+        attentionTotal: number;
+      };
+      expect(after.attentionTotal).toBe(before.attentionTotal + 1);
+      // it expires a week after the last loss
+      expect(await redis.ttl(QUEUE_LOST_JOBS_KEY)).toBeGreaterThan(6 * 24 * 3600);
+    } finally {
+      await redis.del(QUEUE_LOST_JOBS_KEY);
+    }
   });
 });
 

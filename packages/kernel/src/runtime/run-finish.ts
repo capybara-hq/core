@@ -12,6 +12,7 @@ import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
 import {
   ACTIVE_RUN_STATUSES,
+  lockWaitRowsIn,
   oweEnsureRun,
   TERMINAL_STATUSES,
   type TerminalStatus,
@@ -91,7 +92,7 @@ export class RunFinish {
       .where("id", "=", a.conversationId)
       .forUpdate()
       .executeTakeFirst();
-    const pending = await this.lockWaitRows(a.runId);
+    const pending = await lockWaitRowsIn(t, a.runId);
     const run = await t
       .selectFrom("runs")
       .select("status")
@@ -132,32 +133,6 @@ export class RunFinish {
     }
     if (conv) await this.oweTreeWork(a, conv.kind, conv.org_id);
     return seq;
-  }
-
-  /**
-   * Locks the run's approval and input request rows (`FOR UPDATE`, in id order) between its
-   * conversation row and its run row; returns whether any of them is pending.
-   */
-  private async lockWaitRows(runId: string): Promise<{ approvals: boolean; questions: boolean }> {
-    const t = this.kdb.db;
-    const approvals = await t
-      .selectFrom("approvals")
-      .select("status")
-      .where("run_id", "=", runId)
-      .orderBy("id")
-      .forUpdate()
-      .execute();
-    const questions = await t
-      .selectFrom("questions")
-      .select("status")
-      .where("run_id", "=", runId)
-      .orderBy("id")
-      .forUpdate()
-      .execute();
-    return {
-      approvals: approvals.some((r) => r.status === "pending"),
-      questions: questions.some((r) => r.status === "pending"),
-    };
   }
 
   /** {@link finishIn}'s owed stops and delivery of a run's sub-agent tree. */

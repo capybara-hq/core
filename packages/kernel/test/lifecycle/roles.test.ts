@@ -215,6 +215,9 @@ describe("role modules", () => {
     expect(a.get(LockedIntervalScheduler).names()).toEqual(
       expect.arrayContaining([PLUGINS_RECONCILE_JOB, RUN_ORPHAN_CHECK_JOB]),
     );
+    // job names become lock keys and BullMQ-adjacent ids: no `:`
+    expect(RUN_ORPHAN_CHECK_JOB).not.toContain(":");
+    expect(a.get(LockedIntervalScheduler).periodOf(RUN_ORPHAN_CHECK_JOB)).toBe(60_000);
     workerSchedules = schedulesOf(a);
     const { jobHosts, processors } = scan(a);
     expect(jobHosts).toEqual([

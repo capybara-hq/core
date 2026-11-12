@@ -165,15 +165,19 @@ async function expectEnsureRunOwed(convId: string, orgId: string, seq: number): 
 }
 
 /**
- * Redis is back: once every owed row records its fast path's failed attempt (so no fast-path pass
- * still holds a row), turns the dispatch seam off, makes every owed row due now (the ensure-run's
- * 30 s included) and delivers them with the relay's pass.
+ * Redis is back: once every owed row due now records its fast path's failed attempt (so no
+ * fast-path pass still holds a row; a delayed row, such as the ensure-run backstop, never goes
+ * through the fast path, ruling R20), turns the dispatch seam off, makes every owed row due now
+ * (the ensure-run's 30 s included) and delivers them with the relay's pass.
  */
 async function deliverOwed(): Promise<void> {
   await waitFor(
     async () => {
-      const rows = await db.selectFrom("outbox").select("attempts").execute();
-      return rows.length > 0 && rows.every((r) => r.attempts >= 1);
+      const rows = await db
+        .selectFrom("outbox")
+        .select(["attempts", sql<boolean>`COALESCE(run_at > now(), false)`.as("delayed")])
+        .execute();
+      return rows.length > 0 && rows.every((r) => r.attempts >= 1 || r.delayed);
     },
     10_000,
     "the fast paths' failed attempts recorded",

@@ -125,7 +125,6 @@ export function conversationsFor(
     { isAccessible: async () => true },
     d.runs ?? noRuns,
     { resolve: refuse("providers") },
-    quiet,
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },

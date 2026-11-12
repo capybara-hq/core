@@ -784,27 +784,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await consumedSeq(db, convId)).toBe(hello);
   });
 
-  it("同一触发点的任务已存在（属于另一个运行）→ ensureRun 不投递、不留下 queued 行", async () => {
-    const { orgId, convId } = await setup();
-    const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
-    const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
-    try {
-      // 预先放一个同 jobId 的延迟任务（模拟仍在队列中的旧运行任务）
-      await q.add(
-        "run",
-        { runId: "other-run", conversationId: convId },
-        { jobId: runJobId(convId, 1), delay: 60_000 },
-      );
-      await postMessage(req, orgId, convId, "echo:x");
-      expect(await runsOf(db, convId)).toEqual([]);
-      const job = await q.getJob(runJobId(convId, 1));
-      expect(job?.data.runId).toBe("other-run");
-      await job?.remove();
-    } finally {
-      await q.close();
-      conn.disconnect();
-    }
-  });
+  // A second run of the same trigger gets its own job id (`<runJobId>-<n>`, read from PG; ruling
+  // R21): run-queue-outbox.test.ts "a second run of the same trigger gets its own job id".
 });
 
 /**

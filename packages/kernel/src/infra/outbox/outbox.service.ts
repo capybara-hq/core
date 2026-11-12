@@ -45,7 +45,8 @@ const pendingIds = new WeakMap<object, string[]>();
 
 /**
  * Writes owed work as a row in the caller's transaction (spec §3.2): the row commits or rolls back
- * with the business write, and after the commit the fast path delivers it.
+ * with the business write, and after the commit the fast path delivers it when it is due now (a
+ * row with a future `runAt` waits for the relay, spec §3.3).
  */
 @Injectable()
 export class OutboxService {
@@ -88,7 +89,12 @@ export class OutboxService {
       .returning("id")
       .executeTakeFirst();
     if (row) {
-      this.deliverAfterCommit(row.id);
+      // only a job due now goes through the fast path (ruling R20): a delayed one (a backstop, a
+      // timeout) is claimed by the relay within its next tick and added with its remaining delay,
+      // so the commit's caller spends no claim transaction on work due in seconds or hours
+      if (job.runAt === undefined || job.runAt.getTime() <= Date.now()) {
+        this.deliverAfterCommit(row.id);
+      }
       return true;
     }
     const stored = await this.db

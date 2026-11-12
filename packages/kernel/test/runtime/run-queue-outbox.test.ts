@@ -250,6 +250,38 @@ describe("RunQueue.ensureRun through the outbox", () => {
     expect(evs.filter((e) => e.type === "run_failed")).toEqual([]);
   }, 30_000);
 
+  it("a second run of the same trigger gets its own job id, so the earlier run's job never hides it", async () => {
+    const { orgId, convId } = await setup();
+    const seq = await postMessage(req, orgId, convId, "echo:again");
+    const [first] = await runRows(convId);
+    await fastPathFailed(convId);
+    await relayPass();
+    expect(await runs.getJob(runJobId(convId, seq))).toBeDefined();
+    // the run ended at its deadline without absorbing its message (R34): the trigger stays
+    // unconsumed while BullMQ still holds the first run's job
+    await db
+      .updateTable("runs")
+      .set({ status: "completed", finished_at: sql<Date>`now()` })
+      .where("id", "=", first?.id as string)
+      .execute();
+    failing = true;
+    const second = await api.app.get(RunQueue).ensureRun(convId);
+    expect(second).not.toBeNull();
+    const again = `${runJobId(convId, seq)}-2`;
+    const row = await db
+      .selectFrom("runs")
+      .select(["trigger_seq", "job_id", "status"])
+      .where("id", "=", second as string)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ trigger_seq: String(seq), job_id: again, status: "queued" });
+    expect(await owedRows(convId)).toEqual([
+      expect.objectContaining({ job_id: again, data: { runId: second, conversationId: convId } }),
+    ]);
+    await fastPathFailed(convId);
+    await relayPass();
+    expect((await runs.getJob(again))?.data).toEqual({ runId: second, conversationId: convId });
+  }, 30_000);
+
   it("a sub-agent's run started by ensureRun owes its job on the sub-agent queue", async () => {
     const { orgId, agentId, convId } = await setup();
     const child = randomUUID();

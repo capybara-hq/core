@@ -31,8 +31,15 @@ export const RUN_ORPHAN_CHECK_PERIOD_MS = 60_000;
  */
 export const RUN_ORPHAN_MIN_AGE_MS = 60_000;
 
-/** The most runs one pass looks at; the rest wait for the next minute. */
+/** The candidates one page of a pass reads (a keyset page over the state's start time and id). */
 export const RUN_ORPHAN_CHECK_BATCH = 500;
+
+/**
+ * The most pages one pass reads: a bound on its work. Healthy long runs and queued runs waiting
+ * for a quota slot are passed over page by page, so a real orphan behind them is still reached;
+ * beyond this many candidates the rest wait for the next minute.
+ */
+export const RUN_ORPHAN_CHECK_MAX_PAGES = 10;
 
 /** The error the canary logs (transactional outbox spec §8.3). */
 export const QUEUE_LOST_JOBS_MESSAGE = "queued run without a job: the queue lost jobs";
@@ -63,16 +70,18 @@ export interface OrphanCandidate {
 const SINCE = sql<Date>`GREATEST(COALESCE(r.queued_at, r.created_at), COALESCE(r.started_at, r.created_at))`;
 
 /**
- * Active runs of chat and sub-agent conversations in `statuses` that entered their state more than
- * `minAgeMs` ago, oldest first (an eval's hidden conversation drives its runs itself).
+ * One page of the active runs of chat and sub-agent conversations in `statuses` that entered their
+ * state more than `minAgeMs` ago, by (state start, id), after `after` (an eval's hidden
+ * conversation drives its runs itself).
  */
 export async function orphanCandidates(
   db: KernelSchemaDb,
   statuses: readonly ("queued" | "running")[],
   minAgeMs: number,
   limit: number,
+  after?: Pick<OrphanCandidate, "since" | "runId">,
 ): Promise<OrphanCandidate[]> {
-  const rows = await db
+  let q = db
     .selectFrom("runs as r")
     .innerJoin("conversations as c", "c.id", "r.conversation_id")
     .select([
@@ -87,10 +96,11 @@ export async function orphanCandidates(
     ])
     .where("r.status", "in", statuses)
     .where("c.kind", "in", ["chat", "subagent"])
-    .where(SINCE, "<", sql<Date>`now() - ${minAgeMs}::integer * interval '1 millisecond'`)
-    .orderBy(SINCE)
-    .limit(limit)
-    .execute();
+    .where(SINCE, "<", sql<Date>`now() - ${minAgeMs}::integer * interval '1 millisecond'`);
+  if (after !== undefined) {
+    q = q.where(sql<boolean>`(${SINCE}, r.id) > (${after.since}::timestamptz, ${after.runId})`);
+  }
+  const rows = await q.orderBy(SINCE).orderBy("r.id").limit(limit).execute();
   return rows.map((r) => ({
     runId: r.id,
     conversationId: r.conversation_id,
@@ -103,22 +113,44 @@ export async function orphanCandidates(
   }));
 }
 
-/** Whether the outbox still owes the job `jobId` on `queue` (a pending row, not dead). */
-export async function jobOwed(db: KernelSchemaDb, queue: string, jobId: string): Promise<boolean> {
+/**
+ * Whether the outbox holds the job `jobId` on `queue`: a pending row (it is still owed) or a dead
+ * one (the outbox gave up on it; the super admin sees it under `outbox_dead` and retries or
+ * discards it, so it is not a job the queue lost).
+ */
+export async function jobInOutbox(
+  db: KernelSchemaDb,
+  queue: string,
+  jobId: string,
+): Promise<boolean> {
   const row = await db
     .selectFrom("outbox")
     .select("id")
     .where("queue", "=", queue)
     .where("job_id", "=", jobId)
-    .where("dead_at", "is", null)
     .executeTakeFirst();
   return row !== undefined;
 }
 
+/** Every page of {@link orphanCandidates}, at most {@link RUN_ORPHAN_CHECK_MAX_PAGES}. */
+async function* candidatePages(
+  db: KernelSchemaDb,
+  statuses: readonly ("queued" | "running")[],
+  minAgeMs: number,
+): AsyncGenerator<OrphanCandidate[]> {
+  let after: OrphanCandidate | undefined;
+  for (let page = 0; page < RUN_ORPHAN_CHECK_MAX_PAGES; page++) {
+    const rows = await orphanCandidates(db, statuses, minAgeMs, RUN_ORPHAN_CHECK_BATCH, after);
+    if (rows.length > 0) yield rows;
+    if (rows.length < RUN_ORPHAN_CHECK_BATCH) return;
+    after = rows[rows.length - 1];
+  }
+}
+
 /**
- * The `queued` runs (in their state for over `minAgeMs`) whose job is neither owed by the outbox
- * nor in BullMQ (`jobExists`), and that are still queued after both looks: the run queue lost their
- * jobs. The outbox is read before BullMQ (a row is deleted only after its job was added) and the
+ * The `queued` runs (in their state for over `minAgeMs`) whose job is neither in the outbox
+ * (owed, or dead) nor in BullMQ (`jobExists`), and that are still queued after both looks: the run
+ * queue lost their jobs. The outbox is read before BullMQ (a row is deleted only after its job was added) and the
  * run again after both (a job that finished took its run out of `queued` first), so a run in
  * flight is never reported. The `run-orphan-check` uses it; so does the dual-replica test harness,
  * which asserts at its teardown that the kernel left none (`minAgeMs` 0).
@@ -126,24 +158,20 @@ export async function jobOwed(db: KernelSchemaDb, queue: string, jobId: string):
 export async function queuedRunsWithoutJob(
   db: KernelSchemaDb,
   jobExists: (queue: string, jobId: string) => Promise<boolean>,
-  opts: { minAgeMs: number; limit?: number },
+  opts: { minAgeMs: number },
 ): Promise<OrphanCandidate[]> {
   const out: OrphanCandidate[] = [];
-  const candidates = await orphanCandidates(
-    db,
-    ["queued"],
-    opts.minAgeMs,
-    opts.limit ?? RUN_ORPHAN_CHECK_BATCH,
-  );
-  for (const c of candidates) {
-    if (await jobOwed(db, c.queue, c.jobId)) continue;
-    if (await jobExists(c.queue, c.jobId)) continue;
-    const now = await db
-      .selectFrom("runs")
-      .select("status")
-      .where("id", "=", c.runId)
-      .executeTakeFirst();
-    if (now?.status === "queued") out.push(c);
+  for await (const page of candidatePages(db, ["queued"], opts.minAgeMs)) {
+    for (const c of page) {
+      if (await jobInOutbox(db, c.queue, c.jobId)) continue;
+      if (await jobExists(c.queue, c.jobId)) continue;
+      const now = await db
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", c.runId)
+        .executeTakeFirst();
+      if (now?.status === "queued") out.push(c);
+    }
   }
   return out;
 }
@@ -158,7 +186,7 @@ export async function queuedRunsWithoutJob(
  *   `run.orphaned` (its terminal transaction cancels its waits and owes what every run end owes),
  *   then, after the commit, its checkpoints are dropped, its fork child stopped (`run.orphaned`), a
  *   sub-agent's failure delivered to its parent at once and the conversation's next run started.
- * - `queued`, with no pending outbox row either: a canary. Every queued run has its job owed in its
+ * - `queued`, with no outbox row either (pending or dead): a canary. Every queued run has its job owed in its
  *   own transaction, so this means Redis lost data. It is logged as an error, counted for the admin
  *   overview ({@link QueueLostJobs}) and its job owed again so the run is not stuck.
  * Redis is read before each repair's transaction, which then re-reads the run under its
@@ -199,24 +227,21 @@ export class RunOrphanCheck {
   /** One pass: repairs the orphans it finds (each on its own; a failure is logged). */
   async check(): Promise<RunOrphanCheckResult> {
     const out: RunOrphanCheckResult = { runningRepaired: 0, queuedReadded: 0 };
-    const candidates = await orphanCandidates(
-      this.db,
-      ["queued", "running"],
-      RUN_ORPHAN_MIN_AGE_MS,
-      RUN_ORPHAN_CHECK_BATCH,
-    );
     const lost: OrphanCandidate[] = [];
-    for (const c of candidates) {
-      try {
-        if (!(await this.withoutJobOrHolder(c))) continue;
-        if (c.status === "running") {
-          if (await this.failRunning(c)) out.runningRepaired++;
-        } else if (await this.oweAgainIn(c)) {
-          out.queuedReadded++;
-          lost.push(c);
+    const pages = candidatePages(this.db, ["queued", "running"], RUN_ORPHAN_MIN_AGE_MS);
+    for await (const page of pages) {
+      for (const c of page) {
+        try {
+          if (!(await this.withoutJobOrHolder(c))) continue;
+          if (c.status === "running") {
+            if (await this.failRunning(c)) out.runningRepaired++;
+          } else if (await this.oweAgainIn(c)) {
+            out.queuedReadded++;
+            lost.push(c);
+          }
+        } catch (err) {
+          this.log.error("run-orphan-check: cannot repair a run", { runId: c.runId, err });
         }
-      } catch (err) {
-        this.log.error("run-orphan-check: cannot repair a run", { runId: c.runId, err });
       }
     }
     if (lost.length > 0) {
@@ -229,10 +254,13 @@ export class RunOrphanCheck {
     return out;
   }
 
-  /** Neither a conversation lock holder nor the run's job in BullMQ (nor, queued, owed). */
+  /**
+   * Neither a conversation lock holder nor the run's job in BullMQ (nor, queued, in the outbox: an
+   * owed row is delivered by the relay, a dead one waits for the super admin).
+   */
   private async withoutJobOrHolder(c: OrphanCandidate): Promise<boolean> {
     if ((await this.lock.holder(c.conversationId)) !== null) return false;
-    if (c.status === "queued" && (await jobOwed(this.db, c.queue, c.jobId))) return false;
+    if (c.status === "queued" && (await jobInOutbox(this.db, c.queue, c.jobId))) return false;
     return (await this.jobs.getJob(c.jobId, c.queue)) === undefined;
   }
 

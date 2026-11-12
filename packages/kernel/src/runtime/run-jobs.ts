@@ -2,7 +2,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
 import { sql } from "kysely";
-import type { ConversationKind } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -40,6 +40,36 @@ export const TERMINAL_STATUSES: ReadonlySet<string> = new Set<TerminalStatus>([
   "failed",
   "aborted",
 ]);
+
+/**
+ * Locks a run's approval and input request rows (`FOR UPDATE`, in id order) in the caller's
+ * transaction, after its conversation row and before its run row: the one lock order of every path
+ * that writes them (conversation, decided rows, run; ruling R19), so a stop, a run's end, a decision
+ * and a timeout never deadlock. Returns whether any of them is still pending.
+ */
+export async function lockWaitRowsIn(
+  t: KernelSchemaDb,
+  runId: string,
+): Promise<{ approvals: boolean; questions: boolean }> {
+  const approvals = await t
+    .selectFrom("approvals")
+    .select("status")
+    .where("run_id", "=", runId)
+    .orderBy("id")
+    .forUpdate()
+    .execute();
+  const questions = await t
+    .selectFrom("questions")
+    .select("status")
+    .where("run_id", "=", runId)
+    .orderBy("id")
+    .forUpdate()
+    .execute();
+  return {
+    approvals: approvals.some((r) => r.status === "pending"),
+    questions: questions.some((r) => r.status === "pending"),
+  };
+}
 
 /** 运行任务的数据。 */
 export interface RunJobData {

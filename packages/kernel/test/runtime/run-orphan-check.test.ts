@@ -378,6 +378,57 @@ describe("run-orphan-check", () => {
     expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
   }, 60_000);
 
+  it("reaches an orphan behind a full page of healthy candidates, and skips a dead-lettered job", async () => {
+    // 600 queued runs older than the orphan, each with its job still owed (Redis was down): a
+    // first page of candidates the check must pass over
+    await sql`
+      WITH c AS (
+        INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, title)
+        SELECT gen_random_uuid()::text, ${orgId}, ${agentId}, ${ownerId}, 'Waiting'
+        FROM generate_series(1, 600)
+        RETURNING id
+      ), r AS (
+        INSERT INTO capybara.runs
+          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq,
+           created_at, queued_at)
+        SELECT gen_random_uuid()::text, id, 'queued', 1, ${ownerId}, 1,
+          now() - interval '10 minutes', now() - interval '10 minutes'
+        FROM c
+        RETURNING id, conversation_id
+      )
+      INSERT INTO capybara.outbox (queue, job_name, job_id, data, org_id, next_attempt_at)
+      SELECT ${RUN_QUEUE_NAME}, 'run', 'run-' || conversation_id || '-1',
+        jsonb_build_object('runId', id, 'conversationId', conversation_id), ${orgId},
+        now() + interval '1 hour'
+      FROM r`.execute(db);
+    // a queued run whose job the outbox gave up on (dead): the super admin's, not a lost job
+    const dead = await runningOrphan();
+    await db.updateTable("runs").set({ status: "queued" }).where("id", "=", dead.runId).execute();
+    await db
+      .insertInto("outbox")
+      .values({
+        queue: RUN_QUEUE_NAME,
+        job_name: "run",
+        job_id: runJobId(dead.conv, dead.seq),
+        data: JSON.stringify({ runId: dead.runId, conversationId: dead.conv }),
+        org_id: orgId,
+        attempts: 20,
+        dead_at: sql<Date>`now()`,
+      })
+      .execute();
+    // the real orphan, in its state for less long than all of them
+    const { runId } = await runningOrphan();
+    await db
+      .updateTable("runs")
+      .set({ started_at: sql<Date>`now() - interval '2 minutes'` })
+      .where("id", "=", runId)
+      .execute();
+    expect(await check()).toEqual({ runningRepaired: 1, queuedReadded: 0 });
+    expect(await runStatus(db, runId)).toBe("failed");
+    expect(await runStatus(db, dead.runId)).toBe("queued");
+    expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
+  }, 60_000);
+
   it("GET events and opening SSE never change run state", async () => {
     const { conv, runId } = await runningOrphan();
     const jar = cookieJar();

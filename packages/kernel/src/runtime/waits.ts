@@ -31,7 +31,7 @@ import { subagentWaitingIdemKey, type WaitingFor } from "./loop.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
-import { RunResume, resumeJobId, TERMINAL_STATUSES } from "./run-jobs.js";
+import { lockWaitRowsIn, RunResume, resumeJobId, TERMINAL_STATUSES } from "./run-jobs.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
 import {
   childResult,
@@ -367,7 +367,7 @@ export class Waits implements OnApplicationShutdown {
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
-    await this.lockWaitRows(runId);
+    await lockWaitRowsIn(t, runId);
     const run = await t
       .selectFrom("runs")
       .select("status")
@@ -441,28 +441,6 @@ export class Waits implements OnApplicationShutdown {
         payload: { byAccountId, reason: "user", ...(detail !== undefined && { detail }) },
       },
     });
-  }
-
-  /**
-   * Locks the run's approval and input request rows (`FOR UPDATE`), in the caller's transaction,
-   * after its conversation and before its run row: the one lock order of every path that writes
-   * them (conversation, decided rows, run), so a stop never deadlocks with a decision or timeout.
-   */
-  private async lockWaitRows(runId: string): Promise<void> {
-    await this.db
-      .selectFrom("approvals")
-      .select("id")
-      .where("run_id", "=", runId)
-      .orderBy("id")
-      .forUpdate()
-      .execute();
-    await this.db
-      .selectFrom("questions")
-      .select("id")
-      .where("run_id", "=", runId)
-      .orderBy("id")
-      .forUpdate()
-      .execute();
   }
 
   /**
