@@ -354,7 +354,8 @@ Three new observe-only hook mount points, added to `HOOKS_AVAILABLE` **(designer
 
 - **Durable.** The firing transaction writes one outbox row per (event, plugin); delivery is
   a BullMQ job per row with a deterministic id (`lifecycle-<deliveryId>`, the row's id), enqueued
-  in `afterCommit`, consumed under `WorkerModule`, retried with backoff. The in-process `KernelEventMap` is not used.
+  in `afterCommit`, consumed under `WorkerModule`, retried with backoff. The in-process
+  `KernelEventMap` is not used.
 - **Who receives.** Every loaded plugin that registered the mount and declared it in
   `permissions.hooks`, **whether or not the org has it enabled**: cleanup concerns data the plugin
   already holds. A plugin not loaded at delivery time (uninstalled) gets nothing.
