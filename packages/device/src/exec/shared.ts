@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  realpathSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -49,41 +50,80 @@ const CACHE_DIRS: readonly (readonly [string, string])[] = [
   ["COREPACK_HOME", "corepack"],
 ];
 
-/**
- * Makes one cache folder a real directory: a file or a link a sandboxed command put in its place
- * is removed (never followed) and the folder made again. False when it still cannot be made.
- */
-function ensureCacheFolder(path: string): boolean {
+/** The device and inode of a real directory (never through a link); undefined otherwise. */
+function realDirId(path: string): string | undefined {
   try {
     const st = lstatSync(path);
-    if (st.isDirectory()) return true;
-    // unlink, not rm: rm skips a link whose target is missing.
-    unlinkSync(path);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false;
-  }
-  try {
-    mkdirSync(path, { recursive: true, mode: 0o700 });
-    return lstatSync(path).isDirectory();
+    return st.isDirectory() ? `${st.dev}:${st.ino}` : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
 /**
+ * Makes the cache root a real directory and returns its identity. Sandboxed commands may write
+ * the root (it is under `<dir>/cache`), so they can replace it with a link to a host folder: a
+ * link, a file or anything else in its place is unlinked (never followed) and the root made
+ * again, mode 0700. Its real path must then be its parent's real path plus its name (nothing in
+ * between resolves elsewhere). Undefined when it cannot be made a real directory.
+ */
+function ensureCacheRoot(root: string): string | undefined {
+  try {
+    const st = lstatSync(root);
+    // unlink, not rm: rm skips a link whose target is missing, and never recurse into a target.
+    if (!st.isDirectory()) unlinkSync(root);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+  }
+  try {
+    mkdirSync(root, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+  }
+  try {
+    if (realpathSync(root) !== join(realpathSync(dirname(root)), basename(root))) return undefined;
+  } catch {
+    return undefined;
+  }
+  return realDirId(root);
+}
+
+/**
+ * Makes one cache folder under a verified root: an existing real directory is used, a missing
+ * one is made (not recursively, so nothing is made through a link). A file or a link a command
+ * put in its place is left alone (never removed, never followed): its variable is left out.
+ */
+function ensureCacheFolder(path: string): boolean {
+  if (realDirId(path) !== undefined) return true;
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch {
+    return false;
+  }
+  return realDirId(path) !== undefined;
+}
+
+/**
  * The cache variables of `dev` / `open` (spec §5.2.1), each pointing at a folder of `root`
- * (`MAVEN_OPTS` as `-Dmaven.repo.local=<folder>`). With `create`, the folders are made on demand;
- * a folder that cannot be made (a command replaced it with something this program cannot remove)
- * leaves its variable out, so one broken cache never stops the next command. A command's own
- * value wins: callers apply the request's environment after these.
+ * (`MAVEN_OPTS` as `-Dmaven.repo.local=<folder>`). With `create` (on the host, before a
+ * sandboxed command), the root is made a real directory first ({@link ensureCacheRoot}) and the
+ * folders are made on demand; a folder that cannot be made leaves its variable out, and a root
+ * that cannot be made, or that was swapped while the folders were made, leaves every variable
+ * out, so a broken cache never stops the next command. A command's
+ * own value wins: callers apply the request's environment after these.
  */
 export function cacheEnv(root: string, opts: { create?: boolean } = {}): Record<string, string> {
+  const create = opts.create === true;
+  const rootId = create ? ensureCacheRoot(root) : undefined;
+  if (create && rootId === undefined) return {};
   const out: Record<string, string> = {};
   for (const [name, sub] of CACHE_DIRS) {
     const path = join(root, sub);
-    if (opts.create === true && !ensureCacheFolder(path)) continue;
+    if (create && !ensureCacheFolder(path)) continue;
     out[name] = name === "MAVEN_OPTS" ? `-Dmaven.repo.local=${path}` : path;
   }
+  // A concurrent command may have swapped the root meanwhile: then trust none of the folders.
+  if (create && realDirId(root) !== rootId) return {};
   return out;
 }
 

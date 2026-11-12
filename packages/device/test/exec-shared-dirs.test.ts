@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -71,23 +72,51 @@ describe("cacheEnv", () => {
     expect(existsSync(join(base, "none"))).toBe(false);
   });
 
-  it("replaces a file or a link in a folder's place, never following the link", () => {
+  it("leaves out a folder a command replaced with a file or a link, never touching it", () => {
     const root = join(base, "cache");
     mkdirSync(root);
     writeFileSync(join(root, "npm"), "x");
-    const outside = join(base, "outside");
-    symlinkSync(outside, join(root, "pip"));
+    const victim = join(base, "victim");
+    mkdirSync(victim);
+    writeFileSync(join(victim, "keep"), "x");
+    symlinkSync(victim, join(root, "pip"));
     const env = cacheEnv(root, { create: true });
-    expect(env.npm_config_cache).toBe(join(root, "npm"));
-    expect(lstatSync(join(root, "npm")).isDirectory()).toBe(true);
-    expect(lstatSync(join(root, "pip")).isDirectory()).toBe(true);
-    expect(existsSync(outside)).toBe(false);
+    expect(env.npm_config_cache).toBeUndefined();
+    expect(env.PIP_CACHE_DIR).toBeUndefined();
+    expect(env.UV_CACHE_DIR).toBe(join(root, "uv"));
+    // neither replaced nor followed
+    expect(lstatSync(join(root, "npm")).isFile()).toBe(true);
+    expect(lstatSync(join(root, "pip")).isSymbolicLink()).toBe(true);
+    expect(readdirSync(victim)).toEqual(["keep"]);
   });
 
-  it("leaves out a variable whose folder cannot be made, never throwing", () => {
-    // the cache root itself is a file: no folder can be made under it
+  it("removes a link in the cache root's place without following it", () => {
+    // a sandboxed command may write <dir>/cache: rm -rf it and link it to a host folder
+    const victim = join(base, "victim");
+    mkdirSync(victim);
+    writeFileSync(join(victim, "npm"), "x");
+    const root = join(base, "cache");
+    symlinkSync(victim, root);
+    const env = cacheEnv(root, { create: true });
+    expect(env.npm_config_cache).toBe(join(root, "npm"));
+    expect(lstatSync(root).isDirectory()).toBe(true);
+    expect(statSync(root).mode & 0o777).toBe(0o700);
+    // the link's target is untouched: its file stays, no folder was made there
+    expect(readdirSync(victim)).toEqual(["npm"]);
+    expect(lstatSync(join(victim, "npm")).isFile()).toBe(true);
+  });
+
+  it("replaces a file in the cache root's place", () => {
     const root = join(base, "cache");
     writeFileSync(root, "x");
-    expect(cacheEnv(root, { create: true })).toEqual({});
+    expect(Object.keys(cacheEnv(root, { create: true }))).toHaveLength(12);
+    expect(lstatSync(root).isDirectory()).toBe(true);
+  });
+
+  it("leaves every variable out when the cache root cannot be made, never throwing", () => {
+    // the cache root's parent is a file: nothing can be made
+    const parent = join(base, "file");
+    writeFileSync(parent, "x");
+    expect(cacheEnv(join(parent, "cache"), { create: true })).toEqual({});
   });
 });
