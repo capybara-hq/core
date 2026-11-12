@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -26,6 +27,7 @@ import {
   session,
   startKernel,
   type TestKernel,
+  waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
 
@@ -178,5 +180,71 @@ describe("extension tools by conversation source", { timeout: 60_000 }, () => {
       expect(r.isError).toBe(true);
       expect(r.content).toContain(`Not available in ${source} conversations`);
     }
+  });
+
+  it("a full-run replay offers the tools of the original conversation's source", async () => {
+    // the original: a group-chat conversation, whose requests never offered `web-only`
+    const conv = await createConv(owner, orgId, agentId);
+    await setSource(conv, "channel_group");
+    await waitForTerminal(db, conv, await postMessage(owner, orgId, conv, "echo:hi"), 20_000);
+    const [orig] = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    const set = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/eval-sets`,
+      payload: { agentId, name: "Sources" },
+    });
+    expect(set.statusCode, set.body).toBe(201);
+    const setId = (set.json() as { set: { id: string } }).set.id;
+    const added = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/eval-sets/${setId}/cases`,
+      payload: { conversationId: conv, runId: orig?.id },
+    });
+    expect(added.statusCode, added.body).toBe(201);
+    const started = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/eval-sets/${setId}/runs`,
+      payload: { mode: "run", candidate: {}, judge: false },
+    });
+    expect(started.statusCode, started.body).toBe(201);
+    const runId = (started.json() as { run: EvalRunView }).run.id;
+    const [result] = await waitFor(
+      async () => {
+        const r = await owner({
+          method: "GET",
+          url: `/api/v1/orgs/${orgId}/eval-runs/${runId}/results?limit=10`,
+        });
+        const rs = (r.json() as { results: EvalResultView[] }).results;
+        return rs.length > 0 && rs.every((x) => x.status !== "pending" && x.status !== "running")
+          ? rs
+          : null;
+      },
+      30_000,
+      "eval result",
+      100,
+    );
+    expect(result?.status, JSON.stringify(result?.error)).toBe("done");
+    const evalConv = result?.evalConversationId as string;
+    const calls = (await eventsOf(db, evalConv)).filter((e) => e.type === "model_call");
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      const req = (
+        c.payload as { request: { tools?: { key: string }[]; catalog?: { key: string }[] } }
+      ).request;
+      const keys = [...(req.tools ?? []), ...(req.catalog ?? [])].map((t) => t.key);
+      expect(keys).toContain("plugin__fake-tools-ui__write");
+      expect(keys).not.toContain(KEY);
+    }
+    // the eval conversation is seeded with the original source
+    const row = await db
+      .selectFrom("conversations")
+      .select("source")
+      .where("id", "=", evalConv)
+      .executeTakeFirstOrThrow();
+    expect(row.source).toBe("channel_group");
   });
 });

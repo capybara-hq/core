@@ -1,4 +1,4 @@
-import type { ToolSpec } from "@capybara-hq/plugin-sdk";
+import type { ConversationSource, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type {
   ConversationEvent,
@@ -30,6 +30,12 @@ export interface CaseSnapshot {
   runId: string;
   agentId: string;
   agentVersion: number;
+  /**
+   * The original conversation's source (memory plugin spec §6.2): a full-run replay offers the
+   * tools of this source. Cases taken before it was recorded have none (replayed as `web`, or as
+   * `subagent` for a child case).
+   */
+  source?: ConversationSource;
   /** seq ≤ 该运行终态事件的 seq，按 seq 升序。 */
   events: SnapshotEvent[];
   /** 事件里各次运行（`run_started`）与本运行引用的 agent 版本 → 定义。 */
@@ -84,7 +90,7 @@ export async function takeSnapshot(
 ): Promise<CaseSnapshot> {
   const conv = await db
     .selectFrom("conversations")
-    .select(["agent_id", "kind"])
+    .select(["agent_id", "kind", "source"])
     .where("id", "=", conversationId)
     .where("org_id", "=", orgId)
     .executeTakeFirst();
@@ -201,6 +207,7 @@ export async function takeSnapshot(
     runId,
     agentId: conv.agent_id,
     agentVersion: run.agent_version,
+    source: conv.source,
     events,
     definitions,
     toolSpecs,

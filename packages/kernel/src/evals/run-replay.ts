@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type ContentBlock,
+  type ConversationSource,
   type Logger,
   ModelError,
   type ModelRequest,
@@ -142,6 +143,8 @@ export interface ReplaySeed {
   evalRunId: string;
   orgId: string;
   agentId: string;
+  /** The original conversation's source: the replay offers the tools of this source. */
+  source: ConversationSource;
   accountId: string;
   conversationId: string;
   runId: string;
@@ -211,7 +214,7 @@ export class EvalReplaySeeder {
         consumed_seq: p.consumed,
         kind: "eval",
         eval_run_id: evalRunId,
-        source: "web",
+        source: p.source,
       })
       .execute();
     for (let i = 0; i < p.seeds.length; i += SEED_BATCH) {
@@ -516,6 +519,10 @@ export async function replayRun(
     (triggerEvent.payload as { skill?: unknown; dispatch?: unknown }).skill !== undefined &&
     (triggerEvent.payload as { dispatch?: unknown }).dispatch !== undefined;
 
+  // the original conversation's source (recorded in the case); a case taken before it was
+  // recorded replays as its run did by default: a web conversation, or a sub-agent's for a child
+  const source: ConversationSource = s.source ?? (subagent === undefined ? "web" : "subagent");
+
   const conversationId = randomUUID();
   const runId = randomUUID();
   await d.seeder.seed(
@@ -523,6 +530,7 @@ export async function replayRun(
       evalRunId,
       orgId: s.orgId,
       agentId: s.agentId,
+      source,
       accountId,
       conversationId,
       runId,
@@ -728,8 +736,8 @@ export async function replayRun(
       runId,
       agentId: s.agentId,
       triggerAccountId: accountId,
-      // the seeded conversation's source; a child case lists its tools as a sub-agent's
-      source: subagent === undefined ? "web" : "subagent",
+      // the seeded conversation's source (the original's): its tools are the original's
+      source,
       ownerAccountId: accountId,
       role: membership?.role ?? "guest",
       agent,
