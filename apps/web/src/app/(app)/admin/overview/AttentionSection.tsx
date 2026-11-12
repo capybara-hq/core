@@ -13,7 +13,7 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
@@ -144,8 +144,18 @@ function AttentionGroups({
   locale: string;
 }) {
   const attention = read ?? NO_ATTENTION;
+  // the dead rows are read on their own, only when the summary says there are some
+  const dq = adminOutboxDeadQuery();
+  const dead = useQuery({
+    ...dq,
+    retryOnMount: retryOnMountOf(dq.queryKey),
+    enabled: attention.outbox.length > 0,
+  });
+  const deadFailed = dead.data === undefined && dead.error !== null;
   const unavailable = new Set<string>(attention.unavailable);
   if (inbox === null) unavailable.add("inbox");
+  // the rows could not be read: the group says so with 重试, never a bare count
+  if (deadFailed) unavailable.add("outbox");
   const more = (source: Exclude<AttentionSource, "outbox" | "queue">): ItemListRow[] =>
     attention.more[source] > 0
       ? [
@@ -234,7 +244,9 @@ function AttentionGroups({
         : null
       : read === null
         ? retryAttention
-        : null;
+        : g.source === "outbox" && deadFailed
+          ? () => void dead.refetch()
+          : null;
   if (shown.length === 0) return <EmptyState size="panel" text={t("empty")} />;
   return shown.map((g) => {
     const retry = retryOf(g);
@@ -260,7 +272,7 @@ function AttentionGroups({
             {t("unavailable")}
           </Text>
         ) : g.id === "outbox" ? (
-          <OutboxDeadList label={g.title} summary={attention.outbox} t={t} />
+          <OutboxDeadList label={g.title} summary={attention.outbox} dead={dead} t={t} />
         ) : (
           <ItemList label={g.title} rows={g.rows} />
         )}
@@ -272,21 +284,22 @@ function AttentionGroups({
 /**
  * The dead outbox rows (transactional outbox spec §3.4): each with its job, queue and last error,
  * 重试 (queued again; dropped instead when the same job is owed already) and 丢弃 (after a
- * confirmation: the job never runs). Until the rows are read, the summary's count stands in.
+ * confirmation: the job never runs). Until the rows are read, the summary's count stands in; a
+ * failed read is the group's unavailable state (with 重试), drawn by the caller.
  */
 function OutboxDeadList({
   label,
   summary,
+  dead,
   t,
 }: {
   label: string;
   summary: AttentionOutboxDead[];
+  dead: UseQueryResult<{ items: OutboxDeadRow[] }>;
   t: T;
 }) {
   const errorMessage = useErrorMessage();
   const toast = useToast();
-  const q = adminOutboxDeadQuery();
-  const dead = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
   const [discarding, setDiscarding] = useState<OutboxDeadRow | null>(null);
   const d = keys.deployment();
   const invalidates = () => [d.adminOverview(), d.platformAuditAll()];

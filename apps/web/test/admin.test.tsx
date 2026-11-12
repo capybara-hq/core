@@ -427,6 +427,50 @@ describe("/admin 概览（OverviewPage）", () => {
     },
   );
 
+  it("attention: a failed read of the dead outbox rows is the group's unavailable state with retry", async () => {
+    const o = zh.admin.overview.attention;
+    let failing = true;
+    const calls = stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, {
+            ...EMPTY_ATTENTION,
+            outbox: [{ kind: "outbox_dead", count: 2, oldestAt: "2026-11-12T08:00:00.000Z" }],
+          }),
+        "GET /api/v1/admin/outbox/dead": () =>
+          failing
+            ? boom()
+            : json(200, {
+                items: [
+                  {
+                    id: "7",
+                    queue: "cap-kernel-maintenance",
+                    jobName: "plugin-scope-sync",
+                    jobId: "job-7",
+                    orgId: null,
+                    attempts: 20,
+                    lastError: null,
+                    deadAt: "2026-11-12T08:00:00.000Z",
+                    createdAt: "2026-11-12T07:00:00.000Z",
+                  },
+                ],
+              }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const box = within(section(o.title));
+    expect(await box.findByText(o.unavailable)).toBeTruthy();
+    // no bare count stands in for rows that could not be read
+    expect(box.queryByRole("list", { name: o.groups.outbox })).toBeNull();
+    expect(box.queryByText(fill(o.outbox.count, { n: 2 }))).toBeNull();
+    const from = calls.length;
+    failing = false;
+    await userEvent.setup().click(box.getByRole("button", { name: o.retry }));
+    const list = await box.findByRole("list", { name: o.groups.outbox });
+    expect(await within(list).findByText("plugin-scope-sync")).toBeTruthy();
+    expect(pathsAfter(calls, from)).toEqual(["/api/v1/admin/outbox/dead"]);
+  });
+
   it.each(LOCALES)("待处理：队列丢失了后台任务时显示一项，说明已重新排入（%s）", async (locale) => {
     const o = msgs[locale].admin.overview.attention;
     stubApi(
