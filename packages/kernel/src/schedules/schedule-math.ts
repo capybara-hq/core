@@ -160,6 +160,79 @@ function ticker(t: ScheduleTrigger): (after: Date) => Date | null {
   };
 }
 
+/**
+ * The ticks in `(after, until]` (before jitter), at most `max`, from the same ticker
+ * {@link nextTick} and {@link dueTicks} use, so a list of planned runs equals what the scanner
+ * fires (calendar spec §5.2). `exhausted`: `max` ticks were taken before a tick past `until` was
+ * seen, so more may follow. A `once` trigger yields its one tick when it lies in the window.
+ * Costs one tick evaluation per tick returned, plus one when the walk reaches `until`.
+ */
+export function ticksIn(
+  t: ScheduleTrigger,
+  after: Date,
+  until: Date,
+  max: number,
+): { ticks: Date[]; exhausted: boolean } {
+  const ticks: Date[] = [];
+  if (after.getTime() >= until.getTime()) return { ticks, exhausted: false };
+  const next = ticker(t);
+  let cursor = after;
+  while (ticks.length < max) {
+    const tick = next(cursor);
+    if (!tick || tick.getTime() > until.getTime()) return { ticks, exhausted: false };
+    ticks.push(tick);
+    cursor = tick;
+  }
+  return { ticks, exhausted: true };
+}
+
+/** What one scan does to a due task (spec §6 step 1), as {@link scanStep} decides it. */
+export interface ScanStep {
+  /** The first missed tick, recorded as one skipped run (`missed`); null when none. */
+  missed: Date | null;
+  /** The tick whose run is recorded and fired; null when none. */
+  fire: Date | null;
+  /** The task's new `next_run_at` (jitter included); null when it ends. */
+  nextRunAt: Date | null;
+  /** Why the task ends: no tick left (`done`) or the next one lies past `expires_at`. */
+  end: "done" | "expired" | null;
+}
+
+/**
+ * One scan of a due task (`next_run_at <= now`) as of `now`, the schedule math alone: the ticks
+ * are before jitter, so the due tick is `nextRunAt - jitter` and a tick is due once
+ * `tick + jitter <= now`. The scanner applies the result; the calendar's parity test drives it.
+ * Throws when the trigger cannot be evaluated.
+ */
+export function scanStep(
+  task: {
+    trigger: ScheduleTrigger;
+    nextRunAt: Date;
+    jitterSeconds: number;
+    expiresAt: Date | null;
+  },
+  now: Date,
+  catchUpWindowMinutes: number,
+): ScanStep {
+  const jitterMs = task.jitterSeconds * 1000;
+  const dueTick = new Date(task.nextRunAt.getTime() - jitterMs);
+  const until = new Date(now.getTime() - jitterMs);
+  const ticks = dueTicks(
+    task.trigger,
+    new Date(dueTick.getTime() - 1),
+    until,
+    catchUpWindowMinutes,
+  );
+  const next = nextTick(task.trigger, until);
+  const expires = task.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
+  const fire = ticks.fire !== null && ticks.fire.getTime() <= expires ? ticks.fire : null;
+  const first = ticks.firstMissed;
+  const missed = first !== null && first.getTime() <= expires ? first : null;
+  if (next === null) return { missed, fire, nextRunAt: null, end: "done" };
+  if (next.getTime() > expires) return { missed, fire, nextRunAt: null, end: "expired" };
+  return { missed, fire, nextRunAt: new Date(next.getTime() + jitterMs), end: null };
+}
+
 /** The wall clock of `at` in `timeZone`, read as if it were UTC (epoch ms, seconds dropped). */
 function localWallClock(at: Date, timeZone: string): number {
   return Math.floor(wallOf(at.getTime(), timeZone) / 60000) * 60000;

@@ -6,6 +6,8 @@ import {
   jitterSeconds,
   minGapMinutes,
   nextTick,
+  scanStep,
+  ticksIn,
   validateTrigger,
 } from "../../src/schedules/schedule-math.js";
 import type { ScheduleTrigger } from "../../src/schedules/types.js";
@@ -187,5 +189,286 @@ describe("schedule math", () => {
         code: "schedule.invalid_once_time",
       });
     }
+  });
+});
+
+const MIN = 60_000;
+const HOUR = 3_600_000;
+
+/** Every tick in (after, until] by repeated nextTick. */
+function byNextTick(t: ScheduleTrigger, after: Date, until: Date): Date[] {
+  const out: Date[] = [];
+  for (let tick = nextTick(t, after); tick && tick <= until; tick = nextTick(t, tick)) {
+    out.push(tick);
+  }
+  return out;
+}
+
+const iso = (ds: readonly Date[]) => ds.map((d) => d.toISOString());
+
+describe("ticksIn", () => {
+  it("equals repeated nextTick, in (after, until]", () => {
+    for (const t of [
+      cron("0 9 * * *", "Asia/Shanghai"),
+      cron("0 * * * *", "America/New_York"),
+      cron("*/15 * * * *", "Europe/London"),
+      cron("0 9 * * 1", "America/New_York"),
+    ]) {
+      const after = new Date("2026-03-01T00:00:00Z");
+      const until = new Date("2026-03-12T00:00:00Z");
+      const r = ticksIn(t, after, until, 100_000);
+      expect(r.exhausted).toBe(false);
+      expect(iso(r.ticks)).toEqual(iso(byNextTick(t, after, until)));
+    }
+    // a tick exactly at `after` is out, one exactly at `until` is in
+    const daily = cron("0 9 * * *");
+    expect(
+      iso(
+        ticksIn(daily, new Date("2026-06-01T09:00:00Z"), new Date("2026-06-03T09:00:00Z"), 10)
+          .ticks,
+      ),
+    ).toEqual(["2026-06-02T09:00:00.000Z", "2026-06-03T09:00:00.000Z"]);
+  });
+
+  it("stops at max and says so", () => {
+    const hourly = cron("0 * * * *");
+    const after = new Date("2026-06-01T00:00:00Z");
+    const r = ticksIn(hourly, after, new Date("2026-06-02T00:00:00Z"), 5);
+    expect(r.exhausted).toBe(true);
+    expect(r.ticks).toHaveLength(5);
+    expect(ticksIn(hourly, after, new Date("2026-06-01T03:00:00Z"), 5)).toMatchObject({
+      exhausted: false,
+    });
+    expect(ticksIn(hourly, after, after, 5)).toEqual({ ticks: [], exhausted: false });
+  });
+
+  it("a once trigger yields its tick only inside the window", () => {
+    const once: ScheduleTrigger = { kind: "once", at: "2026-06-02T09:00:00", timeZone: "UTC" };
+    expect(iso(ticksIn(once, now, new Date("2026-06-03T00:00:00Z"), 10).ticks)).toEqual([
+      "2026-06-02T09:00:00.000Z",
+    ]);
+    expect(ticksIn(once, now, new Date("2026-06-02T08:59:59Z"), 10).ticks).toEqual([]);
+    expect(
+      ticksIn(once, new Date("2026-06-02T09:00:00Z"), new Date("2026-06-03T00:00:00Z"), 10).ticks,
+    ).toEqual([]);
+  });
+});
+
+interface SimTask {
+  trigger: ScheduleTrigger;
+  jitterSeconds: number;
+  expiresAt?: Date;
+}
+
+/**
+ * The scanner over [start, end] (scan.job.ts: a task is due when next_run_at <= now, then
+ * scanStep, as `advance` applies it), for a task created at `start` (next_run_at = the first tick
+ * after it plus jitter, as the service creates it). `scanAt` lists the scan instants: every minute
+ * (plus a delay) or a jump to each next_run_at. Returns the fired and the missed ticks.
+ */
+function simulateScanner(
+  task: SimTask,
+  start: Date,
+  end: Date,
+  scanAt: "minutes" | "jumps",
+  delaySeconds: number,
+): { fired: Date[]; missed: Date[] } {
+  const fired: Date[] = [];
+  const missed: Date[] = [];
+  const first = nextTick(task.trigger, start);
+  let nextRunAt = first === null ? null : new Date(first.getTime() + task.jitterSeconds * 1000);
+  const expires = task.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
+  if (first !== null && first.getTime() > expires) nextRunAt = null;
+  let now = new Date(Math.ceil(start.getTime() / MIN) * MIN + delaySeconds * 1000);
+  while (nextRunAt !== null && now <= end) {
+    if (nextRunAt <= now) {
+      const step = scanStep(
+        {
+          trigger: task.trigger,
+          nextRunAt,
+          jitterSeconds: task.jitterSeconds,
+          expiresAt: task.expiresAt ?? null,
+        },
+        now,
+        60,
+      );
+      if (step.missed) missed.push(step.missed);
+      if (step.fire) fired.push(step.fire);
+      nextRunAt = step.nextRunAt;
+    }
+    if (scanAt === "minutes" || nextRunAt === null) {
+      now = new Date(now.getTime() + MIN);
+    } else {
+      // the first minute at or after next_run_at, plus the delay
+      const at = Math.ceil(nextRunAt.getTime() / MIN) * MIN + delaySeconds * 1000;
+      now = new Date(Math.max(at, now.getTime() + MIN));
+    }
+  }
+  return { fired, missed };
+}
+
+/** The ticks the calendar plans for a task created at `start`: ticksIn up to `until`. */
+function planned(task: SimTask, start: Date, until: Date): Date[] {
+  const bound = task.expiresAt && task.expiresAt < until ? task.expiresAt : until;
+  return ticksIn(task.trigger, start, bound, 100_000).ticks;
+}
+
+describe("scanner parity: ticksIn lists exactly what the scanner fires", () => {
+  const cases: { name: string; task: SimTask; start: string }[] = [
+    {
+      name: "daily 09:00 Shanghai",
+      task: { trigger: cron("0 9 * * *", "Asia/Shanghai"), jitterSeconds: 137 },
+      start: "2026-03-03T00:00:00Z",
+    },
+    {
+      name: "hourly Shanghai",
+      task: { trigger: cron("0 * * * *", "Asia/Shanghai"), jitterSeconds: 211 },
+      start: "2026-10-20T00:00:00Z",
+    },
+    {
+      name: "daily 09:00 New York, spring",
+      task: { trigger: cron("0 9 * * *", "America/New_York"), jitterSeconds: 137 },
+      start: "2026-03-03T00:00:00Z",
+    },
+    {
+      name: "daily 02:30 New York, spring",
+      task: { trigger: cron("30 2 * * *", "America/New_York"), jitterSeconds: 42 },
+      start: "2026-03-03T00:00:00Z",
+    },
+    {
+      name: "hourly New York, spring",
+      task: { trigger: cron("0 * * * *", "America/New_York"), jitterSeconds: 211 },
+      start: "2026-03-03T00:00:00Z",
+    },
+    {
+      name: "daily 01:30 New York, fall",
+      task: { trigger: cron("30 1 * * *", "America/New_York"), jitterSeconds: 299 },
+      start: "2026-10-27T00:00:00Z",
+    },
+    {
+      name: "hourly New York, fall",
+      task: { trigger: cron("0 * * * *", "America/New_York"), jitterSeconds: 211 },
+      start: "2026-10-27T00:00:00Z",
+    },
+    {
+      name: "daily 01:30 London, spring",
+      task: { trigger: cron("30 1 * * *", "Europe/London"), jitterSeconds: 137 },
+      start: "2026-03-24T00:00:00Z",
+    },
+    {
+      name: "hourly London, spring",
+      task: { trigger: cron("0 * * * *", "Europe/London"), jitterSeconds: 211 },
+      start: "2026-03-24T00:00:00Z",
+    },
+    {
+      name: "daily 01:30 London, fall",
+      task: { trigger: cron("30 1 * * *", "Europe/London"), jitterSeconds: 137 },
+      start: "2026-10-20T00:00:00Z",
+    },
+    {
+      name: "hourly London, fall",
+      task: { trigger: cron("0 * * * *", "Europe/London"), jitterSeconds: 211 },
+      start: "2026-10-20T00:00:00Z",
+    },
+    {
+      name: "weekly Monday 09:00 New York, spring",
+      task: { trigger: cron("0 9 * * 1", "America/New_York"), jitterSeconds: 250 },
+      start: "2026-03-01T00:00:00Z",
+    },
+    {
+      name: "*/15 London, fall",
+      task: { trigger: cron("*/15 * * * *", "Europe/London"), jitterSeconds: 53 },
+      start: "2026-10-20T00:00:00Z",
+    },
+    {
+      name: "*/15 New York, spring",
+      task: { trigger: cron("*/15 * * * *", "America/New_York"), jitterSeconds: 53 },
+      start: "2026-03-03T00:00:00Z",
+    },
+    {
+      name: "once in the New York gap",
+      task: {
+        trigger: { kind: "once", at: "2026-03-08T02:30:00", timeZone: "America/New_York" },
+        jitterSeconds: 0,
+      },
+      start: "2026-03-03T00:00:00Z",
+    },
+    {
+      name: "hourly New York, expiring mid-window",
+      task: {
+        trigger: cron("0 * * * *", "America/New_York"),
+        jitterSeconds: 211,
+        expiresAt: new Date("2026-03-09T12:00:00Z"),
+      },
+      start: "2026-03-03T00:00:00Z",
+    },
+  ];
+
+  for (const c of cases) {
+    it(c.name, () => {
+      const start = new Date(c.start);
+      const end = new Date(start.getTime() + 10 * 24 * HOUR);
+      // a tick in the last minutes of the window fires after it: compare up to a bound the scanner
+      // has surely passed
+      const until = new Date(end.getTime() - c.task.jitterSeconds * 1000 - 2 * MIN);
+      const plan = planned(c.task, start, until);
+      expect(plan.length).toBeGreaterThan(0);
+      // every minute on the dot, every minute late, and straight to each next_run_at
+      const scans = [
+        ["minutes", 0],
+        ["minutes", 59],
+        ["jumps", 7],
+      ] as const;
+      for (const [scanAt, delay] of scans) {
+        const sim = simulateScanner(c.task, start, end, scanAt, delay);
+        expect(sim.missed, `${scanAt} +${delay}s missed`).toEqual([]);
+        expect(iso(sim.fired.filter((d) => d <= until)), `${scanAt} +${delay}s`).toEqual(iso(plan));
+      }
+      // the tick evaluations are slow (cron walks a calendar): a 10-day window of */15 takes seconds
+    }, 60_000);
+  }
+
+  it("02:30 New York does not fire on the spring-forward day, 01:30 fires once on the fall-back day", () => {
+    const spring = planned(
+      { trigger: cron("30 2 * * *", "America/New_York"), jitterSeconds: 0 },
+      new Date("2026-03-07T12:00:00Z"),
+      new Date("2026-03-09T12:00:00Z"),
+    );
+    expect(iso(spring)).toEqual(["2026-03-09T06:30:00.000Z"]);
+    const fall = planned(
+      { trigger: cron("30 1 * * *", "America/New_York"), jitterSeconds: 0 },
+      new Date("2026-11-01T00:00:00Z"),
+      new Date("2026-11-02T00:00:00Z"),
+    );
+    expect(iso(fall)).toEqual(["2026-11-01T05:30:00.000Z"]);
+  });
+
+  it("once in a gap fires at the first instant after it", () => {
+    const once = planned(
+      {
+        trigger: { kind: "once", at: "2026-03-08T02:30:00", timeZone: "America/New_York" },
+        jitterSeconds: 0,
+      },
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-20T00:00:00Z"),
+    );
+    expect(iso(once)).toEqual(["2026-03-08T07:00:00.000Z"]);
+  });
+
+  it("an expiring task fires nothing after expires_at and ends", () => {
+    const task: SimTask = {
+      trigger: cron("0 * * * *", "UTC"),
+      jitterSeconds: 0,
+      expiresAt: new Date("2026-06-01T05:00:00Z"),
+    };
+    const sim = simulateScanner(
+      task,
+      new Date("2026-06-01T00:00:00Z"),
+      new Date("2026-06-02T00:00:00Z"),
+      "minutes",
+      0,
+    );
+    expect(iso(sim.fired).at(-1)).toBe("2026-06-01T05:00:00.000Z");
+    expect(sim.fired).toHaveLength(5);
   });
 });
