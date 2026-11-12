@@ -315,8 +315,21 @@
   color: var(--cb-muted);
 }
 .cb-scal-chip-failed {
-  flex: none;
   color: var(--cb-fail);
+}
+/* A collapsed task's line: the name keeps up to half the line, the summary shrinks first. */
+.cb-scal-chip-title {
+  flex: 0 0 auto;
+  max-width: 50%;
+}
+.cb-scal-tail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cb-scal-tail > .cb-scal-summary {
+  flex: initial;
 }
 .cb-scal-now {
   position: absolute;

@@ -235,7 +235,22 @@ describe("ScheduleCalendar week", () => {
     expect(failed.getAttribute("aria-label")).toBe(
       "数据同步，每小时，11月11日 周三 24 次，其中 2 次失败",
     );
-    expect(failed.textContent).toBe("数据同步每小时 · 24 次· 2 次失败");
+    expect(failed.textContent).toBe("数据同步每小时 · 24 次 · 2 次失败");
+    // the name keeps its room: the summary and the failures shrink first, with an ellipsis
+    const title = failed.querySelector('[data-part="schedule-calendar-title"]') as HTMLElement;
+    const tail = failed.querySelector('[data-part="schedule-calendar-tail"]') as HTMLElement;
+    expect(tail.contains(failed.querySelector('[data-part="schedule-calendar-chip-failed"]'))).toBe(
+      true,
+    );
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/schedule-calendar.css"),
+      "utf8",
+    );
+    expect(title.className).toContain("cb-scal-chip-title");
+    expect(css).toMatch(/\.cb-scal-chip-title \{\s*flex: 0 0 auto;\s*max-width: 50%;/);
+    expect(css).toMatch(
+      /\.cb-scal-tail \{\s*flex: 0 1 auto;\s*min-width: 0;\s*overflow: hidden;\s*text-overflow: ellipsis;/,
+    );
     expect(failed.querySelector("svg")?.getAttribute("data-icon")).toBe("circle-x");
   });
 

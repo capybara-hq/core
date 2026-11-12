@@ -82,7 +82,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
   const itemLine = (it) =>
     `${stateIcon(it.state)}<span class="r-scal-time" data-part="schedule-calendar-time">${esc(it.time)}</span><span class="r-scal-title" data-part="schedule-calendar-title">${esc(it.title)}</span>${it.mark ? `<span class="r-scal-mark">${esc(it.mark)}</span>` : ""}`;
   const chipLine = (c) =>
-    `${stateIcon(c.state)}<span class="r-scal-title" data-part="schedule-calendar-title">${esc(c.title)}</span><span class="r-scal-summary" data-part="schedule-calendar-summary">${esc(c.summary)}</span>${c.failed ? `<span class="r-scal-chip-failed" data-part="schedule-calendar-chip-failed">· ${esc(c.failed)}</span>` : ""}`;
+    `${stateIcon(c.state)}<span class="r-scal-title r-scal-chip-title" data-part="schedule-calendar-title">${esc(c.title)}</span><span class="r-scal-tail" data-part="schedule-calendar-tail"><span class="r-scal-summary" data-part="schedule-calendar-summary">${esc(c.summary)}</span>${c.failed ? `<span class="r-scal-chip-failed" data-part="schedule-calendar-chip-failed"> · ${esc(c.failed)}</span>` : ""}</span>`;
   const sel = (id, o) => (id === o.selectedId ? ' data-selected="true" aria-current="true"' : "");
 
   function toolbar(o) {

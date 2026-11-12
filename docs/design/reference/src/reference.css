@@ -6025,8 +6025,21 @@ textarea {
   color: var(--cb-muted);
 }
 .r-scal-chip-failed {
-  flex: none;
   color: var(--cb-fail);
+}
+/* A collapsed task's line: the name keeps up to half the line, the summary shrinks first. */
+.r-scal-chip-title {
+  flex: 0 0 auto;
+  max-width: 50%;
+}
+.r-scal-tail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.r-scal-tail > .r-scal-summary {
+  flex: initial;
 }
 .r-scal-now {
   position: absolute;

@@ -784,17 +784,21 @@ function ChipLine({ chip }: { chip: ScheduleCalendarCollapsed }) {
   return (
     <>
       <StateIcon state={chip.state} />
-      <span className="cb-scal-title" data-part="schedule-calendar-title">
+      {/* the name keeps up to half the line; the summary gives way first, with an ellipsis */}
+      <span className="cb-scal-title cb-scal-chip-title" data-part="schedule-calendar-title">
         {chip.title}
       </span>
-      <span className="cb-scal-summary" data-part="schedule-calendar-summary">
-        {chip.summary}
-      </span>
-      {chip.failed ? (
-        <span className="cb-scal-chip-failed" data-part="schedule-calendar-chip-failed">
-          · {chip.failed}
+      <span className="cb-scal-tail" data-part="schedule-calendar-tail">
+        <span className="cb-scal-summary" data-part="schedule-calendar-summary">
+          {chip.summary}
         </span>
-      ) : null}
+        {chip.failed ? (
+          <span className="cb-scal-chip-failed" data-part="schedule-calendar-chip-failed">
+            {" "}
+            · {chip.failed}
+          </span>
+        ) : null}
+      </span>
     </>
   );
 }
