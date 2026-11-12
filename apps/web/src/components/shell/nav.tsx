@@ -63,15 +63,6 @@ const NAV: readonly {
     icon: "connector",
     section: "primary",
   },
-  // Devices: where a person's conversations run their commands and keep their files
-  {
-    id: "devices",
-    key: "devices",
-    href: "/devices",
-    audience: "all",
-    icon: "cpu",
-    section: "primary",
-  },
   // Scheduled tasks: a member's own tasks (guests can't create them, spec §10)
   {
     id: "schedules",
@@ -80,6 +71,16 @@ const NAV: readonly {
     audience: "member",
     icon: "clock",
     section: "primary",
+  },
+  // Devices: where a person's conversations run their commands and keep their files
+  // (set up once, then rarely visited: under More)
+  {
+    id: "devices",
+    key: "devices",
+    href: "/devices",
+    audience: "all",
+    icon: "cpu",
+    section: "more",
   },
   // Plugins (what the platform offers this org): members browse and ask, org admins switch them
   {

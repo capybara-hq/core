@@ -64,19 +64,20 @@ function ids(level: NavLevel, superAdmin: boolean) {
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
   // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
-  const primaryGuest = ["agents", "connectors", "devices"];
+  const primaryGuest = ["agents", "connectors"];
   // 定时任务 for members up (guests can't create tasks; scheduled tasks spec §10)
-  const primary = ["agents", "skills", "connectors", "devices", "schedules"];
+  const primary = ["agents", "skills", "connectors", "schedules"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
-  const member = ["plugins", "extensions", "settings"];
-  const admin = ["plugins", "extensions", "channels", "evals", "settings"];
+  // 设备 sits under 更多 (acceptance 2026-11-12)
+  const member = ["devices", "plugins", "extensions", "settings"];
+  const admin = ["devices", "plugins", "extensions", "channels", "evals", "settings"];
   const cases: [NavLevel, boolean, string[], string[]][] = [
-    ["guest", false, primaryGuest, []],
+    ["guest", false, primaryGuest, ["devices"]],
     ["member", false, primary, member],
     ["admin", false, primary, admin],
-    ["guest", true, primaryGuest, []],
+    ["guest", true, primaryGuest, ["devices"]],
     ["admin", true, primary, admin],
   ];
   for (const [level, superAdmin, top, more] of cases) {
@@ -100,7 +101,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 设备 定时任务 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 定时任务 after 新会话; members see 设备 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -125,10 +126,10 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["智能体", "agent", "/agents"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
-        ["设备", "cpu", "/devices"],
         ["定时任务", "clock", "/schedules"],
       ],
       more: [
+        ["设备", "cpu", "/devices"],
         ["插件", "catalog", "/plugins"],
         ["扩展", "extension", "/extensions"],
         ["组织设置", "settings", "/settings/organization"],
@@ -136,6 +137,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     });
     expect(read("admin").primary).toEqual(read("member").primary);
     expect(read("admin").more).toEqual([
+      ["设备", "cpu", "/devices"],
       ["插件", "catalog", "/plugins"],
       ["扩展", "extension", "/extensions"],
       ["渠道", "channel", "/channels"],
