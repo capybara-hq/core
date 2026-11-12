@@ -4,7 +4,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { ModuleRef } from "@nestjs/core";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -73,6 +73,17 @@ const insertRow = async (jobId: string, extra: { runAt?: Date; queue?: KernelQue
     .executeTakeFirstOrThrow();
   return row.id;
 };
+
+/**
+ * The database clock as text (microseconds kept): backoff is set from PG `now()`, so it is
+ * asserted against PG time only, never against the test process's clock.
+ */
+const dbClock = async () =>
+  (
+    (await sql<{ t: string }>`select clock_timestamp()::text as t`.execute(pool)).rows[0] as {
+      t: string;
+    }
+  ).t;
 
 const jobsIn = async (q: Queue) => q.getJobs(["waiting", "delayed", "active", "completed"]);
 
@@ -172,14 +183,19 @@ describe("OutboxDispatcher", () => {
   it("a failing queue keeps the row with attempts 1 and next_attempt_at about 1 s ahead", async () => {
     fails = true;
     const id = await insertRow("failing-1");
-    const before = Date.now();
+    const before = await dbClock();
     await dispatcher.dispatchOwn([id]);
+    const after = await dbClock();
     const [row] = await rows();
     expect(row).toMatchObject({ job_id: "failing-1", attempts: 1, dead_at: null });
     expect(row?.last_error).toMatch(/dispatch/);
-    const ahead = (row as { next_attempt_at: Date }).next_attempt_at.getTime() - before;
-    expect(ahead).toBeGreaterThan(500);
-    expect(ahead).toBeLessThan(2_500);
+    // exactly baseMs after the failure update's now(), which lies between the two clock reads
+    const placed = await sql<{ lower: boolean; upper: boolean }>`
+      select next_attempt_at >= ${before}::timestamptz + interval '1 second' as lower,
+             next_attempt_at <= ${after}::timestamptz + interval '1 second' as upper
+      from capybara.outbox where id = ${id}`.execute(pool);
+    expect(OUTBOX_BACKOFF.baseMs).toBe(1000);
+    expect(placed.rows).toEqual([{ lower: true, upper: true }]);
     expect(await jobsIn(maintenance())).toEqual([]);
     // not due yet: the relay leaves it
     fails = false;
