@@ -134,10 +134,11 @@ Guests get the existing no-access state (members up, as the list). The page's ot
   task run row has no end time; designer's call). A block shows the state icon, the time (mono),
   the task name (one line, ellipsis) and, when the height allows, the agent's name (`small`
   `muted`). In 全组织 the creator's name joins the agent (「研究助手 · 张三」).
-- **Overlap**: blocks whose half-hour slots overlap share the column side by side, up to three; a
-  cluster that needs more keeps two blocks and draws one 「+N」 in the third place, at the first
+- **Overlap**: blocks whose half-hour slots overlap share the column side by side, up to two; a
+  cluster that needs more keeps one block and draws one 「+N」 in the second place, at the first
   hidden item's slot, opening a Popover listing the hidden ones as buttons (designer's call;
-  implementation review 2026-11-12: two blocks and 「+N」 match the month's third line).
+  coordinator decision 2026-11-13: three side by side left about 51 px each at the 1120 content
+  width, only an icon and a clipped time 「09:0」).
 - **Dense lane**: under the day headers, one lane per day for collapsed tasks (§5.4). Each collapsed
   task-day is a one-line chip 「每小时 · 24 次」 / 「每 15 分钟 · 96 次」 with a state summary
   (「· 2 次失败」 in `fail` with `circle-x` when any failed). The lane is drawn only when the week
@@ -510,7 +511,7 @@ is told by color alone.
 
 - Reference blocks in `docs/design/reference/src/` (dark and light, from `@capybara-hq/design/fixtures`
   with a fixed clock), state list `<!-- states: schedule-calendar -->`:
-  `week` (all five item states, overlap of three and a 「+N」, the now line), `week-dense` (the
+  `week` (all five item states, overlaps that end in a 「+N」, the now line), `week-dense` (the
   collapsed lane), `month` (three items and 「+N 项」, days outside the month), `agenda` (390 wide),
   `loading`, `empty`, `failed` (load-failed line), `selected`. A size table per §9.2 with the new
   layout tokens. PNGs are rendered only by the `reference-update` workflow.

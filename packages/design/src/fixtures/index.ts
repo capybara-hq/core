@@ -802,9 +802,10 @@ function scheduleCollapsed(
 /**
  * The schedule calendar's reference blocks (spec §6.40 "ScheduleCalendar"; scheduled tasks
  * calendar design §11): the week of 2026-11-09 with today Thursday 11-12 at 10:24 in
- * Asia/Shanghai; every item state, an overlap of three on Tuesday 09:00 and four on Wednesday
- * 14:00 (two blocks and 「+2」), a collapsed hourly task for the dense lane, the month of 2026-11
- * (6 × 7 days from 10-26) with a day of five items, and the empty and load-failed copy.
+ * Asia/Shanghai; every item state, an overlap of three on Tuesday 09:00 (one block and 「+2」) and
+ * four on Wednesday 14:00 (one block and 「+3」), a collapsed hourly task for the dense lane, the
+ * month of 2026-11 (6 × 7 days from 10-26) with a day of five items, and the empty and
+ * load-failed copy.
  */
 export const SCHEDULE_CALENDAR_FIXTURE = {
   timeZone: "Asia/Shanghai",
