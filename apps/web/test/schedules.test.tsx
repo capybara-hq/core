@@ -11,6 +11,8 @@ import { ME } from "./support/render";
 import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 
+// `/schedules` reads the remembered view's cookie (calendar spec §4.1): none here, the list.
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {

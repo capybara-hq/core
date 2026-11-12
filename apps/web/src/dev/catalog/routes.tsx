@@ -29,10 +29,15 @@ export const OVERLAY_ROUTES = [
 
 /**
  * Real app pages drawn from a seeded query cache in the admin console's shell (`pages.tsx`): no
- * kernel behind them. Screenshotted by their own visual spec (`visual/admin-overview.spec.ts`), so
- * they are not catalog routes.
+ * kernel behind them. Screenshotted by their own visual specs (`visual/admin-overview.spec.ts`,
+ * `visual/schedules-calendar.spec.ts`), so they are not catalog routes.
  */
-export const PAGE_ROUTES = ["pages/admin-overview"] as const;
+export const PAGE_ROUTES = [
+  "pages/admin-overview",
+  "pages/schedules-calendar",
+  "pages/schedules-calendar-month",
+  "pages/schedules-calendar-admin",
+] as const;
 
 export const CATALOG_ROUTES = [
   "components",

@@ -35,7 +35,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
     return v("hour") * 60 + v("minute");
   };
 
-  // Overlapping half hours share the column, three at most; with more, two and 「+N」 third.
+  // Overlapping half hours share the column, two at most; with more, one and 「+N」 second.
   function placeDay(items) {
     const sorted = [...items].sort((a, b) => a.minute - b.minute || a.id.localeCompare(b.id));
     const out = [];
@@ -55,15 +55,15 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
         lane.set(it.id, l);
       }
       const lanes = laneEnd.length;
-      if (lanes <= 3) {
+      if (lanes <= 2) {
         for (const it of cluster) out.push({ kind: "item", item: it, lane: lane.get(it.id), lanes });
       } else {
         const rest = [];
         for (const it of cluster) {
-          if (lane.get(it.id) < 2) out.push({ kind: "item", item: it, lane: lane.get(it.id), lanes: 3 });
+          if (lane.get(it.id) < 1) out.push({ kind: "item", item: it, lane: lane.get(it.id), lanes: 2 });
           else rest.push(it);
         }
-        out.push({ kind: "more", items: rest, minute: rest[0].minute, lane: 2, lanes: 3 });
+        out.push({ kind: "more", items: rest, minute: rest[0].minute, lane: 1, lanes: 2 });
       }
       cluster = [];
       end = -1;

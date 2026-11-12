@@ -249,6 +249,12 @@ function seeded(): QueryClient {
 
 /** `/dev/ui/pages/<page>`: one app page in the admin console's shell. */
 export function PageCatalog({ route }: { route: PageRoute }) {
+  // the schedules pages are drawn by the catalog's index (not lazy)
+  return route === "pages/admin-overview" ? <AdminOverviewCatalog /> : null;
+}
+
+/** `/dev/ui/pages/admin-overview`: the admin console overview. */
+function AdminOverviewCatalog() {
   const [client] = useState(seeded);
   const { onOpenCommands: _, ...sidebar } = sidebarProps(
     { active: "overview", context: "admin", level: "superAdmin" },
@@ -260,7 +266,7 @@ export function PageCatalog({ route }: { route: PageRoute }) {
       <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/admin")}>
         {/* no polling: a query's own refetchInterval beats the client's defaults, and with no
             kernel behind the catalog a poll would only fail and turn the health stale */}
-        {route === "pages/admin-overview" ? <AdminOverviewView pollHealth={false} /> : null}
+        <AdminOverviewView pollHealth={false} />
       </AppShell>
     </QueryClientProvider>
   );

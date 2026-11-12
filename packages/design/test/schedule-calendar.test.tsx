@@ -4,7 +4,12 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCHEDULE_CALENDAR_FIXTURE as F } from "../src/fixtures/index";
-import { DesignProvider, ScheduleCalendar, type ScheduleCalendarProps } from "../src/index";
+import {
+  DesignProvider,
+  ScheduleCalendar,
+  type ScheduleCalendarItem,
+  type ScheduleCalendarProps,
+} from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 // ScheduleCalendar (spec §6.40; scheduled tasks calendar design §4, §6, §7, §8): the week time
@@ -111,43 +116,50 @@ describe("ScheduleCalendar week", () => {
       expect(b.dataset.state).toBe(it.state);
       expect(b.querySelector("svg")?.getAttribute("data-icon")).toBe(icon[it.state]);
     }
-    const r10 = g.querySelector('[data-key="i:r10"]') as HTMLElement;
-    expect(r10.getAttribute("aria-label")).toBe("数据导出，研究助手，11月11日 周三 14:00，失败");
+    const r3 = g.querySelector('[data-key="i:r3"]') as HTMLElement;
+    expect(r3.getAttribute("aria-label")).toBe("对账检查，财务对账，11月9日 周一 14:00，失败");
     // a trial run carries its mark
     expect(g.querySelector('[data-key="i:r13"]')?.textContent).toContain("试运行");
   });
 
-  it("puts up to three overlapping blocks side by side and the rest in 「+N」", async () => {
+  it("puts up to two overlapping blocks side by side and the rest in 「+N」", async () => {
     const { container, p } = cal();
     const g = grid(container);
-    // Tuesday 09:00: three overlapping half hours, three lanes
-    const tue = ["r4", "r5", "r6"].map((id) =>
-      g.querySelector<HTMLElement>(`[data-key="i:${id}"]`),
-    );
-    expect(tue.map((b) => b?.style.left)).toEqual(["0%", `${100 / 3}%`, `${200 / 3}%`]);
-    // Wednesday 14:00: four overlap: two blocks and 「+2」 in the third place
-    expect(g.querySelector('[data-key="i:r9"]')).not.toBeNull();
+    // Tuesday 09:00: two overlapping half hours, two lanes side by side
+    const tue = ["r4", "r5"].map((id) => g.querySelector<HTMLElement>(`[data-key="i:${id}"]`));
+    expect(tue.map((b) => b?.style.left)).toEqual(["0%", "50%"]);
+    expect(tue.map((b) => b?.style.width)).toEqual(["calc(50% - 2px)", "calc(50% - 2px)"]);
+    // a third at the same time would not fit: one block and 「+2」 in the second place
+    const three = cal({
+      items: [{ ...(F.week.items[3] as ScheduleCalendarItem), id: "x1" }, ...F.week.items],
+    });
+    const g3 = grid(three.container);
+    expect(g3.querySelector('[data-key="i:x1"]')).toBeNull();
+    expect(parts(g3, "schedule-calendar-more")[0]?.textContent).toBe("+2");
+    three.unmount();
+    // Wednesday 14:00: four overlap: one block (r10 sorts before r9 by id) and 「+3」
     expect(g.querySelector('[data-key="i:r10"]')).not.toBeNull();
-    expect(g.querySelector('[data-key="i:r11"]')).toBeNull();
-    const more = parts(g, "schedule-calendar-more")[0] as HTMLElement;
-    expect(more.textContent).toBe("+2");
-    expect(more.getAttribute("aria-label")).toBe("另外 2 项，11月11日 周三");
-    await userEvent.click(more);
+    expect(g.querySelector('[data-key="i:r9"]')).toBeNull();
+    const more = parts(g, "schedule-calendar-more");
+    expect(more.map((m) => m.textContent)).toEqual(["+3"]);
+    const wed = more[0] as HTMLElement;
+    expect(wed.style.left).toBe("50%");
+    expect(wed.getAttribute("aria-label")).toBe("另外 3 项，11月11日 周三");
+    await userEvent.click(wed);
     const pop = await popover("11月11日 周三");
     const buttons = within(pop).getAllByRole("button");
-    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
-      F.week.items.find((i) => i.id === "r11")?.label,
-      F.week.items.find((i) => i.id === "r12")?.label,
-    ]);
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(
+      ["r9", "r11", "r12"].map((id) => F.week.items.find((i) => i.id === id)?.label),
+    );
     // the items carry their states
-    expect(buttons.map((b) => b.dataset.state)).toEqual(["completed", "skipped"]);
-    await userEvent.click(buttons[0] as HTMLElement);
+    expect(buttons.map((b) => b.dataset.state)).toEqual(["completed", "completed", "skipped"]);
+    await userEvent.click(buttons[1] as HTMLElement);
     expect(p.onSelect).toHaveBeenCalledWith("r11");
     // choosing closes the list
     expect(document.querySelector('[data-part="schedule-calendar-popover"]')).toBeNull();
   });
 
-  it("splits a chain of overlaps into lanes, two blocks and 「+N」 past three", () => {
+  it("splits a chain of overlaps into lanes, one block and 「+N」 past two", () => {
     const at = (id: string, time: string) => {
       const [h, m] = time.split(":").map(Number) as [number, number];
       return {
@@ -174,14 +186,13 @@ describe("ScheduleCalendar week", () => {
     const shown = parts(g, "schedule-calendar-block").map((b) => [b.dataset.key, b.style.left]);
     expect(shown).toEqual([
       ["i:a", "0%"],
-      ["i:b", `${100 / 3}%`],
       ["i:e", "0%"],
       ["i:f", "0%"],
     ]);
     const more = parts(g, "schedule-calendar-more")[0] as HTMLElement;
-    expect(more.textContent).toBe("+2");
-    expect(more.style.top).toBe(`calc(var(--cb-layout-calendar-hour) * ${550 / 60})`);
-    expect(more.style.left).toBe(`${200 / 3}%`);
+    expect(more.textContent).toBe("+3");
+    expect(more.style.top).toBe(`calc(var(--cb-layout-calendar-hour) * ${540 / 60})`);
+    expect(more.style.left).toBe("50%");
   });
 
   it("opens at 07:00, again when early items arrive, never after the person scrolled", () => {

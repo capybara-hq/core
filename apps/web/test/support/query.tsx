@@ -21,7 +21,11 @@ export { testQueryClient };
 
 import { type Routes, serverRoutes, sessionRoutes } from "./server";
 
-type RouteOpts = Parameters<typeof renderPage>[1] & { readiness?: OrgReadiness };
+type RouteOpts = Parameters<typeof renderPage>[1] & {
+  readiness?: OrgReadiness;
+  /** The document request's `Cookie` header the layout's prefetch sees. */
+  cookie?: string;
+};
 
 const APP = join(import.meta.dirname, "../../src/app");
 
@@ -61,7 +65,7 @@ function withCache(page: ReactNode, state?: DehydratedState) {
  */
 /** The server half of a document load: the layout's and the route's prefetch, and the page. */
 async function serverLoad(path: string, routes: Routes, opts: RouteOpts) {
-  const { readiness, ...render } = opts;
+  const { readiness, cookie, ...render } = opts;
   const me = render.me ?? ME;
   const calls = serverRoutes({ ...sessionRoutes(me, readiness), ...routes });
   let state: DehydratedState;
@@ -71,7 +75,12 @@ async function serverLoad(path: string, routes: Routes, opts: RouteOpts) {
     await qc.fetchQuery(meQuery());
     // The shell's readiness (the layout's `getShell()` reads it beside the route).
     if (me.currentOrgId !== null) await qc.fetchQuery(readinessQuery(me.currentOrgId));
-    await prefetchRoute(qc, path, { me, orgId: me.currentOrgId, locale: render.locale ?? "en" });
+    await prefetchRoute(qc, path, {
+      me,
+      orgId: me.currentOrgId,
+      locale: render.locale ?? "en",
+      cookie: cookie ?? null,
+    });
     page = await pageOf(path);
     state = JSON.parse(JSON.stringify(dehydrateFor(qc))) as DehydratedState;
   } finally {
@@ -134,7 +143,7 @@ export async function renderRouteEmptyCache(
   routes: Routes,
   opts: RouteOpts = {},
 ): Promise<{ calls: Call[]; client: QueryClient } & ReturnType<typeof renderPage>> {
-  const { readiness, ...render } = opts;
+  const { readiness, cookie: _cookie, ...render } = opts;
   const all = { ...sessionRoutes(render.me ?? ME, readiness), ...routes };
   let page: ReactNode;
   serverRoutes(all);

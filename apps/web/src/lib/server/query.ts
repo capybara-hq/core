@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 import { ApiClientError } from "../api";
 import { loginPathFor } from "../auth-sources";
+import { cookieOf } from "../cookies";
 import { makeQueryClient, type WireError } from "../query/client";
 import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "../query/routes";
 import type { Me } from "../session";
@@ -50,7 +51,13 @@ export function dehydrateFor(qc: QueryClient): DehydratedState {
 export async function prefetchRoute(
   qc: QueryClient,
   path: string,
-  session: { me: Me | null; orgId: string | null; locale?: string },
+  session: {
+    me: Me | null;
+    orgId: string | null;
+    locale?: string;
+    /** The document request's `Cookie` header (a route keyed by the viewer's zone reads it). */
+    cookie?: string | null;
+  },
   opts: { signedOutRedirect: boolean } = { signedOutRedirect: true },
 ): Promise<"ok" | "unknown"> {
   const match = matchRoute(path);
@@ -61,6 +68,10 @@ export async function prefetchRoute(
     me: session.me,
     orgId: session.orgId,
     locale: uiLocale(session.locale ?? "en"),
+    cookie: (name) => cookieOf(session.cookie ?? null, name),
+    // The root layout's clock reads its own Date.now(): across a viewer-local midnight the two
+    // may name different days, and the view then reads its range again (a rare extra read).
+    now: Date.now(),
   };
   const queries = match.entry.queries(ctx);
   // A server read is not retried: the first paint waits for it, and the page's retry action or

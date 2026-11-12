@@ -14,6 +14,7 @@ import {
   REFERENCE_ROUTES,
   referenceComponentOf,
 } from "./routes";
+import { SchedulesPageCatalog } from "./schedules-page";
 import { StressCatalog } from "./stress";
 import { TableCatalog } from "./table";
 import { TemplateCatalog } from "./templates";
@@ -31,6 +32,11 @@ export function Catalog({ route }: { route: string }) {
   if (route === "stress") return <StressCatalog />;
   if (isOverlayRoute(route)) return <OverlayCatalog route={route} />;
   if (isTemplateRoute(route)) return <TemplateCatalog route={route} />;
+  // Not lazy: the calendar's phone case checks the first paint with JavaScript off, and a lazy
+  // boundary streams its content hidden until a script reveals it.
+  if (route === "pages/schedules-calendar") return <SchedulesPageCatalog variant="week" />;
+  if (route === "pages/schedules-calendar-month") return <SchedulesPageCatalog variant="month" />;
+  if (route === "pages/schedules-calendar-admin") return <SchedulesPageCatalog variant="admin" />;
   if (isPageRoute(route)) {
     return (
       <Suspense fallback={null}>
