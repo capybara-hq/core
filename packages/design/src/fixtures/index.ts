@@ -719,3 +719,172 @@ export const TREND_CHART_FIXTURE = {
   hover: 4,
   empty: "近 7 天没有运行。",
 };
+
+/** One block of the schedule calendar's fixture (spec §6.40): the props of a ScheduleCalendar item. */
+type ScheduleCalendarFixtureItem = {
+  id: string;
+  day: string;
+  minute: number;
+  time: string;
+  title: string;
+  meta?: string;
+  state: "upcoming" | "running" | "completed" | "failed" | "skipped";
+  mark?: string;
+  label: string;
+};
+
+type ScheduleCalendarFixtureCollapsed = {
+  id: string;
+  day: string;
+  title: string;
+  summary: string;
+  failed?: string;
+  state: "upcoming" | "running" | "completed" | "failed" | "skipped";
+  label: string;
+};
+
+const SCHEDULE_STATE_WORD = {
+  upcoming: "计划运行",
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  skipped: "已跳过",
+} as const;
+const SCHEDULE_WEEKDAY = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+/** 「11月12日 周四」 for a YYYY-MM-DD (the fixture's own copy; the component builds its own). */
+function scheduleDayLabel(day: string): string {
+  const [y, m, d] = day.split("-").map(Number) as [number, number, number];
+  const wd = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+  return `${m}月${d}日 ${SCHEDULE_WEEKDAY[wd]}`;
+}
+
+function scheduleItem(
+  id: string,
+  day: string,
+  time: string,
+  title: string,
+  meta: string,
+  state: ScheduleCalendarFixtureItem["state"],
+  mark?: string,
+): ScheduleCalendarFixtureItem {
+  const [h, min] = time.split(":").map(Number) as [number, number];
+  return {
+    id,
+    day,
+    minute: h * 60 + min,
+    time,
+    title,
+    meta,
+    state,
+    ...(mark ? { mark } : {}),
+    label: `${title}，${meta}，${scheduleDayLabel(day)} ${time}，${SCHEDULE_STATE_WORD[state]}${mark ? `，${mark}` : ""}`,
+  };
+}
+
+function scheduleCollapsed(
+  id: string,
+  day: string,
+  state: ScheduleCalendarFixtureCollapsed["state"],
+  failed?: number,
+): ScheduleCalendarFixtureCollapsed {
+  return {
+    id,
+    day,
+    title: "数据同步",
+    summary: "每小时 · 24 次",
+    ...(failed ? { failed: `${failed} 次失败` } : {}),
+    state,
+    label: `数据同步，每小时，${scheduleDayLabel(day)} 24 次${failed ? `，其中 ${failed} 次失败` : ""}`,
+  };
+}
+
+/**
+ * The schedule calendar's reference blocks (spec §6.40 "ScheduleCalendar"; scheduled tasks
+ * calendar design §11): the week of 2026-11-09 with today Thursday 11-12 at 10:24 in
+ * Asia/Shanghai; every item state, an overlap of three on Tuesday 09:00 and four on Wednesday
+ * 14:00 (two blocks and 「+2」), a collapsed hourly task for the dense lane, the month of 2026-11
+ * (6 × 7 days from 10-26) with a day of five items, and the empty and load-failed copy.
+ */
+export const SCHEDULE_CALENDAR_FIXTURE = {
+  timeZone: "Asia/Shanghai",
+  today: "2026-11-12",
+  /** 2026-11-12 10:24 in Asia/Shanghai. */
+  now: 1794450240000,
+  week: {
+    days: [
+      "2026-11-09",
+      "2026-11-10",
+      "2026-11-11",
+      "2026-11-12",
+      "2026-11-13",
+      "2026-11-14",
+      "2026-11-15",
+    ],
+    rangeLabel: "2026-11-09 – 11-15",
+    items: [
+      scheduleItem("r1", "2026-11-09", "08:30", "合同到期提醒", "合同审阅", "completed"),
+      scheduleItem("r2", "2026-11-09", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("r3", "2026-11-09", "14:00", "对账检查", "财务对账", "failed"),
+      scheduleItem("r4", "2026-11-10", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("r5", "2026-11-10", "09:00", "工单回顾", "客服助手", "completed"),
+      scheduleItem("r6", "2026-11-10", "09:15", "合同到期提醒", "合同审阅", "skipped"),
+      scheduleItem("r7", "2026-11-10", "14:00", "对账检查", "财务对账", "completed"),
+      scheduleItem("r8", "2026-11-11", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("r9", "2026-11-11", "14:00", "对账检查", "财务对账", "completed"),
+      scheduleItem("r10", "2026-11-11", "14:00", "数据导出", "研究助手", "failed"),
+      scheduleItem("r11", "2026-11-11", "14:10", "库存盘点", "财务对账", "completed"),
+      scheduleItem("r12", "2026-11-11", "14:20", "发票核对", "财务对账", "skipped"),
+      scheduleItem("r13", "2026-11-11", "16:30", "每日简报", "研究助手", "completed", "试运行"),
+      scheduleItem("r14", "2026-11-12", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("r15", "2026-11-12", "10:00", "周会纪要", "研究助手", "running"),
+      scheduleItem("o1", "2026-11-12", "14:00", "对账检查", "财务对账", "upcoming"),
+      scheduleItem("o2", "2026-11-13", "09:00", "每日简报", "研究助手", "upcoming"),
+      scheduleItem("o3", "2026-11-13", "14:00", "对账检查", "财务对账", "upcoming"),
+      scheduleItem("o4", "2026-11-13", "17:00", "周报汇总", "周报整理", "upcoming"),
+      scheduleItem("o5", "2026-11-15", "10:00", "每周备份", "研究助手", "upcoming"),
+    ],
+    collapsed: [
+      scheduleCollapsed("c1", "2026-11-10", "completed"),
+      scheduleCollapsed("c2", "2026-11-11", "failed", 2),
+      scheduleCollapsed("c3", "2026-11-12", "running"),
+      scheduleCollapsed("c4", "2026-11-13", "upcoming"),
+    ],
+  },
+  month: {
+    /** Monday 10-26 to Sunday 12-06: six weeks around 2026-11. */
+    days: Array.from({ length: 42 }, (_, i) => {
+      const d = new Date(Date.UTC(2026, 9, 26 + i));
+      return d.toISOString().slice(0, 10);
+    }),
+    rangeLabel: "2026-11",
+    items: [
+      scheduleItem("m1", "2026-10-30", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("m2", "2026-11-02", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("m3", "2026-11-02", "14:00", "对账检查", "财务对账", "completed"),
+      scheduleItem("m4", "2026-11-03", "09:00", "每日简报", "研究助手", "failed"),
+      scheduleItem("m5", "2026-11-05", "08:30", "合同到期提醒", "合同审阅", "completed"),
+      scheduleItem("m6", "2026-11-05", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("m7", "2026-11-05", "09:00", "工单回顾", "客服助手", "completed"),
+      scheduleItem("m8", "2026-11-05", "14:00", "对账检查", "财务对账", "skipped"),
+      scheduleItem("m9", "2026-11-05", "17:00", "周报汇总", "周报整理", "completed"),
+      scheduleItem("m10", "2026-11-10", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("m11", "2026-11-10", "14:00", "对账检查", "财务对账", "completed"),
+      scheduleItem("m12", "2026-11-12", "09:00", "每日简报", "研究助手", "completed"),
+      scheduleItem("m13", "2026-11-12", "10:00", "周会纪要", "研究助手", "running"),
+      scheduleItem("m14", "2026-11-13", "17:00", "周报汇总", "周报整理", "upcoming"),
+      scheduleItem("m15", "2026-11-20", "09:00", "每日简报", "研究助手", "upcoming"),
+      scheduleItem("m16", "2026-11-27", "17:00", "周报汇总", "周报整理", "upcoming"),
+      scheduleItem("m17", "2026-12-01", "09:00", "月度对账", "财务对账", "upcoming"),
+    ],
+    collapsed: [scheduleCollapsed("mc1", "2026-11-10", "completed")],
+  },
+  /** The phone agenda's selected day (today). */
+  agendaDay: "2026-11-12",
+  /** The selected block of the `selected` state (Monday's failed run). */
+  selectedId: "r3",
+  footnote: "时间按 Asia/Shanghai 显示",
+  scope: { mine: "只看我的", all: "全组织" },
+  empty: { text: "本周没有运行", hint: "下一次运行：11-17 09:00", action: "跳到下一次运行" },
+  errorCode: "internal · req_7f3a9c",
+};
