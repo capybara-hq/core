@@ -61,7 +61,7 @@ export interface ChangedConnectorTemplateRef {
   to: string;
 }
 
-/** What {@link PlatformComponents.syncFromVersion} changed (unchanged components are not listed). */
+/** What {@link PlatformComponents.applySyncIn} changed (unchanged components are not listed). */
 export interface PlatformSyncResult {
   skills: ChangedRef[];
   agentTemplates: ChangedRef[];
@@ -224,12 +224,10 @@ export interface UploadActor {
   auditDetail?: Record<string, unknown>;
 }
 
-/** Plans are retried this many times against concurrent syncs of the same item. */
-const SYNC_ATTEMPTS = 3;
-
 /**
- * Writes the platform rows of a catalog version's components. Called by the import confirm that
- * creates a catalog item (`initial`), and by the platform plugin update for a new version.
+ * Writes the platform rows of a catalog version's components, in the transaction of the import
+ * confirm that makes an item's first usable version, of the super admin's confirmation of an org
+ * upload's first version, and of the platform plugin update to a new version.
  */
 @Injectable()
 export class PlatformComponents {
@@ -255,54 +253,13 @@ export class PlatformComponents {
     this.files = storage;
   }
 
-  /**
-   * Creates or updates the platform rows of every component of catalog version `version` of item
-   * `itemId`: a component is matched by plugin and name (connector templates by item and template
-   * id) and gets a new version only when its content changed (skills by their files' digest,
-   * templates by canonical JSON); new rows follow the plugin's scope (`scope_mode: follow`).
-   * Files are copied from the catalog prefix to `deployment/platform/…` (keyed by content,
-   * {@link contentPrefix}) before the rows are written in a transaction of their own, so a sync
-   * that stops midway leaves at most files a retry reuses, and running it again is a no-op once it
-   * succeeded. `initial` is logged. Components missing from the version are left alone (the
-   * platform update decides what a removal means). On success the item records `version` as
-   * `platform_synced_version`. The import and the platform update write the rows in their own
-   * transaction instead ({@link prepareImport} / {@link prepareSync}, then {@link applySyncIn}).
-   */
-  async syncFromVersion(
-    itemId: string,
-    version: string,
-    opts: { initial: boolean },
-  ): Promise<PlatformSyncResult> {
-    for (let attempt = 1; ; attempt++) {
-      const plan = await this.planFrom(await this.source(itemId, version, false));
-      if (
-        plan.skills.length === 0 &&
-        plan.agentTemplates.length === 0 &&
-        plan.connectorTemplates.length === 0 &&
-        plan.themes.length === 0
-      ) {
-        await this.markSynced(itemId, version);
-        return { skills: [], agentTemplates: [], connectorTemplates: [], themes: [] };
-      }
-      await this.writeFiles(plan);
-      try {
-        const r = await this.apply(plan);
-        await this.markSynced(itemId, version);
-        this.log.info("platform components synced", {
-          itemId,
-          version,
-          initial: opts.initial,
-          skills: r.skills.length,
-          agentTemplates: r.agentTemplates.length,
-          connectorTemplates: r.connectorTemplates.length,
-          themes: r.themes.length,
-        });
-        return r;
-      } catch (e) {
-        if (!(e instanceof PlanStale) || attempt >= SYNC_ATTEMPTS) throw e;
-      }
-    }
-  }
+  // A plugin sync matches a component by plugin and name (connector templates by item and template
+  // id) and gives it a new version only when its content changed (skills by their files' digest,
+  // templates by canonical JSON); new rows follow the plugin's scope (`scope_mode: follow`).
+  // Components missing from the version are left alone (the platform update decides what a removal
+  // means). It runs in two phases: {@link prepareImport} / {@link prepareSync} plan and copy the
+  // files (keyed by content, {@link contentPrefix}) before the caller's transaction, and
+  // {@link applySyncIn} writes the rows and `platform_synced_version` in it.
 
   /**
    * The first phase of a sync inside a caller's transaction (the platform plugin update, the super

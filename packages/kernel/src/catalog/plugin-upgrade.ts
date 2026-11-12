@@ -343,7 +343,7 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   the extension first (`ExtensionAdminOps.install`, enabled when the update installs it; added
  *   permissions wait for the admin's approval as for any extension upgrade), then one transaction
  *   under the item name's lock that recomputes the diff (`plugin.upgrade_stale` on a difference)
- *   and writes the platform versions (`PlatformComponents.syncFromVersion`, which records
+ *   and writes the platform versions (`PlatformComponents.applySyncIn`, which records
  *   `platform_synced_version`), the removals (a component no agent uses is soft-deleted, so
  *   unpinned linked copies go with it; pinned copies keep their own version; a removed connector
  *   template leaves its connectors as the orgs' own), clears the pins of linked copies, fans

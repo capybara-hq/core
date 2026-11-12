@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "./org-env.js";
 import { bundlePlugin, mcpTemplate, skillFiles } from "./packages.js";
+import { syncPlatformComponents } from "./platform-sync.js";
 
 /**
  * Plugin scope phase 2, Task 2: the platform components of a plugin version. The confirm that
  * creates a catalog item writes one platform row per skill, agent template and connector template
  * (files under `deployment/platform/…`); a new version of the item leaves them alone (updates go
- * through the platform plugin update); `syncFromVersion` adds a version only when content changed.
+ * through the platform plugin update); a sync adds a version only when content changed.
  */
 
 let env: OrgEnv;
@@ -162,7 +162,7 @@ describe("platform components from a plugin version", () => {
     expect(t.current_version).toBe(1);
   });
 
-  it("syncFromVersion adds a version only for changed content", async () => {
+  it("a sync adds a version only for changed content", async () => {
     const itemId = await importPlugin(env, await kit("1.0.0"));
     const first = (await skillRows()).find((s) => s.name === "alpha");
     await importPlugin(
@@ -172,8 +172,7 @@ describe("platform components from a plugin version", () => {
         reviewer: reviewerMd("Review harder."),
       }),
     );
-    const sync = env.k.app.get(PlatformComponents);
-    const r = await sync.syncFromVersion(itemId, "1.1.0", { initial: false });
+    const r = await syncPlatformComponents(env.k.app, itemId, "1.1.0");
     const alpha = (await skillRows()).find((s) => s.name === "alpha");
     expect(r.skills).toEqual([{ kind: "skill", id: alpha?.id, name: "alpha", from: 1, to: 2 }]);
     expect(r.agentTemplates).toEqual([
@@ -194,7 +193,7 @@ describe("platform components from a plugin version", () => {
     expect(beta?.current_version).toBe(1);
 
     // the same version again changes nothing
-    expect(await sync.syncFromVersion(itemId, "1.1.0", { initial: false })).toEqual({
+    expect(await syncPlatformComponents(env.k.app, itemId, "1.1.0")).toEqual({
       skills: [],
       agentTemplates: [],
       connectorTemplates: [],

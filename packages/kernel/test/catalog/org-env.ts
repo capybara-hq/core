@@ -24,7 +24,6 @@ import {
   readCatalogFiles,
   skillOf,
 } from "../../src/catalog/catalog-content.js";
-import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import {
   PLUGIN_SCOPE_QUEUE,
   SCOPE_BACKSTOP_DELAY,
@@ -57,6 +56,7 @@ import {
 } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
+import { syncPlatformComponents } from "./platform-sync.js";
 
 // The core fakes of @capybara-hq/testing stand in for official plugins: an object store, a
 // connector extension (kind `fake`), an extension with tools / view / migration (`fake-tools-ui`)
@@ -535,7 +535,7 @@ export async function seedPlugin(
     })
     .execute();
   if (o.addTo === undefined && o.platform !== false) {
-    await env.k.app.get(PlatformComponents).syncFromVersion(id, version, { initial: true });
+    await syncPlatformComponents(env.k.app, id, version);
   }
   return id;
 }
