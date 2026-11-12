@@ -86,6 +86,8 @@ export interface HookSource {
   readonly name: string;
   readonly hooks: readonly RegisteredHook[];
   readonly inflight: InflightTracker;
+  /** The instance's platform deployment config (what lifecycle hooks are called with). */
+  readonly config?: unknown;
 }
 
 /** A lifecycle mount: an observe-only notice that a member, an agent or an org was removed. */
@@ -287,13 +289,12 @@ export class HookRegistry {
   }
 
   /**
-   * Handlers of a queue-delivered mount by plugin name: `usage.report` (the usage queue) and the
-   * lifecycle mounts (the lifecycle queue, `lifecycle-hooks.ts`), never through {@link run}. Each
+   * `usage.report` handlers by plugin name (delivered by the usage queue, not by {@link run}); each
    * call runs through the instance's `inflight.run` with the plugin's effective config for the
    * payload's organization, and throws {@link HookNeedsConfigError} without calling the handler
    * when that config is not valid (layering spec A §6).
    */
-  handlers<K extends QueuedHook>(mount: K): { plugin: string; handler: HookHandler<K> }[] {
+  handlers(mount: "usage.report"): { plugin: string; handler: HookHandler<"usage.report"> }[] {
     return this.entries(mount).map(({ src, hook }) => ({
       plugin: src.name,
       handler: (payload, signal) =>
@@ -301,6 +302,24 @@ export class HookRegistry {
           const effective = await this.d.effectiveConfig(payload.orgId, src.name);
           if (!effective.ok) throw new HookNeedsConfigError(src.name);
           await hook.handler(payload, s, { config: effective.config });
+        }),
+    }));
+  }
+
+  /**
+   * Lifecycle handlers by plugin name (delivered by the lifecycle queue, `lifecycle-hooks.ts`, not
+   * by {@link run}). Each call runs through the instance's `inflight.run` with the plugin's platform
+   * deployment config, never an org's copy: cleanup goes out whether or not the org's effective
+   * config is valid (or the org still exists).
+   */
+  lifecycleHandlers<K extends LifecycleHook>(
+    mount: K,
+  ): { plugin: string; handler: HookHandler<K> }[] {
+    return this.entries(mount).map(({ src, hook }) => ({
+      plugin: src.name,
+      handler: (payload, signal) =>
+        src.inflight.run(signal, async (s) => {
+          await hook.handler(payload, s, { config: src.config });
         }),
     }));
   }

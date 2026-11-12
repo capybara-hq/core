@@ -15,7 +15,7 @@ import { LockedInterval } from "../infra/schedule/locked-interval.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ExtensionsModule } from "./extensions.module.js";
-import { deepFreeze, errMsg, HookNeedsConfigError, type LifecycleHook } from "./hooks.js";
+import { deepFreeze, errMsg, type LifecycleHook } from "./hooks.js";
 import { ExtensionHost } from "./host.js";
 
 /** Queue of lifecycle hook deliveries (no `:` in the name). */
@@ -62,11 +62,13 @@ export interface LifecycleDeliveryHooks {
 export const LIFECYCLE_DELIVERY_HOOKS = Symbol("LIFECYCLE_DELIVERY_HOOKS");
 
 /**
- * Plugins that subscribe to a lifecycle mount according to deployment state: an approved
- * permission snapshot that declares the mount in `permissions.hooks`, for a plugin the deployment
- * still knows (an enabled install, or a config-declared plugin with a replica status row that is
- * not `unloaded`; the same rule as `usage.report` subscribers). Org enablement does not count:
- * cleanup concerns data the plugin already holds (memory plugin spec §6.3). Sorted by name.
+ * Plugins that subscribe to a lifecycle mount according to deployment state: the approved
+ * permission snapshot declares the mount in `permissions.hooks`, and that approved version is the
+ * one the deployment runs: an enabled install of that version, or a replica status row (not
+ * `unloaded`) that loaded or still serves it (an upgrade pending approval keeps serving the
+ * approved version; a config-declared plugin has only replica rows). A snapshot approved for
+ * another version than the one installed or served does not count. Org enablement does not count
+ * either: cleanup concerns data the plugin already holds (memory plugin spec §6.3). Sorted by name.
  */
 export async function queryLifecycleSubscribers(
   db: KernelSchemaDb,
@@ -84,6 +86,7 @@ export async function queryLifecycleSubscribers(
             .selectFrom("extension_installs as i")
             .select(sql`1`.as("one"))
             .whereRef("i.name", "=", "s.plugin")
+            .whereRef("i.version", "=", "s.version")
             .where("i.desired_state", "=", "enabled"),
         ),
         eb.exists(
@@ -91,8 +94,13 @@ export async function queryLifecycleSubscribers(
             .selectFrom("extension_replica_status as r")
             .select(sql`1`.as("one"))
             .whereRef("r.plugin", "=", "s.plugin")
-            .where("r.source", "=", "config")
-            .where("r.state", "<>", "unloaded"),
+            .where("r.state", "<>", "unloaded")
+            .where((r) =>
+              r.or([
+                r("r.version", "=", r.ref("s.version")),
+                r("r.serving_version", "=", r.ref("s.version")),
+              ]),
+            ),
         ),
       ]),
     )
@@ -110,11 +118,12 @@ export async function queryLifecycleSubscribers(
  * - **Enqueue** ({@link enqueue}): after the commit, job `lifecycle-<deliveryId>` on
  *   {@link LIFECYCLE_QUEUE} (10 attempts, backoff from 5 s). Never throws: the sweeper catches up.
  * - **Deliver** ({@link process}, worker role): reads the row; the plugin's handlers loaded on this
- *   replica are called in turn (5 s each, through the instance's in-flight tracker, with its
- *   effective config for the payload's org), then `delivered_at` is set. Not loaded on this replica
+ *   replica are called in turn (5 s each, through the instance's in-flight tracker), then
+ *   `delivered_at` is set. Not loaded on this replica
  *   -> the job fails and is retried (another replica or a later attempt). Loaded without a handler,
- *   or an effective config not valid in the org (no call is made there, layering spec A §6), or a
- *   row older than 7 days -> marked delivered with a warning. A delivered row is never called again.
+ *   or a row older than 7 days -> marked delivered with a warning. A delivered row is never called
+ *   again. Handlers get the plugin's platform deployment config (`call.config`), never an org's
+ *   copy, so an org whose effective config is not valid still gets its cleanup.
  * - **Sweep** ({@link sweep}, {@link LifecycleSweepJob} every minute, once across replicas): offers
  *   undelivered rows older than 30 s again with the same job ids (deduped while a job exists), and
  *   deletes rows delivered more than 7 days ago.
@@ -248,7 +257,7 @@ export class LifecycleHooks {
       return;
     }
     const handlers = this.host.hooks
-      .handlers(row.mount)
+      .lifecycleHandlers(row.mount)
       .filter((h) => h.plugin === row.plugin)
       .map((h) => h.handler as HookHandler<LifecycleHook>);
     if (handlers.length === 0) {
@@ -268,15 +277,7 @@ export class LifecycleHooks {
     const payload = deepFreeze(
       structuredClone(row.payload),
     ) as unknown as HookPayloads[LifecycleHook];
-    try {
-      for (const h of handlers) await this.call(h, payload, stop);
-    } catch (err) {
-      if (!(err instanceof HookNeedsConfigError)) throw err;
-      this.log.warn("lifecycle hook delivery dropped: the plugin needs configuration in the org", {
-        ...fields,
-        orgId: payload.orgId,
-      });
-    }
+    for (const h of handlers) await this.call(h, payload, stop);
     await this.markDelivered(row.id);
   }
 
@@ -309,7 +310,9 @@ export class LifecycleHooks {
             ac.abort(err);
             reject(err);
           }, LIFECYCLE_HOOK_TIMEOUT_MS);
-          ac.signal.addEventListener("abort", () => reject(ac.signal.reason), { once: true });
+          // already aborted (the replica was stopping before the call): no abort event will fire
+          if (ac.signal.aborted) reject(ac.signal.reason);
+          else ac.signal.addEventListener("abort", () => reject(ac.signal.reason), { once: true });
         }),
       ]);
     } finally {

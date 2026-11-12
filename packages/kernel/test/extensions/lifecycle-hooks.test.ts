@@ -5,12 +5,13 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AgentsService } from "../../src/agents/agents.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionDeploymentConfigService } from "../../src/extensions/deployment-config.js";
-import { LIFECYCLE_DELIVERY_HOOKS } from "../../src/extensions/lifecycle-hooks.js";
+import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
+import { LIFECYCLE_DELIVERY_HOOKS, LifecycleHooks } from "../../src/extensions/lifecycle-hooks.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MembersService } from "../../src/orgs/members.service.js";
@@ -85,6 +86,39 @@ async function newMember(orgId: string, login: string): Promise<string> {
   return acc.id;
 }
 
+/** Switches the fixture off in the org (its own switch row). */
+async function switchOff(orgId: string): Promise<void> {
+  await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
+    VALUES (${PLUGIN}, ${orgId}, false)
+    ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = false`.execute(raw);
+}
+
+/** Stores an org copy of the fixture's config that does not validate (label over 10 characters). */
+async function invalidCopy(orgId: string): Promise<void> {
+  await db
+    .insertInto("extension_org_overrides")
+    .values({
+      plugin: PLUGIN,
+      org_id: orgId,
+      config: JSON.stringify({ label: "far too long for the limit" }),
+      created_by: ownerId,
+      updated_by: ownerId,
+    })
+    .execute();
+  const effective = await k.app.get(EffectiveConfigs).get(orgId, PLUGIN);
+  expect(effective.ok).toBe(false);
+}
+
+/** Inserts a delivery row by hand (for a plugin the subscriber query would not pick). */
+async function insertRow(plugin: string, payload: object): Promise<string> {
+  const row = await db
+    .insertInto("lifecycle_deliveries")
+    .values({ mount: "org.deleted", payload: JSON.stringify(payload), plugin })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+  return row.id;
+}
+
 async function newAgent(orgId: string): Promise<string> {
   const res = await req({
     method: "POST",
@@ -152,9 +186,10 @@ describe("lifecycle hooks", { timeout: 60_000 }, () => {
     expect(row?.attempts).toBe(1);
   });
 
-  it("deleting an agent delivers agent.deleted", async () => {
+  it("deleting an agent delivers agent.deleted, also with the plugin switched off in the org", async () => {
     const orgId = await createOrg(req, "Agents");
     const agentId = await newAgent(orgId);
+    await switchOff(orgId);
     await k.app.get(AgentsService).softDelete(orgId, agentId, ownerId);
     const payload = { orgId, agentId };
     expect(await delivered("agent.deleted", payload)).toEqual([
@@ -164,13 +199,61 @@ describe("lifecycle hooks", { timeout: 60_000 }, () => {
 
   it("deleting an org delivers org.deleted, also with the plugin switched off in the org", async () => {
     const orgId = await createOrg(req, "Gone");
-    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
-      VALUES (${PLUGIN}, ${orgId}, false)
-      ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = false`.execute(raw);
+    await switchOff(orgId);
     const owner = await k.app.get(AccountsService).get(ownerId);
     await k.app.get(OrgsService).softDelete(orgId, owner as never);
     const payload = { orgId };
     expect(await delivered("org.deleted", payload)).toEqual([{ mount: "org.deleted", payload }]);
+  });
+
+  it("removing a member delivers with the plugin switched off and an invalid org config", async () => {
+    const orgId = await createOrg(req, "Invalid");
+    const accountId = await newMember(orgId, "offcfg");
+    await switchOff(orgId);
+    await invalidCopy(orgId);
+    await k.app.get(MembersService).remove(orgId, accountId, ownerId);
+    const payload = { orgId, accountId };
+    expect(await delivered("org.member_removed", payload)).toEqual([
+      { mount: "org.member_removed", payload },
+    ]);
+  });
+
+  it("a plugin not loaded on this replica: the attempt throws and the row stays undelivered", async () => {
+    const id = await insertRow("ghost-plugin", { orgId: "00000000-0000-0000-0000-000000000001" });
+    const hooks = k.app.get(LifecycleHooks);
+    await expect(hooks.process({ deliveryId: id }, new AbortController().signal)).rejects.toThrow(
+      /ghost-plugin is not loaded on this replica/,
+    );
+    const row = await db
+      .selectFrom("lifecycle_deliveries")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.delivered_at).toBeNull();
+    expect(row.attempts).toBe(0);
+  });
+
+  it("a loaded plugin without a handler: dropped with a warning", async () => {
+    // model-fake is loaded here and registered no lifecycle hook
+    const id = await insertRow("model-fake", { orgId: "00000000-0000-0000-0000-000000000002" });
+    const hooks = k.app.get(LifecycleHooks);
+    const warn = vi.spyOn((hooks as unknown as { log: { warn: () => void } }).log, "warn");
+    try {
+      await hooks.process({ deliveryId: id }, new AbortController().signal);
+      expect(warn).toHaveBeenCalledWith(
+        "lifecycle hook delivery dropped: the plugin registered no handler",
+        expect.objectContaining({ deliveryId: id, plugin: "model-fake" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+    const row = await db
+      .selectFrom("lifecycle_deliveries")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.delivered_at).not.toBeNull();
+    expect(row.attempts).toBe(0);
   });
 
   it("a rolled-back offboarding records nothing", async () => {

@@ -1,4 +1,9 @@
-import { defineExtension, type ExtensionContext, type HookCall } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionContext,
+  type HookCall,
+  orgAccess,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
@@ -7,12 +12,16 @@ import { z } from "zod";
  * (`plugin_fake_lifecycle`): table `calls` gets one row per call, `deliveries` one row per call
  * that succeeded, each with the mount and the payload. Deployment config `failTimes` (default 0):
  * the first `failTimes` calls of each (mount, payload) throw, so tests can drive the kernel's
- * retries; the count lives in PG, so it holds across replicas.
+ * retries; the count lives in PG, so it holds across replicas. Deployment config `label` (optional,
+ * at most 10 characters) is overridable per org, so a test can store an org copy that does not
+ * validate (an org whose effective config is invalid).
  */
 
 const DeploymentConfig = z.object({
   /** How many calls of each (mount, payload) throw before one succeeds. */
   failTimes: z.number().int().min(0).default(0),
+  /** Overridable per org; an org copy with a longer label makes that org's config invalid. */
+  label: orgAccess(z.string().max(10).optional(), "override"),
 });
 
 type Db = ExtensionContext["db"];

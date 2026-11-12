@@ -222,21 +222,32 @@ export interface UsageReportPayload {
 }
 
 /**
- * `org.member_removed`: an account left the org (removed, or the member deleted). Delivered through
- * a queue at least once, only while the org has the plugin enabled; handlers must be idempotent.
+ * `org.member_removed`: an account left the org (offboarding: removed by an admin, left on its own,
+ * or offboarded by a directory sync). Lifecycle hooks are delivered durably, after the removal
+ * committed, through a queue, at least once per plugin that declares the mount in
+ * `permissions.hooks`, whether or not the org has the plugin enabled and whether or not the org's
+ * effective config of the plugin is valid (`call.config` is the platform deployment config): they
+ * exist so a plugin can delete the data it holds. Handlers must be idempotent. The payload carries
+ * ids only.
  */
 export interface OrgMemberRemovedPayload {
   orgId: string;
   accountId: string;
 }
 
-/** `agent.deleted`: an agent was deleted. Delivered like {@link OrgMemberRemovedPayload}. */
+/**
+ * `agent.deleted`: an agent was deleted. Delivered like {@link OrgMemberRemovedPayload} (durably, at
+ * least once, regardless of org enablement or config validity; ids only).
+ */
 export interface AgentDeletedPayload {
   orgId: string;
   agentId: string;
 }
 
-/** `org.deleted`: an org was deleted. Delivered like {@link OrgMemberRemovedPayload}. */
+/**
+ * `org.deleted`: an org was deleted. Delivered like {@link OrgMemberRemovedPayload} (durably, at
+ * least once, regardless of org enablement or config validity; ids only).
+ */
 export interface OrgDeletedPayload {
   orgId: string;
 }
@@ -267,7 +278,8 @@ export type HookVerdict = void | { deny: string };
  * extension's effective deployment config for the payload's org (the platform's config with the
  * org's copy applied to the overridable fields, or `ctx.config` while the org follows it); the
  * kernel always passes it, and never calls a hook for an org where that config is not valid
- * (observe hooks are skipped, policy hooks deny).
+ * (observe hooks are skipped, policy hooks deny). Lifecycle hooks ({@link LIFECYCLE_HOOKS}) are the
+ * exception: they get the platform deployment config and are always called.
  */
 export type HookHandler<K extends AvailableHook> = (
   payload: HookPayloads[K],
@@ -277,7 +289,10 @@ export type HookHandler<K extends AvailableHook> = (
 
 /** The per-call context of a hook handler (see {@link HookHandler}). */
 export interface HookCall {
-  /** The extension's effective deployment config for the payload's org. */
+  /**
+   * The extension's effective deployment config for the payload's org (lifecycle hooks: the
+   * platform deployment config).
+   */
   config: unknown;
 }
 
