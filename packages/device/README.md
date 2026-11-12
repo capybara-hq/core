@@ -189,12 +189,13 @@ default) and loses the key at the next change; `start` says so at each start whi
   including the host daemons' (Docker, D-Bus, ssh-agent). Allowing them with the daemons' sockets
   masked is planned after a spike that proves them unreachable; it has not been done yet. Use
   Docker mode for browsers on Linux.
-- **Package caches.** `XDG_CACHE_HOME`, `npm_config_cache`, `npm_config_store_dir` (pnpm),
-  `PIP_CACHE_DIR`, `UV_CACHE_DIR`, `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`,
-  `MAVEN_OPTS` (`-Dmaven.repo.local`), `PLAYWRIGHT_BROWSERS_PATH` and `COREPACK_HOME` point at
+- **Package caches.** `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`, `UV_CACHE_DIR`,
+  `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`, `MAVEN_OPTS` (`-Dmaven.repo.local`), `PLAYWRIGHT_BROWSERS_PATH` and `COREPACK_HOME` point at
   folders of `<dir>/cache/`, kept across commands. Your own `~/.npm`, `~/.cache` and pnpm store stay
   read only, so a sandboxed command cannot poison your own builds. A command that sets one of
-  these variables itself keeps its value.
+  these variables itself keeps its value. pnpm's store is not redirected (pnpm reads it only from
+  `npm_config_store_dir`, which makes npm warn on every command): it stays at pnpm's default under
+  the command's HOME, the workspace.
 
 ### Running without a sandbox
 
