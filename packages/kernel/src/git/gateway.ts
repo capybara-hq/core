@@ -535,6 +535,9 @@ export class GitGateway {
             ...(body !== undefined && { body, duplex: "half" }),
             signal: ac.signal,
           } as RequestInit & { signal: AbortSignal },
+          // the same rules as the commit identity lookup: the deployment's egress proxy and its
+          // private host allowance (`marketplaces.allowPrivateHosts`, e.g. an internal GitHub
+          // Enterprise host), never a redirect
           gitNetPolicy(this.config.get()),
         );
       };
