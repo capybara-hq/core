@@ -918,8 +918,9 @@ export class ApprovalsService {
    * A git push ask's decision (sandbox git credentials spec §7): only the asked actor
    * (`requested_for`) decides, in a signed-in session (a personal access token is refused, as for
    * network asks); `once` is a run grant (the row itself), `always` also writes the actor's
-   * standing allow for the repository (`connector_tool_account_policies`, `git_push:<repo>`) in
-   * the decision's transaction. The run resumes after the commit.
+   * standing allow for the repository on that host (`connector_tool_account_policies`,
+   * `git_push:<host>/<owner>/<repo>`) in the decision's transaction. The run resumes after the
+   * commit.
    */
   private async decideGit(
     orgId: string,
@@ -1175,7 +1176,7 @@ export class ApprovalsService {
       // a git ask's run grant is the row itself; `always` is the actor's standing allow for the
       // repository on the connector (a row the connector's deletion removes with it)
       if (git.outcome === "always" && before.git !== null && connectorId !== null) {
-        await this.allowRepoIn(orgId, connectorId, accountId, before.git.repo);
+        await this.allowRepoIn(orgId, connectorId, accountId, before.git.host, before.git.repo);
       }
     } else if (scope === "session") {
       // a sub-agent's grant is the root conversation's (agent map spec §7): the root and every
@@ -1398,13 +1399,14 @@ export class ApprovalsService {
   /**
    * The actor's standing allow for pushes to `repo` through the connector (sandbox git
    * credentials spec §7, 「一直允许」): a `connector_tool_account_policies` row named
-   * `git_push:<repo>` with policy `allow`, in the decision's transaction.
+   * `git_push:<host>/<owner>/<repo>` with policy `allow`, in the decision's transaction.
    */
   @Transactional({ propagation: "mandatory" })
   private async allowRepoIn(
     orgId: string,
     connectorId: string,
     accountId: string,
+    host: string,
     repo: string,
   ): Promise<void> {
     await this.db.db
@@ -1413,7 +1415,7 @@ export class ApprovalsService {
         org_id: orgId,
         connector_id: connectorId,
         account_id: accountId,
-        tool_name: gitPushPolicyName(repo),
+        tool_name: gitPushPolicyName(host, repo),
         policy: "allow",
       })
       .onConflict((oc) =>

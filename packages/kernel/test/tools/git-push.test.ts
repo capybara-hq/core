@@ -202,13 +202,14 @@ describe("decideGitPush", { timeout: 60_000 }, () => {
     for (const connectorId of [personal, orgOwned]) {
       await sql`INSERT INTO capybara.connector_tool_account_policies
           (org_id, connector_id, account_id, tool_name, policy)
-        VALUES (${seed.orgId}, ${connectorId}, ${seed.accountId}, 'git_push:acme/app', 'allow')`.execute(
+        VALUES (${seed.orgId}, ${connectorId}, ${seed.accountId}, 'git_push:github.com/acme/app', 'allow')`.execute(
         raw,
       );
     }
     expect(await push()).toMatchObject({ decision: "allow", reason: "member_allow" });
-    // another repository, and the org connector (it pushes as the org): still asked
+    // another repository, another host, and the org connector (it pushes as the org): asked
     expect((await push({ repo: "acme/other" })).decision).toBe("ask");
+    expect((await push({ host: "ghe.example.com" })).decision).toBe("ask");
     expect((await push({ connectorId: orgOwned })).decision).toBe("ask");
     // the org's deny is a floor no member setting lifts
     await setOrgDefault(personal, "deny");
@@ -268,12 +269,17 @@ describe("git asks", { timeout: 60_000 }, () => {
     expect(await push()).toMatchObject({ decision: "allow", reason: "run_grant" });
     expect((await push({ repo: "acme/other" })).decision).toBe("ask");
     expect((await push({ host: "gitlab.com" })).decision).toBe("ask");
+    // the grant is the actor's and the connector's: never another person's or source's
+    expect((await push({ connectorId: orgOwned })).decision).toBe("ask");
+    const other = randomUUID();
+    await sql`INSERT INTO capybara.accounts (id, display_name) VALUES (${other}, 'X')`.execute(raw);
+    expect((await push({ accountId: other })).decision).toBe("ask");
     // a sub-agent's run of the tree sees it; no member policy was written
     const child = randomUUID();
     await insertRun(child, { budgetRunId: runId });
     expect((await push({ runId: child })).reason).toBe("run_grant");
     expect(await memberPolicies()).toEqual([]);
-    expect((await gitRunState(db, runId)).granted).toEqual(new Set(["acme/app"]));
+    expect((await gitRunState(db, runId)).granted).toEqual(new Set(["github.com/acme/app"]));
     // the grant ends with its run
     await sql`UPDATE capybara.runs SET status = 'completed' WHERE id = ${runId}`.execute(raw);
     expect((await push()).decision).toBe("ask");
@@ -289,7 +295,7 @@ describe("git asks", { timeout: 60_000 }, () => {
       {
         connector_id: personal,
         account_id: seed.accountId,
-        tool_name: "git_push:acme/app",
+        tool_name: "git_push:github.com/acme/app",
         policy: "allow",
       },
     ]);
@@ -318,7 +324,7 @@ describe("git asks", { timeout: 60_000 }, () => {
       reason: "not now",
     });
     expect(d).toMatchObject({ status: "denied", denyReason: "not now" });
-    expect((await gitRunState(db, runId)).refused).toEqual(new Set(["acme/app"]));
+    expect((await gitRunState(db, runId)).refused).toEqual(new Set(["github.com/acme/app"]));
     expect((await push()).decision).toBe("ask");
     // a run grant never lifts the org's deny
     const b = await ask({}, { repo: "acme/two" });
@@ -357,7 +363,7 @@ describe("git asks", { timeout: 60_000 }, () => {
     await sql`UPDATE capybara.approvals SET expires_at = now() - interval '1 second'
       WHERE id = ${a.id}`.execute(raw);
     expect((await approvals.expire(a.id)).outcome).toBe("expired");
-    expect((await gitRunState(db, runId)).refused.has("acme/app")).toBe(true);
+    expect((await gitRunState(db, runId)).refused.has("github.com/acme/app")).toBe(true);
 
     // the run's starter writes a message: the pending git ask is skipped like a network ask
     const b = await ask({}, { repo: "acme/two" });
@@ -462,6 +468,54 @@ describe("unattended runs", { timeout: 60_000 }, () => {
       decision: "deny",
       reason: "org_deny",
     });
+  });
+
+  it("a forbidden git:push denies before every allow in an unattended run, never in an attended one", async () => {
+    const run = await taskRun(false);
+    // entries compare normalized: `git:push:Acme/App` forbids acme/app
+    for (const forbiddenTools of [["git:push"], ["git:push:Acme/App.git"]]) {
+      const ban = u({ forbiddenTools });
+      // the org's allow
+      await setOrgDefault(personal, "allow");
+      expect(await push({ runId: run, unattended: ban })).toMatchObject({
+        decision: "deny",
+        reason: "forbidden",
+      });
+      await setOrgDefault(personal, "ask");
+      // a member's standing allow
+      await sql`INSERT INTO capybara.connector_tool_account_policies
+          (org_id, connector_id, account_id, tool_name, policy)
+        VALUES (${seed.orgId}, ${personal}, ${seed.accountId}, 'git_push:github.com/acme/app', 'allow')
+        ON CONFLICT DO NOTHING`.execute(raw);
+      expect(await push({ runId: run, unattended: ban })).toMatchObject({ reason: "forbidden" });
+      await sql`DELETE FROM capybara.connector_tool_account_policies`.execute(raw);
+      // a task grant
+      await addGrant("git:push:acme/app");
+      expect(await push({ runId: run, unattended: ban })).toMatchObject({ reason: "forbidden" });
+    }
+    // another repository is not forbidden by a per-repository entry
+    expect(
+      (
+        await push({
+          runId: run,
+          repo: "acme/other",
+          unattended: u({ forbiddenTools: ["git:push:acme/app"] }),
+        })
+      ).reason,
+    ).toBe("unattended");
+    // an attended run (null context) ignores the scheduled-run ban
+    await setOrgDefault(personal, "allow");
+    expect((await push({ unattended: null })).reason).toBe("org_allow");
+  });
+
+  it("a forbidden git:push denies over a run grant of the unattended run", async () => {
+    const run = await taskRun(false);
+    const a = await ask({ runId: run });
+    await approvals.decide(seed.orgId, a.id, seed.accountId, { decision: "approve" });
+    expect((await push({ runId: run, unattended: u() })).reason).toBe("run_grant");
+    expect(
+      await push({ runId: run, unattended: u({ forbiddenTools: ["git:push"] }) }),
+    ).toMatchObject({ decision: "deny", reason: "forbidden" });
   });
 
   it("a trial run asks; its 「这次允许」 becomes the task's git:push:<repo> grant", async () => {

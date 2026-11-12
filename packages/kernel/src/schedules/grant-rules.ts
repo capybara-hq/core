@@ -208,7 +208,7 @@ export function gitGrantRefusal(
   key: string,
   ctx: Pick<GrantContext, "forbiddenTools">,
 ): { code: GrantRefusalCode; message: string } | null {
-  if (ctx.forbiddenTools.includes(key) || ctx.forbiddenTools.includes(GIT_PUSH_GRANT)) {
+  if (gitPushForbidden(ctx.forbiddenTools, key)) {
     return {
       code: "forbidden",
       message: `The organization does not allow ${key} in scheduled runs`,
@@ -223,6 +223,19 @@ export function gitGrantRefusal(
     };
   }
   return null;
+}
+
+/**
+ * Whether the org's `forbiddenTools` forbid the git push grant `key` (normalized): it lists
+ * `git:push` or the key, each entry compared normalized (`git:push:Acme/App` forbids
+ * `git:push:acme/app`).
+ */
+export function gitPushForbidden(forbiddenTools: readonly string[], key: string): boolean {
+  return forbiddenTools.some((entry) => {
+    if (!isGitGrantKey(entry.trim())) return false;
+    const e = normalizeGitGrantKey(entry.trim());
+    return e === GIT_PUSH_GRANT || e === key;
+  });
 }
 
 /**

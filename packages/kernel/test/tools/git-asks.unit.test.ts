@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   GIT_PUSH_GRANT,
   gitGrantRefusal,
+  gitPushForbidden,
   gitPushGrantKey,
   grantRefusalOf,
   isGitGrantKey,
@@ -126,9 +127,11 @@ describe("planGitAsk", () => {
   });
 
   it("does not ask again about a refused repository, while another ask waits, or past the cap", () => {
-    expect(planGitAsk(ask, state({ refused: new Set(["acme/app"]) })).notes).toEqual([
+    expect(planGitAsk(ask, state({ refused: new Set(["github.com/acme/app"]) })).notes).toEqual([
       gitDeniedNote("acme/app", REFS),
     ]);
+    // a refusal on another host says nothing about this one
+    expect(planGitAsk(ask, state({ refused: new Set(["gitlab.com/acme/app"]) })).ask).toBe(true);
     expect(planGitAsk(ask, state({ pending: true })).notes[0]).toContain(
       "another push request is waiting for the user",
     );
@@ -235,6 +238,18 @@ describe("git push task grants", () => {
     expect(gitGrantRefusal("git:push:acme/app", { forbiddenTools: ["git:push"] })?.code).toBe(
       "forbidden",
     );
+    // forbiddenTools entries compare normalized
+    expect(gitPushForbidden(["git:push:Acme/App.git"], "git:push:acme/app")).toBe(true);
+    expect(gitPushForbidden([" git:push "], "git:push:acme/app")).toBe(true);
+    expect(gitPushForbidden(["git:push:acme/other", "Bash"], "git:push:acme/app")).toBe(false);
+    expect(
+      gitGrantRefusal("git:push:acme/app", { forbiddenTools: ["git:push:ACME/app"] })?.code,
+    ).toBe("forbidden");
+    // the longest repository keeps the grant key within a forbiddenTools entry (200)
+    const longest = `${"o".repeat(39)}/${"r".repeat(191 - 40)}`;
+    expect(normalizeGitRepo(longest)).toBe(longest);
+    expect(gitPushGrantKey(longest).length).toBeLessThanOrEqual(200);
+    expect(normalizeGitRepo(`${longest}x`)).toBeNull();
     expect(
       grantRefusalOf("git:push:acme/app", undefined, {
         ...ctx,

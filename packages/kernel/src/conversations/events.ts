@@ -62,8 +62,11 @@ export const NETWORK_HOST_MAX_CHARS = 255;
 export const GIT_ASK_MAX_REFS = 20;
 /** The longest ref name a git push ask carries. */
 export const GIT_REF_MAX_CHARS = 255;
-/** The longest `<owner>/<repo>` a git push ask carries (GitHub allows 39 + 100 characters). */
-export const GIT_REPO_MAX_CHARS = 200;
+/**
+ * The longest `<owner>/<repo>` a git push ask carries (GitHub allows 39 + 100 characters): the
+ * grant key `git:push:<owner>/<repo>` must fit an org's `forbiddenTools` entry (200 characters).
+ */
+export const GIT_REPO_MAX_CHARS = 191;
 /** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 /** 一条 `media_excluded` 事件最多的附件数。 */

@@ -164,7 +164,13 @@ export const gitPolicyDeniedNote = (repo: string, refs: readonly string[]) =>
 export const gitNotConnectedNote = (host: string) =>
   `[git] The push to ${host} was not made: the user has no connection that can push there. The user can connect one under Settings → Connectors; continue without pushing or ask the user.`;
 
-/** What the run tree's git asks add up to (the network asks' rules, §6.8 there). */
+/** How the run state keys a repository on a host: `<host>/<owner>/<repo>` (lower-case). */
+export const gitRepoKey = (host: string, repo: string) => `${host.toLowerCase()}/${repo}`;
+
+/**
+ * What the run tree's git asks add up to (the network asks' rules, §6.8 there); repositories are
+ * keyed by {@link gitRepoKey}, so a decision about one host says nothing about another.
+ */
 export interface GitRunState {
   /** Repositories allowed for the rest of the run tree (「这次允许」). */
   granted: Set<string>;
@@ -207,7 +213,7 @@ export function planGitAsk(record: GitAskRecord, run: GitRunState | null): GitPl
     default:
       break;
   }
-  if (run?.refused.has(repo)) {
+  if (run?.refused.has(gitRepoKey(record.host, repo))) {
     return { ask: false, notes: [gitDeniedNote(repo, refs)], missingGrants: [] };
   }
   if (run?.pending === true) {

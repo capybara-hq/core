@@ -2,10 +2,15 @@ import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
-import { GIT_PUSH_GRANT, gitPushGrantKey, normalizeGitRepo } from "../schedules/grant-rules.js";
+import {
+  GIT_PUSH_GRANT,
+  gitPushForbidden,
+  gitPushGrantKey,
+  normalizeGitRepo,
+} from "../schedules/grant-rules.js";
 import { type UnattendedRun, unattendedRules, unattendedRunOf } from "../schedules/unattended.js";
 import { gitPushPolicyName, personalAuth } from "./connector-account-policies.js";
-import type { GitRunState } from "./git-asks.js";
+import { type GitRunState, gitRepoKey } from "./git-asks.js";
 import { connectorPolicy } from "./policy.js";
 import type { ToolPolicy } from "./registry.js";
 
@@ -16,7 +21,7 @@ import type { ToolPolicy } from "./registry.js";
  *
  * Storage (no new table): the org's default is `connectors.git_push_policy` (default `ask`); a
  * member's standing allow (or deny) for one repository is their `connector_tool_account_policies`
- * row `git_push:<owner>/<repo>` (a personal connector only: an org connector's push acts as the
+ * row `git_push:<host>/<owner>/<repo>` (a personal connector only: an org connector's push acts as the
  * org); a run grant is an approved `once` git ask of the run tree; a scheduled task's grants are
  * `git:push` and `git:push:<owner>/<repo>` in `scheduled_task_grants`.
  */
@@ -99,13 +104,15 @@ export function gitPushBase(input: {
 /**
  * Decides a push (sandbox git credentials spec §7), highest first:
  * 1. the org's default `deny` for the connector; the member's own `deny` for the repository;
- * 2. the member's standing allow for the repository (personal connector), else the org's
- *    default `allow`; a member's `ask` keeps an org `allow` asking;
- * 3. an ask is allowed by a run grant (an approved `once` git ask of the live run tree for the
- *    host and repository);
- * 4. an unattended run (no trial, no person joined): a forbidden `git:push` denies; a task grant
- *    `git:push` or `git:push:<owner>/<repo>` allows; else `fail` mode refuses (`unattended`, with
- *    the missing grant to record) and `wait` mode asks the creator.
+ * 2. an unattended run (no trial, no person joined) whose org forbids `git:push` or the
+ *    repository's key in scheduled runs (scheduled tasks spec §7): deny, whatever allows it below;
+ * 3. the member's standing allow for the repository on the host (personal connector), else the
+ *    org's default `allow`; a member's `ask` keeps an org `allow` asking;
+ * 4. an ask is allowed by a run grant (an approved `once` git ask of the live run tree for the
+ *    host, repository and connector, decided for the same actor);
+ * 5. an unattended run: a task grant `git:push` or `git:push:<owner>/<repo>` allows; else `fail`
+ *    mode refuses (`unattended`, with the missing grant to record) and `wait` mode asks the
+ *    creator.
  * Grants never lift a deny. The caller records the missing grant and the Redis ask record.
  */
 export async function decideGitPush(
@@ -133,40 +140,40 @@ export async function decideGitPush(
       .select("policy")
       .where("connector_id", "=", input.connectorId)
       .where("account_id", "=", input.accountId)
-      .where("tool_name", "=", gitPushPolicyName(repo))
+      .where("tool_name", "=", gitPushPolicyName(host, repo))
       .executeTakeFirst();
     member = row?.policy;
   }
   const base = gitPushBase({ orgDefault: connector.git_push_policy, member });
-  if (base.policy !== "ask") return { decision: base.policy, reason: base.reason, repo };
-  if (await hasRunGrant(db, input.orgId, input.runId, host, repo)) {
-    return { decision: "allow", reason: "run_grant", repo };
-  }
+  if (base.policy === "deny") return { decision: "deny", reason: base.reason, repo };
+  // what an unattended run may not do at all comes before every allow (as the tool policy)
+  const key = gitPushGrantKey(repo);
   const unattended =
     input.unattended !== undefined
       ? input.unattended
       : await unattendedRunOf(db, config, input.orgId, input.runId);
-  if (unattendedRules(unattended)) {
-    const key = gitPushGrantKey(repo);
-    if (
-      unattended.forbiddenTools.includes(GIT_PUSH_GRANT) ||
-      unattended.forbiddenTools.includes(key)
-    ) {
-      return { decision: "deny", reason: "forbidden", repo };
-    }
+  const rules = unattendedRules(unattended) ? unattended : null;
+  if (rules !== null && gitPushForbidden(rules.forbiddenTools, key)) {
+    return { decision: "deny", reason: "forbidden", repo };
+  }
+  if (base.policy === "allow") return { decision: "allow", reason: base.reason, repo };
+  if (await hasRunGrant(db, input, host, repo)) {
+    return { decision: "allow", reason: "run_grant", repo };
+  }
+  if (rules !== null) {
     const granted = await db
       .selectFrom("scheduled_task_grants")
       .select("tool_key")
-      .where("task_id", "=", unattended.taskId)
+      .where("task_id", "=", rules.taskId)
       .where("tool_key", "in", [GIT_PUSH_GRANT, key])
       .executeTakeFirst();
     if (granted !== undefined) return { decision: "allow", reason: "task_grant", repo };
-    if (unattended.unattendedAsk === "fail") {
+    if (rules.unattendedAsk === "fail") {
       return {
         decision: "deny",
         reason: "unattended",
         repo,
-        missingGrant: { taskRunId: unattended.taskRunId, key },
+        missingGrant: { taskRunId: rules.taskRunId, key },
       };
     }
   }
@@ -181,19 +188,18 @@ const treeOf = (db: KernelSchemaDb, root: string) =>
     .where((eb) => eb.or([eb("id", "=", root), eb("budget_run_id", "=", root)]));
 
 /**
- * Whether the run tree holds a run grant for pushes to `repo` on `host`: an approved `once` git
- * ask of the tree in the org, while the tree's root run has not ended (a grant ends with its run;
- * a later run of the same budget window does not inherit it). An `always` decision is the member's
- * policy row and is read there, not here.
+ * Whether the run tree holds a run grant for this push: an approved `once` git ask of the tree in
+ * the org about the same host, repository and connector, asked of the same actor, while the tree's
+ * root run has not ended (a grant ends with its run; a later run of the same budget window does
+ * not inherit it). An `always` decision is the member's policy row and is read there, not here.
  */
 async function hasRunGrant(
   db: KernelSchemaDb,
-  orgId: string,
-  runId: string,
+  input: Pick<GitPushInput, "orgId" | "runId" | "connectorId" | "accountId">,
   host: string,
   repo: string,
 ): Promise<boolean> {
-  const root = await budgetRunOf(db, runId);
+  const root = await budgetRunOf(db, input.runId);
   const live = await db
     .selectFrom("runs")
     .select("id")
@@ -205,7 +211,9 @@ async function hasRunGrant(
     .selectFrom("approvals")
     .select("id")
     .where("kind", "=", "git")
-    .where("org_id", "=", orgId)
+    .where("org_id", "=", input.orgId)
+    .where("connector_id", "=", input.connectorId)
+    .where("requested_for", "=", input.accountId)
     .where("status", "=", "approved")
     .where("scope", "=", "once")
     .where(sql<string>`detail->>'repo'`, "=", repo)
@@ -217,7 +225,8 @@ async function hasRunGrant(
 
 /**
  * The run tree's git asks (the network asks' rules, network ask-to-allow spec §6.8): the
- * repositories granted and refused in the tree, this run's asks, a pending ask of the tree.
+ * repositories granted and refused in the tree (keyed `<host>/<owner>/<repo>`, {@link gitRepoKey}),
+ * this run's asks, a pending ask of the tree.
  */
 export async function gitRunState(db: KernelSchemaDb, runId: string): Promise<GitRunState> {
   const root = await budgetRunOf(db, runId);
@@ -230,11 +239,12 @@ export async function gitRunState(db: KernelSchemaDb, runId: string): Promise<Gi
   const state: GitRunState = { granted: new Set(), refused: new Set(), asks: 0, pending: false };
   for (const r of rows) {
     if (r.run_id === runId) state.asks++;
-    const repo = (r.detail as { repo?: unknown } | null)?.repo;
+    const d = r.detail as { host?: unknown; repo?: unknown } | null;
     if (r.status === "pending") state.pending = true;
-    else if (typeof repo !== "string") continue;
-    else if (r.status === "approved" && r.scope === "once") state.granted.add(repo);
-    else if (REFUSING.has(r.status)) state.refused.add(repo);
+    else if (typeof d?.repo !== "string" || typeof d.host !== "string") continue;
+    else if (r.status === "approved" && r.scope === "once") {
+      state.granted.add(gitRepoKey(d.host, d.repo));
+    } else if (REFUSING.has(r.status)) state.refused.add(gitRepoKey(d.host, d.repo));
   }
   return state;
 }

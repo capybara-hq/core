@@ -2,7 +2,7 @@
 -- connector's virtual tool `git_push` (`allow` / `ask` / `deny`, default `ask`). It has no row in
 -- `connector_tools` (that table mirrors the tools the connector serves, kept in step by drift
 -- review), so it is the connector's own column. A member's standing allow for one repository is a
--- `connector_tool_account_policies` row named `git_push:<owner>/<repo>` (no schema change there).
+-- `connector_tool_account_policies` row named `git_push:<host>/<owner>/<repo>` (no schema change).
 ALTER TABLE connectors ADD COLUMN IF NOT EXISTS git_push_policy text NOT NULL DEFAULT 'ask';
 ALTER TABLE connectors DROP CONSTRAINT IF EXISTS connectors_git_push_policy_check;
 ALTER TABLE connectors ADD CONSTRAINT connectors_git_push_policy_check
