@@ -1047,8 +1047,8 @@ rules), 10 s. The answer is read with the OAuth flow's existing refusal parser:
 
 | Token endpoint answers | Status | Reason / fix |
 |---|---|---|
-| `invalid_grant`, Slack `invalid_code` (the client authenticated, the code is bad, as intended) | ok | "The token endpoint accepted the client." |
-| `invalid_client`, `unauthorized_client`, Slack `invalid_client_id`, `bad_client_secret`, HTTP 401 | failing | "The token endpoint refused the client id or secret." / "Copy the Client ID and Client Secret again from the app's Basic Information page." |
+| `invalid_grant`, Slack `invalid_code`, GitHub `bad_verification_code` (the client authenticated, the code is bad, as intended) | ok | "The token endpoint accepted the client." |
+| `invalid_client`, `unauthorized_client`, Slack `invalid_client_id`, `bad_client_secret`, GitHub `incorrect_client_credentials`, HTTP 401 | failing | "The token endpoint refused the client id or secret." / "Copy the client ID and client secret again from the app's settings page." |
 | `redirect_uri_mismatch`, Slack `bad_redirect_uri` | failing | "The app does not list the callback URL." / "Add `{{oauthCallbackUrl}}` to the app's redirect URLs." (rendered) |
 | anything else, 429, 5xx, a network error, a 2xx with a token (never expected) | unknown | "Could not verify the client; retry later." A token in a 2xx body is discarded unread and not stored. |
 
