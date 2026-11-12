@@ -8,10 +8,11 @@ import type {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import {
@@ -22,7 +23,7 @@ import {
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import type { DeviceOpResolveData } from "../../src/local-devices/policy-op-jobs.js";
-import { LIST_TTL_MARGIN_MS } from "../../src/local-devices/relay.js";
+import { LIST_TTL_MARGIN_MS, LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { DeviceOpResolver } from "../../src/tools/device-op-resolver.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -588,6 +589,31 @@ describe("device policy intents", () => {
     expect(recent).toEqual([
       expect.objectContaining({ kind: "policy", add: ["files.slack.com"], outcome: "failed" }),
     ]);
+  });
+
+  it("a relay ApiError on the call (offline, disconnected, deleted) is offline, the op unknown", async () => {
+    const d = await device();
+    await connect(d, new Sim());
+    const relay = k.app.get(LocalDeviceRelay);
+    for (const code of ["device.offline", "device.forbidden", "device.not_found"] as const) {
+      const begun = await policies.begin({
+        orgId,
+        deviceId: d.deviceId,
+        change: { add: ["files.slack.com"] },
+        source: source(d.accountId),
+      });
+      if ("outcome" in begun) throw new Error("nothing was sent");
+      const call = vi.spyOn(relay, "call").mockRejectedValueOnce(new ApiError(code, "relay"));
+      try {
+        const sent = await policies.send(begun.intent);
+        expect(sent.result).toEqual({ outcome: "unknown" });
+        expect(sent.outcome).toMatchObject({ applied: false, reason: "offline" });
+        expect(sent.notFound, code).toBe(code === "device.not_found" ? true : undefined);
+        expect(call).toHaveBeenCalledTimes(1);
+      } finally {
+        call.mockRestore();
+      }
+    }
   });
 
   it("an answer the kernel cannot read, or the machine's own error, is resolved, not refused", async () => {

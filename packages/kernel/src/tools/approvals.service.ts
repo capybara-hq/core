@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   connectorToolKey,
   type LocalizedName,
@@ -760,8 +761,10 @@ export class ApprovalsService {
    * with outcome `refused`, nothing granted; no answer → a run grant (`once_fallback`, `offline`)
    * while the op stays `unknown` for the machine's next hello or the resolver. A device that
    * reconnects during the call and reports the op applied lets the resolver approve the ask as
-   * this owner first: that decision is returned (`toSeq` null: already announced), never a 409. A
-   * device deleted during the call is `device.not_found` (the op recorded unknown).
+   * this owner first: that decision is returned (`toSeq` null: already announced), never a 409;
+   * when it granted other hosts than this call's (another of the owner's changes) and this call's
+   * change was not confirmed, `approval.already_decided` says so. A device deleted during the
+   * call is `device.not_found` (the op recorded unknown).
    */
   private async decideAlways(
     orgId: string,
@@ -831,7 +834,15 @@ export class ApprovalsService {
         record.detail?.outcome === "always" &&
         record.decidedBy === accountId
       ) {
-        return { record, toSeq: null };
+        const stored = [...(record.detail.grantedHosts ?? [])].sort();
+        if (isDeepStrictEqual(stored, [...granted].sort())) return { record, toSeq: null };
+        // approved by another of this owner's changes (other hosts), and this call's change was
+        // not confirmed by the device: never report it as done
+        throw new ApiError(
+          "approval.already_decided",
+          `The request was already approved to always allow ${stored.join(", ") || "no hosts"}; ` +
+            `the device did not confirm allowing ${granted.join(", ")}.`,
+        );
       }
     }
     // the device took the hosts, but a reply, the expiry or a stop closed the ask meanwhile: the

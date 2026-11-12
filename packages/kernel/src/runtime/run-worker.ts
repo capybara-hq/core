@@ -683,6 +683,11 @@ export class RunWorker {
         agent = started.agent;
         const toSeq = started.toSeq;
         if (toSeq !== undefined) await this.eventLog.notify(conversationId, toSeq);
+      } else if (await this.runEnded(conversationId, runId)) {
+        // a retried start (its run_started is there) read `queued` before the conversation lock:
+        // a stop that ended the run meanwhile wins, so no catalog or run context is recorded
+        // after its end
+        return "finished";
       }
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
       await this.skillsCatalog.record(
@@ -926,6 +931,33 @@ export class RunWorker {
   }
 
   /**
+   * Whether the run is gone or terminal, read in the caller's transaction under the locks
+   * (conversation, then run, as `RunFinish.finishIn`): the job read its status before taking the
+   * conversation lock, and a stop may have ended it since.
+   */
+  private async endedUnderLocks(conversationId: string, runId: string): Promise<boolean> {
+    await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .execute();
+    const row = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .forUpdate()
+      .executeTakeFirst();
+    return !row || TERMINAL_STATUSES.has(row.status);
+  }
+
+  /** {@link endedUnderLocks} in its own transaction (a retried start's re-check). */
+  @Transactional({ propagation: "requires_new" })
+  private async runEnded(conversationId: string, runId: string): Promise<boolean> {
+    return this.endedUnderLocks(conversationId, runId);
+  }
+
+  /**
    * `run_started` under the conversation row lock, with the model / effort switch in effect then
    * (a chat run's `saved` version under the conversation's selection): what the run uses.
    */
@@ -938,21 +970,7 @@ export class RunWorker {
     saved: AgentDefinition | undefined,
   ): Promise<{ toSeq: number | undefined; agent: AgentDefinition; terminal?: true }> {
     const t = this.db;
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", conversationId)
-      .forUpdate()
-      .execute();
-    // the run's status again under the locks (conversation, then run, as `RunFinish.finishIn`):
-    // the job read it before taking the conversation lock, and a stop may have ended it since
-    const row = await t
-      .selectFrom("runs")
-      .select("status")
-      .where("id", "=", run.id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row || TERMINAL_STATUSES.has(row.status)) {
+    if (await this.endedUnderLocks(conversationId, run.id)) {
       return { toSeq: undefined, agent: current, terminal: true };
     }
     const agent =

@@ -555,6 +555,31 @@ describe("network asks on the device policy intent", { timeout: 60_000 }, () => 
     expect(ofType(await eventsOf(db, s.conversationId), "approval_decided")).toHaveLength(1);
   });
 
+  it("approved meanwhile by the owner's other change (other hosts), this unconfirmed change is a 409", async () => {
+    const sim = new Sim();
+    sim.mode = "hold";
+    const machine = await connect(sim);
+    const a = await ask();
+    const pending = always(a.id);
+    await machine.next((f) => f.type === "req" && f.op === "policy");
+    // what the resolver writes for another op of this owner: approved `always`, other hosts
+    await sql`UPDATE capybara.approvals SET status = 'approved', scope = 'always',
+      decided_by = ${s.accountId}, decided_at = now(),
+      detail = detail || '{"outcome":"always","grantedHosts":["other.example.com"]}'::jsonb
+      WHERE id = ${a.id}`.execute(raw);
+    // this call's op is never answered: not confirmed
+    machine.close();
+    const res = await pending;
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json()).toMatchObject({
+      error: {
+        code: "approval.already_decided",
+        message:
+          "The request was already approved to always allow other.example.com; the device did not confirm allowing files.slack.com.",
+      },
+    });
+  });
+
   it("the device is deleted during the call: device.not_found, the op recorded unknown, nothing granted", async () => {
     const sim = new Sim();
     sim.mode = "hold";

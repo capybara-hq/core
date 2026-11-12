@@ -3,7 +3,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -11,9 +11,11 @@ import {
   OutboxDispatcher,
 } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { RUN_STOP_JOB } from "../../src/orgs/offboarding.js";
+import { RunContextService } from "../../src/runtime/run-context.service.js";
 import { RunControl } from "../../src/runtime/run-control.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
+import { SkillsCatalogService } from "../../src/skills/catalog.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -293,6 +295,31 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
     await deliverResume(runId);
     expect(await runStatus(runId)).toBe("aborted");
     expect(await afterAbort(conv, runId)).toEqual([]);
+  }, 60_000);
+
+  it("a resume job that read it as queued before the stop records no catalog or run context", async () => {
+    const conv = await createConv(req, orgId, askerId);
+    const runId = await resumedQueued(req, conv);
+    const catalog = vi.spyOn(k.app.get(SkillsCatalogService), "record");
+    const context = vi.spyOn(k.app.get(RunContextService), "record");
+    try {
+      // the resume job reads `queued` (its run_started is there), then the stop ends the run
+      const pause = pauseAt("afterRunRead", conv);
+      const delivered = deliverResume(runId);
+      expect(await pause.reached).toBe(runId);
+      expect(await k.app.get(RunControl).abortQueued(conv, runId, null)).toBe(true);
+      pause.release();
+      await delivered;
+      expect(await runStatus(runId)).toBe("aborted");
+      const forRun = (calls: unknown[][]) =>
+        calls.filter((c) => (c[0] as { runId?: string }).runId === runId);
+      expect(forRun(catalog.mock.calls)).toEqual([]);
+      expect(forRun(context.mock.calls)).toEqual([]);
+      expect(await afterAbort(conv, runId)).toEqual([]);
+    } finally {
+      catalog.mockRestore();
+      context.mockRestore();
+    }
   }, 60_000);
 
   it("offboarding's run-stop ends it in PG and the held resume job does not run it", async () => {
