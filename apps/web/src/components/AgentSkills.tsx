@@ -4,10 +4,13 @@ import {
   Badge,
   Button,
   Checkbox,
+  CheckList,
   DangerConfirm,
   Dialog,
   EmptyState,
   FilePicker,
+  Icon,
+  Input,
   ItemList,
   ItemListItem,
   Stack,
@@ -19,69 +22,81 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
+import type { DisabledSkillRef } from "../lib/agents";
 import { ApiClientError, issueLines } from "../lib/api";
-import { type OrgComponent, unavailableComponent } from "../lib/components";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import {
   deleteAgentSkill,
-  PINNED_SKILLS_LIMITS,
   precheckSkillZip,
   type SkillSummary,
   shareAgentSkill,
-  skillAliases,
   uploadAgentSkillZip,
 } from "../lib/skills";
+import {
+  type PluginChange,
+  pluginAllOff,
+  type SkillKeyOf,
+  setOwnSkills,
+  setPluginSkills,
+  skillIdKeys,
+  skillIsOff,
+} from "../lib/skills-off";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * The org skills multi-select: one checkbox per skill (name · description), platform skills with a
- * "platform" tag. A selected id that is not in the library (the skill was deleted) shows as a
- * deleted skill and stays ticked; unticking removes it from the definition (the kernel checks only
- * newly added references on save, so keeping it is not an error).
- * A platform skill is selected when the definition names it or one of the org copies linked to it
- * (`linkedIds`, older agents); those copy ids are never shown as deleted. Unticking it removes
- * every alias; ticking it adds the platform skill's own id. A builtin plugin's skill (`builtin`)
- * shows ticked and disabled: every agent has it without selecting it. A region of the skills card; with no
- * org skills the panel empty state, linking to the skills page when `skillsHref` is given (the
+ * The skills on in the org, for an agent or a template (skills default-on spec §10): one grouped
+ * list ({@link SkillGroups}) where a checked row is on. Every skill is on unless `value` turns it
+ * off; entries for skills not listed here (a plugin the org turned off, a deleted skill) stay as
+ * they are. The summary (on and off counts, with `extraOn` for skills always on that are listed
+ * elsewhere, such as the agent's own) stands at the heading's right. A region of the skills card;
+ * with no skills the panel empty state, linking to the skills page when `skillsHref` is given (the
  * viewer can see it).
  */
 export function OrgSkillsPicker({
   skills,
-  offered,
   value,
   onChange,
+  keyOf = skillIdKeys,
+  extraOn = 0,
   skillsHref,
-  alsoKnown = [],
+  disabled = false,
 }: {
   skills: SkillSummary[] | undefined;
-  /** The platform components offered to the org: an id of one that is off reads as unavailable. */
-  offered?: OrgComponent[] | null;
-  /** Ids listed elsewhere on the page (skills the agent shared): never shown as deleted here. */
-  alsoKnown?: readonly string[];
-  value: string[];
-  onChange(next: string[]): void;
+  /** What is turned off. */
+  value: DisabledSkillRef[];
+  onChange(next: DisabledSkillRef[]): void;
+  /** How a skill without a plugin is named in `value` (an agent: by id; a template: by name). */
+  keyOf?: SkillKeyOf;
+  /** Skills on that this list does not show (the agent's own), for the summary. */
+  extraOn?: number;
   /** The skills page, for the empty state's action; undefined when the viewer cannot see it. */
   skillsHref?: string | undefined;
+  disabled?: boolean;
 }) {
   const t = useTranslations("agents.form");
-  const toggle = (s: SkillSummary, on: boolean) => {
-    const aliases = skillAliases(s);
-    onChange(on ? [...value, s.id] : value.filter((x) => !aliases.includes(x)));
-  };
-  const known = new Set([...(skills ?? []).flatMap(skillAliases), ...alsoKnown]);
-  const missing = skills === undefined ? [] : value.filter((id) => !known.has(id));
-  // a platform skill off in the org (spec §5 rule 8): unavailable, back when it is on again
-  const unavailable = missing.flatMap((id) => {
-    const c = unavailableComponent(offered, "skill", id);
-    return c === undefined ? [] : [{ id, name: c.name }];
-  });
-  const deleted = missing.filter((id) => !unavailable.some((u) => u.id === id));
+  const list = skills ?? [];
+  const off = list.filter((s) => skillIsOff(value, s, keyOf)).length;
   return (
-    <Subsection variant="divided" title={t("orgSkillsLabel")}>
+    <Subsection
+      variant="divided"
+      title={t("orgSkillsLabel")}
+      actions={
+        skills === undefined ? undefined : (
+          <Text variant="small" tone="faint">
+            {t("skillsSummary", { on: list.length - off + extraOn, off })}
+          </Text>
+        )
+      }
+    >
       <Stack gap={4}>
-        {skills !== undefined && skills.length === 0 && missing.length === 0 && (
+        {skills === undefined && (
+          <Text variant="small" tone="faint">
+            {t("skillsUnreadable")}
+          </Text>
+        )}
+        {skills !== undefined && skills.length === 0 && (
           <EmptyState
             size="panel"
             text={t("noOrgSkills")}
@@ -92,56 +107,169 @@ export function OrgSkillsPicker({
                 })}
           />
         )}
-        {(skills ?? []).map((s) => (
-          <Stack key={s.id} direction="row" gap={8} align="center">
-            <Checkbox
-              label={`${s.name} · ${s.description}`}
-              // a builtin plugin's skill: every agent has it, nothing to select
-              checked={s.builtin === true || skillAliases(s).some((id) => value.includes(id))}
-              disabled={s.builtin === true}
-              onChange={(on) => toggle(s, on)}
-            />
-            <SkillTags skill={s} />
-          </Stack>
-        ))}
-        {(skills ?? []).some((s) => s.builtin === true) && (
-          <Text variant="small" tone="faint">
-            {t("builtinHint")}
-          </Text>
+        {skills !== undefined && skills.length > 0 && (
+          <SkillGroups
+            skills={skills}
+            value={value}
+            onChange={onChange}
+            keyOf={keyOf}
+            disabled={disabled}
+          />
         )}
-        {(skills ?? []).some((s) => s.manual === true) && (
+        {list.some((s) => s.manual === true) && (
           <Text variant="small" tone="faint">
             {t("manualHint")}
           </Text>
         )}
-        {unavailable.map((u) => (
-          <Checkbox
-            key={u.id}
-            label={t("unavailableSkill", { name: u.name })}
-            checked
-            onChange={(on) => onChange(on ? value : value.filter((x) => x !== u.id))}
-          />
-        ))}
-        {unavailable.length > 0 && (
-          <Text variant="small" tone="warn">
-            {t("unavailableSkillHint")}
-          </Text>
-        )}
-        {deleted.map((id) => (
-          <Checkbox
-            key={id}
-            label={t("deletedSkill", { id })}
-            checked
-            onChange={(on) => onChange(on ? value : value.filter((x) => x !== id))}
-          />
-        ))}
-        {deleted.length > 0 && (
-          <Text variant="small" tone="warn">
-            {t("deletedSkillHint")}
-          </Text>
-        )}
       </Stack>
     </Subsection>
+  );
+}
+
+/** From this many skills a skill list draws its filter field (as ToolPolicyList's, spec §6.36). */
+const SKILL_SEARCH_FROM = 8;
+
+export type SkillGroup = {
+  id: string;
+  title: string;
+  /** The plugin of a plugin group. */
+  plugin?: string;
+  skills: SkillSummary[];
+};
+
+/**
+ * The skills grouped by where they come from: one group per plugin (by its name), then the org's
+ * own skills (no plugin), then the built-in ones (a builtin plugin's: always on).
+ */
+export function skillGroupsOf(
+  skills: readonly SkillSummary[],
+  names: { org: string; builtin: string },
+): SkillGroup[] {
+  const plugins = new Map<string, SkillSummary[]>();
+  const own: SkillSummary[] = [];
+  const builtin: SkillSummary[] = [];
+  for (const s of skills) {
+    if (s.builtin === true) builtin.push(s);
+    else if (s.plugin) plugins.set(s.plugin, [...(plugins.get(s.plugin) ?? []), s]);
+    else own.push(s);
+  }
+  return [
+    ...[...plugins.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([plugin, list]) => ({ id: `plugin:${plugin}`, title: plugin, plugin, skills: list })),
+    ...(own.length > 0 ? [{ id: "org", title: names.org, skills: own }] : []),
+    ...(builtin.length > 0 ? [{ id: "builtin", title: names.builtin, skills: builtin }] : []),
+  ];
+}
+
+/**
+ * The skills on / off, one `CheckList` per group ({@link skillGroupsOf}); a checked row is on and
+ * every row starts checked. A plugin group's head is the whole plugin: unchecking it turns the
+ * plugin off with its later skills (`"all"`, the line 「已关闭全部（含以后新增的）」 under it),
+ * checking it clears the entry; unchecking the last row on one by one does the same. The 本组织
+ * head turns its rows on or off one by one. Built-in skills are checked and locked. Each row is
+ * the name with its tags on the first line and the description as one cut line (the full text on
+ * hover). With many skills a filter field narrows the rows by name and description; a head then
+ * acts on the rows it shows, by name, never on the whole plugin.
+ */
+export function SkillGroups({
+  skills,
+  value,
+  onChange,
+  keyOf = skillIdKeys,
+  disabled = false,
+}: {
+  skills: readonly SkillSummary[];
+  value: DisabledSkillRef[];
+  onChange(next: DisabledSkillRef[]): void;
+  keyOf?: SkillKeyOf;
+  disabled?: boolean;
+}) {
+  const t = useTranslations("agents.form");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const matches = (s: SkillSummary) =>
+    q === "" || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+  const groups = skillGroupsOf(skills, {
+    org: t("skillGroupOrg"),
+    builtin: t("skillGroupBuiltin"),
+  })
+    .map((g) => ({ ...g, known: g.skills, skills: g.skills.filter(matches) }))
+    .filter((g) => g.skills.length > 0);
+  return (
+    <Stack gap={12}>
+      {skills.length >= SKILL_SEARCH_FROM && (
+        <Input
+          type="search"
+          density="dense"
+          prefix={<Icon name="search" size={14} />}
+          placeholder={t("searchSkills")}
+          aria-label={t("searchSkills")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      )}
+      {groups.length === 0 && <EmptyState size="panel" text={t("noSkillMatch")} />}
+      {groups.map((g) => {
+        const byId = new Map(g.skills.map((s) => [s.id, s]));
+        const pick = (ids: string[]) =>
+          ids.flatMap((id) => {
+            const s = byId.get(id);
+            return s === undefined ? [] : [s];
+          });
+        const change = (list: SkillSummary[], on: boolean, how: PluginChange) => {
+          if (g.plugin === undefined) onChange(setOwnSkills(value, list, on, keyOf));
+          else {
+            onChange(
+              setPluginSkills(
+                value,
+                g.plugin,
+                g.known.map((s) => s.name),
+                list.map((s) => s.name),
+                on,
+                how,
+              ),
+            );
+          }
+        };
+        const allOff = g.plugin !== undefined && pluginAllOff(value, g.plugin);
+        const offCount = g.known.filter((s) => skillIsOff(value, s, keyOf)).length;
+        return (
+          <Stack key={g.id} gap={4}>
+            <CheckList
+              label={g.title}
+              title={g.title}
+              disabled={disabled}
+              rows={g.skills.map((s) => ({
+                id: s.id,
+                title: s.name,
+                marks: <SkillTags skill={s} />,
+                description: s.description,
+                checked: !skillIsOff(value, s, keyOf),
+                // a builtin plugin's skill: every agent has it
+                locked: s.builtin === true,
+              }))}
+              onCheck={(id, on) => change(pick([id]), on, "row")}
+              onCheckAll={(ids, on) => change(pick(ids), on, q === "" ? "head" : "shown")}
+            />
+            {g.id === "builtin" && (
+              <Text variant="small" tone="faint">
+                {t("builtinHint")}
+              </Text>
+            )}
+            {allOff ? (
+              <Text variant="small" tone="muted">
+                {t("skillsOffAll")}
+              </Text>
+            ) : offCount > 0 ? (
+              <Text variant="small" tone="muted">
+                {t("skillsOffSome", { n: offCount })}
+              </Text>
+            ) : null}
+          </Stack>
+        );
+      })}
+    </Stack>
   );
 }
 
@@ -192,159 +320,6 @@ export function SkillRegistrationSwitch({
 }
 
 /**
- * The agent's pinned skills (`skills.pinned`, spec §9.1): one checkbox per selected skill (the
- * org skills in `orgSkills` and the agent's own skills, in that order), with a "suggested" badge
- * when its plugin suggests pinning it and its token estimate; the pinned count and summed token
- * estimate; at the count limit the other boxes are disabled with a hint. Over the SKILL.md byte
- * limit (the current versions' sizes) a warning: when the list is unchanged runs keep what fits
- * (the kernel only refuses a changed list); when it changed, saving is refused. A pinned id that
- * is no longer selectable (its skill was deleted) stays ticked as a deleted skill until unticked.
- * `skills` is undefined when either skill list could not be read: the pins are then kept as they
- * are and only a status line shows, so a live pin never looks deleted. A region of the skills
- * card: the count against the limit at the heading's right; with nothing selected, one short line
- * where the pin list would be.
- */
-export function PinnedSkillsPicker({
-  skills,
-  offered,
-  selected,
-  value,
-  onChange,
-  changed = false,
-}: {
-  /** Undefined when a skill list could not be read. */
-  skills: SkillSummary[] | undefined;
-  /** The platform components offered to the org: a pin of one that is off reads as unavailable. */
-  offered?: OrgComponent[] | null;
-  /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
-  selected: string[];
-  value: string[];
-  onChange(next: string[]): void;
-  /** The pinned list differs from the saved definition. */
-  changed?: boolean;
-}) {
-  const t = useTranslations("agents.form");
-  if (skills === undefined) {
-    return (
-      <Subsection variant="divided" title={t("pinnedLabel")} description={t("pinnedHint")}>
-        <Text variant="small" tone="faint">
-          {t("pinnedUnavailable")}
-        </Text>
-      </Subsection>
-    );
-  }
-  // a linked copy's id stands for its platform skill (older agents select and pin copy ids)
-  const byId = new Map(skills.flatMap((s) => skillAliases(s).map((id) => [id, s] as const)));
-  /** Each selected skill once, under the id the definition selects it by. */
-  const rows: (SkillSummary & { ref: string })[] = [];
-  for (const id of selected) {
-    const s = byId.get(id);
-    if (s !== undefined && !rows.some((r) => r.id === s.id)) rows.push({ ...s, ref: id });
-  }
-  const pinnedOf = (s: SkillSummary) => skillAliases(s).some((id) => value.includes(id));
-  const stale = value.filter((id) => !rows.some((s) => skillAliases(s).includes(id)));
-  const pinnedRows = rows.filter(pinnedOf);
-  const bytes = pinnedRows.reduce((n, s) => n + (s.entryBytes ?? 0), 0);
-  const tokens = pinnedRows.reduce((n, s) => n + (s.tokenEstimate ?? 0), 0);
-  const max = PINNED_SKILLS_LIMITS.count;
-  const full = value.length >= max;
-  const toggle = (id: string, on: boolean) =>
-    onChange(on ? [...value, id] : value.filter((x) => x !== id));
-  /** Pins a row under the id it is selected by; unpins every alias of it. */
-  const toggleRow = (s: SkillSummary & { ref: string }, on: boolean) => {
-    const aliases = skillAliases(s);
-    onChange(on ? [...value, s.ref] : value.filter((x) => !aliases.includes(x)));
-  };
-  return (
-    <Subsection
-      variant="divided"
-      title={t("pinnedLabel")}
-      description={t("pinnedHint")}
-      actions={
-        <Text variant="small" tone="faint">
-          {t("pinnedCount", { count: value.length, max })}
-        </Text>
-      }
-    >
-      <Stack gap={4}>
-        {rows.length === 0 && stale.length === 0 && (
-          <Text variant="small" tone="faint">
-            {t("noPinnable")}
-          </Text>
-        )}
-        {rows.map((s) => {
-          const on = pinnedOf(s);
-          // a manual-only skill is not in the model's catalog: never newly pinned (phase D)
-          const manual = s.manual === true;
-          return (
-            <Stack key={s.id} direction="row" gap={8} align="center">
-              <Checkbox
-                label={t("pinSkill", { name: s.name })}
-                checked={on}
-                disabled={!on && (full || manual)}
-                onChange={(next) => toggleRow(s, next)}
-              />
-              <SkillTags skill={s} />
-              {s.suggestPinned === true && <Badge>{t("suggested")}</Badge>}
-              {s.tokenEstimate !== undefined && (
-                <Text variant="small" tone="muted">
-                  {t("tokenEstimate", { n: s.tokenEstimate })}
-                </Text>
-              )}
-            </Stack>
-          );
-        })}
-        {stale.map((id) => (
-          <Checkbox
-            key={id}
-            label={(() => {
-              const off = unavailableComponent(offered, "skill", id);
-              return off !== undefined
-                ? t("unavailableSkill", { name: off.name })
-                : t("deletedSkill", { id });
-            })()}
-            checked
-            onChange={(next) => toggle(id, next)}
-          />
-        ))}
-        {rows.some((s) => s.manual === true && !pinnedOf(s)) && (
-          <Text variant="small" tone="faint">
-            {t("manualNotPinnable")}
-          </Text>
-        )}
-        {pinnedRows
-          .filter((s) => s.manual === true)
-          .map((s) => (
-            <Text key={s.id} variant="small" tone="warn">
-              {t("pinnedManualOnly", { name: s.name })}
-            </Text>
-          ))}
-        {tokens > 0 && (
-          <Text variant="small" tone="muted">
-            {t("pinnedTotal", { n: tokens })}
-          </Text>
-        )}
-        {full && rows.length > value.length && (
-          <Text variant="small" tone="faint">
-            {t("tooMany", { max })}
-          </Text>
-        )}
-        {bytes > PINNED_SKILLS_LIMITS.totalBytes && (
-          <>
-            <Text variant="small" tone="warn">
-              {t("overLimit", { bytes, max: PINNED_SKILLS_LIMITS.totalBytes })}
-            </Text>
-            <Text variant="small" tone="warn">
-              {changed ? t("overLimitRefused") : t("overLimitKept")}
-            </Text>
-          </>
-        )}
-      </Stack>
-    </Subsection>
-  );
-}
-
-/**
  * The agent's own skills (`scope=agent`) and the org skills it shared (marked "shared with the
  * org", no actions): name · version and description. Everyone who can open
  * the agent reads the list; only the owner (`canManage`) sees the actions: upload a skill package
@@ -365,7 +340,7 @@ export function OwnSkills({
   agentId: string;
   skills: SkillSummary[] | undefined;
   canManage: boolean;
-  onDeleted(skillId: string): void;
+  onDeleted?(skillId: string): void;
   children?: ReactNode;
 }) {
   const t = useTranslations("agents.form");
@@ -520,7 +495,7 @@ export function OwnSkills({
           }
           toast.success(t("ownSkillDeleted", { name: target.name }));
           setTarget(undefined);
-          onDeleted(target.id);
+          onDeleted?.(target.id);
         }}
       />
     </Subsection>

@@ -199,6 +199,30 @@ export const archiveFallbackVersion = (digest: string): string =>
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/**
+ * A `plugin.json` with the fields the SDK no longer has dropped: `skills[].pinned` (the pinned
+ * suggestion, gone with pinning; skills default-on spec §8). Stored packages are history and still
+ * carry it, so every reader of a package passes the manifest through here before parsing. Anything
+ * else (not JSON, not an object) is returned as is for the parser to report.
+ */
+export function withoutRemovedManifestFields(text: string): unknown {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!isObj(raw) || !Array.isArray(raw.skills)) return raw;
+  return {
+    ...raw,
+    skills: raw.skills.map((s: unknown) => {
+      if (!isObj(s) || !("pinned" in s)) return s;
+      const { pinned: _, ...rest } = s;
+      return rest;
+    }),
+  };
+}
+
 const decode = (data: Uint8Array): string | undefined => {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(data);
@@ -409,7 +433,7 @@ export function readPluginFiles(
     if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
     const undeclared = clientUndeclared(text);
     if (undeclared !== undefined) throw new PluginPackageError("client.undeclared", [undeclared]);
-    const parsed = parsePluginManifest(text);
+    const parsed = parsePluginManifest(withoutRemovedManifestFields(text));
     if ("errors" in parsed) {
       return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE}: ${e}`));
     }

@@ -390,8 +390,11 @@ export async function seedPlugin(
     dependencies?: { name: string; version: string }[];
     version?: string;
     addTo?: string;
-    /** Skills whose manifest entry sets `pinned: true` (the suggestion, spec §9.1). */
-    pinned?: string[];
+    /**
+     * Skills whose stored manifest entry still has `pinned: true`, the suggestion removed with
+     * skills default-on (stored manifests are history and keep it).
+     */
+    legacyPinned?: string[];
     /** The version's `source_format` (default capybara). */
     sourceFormat?: "capybara" | "claude-code";
     /**
@@ -419,7 +422,7 @@ export async function seedPlugin(
     ...(o.dependencies !== undefined && { dependencies: o.dependencies }),
     skills: skills.map((s) => ({
       path: `./skills/${s}`,
-      ...(o.pinned?.includes(s) && { pinned: true }),
+      ...(o.legacyPinned?.includes(s) && { pinned: true }),
     })),
     connectorTemplates: Object.keys(templates).map((t) => ({ path: `./connectors/${t}.json` })),
     ...(o.extension && {
@@ -573,7 +576,6 @@ export async function legacyCopies(
           itemId,
           version: a.version,
           format: v.source_format,
-          suggestPinned: sk.pinned === true,
         },
       },
     );

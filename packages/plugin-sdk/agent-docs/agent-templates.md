@@ -30,8 +30,8 @@ You are a careful researcher. ...
 | `model` | `inherit` \| `fast` \| `standard` \| `capable` | no | A purpose tier, never a model id; default `inherit`. |
 | `effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | no | Reasoning effort. |
 | `maxSteps` | integer | no | Step limit; the kernel caps it. |
-| `skills` | array of skill names | no | At most 3, preloaded (pinned). |
-| `selectedSkills` | array of skill names | no | At most 32 further skills the agent may use. |
+| `skills` | array of skill names | no | At most 3; the sub-agent is told to load them with `Skill` before it starts. |
+| `disallowedSkills` | array of skill references | no | At most 64 skills turned off (all others on in the org are on): `<plugin>:<name>`, `<plugin>:*` (the whole plugin, later skills included) or a bare `<name>` (an org skill without a plugin). |
 | `connectors` | array of objects | no | At most 16: `{ template, tools?, policies? }` for a connector template (`<id>` or `<plugin>:<id>`), or `{ needs: { protocol, endpoint, tools, label }, policies? }` for a described need. |
 | `subagents` | object | no | `{ general?, types?, inline? }`: the sub-agents in its roster (at most 16 types plus inline). |
 | `modelRef` | string | no | `provider/model`; set on org templates saved from an agent. |
@@ -40,6 +40,18 @@ You are a careful researcher. ...
 <!-- /generated -->
 
 Unknown keys are ignored. The body is at most 100,000 characters.
+
+## Skills
+
+An agent has every skill that is on in its org; nothing is pinned into its context. A template
+only turns skills off, with `disallowedSkills`: `<plugin>:<name>` for one skill of a plugin,
+`<plugin>:*` for the whole plugin (skills it gains later included) or a bare `<name>` for an org
+skill without a plugin. Saving an agent as an org template writes its off-list here.
+
+`skills` keeps Claude Code's meaning for sub-agent use: when the template runs as a sub-agent, the
+child is told to load these skills with `Skill` before it starts. When a member creates an agent
+from the template, each name in `skills` (and in its sub-agents' `skills`) is reported as carried
+or as unavailable in the org; it narrows nothing.
 
 ## Creating an agent from a template
 

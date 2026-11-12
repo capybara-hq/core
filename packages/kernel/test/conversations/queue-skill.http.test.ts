@@ -40,6 +40,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 import { openSse } from "../helpers/sse.js";
 
 /**
@@ -223,12 +224,13 @@ async function seedSkill(
   return { id, version };
 }
 
-const definition = (skills: string[], tools: { kind: "builtin"; name: string }[] = []) => ({
+/** A definition with only `skills` of the org's skills on (skills default-on spec §4). */
+const definition = async (skills: string[], tools: { kind: "builtin"; name: string }[] = []) => ({
   name: "Lead",
   instructions: LEAD,
   model: { provider: "model-script", model: "script-1" },
   disabledTools: onlyBuiltins(tools as Record<string, unknown>[]),
-  skills: { orgSkills: skills },
+  disabledSkills: await onlySkills(db, orgId, skills),
 });
 
 async function createAgent(
@@ -238,7 +240,7 @@ async function createAgent(
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
-    payload: { definition: definition(skills, tools), visibility: "private" },
+    payload: { definition: await definition(skills, tools), visibility: "private" },
   });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { agent: { id: string } }).agent.id;
@@ -248,7 +250,7 @@ async function setSkills(agentId: string, skills: string[]): Promise<void> {
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
-    payload: { definition: definition(skills) },
+    payload: { definition: await definition(skills) },
   });
   expect(res.statusCode, res.body).toBe(200);
 }

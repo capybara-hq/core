@@ -23,7 +23,6 @@ import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
-import { pinnedBlock } from "../../src/runtime/context/skills.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -50,8 +49,10 @@ import { CLAUDE_FIXTURES, loadFixtureAsStrings } from "./claude-fixtures.js";
 /**
  * Spec §12, phase B acceptance, end to end on one kernel: a super admin adds the superpowers
  * repository (the checked-in fixture on a local fake git server, no network) as a git marketplace
- * and imports superpowers through the one review; an org installs it; an agent pins
- * using-superpowers; model-fake loads brainstorming by its qualified and its plain name; replaying
+ * and imports superpowers through the one review; an org installs it; an agent has its skills on
+ * without selecting them (skills default-on spec §3) and, nothing being pinned any more, loads
+ * using-superpowers with `Skill`; model-fake loads brainstorming by its qualified and its plain
+ * name; replaying
  * the conversation (step reconstruction and a full-run replay) reproduces its requests exactly.
  * The `it`s run in order and share state.
  */
@@ -203,20 +204,16 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       "writing-plans",
     ]);
 
-    // the admin ticks using-superpowers as pinned in the same review
     const confirmed = await admin({
       method: "POST",
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-      payload: {
-        reviewHash: review.reviewHash,
-        pinnedSuggestions: ["using-superpowers"],
-      },
+      payload: { reviewHash: review.reviewHash },
     });
     expect(confirmed.statusCode, confirmed.body).toBe(201);
     state.itemId = confirmed.json().item.id as string;
   });
 
-  it("the admin ticks using-superpowers as pinned and the org installs it; an agent selects the skills and pins using-superpowers", async () => {
+  it("the org installs superpowers; an agent has all its skills on without selecting any", async () => {
     const installed = await admin({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/catalog/${state.itemId}/install`,
@@ -230,17 +227,16 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       name: string;
       plugin?: string;
       sourceFormat?: string;
-      suggestPinned?: boolean;
     }[];
-    expect(skills.map((s) => [s.name, s.plugin, s.sourceFormat, s.suggestPinned])).toEqual([
-      ["brainstorm", "superpowers", "claude-code", false],
-      ["brainstorming", "superpowers", "claude-code", false],
-      ["dispatching-parallel-agents", "superpowers", "claude-code", false],
-      ["requesting-code-review", "superpowers", "claude-code", false],
-      ["subagent-driven-development", "superpowers", "claude-code", false],
-      ["test-driven-development", "superpowers", "claude-code", false],
-      ["using-superpowers", "superpowers", "claude-code", true],
-      ["writing-plans", "superpowers", "claude-code", false],
+    expect(skills.map((s) => [s.name, s.plugin, s.sourceFormat])).toEqual([
+      ["brainstorm", "superpowers", "claude-code"],
+      ["brainstorming", "superpowers", "claude-code"],
+      ["dispatching-parallel-agents", "superpowers", "claude-code"],
+      ["requesting-code-review", "superpowers", "claude-code"],
+      ["subagent-driven-development", "superpowers", "claude-code"],
+      ["test-driven-development", "superpowers", "claude-code"],
+      ["using-superpowers", "superpowers", "claude-code"],
+      ["writing-plans", "superpowers", "claude-code"],
     ]);
     // phase C: the translated code-reviewer agent is an org agent template
     const [reviewer, ...others] = await agentTemplatesFor(db).listForOrg(orgId);
@@ -261,10 +257,6 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
           instructions: "Help build features.",
           model: { provider: "model-fake", model: "fake-1" },
           disabledTools: builtinsOff(),
-          skills: {
-            orgSkills: skills.map((s) => s.id),
-            pinned: [ids["using-superpowers"]],
-          },
         },
         visibility: "org",
       },
@@ -272,32 +264,29 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(created.statusCode, created.body).toBe(201);
     const agent = created.json().agent as {
       id: string;
-      definition: { skills: { pinned: string[] } };
+      definition: { skills?: unknown; disabledSkills: unknown[] };
     };
-    expect(agent.definition.skills.pinned).toEqual([ids["using-superpowers"]]);
+    expect(agent.definition.skills).toBeUndefined();
+    expect(agent.definition.disabledSkills).toEqual([]);
     state.agentId = agent.id;
   });
 
-  it("asked for a new feature, the model loads brainstorming first (superpowers:brainstorming also loads)", async () => {
+  it("the model loads using-superpowers with Skill, then brainstorming (superpowers:brainstorming also loads)", async () => {
     capture.reset();
     const conv = await createConv(admin, orgId, state.agentId as string);
     state.convId = conv;
-    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"superpowers:brainstorming"}');
+    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"using-superpowers"}');
     await waitForTerminal(db, conv, 1, 30_000);
-    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"brainstorming"}');
+    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"superpowers:brainstorming"}');
     await waitForTerminal(db, conv, 2, 30_000);
+    await postMessage(admin, orgId, conv, 'tool:Skill:{"skill":"brainstorming"}');
+    await waitForTerminal(db, conv, 3, 30_000);
 
     const first = sent[0];
     const system = first?.system[0]?.text ?? "";
-    const pinned = pinnedBlock({
-      id: state.skillIds?.["using-superpowers"] as string,
-      version: 1,
-      name: "using-superpowers",
-      source: "",
-      body: body("using-superpowers"),
-    });
-    expect(system).toContain('<pinned_skill name="using-superpowers" version="1">');
-    expect(system).toContain(pinned);
+    // nothing is pinned: using-superpowers is listed in the catalog and loaded with Skill
+    expect(system).not.toContain("<pinned_skill");
+    expect(system).toContain("- using-superpowers:");
     expect(system).toContain(CLAUDE_CODE_TOOL_MAP);
 
     const events = await eventsOf(db, conv);
@@ -307,15 +296,16 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       | undefined;
     expect(catalog?.payload.skills.map((s) => s.name)).toContain("brainstorm");
     const results = events.filter((e): e is ToolResult => e.type === "tool_result");
-    expect(results).toHaveLength(2);
+    expect(results).toHaveLength(3);
+    const using = body("using-superpowers").trim();
     const brainstorming = body("brainstorming").trim();
-    for (const r of results) {
+    for (const [i, r] of results.entries()) {
       expect(r.payload.toolKey).toBe("Skill");
       expect(r.payload.isError, r.payload.content).toBe(false);
-      expect(r.payload.content).toContain(brainstorming);
+      expect(r.payload.content).toContain(i === 0 ? using : brainstorming);
     }
     const runs = await runsOf(db, conv);
-    expect(runs.map((r) => r.status)).toEqual(["completed", "completed"]);
+    expect(runs.map((r) => r.status)).toEqual(["completed", "completed", "completed"]);
     state.original = structuredClone(sent);
   });
 
@@ -327,7 +317,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     const calls = toEvents(snap).filter((e): e is ModelCall => e.type === "model_call");
     const original = state.original as typeof sent;
     expect(calls).toHaveLength(original.length);
-    expect(calls.length).toBe(4);
+    expect(calls.length).toBe(6);
     for (const [i, c] of calls.entries()) {
       const info = (
         await k.app
@@ -383,6 +373,6 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(candidate.unmatched).toBe(0);
     expect(candidate.toolCalls).toEqual([{ name: "Skill", input: { skill: "brainstorming" } }]);
     // the replayed run sends exactly the requests of the original last run (its two steps)
-    expect(sent).toEqual(original.slice(2));
+    expect(sent).toEqual(original.slice(4));
   });
 });

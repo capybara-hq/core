@@ -29,10 +29,14 @@ export interface AgentTemplate {
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Step limit (the kernel caps it at `runtime.maxSteps`). */
   maxSteps?: number;
-  /** Skill names preloaded (pinned) in the sub-agent. */
+  /** Skill names the sub-agent is told to load with `Skill` before it starts (Claude Code's field). */
   skills?: string[];
-  /** Further skill names the agent uses (not preloaded; P4-1). */
-  selectedSkills?: string[];
+  /**
+   * Skills turned off for the agent (every skill on in the org is on otherwise):
+   * `<plugin>:<name>`, `<plugin>:*` (the whole plugin, skills it gains later included) or a bare
+   * `<name>` (an org skill without a plugin).
+   */
+  disallowedSkills?: string[];
   /** Connectors the agent needs: a connector template of the plugin, or a described need. */
   connectors?: AgentTemplateConnector[];
   /** The sub-agents the agent gets in its roster. */
@@ -99,12 +103,12 @@ export const AGENT_TEMPLATE_LIMITS = {
   descriptionChars: 4096,
   /** Templates in one plugin. */
   perPlugin: 64,
-  /** Preloaded skills. */
+  /** Skills the sub-agent loads first. */
   skills: 3,
   /** Entries of `tools` and of `disallowedTools`. */
   tools: 200,
-  /** Entries of `selectedSkills`. */
-  selectedSkills: 32,
+  /** Entries of `disallowedSkills`. */
+  disallowedSkills: 64,
   /** Entries of `connectors`. */
   connectors: 16,
   /** `subagents.types` plus `subagents.inline`. */
@@ -185,13 +189,14 @@ export const AGENT_TEMPLATE_FIELDS: readonly AgentTemplateField[] = [
     name: "skills",
     type: "array of skill names",
     required: false,
-    description: "At most 3, preloaded (pinned).",
+    description: "At most 3; the sub-agent is told to load them with `Skill` before it starts.",
   },
   {
-    name: "selectedSkills",
-    type: "array of skill names",
+    name: "disallowedSkills",
+    type: "array of skill references",
     required: false,
-    description: "At most 32 further skills the agent may use.",
+    description:
+      "At most 64 skills turned off (all others on in the org are on): `<plugin>:<name>`, `<plugin>:*` (the whole plugin, later skills included) or a bare `<name>` (an org skill without a plugin).",
   },
   {
     name: "connectors",
@@ -240,6 +245,20 @@ const TOOL_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const distinct = (v: readonly unknown[]) => new Set(v).size === v.length;
 const NAME_REF_RE = /^[a-z0-9][a-z0-9-]{0,63}(:[a-z0-9][a-z0-9-]{0,63})?$/;
 const MODEL_REF_RE = /^[^/\s]+\/\S+$/;
+const PLUGIN_REF_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * A `disallowedSkills` entry: `<plugin>:<name>`, `<plugin>:*` (the whole plugin) or a bare skill
+ * `<name>` (an org skill without a plugin).
+ */
+export function isDisallowedSkillRef(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const i = v.indexOf(":");
+  if (i < 0) return isSkillName(v);
+  const plugin = v.slice(0, i);
+  const name = v.slice(i + 1);
+  return PLUGIN_REF_RE.test(plugin) && (name === "*" || isSkillName(name));
+}
 /** The name rule of an instruction file (the agent's rule, mirrored). */
 export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE = /^[^/\\]{1,64}\.md$/;
 
@@ -329,11 +348,20 @@ export function parseAgentTemplate(
     else errors.push(`skills must list at most ${L.skills} skill names`);
   }
 
-  if (fm.selectedSkills !== undefined) {
-    const s = fm.selectedSkills;
-    if (Array.isArray(s) && s.length <= L.selectedSkills && s.every(isSkillName) && distinct(s)) {
-      out.selectedSkills = s;
-    } else errors.push(`selectedSkills must list at most ${L.selectedSkills} skill names`);
+  if (fm.disallowedSkills !== undefined) {
+    const s = fm.disallowedSkills;
+    if (
+      Array.isArray(s) &&
+      s.length <= L.disallowedSkills &&
+      s.every(isDisallowedSkillRef) &&
+      distinct(s)
+    ) {
+      out.disallowedSkills = s;
+    } else {
+      errors.push(
+        `disallowedSkills must list at most ${L.disallowedSkills} distinct entries, each <plugin>:<name>, <plugin>:* or <name>`,
+      );
+    }
   }
   if (fm.connectors !== undefined) {
     const c = readConnectors(fm.connectors, errors);

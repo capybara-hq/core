@@ -69,6 +69,12 @@ export type TranslationCode =
   // warnings
   | "skill_ignored_restrictions"
   | "skill_claude_variables"
+  /**
+   * The plugin runs a SessionStart hook (Capybara runs no hooks; its skills are in every agent's
+   * catalog; skills default-on spec §8).
+   */
+  | "session_start_hook"
+  /** Before skills default-on (the pinned suggestion); no longer emitted, kept for stored reports. */
   | "session_start_pin_hint"
   | "mcp_auth_none"
   | "mcp_type_assumed"
@@ -104,7 +110,7 @@ export interface TranslationReport {
   format: "claude-code";
   /** `.claude-plugin/plugin.json`, or null when the tree has none. */
   manifestPath: string | null;
-  /** The plugin has a SessionStart hook: the pinned suggestion is expanded by default (§8.4). */
+  /** The plugin has a SessionStart hook (the report then has a `session_start_hook` item). */
   sessionStart: boolean;
   /** Items sorted by group order, then component, then name. At most {@link CLAUDE_REPORT_MAX_ITEMS} (then one "unknown_field" item named "…" with detail { more: n }). */
   items: TranslationItem[];
@@ -149,6 +155,7 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   other_harness: "ignored",
   skill_ignored_restrictions: "warnings",
   skill_claude_variables: "warnings",
+  session_start_hook: "warnings",
   session_start_pin_hint: "warnings",
   mcp_auth_none: "warnings",
   mcp_type_assumed: "warnings",

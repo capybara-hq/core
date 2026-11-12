@@ -185,9 +185,12 @@
 }
 
 /* Badge / Kbd */
+/* A badge is one unit: it never shrinks or wraps beside a long text (no 「平 / 台」). */
 .cb-badge {
   display: inline-flex;
+  flex: none;
   align-items: center;
+  white-space: nowrap;
   padding: 0 6px;
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);

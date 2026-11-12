@@ -45,6 +45,7 @@ import {
   type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 
 /**
  * Phase D task 3: a person invokes a skill of the conversation's agent with `/name args`. The
@@ -231,33 +232,34 @@ async function catalogItem(name: string): Promise<string> {
 
 type Tool = { kind: "builtin"; name: string };
 
-const definition = (orgSkills: string[], tools: Tool[] = []) => ({
+/** A definition that leaves the agent only `keep` of the org's skills (skills default-on §4). */
+const definition = async (keep: string[], tools: Tool[] = []) => ({
   name: "Skilled",
   instructions: "Use skills.",
   model: { provider: "model-fake", model: "fake-1" },
   disabledTools: onlyBuiltins(tools as Record<string, unknown>[]),
-  skills: { orgSkills },
+  disabledSkills: await onlySkills(db, orgId, keep),
 });
 
 async function createAgent(
-  orgSkills: string[],
+  keep: string[],
   tools: Tool[] = [],
   visibility: "private" | "org" = "private",
 ): Promise<string> {
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
-    payload: { definition: definition(orgSkills, tools), visibility },
+    payload: { definition: await definition(keep, tools), visibility },
   });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { agent: { id: string } }).agent.id;
 }
 
-async function setSkills(agentId: string, orgSkills: string[], tools: Tool[] = []) {
+async function setSkills(agentId: string, keep: string[], tools: Tool[] = []) {
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
-    payload: { definition: definition(orgSkills, tools) },
+    payload: { definition: await definition(keep, tools) },
   });
   expect(res.statusCode, res.body).toBe(200);
 }
@@ -756,7 +758,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
 describe("Review Focus 2: the skill changes between listing and sending", {
   timeout: 60_000,
 }, () => {
-  it("a deselected skill is 400 skill.not_invocable and writes nothing", async () => {
+  it("a turned-off skill is 400 skill.not_invocable and writes nothing", async () => {
     const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
     const agentId = await createAgent([s.id]);
     const conv = await createConv(owner, orgId, agentId);
@@ -874,7 +876,7 @@ describe("Review Focus 4: a retry with the same clientMessageId", { timeout: 60_
     const r2 = await send(conv, body);
     expect(r2.statusCode, r2.body).toBe(202);
     expect(r2.json().event.seq).toBe(r1.json().event.seq);
-    // deselected: still the first event
+    // turned off: still the first event
     await setSkills(agentId, []);
     const r3 = await send(conv, body);
     expect(r3.statusCode, r3.body).toBe(202);

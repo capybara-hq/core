@@ -42,7 +42,7 @@ const isZip = (f: File) => /\.zip$/i.test(f.name);
  * 上传插件包 on the workspace 插件 page (org admins; spec §14, rulings P3-7 to P3-12): pick a
  * `.tgz` (prepared at once: the kernel stages it for this org) or a single skill's `.zip` (sent to
  * the skill upload; the person lands on 技能). The review is the import's ({@link PluginReviewBody},
- * org mode: no scope picker and no pinned suggestions), with 范围：仅本组织, the 可共享 switch for a
+ * org mode: no scope picker), with 范围：仅本组织, the 可共享 switch for a
  * new plugin (off by default; a new version keeps the plugin's setting), the notice when the
  * package carries an extension (it waits for the super admin), and the update preview when a new
  * version without an extension applies at once (one hash covers both). Confirm: a `pending`

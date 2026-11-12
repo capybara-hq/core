@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, pinned skills and the Claude Code tool map in the skills_catalog snapshot (pinned_changed), skill invocations (skill_fork_result, no DriftReason), background sub-agents (subagent_delivery, trigger subagent), full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals, per-org concurrency, token caps, the judge's purpose eval, privacy (trajectory 404, trajectory.viewed audit, no export), and extension hooks in replays (hook_denied is not model-visible, needs no DriftReason; replays fire no hooks; compaction usage events).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, the Claude Code tool map and old pinned skills in the skills_catalog snapshot (pinned_changed), skill invocations (skill_fork_result, no DriftReason), background sub-agents (subagent_delivery, trigger subagent), full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals, per-org concurrency, token caps, the judge's purpose eval, privacy (trajectory 404, trajectory.viewed audit, no export), and extension hooks in replays (hook_denied is not model-visible, needs no DriftReason; replays fire no hooks; compaction usage events).
 ---
 
 # Evals and replay
@@ -25,13 +25,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - **Any new model-visible input must go into the log** (written into an event or the `model_call` record); request building must not read PG / config / the clock on the spot.
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
-  `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
+  `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills in old logs and the tool map"),
   `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
-  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
+  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range, `guard` for a read-before-write refusal)
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
   `Bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
@@ -116,15 +116,33 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `reconstruct.test.ts` ("UI refresh B model switches" and the drift group), `step-replay.test.ts`,
   `run-replay.test.ts` and `runtime/model-switch.test.ts`.
 
-## Pinned skills and the tool map (phase B)
+## Pinned skills in old logs and the tool map (phase B; pinning removed by skills default-on)
 
+- **Skills are on by default** (`docs/superpowers/specs/2026-11-12-skills-default-on-design.md` §9): the catalog a run start resolves
+  is the agent's own and shared skills plus every skill on in the org its `disabledSkills` leaves on. A skill that appears because a
+  plugin was enabled gets a new snapshot and the existing "New skills" notice at the next run start: it is in the log, so no
+  `DriftReason`. A step replay renders the recorded catalog whatever the candidate's `disabledSkills` say.
+- **Catalog budget** (spec §7): the cut is decided when the snapshot is written (`skills[].nameOnly`, from
+  `skills.catalogBudgetChars` at that run start), so rendering stays a pure function of the snapshot and needs no `DriftReason`; a
+  later budget never changes an old request. A snapshot without `nameOnly` renders byte for byte as before. `sameSkills` compares
+  `nameOnly`, so an entry crossing the budget writes a new snapshot and shows in the "Updated skills" notice at the next run start.
+  Ranking: the agent's own and the org skills it shared, builtin, the org's own, then plugin skills. `skills.catalog_over_budget`
+  (info) is logged at every run start while the catalog is over budget, whether or not a new snapshot is written.
+  Zero-drift case: "a catalog budget change between runs" in `reconstruct.test.ts`; unit tests in
+  `test/runtime/context/skills-budget.test.ts`.
+- **Nothing is pinned any more**: run start reads no bodies and new snapshots carry no `pinned`. The event schema keeps the optional
+  `pinned` (and the `EVENT_*` caps for its bodies) so old logs parse, and every pinned rendering path stays, since it reads only the
+  log. The first run on a conversation whose latest snapshot has pins writes one without them, and the request gets
+  `Pinned skills removed (their pinned instructions no longer apply): …`, computed from the two snapshots at build time: never change
+  that text, or old reconstructions drift.
 - The `skills_catalog` event carries, besides `skills` (each with `plugin`, the catalog item name, when the skill came from a plugin):
-  `pinned: [{ id, version, name, source, body }]` (≤ 3, the agent's order, bodies read from storage at run start) and `toolMap` (the fixed
+  `pinned: [{ id, version, name, source, body }]` (old logs only: ≤ 3, the agent's order, bodies read from storage at the run start
+  that wrote them) and `toolMap` (the fixed
   English Claude Code tool-name map, present iff a skill has source format `claude-code`). Request building renders only these fields:
   the pinned header and `<pinned_skill name=… version=…>` blocks after the catalog in the system segment; when a later snapshot changes the
   pinned set or the map, an append-only system notice (full body of each new / changed entry, names of removed ones; pinned ids are left out
   of the "Updated skills" list); after compaction the current pinned set and map are restored with the catalog. Code:
-  `runtime/context/skills.ts`, `runtime/context/claude-tools.ts`, `skills/catalog.ts` (`SkillsCatalogService.record`, `loadPinnedBodies`, `fitPinned`).
+  `runtime/context/skills.ts`, `runtime/context/claude-tools.ts`, `skills/catalog.ts` (`SkillsCatalogService.record`).
 - Platform skills (plugin scope phase 2): a snapshot entry's `source` is `platform:<object prefix>` for a platform skill version (read from
   `deployment/`, `skills/usable.ts` `skillFileStore`); an org copy linked to its platform skill keeps its id in agent definitions and
   snapshots and serves the platform's current version under that id, so linking or a platform update shows as one "Updated skills" notice
@@ -138,20 +156,26 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - **Old logs render byte for byte as before**: a snapshot without `plugin` / `pinned` / `toolMap` means none, and a run on such a conversation
   writes no new snapshot or notice when nothing changed. The bodies and the map are in the log, so a baseline can never miss them and they
   need no drift reason of their own.
-- `pinned_changed`: for a non-baseline reconstruction without `definition_missing`, the candidate's `skills.pinned` (deduplicated, capped at 3)
-  differs from the **original agent version's** `skills.pinned` (same normalisation); only when that definition is missing are the recorded
-  snapshot's pinned ids compared. The request still uses the recorded bodies (a step replay never reads storage).
+- `pinned_changed`: set for a non-baseline reconstruction without `definition_missing` when the snapshot in effect at that call has pins
+  (`payload.pinned` non-empty), whatever the candidate: no candidate can pin any more, and the migration rewrote the definitions it
+  would have compared. A later snapshot without pins ends it. The request still uses the recorded bodies (a step replay never reads
+  storage).
 - **Changing the map text** (phase C changed the `Task` / `Agent` line and added `TaskOutput, TaskStop`, sub-agents spec §16.5; background
   Bash maps `TaskOutput` / `TaskStop` to themselves instead of "not available", spec §4.4; background sub-agents name `SendMessage` as a
   same-name tool instead of "`Agent` with `resume`", agent map spec §4.2): old
   snapshots keep their text and reconstruct byte for byte; a conversation's next run writes a new snapshot (the map differs) and the request
   gets the "The following tool-name map now applies:" notice, all from the log. `reconstruct.test.ts` "an old snapshot keeps its old map
   text; a new snapshot gets the new one" pins this; run the zero-drift tests before and after any change to `claude-tools.ts`.
-- Full-run replay copies the run's `skills_catalog` (with `pinned` and `toolMap`) unchanged into the eval conversation.
-- Zero-drift coverage: `reconstruct.test.ts` "pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map,
-  and a compaction" and the drift-group `pinned_changed` cases; the phase B acceptance `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`
-  (a superpowers import, an agent pinning `using-superpowers`, `Skill` by qualified and plain name, then every `model_call`
-  reconstructed with `drift: []` and equal to what the provider received, and a full-run replay sending the same requests).
+- Full-run replay copies the run's `skills_catalog` (an old one with `pinned`, and `toolMap`) unchanged into the eval conversation.
+- Zero-drift coverage: the fixture `test/evals/fixtures/pre-skills-default-on/` (a real recording at commit `3217c4f8d`, see its
+  README; never regenerate it): pinned skills, a pinned version change, a claude-code skill with the tool map, compactions and a
+  template child with a pinned skill, checked by `test/evals/pre-skills-default-on.test.ts` (every `model_call` of parent and child
+  with `drift: []`, `pinned_changed` / `subagent_changed` under a candidate); `reconstruct.test.ts` "a skill version change
+  mid-conversation, a claude-code skill with the tool map, and a compaction: nothing pinned …" and the drift-group `pinned_changed`
+  cases; `skills-runtime.test.ts` for the "Pinned skills removed" notice; the phase B acceptance
+  `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts` (a superpowers import, `using-superpowers` in the catalog and loaded
+  with `Skill` by qualified and plain name, then every `model_call` reconstructed with `drift: []` and equal to what the provider
+  received, and a full-run replay sending the same requests).
   Both capture provider requests with `packages/kernel/test/helpers/provider-capture.ts`.
 
 ## Sub-agents (phase C, sub-agents spec §15; background sub-agents, agent map spec §8)
@@ -182,18 +206,19 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `takeSnapshot` copies `subagent: { definition, preamble }` from `subagent_started` and `parent` (the dispatching call, from
   `subagent_dispatches`; navigation only, shown on the case detail). `caseBase` uses the logged definition (model included), never
   `definitions`; a child step therefore never gets `definition_missing` or `pinned_changed`. For a follow-up's run the
-  snapshot's definition carries that run's narrowing (`user_message.dispatch.narrowed` on its task message: the frozen tools and
-  `orgSkills` intersected with the current version at the restart by `SendMessage`, or at the `resume` in older logs), as the run
-  itself used. A child case offers the sub-agent message tools as its recorded requests did (a fork invocation's child has none).
+  snapshot's definition carries that run's narrowing (`user_message.dispatch.narrowed` on its task message: the union of the frozen
+  and the current version's `disabledTools` / `disabledSkills` at the restart by `SendMessage`; older logs hold the intersected
+  `skills.orgSkills`, or were narrowed at the `resume`), as the run itself used. A child case offers the sub-agent message tools as its recorded requests did (a fork invocation's child has none).
 - **Child requests** render the logged preamble and instructions (`build.ts` reads `subagent_started`), also under a candidate.
   `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged one in
-  instructions, pinned skills or tools: the same version with an instruction override; another version of the case's agent (an org agent's
+  instructions, turned-off skills (canonical `disabledSkills`) or tools: the same version with an instruction override; another version of the case's agent (an org agent's
   next version; for templates the parent's version: `general` takes its instructions and tools, `inline` its template of that name, gone =
   changed); a plugin template's current version (`ReconstructOptions.subagentTemplate`, read by the worker; removed = version 0). Model
   and params are separate candidate axes. Template narrowing that needs the database is not recomputed; instead, from the
   snapshot alone, an `inline` child compares its whole template between the case's version and the candidate's, and a `general` /
-  `plugin` child also compares the parent's `tools`, `orgSkills` and roster entry (`subagents.general`, the selected template);
-  any difference counts. Not compared: the candidate's `subagents` block as the child's own roster, and whether it offers `Agent`
+  `plugin` child also compares the parent's turned-off tools, canonical `disabledSkills` and roster entry (`subagents.general`, the
+  selected template), and an `inline` child the parent's side as well; any difference counts. A logged child definition that pinned
+  skills (read raw from `subagent_started`) counts as changed against any candidate. Not compared: the candidate's `subagents` block as the child's own roster, and whether it offers `Agent`
   (that follows the child's depth: `keepAgent` comes only from the logged child); a nesting child's dispatches are its recorded
   `Agent` results.
 - **Candidates on a child case** (`resolveCandidate` with the sub-agent's source): the request always renders the logged definition

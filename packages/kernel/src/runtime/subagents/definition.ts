@@ -2,26 +2,28 @@ import {
   type AgentTemplate,
   type AgentTemplateTier,
   type ModelParameter,
-  SKILL_ENTRY_FILE,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
 import {
   type AgentDefinition,
+  canonicalDisabledSkills,
   canonicalDisabledTools,
+  DisabledSkillRef,
   type DisabledToolRef,
   type ModelRef,
   type SubagentTools,
 } from "../../agents/definition.js";
 import { loadTemplates } from "../../agents/templates.js";
-import type { EventPayload } from "../../conversations/events.js";
+import { type EventPayload, SKILLS_CATALOG_MAX } from "../../conversations/events.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
-import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
-import { builtinSkillIds, selectedSkills } from "../../skills/usable.js";
+import { invocationOf, resolveSkills } from "../../skills/catalog.js";
+import { agentSkills, usableSkills } from "../../skills/usable.js";
 import { AGENT_TOOL, CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
+import { SUBAGENT_PREAMBLE } from "./preamble.js";
 import type { RosterEntry } from "./roster.js";
 
 export { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
@@ -43,7 +45,15 @@ export interface EffectiveDefinition {
   definition: AgentDefinition;
   template: EventPayload<"subagent_started">["template"];
   maxSteps: number;
-  /** Dispatch warnings (pinned skills dropped), recorded in `subagent_started.warnings`. */
+  /**
+   * The child's preamble, frozen into `subagent_started.preamble` (model-visible):
+   * {@link SUBAGENT_PREAMBLE}, plus the line naming the template's skills to load first.
+   */
+  preamble: string;
+  /**
+   * Dispatch warnings (a template skill the child does not have), recorded in
+   * `subagent_started.warnings`.
+   */
   warnings: string[];
 }
 
@@ -122,105 +132,92 @@ type TemplateLike = {
     | "effort"
     | "maxSteps"
     | "skills"
-    | "selectedSkills"]?: AgentTemplate[K] | undefined;
+    | "disallowedSkills"]?: AgentTemplate[K] | undefined;
 };
 
-interface SkillRow {
-  id: string;
-  name: string;
-  scope: "org" | "agent";
-  plugin: string | null;
-  bytes: number;
+/**
+ * A template's `disallowedSkills` as `disabledSkills` entries (skills default-on spec §6.1, §6.2):
+ * `<plugin>:*` turns the whole plugin off, `<plugin>:<name>` one of its skills, and a bare `<name>`
+ * the org's usable skills of that name without a plugin (by id). A bare name the org does not have
+ * and an entry that is no valid reference (stored template data is not re-validated) are dropped.
+ */
+export async function disallowedSkillRefs(
+  db: KernelSchemaDb,
+  orgId: string,
+  refs: readonly unknown[] | undefined,
+): Promise<DisabledSkillRef[]> {
+  const out: DisabledSkillRef[] = [];
+  const bare = new Set<string>();
+  for (const ref of refs ?? []) {
+    if (typeof ref !== "string") continue;
+    const i = ref.indexOf(":");
+    if (i < 0) {
+      bare.add(ref);
+      continue;
+    }
+    const name = ref.slice(i + 1);
+    const entry = DisabledSkillRef.safeParse({
+      kind: "plugin",
+      plugin: ref.slice(0, i),
+      skills: name === "*" ? "all" : [name],
+    });
+    if (entry.success) out.push(entry.data);
+  }
+  if (bare.size > 0) {
+    for (const s of await usableSkills(db, orgId)) {
+      if (s.plugin === null && bare.has(s.name)) out.push({ kind: "skill", skillId: s.id });
+    }
+  }
+  return out;
 }
 
+/** The warning of a template skill the child does not have. */
+const skillNotLoadedText = (ref: string) =>
+  `The skill "${ref}" is not among the sub-agent's skills, so it is not asked to load it.`;
+
+/** The preamble line naming the skills a template child loads first (skills default-on §6.1). */
+export const loadSkillsFirstText = (names: readonly string[]) =>
+  `Before you start, load these skills with Skill: ${names.join(", ")}.`;
+
 /**
- * The template's skills the parent selects (its `orgSkills` or the parent agent's own skills),
- * within the pinned limits (spec §5.3): inline templates name skill ids, plugin templates skill
- * names (`<name>` or `<plugin>:<name>`). A name that matches more than one selected skill picks, in
- * this order, the skill from the template's own plugin, the agent's own skill, the org skill (ties
- * by id), with a warning. Dropped ones get a warning. A builtin plugin's skill the parent does not
- * select is available to `selected` but never pinned (like `agent.pinned_invalid` and inline
- * templates: a pin needs a selection).
+ * The template's `skills` the child has (skills default-on spec §6.1: they are no longer pinned),
+ * by the names its catalog lists them under, in the template's order: the catalog its first run
+ * records (the agent `agentId` with the child's `disabledSkills`, model-invocable skills only).
+ * Inline templates name skill ids (`byId`; a platform skill's id names its linked copy too), plugin
+ * templates names (`<name>`, or `<plugin>:<name>` when the catalog's skill of that name is from
+ * that plugin). The others become warnings.
  */
-async function pinnedFor(
+async function skillsToLoad(
   db: KernelSchemaDb,
-  a: { orgId: string; parent: AgentDefinition; parentAgentId: string },
+  a: { orgId: string; agentId: string; disabledSkills: readonly DisabledSkillRef[] },
   refs: readonly string[],
-  byName: { plugin: string | undefined } | null,
-  /** Further names the template lists (`selectedSkills`): resolved the same way, never pinned. */
-  selected: readonly string[] = [],
-): Promise<{ pinned: string[]; warnings: string[] }> {
-  if (refs.length === 0 && selected.length === 0) return { pinned: [], warnings: [] };
-  // org and agent skills, linked org copies and platform skills on in the org (phase 2), by id
-  const rows: SkillRow[] = (
-    await selectedSkills(db, {
-      orgId: a.orgId,
-      agentId: a.parentAgentId,
-      orgSkills: a.parent.skills?.orgSkills ?? [],
-    })
-  ).map((r) => ({
-    id: r.id,
-    name: r.name,
-    scope: r.scope,
-    plugin: r.plugin,
-    bytes: r.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0,
-  }));
-  // builtin skills every agent has without selecting them: never pinnable unless selected
-  const chosen = new Set(a.parent.skills?.orgSkills ?? []);
-  const auto = new Set((await builtinSkillIds(db, a.orgId)).filter((id) => !chosen.has(id)));
-  const pinnable = rows.filter((r) => !auto.has(r.id));
-  const pinned: string[] = [];
+  byId: boolean,
+): Promise<{ names: string[]; warnings: string[] }> {
+  if (refs.length === 0) return { names: [], warnings: [] };
+  const input = { orgId: a.orgId, agentId: a.agentId, disabledSkills: [...a.disabledSkills] };
+  const catalog = (await resolveSkills(db, { ...input, agent: input }))
+    .filter((r) => invocationOf(r.manifest).model)
+    .slice(0, SKILLS_CATALOG_MAX)
+    .map((r) => r.skill);
+  const rows = byId ? await agentSkills(db, input) : [];
+  const names: string[] = [];
   const warnings: string[] = [];
-  const own = byName?.plugin;
-  const rank = (r: SkillRow) =>
-    own !== undefined && r.plugin === own ? 0 : r.scope === "agent" ? 1 : 2;
-  const match = (ref: string, among: readonly SkillRow[] = rows): SkillRow | undefined => {
-    if (byName === null) return among.find((r) => r.id === ref);
-    const i = ref.indexOf(":");
-    const found =
-      i < 0
-        ? among.filter((r) => r.name === ref)
-        : among.filter((r) => r.name === ref.slice(i + 1) && r.plugin === ref.slice(0, i));
-    // rows are ordered by id, and the sort is stable: ties keep that order
-    const [first, ...rest] = found.sort((x, y) => rank(x) - rank(y));
-    if (first && rest.length > 0) {
-      const which = [`the one from the plugin ${own}`, "the agent's own skill", "the org skill"][
-        rank(first)
-      ];
-      warnings.push(
-        `The skill name "${ref}" matches more than one selected skill; ${which} was pinned.`,
-      );
-    }
-    return first;
-  };
-  let total = 0;
   for (const ref of refs) {
-    const r = match(ref, pinnable);
-    if (!r) {
-      warnings.push(`The skill "${ref}" was not pinned: the agent does not select it.`);
-      continue;
+    let found: (typeof catalog)[number] | undefined;
+    if (byId) {
+      const row = rows.find((r) => r.id === ref || r.platformSkillId === ref);
+      found = row && catalog.find((c) => c.id === row.id);
+    } else {
+      const i = ref.indexOf(":");
+      found =
+        i < 0
+          ? catalog.find((c) => c.name === ref)
+          : catalog.find((c) => c.name === ref.slice(i + 1) && c.plugin === ref.slice(0, i));
     }
-    if (pinned.includes(r.id)) continue;
-    if (pinned.length >= PINNED_SKILLS_LIMITS.count) {
-      warnings.push(`The skill "${r.name}" was not pinned: at most 3 skills can be pinned.`);
-      continue;
-    }
-    if (total + r.bytes > PINNED_SKILLS_LIMITS.totalBytes) {
-      warnings.push(
-        `The skill "${r.name}" was not pinned: pinned skills are limited to 32 KB in total.`,
-      );
-      continue;
-    }
-    total += r.bytes;
-    pinned.push(r.id);
+    if (found === undefined) warnings.push(skillNotLoadedText(ref));
+    else if (!names.includes(found.name)) names.push(found.name);
   }
-  for (const ref of selected) {
-    if (refs.includes(ref)) continue;
-    if (!match(ref)) {
-      warnings.push(`The skill "${ref}" is not available: the agent does not select it.`);
-    }
-  }
-  return { pinned, warnings };
+  return { names, warnings };
 }
 
 /** The `effort` declaration of `model`, or null (or when the model cannot be resolved). */
@@ -308,7 +305,8 @@ function orgAgentDefinition(
   // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3); its own `subagents`
   // block stays: it is the roster the child dispatches from (agent map spec §4.1); pending
   // connectors are authoring data too (ruling P4-6)
-  const { skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
+  // `skills.writePolicy` never reaches a child: it governs registration on the agent itself
+  const { skills: _skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
   const { subagentTools: _filter, ...ownRest } = rest;
   const definition: AgentDefinition = {
     ...ownRest,
@@ -317,17 +315,14 @@ function orgAgentDefinition(
     subagentTools: childFilter(atMaxDepth(a), null),
     // its policies, then the parent's on top, stricter wins (keys outside its tools are inert)
     toolPolicies: stricterPolicies(own.toolPolicies ?? {}, a.parent.toolPolicies ?? {}),
-    ...(skills !== undefined && {
-      skills: {
-        orgSkills: skills.orgSkills,
-        ...(skills.pinned !== undefined && { pinned: skills.pinned }),
-      },
-    }),
+    // its own skills: what it turns off (skills default-on spec §6.1)
+    disabledSkills: own.disabledSkills ?? [],
   };
   return {
     definition,
     template: { source: "agent", id: agentId, version: a.orgAgent.version },
     maxSteps: d.config.get().runtime.maxSteps,
+    preamble: SUBAGENT_PREAMBLE,
     warnings: [],
     model: own.model,
     tierFallback: false,
@@ -337,9 +332,9 @@ function orgAgentDefinition(
 /**
  * The effective definition of a sub-agent at its first dispatch (spec §5.3–§5.5):
  * - `general` / `inline` / `plugin`: the parent's definition narrowed by the template (tools by
- *   resolved key, `disallowedTools`, {@link CHILD_REMOVED_TOOLS}; policies stricter-wins), the
- *   template's instructions, pinned = the template's skills the parent selects (general pins
- *   nothing), `maxSteps = min(template ?? runtime.maxSteps, runtime.maxSteps)`, and the model tier
+ *   resolved key, `disallowedTools`, {@link CHILD_REMOVED_TOOLS}; policies stricter-wins; skills
+ *   by its `disallowedSkills`), the template's instructions, its `skills` the child has named in
+ *   the preamble to load first (general gets no line), `maxSteps = min(template ?? runtime.maxSteps, runtime.maxSteps)`, and the model tier
  *   `tier` (the call's) → the template's → `inherit`; an unmapped tier runs on the parent's model
  *   (`tierFallback`); a template `effort` is set when the resolved model declares it;
  * - `agent`: the org agent's version that passed the gates (`orgAgent`, from {@link checkOrgAgent}),
@@ -386,12 +381,18 @@ export async function effectiveDefinition(
   }
 
   const toolPolicies = stricterPolicies(parent.toolPolicies ?? {}, template?.toolPolicies ?? {});
-  const { pinned, warnings } = await pinnedFor(
+  // skills default-on (spec §6.1): the parent's catalog, narrowed by the template's
+  // `disallowedSkills`; the template's `skills` are named in the preamble, never pinned
+  const narrowing = await disallowedSkillRefs(d.db, a.orgId, template?.disallowedSkills);
+  const disabledSkills =
+    narrowing.length === 0
+      ? (parent.disabledSkills ?? [])
+      : canonicalDisabledSkills([...(parent.disabledSkills ?? []), ...narrowing]);
+  const { names, warnings } = await skillsToLoad(
     d.db,
-    a,
+    { orgId: a.orgId, agentId: a.parentAgentId, disabledSkills },
     template?.skills ?? [],
-    entry.source === "plugin" ? { plugin: entry.plugin } : null,
-    template?.selectedSkills ?? [],
+    entry.source === "inline",
   );
   const tier = a.tier ?? template?.model ?? "inherit";
   const m = await resolveTier(d, a.orgId, parent, tier);
@@ -403,7 +404,6 @@ export async function effectiveDefinition(
       if (v !== undefined) modelParams = { ...modelParams, [decl.key]: v };
     }
   }
-  const parentSkills = parent.skills;
   const definition: AgentDefinition = {
     name: childName(parent.name, entry.type),
     avatarUrl: parent.avatarUrl,
@@ -415,18 +415,17 @@ export async function effectiveDefinition(
     disabledTools: parent.disabledTools ?? [],
     subagentTools: childFilter(atMaxDepth(a), template, parent.subagentTools),
     toolPolicies,
-    ...((parentSkills !== undefined || pinned.length > 0) && {
-      skills: {
-        orgSkills: parentSkills?.orgSkills ?? [],
-        ...(pinned.length > 0 && { pinned }),
-      },
-    }),
+    disabledSkills,
     ...(parent.subagents !== undefined && { subagents: parent.subagents }),
   };
   return {
     definition,
     template: ref,
     maxSteps: Math.min(template?.maxSteps ?? runtimeMax, runtimeMax),
+    preamble:
+      names.length === 0
+        ? SUBAGENT_PREAMBLE
+        : `${SUBAGENT_PREAMBLE}\n\n${loadSkillsFirstText(names)}`,
     warnings,
     model: m.model,
     tierFallback: m.tierFallback,
@@ -435,13 +434,16 @@ export async function effectiveDefinition(
 
 /**
  * What a follow-up (`resume`) may still use (final review I1, spec §5.3): the frozen definition's
- * turned-off tools together with the current version's (it can lose tools, never gain them), and
- * the frozen org skills intersected with the current ones. Recorded on the follow-up's task message
- * (`user_message.dispatch.narrowed`), so the run and its replay read it from the log.
+ * turned-off tools and skills together with the current version's (it can lose tools and skills,
+ * never gain them). Recorded on the follow-up's task message (`user_message.dispatch.narrowed`), so
+ * the run and its replay read it from the log.
  */
 export interface FollowUpNarrowing {
   /** Absent in logs from before tools were on by default (no tool narrowing then). */
   disabledTools?: DisabledToolRef[] | undefined;
+  /** Absent in logs from before skills were on by default (skills default-on spec §6.1). */
+  disabledSkills?: DisabledSkillRef[] | undefined;
+  /** Older logs only: the frozen org skills intersected with the current ones. */
   skills?: { orgSkills: string[]; pinned?: string[] | undefined } | undefined;
 }
 
@@ -450,47 +452,36 @@ export interface FollowUpNarrowing {
  * definition) against `current`, the definition a fresh dispatch would read now: the dispatching
  * parent run's version for `general` / inline / plugin children, the dispatched org agent's
  * current version for an org agent child (whose tools are its own at dispatch too, §5.5). Its
- * `disabledTools` are both lists together; its `orgSkills` keep only those `current` still
- * selects; a pinned id that was one of the frozen org skills goes with it (the agent's own skills
- * stay).
+ * `disabledTools` and `disabledSkills` are both lists together.
  */
 export function narrowFollowUp(
-  frozen: Pick<AgentDefinition, "disabledTools" | "skills">,
-  current: Pick<AgentDefinition, "disabledTools" | "skills">,
+  frozen: Pick<AgentDefinition, "disabledTools" | "disabledSkills">,
+  current: Pick<AgentDefinition, "disabledTools" | "disabledSkills">,
 ): FollowUpNarrowing {
-  const disabledTools = canonicalDisabledTools([
-    ...(frozen.disabledTools ?? []),
-    ...(current.disabledTools ?? []),
-  ]);
-  if (frozen.skills === undefined) return { disabledTools };
-  const frozenOrg = new Set(frozen.skills.orgSkills);
-  const now = new Set(current.skills?.orgSkills ?? []);
-  const orgSkills = frozen.skills.orgSkills.filter((id) => now.has(id));
-  const pinned = frozen.skills.pinned?.filter((id) => !frozenOrg.has(id) || now.has(id));
-  return { disabledTools, skills: { orgSkills, ...(pinned !== undefined && { pinned }) } };
+  return {
+    disabledTools: canonicalDisabledTools([
+      ...(frozen.disabledTools ?? []),
+      ...(current.disabledTools ?? []),
+    ]),
+    disabledSkills: canonicalDisabledSkills([
+      ...(frozen.disabledSkills ?? []),
+      ...(current.disabledSkills ?? []),
+    ]),
+  };
 }
 
 /**
  * The definition a child run uses: the frozen one with its trigger's follow-up narrowing. A
- * narrowing logged before tools were on by default (no `disabledTools`) narrows only skills.
+ * narrowing logged before tools (or skills) were on by default narrows nothing of that kind.
  */
 export function childRunDefinition(
   frozen: AgentDefinition,
   narrowed: FollowUpNarrowing | undefined,
 ): AgentDefinition {
   if (narrowed === undefined) return frozen;
-  const { skills, ...rest } = frozen;
-  const kept =
-    skills === undefined || narrowed.skills === undefined
-      ? skills
-      : {
-          ...skills,
-          orgSkills: narrowed.skills.orgSkills,
-          ...(narrowed.skills.pinned !== undefined && { pinned: narrowed.skills.pinned }),
-        };
   return {
-    ...rest,
+    ...frozen,
     ...(Array.isArray(narrowed.disabledTools) && { disabledTools: narrowed.disabledTools }),
-    ...(kept !== undefined && { skills: kept }),
+    ...(Array.isArray(narrowed.disabledSkills) && { disabledSkills: narrowed.disabledSkills }),
   };
 }

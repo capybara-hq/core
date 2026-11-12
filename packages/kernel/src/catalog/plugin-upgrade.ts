@@ -264,8 +264,6 @@ interface UpdateDiff {
   connectorOrgs: PlatformUpdateConnectorOrg[];
   /** See {@link PlatformUpdatePreview.themes}. */
   themes?: ThemePreview[];
-  /** Skills whose content stays and whose pinned suggestion the target sets (by platform id). */
-  suggest: Map<string, boolean>;
   contents: TargetContents;
   dependencies: string[];
   diffHash: string;
@@ -347,12 +345,11 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   permissions wait for the admin's approval as for any extension upgrade), then one transaction
  *   under the item name's lock that recomputes the diff (`plugin.upgrade_stale` on a difference)
  *   and writes the platform versions (`PlatformComponents.syncFromVersion`, which records
- *   `platform_synced_version`), the pinned suggestions of unchanged skills, the removals (a
- *   component no agent uses is soft-deleted, so unpinned linked copies go with it; pinned copies
- *   keep their own version; a removed connector template leaves its connectors as the orgs' own),
- *   clears the pins of linked copies, fans changed templates out to every connector made from them
- *   (`applyTemplateIn`, under each org's row lock, credentials cleared only for a changed
- *   credential shape), moves every org install to the version and audits
+ *   `platform_synced_version`), the removals (a component no agent uses is soft-deleted, so
+ *   unpinned linked copies go with it; pinned copies keep their own version; a removed connector
+ *   template leaves its connectors as the orgs' own), clears the pins of linked copies, fans
+ *   changed templates out to every connector made from them (`applyTemplateIn`, under each org's
+ *   row lock, credentials cleared only for a changed credential shape), moves every org install to the version and audits
  *   `plugin.platform_updated`; the scope sync of the item and its dependencies is enqueued after
  *   the commit (orgs get new dependencies by rule 9). A failure rolls the transaction back and
  *   puts the extension back where it was (audit `plugin.platform_update_failed`, 502
@@ -833,16 +830,6 @@ export class PlatformPluginUpdater {
       if (e instanceof PlanStale) throw stale();
       throw e;
     }
-    for (const [id, pinned] of diff.suggest) {
-      await t
-        .updateTable("platform_skill_versions as v")
-        .set({ suggest_pinned: pinned })
-        .from("platform_skills as s")
-        .whereRef("s.id", "=", "v.skill_id")
-        .whereRef("s.current_version", "=", "v.version")
-        .where("s.id", "=", id)
-        .execute();
-    }
 
     // Removals (spec §7.3): kept while agents use it; otherwise soft-deleted
     const now = sql<Date>`now()`;
@@ -1149,7 +1136,6 @@ export class PlatformPluginUpdater {
     // The platform's components of the plugin and the target's
     const live = await this.liveComponents(itemId);
     const components: PlatformUpdateComponent[] = [];
-    const suggest = new Map<string, boolean>();
     const direction = (fromVersion: string | null): UpdateChange =>
       fromVersion === null || compareVersions(to.version, fromVersion) >= 0
         ? "upgrade"
@@ -1172,7 +1158,6 @@ export class PlatformPluginUpdater {
       return {
         name: n,
         digest: dirDigest(to, packagePath(entry?.path as string)),
-        pinned: entry?.pinned === true,
       };
     });
     for (const s of toSkills) {
@@ -1182,7 +1167,6 @@ export class PlatformPluginUpdater {
         continue;
       }
       const same = skillFilesDigest(l.manifest.files) === s.digest;
-      if (same && l.suggestPinned !== s.pinned) suggest.set(l.id, s.pinned);
       components.push({
         kind: "skill",
         id: l.id,
@@ -1600,7 +1584,6 @@ export class PlatformPluginUpdater {
       connectors,
       connectorOrgs,
       ...(themes !== undefined && { themes }),
-      suggest,
       contents,
       dependencies,
       diffHash,
@@ -1753,7 +1736,6 @@ export class PlatformPluginUpdater {
           "v.manifest",
           "v.catalog_version",
           "v.updated_on_own",
-          "v.suggest_pinned",
         ])
         .where("p.catalog_item_id", "=", itemId)
         .where("p.deleted_at", "is", null)
@@ -1768,7 +1750,6 @@ export class PlatformPluginUpdater {
       catalogVersion: r.catalog_version,
       updatedOnOwn: r.updated_on_own,
       ownScope: r.scope_mode === "own",
-      suggestPinned: r.suggest_pinned,
     }));
     const agentTemplates = (
       await db

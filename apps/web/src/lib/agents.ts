@@ -22,6 +22,14 @@ export type DisabledToolRef =
   | { kind: "plugin"; plugin: string; tools: "all" | string[] }
   | { kind: "connector"; connectorId: string; tools: "all" | string[] };
 
+/**
+ * A skill turned off for an agent (kernel `DisabledSkillRef`): a plugin's skills by name, or the
+ * whole plugin (`"all"`, its later skills too); a skill without a plugin by id.
+ */
+export type DisabledSkillRef =
+  | { kind: "plugin"; plugin: string; skills: "all" | string[] }
+  | { kind: "skill"; skillId: string };
+
 /** 收紧后的策略（只能收紧：`ask` / `deny`）。 */
 export type TightenedPolicy = "ask" | "deny";
 
@@ -94,19 +102,16 @@ export interface AgentDefinitionInput {
   disabledTools?: DisabledToolRef[];
   /** 按工具 key 的策略（连接器工具可设 `allow`，见 {@link AgentToolPolicy}）。 */
   toolPolicies?: Record<string, AgentToolPolicy>;
-  /** 选用的组织技能（id）；不用技能时省略。 */
   /**
-   * Skills settings. The form manages only `orgSkills`, `pinned` and `writePolicy` (the confirmation
-   * switch for skill registration, `agents.register-skill`, on a private agent; absent = allow);
-   * other keys (added by newer kernels) are sent back as saved.
+   * The skills turned off (skills default-on spec §4); absent or `[]` = every skill on in the org.
+   * Entries for a plugin the org turned off are kept as saved.
    */
-  skills?: {
-    orgSkills: string[];
-    writePolicy?: "allow" | "ask";
-    /** Pinned skill ids (spec §9.1; no default: absent unless the owner pinned something). */
-    pinned?: string[];
-    [key: string]: unknown;
-  };
+  disabledSkills?: DisabledSkillRef[];
+  /**
+   * Skills settings: only `writePolicy` (the confirmation switch for skill registration,
+   * `agents.register-skill`, on a private agent; absent = allow).
+   */
+  skills?: { writePolicy?: "allow" | "ask" };
   /** Sub-agents (phase C); absent unless set (no new version for agents without it). */
   subagents?: AgentSubagents;
 }
@@ -226,7 +231,7 @@ export const SUBAGENTS_INVALID_REASONS = [
   "invalid_name",
   "duplicate",
   "tool_not_selected",
-  "skill_not_selected",
+  "skill_not_available",
   "agent_not_available",
   "self",
   "too_many",

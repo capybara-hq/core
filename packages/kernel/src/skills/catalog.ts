@@ -1,17 +1,11 @@
-import { createHash } from "node:crypto";
-import {
-  type Logger,
-  parseSkillMd,
-  SKILL_ENTRY_FILE,
-  type SkillInvocation,
-} from "@capybara-hq/plugin-sdk";
+import type { Logger, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
-import { ApiError } from "../errors.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -20,31 +14,30 @@ import type { KernelLogger } from "../log.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
 import {
   type CatalogSkill,
-  type PinnedSkill,
+  catalogLine,
   type SkillsSnapshot,
   sameSnapshot,
 } from "../runtime/context/skills.js";
-import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
-import { type SkillVersionRow, selectedSkills, skillFileStore } from "./usable.js";
+import {
+  agentOwnSkillIds,
+  agentSkills,
+  builtinSkillIds,
+  builtinSkillPlugins,
+  type SkillVersionRow,
+  type UsableSkill,
+} from "./usable.js";
 
 /**
  * 技能目录快照（M5 T14，Ruling M17）：运行开始时解析「此刻对这个对话生效的技能」，与日志里最新一份快照不同才写
  * `skills_catalog`。模型看到的目录与 `Skill` 的名字解析只来自日志，不读实时的库。
  */
 
-/**
- * Pinned skill limits (spec §9.1): at most `count` pinned skills per agent, whose current SKILL.md
- * sizes total at most `totalBytes`. Saving checks both; at run time the pinned bodies are kept in
- * the agent's order while they fit.
- */
-export const PINNED_SKILLS_LIMITS = { count: 3, totalBytes: 32768 } as const;
-
 /** {@link resolveEffectiveSkills} 的输入。 */
 export interface EffectiveSkillsInput {
   orgId: string;
   agentId: string;
-  /** 本次运行固定的 agent 版本的定义（`skills.orgSkills` 是选中的组织技能 id）。 */
-  agent: Pick<AgentDefinition, "skills">;
+  /** The definition of the run's agent version (`disabledSkills`: what it turns off). */
+  agent: Pick<AgentDefinition, "disabledSkills">;
   /**
    * The conversation id: a pending skill change of the agent (`skill_change_requests`, a version
    * draft) applies only in the conversation that proposed it (a trial) and is overlaid here.
@@ -53,12 +46,12 @@ export interface EffectiveSkillsInput {
 }
 
 /**
- * The skills in effect for this conversation now, sorted by name (code point order):
- * - the org skills the run's agent version selects (`scope='org'`, ids in `skills.orgSkills`);
- * - plus the agent's own skills (`scope='agent'`);
- * - plus the skills of builtin plugins on in the org (skill authoring spec §5.7), never selected:
- *   every agent lists them (not pinned); a selected one is listed once;
- * - deleted skills are skipped (a saved agent version may still name them);
+ * The skills in effect for this conversation now, sorted by name (code point order), as
+ * {@link agentSkills} resolves them (skills default-on spec §3):
+ * - the agent's own skills (`scope='agent'`) and the org skills it shared;
+ * - plus every skill on in the org, minus what the run's agent version's `disabledSkills` turns
+ *   off (never a builtin plugin's skill);
+ * - deleted skills are skipped;
  * - the version is `current_version`, the description the one in that version's manifest.
  * When an org skill and the agent's own skill share a name only the agent's own is kept (more
  * specific; neither `/skills/<name>/` nor loading by name can have two).
@@ -112,6 +105,13 @@ export interface ResolvedSkill {
   format: SourceFormat;
   /** Its version's file manifest (a trial draft's proposed one). */
   manifest: SkillManifest;
+  /**
+   * Where it comes from, for the catalog budget's ranking: `scope` `agent` is the agent's own
+   * skill, `origin` `platform` a platform skill (or an org copy linked to one). A trial draft takes
+   * the entry it replaces (an agent's own skill when it replaces none).
+   */
+  scope: SkillVersionRow["scope"];
+  origin: UsableSkill["origin"];
 }
 
 /**
@@ -124,17 +124,17 @@ export async function resolveSkills(
   input: Omit<EffectiveSkillsInput, "conversationId"> & { conversationId?: string },
   log?: Pick<Logger, "warn">,
 ): Promise<ResolvedSkill[]> {
-  // Phase 2 (Task 3): `orgSkills` ids may be org skills, org copies linked to a platform skill
-  // (served as its current version under the copy's id, ruling B2) or platform skill ids; only
-  // those usable in the org resolve (skills/usable.ts); the skills of builtin plugins on in the org
-  // come along unselected
-  const rows = await selectedSkills(
+  const rows = await agentSkills(
     db,
-    { orgId: input.orgId, agentId: input.agentId, orgSkills: input.agent.skills?.orgSkills ?? [] },
+    {
+      orgId: input.orgId,
+      agentId: input.agentId,
+      disabledSkills: input.agent.disabledSkills ?? [],
+    },
     log,
   );
-  // One skill per name: the agent's own, then an org skill or copy (an id the agent kept from
-  // before the platform component existed), then a platform skill id; ties by id
+  // One skill per name: the agent's own, then an org skill or copy, then a platform skill; ties by
+  // id
   const rank = (r: SkillVersionRow) =>
     r.scope === "agent" ? 0 : r.platformSkillId === r.id ? 2 : 1;
   const byName = new Map<string, SkillVersionRow>();
@@ -156,6 +156,8 @@ export async function resolveSkills(
         },
         format: r.format,
         manifest: r.manifest,
+        scope: r.scope,
+        origin: r.origin,
       },
     ]),
   );
@@ -173,6 +175,7 @@ export async function resolveSkills(
           .where("kind", "=", "version")
           .execute();
   for (const { proposed_version: p, object_prefix } of trials) {
+    const replaced = effective.get(p.manifest.name);
     effective.set(p.manifest.name, {
       skill: {
         id: p.skillId,
@@ -183,6 +186,8 @@ export async function resolveSkills(
       },
       format: "capybara",
       manifest: p.manifest,
+      scope: replaced?.scope ?? "agent",
+      origin: replaced?.origin ?? "org",
     });
   }
   return [...effective.values()].sort((a, b) =>
@@ -190,186 +195,86 @@ export async function resolveSkills(
   );
 }
 
-/** A pinned skill to read: an effective skill the agent version pins. */
-interface PinnedCandidate {
-  id: string;
-  version: number;
-  name: string;
-  source: string;
-  manifest: SkillManifest;
-}
+/**
+ * The rank of a skill in the catalog budget (skills default-on spec §7): 0 the agent's own skills
+ * (and the org skills it shared), 1 builtin skills, 2 the org's own skills (no plugin), 3 plugin
+ * skills.
+ */
+export type BudgetTier = 0 | 1 | 2 | 3;
 
 /**
- * The pinned skills of the run's agent version that are effective now, in the definition's order
- * (unique, at most {@link PINNED_SKILLS_LIMITS}.count). An id that is not in the model's catalog
- * (`model`: deleted, deselected, its plugin uninstalled, shadowed by an agent skill of the same
- * name) is skipped; one whose current version is manual-only (phase D) is skipped with a warning
- * when `log` is given.
+ * The {@link BudgetTier} of a resolved skill: the agent's own (`scope` `agent`, or an org skill it
+ * shared, `known.shared`: always on, never turned off, spec §3), else builtin (a platform skill of
+ * a builtin plugin, `known.plugins`, or one of `known.ids`, as `builtinSkillIds` gives them), else
+ * the org's own (no plugin), else a plugin skill.
  */
-function pinnedCandidates(
-  model: readonly ResolvedSkill[],
-  agent: Pick<AgentDefinition, "skills">,
-  input: Pick<EffectiveSkillsInput, "orgId" | "agentId" | "conversationId">,
-  all: readonly ResolvedSkill[],
-  log?: Pick<Logger, "warn">,
-): PinnedCandidate[] {
-  const byId = new Map(model.map((r) => [r.skill.id, r]));
-  const manual = new Map(
-    all.filter((r) => !invocationOf(r.manifest).model).map((r) => [r.skill.id, r]),
-  );
-  const out: PinnedCandidate[] = [];
-  for (const id of new Set(agent.skills?.pinned ?? [])) {
-    const m = manual.get(id);
-    if (m) {
-      log?.warn("pinned skill is manual-only", {
-        orgId: input.orgId,
-        agentId: input.agentId,
-        conversationId: input.conversationId,
-        skillId: id,
-        name: m.skill.name,
-        version: m.skill.version,
-      });
-      continue;
-    }
-    const r = byId.get(id);
-    if (!r) continue;
-    const { name, version, source } = r.skill;
-    out.push({ id, version, name, source, manifest: r.manifest });
-    if (out.length >= PINNED_SKILLS_LIMITS.count) break;
+export function budgetTier(
+  r: Pick<ResolvedSkill, "skill" | "scope" | "origin">,
+  known: {
+    plugins: ReadonlySet<string>;
+    ids: ReadonlySet<string>;
+    shared: ReadonlySet<string>;
+  },
+): BudgetTier {
+  if (r.scope === "agent" || known.shared.has(r.skill.id)) return 0;
+  const plugin = r.skill.plugin;
+  if (
+    (r.origin === "platform" && plugin !== undefined && known.plugins.has(plugin)) ||
+    known.ids.has(r.skill.id)
+  ) {
+    return 1;
   }
-  return out;
+  return plugin === undefined ? 2 : 3;
 }
 
-const sameCandidates = (a: readonly PinnedCandidate[], b: readonly PinnedCandidate[]) =>
-  a.length === b.length &&
-  a.every((p, i) => {
-    const q = b[i];
-    return q !== undefined && p.id === q.id && p.version === q.version && p.source === q.source;
-  });
+/** The characters a described entry takes in the listing: its line and the line break. */
+export const catalogLineChars = (s: Pick<CatalogSkill, "name" | "description">): number =>
+  [...catalogLine(s)].length + 1;
 
-const storageUnavailable = (message: string) => new ApiError("storage.unavailable", message);
-
-/** `details[0].reason` of a pinned SKILL.md that cannot be used whatever the retries. */
-const PINNED_UNREADABLE = "pinned_unreadable";
-
-/** Read attempts per pinned SKILL.md (a transient storage error is retried once). */
-const PINNED_READ_ATTEMPTS = 2;
-
-/**
- * The `run_failed` message (shown to the user, English like the other run texts) for a
- * `storage.unavailable` from {@link SkillsCatalogService.record}: a pinned SKILL.md that is missing,
- * corrupt or unparsable points at the agent's owner, since sending again cannot help; anything
- * else is a transient storage failure.
- */
-export function pinnedFailureText(e: ApiError): string {
-  const d = e.details?.[0] as { reason?: string; name?: string } | undefined;
-  if (d?.reason === PINNED_UNREADABLE) {
-    return `Pinned skill "${d.name}" cannot be read; ask the agent's owner to unpin it or upload it again.`;
-  }
-  return "File storage is temporarily unavailable, so this agent's pinned skills cannot be read; send the message again later.";
+/** What {@link applyCatalogBudget} decided. */
+export interface CatalogBudgetResult {
+  /** The entries in their input order, those past the budget with `nameOnly: true`. */
+  skills: CatalogSkill[];
+  /** The characters every entry's described line would take ({@link catalogLineChars}). */
+  characters: number;
+  /** How many entries are name-only (0: everything fits). */
+  nameOnly: number;
 }
 
 /**
- * Reads each pinned skill's SKILL.md from `kernel/<orgId>/<source>SKILL.md` (a platform version's
- * `platform:<prefix>` from `deployment/<prefix>SKILL.md`), verifies it against
- * the manifest's size and sha256 and returns the parsed body, in order. Every failure throws
- * `storage.unavailable` (Decision 9: the run fails before any model request):
- * - a read error is retried once ({@link PINNED_READ_ATTEMPTS}), then is transient (the user
- *   sends again);
- * - a manifest without SKILL.md, a missing object, an integrity mismatch, non-UTF-8 or an
- *   unparsable file is permanent: logged at `error` with the skill id and source, and the error
- *   carries `details: [{ reason: "pinned_unreadable", skillId, name, source }]`
- *   ({@link pinnedFailureText} turns it into an owner-facing message).
+ * The catalog budget (skills default-on spec §7): the entries ranked by `tierOf` (then by name, in
+ * code point order) keep their descriptions while the running total of their rendered lines
+ * ({@link catalogLineChars}) stays within `budget`; the first one past it and every one after it
+ * are name-only. Pure and deterministic; `tierOf` is only called when the whole listing does not
+ * fit. Entries keep their input order; any `nameOnly` they carry is replaced.
  */
-export async function loadPinnedBodies(
-  storage: PrefixedStorage,
-  orgId: string,
-  pinned: readonly PinnedCandidate[],
-  opts: { signal?: AbortSignal; log?: Pick<Logger, "error"> } = {},
-): Promise<PinnedSkill[]> {
-  if (pinned.length === 0) return [];
-  storage.assertAvailable();
-  const out: PinnedSkill[] = [];
-  for (const p of pinned) {
-    // a platform version (`platform:<prefix>`) is read from deployment/ (ruling D2)
-    const { store, prefix } = skillFileStore(storage, orgId, p.source);
-    const unreadable = (problem: string) => {
-      opts.log?.error("pinned skill unreadable", {
-        orgId,
-        skillId: p.id,
-        version: p.version,
-        source: p.source,
-        problem,
-      });
-      return new ApiError("storage.unavailable", `Pinned skill ${p.name} ${problem}`, [
-        { reason: PINNED_UNREADABLE, skillId: p.id, name: p.name, source: p.source },
-      ]);
-    };
-    const entry = p.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
-    if (!entry) throw unreadable(`has no ${SKILL_ENTRY_FILE} in its manifest`);
-    let bytes: Uint8Array | null = null;
-    for (let attempt = 1; bytes === null; attempt++) {
-      let got: Awaited<ReturnType<typeof store.get>>;
-      try {
-        got = await store.get(
-          `${prefix}${SKILL_ENTRY_FILE}`,
-          opts.signal && { signal: opts.signal },
-        );
-        if (got) bytes = new Uint8Array(await new Response(got.body).arrayBuffer());
-      } catch {
-        if (attempt >= PINNED_READ_ATTEMPTS) {
-          throw storageUnavailable(`Cannot read pinned skill ${p.name} from storage`);
-        }
-        continue;
-      }
-      if (!got) throw unreadable("is missing from storage");
-    }
-    if (
-      bytes.byteLength !== entry.size ||
-      createHash("sha256").update(bytes).digest("hex") !== entry.sha256
-    ) {
-      throw unreadable("failed its integrity check");
-    }
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      throw unreadable("is not UTF-8");
-    }
-    const parsed = parseSkillMd(text, { invocationKeys: false });
-    if ("errors" in parsed) throw unreadable("cannot be parsed");
-    out.push({ id: p.id, version: p.version, name: p.name, source: p.source, body: parsed.body });
-  }
-  return out;
-}
-
-/**
- * The pinned skills that fit: in order while the running total of UTF-8 body bytes stays within
- * {@link PINNED_SKILLS_LIMITS}.totalBytes; the first that does not fit and every later one are
- * dropped with a warning (Review Focus 4: a pinned skill's new version can push a saved set over).
- */
-export function fitPinned(
-  pinned: readonly PinnedSkill[],
-  log: Pick<Logger, "warn"> | undefined,
-  input: Partial<Pick<EffectiveSkillsInput, "orgId" | "agentId" | "conversationId">>,
-): PinnedSkill[] {
-  const enc = new TextEncoder();
+export async function applyCatalogBudget(
+  skills: readonly CatalogSkill[],
+  budget: number,
+  tierOf: () => Promise<(s: CatalogSkill) => BudgetTier>,
+): Promise<CatalogBudgetResult> {
+  const described = skills.map(({ nameOnly: _n, ...s }) => s);
+  const cost = described.map(catalogLineChars);
+  const characters = cost.reduce((a, b) => a + b, 0);
+  if (characters <= budget) return { skills: described, characters, nameOnly: 0 };
+  const tier = await tierOf();
+  const order = described
+    .map((s, i) => ({ s, i, t: tier(s) }))
+    .sort((a, b) =>
+      a.t !== b.t ? a.t - b.t : a.s.name < b.s.name ? -1 : a.s.name > b.s.name ? 1 : a.i - b.i,
+    );
+  const cut = new Set<number>();
   let total = 0;
-  for (let i = 0; i < pinned.length; i++) {
-    total += enc.encode((pinned[i] as PinnedSkill).body).byteLength;
-    if (total > PINNED_SKILLS_LIMITS.totalBytes) {
-      log?.warn("pinned skills over the limit", {
-        orgId: input.orgId,
-        agentId: input.agentId,
-        conversationId: input.conversationId,
-        kept: pinned.slice(0, i).map((p) => p.name),
-        dropped: pinned.slice(i).map((p) => p.name),
-        maxBytes: PINNED_SKILLS_LIMITS.totalBytes,
-      });
-      return pinned.slice(0, i);
-    }
+  for (const { i } of order) {
+    const c = cost[i] as number;
+    if (cut.size === 0 && total + c <= budget) total += c;
+    else cut.add(i);
   }
-  return [...pinned];
+  return {
+    skills: described.map((s, i) => (cut.has(i) ? { ...s, nameOnly: true as const } : s)),
+    characters,
+    nameOnly: cut.size,
+  };
 }
 
 /** `skills_catalog` 的幂等键：每次运行最多写一份。 */
@@ -440,30 +345,31 @@ export async function lockLatestCatalog(
   return last ? (last.payload as SkillsSnapshot) : undefined;
 }
 
-/** How often run start re-resolves when the pinned set changed while its bodies were read. */
-const RECORD_ATTEMPTS = 3;
-
 /**
  * 运行开始时记录技能目录快照：解析生效的技能，与日志里最新一份不同才写（带幂等键，崩溃重试不重复）。
  * 从没有快照、现在也没有技能 → 不写（没有技能的 agent 不出现目录）；之前有、现在全没了 → 写空快照（模型据此得知被移除）。
  * 解析、比较、追加在一个事务里、先锁会话行：否则在解析与追加之间提交的拒绝 + 回退快照会被过时的草稿条目盖回去。
  * 解析只读 skills / agents / 申请（不加锁），不会与别的路径形成死锁。
  *
- * Phase B: the snapshot also carries each skill's `plugin`, the pinned skills' bodies (`pinned`)
- * and the Claude Code tool-name map (`toolMap`, iff an effective skill has source format
- * `claude-code`). Pinned bodies are read from object storage outside the transaction (1); inside
- * it the skills are resolved again (2), and when the pinned identities changed meanwhile the
- * whole thing starts over (at most {@link RECORD_ATTEMPTS} times, then `conflict`). A read failure
- * throws `storage.unavailable` before anything is written. Writes only when `!sameSnapshot`.
+ * The snapshot also carries each skill's `plugin` and the Claude Code tool-name map (`toolMap`,
+ * iff an effective skill has source format `claude-code`). It never carries `pinned` any more
+ * (skills default-on spec §8): a conversation whose latest snapshot has pins gets one without them,
+ * and the request tells the model they were removed. Run start reads no object storage.
+ *
+ * The catalog budget (`skills.catalogBudgetChars`, spec §7) is applied here and recorded in the
+ * snapshot: entries past it carry `nameOnly: true` ({@link applyCatalogBudget}); the cut is logged
+ * as `skills.catalog_over_budget`. A changed budget writes a new snapshot at the next run start
+ * only when an entry crosses it. Snapshots appended elsewhere (a skill registration, a trial's
+ * revert) carry the entries forward as they are; the next run start applies the budget again.
  */
 @Injectable()
 export class SkillsCatalogService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(StorageService) private readonly storage: StorageService,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /**
@@ -474,51 +380,49 @@ export class SkillsCatalogService {
     input: EffectiveSkillsInput & { runId: string },
     opts: { log?: Pick<Logger, "warn" | "error"> } = {},
   ): Promise<void> {
-    const log = opts.log ?? this.log;
-    for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
-      const all = await resolveSkills(this.db.db, input, attempt === 1 ? log : undefined);
-      // Warn about manual-only pins once, on the first attempt
-      const first = pinnedCandidates(
-        forModel(all, input),
-        input.agent,
-        input,
-        all,
-        attempt === 1 ? log : undefined,
-      );
-      const pinned = fitPinned(
-        await loadPinnedBodies(this.storage, input.orgId, first, { log }),
-        log,
-        input,
-      );
-      const toSeq = await this.append(input, first, pinned, log);
-      if (toSeq === "retry") continue;
-      if (toSeq !== null) await this.eventLog.notify(input.conversationId, toSeq);
-      return;
-    }
-    throw new ApiError(
-      "conflict",
-      "The pinned skills kept changing while the run started; send the message again.",
-    );
+    const toSeq = await this.append(input, opts.log ?? this.log);
+    if (toSeq !== null) await this.eventLog.notify(input.conversationId, toSeq);
   }
 
-  /** Step (2) of {@link record}: under the conversation row lock, resolve again and append. */
+  /** Under the conversation row lock, resolves the skills and appends a changed snapshot. */
   @Transactional()
   private async append(
     input: EffectiveSkillsInput & { runId: string },
-    first: readonly PinnedCandidate[],
-    pinned: PinnedSkill[],
     log: Pick<Logger, "warn" | "error">,
-  ): Promise<number | null | "retry"> {
+  ): Promise<number | null> {
     const last = await lockLatestCatalog(this.db.db, input.conversationId);
-    const all = await resolveSkills(this.db.db, input);
+    const all = await resolveSkills(this.db.db, input, log);
     const resolved = forModel(all, input, log);
-    if (!sameCandidates(first, pinnedCandidates(resolved, input.agent, input, all))) {
-      return "retry";
+    const budget = this.config.get().skills.catalogBudgetChars;
+    const cut = await applyCatalogBudget(
+      resolved.map((r) => r.skill),
+      budget,
+      async () => {
+        const plugins = await builtinSkillPlugins(this.db.db);
+        const ids = new Set(await builtinSkillIds(this.db.db, input.orgId));
+        const shared = new Set((await agentOwnSkillIds(this.db.db, input)).shared);
+        // names are unique in the catalog
+        const tiers = new Map(
+          resolved.map((r) => [r.skill.name, budgetTier(r, { plugins, ids, shared })] as const),
+        );
+        return (s) => tiers.get(s.name) ?? 3;
+      },
+    );
+    const skills = cut.skills;
+    if (cut.nameOnly > 0) {
+      this.log.info("skills.catalog_over_budget", {
+        orgId: input.orgId,
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        entries: skills.length,
+        nameOnly: cut.nameOnly,
+        characters: cut.characters,
+        budget,
+      });
     }
-    const skills = resolved.map((r) => r.skill);
     const next: SkillsSnapshot = {
       skills,
-      ...(pinned.length > 0 && { pinned }),
       // The model's (truncated) skills as before phase D, plus manual-only ones: a person can
       // invoke one whose body names Claude tools (batch 1 review M8)
       ...([...resolved, ...all.filter((r) => !invocationOf(r.manifest).model)].some(

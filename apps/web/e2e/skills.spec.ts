@@ -32,7 +32,7 @@ const designZh = (key: string): string => {
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
 /**
- * A titled subsection of the agent page's skills card (org skills / pinned / written by the agent):
+ * A titled subsection of the agent page's skills card (org skills / written by the agent):
  * the region holding its level-3 heading, not the card around it (which has the level-2 heading).
  */
 const skillsRegion = (page: Page, title: string) =>
@@ -118,7 +118,7 @@ function makeZip(files: Record<string, string>): Buffer {
 
 const SKILL = "e2e-notes";
 
-test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线摘要显示加载的技能与版本", async ({
+test("an admin uploads a skill package, on for a new agent by default; the Skill timeline names the skill and version", async ({
   page,
 }) => {
   await signIn(page);
@@ -145,35 +145,39 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   await expect(page).toHaveURL(/\/skills\/[^/]+$/);
   await expect(page.locator("pre")).toContainText("# Notes");
 
-  // 3. 新建 agent，在 agent 页面的「技能」分组里勾选它，并置顶（skills.pinned）
+  // 3. A new agent has the org's skills on by default; unticking one writes disabledSkills,
+  // ticking it again clears it
   await newAgent(page, "Skill agent");
   await openAgentSection(page, "skills");
   const group = skillsRegion(page, zh.agents.form.orgSkillsLabel);
-  await group.getByRole("checkbox", { name: new RegExp(SKILL) }).check();
-  const pinnedGroup = skillsRegion(page, zh.agents.form.pinnedLabel);
-  await pinnedGroup
-    .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) })
-    .check();
+  const box = group.getByRole("checkbox", { name: new RegExp(SKILL) });
+  await expect(box).toBeChecked();
+  await box.uncheck();
   await saveSection(page);
 
-  // 4. 对话：model-fake 按脚本调用 Skill，时间线显示工具给的中文摘要
-  const agents = (await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as {
-    agents: {
-      id: string;
-      definition: { name: string; skills?: { orgSkills: string[]; pinned?: string[] } };
-    }[];
+  type Listed = {
+    agents: { id: string; definition: { name: string; disabledSkills?: unknown[] } }[];
   };
-  const agent = agents.agents.find((a) => a.definition.name === "Skill agent");
-  expect(agent?.definition.skills?.orgSkills).toHaveLength(1);
-  expect(agent?.definition.skills?.pinned).toEqual(agent?.definition.skills?.orgSkills);
-  // the edit page shows it pinned after a reload
+  const read = async () =>
+    ((await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as Listed).agents.find(
+      (a) => a.definition.name === "Skill agent",
+    );
+  const agent = await read();
+  expect(agent?.definition.disabledSkills).toEqual([
+    { kind: "skill", skillId: expect.any(String) },
+  ]);
+  // the agent page shows it off after a reload, and it goes back on
   await page.goto(`/agents/${agent?.id}?s=skills`);
   await page.reload();
-  await expect(
-    skillsRegion(page, zh.agents.form.pinnedLabel).getByRole("checkbox", {
-      name: fill(zh.agents.form.pinSkill, { name: SKILL }),
-    }),
-  ).toBeChecked();
+  const again = skillsRegion(page, zh.agents.form.orgSkillsLabel).getByRole("checkbox", {
+    name: new RegExp(SKILL),
+  });
+  await expect(again).not.toBeChecked();
+  await again.check();
+  await saveSection(page);
+  await expect.poll(async () => (await read())?.definition.disabledSkills).toEqual([]);
+
+  // 4. 对话：model-fake 按脚本调用 Skill，时间线显示工具给的中文摘要
   const conv = await page.request.post(`/api/v1/orgs/${orgId}/conversations`, {
     headers: CSRF,
     data: { agentId: agent?.id },
@@ -268,19 +272,20 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const fix = await uploadSkill(
+  // on for every agent by default
+  await uploadSkill(
     page,
     orgId,
     "e2e-fix-issue",
     "---\nname: e2e-fix-issue\ndescription: Fix a GitHub issue.\nargument-hint: '[issue-number]'\n---\nFix GitHub issue $ARGUMENTS.\n",
   );
-  const manual = await uploadSkill(
+  await uploadSkill(
     page,
     orgId,
     "e2e-manual-check",
     "---\nname: e2e-manual-check\ndescription: Run the manual checks.\ndisable-model-invocation: true\n---\nRun the manual checks.\n",
   );
-  const review = await uploadSkill(
+  await uploadSkill(
     page,
     orgId,
     "e2e-review",
@@ -293,7 +298,6 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
         name: "Skill invoker",
         instructions: "Help.",
         model: { provider: "model-fake", model: "fake-1" },
-        skills: { orgSkills: [fix, manual, review] },
       },
       visibility: "private",
     },

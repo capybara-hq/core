@@ -30,6 +30,7 @@ export const AGENT: AgentDefinition = {
   fallback: null,
   modelParams: {},
   fallbackParams: {},
+  disabledSkills: [],
   disabledTools: [],
   toolPolicies: {},
 };

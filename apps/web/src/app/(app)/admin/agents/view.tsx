@@ -103,6 +103,13 @@ const agentColumns = (t: T): Column<AdminAgentRow>[] => [
     cell: (a) => a.createdFrom?.name ?? "—",
   },
   {
+    key: "skillsOff",
+    header: t("columns.skillsOff"),
+    tone: "muted",
+    fit: true,
+    cell: (a) => String(a.skillsOff),
+  },
+  {
     key: "updated",
     header: t("columns.updated"),
     tone: "muted",

@@ -211,6 +211,7 @@ const agentWith = (over: Partial<AgentDefinition> = {}): AgentDefinition => ({
   modelParams: {},
   fallbackParams: {},
   disabledTools: builtinsOff(),
+  disabledSkills: [],
   toolPolicies: {},
   ...over,
 });

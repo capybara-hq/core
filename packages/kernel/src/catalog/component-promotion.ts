@@ -220,7 +220,7 @@ export class ComponentPromotion {
     if (p.kind === "skill") {
       const v = await this.db
         .selectFrom("skill_versions")
-        .select(["manifest", "source_format", "suggest_pinned", "created_by"])
+        .select(["manifest", "source_format", "created_by"])
         .where("skill_id", "=", row.id)
         .where("version", "=", row.version)
         .executeTakeFirstOrThrow();
@@ -246,7 +246,6 @@ export class ComponentPromotion {
           object_prefix: p.prefix as string,
           catalog_version: null,
           source_format: v.source_format,
-          suggest_pinned: v.suggest_pinned,
           created_by: v.created_by,
         })
         .execute();

@@ -28,7 +28,6 @@ import {
 } from "./definition.js";
 import { subagentLimits } from "./limits.js";
 import { auditRefusal, checkOrgAgent, currentAgentDefinition } from "./org-agents.js";
-import { SUBAGENT_PREAMBLE } from "./preamble.js";
 import {
   findType,
   GENERAL_PURPOSE_DESCRIPTION,
@@ -282,7 +281,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
                   },
                 },
           definition: eff.definition,
-          preamble: SUBAGENT_PREAMBLE,
+          preamble: eff.preamble,
           maxSteps: eff.maxSteps,
           ...([...eff.warnings, ...warnings].length > 0 && {
             warnings: [...eff.warnings, ...warnings],

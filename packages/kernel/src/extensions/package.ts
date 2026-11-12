@@ -10,7 +10,11 @@ import {
   parsePluginManifest,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
-import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
+import {
+  PluginPackageError,
+  readPluginPackage,
+  withoutRemovedManifestFields,
+} from "../catalog/plugin-package.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { MIGRATION_FILE_RE } from "../db/migrator.js";
 import { ApiError } from "../errors.js";
@@ -329,7 +333,7 @@ export async function declaredDisplayName(
   // another plugin's plugin.json (valid or not) says nothing about this extension
   const named = (json as { name?: unknown } | null)?.name;
   if (typeof named === "string" && named !== name) return {};
-  const m = parsePluginManifest(json);
+  const m = parsePluginManifest(withoutRemovedManifestFields(text));
   if ("errors" in m) return { problem: m.errors.slice(0, 3).join("; ") };
   if (m.name !== name) return {};
   return m.displayName === undefined ? {} : { displayName: m.displayName };

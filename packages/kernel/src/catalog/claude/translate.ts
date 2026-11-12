@@ -834,7 +834,7 @@ export function translateClaudePlugin(
     Math.max(0, hookProblems.length - MAX_HOOK_ITEMS);
   if (moreHooks > 0) add(item("hooks_not_run", "hook", "…", { detail: { more: moreHooks } }));
   const sessionStart = events.has("SessionStart");
-  if (sessionStart) add(item("session_start_pin_hint", "hook", "SessionStart"));
+  if (sessionStart) add(item("session_start_hook", "hook", "SessionStart"));
 
   // MCP servers: .mcp.json first, then each declaration; a later name replaces an earlier one.
   // A Map: an untrusted "__proto__" key must never touch an object's prototype.

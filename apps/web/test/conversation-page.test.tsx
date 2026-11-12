@@ -1138,7 +1138,7 @@ describe("the conversation page (ConversationPage)", () => {
     );
   });
 
-  it("a run blocked by a policy hook names the extension; a pinned-skill failure says so", async () => {
+  it("a run blocked by a policy hook names the extension; an old pinned-skill failure reads as its code", async () => {
     api({
       [`GET ${BASE}/events`]: () =>
         json(200, {
@@ -1177,7 +1177,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(hook?.textContent).toContain(en.errors.run.hook_denied.replace("{plugin}", "guard"));
     // a denial is not retried (the policy would deny it again)
     expect(within(hook as HTMLElement).queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(pinned?.textContent).toContain(en.errors.run.pinned_unavailable);
+    expect(pinned?.textContent).toContain(en.errors.storage.unavailable);
     // the kernel's text (it names the skill) stays behind the raw-error toggle
     expect(pinned?.textContent).not.toContain('Pinned skill "notes" cannot be read');
     await userEvent

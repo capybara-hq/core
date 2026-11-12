@@ -9,7 +9,7 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { ApiClientError, issueLines } from "../lib/api";
@@ -29,6 +29,7 @@ import { retryOnMountOf } from "../lib/query/client";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { pluginInstallsQuery } from "../lib/query/settings";
+import { skillsQuery } from "../lib/query/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { hasConfigFields } from "./config-form/model";
@@ -179,7 +180,27 @@ export function usePluginActions({
   /** The action whose call is running (drawn pending on its row). */
   const [running, setRunning] = useState<{ itemId: string; id: PluginAction["id"] }>();
   const [error, setError] = useState<{ message: string; extra: string[] }>();
-  const [off, setOff] = useState<{ item: OrgCatalogItem; preview: SwitchPreview } | null>(null);
+  /** The switch-off preview, with how many of the plugin's skills every agent loses. */
+  const [off, setOff] = useState<{
+    item: OrgCatalogItem;
+    preview: SwitchPreview;
+    skills: number;
+  } | null>(null);
+  /** A plugin without an install whose skills go off: confirmed before the switch. */
+  const [skillsOff, setSkillsOff] = useState<{ item: OrgCatalogItem; skills: number } | null>(null);
+  const qc = useQueryClient();
+  /**
+   * How many skills of the plugin every agent loses (builtin ones never go off), read from the
+   * library when 停用 is chosen (0 when it cannot be read).
+   */
+  const skillsOf = async (i: OrgCatalogItem): Promise<number> => {
+    try {
+      const { skills } = await qc.fetchQuery(skillsQuery(orgId));
+      return skills.filter((s) => s.plugin === i.name && s.builtin !== true).length;
+    } catch {
+      return 0;
+    }
+  };
   const [notice, setNotice] = useState<string>();
   const sw = useAppMutation({
     fn: (v: { itemId: string; enabled: boolean; confirm?: string }) =>
@@ -227,25 +248,31 @@ export function usePluginActions({
       await sw.mutateAsync({ itemId: i.id, enabled: true });
       return t("toast.enabled", { name: nameOf(i) });
     });
-  // The first off call answers the preview (or switches off at once when nothing is installed)
-  const disable = (i: OrgCatalogItem) =>
+  // The first off call answers the preview (or switches off at once when nothing is installed:
+  // a plugin whose skills every agent would lose is confirmed here first, skills default-on §10)
+  const disable = (i: OrgCatalogItem, confirmed = false) =>
     run({ itemId: i.id, id: "disable" }, async () => {
+      const skills = await skillsOf(i);
+      if (!confirmed && i.installed === null && skills > 0) {
+        setSkillsOff({ item: i, skills });
+        return undefined;
+      }
       const r = await sw.mutateAsync({ itemId: i.id, enabled: false });
       if ("preview" in r) {
         setNotice(undefined);
-        setOff({ item: i, preview: r });
+        setOff({ item: i, preview: r, skills });
         return undefined;
       }
       return t("toast.disabled", { name: nameOf(i) });
     });
   const confirmOff = async () => {
     if (off === null) return;
-    const { item, preview } = off;
+    const { item, preview, skills } = off;
     setBusy(true);
     try {
       const r = await sw.mutateAsync({ itemId: item.id, enabled: false, confirm: preview.confirm });
       if ("preview" in r) {
-        setOff({ item, preview: r });
+        setOff({ item, preview: r, skills });
         return;
       }
       setOff(null);
@@ -256,7 +283,7 @@ export function usePluginActions({
         try {
           const again = await sw.mutateAsync({ itemId: item.id, enabled: false });
           if ("preview" in again) {
-            setOff({ item, preview: again });
+            setOff({ item, preview: again, skills });
             setNotice(t("switchOff.stale"));
             return;
           }
@@ -375,17 +402,47 @@ export function usePluginActions({
   };
 
   const dialog =
-    off === null ? null : (
+    off !== null ? (
       <SwitchOffDialog
         orgId={orgId}
         name={nameOf(off.item)}
         preview={off.preview.preview}
+        skills={off.skills}
         busy={busy}
         notice={notice}
         onConfirm={() => void confirmOff()}
         onCancel={() => setOff(null)}
       />
-    );
+    ) : skillsOff !== null ? (
+      <Dialog
+        open
+        onOpenChange={(o) => {
+          if (!o) setSkillsOff(null);
+        }}
+        title={t("switchOff.title", { name: nameOf(skillsOff.item) })}
+        danger
+        initialFocus="cancel"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setSkillsOff(null)}>
+              {t("switchOff.cancel")}
+            </Button>
+            <Button
+              variant="danger-solid"
+              onClick={() => {
+                const i = skillsOff.item;
+                setSkillsOff(null);
+                void disable(i, true);
+              }}
+            >
+              {t("switchOff.confirm")}
+            </Button>
+          </>
+        }
+      >
+        <Text variant="prose">{t("switchOff.skills", { n: skillsOff.skills })}</Text>
+      </Dialog>
+    ) : null;
   return { actionsOf, dialog, error, busy };
 }
 
@@ -400,6 +457,7 @@ export function SwitchOffDialog({
   orgId,
   name,
   preview,
+  skills = 0,
   busy,
   notice,
   onConfirm,
@@ -408,6 +466,8 @@ export function SwitchOffDialog({
   orgId: string;
   name: string;
   preview: UninstallPreview;
+  /** How many of the plugin's skills every agent loses (skills default-on spec §10). */
+  skills?: number;
   busy: boolean;
   /** A line above the lists (the preview changed; a failure). */
   notice?: string | undefined;
@@ -448,6 +508,11 @@ export function SwitchOffDialog({
       <Stack gap={16}>
         {notice !== undefined && <FormError message={notice} />}
         <Text variant="prose">{t("hint")}</Text>
+        {skills > 0 && (
+          <Text variant="prose" tone="warn">
+            {t("skills", { n: skills })}
+          </Text>
+        )}
         <ImpactPreview
           empty={t("none")}
           groups={[

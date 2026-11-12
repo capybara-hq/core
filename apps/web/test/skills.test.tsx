@@ -7,6 +7,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi as stubApiOnly } from 
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -149,6 +150,34 @@ describe("技能库列表（ListPage）", () => {
     );
     expect(within(zone).getByText(m.skills.upload.chooseHint)).toBeTruthy();
     // 打开一行 → 详情页
+  });
+
+  it("a plugin filter narrows the rows to one plugin's skills or the org's own", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(200, {
+          skills: [
+            skill("s1", "pdf-tools"),
+            skill("s2", "brainstorming", { plugin: "superpowers" }),
+            skill("s3", "writing-plans", { plugin: "superpowers" }),
+            skill("s4", "lint", { plugin: "dev" }),
+          ],
+        }),
+    });
+    await renderSkills({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: zh.skills.listLabel });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+    const filter = screen.getByRole("combobox", { name: zh.skills.filters.plugin });
+    const user = userEvent.setup();
+    await pickOption(filter, "superpowers", user);
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .map((r) => r.textContent),
+    ).toEqual([expect.stringContaining("brainstorming"), expect.stringContaining("writing-plans")]);
+    await pickOption(filter, zh.skills.filters.noPlugin, user);
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText("pdf-tools")).toBeTruthy();
   });
 
   it("成员只能查看：没有上传入口", async () => {
@@ -370,6 +399,16 @@ describe("技能详情（DetailPage）", () => {
       expect(within(versions).getByText("v1")).toBeTruthy();
     },
   );
+
+  it("the facts say the skill is on for every agent and how many agents turned it off", async () => {
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ agentsOff: 2 })) });
+    await renderSkill({ locale: "zh" });
+    expect(await screen.findByText("默认对所有智能体开启；2 个智能体关闭了它")).toBeTruthy();
+    cleanup();
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ agentsOff: 0 })) });
+    await renderSkill();
+    expect(await screen.findByText("On for every agent by default")).toBeTruthy();
+  });
 
   it("正文读不到：显示说明", async () => {
     stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ body: null })) });

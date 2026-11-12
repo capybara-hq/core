@@ -7,7 +7,13 @@ import { PendingConnectorRequests } from "../../src/agents/pending-connector-req
 import { loadTemplates } from "../../src/agents/templates.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
-import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import {
+  importSkill,
+  type OrgEnv,
+  resetOrgCatalog,
+  setBuiltin,
+  startOrgEnv,
+} from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { createOrg, enableExtensions, type Req } from "../helpers/runs.js";
 
@@ -157,7 +163,7 @@ async function connector(
   return id;
 }
 
-/** An org skill (`manual`: manual-only, never pinned). */
+/** An org skill (`manual`: manual-only). */
 async function orgSkill(
   name: string,
   o: { manual?: boolean; itemId?: string; bytes?: number } = {},
@@ -277,8 +283,9 @@ describe("creating an agent from a template", () => {
           Read: "deny",
           plugin__nope__write: "deny",
         },
-        skills: ["pdf", "manual"],
-        selectedSkills: ["sheets", "missing-skill"],
+        skills: ["pdf", "manual", "missing-skill"],
+        // a stored field from before skills were on by default: read as absent
+        ...({ selectedSkills: ["sheets"] } as Partial<AgentTemplate>),
         connectors: [
           { template: "none", policies: { x: "ask" } },
           {
@@ -326,9 +333,9 @@ describe("creating an agent from a template", () => {
       ["Agent", "carried", "subagents"],
     ]);
     expect(pick(p, "skill")).toEqual([
-      ["pdf", "carried", "pinned"],
-      ["manual", "carried", "not_pinned_manual_only"],
-      ["sheets", "carried", null],
+      // checked against the org's skills, never pinned (skills default-on spec §6.2)
+      ["pdf", "carried", null],
+      ["manual", "carried", null],
       ["missing-skill", "unavailable", "not_found"],
       ["review-notes", "carried", "subagent"],
     ]);
@@ -372,10 +379,10 @@ describe("creating an agent from a template", () => {
     // policies only for the agent's tools; Read was disallowed, the nope plugin is unavailable;
     // the connector entry's policy lands on the bound connector's key
     expect(d.toolPolicies).toEqual({ Bash: "ask", mcp__one__delete_all: "deny" });
-    expect(d.skills).toEqual({
-      orgSkills: [pinnedSkill, manualSkill, selectedSkill, inlineSkill],
-      pinned: [pinnedSkill],
-    });
+    // every skill the org has is on: nothing is selected or pinned (skills default-on spec §3)
+    expect(d.skills).toBeUndefined();
+    expect(d.disabledSkills).toEqual([]);
+    expect([pinnedSkill, manualSkill, selectedSkill, inlineSkill]).toHaveLength(4);
     expect(d.subagents).toEqual({
       templates: [reviewer],
       inline: [
@@ -995,18 +1002,80 @@ describe("creating an agent from a template", () => {
     expect(g.agent.definition.disabledTools).toEqual(builtinsOff("Read", "Agent"));
   });
 
-  it("gives every name of one skill its item and leaves an oversized one unpinned", async () => {
+  it("gives every name of one skill its item; nothing is pinned, an oversized one included", async () => {
     const itemId = await catalogItem("crm");
     const pdf = await orgSkill("pdf", { itemId });
     const big = await orgSkill("big", { bytes: 40_000 });
-    const id = await platformTemplate(tpl({ skills: ["pdf", "big"], selectedSkills: ["crm:pdf"] }));
+    const id = await platformTemplate(tpl({ skills: ["pdf", "big", "crm:pdf"] }));
     const { agent, preview: p } = await createOk(env.mem, id);
     expect(pick(p, "skill")).toEqual([
-      ["pdf", "carried", "pinned"],
-      ["big", "carried", "not_pinned_too_large"],
-      ["crm:pdf", "carried", "pinned"],
+      ["pdf", "carried", null],
+      ["big", "carried", null],
+      ["crm:pdf", "carried", null],
     ]);
-    expect(agent.definition.skills).toEqual({ orgSkills: [pdf, big], pinned: [pdf] });
+    expect(agent.definition.skills).toBeUndefined();
+    expect(agent.definition.disabledSkills).toEqual([]);
+    expect([pdf, big]).toHaveLength(2);
+  });
+
+  it("turns off the template's disallowedSkills; what names nothing is dropped", async () => {
+    const crm = await catalogItem("crm");
+    const docs = await catalogItem("docs");
+    await orgSkill("pdf", { itemId: crm });
+    await orgSkill("notes", { itemId: docs });
+    const sheets = await orgSkill("sheets");
+    const id = await platformTemplate(
+      tpl({
+        skills: ["sheets"],
+        disallowedSkills: [
+          "crm:*",
+          "docs:notes",
+          "docs:absent",
+          "sheets",
+          // a bare name means a skill without a plugin: `crm:pdf` is not it
+          "pdf",
+          "missing",
+          // a plugin the org has no skills of
+          "later:*",
+        ],
+      }),
+    );
+    const { agent, preview: p } = await createOk(env.mem, id);
+    expect(pick(p, "skill")).toEqual([
+      // `skills` narrows nothing: a skill named there may still be turned off
+      ["sheets", "carried", null],
+      ["crm:*", "carried", "disallowed"],
+      ["docs:notes", "carried", "disallowed"],
+      ["sheets", "carried", "disallowed"],
+    ]);
+    expect(p.dropped).toEqual(
+      expect.arrayContaining([
+        "disallowedSkills.docs:absent",
+        "disallowedSkills.pdf",
+        "disallowedSkills.missing",
+        "disallowedSkills.later:*",
+      ]),
+    );
+    expect(agent.definition.disabledSkills).toEqual([
+      { kind: "plugin", plugin: "crm", skills: "all" },
+      { kind: "plugin", plugin: "docs", skills: ["notes"] },
+      { kind: "skill", skillId: sheets },
+    ]);
+  });
+
+  it("drops disallowedSkills entries that name a builtin plugin or skill (always on)", async () => {
+    const core = await importSkill(env, { name: "core-kit", skillName: "guide" });
+    await setBuiltin(env, core);
+    const keep = await orgSkill("keep");
+    const id = await platformTemplate(
+      tpl({ disallowedSkills: ["core-kit:*", "core-kit:guide", "keep"] }),
+    );
+    const { agent, preview: p } = await createOk(env.mem, id);
+    expect(pick(p, "skill")).toEqual([["keep", "carried", "disallowed"]]);
+    expect(p.dropped).toEqual(
+      expect.arrayContaining(["disallowedSkills.core-kit:*", "disallowedSkills.core-kit:guide"]),
+    );
+    expect(agent.definition.disabledSkills).toEqual([{ kind: "skill", skillId: keep }]);
   });
 
   it("404s another org's unshared org template", async () => {
@@ -1227,9 +1296,11 @@ describe("creating an agent from a template", () => {
         })),
       )
       .execute();
-    const pdf = await orgSkill("pdf");
+    const pdf = await orgSkill("pdf", { itemId });
     const sheets = await orgSkill("sheets");
     const notes = await orgSkill("review-notes");
+    const crmItem = await catalogItem("crm");
+    await orgSkill("leads", { itemId: crmItem });
     const reviewer = await platformTemplate(tpl({ name: "reviewer" }), { plugin: "crm" });
 
     const agentId = randomUUID();
@@ -1267,7 +1338,12 @@ describe("creating an agent from a template", () => {
         mcp__kit__search: "ask",
         mcp__wiki__find: "deny",
       },
-      skills: { orgSkills: [pdf, sheets, notes], pinned: [pdf] },
+      // a whole plugin, a plugin's skill, an org skill and a skill the org no longer has
+      disabledSkills: [
+        { kind: "plugin", plugin: "crm", skills: "all" },
+        { kind: "plugin", plugin: "kit", skills: ["gone", "pdf"] },
+        { kind: "skill", skillId: sheets },
+      ],
       subagents: {
         general: false,
         templates: [reviewer],
@@ -1302,13 +1378,15 @@ describe("creating an agent from a template", () => {
     });
     expect(saved.statusCode, saved.body).toBe(201);
     const { template, omitted } = saved.json() as {
-      template: { id: string };
+      template: { id: string; definition: AgentTemplate };
       omitted: unknown[];
     };
+    expect(template.definition.disallowedSkills).toEqual(["crm:*", "kit:pdf", "sheets"]);
     // what has no place in a template is listed, never dropped silently
     expect(omitted).toEqual([
       { kind: "model_param", name: "model-fake.style", reason: "model_param" },
       { kind: "fallback_model", name: "model-fake/fake-1", reason: "fallback" },
+      { kind: "skill", name: "kit:gone", reason: "unavailable" },
     ]);
 
     const { agent, preview: p } = await createOk(env.boss, template.id);
@@ -1336,8 +1414,13 @@ describe("creating an agent from a template", () => {
       "plugin__fake-tools-ui__write": "deny",
       mcp__kit__search: "ask",
     });
-    // pinned and selected skills
-    expect(d.skills).toEqual({ orgSkills: [pdf, sheets, notes], pinned: [pdf] });
+    // skills: the same off-list (skills default-on spec §6.2), minus what the org no longer has
+    expect(d.disabledSkills).toEqual([
+      { kind: "plugin", plugin: "crm", skills: "all" },
+      { kind: "plugin", plugin: "kit", skills: ["pdf"] },
+      { kind: "skill", skillId: sheets },
+    ]);
+    expect([pdf, notes]).toHaveLength(2);
     // the hand-configured connector comes back as a need, with its policy and no secret
     expect(d.pendingConnectors).toEqual([
       {

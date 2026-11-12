@@ -505,7 +505,7 @@ describe("capybara plugins import git:", () => {
     );
     // phase D: the command brainstorm is imported as a skill (not an ignored item)
     expect(r.stdout).not.toContain("command_manual_invocation");
-    expect(r.stdout).toContain("  warnings: session_start_pin_hint SessionStart");
+    expect(r.stdout).toContain("  warnings: session_start_hook SessionStart");
     expect(r.stdout).toContain("  license text: 1070 bytes (stored with the version)");
     expect(r.stdout).toContain("Skill using-superpowers");
   }, 90_000);

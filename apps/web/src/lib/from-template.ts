@@ -131,7 +131,8 @@ export const hasChanges = (c: PreviewChange): boolean =>
  * A dropped entry as a message key and its values (`agents.fromTemplate.dropped.<key>`): the
  * kernel's paths (`maxSteps`, `effort`, `description`, `instructions`, `quickActions.<i>.title`,
  * `instructionFiles.<i>.content`, `subagents.inline.<name>.description|instructions`,
- * `subagents.inline.<name>.tools.<key>`, `connectors.<key>.tools|policies.<name>`); anything else
+ * `subagents.inline.<name>.tools.<key>`, `connectors.<key>.tools|policies.<name>`,
+ * `disallowedSkills.<entry>`); anything else
  * is `other` with the path. A connector is named by `connectorName` (its key `connector-<n>` is
  * the kernel's, never shown).
  */
@@ -147,6 +148,9 @@ export function droppedLine(
   if (m) return { key: `quickAction_${m[2]}`, values: { n: String(Number(m[1]) + 1) } };
   m = /^instructionFiles\.(\d+)\.content$/.exec(path);
   if (m) return { key: "instructionFile", values: { n: String(Number(m[1]) + 1) } };
+  if (path.startsWith("disallowedSkills.")) {
+    return { key: "disallowedSkill", values: { entry: path.slice("disallowedSkills.".length) } };
+  }
   m = /^subagents\.inline\.(.+)\.(description|instructions)$/.exec(path);
   if (m) return { key: `subagent_${m[2]}`, values: { name: m[1] as string } };
   m = /^subagents\.inline\.(.+)\.tools\.(.+)$/.exec(path);
@@ -181,7 +185,7 @@ export const ITEM_REASONS: Readonly<Record<PlanItemKind, readonly string[]>> = {
   description: [],
   quick_action: [],
   tool: ["default", "subagents", "plugin_unavailable", "unknown_tool", "connector_key"],
-  skill: ["pinned", "not_pinned_manual_only", "not_pinned_too_large", "subagent", "not_found"],
+  skill: ["subagent", "disallowed", "not_found"],
   connector: [
     "several",
     "no_connector",

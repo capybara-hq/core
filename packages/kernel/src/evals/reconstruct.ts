@@ -8,6 +8,7 @@ import {
   type AgentDefinition,
   AgentDefinitionSchema,
   builtinDisabled,
+  canonicalDisabledSkills,
   canonicalDisabledTools,
   type ModelRef,
   normalizeStoredDefinition,
@@ -25,10 +26,23 @@ import {
 } from "../runtime/context/build.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
-import { PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { AGENT_TOOL } from "../tools/builtin-names.js";
 import { canonicalJson } from "./recorded-tools.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
+
+/**
+ * Does a definition from before skills were on by default pin skills? Read raw: the normalizer
+ * drops `skills.pinned` (skills default-on spec §4, §9).
+ */
+const pinsSkills = (d: unknown): boolean => {
+  const skills =
+    typeof d === "object" && d !== null ? (d as { skills?: unknown }).skills : undefined;
+  const pinned =
+    typeof skills === "object" && skills !== null
+      ? (skills as { pinned?: unknown }).pinned
+      : undefined;
+  return Array.isArray(pinned) && pinned.length > 0;
+};
 
 /**
  * 由用例快照还原某次模型请求（单步回放的基础，D2 / C5）。与运行时共用 {@link assembleModelRequest}，
@@ -39,15 +53,15 @@ import { type CaseSnapshot, toEvents } from "./snapshot.js";
  * - `system_hash` / `tools_changed`（只在基线判定）：system 指纹、工具序列（tools 与 catalog）与记录不同；
  * - `tool_spec_missing`：快照里缺某个工具定义（从请求里去掉）；
  * - `definition_missing`：快照里缺该 agent 版本的定义（用空指令）；
- * - `pinned_changed` (phase B, never for a baseline): the candidate definition (or candidate agent
- *   version) pins other skills (`skills.pinned`, deduplicated and capped) than the original agent
- *   version's definition (the recorded snapshot's `pinned` ids when that definition is missing; not
- *   with `definition_missing`); the request still renders the recorded pinned bodies (Decision 1);
+ * - `pinned_changed` (phase B, never for a baseline, not with `definition_missing`): the
+ *   `skills_catalog` snapshot in effect at the call pinned skills (`pinned` non-empty). No candidate
+ *   can pin any more (skills default-on spec §9), so any candidate differs from such a call; the
+ *   request still renders the recorded pinned bodies (Decision 1);
  * - `subagent_changed` (phase C, never for a baseline): a sub-agent's (child) case with a candidate
  *   whose effective definition differs from the one frozen in its `subagent_started` (see
  *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
- *   case never consults `definitions` (no `definition_missing`) and has no `pinned_changed` (its
- *   pins are part of the effective definition);
+ *   case never consults `definitions` (no `definition_missing`) and has no `pinned_changed` (a
+ *   logged child definition that pinned counts as `subagent_changed`);
  * - `legacy_event`：记录缺 `tools` / `params` / `absorbedUpToSeq` / `maxOutputTokens`，或还原出媒体而记录里没有
  *   `media` / `mediaBudgetBytes`（较早的事件）；
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
@@ -62,7 +76,10 @@ export type DriftReason =
   | "tools_changed"
   | "tool_spec_missing"
   | "definition_missing"
-  /** The candidate pins other skills than the recorded snapshot rendered (phase B). */
+  /**
+   * The call rendered pinned skills (phase B), which no candidate has any more (skills default-on
+   * spec §9).
+   */
   | "pinned_changed"
   /** A child case's candidate has another effective definition than the logged one (phase C). */
   | "subagent_changed"
@@ -250,27 +267,15 @@ export function reconstructRequest(
     });
   }
 
-  // pinned_changed: the candidate pins other skills than the recorded agent version did. Compared
-  // with the original version's definition, not the effective snapshot (which omits stale or
-  // oversized pins), both deduplicated and capped like the run; the snapshot's ids only when that
-  // definition is missing. The stub of definition_missing has no pins, so it is skipped then.
+  // pinned_changed (skills default-on spec §9): the snapshot in effect at the call pinned skills,
+  // and no candidate pins any more (the migration rewrote the stored versions without pins). The
+  // stub of definition_missing is no candidate, so it is skipped then; a child reports a logged
+  // pin as subagent_changed instead.
   if (!baseline && started === undefined && !drift.has("definition_missing")) {
-    const norm = (ids: readonly string[] | undefined) =>
-      [...new Set(ids ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
-    const origDef = s.definitions[String(origVersion)];
-    let recorded: string[];
-    if (origDef) {
-      recorded = norm(normalizeStoredDefinition(origDef).skills?.pinned);
-    } else {
-      const snap = inputEvents(all, call)
-        .filter((e) => e.type === "skills_catalog")
-        .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
-      recorded = (snap?.payload.pinned ?? []).map((p) => p.id);
-    }
-    const wanted = norm(agent.skills?.pinned);
-    if (recorded.length !== wanted.length || recorded.some((id, i) => wanted[i] !== id)) {
-      drift.add("pinned_changed");
-    }
+    const snap = inputEvents(all, call)
+      .filter((e) => e.type === "skills_catalog")
+      .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
+    if ((snap?.payload.pinned ?? []).length > 0) drift.add("pinned_changed");
   }
 
   // 工具：按记录的顺序从快照取定义；取不到的从请求里去掉（基线与候选一样）
@@ -387,8 +392,9 @@ const sameTemplate = (logged: SubagentStarted["template"], t: SubagentTemplateRe
     logged.version === t.version &&
     (logged.platformTemplateId ?? null) === (t.platformTemplateId ?? null));
 
-const pinsOf = (d: AgentDefinition): string[] =>
-  [...new Set(d.skills?.pinned ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
+/** A definition's turned-off skills, as compared (canonical form). */
+const skillsOf = (d: AgentDefinition): string =>
+  canonicalJson(canonicalDisabledSkills(d.disabledSkills ?? []));
 
 /**
  * A sub-agent's tools without template narrowing (general and org agents), as compared: its
@@ -417,31 +423,38 @@ const hasAgent = (d: AgentDefinition): boolean =>
   !(d.subagentTools?.deny ?? []).includes(AGENT_TOOL) &&
   (d.subagentTools?.allow === undefined || d.subagentTools.allow.includes(AGENT_TOOL));
 
-/** The parent's selection a template child depends on: its tools, org skills and roster entry. */
+/**
+ * The parent's selection a template child depends on: its turned-off tools and skills (every
+ * `general`, `inline` and `plugin` child starts from them) and its roster entry.
+ */
 const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
   canonicalJson({
     disabledTools: canonicalDisabledTools(d.disabledTools ?? []),
-    orgSkills: d.skills?.orgSkills ?? [],
+    disabledSkills: canonicalDisabledSkills(d.disabledSkills ?? []),
     listed:
       started.template.source === "general"
         ? d.subagents?.general !== false
-        : (d.subagents?.templates ?? []).includes(started.template.id ?? ""),
+        : started.template.source === "inline"
+          ? (d.subagents?.inline ?? []).some((x) => x.name === started.agentType)
+          : (d.subagents?.templates ?? []).includes(started.template.id ?? ""),
   });
 
 /**
  * Does a candidate change what a sub-agent (child) case would run (`subagent_changed`, spec
  * §15.1)? Pure, from the snapshot alone, comparing the model-visible parts of the effective
- * definition (instructions, pinned skills, tools) with the logged one (`logged`, from its
- * `subagent_started`):
+ * definition (instructions, turned-off skills, tools) with the logged one (`logged`, from its
+ * `subagent_started`). A logged definition that pinned skills (`started.definition`, read raw)
+ * differs from every candidate: none pins any more (skills default-on spec §9).
  * - the same agent version (`sameVersion`): the candidate is the logged definition with
  *   overrides (instructions, model, params), compared field by field;
  * - another version of the case's agent: for an org agent child (`source: "agent"`) that agent's
  *   version, as dispatch would use it (its own tools minus the child-removed ones); otherwise the
- *   parent's version: `general` takes its instructions and tools and pins nothing, `inline` its
- *   template of the same name (gone = changed), and a `plugin` template does not depend on the
+ *   parent's version: `general` takes its instructions and tools (its skills follow the parent's,
+ *   `parentSide`), `inline` its template of the same name and the parent's turned-off tools and
+ *   skills (`parentSide`; the template gone = changed), and a `plugin` template does not depend on the
  *   parent version (its own version is {@link ReconstructOptions.subagentTemplate}). Template
- *   narrowing that needs the database (inline and plugin tool allowlists, skill names) is not
- *   recomputed: those compare instructions only.
+ *   narrowing that needs the database (inline and plugin tool allowlists, a plugin template's
+ *   `disallowedSkills` and skill names) is not recomputed: those compare instructions only.
  * Models and params are not part of it: they are candidate axes of their own. Neither is the
  * candidate's `subagents` block as the child's own roster (allowlist, templates, limits; only a
  * template child's entry in its parent's roster counts, `parentSide`) nor whether it offers `Agent`:
@@ -457,26 +470,34 @@ export function subagentChanged(
   /** The parent's definition at the case's version (the snapshot's), for template children. */
   original?: AgentDefinition,
 ): boolean {
+  if (pinsSkills(started.definition)) return true;
   const keepAgent = hasAgent(logged);
   const childTools = (d: AgentDefinition) => childToolsOf(d, keepAgent);
-  const differs = (instructions: string, pinned: string[] | null, tools: string | null): boolean =>
+  const differs = (instructions: string, skills: string | null, tools: string | null): boolean =>
     instructions !== logged.instructions ||
-    (pinned !== null && canonicalJson(pinned) !== canonicalJson(pinsOf(logged))) ||
+    (skills !== null && skills !== skillsOf(logged)) ||
     (tools !== null && tools !== childTools(logged));
   if (sameVersion) {
-    return differs(candidate.instructions, pinsOf(candidate), childTools(candidate));
+    return differs(candidate.instructions, skillsOf(candidate), childTools(candidate));
   }
   switch (started.template.source) {
     case "agent":
-      return differs(candidate.instructions, pinsOf(candidate), childTools(candidate));
+      return differs(candidate.instructions, skillsOf(candidate), childTools(candidate));
     case "general":
       return (
-        differs(candidate.instructions, [], childTools(candidate)) ||
+        differs(candidate.instructions, null, childTools(candidate)) ||
         (original !== undefined && parentSide(original, started) !== parentSide(candidate, started))
       );
     case "inline": {
       const t = candidate.subagents?.inline?.find((x) => x.name === started.agentType);
       if (!t) return true;
+      // the parent's turned-off tools and skills reach the child as they do a general one
+      if (
+        original !== undefined &&
+        parentSide(original, started) !== parentSide(candidate, started)
+      ) {
+        return true;
+      }
       // conservative: any difference of the template between the two versions counts
       const o = original?.subagents?.inline?.find((x) => x.name === started.agentType);
       if (o !== undefined) return canonicalJson(o) !== canonicalJson(t);

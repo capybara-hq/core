@@ -30,7 +30,7 @@ export class SkillsOperations implements OnModuleInit {
 
   /** The skill's name for a card summary; its id when it cannot be read. */
   private skillName(orgId: string, skillId: string): Promise<string> {
-    return orElse(async () => named((await this.skills.get(orgId, skillId)).name), skillId);
+    return orElse(async () => named((await this.skills.detail(orgId, skillId)).name), skillId);
   }
 
   onModuleInit(): void {
@@ -38,7 +38,7 @@ export class SkillsOperations implements OnModuleInit {
       defineOperation({
         id: "skills.list",
         description:
-          "List the skills the org can use, org skills and platform skills switched on in it. Each entry has an id, name, description, current version and where it came from.",
+          "List the skills the org can use, org skills and platform skills switched on in it. Each entry has an id, name, description, current version and where it came from (its plugin); builtin: true marks a skill of a builtin plugin, which every agent has and none can turn off. Every agent has every skill listed here unless its disabledSkills turns it off.",
         input: NoInput,
         example: {},
         authz: { orgAction: "skills.read" },
@@ -49,7 +49,7 @@ export class SkillsOperations implements OnModuleInit {
       defineOperation({
         id: "skills.get",
         description:
-          "Read one skill: its description, versions, file list and the current SKILL.md body. Takes the skill id from skills.list.",
+          "Read one skill: its description, versions, file list, the current SKILL.md body and agentsOff (how many of the org's agents turn it off). Takes the skill id from skills.list.",
         input: SkillId,
         example: { skillId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" },
         authz: { orgAction: "skills.read" },

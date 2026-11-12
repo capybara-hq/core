@@ -46,6 +46,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "schedules.maxTasksPerMemberCap": () => {},
   "schedules.maxTasksPerOrgCap": () => {},
   "schedules.maxRunsPerHourCap": () => {},
+  // Run start reads the skills catalog budget when it records a snapshot.
+  "skills.catalogBudgetChars": () => {},
 };
 
 /**

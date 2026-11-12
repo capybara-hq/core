@@ -17,7 +17,9 @@ import { agentsUsing, referenceIds } from "../../src/catalog/component-state.js"
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { skillsChangeText } from "../../src/runtime/context/skills.js";
+import { catalogLineChars } from "../../src/skills/catalog.js";
 import { SkillInvoker } from "../../src/skills/invoke.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -42,9 +44,10 @@ import {
 /**
  * Plugin scope phase 2, Task 3: skills resolve from platform components. A platform skill that is
  * on in the org (its plugin on there for `follow`, its own scope for `own`, no switch off, not
- * disabled) is selectable by id and enters the catalog snapshot with `source: platform:<prefix>`;
- * `Skill`, pinned bodies and a person's invocation read its files from `deployment/`. Org copies
- * linked to it (ruling B2) resolve to its current version under their own id, unless pinned.
+ * disabled) is on for every agent that does not turn it off (skills default-on spec §3) and enters
+ * the catalog snapshot with `source: platform:<prefix>`; `Skill` and a person's invocation read its
+ * files from `deployment/`. Org copies linked to it (ruling B2) serve its current version unless
+ * pinned.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -285,24 +288,31 @@ async function seedOrgSkill(o: {
   return { id, prefix };
 }
 
-const definition = (orgSkills: string[], pinned?: string[]) => ({
+const definition = (disabledSkills: unknown[] = [], extra: Record<string, unknown> = {}) => ({
   name: "Skilled",
   instructions: "Use skills.",
   model: { provider: "model-fake", model: "fake-1" },
   disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
-  skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
+  disabledSkills,
+  ...extra,
 });
 
-async function createSkillAgent(orgSkills: string[], pinned?: string[]) {
+async function createSkillAgent(
+  disabledSkills: unknown[] = [],
+  extra: Record<string, unknown> = {},
+) {
   return owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
-    payload: { definition: definition(orgSkills, pinned), visibility: "org" },
+    payload: { definition: definition(disabledSkills, extra), visibility: "org" },
   });
 }
 
-async function agentWith(orgSkills: string[], pinned?: string[]): Promise<string> {
-  const res = await createSkillAgent(orgSkills, pinned);
+async function agentWith(
+  disabledSkills: unknown[] = [],
+  extra: Record<string, unknown> = {},
+): Promise<string> {
+  const res = await createSkillAgent(disabledSkills, extra);
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { agent: { id: string } }).agent.id;
 }
@@ -329,7 +339,7 @@ const catalogs = async (convId: string) =>
   );
 
 describe("skills from platform components", { timeout: 90_000 }, () => {
-  it("a platform skill on in the org is selectable, enters the snapshot as platform:<prefix> and Skill loads it", async () => {
+  it("a platform skill on in the org is on for an agent, enters the snapshot as platform:<prefix> and Skill loads it", async () => {
     const alpha = await seedPlatformSkill({
       name: "alpha",
       plugin: "kit",
@@ -337,7 +347,7 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
       extra: { "scripts/run.sh": "echo platform-alpha" },
     });
     await installPlugin("kit");
-    const agentId = await agentWith([alpha.id], [alpha.id]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
 
     const r = await call(conv, "Skill", { skill: "alpha" }, 1);
@@ -357,16 +367,8 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
         plugin: "kit",
       },
     ]);
-    // the pinned body is read from deployment/ too
-    expect(snaps[0]?.payload.pinned).toEqual([
-      {
-        id: alpha.id,
-        version: 1,
-        name: "alpha",
-        source: `platform:${alpha.prefix}`,
-        body: "Do alpha from the platform.",
-      },
-    ]);
+    // nothing is pinned (skills default-on spec §8)
+    expect(snaps[0]?.payload.pinned).toBeUndefined();
 
     // the qualified name still resolves
     const q = await call(conv, "Skill", { skill: "kit:alpha" }, 2);
@@ -393,14 +395,36 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     expect(inv.skill).toMatchObject({ id: alpha.id, source: `platform:${alpha.prefix}` });
   });
 
-  it("a platform skill that is off in the org is refused at save and absent from the snapshot", async () => {
+  it("a plugin switched on in the org brings its skills to every agent; switched off or uninstalled it takes them away", async () => {
     const alpha = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "A." });
-    // the plugin is not on in the org: not selectable
-    const refused = await createSkillAgent([alpha.id]);
-    expect(refused.statusCode).toBe(400);
+    // the plugin is not on in the org: an entry turning it off names nothing there
+    const refused = await createSkillAgent([{ kind: "plugin", plugin: "kit", skills: "all" }]);
+    expect(refused.statusCode, refused.body).toBe(400);
+    expect(refused.json().error).toMatchObject({
+      code: "validation_failed",
+      details: [{ path: "disabledSkills.0" }],
+    });
+    const agentId = await agentWith();
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    expect(await catalogs(conv)).toEqual([]);
 
+    // installed in the org: on for the agent at its next run, with no change to the agent
     await installPlugin("kit");
-    const agentId = await agentWith([alpha.id]);
+    await say(conv, 2);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([alpha.id]);
+
+    // uninstalled: gone at the next run
+    await db.deleteFrom("plugin_installs").where("org_id", "=", orgId).execute();
+    await say(conv, 3);
+    expect((await catalogs(conv)).at(-1)?.payload.skills).toEqual([]);
+  });
+
+  it("an org's component switch takes a skill away from every agent; the agent's entry for it stays valid", async () => {
+    const alpha = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "A." });
+    const beta = await seedPlatformSkill({ name: "beta", plugin: "kit", body: "B." });
+    await installPlugin("kit");
+    const agentId = await agentWith([{ kind: "plugin", plugin: "kit", skills: ["beta"] }]);
     const conv = await createConv(owner, orgId, agentId);
     await say(conv, 1);
     expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([alpha.id]);
@@ -412,6 +436,161 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
       .execute();
     await say(conv, 2);
     expect((await catalogs(conv)).at(-1)?.payload.skills).toEqual([]);
+
+    // beta switched off too: the agent's unchanged entry naming it is not checked again
+    await db
+      .insertInto("component_org_switches")
+      .values({ kind: "skill", component_id: beta.id, org_id: orgId, enabled: false })
+      .execute();
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: definition([{ kind: "plugin", plugin: "kit", skills: ["beta"] }], {
+          instructions: "Use skills well.",
+        }),
+      },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it("a plugin turned off as a whole stays off for the skills it gains later; a list covers only its names", async () => {
+    const alpha = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "A." });
+    await seedPlatformSkill({ name: "beta", plugin: "kit", body: "B." });
+    await installPlugin("kit");
+    const whole = await agentWith([{ kind: "plugin", plugin: "kit", skills: "all" }]);
+    const some = await agentWith([{ kind: "plugin", plugin: "kit", skills: ["beta"] }]);
+    const convWhole = await createConv(owner, orgId, whole);
+    const convSome = await createConv(owner, orgId, some);
+    await say(convWhole, 1);
+    await say(convSome, 1);
+    expect(await catalogs(convWhole)).toEqual([]);
+    expect((await catalogs(convSome)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([alpha.id]);
+
+    // the plugin's next version adds a skill
+    const gamma = await seedPlatformSkill({ name: "gamma", plugin: "kit", body: "G." });
+    await say(convWhole, 2);
+    await say(convSome, 2);
+    expect(await catalogs(convWhole)).toEqual([]);
+    expect((await catalogs(convSome)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([
+      alpha.id,
+      gamma.id,
+    ]);
+  });
+
+  it("another org's skill stays on for an org associated with it after its owner stops sharing (P3-16)", async () => {
+    const owner2 = await createOrg(owner, "owner2");
+    const other = await createOrg(owner, "other");
+    const alpha = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "A." });
+    // owned by another org and no longer shared; this org installed its plugin before
+    await db
+      .updateTable("platform_skills")
+      .set({ owner_org_id: owner2, shareable: false })
+      .where("id", "=", alpha.id)
+      .execute();
+    await installPlugin("kit");
+    expect((await usableSkills(db, orgId)).map((s) => s.id)).toEqual([alpha.id]);
+    // an org that is not associated never gets it
+    expect(await usableSkills(db, other)).toEqual([]);
+    const agentId = await agentWith();
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([alpha.id]);
+    const lib = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
+    expect(lib.statusCode, lib.body).toBe(200);
+    expect((lib.json() as { skills: { id: string }[] }).skills.map((s) => s.id)).toEqual([
+      alpha.id,
+    ]);
+  });
+
+  it("a skill entry naming an org copy linked to a platform skill without a plugin turns it off", async () => {
+    // a platform skill without a plugin (another org's, shared), linked by an org copy
+    const pid = randomUUID();
+    const owner2 = await createOrg(owner, "owner2");
+    await db
+      .insertInto("platform_skills")
+      .values({
+        id: pid,
+        name: "beta",
+        description: "Use for beta work.",
+        current_version: 1,
+        scope_mode: "own",
+        scope: "all",
+        owner_org_id: owner2,
+        shareable: true,
+      })
+      .execute();
+    await db
+      .insertInto("platform_skill_versions")
+      .values({
+        skill_id: pid,
+        version: 1,
+        manifest: JSON.stringify({ name: "beta", description: "Use for beta work.", files: [] }),
+        object_prefix: `platform/skills/${pid}/1/`,
+        catalog_version: "1.0.0",
+      })
+      .execute();
+    const copy = await seedOrgSkill({ name: "beta", body: "B." });
+    await db
+      .updateTable("skills")
+      .set({ platform_skill_id: pid })
+      .where("id", "=", copy.id)
+      .execute();
+    const on = await agentWith();
+    const conv = await createConv(owner, orgId, on);
+    await say(conv, 1);
+    // listed under the copy's id
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([copy.id]);
+
+    // the copy's id (what the agent sees) and the platform id both turn it off
+    for (const skillId of [copy.id, pid]) {
+      const off = await agentWith([{ kind: "skill", skillId }]);
+      const c = await createConv(owner, orgId, off);
+      await say(c, 1);
+      expect(await catalogs(c)).toEqual([]);
+    }
+  });
+
+  it("the org's own skills and the ones the agent shared are on by default; only the org's can be turned off", async () => {
+    const mine = await seedOrgSkill({ name: "mine", body: "M." });
+    const agentId = await agentWith();
+    const own = await seedOrgSkill({ name: "notes", body: "N.", agentId });
+    const shared = await seedOrgSkill({ name: "shared", body: "S." });
+    await db
+      .updateTable("skills")
+      .set({ origin_agent_id: agentId })
+      .where("id", "=", shared.id)
+      .execute();
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.name)).toEqual([
+      "mine",
+      "notes",
+      "shared",
+    ]);
+
+    // the agent's own and its shared skill cannot be turned off; the org's can
+    const patch = (disabledSkills: unknown[]) =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+        payload: { definition: definition(disabledSkills) },
+      });
+    for (const id of [own.id, shared.id, "no-such-skill"]) {
+      const r = await patch([{ kind: "skill", skillId: id }]);
+      expect(r.statusCode, r.body).toBe(400);
+      expect(r.json().error).toMatchObject({
+        code: "validation_failed",
+        details: [{ path: "disabledSkills.0" }],
+      });
+    }
+    const ok = await patch([{ kind: "skill", skillId: mine.id }]);
+    expect(ok.statusCode, ok.body).toBe(200);
+    await say(conv, 2);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.name)).toEqual([
+      "notes",
+      "shared",
+    ]);
   });
 
   it("usableSkills: follow, own scope, switches, disabled and name clashes", async () => {
@@ -510,10 +689,10 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     );
   });
 
-  it("a linked copy resolves to the platform version under its own id; a pinned copy keeps its own", async () => {
+  it("a linked copy serves the platform version; a pinned copy keeps its own", async () => {
     await installPlugin("kit");
     const copy = await seedOrgSkill({ name: "alpha", body: "Org copy of alpha.", plugin: "kit" });
-    const agentId = await agentWith([copy.id]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
     await say(conv, 1);
     const first = (await catalogs(conv)).at(-1)?.payload.skills ?? [];
@@ -590,7 +769,16 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     const byId = async () => [...(await skillVersionsById(db, orgId, [copy.id])).keys()];
     expect(await usable()).toEqual([copy.id]);
     expect(await byId()).toEqual([copy.id]);
-    const agentId = await agentWith([copy.id]);
+    // an agent uses a skill only when it names it (skills default-on spec §11): an inline sub-agent
+    // template's skills
+    await agentWith();
+    const agentId = await agentWith([], {
+      subagents: {
+        inline: [
+          { name: "helper", description: "Helps.", instructions: "Help.", skills: [copy.id] },
+        ],
+      },
+    });
     // the previews (disable, scope, uninstall) see the agent through the pinned copy
     expect(await referenceIds(db, orgId, "skill", [p.id])).toEqual(
       new Map([
@@ -635,9 +823,9 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
 });
 
 /**
- * Skill authoring spec, decision 8 and §5.7: the skills of a builtin plugin (`skills-core`'s
- * `skill-guide`) are in every agent's catalog without being selected, listed (not pinned); ranking
- * and the on-in-the-org rules stay as for any platform skill.
+ * Skill authoring spec, decision 8 and §5.7, skills default-on spec §3: the skills of a builtin
+ * plugin (`skills-core`'s `skill-guide`) are in every agent's catalog and no agent can turn them
+ * off; ranking and the on-in-the-org rules stay as for any platform skill.
  */
 describe("skills of builtin plugins", { timeout: 90_000 }, () => {
   /** A platform skill of the builtin plugin `core` (scope `all`, follows its plugin). */
@@ -646,9 +834,9 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
     return seedPlatformSkill({ name, plugin: "core", body });
   }
 
-  it("an agent that selects nothing has the builtin skill in its catalog; Skill loads it and the / menu lists it", async () => {
+  it("an agent has the builtin skill in its catalog; Skill loads it and the / menu lists it", async () => {
     const guide = await seedBuiltinSkill();
-    const agentId = await agentWith([]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
 
     const r = await call(conv, "Skill", { skill: "skill-guide" }, 1);
@@ -692,7 +880,7 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
 
   it("an agent's own skill of the same name shadows the builtin one", async () => {
     await seedBuiltinSkill();
-    const agentId = await agentWith([]);
+    const agentId = await agentWith();
     const own = await seedOrgSkill({ name: "skill-guide", body: "My own guide.", agentId });
     const conv = await createConv(owner, orgId, agentId);
     const r = await call(conv, "Skill", { skill: "skill-guide" }, 1);
@@ -702,7 +890,45 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
     ]);
   });
 
-  it("a platform skill of a plugin that is not builtin still needs selecting", async () => {
+  it("the catalog budget keeps the descriptions of the agent's own, its shared and the builtin skills ahead of the org's and plugin skills", async () => {
+    // names chosen so that name order alone would keep the wrong ones (skills default-on spec §7)
+    await seedBuiltinSkill("zz-guide");
+    const agentId = await agentWith();
+    await seedOrgSkill({ name: "zz-own", body: "O.", agentId });
+    const shared = await seedOrgSkill({ name: "zz-shared", body: "S." });
+    await db
+      .updateTable("skills")
+      .set({ origin_agent_id: agentId })
+      .where("id", "=", shared.id)
+      .execute();
+    await seedOrgSkill({ name: "aa-org", body: "A." });
+    await seedOrgSkill({ name: "aa-plug", body: "P.", plugin: "docs" });
+    const line = (name: string) => catalogLineChars({ name, description: `Use for ${name} work.` });
+    const config = k.app.get(KernelConfigService);
+    const real = config.get();
+    // below the schema's minimum, so set directly: exactly the three top-ranked lines fit
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      skills: { catalogBudgetChars: line("zz-own") + line("zz-shared") + line("zz-guide") },
+    });
+    const conv = await createConv(owner, orgId, agentId);
+    try {
+      await say(conv, 1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(
+      (await catalogs(conv)).at(-1)?.payload.skills.map((s) => [s.name, s.nameOnly === true]),
+    ).toEqual([
+      ["aa-org", true],
+      ["aa-plug", true],
+      ["zz-guide", false],
+      ["zz-own", false],
+      ["zz-shared", false],
+    ]);
+  });
+
+  it("a builtin skill cannot be turned off: the save is refused and it stays in the catalog", async () => {
     const guide = await seedBuiltinSkill();
     await catalogItem("kit");
     const alpha = await seedPlatformSkill({
@@ -712,29 +938,53 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
       scopeMode: "own",
       scope: "all",
     });
-    const agentId = await agentWith([]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
     await say(conv, 1);
-    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([guide.id]);
+    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([
+      alpha.id,
+      guide.id,
+    ]);
 
-    const selecting = await agentWith([alpha.id]);
-    const conv2 = await createConv(owner, orgId, selecting);
+    for (const entry of [
+      { kind: "plugin", plugin: "core", skills: "all" },
+      { kind: "plugin", plugin: "core", skills: ["skill-guide"] },
+      { kind: "skill", skillId: guide.id },
+    ]) {
+      const r = await createSkillAgent([entry]);
+      expect(r.statusCode, r.body).toBe(400);
+      expect(r.json().error).toMatchObject({
+        code: "validation_failed",
+        details: [{ path: "disabledSkills.0" }],
+      });
+    }
+
+    // a plugin that is not builtin can be turned off; the builtin skill stays
+    const off = await agentWith([{ kind: "plugin", plugin: "kit", skills: "all" }]);
+    const conv2 = await createConv(owner, orgId, off);
     await say(conv2, 1);
-    expect((await catalogs(conv2)).at(-1)?.payload.skills.map((s) => s.name)).toEqual([
-      "alpha",
-      "skill-guide",
+    expect((await catalogs(conv2)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([guide.id]);
+    // an entry written directly into the definition (never through a save) cannot hide it either
+    await db
+      .updateTable("agent_versions")
+      .set({
+        definition: JSON.stringify(
+          definition([
+            { kind: "plugin", plugin: "core", skills: "all" },
+            { kind: "skill", skillId: guide.id },
+          ]),
+        ),
+      })
+      .where("agent_id", "=", off)
+      .execute();
+    await say(conv2, 2);
+    expect((await catalogs(conv2)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([
+      alpha.id,
+      guide.id,
     ]);
   });
 
-  it("selecting the builtin skill explicitly lists it once", async () => {
-    const guide = await seedBuiltinSkill();
-    const agentId = await agentWith([guide.id]);
-    const conv = await createConv(owner, orgId, agentId);
-    await say(conv, 1);
-    expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([guide.id]);
-  });
-
-  it("the org's pinned copy of the builtin skill takes its place, unselected", async () => {
+  it("the org's pinned copy of the builtin skill takes its place", async () => {
     const guide = await seedBuiltinSkill();
     const copy = await seedOrgSkill({ name: "skill-guide", body: "Pinned guide.", plugin: "core" });
     await db
@@ -742,7 +992,7 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
       .set({ platform_skill_id: guide.id, pinned_version: 1 })
       .where("id", "=", copy.id)
       .execute();
-    const agentId = await agentWith([]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
     const r = await call(conv, "Skill", { skill: "skill-guide" }, 1);
     expect(r.content).toContain("Pinned guide.");
@@ -757,7 +1007,7 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
     ).toEqual([[copy.id, true]]);
   });
 
-  it("a builtin item or skill owned by another org never reaches this org's agents unselected", async () => {
+  it("a builtin item or skill owned by another org never reaches this org's agents", async () => {
     const other = await createOrg(owner, "other");
     // an org-owned item marked builtin (never so in practice): its skill is not auto-included
     const otherItem = randomUUID();
@@ -803,7 +1053,7 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
         pinned_version: 1,
       })
       .execute();
-    const agentId = await agentWith([]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
     await say(conv, 1);
     expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([guide.id]);
@@ -811,7 +1061,7 @@ describe("skills of builtin plugins", { timeout: 90_000 }, () => {
 
   it("follows the org's component switch and stays out when manual-only", async () => {
     const guide = await seedBuiltinSkill();
-    const agentId = await agentWith([]);
+    const agentId = await agentWith();
     const conv = await createConv(owner, orgId, agentId);
     await say(conv, 1);
     expect((await catalogs(conv)).at(-1)?.payload.skills.map((s) => s.id)).toEqual([guide.id]);

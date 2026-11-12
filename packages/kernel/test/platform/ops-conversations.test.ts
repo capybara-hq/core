@@ -72,6 +72,7 @@ async function agentOf(owner: string) {
       name: "Helper",
       instructions: "Be helpful.",
       model: { provider: "model-fake", model: "fake-1" },
+      disabledSkills: [],
       disabledTools: builtinsOff("Bash"),
       toolPolicies: {},
       fallback: null,

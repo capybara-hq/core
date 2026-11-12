@@ -118,6 +118,7 @@ describe("AgentDefinitionSchema", () => {
       modelParams: {},
       fallbackParams: {},
       disabledTools: [],
+      disabledSkills: [],
       toolPolicies: {},
     });
   });
