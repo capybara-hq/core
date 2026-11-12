@@ -287,6 +287,95 @@ export const addScheduleGrants = (orgId: string, id: string, toolKeys: string[])
 export const removeScheduleGrant = (orgId: string, id: string, toolKey: string) =>
   apiFetch<void>(`${one(orgId, id)}/grants/${enc(toolKey)}`, { method: "DELETE" });
 
+// ---- the calendar (calendar spec §5.1: `GET …/schedules/calendar`) ----
+
+/** A task an item of the calendar names. */
+export interface CalendarTask {
+  id: string;
+  name: string;
+  agentId: string;
+  accountId: string;
+  status: ScheduleStatus;
+  pauseReason: SchedulePauseReason | null;
+  trigger: ScheduleTrigger;
+  mode: ScheduleMode;
+  jitterSeconds: number;
+  nextRunAt: string | null;
+}
+
+/** A recorded run or a planned occurrence. */
+export type CalendarItem =
+  | {
+      kind: "run";
+      taskId: string;
+      /** The task run's id. */
+      id: string;
+      /** The tick (before jitter), or the request time of a manual run. */
+      scheduledFor: string;
+      firedAt: string | null;
+      status: TaskRunStatus;
+      skipReason: TaskRunSkipReason | null;
+      trial: boolean;
+      manual: boolean;
+      /** Null for another member's run (an admin's org-wide view), as `error` and `missingGrants`. */
+      conversationId: string | null;
+      error: string | null;
+      missingGrants: number | null;
+    }
+  | {
+      kind: "occurrence";
+      taskId: string;
+      /** The tick, before jitter. */
+      scheduledFor: string;
+      /** When it fires: the tick plus the task's jitter. */
+      at: string;
+    };
+
+/** A dense task's items of one viewer-local day, summarized. */
+export interface CalendarCollapsed {
+  taskId: string;
+  /** YYYY-MM-DD in the request's zone. */
+  day: string;
+  count: number;
+  upcoming: number;
+  running: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  first: string;
+  last: string;
+}
+
+export interface CalendarAnswer {
+  tasks: CalendarTask[];
+  items: CalendarItem[];
+  collapsed: CalendarCollapsed[];
+  /** Nothing is returned after it (42 days ahead, or where a limit cut the range). */
+  horizon: string;
+  /** A limit cut the range at a whole day: the days from `horizon` on are not loaded. */
+  truncated: boolean;
+}
+
+export interface CalendarParams {
+  /** ISO instants, `from < to`, at most 43 days (2 with `taskId`). */
+  from: string;
+  to: string;
+  /** The viewer's IANA zone (the local days dense tasks are counted in). */
+  timeZone: string;
+  /** Every task of the org (org admins). */
+  all: boolean;
+  /** Only this task, never collapsed (the run panel's day list). */
+  taskId?: string;
+}
+
+/** The runs and planned occurrences of a range. */
+export const getScheduleCalendar = (orgId: string, p: CalendarParams) => {
+  const q = new URLSearchParams({ from: p.from, to: p.to, timeZone: p.timeZone });
+  if (p.all) q.set("all", "true");
+  if (p.taskId !== undefined) q.set("taskId", p.taskId);
+  return apiFetch<CalendarAnswer>(`${base(orgId)}/calendar?${q}`);
+};
+
 /** How many runs the task page lists. */
 export const RUNS_SHOWN = 20;
 
@@ -453,7 +542,7 @@ export function scheduleWords(trigger: ScheduleTrigger | TriggerInput): {
 /** The status a task shows: its state, or the pause's reason. */
 export type ScheduleState = "active" | "ended" | `paused.${SchedulePauseReason}`;
 
-export const scheduleState = (t: ScheduledTask): ScheduleState =>
+export const scheduleState = (t: Pick<ScheduledTask, "status" | "pauseReason">): ScheduleState =>
   t.status === "paused" ? `paused.${t.pauseReason ?? "creator"}` : t.status;
 
 /** The browser's IANA zone (sent on create; the kernel uses it only when the account has none). */

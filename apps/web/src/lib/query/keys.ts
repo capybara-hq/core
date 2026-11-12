@@ -59,6 +59,26 @@ export const keys = {
       schedulesAll: (): readonly unknown[] => [...all, "schedules"],
       /** My scheduled tasks (`all`: every task of the org, org admins). */
       schedules: (scope: "mine" | "all"): readonly unknown[] => [...all, "schedules", scope],
+      /**
+       * A calendar range (under `schedulesAll`: every task mutation refreshes it); `taskId`: one
+       * task's day in the run panel.
+       */
+      scheduleCalendar: (
+        scope: "mine" | "all",
+        from: string,
+        to: string,
+        timeZone: string,
+        taskId?: string,
+      ): readonly unknown[] => [
+        ...all,
+        "schedules",
+        "calendar",
+        scope,
+        from,
+        to,
+        timeZone,
+        taskId ?? null,
+      ],
       /** One scheduled task, its runs and grants (under it: invalidating the task refreshes them). */
       schedule: (id: string): readonly unknown[] => [...all, "schedule", id],
       scheduleRuns: (id: string): readonly unknown[] => [...all, "schedule", id, "runs"],

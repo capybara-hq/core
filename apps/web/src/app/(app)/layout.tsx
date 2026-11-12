@@ -13,6 +13,7 @@ import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
 import { clientHost } from "../../lib/server/client-host";
 import {
+  currentCookieHeader,
   currentNonce,
   currentPath,
   currentSafeUi,
@@ -43,9 +44,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const prefetched: { route: "ok" | "unknown" } = { route: "ok" };
   // The page's locale: an extension view the route prefetches renders in it.
   const locale = await getLocale();
+  // The request's cookies: a route keyed by the viewer's zone (`cb-tz`) or a remembered view.
+  const cookie = await currentCookieHeader();
   // Signed out or a fresh deployment never gets here: the proxy (src/proxy.ts) redirects first.
   const shell = await getShell(qc, async (session) => {
-    prefetched.route = await prefetchRoute(qc, path, { ...session, locale });
+    prefetched.route = await prefetchRoute(qc, path, { ...session, locale, cookie });
   });
   // The kernel cannot answer (starting, restarting): a frame that retries by itself (ruling R2).
   if (shell.kind === "unavailable") return <KernelStarting />;

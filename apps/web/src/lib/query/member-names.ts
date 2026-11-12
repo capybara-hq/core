@@ -14,10 +14,11 @@ export type MemberNames =
  * The org's member names (account id → display name). Names are cosmetic: when the kernel refuses
  * the list (403 / 404) the ids show (`ready` with no names); any other failure is `error` (the
  * page's error state, with a retry). A failure the layout already read is not read again on mount.
+ * `enabled: false`: not read (a page that names people only in one of its views).
  */
-export function useMemberNames(orgId: string): MemberNames {
+export function useMemberNames(orgId: string, enabled = true): MemberNames {
   const q = membersQuery(orgId);
-  const members = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const members = useQuery({ ...q, enabled, retryOnMount: retryOnMountOf(q.queryKey) });
   if (members.data !== undefined) {
     return {
       kind: "ready",

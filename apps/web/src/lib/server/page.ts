@@ -4,6 +4,7 @@ import "./register";
 import { headers } from "next/headers";
 import { ApiClientError } from "../api";
 import { safeUiOf } from "../client-extensions";
+import { cookieOf } from "../cookies";
 import { NONCE_HEADER, PATH_HEADER, SIGN_IN_HEADER } from "../headers";
 import { isSignedOut } from "../signed-out";
 
@@ -20,6 +21,16 @@ export async function currentPath(): Promise<string> {
  */
 export async function currentNonce(): Promise<string> {
   return (await headers()).get(NONCE_HEADER) ?? "";
+}
+
+/** The request's `Cookie` header, or null. */
+export async function currentCookieHeader(): Promise<string | null> {
+  return (await headers()).get("cookie");
+}
+
+/** A cookie of the request (decoded), or undefined. */
+export async function currentCookie(name: string): Promise<string | undefined> {
+  return cookieOf((await headers()).get("cookie"), name);
 }
 
 /**

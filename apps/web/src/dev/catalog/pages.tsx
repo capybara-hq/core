@@ -26,6 +26,7 @@ import { meQuery } from "../../lib/query/shell";
 import type { Me } from "../../lib/session";
 import { COMMANDS } from "./fixtures";
 import type { PageRoute } from "./routes";
+import { SchedulesPageCatalog } from "./schedules-page";
 import { sidebarProps, statusFixture } from "./shell-fixture";
 
 // Real app pages drawn from a seeded query cache (no kernel), for the screenshot tests of pages
@@ -249,6 +250,14 @@ function seeded(): QueryClient {
 
 /** `/dev/ui/pages/<page>`: one app page in the admin console's shell. */
 export function PageCatalog({ route }: { route: PageRoute }) {
+  if (route === "pages/schedules-calendar") return <SchedulesPageCatalog variant="week" />;
+  if (route === "pages/schedules-calendar-month") return <SchedulesPageCatalog variant="month" />;
+  if (route === "pages/schedules-calendar-admin") return <SchedulesPageCatalog variant="admin" />;
+  return <AdminOverviewCatalog />;
+}
+
+/** `/dev/ui/pages/admin-overview`: the admin console overview. */
+function AdminOverviewCatalog() {
   const [client] = useState(seeded);
   const { onOpenCommands: _, ...sidebar } = sidebarProps(
     { active: "overview", context: "admin", level: "superAdmin" },
@@ -260,7 +269,7 @@ export function PageCatalog({ route }: { route: PageRoute }) {
       <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture("/admin")}>
         {/* no polling: a query's own refetchInterval beats the client's defaults, and with no
             kernel behind the catalog a poll would only fail and turn the health stale */}
-        {route === "pages/admin-overview" ? <AdminOverviewView pollHealth={false} /> : null}
+        <AdminOverviewView pollHealth={false} />
       </AppShell>
     </QueryClientProvider>
   );
