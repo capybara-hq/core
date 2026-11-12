@@ -471,6 +471,19 @@ async function copyAttachments(
 }
 
 /**
+ * A device that runs commands without a sandbox the org does not allow (sandbox dev tiers spec
+ * §4.3): the kernel's `device.unsandboxed_not_allowed` text plus what the model can do.
+ */
+const UNSANDBOXED_TEXT =
+  "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`. Ask the user to do that, or to start a new conversation on another device.";
+/** The same, in a scheduled run without the task's `tier:open` grant (spec §11.4). */
+const UNATTENDED_UNSANDBOXED_TEXT =
+  "This device runs commands without a sandbox, which a scheduled run may use only when its task allows the open sandbox level; the task's owner can add tier:open to the task's approved tools, or the device's owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
+/** A scheduled run on a cloud device in the open tier without the task's `tier:open` grant. */
+const UNATTENDED_OPEN_TIER_TEXT =
+  "This device's sandbox level is open, which a scheduled run may use only when its task allows the open sandbox level; the task's owner can add tier:open to the task's approved tools, or lower the device's sandbox level.";
+
+/**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
  * (the pipeline reports a generic tool failure). A provider that cannot be reached becomes a
  * fixed text (providers never write model-visible text) with `kind: "unavailable"`, and its raw
@@ -505,6 +518,11 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
+    if (e.code === "device.unsandboxed_not_allowed" && detail?.reason === "unattended") {
+      return new ToolError(UNATTENDED_UNSANDBOXED_TEXT);
+    }
+    if (e.code === "device.unsandboxed_not_allowed") return new ToolError(UNSANDBOXED_TEXT);
+    if (e.code === "device.tier_not_granted") return new ToolError(UNATTENDED_OPEN_TIER_TEXT);
   }
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);

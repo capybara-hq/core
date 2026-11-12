@@ -41,11 +41,15 @@ import {
   grantRefusal,
   grantRefusalOf,
   isNetworkGrantKey,
+  isPolicyGrantKey,
+  isTierGrantKey,
   NETWORK_GRANT_PREFIX,
   NETWORK_GRANT_SPEC_HASH,
   type NetworkGrantContext,
   networkGrantHost,
   networkGrantRefusal,
+  TIER_GRANT_SPEC_HASH,
+  tierGrantRefusal,
 } from "./grant-rules.js";
 import { schedFireJob } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
@@ -177,6 +181,9 @@ export interface GrantWriteSource {
 /** The refusal of a network grant written outside a person's web session. */
 const NETWORK_GRANT_NEEDS_PERSON = "Network domains are approved on the task page by a person.";
 
+/** The refusal of a sandbox tier grant written outside a person's web session. */
+const TIER_GRANT_NEEDS_PERSON = "A sandbox level is approved on the task page by a person.";
+
 /** Who acts on a task: the service reads their live role itself and decides by that one. */
 export interface ScheduleActor {
   accountId: string;
@@ -271,7 +278,8 @@ export class ScheduledTasksService {
     /** "Run now" enqueues the fire job (consumed by the worker role). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
     /** Network grants: the org's effective egress (network ask-to-allow spec §8.1). */
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "orgLimits" | "devicePolicy">,
     /** Network grants: the task's device's local policy summary (`remoteGrants`). */
     @Inject(DevicePolicyService)
     private readonly devicePolicy: Pick<DevicePolicyService, "summary">,
@@ -400,9 +408,9 @@ export class ScheduledTasksService {
       changes.agentId = agent.id;
       // the grants were approved for the old agent's tools: each must hold for the new agent
       // too (refused, so the creator sees which), and takes the new agent's definition; network
-      // grants belong to no tool and stay as they are
+      // and sandbox tier grants belong to no tool and stay as they are
       const held = (await this.store.listGrants(t, task.id)).filter(
-        (g) => !isNetworkGrantKey(g.toolKey),
+        (g) => !isPolicyGrantKey(g.toolKey),
       );
       const regranted = await this.resolveGrants(
         orgId,
@@ -757,13 +765,13 @@ export class ScheduledTasksService {
     if (grants.length === 0) return [];
     // the creator's view of the agent's tools: a grant whose tool changed or left is stale;
     // unknown (null) when the tools cannot be read now, rather than failing the task page
-    const current = grants.every((g) => isNetworkGrantKey(g.toolKey))
+    const current = grants.every((g) => isPolicyGrantKey(g.toolKey))
       ? new Map()
       : await this.agentToolFacts(orgId, task.accountId, task.agentId);
     return grants.map((g) => ({
       ...g,
-      // a network grant names a domain, not a tool definition: never stale
-      stale: isNetworkGrantKey(g.toolKey)
+      // a network or sandbox tier grant names no tool definition: never stale
+      stale: isPolicyGrantKey(g.toolKey)
         ? false
         : current === null
           ? null
@@ -886,6 +894,12 @@ export class ScheduledTasksService {
       limitsOf ??= this.sandbox.orgLimits(orgId);
       return limitsOf;
     };
+    // the org's sandbox ceiling, read once and only when a refused sandbox level needs it
+    let ceilingOf: Promise<boolean> | undefined;
+    const openReachable = () => {
+      ceilingOf ??= this.sandbox.devicePolicy({ orgId }).then((p) => p.ceiling === "open");
+      return ceilingOf;
+    };
     const toolsOf = (agentId: string) => {
       const lookup = agentTools.get(agentId) ?? this.agentToolFacts(orgId, accountId, agentId);
       agentTools.set(agentId, lookup);
@@ -931,19 +945,22 @@ export class ScheduledTasksService {
       // a refused tool granted since drops out, unless its grant no longer matches the tool's
       // definition (stale: it would be refused again); a refused domain granted since drops out
       // while the org's network allowlist admits it (network ask-to-allow spec §8.3)
-      const isTool = (k: string) => !k.startsWith("connection:") && !isNetworkGrantKey(k);
+      // a refused sandbox level granted since drops out while the org's ceiling is still open
+      const isTool = (k: string) => !k.startsWith("connection:") && !isPolicyGrantKey(k);
       const facts = refused.some(isTool) ? await toolsOf(task.agentId) : null;
       const limits = refused.some(isNetworkGrantKey) ? await orgLimits() : null;
-      const admits = (k: string) => limits !== null && orgAllows(networkGrantHost(k), limits);
+      const open = refused.some(isTierGrantKey) ? await openReachable() : false;
+      const admits = (k: string) =>
+        isTierGrantKey(k) ? open : limits !== null && orgAllows(networkGrantHost(k), limits);
       const missing = refused.filter((k) => {
         const hash = have?.get(k);
-        if (isNetworkGrantKey(k)) return hash === undefined || !admits(k);
+        if (isPolicyGrantKey(k)) return hash === undefined || !admits(k);
         if (hash === undefined) return true;
         const current = facts?.get(k);
         return facts !== null && current?.specHash !== hash;
       });
       if (missing.length === 0) continue;
-      const needsAdmin = missing.filter((k) => isNetworkGrantKey(k) && !admits(k));
+      const needsAdmin = missing.filter((k) => isPolicyGrantKey(k) && !admits(k));
       let deviceRefuses = false;
       if (missing.some(isNetworkGrantKey)) {
         const deviceId = await this.taskDeviceOf(orgId, task).catch(() => null);
@@ -1312,7 +1329,24 @@ export class ScheduledTasksService {
         out.set(toolKey, { toolKey, specHash: NETWORK_GRANT_SPEC_HASH, connectorId: null });
       }
     }
-    const toolGrants = grants.filter((g) => !isNetworkGrantKey(g.toolKey));
+    const tiers = grants.filter((g) => isTierGrantKey(g.toolKey));
+    if (tiers.length > 0) {
+      if (source.fromSession !== true) throw grantNotAllowed(TIER_GRANT_NEEDS_PERSON);
+      const { ceiling } = await this.sandbox.devicePolicy({ orgId });
+      for (const g of tiers) {
+        if (g.connectorId !== undefined) {
+          throw grantNotAllowed(`${g.toolKey} is a sandbox level and comes from no connector`);
+        }
+        const why = tierGrantRefusal(g.toolKey, { ceiling });
+        if (why !== null) throw grantNotAllowed(why.message);
+        out.set(g.toolKey, {
+          toolKey: g.toolKey,
+          specHash: TIER_GRANT_SPEC_HASH,
+          connectorId: null,
+        });
+      }
+    }
+    const toolGrants = grants.filter((g) => !isPolicyGrantKey(g.toolKey));
     if (toolGrants.length === 0) return [...out.values()];
     const d = agent.definition;
     const { tools } = await this.tools.forAgent(orgId, {

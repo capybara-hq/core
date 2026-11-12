@@ -26,6 +26,14 @@ import type { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import {
+  type DeploymentSandboxPolicy,
+  effectiveSandboxPolicy,
+  limitsForTier,
+  type OrgSandboxSettings,
+} from "../../src/sandbox/tiers.js";
+import { UNATTENDED_UNSANDBOXED_ERROR } from "../../src/schedules/unattended.js";
+import { mapSandboxError } from "../../src/tools/builtins/sandbox/common.js";
 import { type Answer, TestHolder } from "./test-holder.js";
 
 /**
@@ -55,8 +63,29 @@ const ROOTS = {
   skills: "/home/me/env/skills",
   tmp: "/home/me/env/tmp",
 };
-/** What the stubbed PG reads answer: the org's limits now, the machine's roots, the org. */
-let orgLimits: SandboxLimits;
+/** The deployment's tiers and network (ceiling dev unless a test raises it). */
+const DEPLOYMENT: DeploymentSandboxPolicy = {
+  limits: { egress: "allowlist", allowHosts: ["example.com"], devHosts: ["registry.npmjs.org"] },
+  tiers: { max: "dev", default: "dev", allowUnsandboxed: true },
+};
+/** The limits of the dev ceiling under {@link DEPLOYMENT} (what every exec carries by default). */
+const DEV_LIMITS: SandboxLimits = {
+  cpu: 2,
+  memoryMb: 1024,
+  diskMb: 2048,
+  egress: "allowlist",
+  allowHosts: ["example.com", "registry.npmjs.org"],
+  tier: "dev",
+  defaultTier: "dev",
+  devHosts: ["registry.npmjs.org"],
+};
+/** What the stubbed PG reads answer: the platform and org policy, the machine's roots, the org. */
+let deployment: DeploymentSandboxPolicy;
+let orgSettings: OrgSandboxSettings;
+/** The tier rule of an unattended run (null: attended), and the machine's isolation. */
+let unattended: { taskRunId: string; openGranted: boolean } | null;
+let unsandboxed: boolean;
+let missing: { taskRunId: string; key: string }[];
 let machineRoots: typeof ROOTS | null;
 let orgOfEnv: string | null;
 let maxFrameBytes: number;
@@ -66,7 +95,11 @@ let grantCalls: { orgId: string; runId: string; deviceId: string }[];
 /** What the machine's exec answers. */
 let execResult: Record<string, unknown>;
 beforeEach(() => {
-  orgLimits = LIMITS;
+  deployment = structuredClone(DEPLOYMENT);
+  orgSettings = {};
+  unattended = null;
+  unsandboxed = false;
+  missing = [];
   machineRoots = ROOTS;
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
@@ -134,7 +167,21 @@ beforeAll(async () => {
       orgOf: async () => orgOfEnv,
       machineRoots: async () => machineRoots,
     },
-    { orgLimits: async () => orgLimits } as Pick<SandboxService, "orgLimits">,
+    {
+      devicePolicy: async () => effectiveSandboxPolicy(deployment, orgSettings, null),
+      deviceLimits: async (_d, o = {}) => {
+        const p = o.policy ?? effectiveSandboxPolicy(deployment, orgSettings, null);
+        const tier = o.tier ?? p.tier;
+        return {
+          cpu: 2,
+          memoryMb: 1024,
+          diskMb: 2048,
+          ...limitsForTier(p, tier),
+          tier,
+          devHosts: p.devHosts,
+        };
+      },
+    } as Pick<SandboxService, "devicePolicy" | "deviceLimits">,
     {
       get: () => ({ devices: { local: { maxFrameBytes } } }),
     } as unknown as KernelConfigService,
@@ -143,7 +190,11 @@ beforeAll(async () => {
         grantCalls.push(input);
         return runGrants;
       },
-    } as Pick<NetworkGrants, "forExec">,
+      unattendedTier: async () => unattended,
+      unsandboxed: async () => unsandboxed,
+      recordMissing: async (taskRunId, key) => void missing.push({ taskRunId, key }),
+    } as Pick<NetworkGrants, "forExec" | "unattendedTier" | "unsandboxed" | "recordMissing">,
+    log,
   );
 }, 120_000);
 afterAll(async () => {
@@ -243,7 +294,7 @@ describe("LocalDeviceProvider", () => {
         maxOutputBytes: 100,
         tag: "tag-1",
         actor,
-        limits: LIMITS,
+        limits: DEV_LIMITS,
       },
     });
     const data = new Uint8Array([0, 1, 2, 250, 255]);
@@ -311,7 +362,7 @@ describe("LocalDeviceProvider", () => {
     await provider.exec(handle, { ...args, signal: signal() });
     expect((h.frames[0] as KernelReq).args).toMatchObject({ limits: { egress: "allowlist" } });
     // the org's egress is turned off: the next exec carries it
-    orgLimits = { ...LIMITS, egress: "none", allowHosts: [] };
+    orgSettings = { sandboxEgress: { mode: "none" } };
     await provider.exec(handle, { ...args, signal: signal() });
     expect((h.frames[1] as KernelReq).args).toMatchObject({
       limits: { egress: "none", allowHosts: [] },
@@ -344,7 +395,10 @@ describe("LocalDeviceProvider", () => {
       source: { kind: "run", id: "root-run", accountId: "owner" },
     };
     await provider.exec(handle, { ...base, actor, signal: signal() });
-    expect((h.frames[2] as KernelReq).args).toMatchObject({ grants: runGrants, limits: LIMITS });
+    expect((h.frames[2] as KernelReq).args).toMatchObject({
+      grants: runGrants,
+      limits: DEV_LIMITS,
+    });
     // a grant beyond the org's limits never reaches the device
     runGrants = {
       hosts: ["example.com", "evil.example.net"],
@@ -354,7 +408,7 @@ describe("LocalDeviceProvider", () => {
     expect((h.frames[3] as KernelReq).args).toMatchObject({
       grants: { ...runGrants, hosts: ["example.com"] },
     });
-    orgLimits = { ...LIMITS, egress: "none", allowHosts: [] };
+    orgSettings = { sandboxEgress: { mode: "none" } };
     await provider.exec(handle, { ...base, actor, signal: signal() });
     expect((h.frames[4] as KernelReq).args).not.toHaveProperty("grants");
     await h.disconnect();
@@ -390,7 +444,7 @@ describe("LocalDeviceProvider", () => {
       { host: "other.org", port: 80, layer: "org" },
     ]);
     // the org closes its egress before the next exec: every device-layer host is the org's
-    orgLimits = { ...LIMITS, egress: "none", allowHosts: [] };
+    orgSettings = { sandboxEgress: { mode: "none" } };
     const r2 = await provider.exec(handle, {
       command: "curl",
       timeoutMs: 1000,
@@ -496,4 +550,116 @@ describe("LocalDevicesModule", () => {
     },
     60_000,
   );
+});
+
+describe("LocalDeviceProvider: sandbox tiers (sandbox dev tiers spec §4.2, §4.3, §11.4)", () => {
+  const base = { command: "ls", timeoutMs: 1000, maxOutputBytes: 10, tag: "t" };
+  const attended = { accountId: "a", conversationId: "c" };
+  const scheduled = { ...attended, runId: "run-1" };
+
+  /** Runs one exec on a connected machine; returns the frame's args or the error. */
+  async function execOnce(actor: typeof attended & { runId?: string }): Promise<{
+    args?: Record<string, unknown>;
+    error?: unknown;
+  }> {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    try {
+      await provider.exec({ id: h.deviceId, roots: ROOTS }, { ...base, actor, signal: signal() });
+      return { args: (h.frames[0] as KernelReq).args as Record<string, unknown> };
+    } catch (error) {
+      return { error };
+    } finally {
+      await h.disconnect();
+    }
+  }
+
+  it("carries the ceiling's network, the ceiling as tier, the org's default and the dev hosts", async () => {
+    expect((await execOnce(attended)).args?.limits).toEqual(DEV_LIMITS);
+    // an open ceiling: open egress, the org's default stays dev
+    deployment.tiers.max = "open";
+    orgSettings = { sandboxTier: { max: "open" } };
+    expect((await execOnce(attended)).args?.limits).toEqual({
+      ...DEV_LIMITS,
+      egress: "open",
+      allowHosts: [],
+      tier: "open",
+      defaultTier: "dev",
+    });
+    // an org ceiling at strict: the base list only, the default cut to it
+    orgSettings = { sandboxTier: { max: "strict" } };
+    expect((await execOnce(attended)).args?.limits).toEqual({
+      ...DEV_LIMITS,
+      allowHosts: ["example.com"],
+      tier: "strict",
+      defaultTier: "strict",
+    });
+  });
+
+  it("caps an unattended run at dev without the task's tier:open grant; the grant lifts the cap", async () => {
+    deployment.tiers.max = "open";
+    deployment.tiers.default = "open";
+    unattended = { taskRunId: "tr-1", openGranted: false };
+    expect((await execOnce(scheduled)).args?.limits).toEqual(DEV_LIMITS);
+    // an attended exec of the same device is not capped
+    expect((await execOnce(attended)).args?.limits).toMatchObject({
+      tier: "open",
+      defaultTier: "open",
+      egress: "open",
+    });
+    unattended = { taskRunId: "tr-1", openGranted: true };
+    expect((await execOnce(scheduled)).args?.limits).toMatchObject({
+      tier: "open",
+      egress: "open",
+    });
+    // the cap never records a missing grant (nothing was refused)
+    expect(missing).toEqual([]);
+  });
+
+  it("runs on an unsandboxed machine only where the org allows it", async () => {
+    unsandboxed = true;
+    // ceiling dev: unsandboxed is not allowed
+    const refused = (await execOnce(attended)).error;
+    expect(refused).toBeInstanceOf(ApiError);
+    expect((refused as ApiError).code).toBe("device.unsandboxed_not_allowed");
+    expect((refused as ApiError).message).toBe(
+      "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.",
+    );
+    // the model is also told what it can do
+    expect((mapSandboxError(refused, undefined) as Error).message).toContain(
+      "Ask the user to do that",
+    );
+    // an open ceiling with unsandboxed allowed: relayed
+    deployment.tiers.max = "open";
+    orgSettings = { sandboxTier: { max: "open" } };
+    expect((await execOnce(attended)).args).toBeDefined();
+    // the org forbids it
+    orgSettings = { sandboxTier: { max: "open", allowUnsandboxed: false } };
+    expect(((await execOnce(attended)).error as ApiError).code).toBe(
+      "device.unsandboxed_not_allowed",
+    );
+    // the platform forbids it
+    orgSettings = { sandboxTier: { max: "open" } };
+    deployment.tiers.allowUnsandboxed = false;
+    expect(((await execOnce(attended)).error as ApiError).code).toBe(
+      "device.unsandboxed_not_allowed",
+    );
+    // a sandboxed machine (or one without a summary) is never refused
+    unsandboxed = false;
+    expect((await execOnce(attended)).args).toBeDefined();
+  });
+
+  it("refuses an unattended run on an unsandboxed machine without tier:open and records it", async () => {
+    deployment.tiers.max = "open";
+    orgSettings = { sandboxTier: { max: "open" } };
+    unsandboxed = true;
+    unattended = { taskRunId: "tr-1", openGranted: false };
+    const e = (await execOnce(scheduled)).error as ApiError;
+    expect(e.code).toBe("device.unsandboxed_not_allowed");
+    expect(e.message).toBe(UNATTENDED_UNSANDBOXED_ERROR);
+    expect((mapSandboxError(e, undefined) as Error).message).toBe(UNATTENDED_UNSANDBOXED_ERROR);
+    expect(missing).toEqual([{ taskRunId: "tr-1", key: "tier:open" }]);
+    unattended = { taskRunId: "tr-1", openGranted: true };
+    expect((await execOnce(scheduled)).args?.limits).toMatchObject({ tier: "open" });
+  });
 });

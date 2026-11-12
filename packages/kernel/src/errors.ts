@@ -352,6 +352,21 @@ export const ERROR_CODES = {
   "device.policy_refused": 409,
   /** The device cannot change its network policy from the platform (cloud, or an older program). */
   "device.policy_unsupported": 409,
+  /**
+   * The device runs commands without a sandbox (its owner set it locally), which the org or the
+   * platform does not allow, or a scheduled run without the task's `tier:open` grant uses it
+   * (sandbox dev tiers spec §4.3, §11.4); checked at each command.
+   */
+  "device.unsandboxed_not_allowed": 403,
+  /**
+   * A scheduled run uses a cloud device whose sandbox tier is open without the task's `tier:open`
+   * grant (sandbox dev tiers spec §11.4).
+   */
+  "device.tier_not_granted": 403,
+  /** A device's sandbox tier above the org's or the platform's highest (sandbox dev tiers §4.1). */
+  "device.tier_not_allowed": 400,
+  /** A local device's tier is kept on its machine (`policy` op or the local CLI), not the row. */
+  "device.tier_on_device": 409,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

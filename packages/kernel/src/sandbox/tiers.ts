@@ -1,4 +1,4 @@
-import { minTier, type SandboxTier, tierAtMost } from "@capybara-hq/plugin-sdk";
+import { isSandboxTier, minTier, type SandboxTier, tierAtMost } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { OrgSettings } from "../orgs/settings.service.js";
 
@@ -120,4 +120,62 @@ export function effectiveSandboxPolicy(
       (org.sandboxTier?.allowUnsandboxed ?? true) &&
       ceiling === "open",
   };
+}
+
+/**
+ * What decides whether a running cloud instance must change (spec §7.1): its tier and egress
+ * mode only. `allowHosts`, cpu, memory and disk reach instances created afterwards.
+ */
+export interface AppliedLimits {
+  tier: SandboxTier;
+  egress: SandboxNetwork["egress"];
+}
+
+/** The {@link AppliedLimits} of `limits`. */
+export const appliedOf = (limits: AppliedLimits): AppliedLimits => ({
+  tier: limits.tier,
+  egress: limits.egress,
+});
+
+/** Whether `a` and `b` are the same tier and egress mode (null, unknown, is never the same). */
+export const sameApplied = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
+  a != null && a.tier === b.tier && a.egress === b.egress;
+
+const EGRESS_MODES: readonly string[] = ["none", "allowlist", "open"];
+
+function appliedFrom(v: unknown): AppliedLimits | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (!isSandboxTier(o.tier) || typeof o.egress !== "string" || !EGRESS_MODES.includes(o.egress)) {
+    return null;
+  }
+  return { tier: o.tier, egress: o.egress as AppliedLimits["egress"] };
+}
+
+/**
+ * `device_instances.instance_limits` read leniently: `applied` is what the instance runs with
+ * (null: unknown, e.g. an instance made before migration 0117, which differs from every effective
+ * value); `unapplied` is a newer value the provider could not apply without a file reset.
+ */
+export function readInstanceLimits(v: unknown): {
+  applied: AppliedLimits | null;
+  unapplied: AppliedLimits | null;
+} {
+  if (typeof v !== "object" || v === null) return { applied: null, unapplied: null };
+  return {
+    applied: appliedFrom(v),
+    unapplied: appliedFrom((v as { unapplied?: unknown }).unapplied),
+  };
+}
+
+/** The JSON written to `device_instances.instance_limits`. */
+export function instanceLimitsJson(
+  applied: AppliedLimits | null,
+  unapplied?: AppliedLimits,
+): string | null {
+  if (applied === null && unapplied === undefined) return null;
+  return JSON.stringify({
+    ...(applied !== null && appliedOf(applied)),
+    ...(unapplied !== undefined && { unapplied: appliedOf(unapplied) }),
+  });
 }

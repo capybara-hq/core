@@ -1,4 +1,9 @@
-import type { FileSystemHandle, ParsedTheme, SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type {
+  FileSystemHandle,
+  ParsedTheme,
+  SandboxTier,
+  SkillInvocation,
+} from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
 import type {
@@ -962,6 +967,8 @@ export interface DevicesTable {
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0096: the provider a demoted default was demoted from; null for every other device. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0117: a cloud device's own sandbox tier; null follows the org's default. */
+  tier: ColumnType<SandboxTier | null, SandboxTier | null | undefined, SandboxTier | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -1000,6 +1007,12 @@ export interface DeviceInstancesTable {
   prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
+  /**
+   * 0117: the limits in force on the instance, `{ tier, egress }`, plus `unapplied` when the
+   * provider could not apply a newer value without a file reset; null = unknown (made before
+   * 0117). Read with `readInstanceLimits` (`sandbox/tiers.ts`).
+   */
+  instance_limits: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 /**

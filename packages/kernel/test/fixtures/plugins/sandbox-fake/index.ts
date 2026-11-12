@@ -43,7 +43,7 @@ import { z } from "zod";
  *   started first (the contract's auto-start, logged as `autostart`);
  * - `root/instances/<id>/procs/<pid>`: running exec commands (process group id), content = the
  *   holder tag; `killAll` kills them all, `killTagged` only those with one of the tags;
- * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
+ * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec?, update? }` in ms, slow
  *   operations (read at each operation, abortable); `exec` holds the command open before it starts;
  * - `root/fs-ids-by-name` (optional, {@link setFakeFileSystemIdsByName}): `createFileSystem` gives
  *   a new file system the id `fs-<name>`, as sandbox-docker names its volumes, so a file system
@@ -62,6 +62,12 @@ import { z } from "zod";
  *   carries only the entry.
  * - `suspend` and `destroy` kill every process the instance started (exec commands and sessions),
  *   as stopping a container does.
+ * - limits (sandbox dev tiers spec §7.1): `updateMode` (deployment config or
+ *   {@link FakeSandboxOptions}) gives the provider an `update` that answers `updated` (and records
+ *   the new limits in the instance's `meta.json`) or `recreate`; `none` (the default) has no
+ *   `update`. `limitsApplyAt` is declared as given. Every limits a `create-fs`, `create` or
+ *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
+ *   also logs `update <id> <answer>` in `ops.log`.
  *
  * `exec` runs the command with `/bin/sh -c` in the instance's directories: `/workspace`, `/skills`
  * and `/tmp` in the command are replaced by their host directories and mapped back in the output;
@@ -69,7 +75,35 @@ import { z } from "zod";
  * operation at once.
  */
 
-const Deployment = z.object({ root: z.string().min(1) });
+const Deployment = z.object({
+  root: z.string().min(1),
+  updateMode: z.enum(["updated", "recreate", "none"]).optional(),
+  limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
+});
+
+/** How the fake applies new limits (see the file header). */
+export interface FakeSandboxOptions {
+  /** `update`'s answer; `none` (default): no `update` method. */
+  updateMode?: "updated" | "recreate" | "none";
+  limitsApplyAt?: "instance" | "fileSystem";
+}
+
+/** One line of `root/limits.log`: the limits an operation got. */
+export interface FakeSandboxLimitsEntry {
+  op: "create-fs" | "create" | "update";
+  /** The file system id (`create-fs`) or the instance id. */
+  id: string;
+  limits: SandboxLimits;
+}
+
+/** Every limits `create-fs`, `create` and `update` got, oldest first. */
+export async function readFakeSandboxLimits(root: string): Promise<FakeSandboxLimitsEntry[]> {
+  const text = await readFile(join(root, "limits.log"), "utf8").catch(() => "");
+  return text
+    .split("\n")
+    .filter((l) => l !== "")
+    .map((l) => JSON.parse(l) as FakeSandboxLimitsEntry);
+}
 
 /** 慢操作的延迟（毫秒），写在 `root/delays.json`。 */
 export interface FakeSandboxDelays {
@@ -79,6 +113,8 @@ export interface FakeSandboxDelays {
   destroy?: number;
   /** Held before the command starts (inside `exec`, so the caller's lease is held meanwhile). */
   exec?: number;
+  /** Held inside `update` (only with an `updateMode`). */
+  update?: number;
 }
 
 /** create 时记下的参数（`root/instances/<id>/meta.json`）。 */
@@ -463,13 +499,18 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /** 新建一个以 `root` 为「提供方后端」的假沙箱。 */
-export function createFakeSandbox(rootDir: string): SandboxProvider {
+export function createFakeSandbox(
+  rootDir: string,
+  options: FakeSandboxOptions = {},
+): SandboxProvider {
   // 用真实路径（macOS 的临时目录经符号链接），pwd 等输出才能换回沙箱路径
   mkdirSync(rootDir, { recursive: true });
   const root = realpathSync(rootDir);
   const binDir = join(root, "bin");
   writeShims(binDir);
   const log = (line: string) => appendFile(join(root, "ops.log"), `${line}\n`);
+  const logLimits = (e: FakeSandboxLimitsEntry) =>
+    appendFile(join(root, "limits.log"), `${JSON.stringify(e)}\n`);
   const delay = async (op: keyof FakeSandboxDelays, signal: AbortSignal) => {
     const raw = await readFile(join(root, "delays.json"), "utf8").catch(() => "{}");
     await sleep((JSON.parse(raw) as FakeSandboxDelays)[op] ?? 0, signal);
@@ -559,6 +600,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
 
   const provider: SandboxProvider = {
     concurrentExec: true as const,
+    ...(options.limitsApplyAt !== undefined && { limitsApplyAt: options.limitsApplyAt }),
 
     async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {
       await delay("create", signal);
@@ -572,6 +614,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       const dir = fileSystemDir(root, id);
       for (const r of ["workspace", "skills"]) await mkdir(join(dir, r), { recursive: true });
       await writeFile(join(dir, "meta.json"), JSON.stringify({ name, limits }));
+      await logLimits({ op: "create-fs", id, limits });
       await log(`create-fs ${id} ${name}`);
       return { id };
     },
@@ -605,6 +648,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       };
       await writeFile(join(dir, "meta.json"), JSON.stringify(meta));
       await writeFile(join(dir, "state"), "running");
+      await logLimits({ op: "create", id, limits });
       await log(`create ${id} ${name}`);
       return { id };
     },
@@ -801,6 +845,23 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };
     },
   };
+  const mode = options.updateMode ?? "none";
+  if (mode !== "none") {
+    provider.update = async (h, limits, signal) => {
+      await delay("update", signal);
+      const meta = await fakeSandboxMeta(root, h.id);
+      if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+      await logLimits({ op: "update", id: h.id, limits });
+      if (mode === "updated") {
+        await writeFile(
+          join(instanceDir(root, h.id), "meta.json"),
+          JSON.stringify({ ...meta, limits }),
+        );
+      }
+      await log(`update ${h.id} ${mode}`);
+      return mode;
+    };
+  }
   return withFaults(root, provider);
 }
 
@@ -814,7 +875,13 @@ export default defineExtension({
   permissions: {},
   config: { deployment: Deployment },
   setup(ctx) {
-    const { root } = ctx.config as z.infer<typeof Deployment>;
-    ctx.provide(SANDBOX_EXTENSION_POINT, createFakeSandbox(root));
+    const { root, updateMode, limitsApplyAt } = ctx.config as z.infer<typeof Deployment>;
+    ctx.provide(
+      SANDBOX_EXTENSION_POINT,
+      createFakeSandbox(root, {
+        ...(updateMode !== undefined && { updateMode }),
+        ...(limitsApplyAt !== undefined && { limitsApplyAt }),
+      }),
+    );
   },
 });

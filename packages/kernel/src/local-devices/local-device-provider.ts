@@ -1,14 +1,19 @@
-import type {
-  ExecResult,
-  FileSystemHandle,
-  SandboxHandle,
-  SandboxLimits,
-  SandboxProvider,
-  SandboxRoots,
+import {
+  type ExecResult,
+  type FileSystemHandle,
+  minTier,
+  type SandboxHandle,
+  type SandboxLimits,
+  type SandboxProvider,
+  type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { TIER_OPEN_GRANT_KEY, UNATTENDED_UNSANDBOXED_ERROR } from "../schedules/unattended.js";
 import { grantsWithin, NetworkGrants, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets, sameRoots } from "./targets.js";
@@ -30,6 +35,10 @@ export const maxReadBytes = (maxFrameBytes: number): number =>
   Math.max(0, Math.floor((maxFrameBytes - FRAME_ENVELOPE_BYTES) / 4) * 3);
 
 const NAME_PREFIX = "cap-device-";
+
+/** The tool error of a device that runs commands without a sandbox the org does not allow (§4.3). */
+export const UNSANDBOXED_NOT_ALLOWED_ERROR =
+  "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
 
 /**
  * The handle of an instance on a machine: the device id (ruling R1: the relay is keyed by
@@ -72,9 +81,15 @@ export class LocalDeviceProvider implements SandboxProvider {
     @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
     @Inject(DeviceTargets)
     private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "devicePolicy" | "deviceLimits">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(NetworkGrants) private readonly grants: Pick<NetworkGrants, "forExec">,
+    @Inject(NetworkGrants)
+    private readonly grants: Pick<
+      NetworkGrants,
+      "forExec" | "unattendedTier" | "unsandboxed" | "recordMissing"
+    >,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   async createFileSystem(args: {
@@ -154,12 +169,20 @@ export class LocalDeviceProvider implements SandboxProvider {
    * ask-to-allow spec §6.3; only those the org's limits admit, sent only when there are some). The device's report of refused hosts is re-layered
    * against the limits this exec carried: the kernel never takes the device's word that the org
    * allows a host (spec §4.1).
+   *
+   * The limits are the device's **ceiling** (sandbox dev tiers spec §4.2): `limits.tier` is the
+   * highest tier the org allows, its network that tier's, `defaultTier` the org's default (the
+   * device runs at `min(local tier ?? defaultTier, tier)`) and `devHosts` the dev hosts. A run of
+   * a scheduled task without a person and without the task's `tier:open` grant is capped at `dev`
+   * (spec §11.4). Before relaying, a machine that last reported running commands without a sandbox
+   * is refused when the org does not allow it, or for such a run (`device.unsandboxed_not_allowed`,
+   * spec §4.3).
    */
   async exec(h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]): Promise<ExecResult> {
     const { signal, ...rest } = args;
     signal.throwIfAborted();
-    const { orgId, limits } = await this.currentLimits(h.id);
     const runId = rest.actor?.runId;
+    const { orgId, limits } = await this.currentLimits(h.id, runId);
     // the run's grants for this device, cut to what the org allows now
     const grants =
       runId !== undefined
@@ -228,10 +251,42 @@ export class LocalDeviceProvider implements SandboxProvider {
     return this.relay.call(h.id, "stat", { path }, { deadlineMs: OP_DEADLINE_MS, signal });
   }
 
-  /** The device's org and its effective limits now (ruling R27); a deleted device is not found. */
-  private async currentLimits(deviceId: string): Promise<{ orgId: string; limits: SandboxLimits }> {
+  /**
+   * The device's org and the limits of one exec now (ruling R27): the ceiling, capped at `dev` for
+   * an unattended run without the `tier:open` grant; a deleted device is not found. Refuses an
+   * unsandboxed machine the org does not allow (or such a run), see {@link exec}.
+   */
+  private async currentLimits(
+    deviceId: string,
+    runId: string | undefined,
+  ): Promise<{ orgId: string; limits: SandboxLimits }> {
     const orgId = await this.targets.orgOf(deviceId);
     if (orgId === null) throw deviceNotFound();
-    return { orgId, limits: await this.sandbox.orgLimits(orgId) };
+    const [policy, unattended, unsandboxed] = await Promise.all([
+      this.sandbox.devicePolicy({ orgId, deviceId }),
+      runId === undefined ? null : this.grants.unattendedTier({ runId, deviceId }),
+      this.grants.unsandboxed(deviceId),
+    ]);
+    const capped = unattended !== null && !unattended.openGranted;
+    if (unsandboxed && (!policy.allowUnsandboxed || capped)) {
+      this.log.warn("command refused on a device that runs without a sandbox", {
+        deviceId,
+        reason: policy.allowUnsandboxed ? "unattended" : "not_allowed",
+      });
+      if (policy.allowUnsandboxed && unattended !== null) {
+        await this.grants
+          .recordMissing(unattended.taskRunId, TIER_OPEN_GRANT_KEY)
+          .catch((err: unknown) =>
+            this.log.warn("cannot record a missing task grant", { deviceId, err }),
+          );
+        throw new ApiError("device.unsandboxed_not_allowed", UNATTENDED_UNSANDBOXED_ERROR, [
+          { reason: "unattended" },
+        ]);
+      }
+      throw new ApiError("device.unsandboxed_not_allowed", UNSANDBOXED_NOT_ALLOWED_ERROR);
+    }
+    const tier = capped ? minTier(policy.ceiling, "dev") : policy.ceiling;
+    const limits = await this.sandbox.deviceLimits({ orgId, deviceId }, { policy, tier });
+    return { orgId, limits: { ...limits, defaultTier: minTier(policy.defaultTier, tier) } };
   }
 }

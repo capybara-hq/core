@@ -239,3 +239,58 @@ export async function appendMissingGrant(
     .where("id", "=", taskRunId)
     .execute();
 }
+
+/**
+ * The task grant that lets an unattended run use the open sandbox tier (sandbox dev tiers spec
+ * §11.4): without it a run of a scheduled task is capped at `dev` on a local device, and refused
+ * on an unsandboxed local device or a cloud device whose tier is open.
+ */
+export const TIER_OPEN_GRANT_KEY = "tier:open";
+
+/** The `spec_hash` the `tier:open` grant is stored with (no tool definition behind it). */
+export const TIER_GRANT_SPEC_HASH = "tier";
+
+/**
+ * The tier rule of an unattended run on `deviceId` (spec §11.4), or null when the run is attended
+ * (no task run, a trial run, or a person joined: the same rule as {@link taskGrantsRunOf}).
+ * `openGranted`: the task holds the `tier:open` grant and `deviceId` is a live device of the task's
+ * org owned by its creator (a creator approves for their own devices only, as with network
+ * grants). A deleted task grants nothing.
+ */
+export async function unattendedTierOf(
+  db: KernelSchemaDb,
+  runId: string,
+  deviceId: string,
+): Promise<{ taskRunId: string; taskId: string; openGranted: boolean } | null> {
+  const run = await unattendedTaskRunOf(db, runId);
+  if (run === null || run.trial) return null;
+  if (await personJoined(db, runId)) return null;
+  const granted = await db
+    .selectFrom("scheduled_task_grants as g")
+    .innerJoin("scheduled_tasks as st", "st.id", "g.task_id")
+    .innerJoin("devices as d", (j) =>
+      j.onRef("d.org_id", "=", "st.org_id").onRef("d.owner_account_id", "=", "st.account_id"),
+    )
+    .select("g.task_id")
+    .where("g.task_id", "=", run.taskId)
+    .where("g.tool_key", "=", TIER_OPEN_GRANT_KEY)
+    .where("st.deleted_at", "is", null)
+    .where("d.id", "=", deviceId)
+    .where("d.deleted_at", "is", null)
+    .executeTakeFirst();
+  return { taskRunId: run.taskRunId, taskId: run.taskId, openGranted: granted !== undefined };
+}
+
+/**
+ * The tool error of a scheduled run on a device whose tier is open (cloud) without the task's
+ * `tier:open` grant (spec §11.4).
+ */
+export const UNATTENDED_OPEN_TIER_ERROR =
+  "This device's sandbox level is open, which a scheduled run may use only when its task allows the open sandbox level; the task's owner can add tier:open to the task's approved tools, or lower the device's sandbox level.";
+
+/**
+ * The tool error of a scheduled run on a device that runs commands without a sandbox, without
+ * the task's `tier:open` grant (spec §11.4).
+ */
+export const UNATTENDED_UNSANDBOXED_ERROR =
+  "This device runs commands without a sandbox, which a scheduled run may use only when its task allows the open sandbox level; the task's owner can add tier:open to the task's approved tools, or the device's owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.";
