@@ -121,7 +121,7 @@ const owedRows = (convId: string) =>
     .where(sql<boolean>`data ->> 'conversationId' = ${convId}`)
     .execute();
 
-/** Moves the run's queue time a minute back: past the queued-orphan grace (30 s). */
+/** Moves the run's queue time a minute back (an old queued run). */
 const agePastGrace = (runId: string) =>
   db
     .updateTable("runs")
@@ -218,22 +218,22 @@ describe("RunQueue.ensureRun through the outbox", () => {
     expect(await owedRows(convId)).toEqual([]);
   }, 60_000);
 
-  it("a queued run past the grace whose job the outbox still owes is not an orphan", async () => {
+  it("a queued run whose job the outbox still owes is never stopped as an orphan", async () => {
     const { orgId, convId } = await setup();
     await postMessage(req, orgId, convId, "echo:owed");
     const [run] = await runRows(convId);
     expect(run?.status).toBe("queued");
     await fastPathFailed(convId);
     await agePastGrace(run?.id as string);
-    // Redis is down past the grace: no BullMQ job, but the row is pending, so nobody stops it
+    // Redis is down: no BullMQ job, but the row is pending, so the stop broadcasts instead
+    // (whether such a run lost its job is the run-orphan-check's question)
     expect(await api.app.get(RunQueue).abortIfOrphaned(convId, run?.id as string, null)).toBe(
       false,
     );
-    expect(await api.app.get(RunQueue).repairOrphan(convId, run?.id as string)).toBeNull();
     expect(await runRows(convId)).toEqual([expect.objectContaining({ status: "queued" })]);
   }, 30_000);
 
-  it("a queued run past the grace whose job was removed is not failed by a new message", async () => {
+  it("an old queued run whose job was removed is not failed by a new message", async () => {
     const { orgId, convId } = await setup();
     await postMessage(req, orgId, convId, "echo:first");
     const [run] = await runRows(convId);

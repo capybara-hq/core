@@ -21,8 +21,8 @@ export interface KernelEventMap {
   "extension.org-disabled": { orgId: string; plugin: string };
   /**
    * A person decided a tool call approval (after the commit, exactly once: only the decision that
-   * changed it from pending). The run's waits resume it and its IM delivery is enqueued; a lost
-   * event is re-derived by the wait sweep (runs waiting on a decided approval are resumed).
+   * changed it from pending). The decision's transaction resumed the run; the event updates IM
+   * cards (its IM delivery is enqueued), and a lost one is re-derived by the next append.
    */
   "approval.decided": {
     id: string;
@@ -65,9 +65,9 @@ export interface KernelEventMap {
    */
   "run.wait-stopped": { conversationId: string; runId: string };
   /**
-   * `ensureRun` marked an orphaned run failed (after the commit): the waits stop its active fork
-   * sub-agent at once (background sub-agents keep running, agent map spec §5.4). A lost event is
-   * repaired by the wait sweep (fork children of finished runs).
+   * The `run-orphan-check` failed an orphaned run (after the commit): the waits stop its active
+   * fork sub-agent at once (background sub-agents keep running, agent map spec §5.4). A lost event
+   * is repaired by the `stop-tree` job the run's terminal transaction owed.
    */
   "run.orphaned": { runId: string };
   /**

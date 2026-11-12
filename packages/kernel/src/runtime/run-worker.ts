@@ -31,7 +31,6 @@ import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { SkillsCatalogService } from "../skills/catalog.js";
 import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
-import { ToolPipeline } from "../tools/pipeline.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
@@ -41,8 +40,8 @@ import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
 import { RunDrafts, streamSink } from "./run-drafts.js";
-import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
-import type { RunJobData } from "./run-jobs.js";
+import { type FinishRunArgs, RunFinish } from "./run-finish.js";
+import { type RunJobData, TERMINAL_STATUSES } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
 import { AgentLoops, RunSteps } from "./run-steps.js";
 import { dispatchOfChildRun, rootConversationOf } from "./subagents/child.js";
@@ -101,7 +100,7 @@ export type ProcessResult = "ensure" | undefined;
 
 /**
  * `broken`：编排自身出错，已尽力标记失败。之后仍 ensureRun：标记成功时触发消息已被消费，只有更新的消息才起新一轮；
- * 标记也失败时运行停在 running，而任务此时已完成并移除，ensureRun 的孤儿清理会把它标记为失败——
+ * 标记也失败时运行停在 running，而任务此时已完成并移除，`run-orphan-check` 会把它标记为失败——
  * 每一轮都要有新的用户消息，不会形成无限重试。
  */
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken" | "suspended";
@@ -166,12 +165,6 @@ export class RunWorker {
     private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
     /** Run start's run context (run context spec §5): who the agent is, the day, the person. */
     @Inject(RunContextService) private readonly runContext: Pick<RunContextService, "record">,
-    /**
-     * In the terminal transaction of every run: writes its open `Agent` call results
-     * (`stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe hooks after the
-     * commit (sub-agents spec §12, review m1: a failed or stalled parent too).
-     */
-    @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The steps' live drafts this process writes for the runs it executes. */
@@ -1026,7 +1019,7 @@ export class RunWorker {
     hook = true,
     floorToTrigger = true,
   ): Promise<number | null> {
-    let fire = () => {};
+    // the terminal transaction also writes the run's open fork report and cancels its waits
     const toSeq = await this.finisher.finish({
       conversationId,
       runId,
@@ -1034,11 +1027,7 @@ export class RunWorker {
       consumed,
       event,
       floorToTrigger,
-      beforeTerminal: async () => {
-        fire = (await this.pipeline.stopOpenAgentCalls(runId)).fire;
-      },
     });
-    if (toSeq !== null) fire();
     if (hook) await this.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;
   }

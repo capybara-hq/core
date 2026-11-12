@@ -36,9 +36,8 @@ import { Waits } from "./waits.js";
 
 /**
  * The run runtime: the conversation run lock, this process's event streams, the run queue and its
- * worker (consumed through `RuntimeWorkersModule`'s processors), the waits (their sweep is the
- * worker role's `WaitSweepJob`), run
- * stops, the checkpoints, the org quotas, the step writes and the agent loops. The model provider
+ * worker (consumed through `RuntimeWorkersModule`'s processors), the waits (a run nobody runs is
+ * the worker role's `RunOrphanCheck`'s to repair), run stops, the checkpoints, the org quotas, the step writes and the agent loops. The model provider
  * registry, the sub-agent dispatch, `usage.report` and the titles have modules of their own (the
  * tools, models and conversations domains import them without the runtime).
  */

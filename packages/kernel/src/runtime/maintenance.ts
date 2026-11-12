@@ -50,8 +50,9 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` and
  * `sandbox-reset-files` → {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
- * {@link DirectorySync}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` and `deliver-to-parent` →
- * {@link Waits} (runtime/subagents/tree-jobs.ts), `owned-plugin-cleanup` →
+ * {@link DirectorySync}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
+ * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
+ * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}, `sched-fire` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a

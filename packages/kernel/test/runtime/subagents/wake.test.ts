@@ -24,6 +24,7 @@ import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
 import { SubagentDeliveries } from "../../../src/runtime/subagents/deliveries.js";
 import { renderSubagentDelivery } from "../../../src/runtime/subagents/render.js";
+import { processDeliverToParent } from "../../../src/runtime/subagents/tree-jobs.js";
 import { Waits } from "../../../src/runtime/waits.js";
 import type { ScriptRule } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
@@ -624,9 +625,9 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       (e) => e.type === "subagent_finished" && e.payload.childRunId === wake.id,
     );
     expect(finished).toHaveLength(1);
-    // exactly once: the end handling again, and the sweep, write nothing more
+    // exactly once: the end handling again, and the owed deliver-to-parent job, write nothing more
     expect(await k.app.get(Waits).childFinished(wake.id)).toBe(false);
-    await k.app.get(Waits).sweep();
+    await processDeliverToParent(k.app.get(Waits), { childRunId: wake.id });
     expect(await ofWake()).toHaveLength(1);
   });
 

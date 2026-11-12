@@ -7,11 +7,11 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import { OUTBOX_JOBS } from "../infra/outbox/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
+import { QueueLostJobs } from "./queue-lost-jobs.js";
 
 /** 内核运行队列的 BullMQ 队列名（不含 `:`；与插件队列 `cap.<插件>.<名>` 不会重名）。 */
 export const RUN_QUEUE_NAME = "cap-kernel-runs";
@@ -30,6 +30,16 @@ export const runQueueNameFor = (
 
 /** 未结束的运行状态（waiting：等人处理审批 / 输入请求，没有任务、不占会话锁与配额）。 */
 export const ACTIVE_RUN_STATUSES = ["queued", "running", "waiting"] as const;
+
+/** 运行的终态。 */
+export type TerminalStatus = "completed" | "failed" | "aborted";
+
+/** The terminal run statuses (here, not in `run-finish.ts`, which the sub-agent modules import). */
+export const TERMINAL_STATUSES: ReadonlySet<string> = new Set<TerminalStatus>([
+  "completed",
+  "failed",
+  "aborted",
+]);
 
 /** 运行任务的数据。 */
 export interface RunJobData {
@@ -97,23 +107,15 @@ export function oweEnsureRun(
 }
 
 /**
- * The options of every run job: one attempt (the run's own paths handle failures), not kept. The
- * outbox registry holds them, so a run job owed through the outbox is added with the same.
- */
-const RUN_JOB_OPTIONS = OUTBOX_JOBS[RUN_JOB].opts;
-
-/**
  * The producer side of the two run queues (`cap-kernel-runs`, `cap-kernel-subagent-runs`): owes
- * run jobs in the caller's transaction ({@link owe}, `ensureRun`), adds them directly under the
- * caller's job id (orphan repairs, the waits' resumes, the sub-agent dispatch) and looks them up;
- * the run worker consumes both queues.
+ * run jobs in the caller's transaction ({@link owe}: `ensureRun`, the sub-agent dispatch, the
+ * `run-orphan-check`) and looks them up; the run worker consumes both queues.
  */
 @Injectable()
 export class RunJobs {
   private readonly queues: Record<string, Queue<RunJobData>>;
 
   constructor(
-    @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(getQueueToken(RUN_QUEUE_NAME)) runs: Queue<RunJobData>,
     @Inject(getQueueToken(SUBAGENT_RUN_QUEUE_NAME)) subagentRuns: Queue<RunJobData>,
     @Inject(KERNEL_LOGGER) log: KernelLogger,
@@ -155,25 +157,6 @@ export class RunJobs {
   /** {@link oweEnsureRun} in the caller's transaction. */
   oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean> {
     return oweEnsureRun(this.outbox, conversationId, seq, orgId);
-  }
-
-  /**
-   * Enqueues a run job under the caller's job id (`ensureRun`, resumes, dispatches, repairs). The
-   * queue follows the conversation's kind (a sub-agent's runs go to
-   * {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind` when the caller knows it, else it is read.
-   */
-  async enqueue(data: RunJobData, jobId: string, kind?: ConversationKind): Promise<void> {
-    const k =
-      kind ??
-      (
-        await this.kdb.db
-          .selectFrom("conversations")
-          .select("kind")
-          .where("id", "=", data.conversationId)
-          .executeTakeFirst()
-      )?.kind ??
-      "chat";
-    await this.queue(runQueueNameFor(k)).add(RUN_JOB, data, { jobId, ...RUN_JOB_OPTIONS });
   }
 }
 
@@ -286,12 +269,14 @@ export class RunResume {
 const RUN_QUEUES_MODULE = QueueModule.registerQueue(RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME);
 
 /**
- * The run queues' producer (the sub-agent dispatch, the run queue and the waits use it) and the
- * resume of a waiting run (the waits and the decisions of the tools domain use it).
+ * The run queues' producer (the sub-agent dispatch, the run queue and the waits use it), the
+ * resume of a waiting run (the waits and the decisions of the tools domain use it) and the
+ * lost-jobs canary of the run queues (the `run-orphan-check` reports it, the admin overview reads
+ * it).
  */
 @Module({
   imports: [RUN_QUEUES_MODULE],
-  providers: [RunJobs, RunResume],
-  exports: [RunJobs, RunResume, RUN_QUEUES_MODULE],
+  providers: [RunJobs, RunResume, QueueLostJobs],
+  exports: [RunJobs, RunResume, QueueLostJobs, RUN_QUEUES_MODULE],
 })
 export class RunJobsModule {}

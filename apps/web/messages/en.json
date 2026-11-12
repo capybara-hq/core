@@ -3571,7 +3571,8 @@
           "extensions": "Extensions",
           "updates": "Plugin updates",
           "providers": "Model providers",
-          "outbox": "Background work that could not be queued"
+          "outbox": "Background work that could not be queued",
+          "queue": "Background queue"
         },
         "inboxTypes": {
           "catalog_request": "Catalog requests",
@@ -3605,6 +3606,11 @@
           "retried": "Queued again.",
           "alreadyOwed": "The same work was already queued; this copy was discarded.",
           "discarded": "Discarded."
+        },
+        "queue": {
+          "lostJobs": "The queue lost background jobs",
+          "count": "{n, plural, one {# job queued again} other {# jobs queued again}}",
+          "hint": "Redis lost data (check its persistence); the runs were queued again. Shown for a week after the last loss."
         },
         "retry": "Retry"
       },

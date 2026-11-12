@@ -95,7 +95,8 @@ const ATTENTION: AdminAttention = {
     },
   ],
   outbox: [],
-  more: { extensions: 0, updates: 0, providers: 0, outbox: 0 },
+  queue: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
   unavailable: [],
 };
 

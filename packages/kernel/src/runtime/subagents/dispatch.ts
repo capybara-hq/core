@@ -420,7 +420,7 @@ const isActiveStatus = (status: string): boolean =>
  * delivered (agent map spec, rc upgrade: a foreground-era dispatch whose rc finisher wrote
  * `subagent_finished` and resumed the parent): the child's report (`childResult`), with the
  * parent's `subagent_finished` appended in this transaction when it is missing (idempotent by its
- * key), so the undelivered sweep never delivers it a second time. Null when the parent already
+ * key), so the `deliver-to-parent` job never delivers it a second time. Null when the parent already
  * has a delivery for the run (it carries the result) or the run has no terminal event yet.
  */
 async function rcFinishedResult(
@@ -485,10 +485,10 @@ export async function commitDispatchIn(
     let result: { content: string; seq: number } | null = null;
     if (a.forSkill === undefined) {
       // an rc child that already ended under the foreground wait, whose rc finisher wrote
-      // `subagent_finished` and resumed this run (no delivery; the sweep never delivers a run with
-      // `subagent_finished`): its report is this call's result, as the rc gave it, or it is lost.
+      // `subagent_finished` and resumed this run (no delivery; a run with `subagent_finished` is
+      // never delivered): its report is this call's result, as the rc gave it, or it is lost.
       // Only while the call has no result: a call that has one (a background dispatch's second
-      // holder) keeps it, and its child's finish stays to its delivery or the undelivered sweep.
+      // holder) keeps it, and its child's finish stays to its delivery (or its `deliver-to-parent` job).
       const resultKey = resultEvent(ctx, callId, AGENT_TOOL, "").idemKey;
       const finished =
         a.sent === undefined &&

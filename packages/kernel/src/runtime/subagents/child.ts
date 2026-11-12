@@ -255,7 +255,7 @@ export async function childResult(
   } else {
     status = "aborted";
     // §4.4: a person's stop names its account; a stop by nobody (null) is the kernel stopping the
-    // child on its parent's behalf (stopChildren with no account: the parent's end, the sweep)
+    // child on its parent's behalf (stopChildren with no account: the parent's end, its `stop-tree` job)
     abortedBy =
       terminal.payload.reason === "user" && terminal.payload.byAccountId === null
         ? "parent"

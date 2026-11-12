@@ -159,8 +159,6 @@ export const NO_REPLY_SKIPS: ReplySkips = { questions: [], network: [], seqs: ne
 
 /** 会话服务用到的运行控制：投递运行（RunQueue）与跨副本中止（RunAbort）。 */
 export interface RunControl {
-  /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
-  ensureRun(conversationId: string): Promise<string | null>;
   /**
    * The direct `ensureRun` after a commit that owes the ensure-run backstop: a failure is logged,
    * never thrown (transactional outbox spec §6).
@@ -372,7 +370,7 @@ export class ConversationsService {
     @Inject(RunControlService) private readonly runs: RunControl,
     /** Resolves a switched-to model and its declared parameters (UI refresh B). */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(KERNEL_LOGGER) readonly _log: Pick<KernelLogger, "warn">,
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
     private readonly content: Pick<ConnectorContent, "resolveAttachments">,
@@ -396,18 +394,6 @@ export class ConversationsService {
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
-
-  /**
-   * 不阻塞地调用一次 `ensureRun`（打开 SSE、读事件时）：它幂等，并顺带清理孤儿运行，
-   * 会话不会因为某次运行结束后的投递失败而永远停在「运行中」。失败只记日志。
-   */
-  kickRun(conversationId: string): void {
-    this.runs
-      .ensureRun(conversationId)
-      .catch((err) =>
-        this.log.warn("ensureRun on conversation open failed", { conversationId, err }),
-      );
-  }
 
   /**
    * Creates an empty conversation bound to its device (`pick`, see
@@ -1086,7 +1072,10 @@ export class ConversationsService {
     return rootConversationOf(this.db.db, row.parent_conversation_id);
   }
 
-  /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */
+  /**
+   * 读事件（先做 `get` 的可见性判定）. A read never changes run state (transactional outbox spec
+   * §6): a run nobody runs is the `run-orphan-check`'s to repair.
+   */
   async listEvents(
     orgId: string,
     conversationId: string,
@@ -1095,14 +1084,13 @@ export class ConversationsService {
     limit: number,
   ): Promise<ConversationEvent[]> {
     await this.get(orgId, conversationId, viewerAccountId);
-    this.kickRun(conversationId);
     return this.eventLog.readAfter(conversationId, afterSeq, limit);
   }
 
   /**
    * The turn-aligned page of events before `beforeSeq` (`null`: the log's last page), with how
    * many runs started before it ({@link EventLog.readTurnPageBefore}; history paging spec §2).
-   * Visibility as {@link get}; kicks a stalled run as {@link listEvents} does.
+   * Visibility as {@link get}; a read only, as {@link listEvents}.
    */
   async listEventsBefore(
     orgId: string,
@@ -1112,7 +1100,6 @@ export class ConversationsService {
     limit: number,
   ): Promise<{ events: ConversationEvent[]; turnsBefore: number }> {
     await this.get(orgId, conversationId, viewerAccountId);
-    this.kickRun(conversationId);
     return this.eventLog.readTurnPageBefore(conversationId, beforeSeq, limit, EVENTS_TURN_EXTEND);
   }
 
@@ -1283,9 +1270,12 @@ export class ConversationsService {
    * send does; announce after the commit with {@link announceSkipped}. `toSeq` is the highest seq
    * written in this conversation (null: none).
    *
-   * One lock order (conversations, decided rows, runs): the questions here (this conversation's,
-   * locked by the caller), then the sub-agents' conversations and their asks, and only then the
-   * run rows, as each skipped wait's run resumes in this transaction.
+   * Lock order: this (root) conversation (the caller's), its pending questions, the sub-agents'
+   * conversations with a pending network ask (id order), the asks themselves (the root's and the
+   * sub-agents'), and only then the run rows, as each skipped wait's run resumes in this
+   * transaction. Every run row comes after every conversation and decided row (ruling R19); a
+   * sub-agent's conversation comes after the root's questions, which only this path locks with a
+   * sub-agent conversation after them.
    */
   @Transactional({ propagation: "mandatory" })
   async skipWaitsIn(
@@ -1527,13 +1517,15 @@ export class ConversationsService {
     if (!run) throw new ApiError("run.not_active", "No active run to abort");
     const runs = this.runs;
     // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
+    // the stop's terminal transaction owed the ensure-run backstop; the direct call starts what
+    // waited for the stopped run now
     if (run.status === "waiting" && (await runs.abortWaiting(conversationId, run.id, accountId))) {
-      this.kickRun(conversationId);
+      await runs.ensureRunAfterCommit(conversationId);
       return run.id;
     }
     // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。
     if (await runs.abortIfOrphaned(conversationId, run.id, accountId)) {
-      this.kickRun(conversationId);
+      await runs.ensureRunAfterCommit(conversationId);
       return run.id;
     }
     await runs.requestAbort(run.id, accountId);

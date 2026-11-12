@@ -15,8 +15,8 @@ export interface AdminOverview {
   accounts: number;
   /**
    * What waits for a super admin: the platform inbox total plus the extensions, plugin updates and
-   * model providers of {@link AdminAttention} (counted in full, not capped) and every dead outbox
-   * row.
+   * model providers of {@link AdminAttention} (counted in full, not capped), every dead outbox
+   * row and the run queue's lost-jobs item.
    */
   attentionTotal: number;
   /** An attention list could not be read: `attentionTotal` leaves its items out. */
@@ -40,7 +40,7 @@ export type AttentionExtensionReason =
 export type AttentionProviderProblem = "list_failed" | "no_chat_model";
 
 /** An attention list (a source the kernel reads on its own). */
-export type AttentionSource = "extensions" | "updates" | "providers" | "outbox";
+export type AttentionSource = "extensions" | "updates" | "providers" | "outbox" | "queue";
 
 export interface AttentionExtension {
   name: string;
@@ -83,6 +83,16 @@ export interface AttentionOutboxDead {
 }
 
 /**
+ * The run queue lost background jobs (Redis lost data): how many were queued again and when the
+ * last loss was. The item stays a week after the last loss.
+ */
+export interface AttentionQueueLostJobs {
+  kind: "queue_lost_jobs";
+  count: number;
+  lastAt: string;
+}
+
+/**
  * `GET /admin/overview/attention`: what needs a super admin besides the inbox, each list capped
  * (the rest counted in `more`); `unavailable` names the lists the kernel could not read.
  */
@@ -92,6 +102,8 @@ export interface AdminAttention {
   providers: AttentionProvider[];
   /** At most one item, when some outbox rows are dead. */
   outbox: AttentionOutboxDead[];
+  /** At most one item, when the run queue lost jobs in the last week. */
+  queue: AttentionQueueLostJobs[];
   more: Record<AttentionSource, number>;
   unavailable: AttentionSource[];
 }

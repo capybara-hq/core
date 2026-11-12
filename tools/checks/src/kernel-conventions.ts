@@ -403,14 +403,9 @@ export const KC_PENDING: KcPending = {
       reason: "moves to the outbox in PR 3",
     },
     {
-      path: "packages/kernel/src/runtime/run-jobs.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 2",
-    },
-    {
       path: "packages/kernel/src/runtime/run-queue.ts",
-      max: 2,
-      reason: "moves to the outbox in PR 2",
+      max: 1,
+      reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
     },
     {
       path: "packages/kernel/src/runtime/usage-report-jobs.ts",

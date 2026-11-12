@@ -138,8 +138,9 @@ describe("GET /api/v1/admin/overview/attention", { timeout: 60_000 }, () => {
       { plugin: "model-embed-probe", displayName: null, icon: null, problem: "no_chat_model" },
     ]);
     expect(a.updates).toEqual([]);
-    expect(a.more).toEqual({ extensions: 0, updates: 0, providers: 0, outbox: 0 });
+    expect(a.more).toEqual({ extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 });
     expect(a.outbox).toEqual([]);
+    expect(a.queue).toEqual([]);
     expect(a.unavailable).toEqual([]);
     // privacy (spec §9): categories only
     const keys = keysOf(a);

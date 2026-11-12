@@ -3559,7 +3559,8 @@
           "extensions": "扩展",
           "updates": "插件更新",
           "providers": "模型供应商",
-          "outbox": "无法排入队列的后台任务"
+          "outbox": "无法排入队列的后台任务",
+          "queue": "后台队列"
         },
         "inboxTypes": {
           "catalog_request": "平台目录申请",
@@ -3593,6 +3594,11 @@
           "retried": "已重新排入队列。",
           "alreadyOwed": "同一任务已在队列中，这份副本已丢弃。",
           "discarded": "已丢弃。"
+        },
+        "queue": {
+          "lostJobs": "队列丢失了后台任务",
+          "count": "已重新排入 {n} 项",
+          "hint": "Redis 丢失了数据（请检查其持久化配置），相关运行已重新排入队列。最后一次丢失后保留一周。"
         },
         "retry": "重试"
       },

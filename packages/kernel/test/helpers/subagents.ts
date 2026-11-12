@@ -30,6 +30,9 @@ export function finishRun(
     { onRunFinished: async () => {} },
     // no outbox here: the ensure-run backstop is not under test
     { add: async () => true },
+    // runs finished by hand ask for nothing: no waits to cancel
+    { cancelPendingIn: async () => [] },
+    { cancelPendingIn: async () => [] },
   ).finish(a);
 }
 
@@ -130,13 +133,14 @@ export async function dropChildJobs(queue: Queue, childConvs: string[]): Promise
   return n;
 }
 
-/** Moves a run's queued / created time back past the sweeps' grace periods. */
+/** Moves a run's times back past the run-orphan-check's minute (and any other grace period). */
 export async function backdateRun(db: KernelSchemaDb, runId: string): Promise<void> {
   await db
     .updateTable("runs")
     .set({
       created_at: sql`now() - interval '5 minutes'`,
       queued_at: sql`CASE WHEN queued_at IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
+      started_at: sql`CASE WHEN started_at IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
       waiting_since: sql`CASE WHEN waiting_since IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
       finished_at: sql`CASE WHEN finished_at IS NULL THEN NULL ELSE now() - interval '5 minutes' END`,
     })

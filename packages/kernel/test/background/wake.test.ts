@@ -22,8 +22,10 @@ import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../src/runtime/run-orphan-check.job.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -136,6 +138,8 @@ beforeAll(async () => {
       },
     ),
   );
+  // the orphan test calls the run-orphan-check itself
+  k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
   store = k.app.get(BackgroundTaskStore);
   finisher = k.app.get(BackgroundTaskFinisher);
   runs = k.app.get(RunQueue);
@@ -640,7 +644,7 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     });
   });
 
-  it("an orphaned wake run is repaired by ensureRun; later finishes and messages go on", async () => {
+  it("a wake run whose job the queue lost is re-added by the run-orphan-check; later finishes and messages go on", async () => {
     const conv = await idleConversation("SCENARIO orphan");
     // a finish whose wake run was queued, and whose job was lost (no job ever existed). The
     // orphan goes in first: the run that just ended may still be in its own ensureRun, which
@@ -672,17 +676,27 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     await sql`UPDATE capybara.runs SET trigger_seq = ${ev?.seq ?? 0} WHERE id = ${orphan}`.execute(
       raw,
     );
-    // past the queued grace period and outside the wake window
+    // queued for over the check's minute and outside the wake window
     await sql`UPDATE capybara.runs SET created_at = now() - interval '2 minutes',
       queued_at = now() - interval '2 minutes' WHERE id = ${orphan}`.execute(raw);
+    // a read path or another ensureRun never repairs it
     expect(await runs.ensureRun(conv)).toBeNull();
-    const repaired = (await runRows(conv)).find((r) => r.id === orphan);
-    expect(repaired?.status).toBe("failed");
-    expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(ev?.seq ?? 0);
-    const failed = (await eventsOf(db, conv)).find(
-      (e) => e.type === "run_failed" && e.runId === orphan,
+    expect((await runRows(conv)).find((r) => r.id === orphan)?.status).toBe("queued");
+    // the check owes its job again (the canary: the queue lost a job) and the wake run runs
+    expect(await k.app.get(RunOrphanCheck).check()).toEqual({
+      runningRepaired: 0,
+      queuedReadded: 1,
+    });
+    await waitFor(
+      async () => (await runRows(conv)).find((r) => r.id === orphan)?.status === "completed",
+      30_000,
+      "the re-added wake run finished",
     );
-    expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
+    expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(ev?.seq ?? 0);
+    expect((await runStarted(conv, orphan)).payload).toMatchObject({
+      trigger: "background_task",
+      triggerSeq: ev?.seq,
+    });
     // a later finish wakes the conversation again
     const next = await finishTask(conv);
     await waitFor(

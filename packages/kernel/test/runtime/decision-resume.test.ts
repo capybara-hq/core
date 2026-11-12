@@ -189,12 +189,19 @@ const decide = (id: string) =>
     payload: { decision: "approve" },
   });
 
-/** Sessions of this database waiting for a lock (the requests a held lock blocks). */
-const lockWaiters = async () =>
+/**
+ * The sessions waiting behind the blocker's session `pid`, directly or behind another waiter (the
+ * requests the test's held lock blocks); other sessions' lock waits do not count.
+ */
+const lockWaiters = async (pid: number) =>
   Number(
     (
-      await sql<{ n: string }>`SELECT count(*) AS n FROM pg_stat_activity
-        WHERE datname = current_database() AND wait_event_type = 'Lock'`.execute(raw)
+      await sql<{ n: string }>`WITH RECURSIVE w(pid) AS (
+          SELECT a.pid FROM pg_stat_activity a WHERE ${pid}::int = ANY(pg_blocking_pids(a.pid))
+          UNION
+          SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
+        )
+        SELECT count(*) AS n FROM w`.execute(raw)
     ).rows[0]?.n,
   );
 
@@ -204,22 +211,24 @@ const lockWaiters = async () =>
  */
 async function holdLock(
   lock: (trx: typeof raw) => Promise<unknown>,
-): Promise<{ release: () => Promise<void> }> {
+): Promise<{ pid: number; release: () => Promise<void> }> {
   let open!: () => void;
   const gate = new Promise<void>((r) => {
     open = r;
   });
-  let held!: () => void;
-  const holding = new Promise<void>((r) => {
+  let held!: (pid: number) => void;
+  const holding = new Promise<number>((r) => {
     held = r;
   });
   const done = raw.transaction().execute(async (trx) => {
     await lock(trx as unknown as typeof raw);
-    held();
+    const me = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx);
+    held(Number(me.rows[0]?.pid));
     await gate;
   });
-  await holding;
+  const pid = await holding;
   return {
+    pid,
     release: async () => {
       open();
       await done;
@@ -397,13 +406,21 @@ describe("decisions resume their run in the decision's transaction", () => {
       sql`SELECT 1 FROM capybara.runs WHERE id = ${runId} FOR UPDATE`.execute(t),
     );
     const decision = decide(waitId);
-    await waitFor(async () => (await lockWaiters()) >= 1, 10_000, "decision blocked on the run");
+    await waitFor(
+      async () => (await lockWaiters(blocker.pid)) >= 1,
+      10_000,
+      "decision blocked on the run",
+    );
     const suspended = k.app.get(Waits).suspend(runId, convId, {
       kind: "approval",
       id: waitId,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
-    await waitFor(async () => (await lockWaiters()) >= 2, 10_000, "suspend blocked on the run");
+    await waitFor(
+      async () => (await lockWaiters(blocker.pid)) >= 2,
+      10_000,
+      "suspend blocked on the run",
+    );
     await blocker.release();
     expect((await decision).statusCode).toBe(200);
     await suspended;
@@ -430,9 +447,9 @@ describe("one lock order for decisions and stops (conversation, decided row, run
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
     });
-    await waitFor(async () => (await lockWaiters()) >= 1, 10_000, "stop blocked");
+    await waitFor(async () => (await lockWaiters(blocker.pid)) >= 1, 10_000, "stop blocked");
     const decision = decide(waitId);
-    await waitFor(async () => (await lockWaiters()) >= 2, 10_000, "decision blocked");
+    await waitFor(async () => (await lockWaiters(blocker.pid)) >= 2, 10_000, "decision blocked");
     await blocker.release();
     const [s, d] = await Promise.all([stop, decision]);
     // the stop went first: it cancelled the approval and ended the run; the decision finds the

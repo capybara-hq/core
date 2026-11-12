@@ -8,18 +8,16 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { ScheduledTaskRunTracker } from "../schedules/run-tracker.js";
-import { ACTIVE_RUN_STATUSES, oweEnsureRun } from "./run-jobs.js";
+import { ApprovalsService } from "../tools/approvals.service.js";
+import { QuestionsService } from "../tools/questions.service.js";
+import {
+  ACTIVE_RUN_STATUSES,
+  oweEnsureRun,
+  TERMINAL_STATUSES,
+  type TerminalStatus,
+} from "./run-jobs.js";
 import { pairStoppedForks } from "./subagents/skill-fork.js";
 import { oweDeliverToParent, oweStopChildren } from "./subagents/tree-jobs.js";
-
-/** 运行的终态。 */
-export type TerminalStatus = "completed" | "failed" | "aborted";
-
-export const TERMINAL_STATUSES: ReadonlySet<string> = new Set<TerminalStatus>([
-  "completed",
-  "failed",
-  "aborted",
-]);
 
 export interface FinishRunArgs {
   conversationId: string;
@@ -34,17 +32,11 @@ export interface FinishRunArgs {
    * 超时（max_duration）传 false：loop 没吸收的消息没有被回复，必须留给下一轮（R34）。
    */
   floorToTrigger?: boolean;
-  /**
-   * Runs in the transaction once the run is known not to be terminal, before the terminal event
-   * (and before the run's open fork invocation gets its report, which {@link RunFinish.finishIn}
-   * always writes).
-   */
-  beforeTerminal?: () => Promise<void>;
 }
 
 /**
- * Writes runs' terminal states (one instance; the run worker, the run queue's orphan repairs, the
- * waits and the eval replays finish runs through it).
+ * Writes runs' terminal states (one instance; the run worker, the run queue's orphan abort, the
+ * `run-orphan-check`, the waits and the eval replays finish runs through it).
  */
 @Injectable()
 export class RunFinish {
@@ -57,11 +49,20 @@ export class RunFinish {
     private readonly taskRuns: Pick<ScheduledTaskRunTracker, "onRunFinished">,
     /** The run's end owes the conversation's ensure-run backstop (transactional outbox spec §6). */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** A finished run's pending approvals are cancelled in its terminal transaction. */
+    @Inject(ApprovalsService) private readonly approvals: Pick<ApprovalsService, "cancelPendingIn">,
+    /** ... and its pending input requests. */
+    @Inject(QuestionsService) private readonly questions: Pick<QuestionsService, "cancelPendingIn">,
   ) {}
 
   /**
    * 在调用方的事务内写运行的终态：会话行锁 → 运行仍未结束才写终态事件、推进 `consumed_seq`、更新 `runs.status`。
    * It also owes the conversation's ensure-run backstop under the terminal event's seq.
+   *
+   * A finished run waits on nothing: its pending approvals and input requests (one asked just
+   * before the run failed, while it was still `running`) are cancelled before its terminal event
+   * (`approval_decided` / `question_answered` with `cancelled`). Lock order, as every path that
+   * writes them: the conversation row, the run's approval and input request rows, the run row.
    *
    * Sub-agents (transactional outbox spec §6): before the terminal event the run's open fork
    * invocation gets its report (`pairStoppedForks`; an `Agent` call has its result from its
@@ -77,7 +78,8 @@ export class RunFinish {
    * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且失败 / 中止 / 完成都至少
    * 消费到触发该运行的消息——否则结束时的 ensureRun 会对同一条消息无限重试（失败）或卡住会话。
    * 超时（`floorToTrigger: false`）只取 `GREATEST(consumed_seq, consumed)`：没吸收的消息留给下一轮（R34）。
-   * 加锁顺序与 `RunQueue.ensureRun` 一致（先会话行、后 runs 行），不会互相死锁。
+   * Lock order as `RunQueue.ensureRun` and the decisions take it: the conversation row, the run's
+   * approval and input request rows, the run row; they never deadlock with each other.
    * 调用方在提交后对非 null 的返回值调用 {@link notifyFinished}。
    */
   @Transactional({ propagation: "mandatory" })
@@ -89,6 +91,7 @@ export class RunFinish {
       .where("id", "=", a.conversationId)
       .forUpdate()
       .executeTakeFirst();
+    const pending = await this.lockWaitRows(a.runId);
     const run = await t
       .selectFrom("runs")
       .select("status")
@@ -96,7 +99,8 @@ export class RunFinish {
       .forUpdate()
       .executeTakeFirst();
     if (!run || TERMINAL_STATUSES.has(run.status)) return null;
-    await a.beforeTerminal?.();
+    if (pending.approvals) await this.approvals.cancelPendingIn(a.runId);
+    if (pending.questions) await this.questions.cancelPendingIn(a.runId);
     await pairStoppedForks(t, this.eventLog, a.runId);
     const [ev] = await this.eventLog.appendIn(a.conversationId, [
       { ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` },
@@ -128,6 +132,32 @@ export class RunFinish {
     }
     if (conv) await this.oweTreeWork(a, conv.kind, conv.org_id);
     return seq;
+  }
+
+  /**
+   * Locks the run's approval and input request rows (`FOR UPDATE`, in id order) between its
+   * conversation row and its run row; returns whether any of them is pending.
+   */
+  private async lockWaitRows(runId: string): Promise<{ approvals: boolean; questions: boolean }> {
+    const t = this.kdb.db;
+    const approvals = await t
+      .selectFrom("approvals")
+      .select("status")
+      .where("run_id", "=", runId)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    const questions = await t
+      .selectFrom("questions")
+      .select("status")
+      .where("run_id", "=", runId)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    return {
+      approvals: approvals.some((r) => r.status === "pending"),
+      questions: questions.some((r) => r.status === "pending"),
+    };
   }
 
   /** {@link finishIn}'s owed stops and delivery of a run's sub-agent tree. */

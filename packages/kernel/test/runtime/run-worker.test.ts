@@ -23,7 +23,6 @@ import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { looperState } from "../fixtures/plugins/model-looper/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
   consumedSeq,
@@ -964,83 +963,9 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     expect(await consumedSeq(db, convId)).toBe(next);
   });
 
-  it("running 的孤儿（没能写终态、任务已结束）无宽限期即被清理，且只有一条终态事件", async () => {
-    const { orgId, convId } = await setup();
-    const first = await postMessage(req, orgId, convId, "echo:a");
-    const [run] = await runsOf(db, convId);
-    await removeJob(convId, first);
-    await db
-      .updateTable("runs")
-      .set({ status: "running", started_at: sql`now()` })
-      .where("id", "=", run?.id as string)
-      .execute();
-    await postMessage(req, orgId, convId, "echo:b");
-    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed", "queued"]);
-    await worker();
-    await waitForTerminal(db, convId, 2);
-    const evs = await eventsOf(db, convId);
-    expect(evs.filter((e) => e.runId === run?.id && e.type.startsWith("run_"))).toHaveLength(1);
-  });
-  it.each(["stream", "events"] as const)(
-    "running 孤儿时打开会话（%s）→ 触发 ensureRun：孤儿标记 run.orphaned，等待中的消息起新一轮并被回复",
-    async (via) => {
-      {
-        const { orgId, convId } = await setup();
-        const first = await postMessage(req, orgId, convId, "echo:a");
-        // 运行进行中到达的消息：ensureRun 看到已有运行，不投递
-        const second = await postMessage(req, orgId, convId, "echo:b");
-        expect(await runsOf(db, convId)).toHaveLength(1);
-        const orphan = await orphanRunning(convId, first);
-        await seedCheckpoint(orphan);
-        if (via === "stream") {
-          const jar = cookieJar();
-          const r = asUser(api.http, jar);
-          const login = await r({
-            method: "POST",
-            url: "/api/v1/auth/login",
-            payload: { login: "owner", password: PW },
-          });
-          expect(login.statusCode).toBe(200);
-          const ac = new AbortController();
-          const res = await fetch(
-            `http://127.0.0.1:${api.port}/api/v1/orgs/${orgId}/conversations/${convId}/stream`,
-            { headers: { cookie: jar.header() as string }, signal: ac.signal },
-          );
-          expect(res.status).toBe(200);
-          ac.abort();
-        } else {
-          const res = await req({
-            method: "GET",
-            url: `/api/v1/orgs/${orgId}/conversations/${convId}/events`,
-          });
-          expect(res.statusCode).toBe(200);
-        }
-        await waitFor(
-          async () => (await runsOf(db, convId)).map((r) => r.status).join() === "failed,queued",
-          3_000,
-          `orphan swept via ${via}`,
-        );
-        const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
-        expect(failed?.runId).toBe(orphan);
-        expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
-        // 孤儿的检查点在收尾时异步清理：等清理完成再断言
-        await waitFor(
-          async () =>
-            ((await checkpointsOf(orphan)).length === 0 && (await writesOf(orphan)).length === 0) ||
-            undefined,
-          5_000,
-          `orphan checkpoints cleaned via ${via}`,
-        );
-        expect(await checkpointsOf(orphan)).toEqual([]);
-        expect(await writesOf(orphan)).toEqual([]);
-        await worker();
-        const terms = await waitForTerminal(db, convId, 2);
-        expect(terms[1]?.payload).toMatchObject({ reason: "completed", consumedUpToSeq: second });
-        const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
-        expect(replies.map(textOf)).toEqual(["b"]);
-      }
-    },
-  );
+  // A `running` run nobody runs (no job, no lock holder) is no longer repaired by a message's or a
+  // read's ensureRun: the run-orphan-check fails it (run-orphan-check.test.ts covers the single
+  // terminal event, the dropped checkpoints and the waiting message's next run).
 
   it("abort 孤儿运行（running、任务不存在、会话锁空闲）→ 直接写 run_aborted，202，运行 aborted，consumed_seq 推进到触发消息", async () => {
     const { orgId, convId } = await setup();

@@ -8,12 +8,15 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { migrate } from "../../../src/db/migrator.js";
 import { createDb } from "../../../src/db/pool.js";
+import { LockedIntervalScheduler } from "../../../src/infra/schedule/locked-interval.js";
 import { KERNEL_BUS } from "../../../src/infra/tokens.js";
+import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../../src/runtime/run-orphan-check.job.js";
 import {
   RUN_QUEUE_NAME,
   runJobId,
   SUBAGENT_RUN_QUEUE_NAME,
 } from "../../../src/runtime/run-queue.js";
+import { processDeliverToParent } from "../../../src/runtime/subagents/tree-jobs.js";
 import { Waits } from "../../../src/runtime/waits.js";
 import {
   openBarrier,
@@ -297,7 +300,7 @@ describe("sub-agents across two replicas", () => {
     });
   }, 90_000);
 
-  it("children finished while their deliveries were lost: both replicas sweep, each delivered once, one wake", async () => {
+  it("children finished while their deliveries were lost: both replicas run the owed deliver-to-parent jobs, each delivered once, one wake", async () => {
     const a = await boot();
     const b = await boot();
     const reqA = await login(a);
@@ -316,8 +319,12 @@ describe("sub-agents across two replicas", () => {
       );
       await backdateRun(db, c.runId);
     }
-    const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
-    expect(ra.delivered + rb.delivered).toBeGreaterThanOrEqual(2);
+    // each child's terminal transaction owed its delivery; both replicas run the job body at once
+    await Promise.all(
+      [a, b].flatMap((k) =>
+        children.map((c) => processDeliverToParent(k.app.get(Waits), { childRunId: c.runId })),
+      ),
+    );
     await sleep(500);
     const events = await eventsOf(db, conv);
     const ds = ofType(events, "subagent_delivery");
@@ -343,9 +350,10 @@ describe("sub-agents across two replicas", () => {
     expect(ds.map((d) => d.seq)).toContain(wakeStart?.payload.triggerSeq);
   }, 90_000);
 
-  it("a lost enqueue: both replicas sweep, the child runs once and delivers once", async () => {
+  it("a job the queue lost: both replicas run the run-orphan-check, the child runs once and delivers once", async () => {
     const a = await boot();
     const b = await boot();
+    for (const k of [a, b]) k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
     const reqA = await login(a);
     await setup(reqA);
     const { conv, children } = await startPaused(reqA, "SCENARIO one", 1);
@@ -353,9 +361,13 @@ describe("sub-agents across two replicas", () => {
     await dropChildJobs(subQueue, [child.conversationId]);
     await backdateRun(db, child.runId);
     await subQueue.resume();
-    const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
-    // both may see the orphan; BullMQ keeps one job per id, so the child still runs once
-    expect(ra.requeued + rb.requeued).toBeGreaterThanOrEqual(1);
+    const [ra, rb] = await Promise.all([
+      a.app.get(RunOrphanCheck).check(),
+      b.app.get(RunOrphanCheck).check(),
+    ]);
+    // the check's run lock is the tick's, not the call's: both may see the orphan; the owed row
+    // and BullMQ keep one job per id, so the child still runs once
+    expect(ra.queuedReadded + rb.queuedReadded).toBeGreaterThanOrEqual(1);
     await finishedDeliveries(db, conv, 1);
     await sleep(500);
     const cev = await eventsOf(db, child.conversationId);

@@ -10,11 +10,8 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
-import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
-import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import {
   ApprovalsService,
@@ -30,11 +27,11 @@ import {
 import { QuestionsService } from "../tools/questions.service.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
-import { subagentsWaitId, subagentWaitingIdemKey, type WaitingFor } from "./loop.js";
+import { subagentWaitingIdemKey, type WaitingFor } from "./loop.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
-import { notifyFinished, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
-import { RunResume, resumeJobId } from "./run-jobs.js";
+import { notifyFinished, RunFinish } from "./run-finish.js";
+import { RunResume, resumeJobId, TERMINAL_STATUSES } from "./run-jobs.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
 import {
   childResult,
@@ -53,52 +50,6 @@ export const waitTimeoutJobId = (waitId: string): string => `wait-timeout-${wait
 
 /** A resumed run's job id (`run-<conversationId>-resume-<waitId>`; `RunResume` owes it). */
 export { resumeJobId };
-
-/**
- * 等待兜底扫描（Task 22）：任务名、job scheduler id（不含 `:`）、周期、宽限期与每类每次最多处理的条数。
- * 宽限期：waiting 超过它、等待却已全部处理的运行才视为「续跑丢失」，避免与正常续跑（暂停后的复查等）竞争。
- */
-export const WAIT_SWEEP_JOB = "wait-sweep";
-/** The maintenance scheduler the sweep ran on before it became a `@LockedCron` (retired). */
-export { WAIT_SWEEP_SCHEDULER_ID } from "./job-ids.js";
-export const WAIT_SWEEP_GRACE_MS = 60_000;
-export const WAIT_SWEEP_BATCH = 500;
-
-/** 一次扫描（本副本）实际生效的修复数。 */
-export interface WaitSweepResult {
-  /** 过期仍 pending、被本次扫描按超时处理的审批 / 输入请求。 */
-  expired: number;
-  /** 等待已全部处理、被本次扫描续跑的 waiting 运行。 */
-  resumed: number;
-  /** 运行已终态、被本次扫描取消的审批 / 输入请求。 */
-  cancelled: number;
-  /**
-   * Finished runs whose fork invocation had no report, repaired (`pairStoppedForks`; the next run
-   * would build on a fork lead without its report).
-   */
-  repaired: number;
-  /** Queued sub-agent runs, and chat runs queued by a resume, whose job was lost, enqueued again. */
-  requeued: number;
-  /** Running sub-agent runs without job or lock, failed `run.orphaned` and reported to the parent. */
-  orphaned: number;
-  /**
-   * Active fork sub-agent runs of a finished parent run, and active sub-agent runs of a deleted
-   * conversation's tree, asked to stop.
-   */
-  stopped: number;
-  /**
-   * Finished background sub-agent runs whose `finished` delivery was never written (the finisher
-   * died after the child's terminal commit), delivered (agent map spec §10).
-   */
-  delivered: number;
-  /**
-   * Idle sub-agents with a parked message no run took (a `SendMessage` that reached a run after
-   * its last model call, whose replica died before the post-run `ensureRun`), started again.
-   */
-  restarted: number;
-}
-
-const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
 
 /** Who may decide a sub-agent's approval, mirrored into the root's `subagent_waiting`. */
 type Approver = { requestedFor: string | null; approverRole: OrgRole | null };
@@ -122,9 +73,8 @@ export interface WaitTimeoutData {
  * One resume only: a resume locks the run row and moves it `waiting → queued` only when it waits on
  * nothing else, owing the run job `run-<conversationId>-resume-<waitId>` in the same transaction
  * (transactional outbox spec §6). A decision does it in its own transaction
- * (`RunResume.resumeIn`); the timeout job, the suspend's re-check and the sweeps through
- * {@link resume}. Whichever comes
- * first, the run resumes once.
+ * (`RunResume.resumeIn`); the timeout job, the suspend's re-check and a fork child's finish
+ * through {@link resume}. Whichever comes first, the run resumes once.
  */
 @Injectable()
 export class Waits implements OnApplicationShutdown {
@@ -138,8 +88,8 @@ export class Waits implements OnApplicationShutdown {
     private readonly approvals: Pick<ApprovalsService, "expire" | "cancelPendingIn">,
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "expire" | "cancelPendingIn">,
-    @Inject(RunQueue)
-    private readonly runQueue: Pick<RunQueue, "repairOrphan" | "abortIfOrphaned" | "ensureRun">,
+    /** Stops a queued or running sub-agent no worker holds directly ({@link stopRun}). */
+    @Inject(RunQueue) private readonly runQueue: Pick<RunQueue, "abortIfOrphaned">,
     /**
      * Writes, in the caller's transaction, the results of a stopped run's open `Agent` calls;
      * `fire` runs their observe hooks after the commit.
@@ -169,7 +119,7 @@ export class Waits implements OnApplicationShutdown {
     private readonly deliveries: Pick<SubagentDeliveries, "childFinished">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {
-    // an orphaned parent run (marked failed by `ensureRun`) stops its fork child at once
+    // an orphaned parent run (failed by the `run-orphan-check`) stops its fork child at once
     // (background children keep running, agent map spec §5.4); the `stop-tree` job its terminal
     // transaction owed is the backstop
     this.unsubscribe = events.on("run.orphaned", ({ runId }) =>
@@ -189,36 +139,6 @@ export class Waits implements OnApplicationShutdown {
   /** The context's handle (the transaction of a `@Transactional` method, else the pool). */
   private get db(): KernelSchemaDb {
     return this.kdb.db;
-  }
-
-  /**
-   * 兜底扫描（维护队列每 10 分钟一次，防延迟任务 / 续跑丢失）。每项修复都复用常规路径，与并发的超时任务、
-   * 人工决定、其他副本的扫描竞争时由行锁与条件更新保证只生效一次；每项生效的修复记一行 warn（只含 id）。
-   * 顺序：先取消终态运行的等待（这些不该再按超时处理），再处理过期的等待，最后续跑「续跑丢失」的运行。
-   * 单项失败只记日志，不影响其他项。
-   */
-  async sweep(): Promise<WaitSweepResult> {
-    const out: WaitSweepResult = {
-      expired: 0,
-      resumed: 0,
-      cancelled: 0,
-      repaired: 0,
-      requeued: 0,
-      orphaned: 0,
-      stopped: 0,
-      delivered: 0,
-      restarted: 0,
-    };
-    out.cancelled = await this.sweepFinishedRuns();
-    out.expired = await this.sweepOverdue();
-    Object.assign(out, await this.sweepSubagentOrphans());
-    out.repaired = await this.sweepOpenAgentCalls();
-    out.stopped =
-      (await this.sweepForkChildrenOfFinished()) + (await this.sweepTreesOfDeletedRoots());
-    out.delivered = await this.sweepUndelivered();
-    out.restarted = await this.sweepParkedMessages();
-    out.resumed = await this.sweepStuckRuns();
-    return out;
   }
 
   /**
@@ -264,7 +184,8 @@ export class Waits implements OnApplicationShutdown {
       .set({
         status: "waiting",
         waiting_since: sql<Date>`now()`,
-        // a sub-agents wait has no row of its own: its expiry lives on the run, for the sweep
+        // a sub-agents wait has no row of its own: its expiry is kept on the run (its timeout job
+        // carries the run and step)
         wait_expires_at: waitingFor.kind === "subagents" ? new Date(waitingFor.expiresAt) : null,
       })
       .from("conversations")
@@ -349,8 +270,7 @@ export class Waits implements OnApplicationShutdown {
   /**
    * Resumes the run in its own transaction (`RunResume.resumeIn`: locks the run row and, when it
    * is `waiting` on nothing else, sets it `queued` and owes its resume job); true when this call
-   * queued it. The wait timeout, the suspend's re-check, a fork child's finish and the sweeps use
-   * it; the decisions call `RunResume.resumeIn` in their own transactions.
+   * queued it. The wait timeout, the suspend's re-check and a fork child's finish use it; the decisions call `RunResume.resumeIn` in their own transactions.
    */
   @Transactional()
   async resume(runId: string, waitId: string): Promise<boolean> {
@@ -417,7 +337,8 @@ export class Waits implements OnApplicationShutdown {
       .deleteThread(runId)
       .catch((err) => this.log.warn("checkpoint delete failed", { runId, err }));
     stopped?.fire();
-    // a stopped sub-agent reports to its parent now, not at the next sweep (a no-op for other runs)
+    // a stopped sub-agent reports to its parent now, not when the owed `deliver-to-parent` job
+    // runs (a no-op for other runs)
     await this.childFinished(runId).catch((err) =>
       this.log.error("cannot report stopped sub-agent run", { runId, err }),
     );
@@ -542,645 +463,6 @@ export class Waits implements OnApplicationShutdown {
       .orderBy("id")
       .forUpdate()
       .execute();
-  }
-
-  /** 扫描 3：运行已终态（如暂停途中失败）仍 pending 的审批 / 输入请求 → 取消（写决定 / 回答事件）。 */
-  private async sweepFinishedRuns(): Promise<number> {
-    const db = this.db;
-    const runs = await db
-      .selectFrom("runs")
-      .select(["id", "conversation_id"])
-      .where("status", "in", TERMINAL_RUN_STATUSES)
-      .where(({ or, exists, selectFrom }) =>
-        or([
-          exists(
-            selectFrom("approvals")
-              .select(sql`1`.as("one"))
-              .whereRef("approvals.run_id", "=", "runs.id")
-              .where("approvals.status", "=", "pending"),
-          ),
-          exists(
-            selectFrom("questions")
-              .select(sql`1`.as("one"))
-              .whereRef("questions.run_id", "=", "runs.id")
-              .where("questions.status", "=", "pending"),
-          ),
-        ]),
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    let total = 0;
-    for (const run of runs) {
-      try {
-        const n = await this.cancelWaitsOfFinished(run.conversation_id, run.id);
-        if (n > 0) {
-          total += n;
-          this.log.warn("wait sweep: cancelled waits of finished run", {
-            runId: run.id,
-            conversationId: run.conversation_id,
-            count: n,
-          });
-        }
-      } catch (err) {
-        this.log.error("wait sweep: cannot cancel waits of finished run", { runId: run.id, err });
-      }
-    }
-    return total;
-  }
-
-  /**
-   * 同一事务里锁会话行与运行行（与 {@link abortWaiting} 同序），运行仍是终态时取消其 pending 等待；
-   * 提交后发布事件。返回取消的条数（并发的另一副本拿到锁时已无 pending → 0）。
-   */
-  private async cancelWaitsOfFinished(conversationId: string, runId: string): Promise<number> {
-    const r = await this.cancelWaitsOfFinishedIn(conversationId, runId);
-    if (r > 0) {
-      const last = await this.db
-        .selectFrom("conversation_events")
-        .select(sql<string>`max(seq)`.as("seq"))
-        .where("conversation_id", "=", conversationId)
-        .executeTakeFirst();
-      if (last?.seq != null) await this.eventLog.notify(conversationId, Number(last.seq));
-    }
-    return r;
-  }
-
-  @Transactional({ propagation: "requires_new" })
-  private async cancelWaitsOfFinishedIn(conversationId: string, runId: string): Promise<number> {
-    const t = this.db;
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", conversationId)
-      .forUpdate()
-      .executeTakeFirst();
-    await this.lockWaitRows(runId);
-    const run = await t
-      .selectFrom("runs")
-      .select("status")
-      .where("id", "=", runId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!run || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) return 0;
-    const a = await this.approvals.cancelPendingIn(runId);
-    const q = await this.questions.cancelPendingIn(runId);
-    return a.length + q.length;
-  }
-
-  /** 扫描 1：`expires_at < now()` 仍 pending 的审批 / 输入请求 → 与超时任务同一路径（置 expired、写事件、续跑）。 */
-  private async sweepOverdue(): Promise<number> {
-    const db = this.db;
-    const approvals = await db
-      .selectFrom("approvals")
-      .select(["id", "run_id"])
-      .where("status", "=", "pending")
-      .where("expires_at", "<", sql<Date>`now()`)
-      .orderBy("expires_at")
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    const questions = await db
-      .selectFrom("questions")
-      .select(["id", "run_id"])
-      .where("status", "=", "pending")
-      .where("expires_at", "<", sql<Date>`now()`)
-      .orderBy("expires_at")
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    const due: { kind: WaitingFor["kind"]; id: string; runId: string }[] = [
-      ...approvals.map((a) => ({ kind: "approval" as const, id: a.id, runId: a.run_id })),
-      ...questions.map((q) => ({ kind: "input" as const, id: q.id, runId: q.run_id })),
-    ];
-    let total = 0;
-    for (const w of due) {
-      try {
-        const r =
-          w.kind === "approval"
-            ? await this.approvals.expire(w.id)
-            : await this.questions.expire(w.id);
-        if (r.outcome !== "expired") continue;
-        total++;
-        this.log.warn("wait sweep: expired overdue wait", {
-          kind: w.kind,
-          id: w.id,
-          runId: w.runId,
-        });
-        if (r.record) await this.resume(r.record.runId, w.id);
-      } catch (err) {
-        this.log.error("wait sweep: cannot expire overdue wait", { kind: w.kind, id: w.id, err });
-      }
-    }
-    return total + (await this.sweepOverdueSubagents());
-  }
-
-  /**
-   * Sub-agents waits past their `runs.wait_expires_at` (their timeout job was lost): expired the
-   * way the timeout job would ({@link expire}: the fork invocation's active child stops as
-   * `timed out`, the parent resumes once it is done). Only fork invocations wait (agent map spec
-   * §5.4); their step is the run's fork dispatch step. A run stays here until its children have
-   * stopped; a pass that neither stopped a child nor resumed the run is not counted.
-   */
-  private async sweepOverdueSubagents(): Promise<number> {
-    const runs = await this.db
-      .selectFrom("runs")
-      .select(["id"])
-      .where("status", "=", "waiting")
-      .where("wait_expires_at", "<", sql<Date>`now()`)
-      .orderBy("wait_expires_at")
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    let total = 0;
-    for (const r of runs) {
-      try {
-        const last = await this.db
-          .selectFrom("subagent_dispatches")
-          .select(sql<number | null>`max(step)`.as("step"))
-          .where("parent_run_id", "=", r.id)
-          .where("for_skill", "=", true)
-          .executeTakeFirst();
-        if (last?.step == null) continue;
-        const step = Number(last.step);
-        const id = subagentsWaitId(r.id, step);
-        // children asked to stop may take a while to end, so the same wait can come back on the
-        // next sweep: only a pass that stopped a child or resumed the run counts and logs (M3)
-        const { acted } = await this.expire("subagents", id, { runId: r.id, step });
-        if (!acted) continue;
-        this.log.warn("wait sweep: expired overdue wait", { kind: "subagents", id, runId: r.id });
-        total++;
-      } catch (err) {
-        this.log.error("wait sweep: cannot expire overdue wait", {
-          kind: "subagents",
-          runId: r.id,
-          err,
-        });
-      }
-    }
-    return total;
-  }
-
-  /**
-   * Sub-agent runs nobody will run (spec §7.5; `RunQueue.repairOrphan`, the same orphan test as
-   * `ensureRun`, which never runs for a child): `queued` past the grace period without a job → enqueued
-   * again (the dispatch committed, its enqueue was lost); `running` without job and lock → failed
-   * `run.orphaned` and reported to the parent, which then resumes. Also a chat run left `queued`
-   * by a resume whose enqueue was lost (final review m8): enqueued again under its resume job id
-   * (`ensureRun` would only repair it at the conversation's next message).
-   */
-  private async sweepSubagentOrphans(): Promise<{ requeued: number; orphaned: number }> {
-    const out = { requeued: 0, orphaned: 0 };
-    const runs = await this.db
-      .selectFrom("runs")
-      .innerJoin("conversations as c", "c.id", "runs.conversation_id")
-      .select(["runs.id", "runs.conversation_id"])
-      .where((eb) =>
-        eb.or([
-          eb.and([eb("c.kind", "=", "subagent"), eb("runs.status", "in", ["queued", "running"])]),
-          // a parent (or any chat run) set `queued` by Waits.resume whose replica died before its
-          // queue.add: child completions make that a frequent cross-replica resume (m8); its job
-          // id is the resume job id recorded with the update
-          eb.and([
-            eb("c.kind", "=", "chat"),
-            eb("runs.status", "=", "queued"),
-            eb("runs.job_id", "like", "run-%-resume-%"),
-          ]),
-        ]),
-      )
-      .where(
-        sql<Date>`COALESCE(runs.queued_at, runs.created_at)`,
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    for (const run of runs) {
-      try {
-        const r = await this.runQueue.repairOrphan(run.conversation_id, run.id);
-        if (r === null) continue;
-        if (r === "failed") {
-          out.orphaned++;
-          await this.childFinished(run.id);
-        } else out.requeued++;
-        this.log.warn("wait sweep: repaired orphaned sub-agent run", {
-          runId: run.id,
-          conversationId: run.conversation_id,
-          outcome: r,
-        });
-      } catch (err) {
-        this.log.error("wait sweep: cannot repair orphaned sub-agent run", {
-          runId: run.id,
-          err,
-        });
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Idle sub-agent conversations (no active run, not deleted) with a message newer than what they
-   * consumed, written past the grace period and within the last day: a `SendMessage` that reached a
-   * run after its last model call is started by that run's post-job `ensureRun`
-   * (`RunQueue.childWakeIn`), which a replica dying after the terminal commit skips. Re-derived with
-   * the same `ensureRun` (its rules decide: a paused root starts nothing). A sub-agent whose last
-   * run was stopped (`aborted`) can never start from a message, so it is left out here, and the
-   * newest conversations come first (active within the last day), so parked messages that cannot
-   * start never fill the batch. Returns how many runs started.
-   */
-  private async sweepParkedMessages(): Promise<number> {
-    const rows = await this.db
-      .selectFrom("conversations as c")
-      .select("c.id")
-      .where("c.kind", "=", "subagent")
-      .where("c.deleted_at", "is", null)
-      // every append bumps `updated_at`: a message of the last day implies it (an index-friendly
-      // bound before the event lookups)
-      .where("c.updated_at", ">", sql<Date>`now() - interval '1 day'`)
-      .where(
-        (eb) =>
-          sql<boolean>`(
-            SELECT r.status FROM capybara.runs r WHERE r.conversation_id = ${eb.ref("c.id")}
-            ORDER BY r.created_at DESC, r.id DESC LIMIT 1
-          ) IS DISTINCT FROM 'aborted'`,
-      )
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom("conversation_events as e")
-            .select(sql`1`.as("one"))
-            .whereRef("e.conversation_id", "=", "c.id")
-            .where("e.type", "=", "user_message")
-            .whereRef("e.seq", ">", "c.consumed_seq")
-            .where(
-              "e.created_at",
-              "<",
-              sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-            )
-            .where("e.created_at", ">", sql<Date>`now() - interval '1 day'`),
-        ),
-      )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("runs as r")
-              .select(sql`1`.as("one"))
-              .whereRef("r.conversation_id", "=", "c.id")
-              .where("r.status", "in", ACTIVE_RUN_STATUSES),
-          ),
-        ),
-      )
-      .orderBy("c.updated_at", "desc")
-      .orderBy("c.id")
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    let n = 0;
-    for (const c of rows) {
-      try {
-        if ((await this.runQueue.ensureRun(c.id)) === null) continue;
-        n++;
-        this.log.warn("wait sweep: started a sub-agent's parked message", { conversationId: c.id });
-      } catch (err) {
-        this.log.error("wait sweep: cannot start a sub-agent's parked message", {
-          conversationId: c.id,
-          err,
-        });
-      }
-    }
-    return n;
-  }
-
-  /**
-   * Finished runs (past the grace period, within the last day) triggered by a fork invocation that
-   * has no report ({@link unreportedForkRuns}): a terminal path that skipped
-   * `stopOpenAgentCalls`, such as an old replica's abort, would otherwise leave a fork lead without
-   * its report. Each is repaired under the conversation row lock with the normal
-   * `stopOpenAgentCalls` (an ended child gives its result, an active one the stopped text;
-   * idempotency keys make it safe against the regular paths); an active fork child is then stopped
-   * by {@link sweepForkChildrenOfFinished}. An `Agent` call has its result from its dispatch (agent
-   * map spec §4.1).
-   */
-  private async sweepOpenAgentCalls(): Promise<number> {
-    const runs = await unreportedForkRuns(this.db);
-    let total = 0;
-    for (const r of runs) {
-      try {
-        const st: { fire?: () => void } = {};
-        const toSeq = await this.repairOpenAgentCallsIn(
-          r.parent_conversation_id,
-          r.parent_run_id,
-          st,
-        );
-        const fire = st.fire;
-        if (fire === undefined) continue;
-        if (toSeq !== null) await this.eventLog.notify(r.parent_conversation_id, toSeq);
-        fire();
-        total++;
-        this.log.warn("wait sweep: wrote the missing fork report of a finished run", {
-          runId: r.parent_run_id,
-          conversationId: r.parent_conversation_id,
-        });
-      } catch (err) {
-        this.log.error("wait sweep: cannot write the missing fork report of a finished run", {
-          runId: r.parent_run_id,
-          err,
-        });
-      }
-    }
-    return total;
-  }
-
-  /** One run's repair of {@link sweepOpenAgentCalls}; its observe hooks go back through `st`. */
-  @Transactional({ propagation: "requires_new" })
-  private async repairOpenAgentCallsIn(
-    conversationId: string,
-    runId: string,
-    st: { fire?: () => void },
-  ): Promise<number | null> {
-    const t = this.db;
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", conversationId)
-      .forUpdate()
-      .executeTakeFirst();
-    const run = await t
-      .selectFrom("runs")
-      .select("status")
-      .where("id", "=", runId)
-      .executeTakeFirst();
-    if (run === undefined || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) {
-      return null;
-    }
-    const stopped = await this.pipeline.stopOpenAgentCalls(runId);
-    if (stopped.callIds.size === 0) return null;
-    st.fire = stopped.fire;
-    return stopped.toSeq ?? null;
-  }
-
-  /**
-   * Active fork sub-agent runs (phase D, `for_skill`) of a parent run that finished more than the
-   * grace period ago (§12: the run's terminal state stops its fork child and reports it stopped;
-   * this is the backstop) → stopped. Background `Agent` children of a finished run are the normal
-   * case and keep running (agent map spec §5.4).
-   */
-  private async sweepForkChildrenOfFinished(): Promise<number> {
-    const parents = await this.db
-      .selectFrom("subagent_dispatches as sd")
-      .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
-      .innerJoin("runs as pr", "pr.id", "sd.parent_run_id")
-      .select("sd.parent_run_id")
-      .distinct()
-      .where("sd.for_skill", "=", true)
-      .where("cr.status", "in", ACTIVE_RUN_STATUSES)
-      .where("pr.status", "in", TERMINAL_RUN_STATUSES)
-      .where(
-        "pr.finished_at",
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    let total = 0;
-    for (const p of parents) {
-      try {
-        const n = await this.stopChildren(p.parent_run_id, null);
-        if (n === 0) continue;
-        total += n;
-        this.log.warn("wait sweep: stopped the fork sub-agent of a finished run", {
-          runId: p.parent_run_id,
-          count: n,
-        });
-      } catch (err) {
-        this.log.error("wait sweep: cannot stop the fork sub-agent of a finished run", {
-          runId: p.parent_run_id,
-          err,
-        });
-      }
-    }
-    return total;
-  }
-
-  /**
-   * Active sub-agent runs with a deleted ancestor (agent map spec §10: deleting the root stops the
-   * whole tree; the delete's own {@link stopTree} is the normal path, this the backstop for a crash
-   * between marking the root deleted and stopping its tree, or a dispatch that raced it) → stopped
-   * on the deleter's behalf (no account). No grace period: nothing in a deleted tree should run.
-   */
-  private async sweepTreesOfDeletedRoots(): Promise<number> {
-    const r = await sql<{ run_id: string; conversation_id: string; status: string }>`
-      WITH RECURSIVE up(run_id, conversation_id, status, ancestor, n) AS (
-        SELECT r.id, r.conversation_id, r.status, c.parent_conversation_id, 1
-        FROM capybara.runs r JOIN capybara.conversations c ON c.id = r.conversation_id
-        WHERE r.status IN ('queued', 'running', 'waiting') AND c.kind = 'subagent'
-          AND c.parent_conversation_id IS NOT NULL
-        UNION ALL
-        SELECT up.run_id, up.conversation_id, up.status, c.parent_conversation_id, up.n + 1
-        FROM up JOIN capybara.conversations c ON c.id = up.ancestor
-        WHERE c.deleted_at IS NULL AND c.parent_conversation_id IS NOT NULL AND up.n < 16
-      )
-      SELECT DISTINCT up.run_id, up.conversation_id, up.status
-      FROM up JOIN capybara.conversations a ON a.id = up.ancestor
-      WHERE a.deleted_at IS NOT NULL
-      LIMIT ${WAIT_SWEEP_BATCH}`.execute(this.db);
-    let total = 0;
-    for (const run of r.rows) {
-      try {
-        // already asked to stop (a worker holds it and stops it at its next check): not again
-        if (run.status === "running" && (await this.abort.requested(run.run_id)) !== null) continue;
-        await this.stopRun(run.conversation_id, run.run_id, run.status, null);
-        total++;
-        this.log.warn("wait sweep: stopped a sub-agent run of a deleted conversation's tree", {
-          runId: run.run_id,
-        });
-      } catch (err) {
-        this.log.error("wait sweep: cannot stop a sub-agent run of a deleted tree", {
-          runId: run.run_id,
-          err,
-        });
-      }
-    }
-    return total;
-  }
-
-  /**
-   * Background sub-agent runs that finished more than the grace period ago (within the last day)
-   * whose parent has no `subagent_finished` for them (agent map spec §10: the finisher died after
-   * the child's terminal commit; the finish path writes `subagent_finished` and the delivery in one
-   * transaction) → {@link childFinished}, idempotent against a late finisher. Keyed on the child
-   * run, so a run nobody dispatched (a wake run, §5.3) is repaired too, and on
-   * `subagent_finished`, not on the delivery, so a child that finished before background
-   * dispatch (its result was the `Agent` call's, its `subagent_finished` written then) is never
-   * delivered a second time. Fork invocations' runs, a run without a terminal event in its log
-   * (nothing to deliver), a conversation never dispatched and a child whose parent conversation
-   * was deleted are skipped; only a written delivery counts.
-   */
-  private async sweepUndelivered(): Promise<number> {
-    const runs = await this.db
-      .selectFrom("runs as cr")
-      .innerJoin("conversations as cc", "cc.id", "cr.conversation_id")
-      .innerJoin("conversations as pc", "pc.id", "cc.parent_conversation_id")
-      .select("cr.id as child_run_id")
-      .where("cc.kind", "=", "subagent")
-      .where("pc.deleted_at", "is", null)
-      .where("cr.status", "in", TERMINAL_RUN_STATUSES)
-      .where(
-        "cr.finished_at",
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-      )
-      .where("cr.finished_at", ">", sql<Date>`now() - interval '1 day'`)
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom("subagent_dispatches as sd")
-            .select(sql`1`.as("one"))
-            .whereRef("sd.child_conversation_id", "=", "cc.id"),
-        ),
-      )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("subagent_dispatches as fd")
-              .select(sql`1`.as("one"))
-              .whereRef("fd.child_run_id", "=", "cr.id")
-              .where("fd.for_skill", "=", true),
-          ),
-        ),
-      )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("conversation_events as e")
-              .select(sql`1`.as("one"))
-              .whereRef("e.conversation_id", "=", "pc.id")
-              .where("e.idem_key", "=", sql<string>`'subagent_finished:' || cr.id`),
-          ),
-        ),
-      )
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom("conversation_events as t")
-            .select(sql`1`.as("one"))
-            .whereRef("t.conversation_id", "=", "cc.id")
-            .whereRef("t.run_id", "=", "cr.id")
-            .where("t.type", "in", ["run_finished", "run_failed", "run_aborted"]),
-        ),
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    let total = 0;
-    for (const r of runs) {
-      try {
-        if (!(await this.childFinished(r.child_run_id))) continue;
-        total++;
-        this.log.warn("wait sweep: delivered the finish of a sub-agent run", {
-          childRunId: r.child_run_id,
-        });
-      } catch (err) {
-        this.log.error("wait sweep: cannot deliver the finish of a sub-agent run", {
-          childRunId: r.child_run_id,
-          err,
-        });
-      }
-    }
-    return total;
-  }
-
-  /**
-   * 扫描 2：waiting 超过宽限期、却已没有 pending 等待的运行（决定提交后进程崩溃、续跑投递失败回滚等）→
-   * {@link resume}（条件更新 `waiting → queued` + 投递）。续跑任务的 jobId 用该运行最近一次等待的 id
-   * （与人工决定 / 超时任务一致，已投递过的同一续跑被 BullMQ 去重）。
-   */
-  private async sweepStuckRuns(): Promise<number> {
-    const runs = await this.db
-      .selectFrom("runs")
-      .select(["id", "conversation_id"])
-      .where("status", "=", "waiting")
-      .where(
-        "waiting_since",
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-      )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("approvals")
-              .select(sql`1`.as("one"))
-              .whereRef("approvals.run_id", "=", "runs.id")
-              .where("approvals.status", "=", "pending"),
-          ),
-        ),
-      )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("questions")
-              .select(sql`1`.as("one"))
-              .whereRef("questions.run_id", "=", "runs.id")
-              .where("questions.status", "=", "pending"),
-          ),
-        ),
-      )
-      // the resume condition's third clause: a run with an active fork child is not stuck
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("subagent_dispatches as sd")
-              .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
-              .select(sql`1`.as("one"))
-              .whereRef("sd.parent_run_id", "=", "runs.id")
-              .where("sd.for_skill", "=", true)
-              .where("cr.status", "in", ACTIVE_RUN_STATUSES),
-          ),
-        ),
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
-    let total = 0;
-    for (const run of runs) {
-      try {
-        const waitId = (await this.lastWaitId(run.id)) ?? run.id;
-        if (!(await this.resume(run.id, waitId))) continue;
-        total++;
-        this.log.warn("wait sweep: resumed stuck waiting run", {
-          runId: run.id,
-          conversationId: run.conversation_id,
-          waitId,
-        });
-      } catch (err) {
-        this.log.error("wait sweep: cannot resume stuck waiting run", { runId: run.id, err });
-      }
-    }
-    return total;
-  }
-
-  /**
-   * The id of the run's latest wait (by creation time): an approval, an input request or a fork
-   * invocation's dispatch, whose wait id is its child run id (the id the child's finisher resumes
-   * with, so a sweep resume and a late finisher resume share one job id).
-   */
-  private async lastWaitId(runId: string): Promise<string | null> {
-    const row = await this.db
-      .selectFrom(
-        this.db
-          .selectFrom("approvals")
-          .select(["id", "created_at"])
-          .where("run_id", "=", runId)
-          .unionAll(
-            this.db
-              .selectFrom("questions")
-              .select(["id", "created_at"])
-              .where("run_id", "=", runId),
-          )
-          .unionAll(
-            this.db
-              .selectFrom("subagent_dispatches")
-              .select(["child_run_id as id", "created_at"])
-              .where("parent_run_id", "=", runId)
-              .where("for_skill", "=", true),
-          )
-          .as("w"),
-      )
-      .select("w.id")
-      .orderBy("w.created_at", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    return row?.id ?? null;
   }
 
   /**
@@ -1314,7 +596,8 @@ export class Waits implements OnApplicationShutdown {
    * `subagent_finished` (idempotent; not model-visible) and tries
    * {@link resume}`(parentRunId, childRunId)`, which succeeds once its parent run waits on nothing
    * else. A run of a conversation never dispatched, or not terminal yet, is left alone. A crash in
-   * between is repaired by the wait sweep (the orphan repair calls this again). A fork child's
+   * between is repaired by the `deliver-to-parent` job its terminal transaction owed (the
+   * `run-orphan-check` calls this too). A fork child's
    * running background tasks the terminal run started are then stopped (not those of a later run);
    * a stopped background child's are all stopped, whichever of its runs started them; a background
    * child that ended on its own keeps them, and their finish wakes it (agent map spec §5.3). True
@@ -1545,65 +828,5 @@ export class Waits implements OnApplicationShutdown {
       .where("id", "=", runId)
       .executeTakeFirst();
     return now?.status === "waiting" && (await this.abortWaiting(conv, runId, byAccountId, detail));
-  }
-}
-
-/**
- * Phase D: finished chat runs (past the grace period, within the last day) triggered by a fork
- * invocation that has no report (dispatched or not); the wait sweep writes it
- * (`pairStoppedForks`).
- */
-export function unreportedForkRuns(
-  db: KernelSchemaDb,
-): Promise<{ parent_run_id: string; parent_conversation_id: string }[]> {
-  return (
-    db
-      .selectFrom("runs as r")
-      .innerJoin("conversation_events as m", (j) =>
-        j.onRef("m.conversation_id", "=", "r.conversation_id").onRef("m.seq", "=", "r.trigger_seq"),
-      )
-      // a sub-agent's task message carries the skill record too: chat conversations only (I1)
-      .innerJoin("conversations as c", "c.id", "r.conversation_id")
-      .select(["r.id as parent_run_id", "r.conversation_id as parent_conversation_id"])
-      .where("c.kind", "=", "chat")
-      .where("r.status", "in", TERMINAL_RUN_STATUSES)
-      .where(
-        "r.finished_at",
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-      )
-      .where("r.finished_at", ">", sql<Date>`now() - interval '1 day'`)
-      .where("m.type", "=", "user_message")
-      .where(sql<boolean>`m.payload -> 'skill' ->> 'mode' = 'fork'`)
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("conversation_events as e")
-              .select(sql`1`.as("one"))
-              .whereRef("e.conversation_id", "=", "r.conversation_id")
-              .where("e.idem_key", "=", sql<string>`'skill_fork_result:' || r.trigger_seq`),
-          ),
-        ),
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute()
-  );
-}
-
-/**
- * The wait sweep, every 10 minutes, once across replicas: {@link Waits.sweep}. Replaces
- * the maintenance scheduler `wait-sweep-every-10m` (retired at worker start).
- */
-@Injectable()
-export class WaitSweepJob {
-  constructor(
-    @Inject(Waits) private readonly waits: Pick<Waits, "sweep">,
-    @Inject(LockService) readonly lockService: LockService,
-    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
-  ) {}
-
-  @LockedCron("*/10 * * * *", { name: WAIT_SWEEP_JOB })
-  async run(): Promise<void> {
-    await this.waits.sweep();
   }
 }

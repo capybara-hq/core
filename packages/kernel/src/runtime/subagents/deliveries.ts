@@ -11,8 +11,7 @@ import { KernelEvents } from "../../infra/events/kernel-events.js";
 import { OutboxService } from "../../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
-import { TERMINAL_STATUSES } from "../run-finish.js";
-import { oweEnsureRun } from "../run-jobs.js";
+import { oweEnsureRun, TERMINAL_STATUSES } from "../run-jobs.js";
 import { childResult, type DispatchRow, deliveryRowOfChildRun, finishedEvent } from "./child.js";
 import { dispatchedIdemKey } from "./dispatch.js";
 
@@ -37,7 +36,7 @@ const DELIVERY_TEXT_MAX = 200_000;
  *
  * A background child's run reaching a terminal state ({@link childFinished}) writes the
  * display-only `subagent_finished` and a `finished` delivery in one transaction, both idempotent by
- * the child run, so of two finishers (the worker and a stop, the orphan sweep) exactly one writes
+ * the child run, so of two finishers (the worker, a stop, the `deliver-to-parent` job, the `run-orphan-check`) exactly one writes
  * them. A run that handed back a report and then completed writes no delivery (acceptance
  * 2026-11-07): the report already told the parent everything, and a content-free "completed" line
  * only woke an idle parent for nothing and pushed the report away from the end of its request. Fork invocations (phase D, `for_skill`) do not deliver: their parent run waits on the child
