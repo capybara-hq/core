@@ -493,6 +493,10 @@ export interface ConnectorsTable {
    * hash, mode: null }`); null when unknown (custom connectors, connectors before 0106).
    */
   guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
+  /** 0118: the git hosts this connector declares (null: none). */
+  git_hosts: ColumnType<string[] | null, string | null | undefined, string | null>;
+  /** 0118: an org-owned connector serves as a git gateway source (personal ones always do). */
+  use_for_git: Generated<boolean>;
 }
 
 /**
