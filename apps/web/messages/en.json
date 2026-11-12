@@ -229,7 +229,7 @@
       "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
-      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
+      "no_extension": "This plugin has no extension, so there is no extension to install on the deployment. Install it into the platform catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now.",
       "field_not_overridable": "This field cannot be set by an organization.",
@@ -408,8 +408,8 @@
     },
     "payload_too_large": "The request is over the size limit.",
     "theme": {
-      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
-      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again.",
+      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and install the plugin again.",
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and install the plugin again.",
       "not_available": "This theme is not available here. Choose one of the themes listed for this setting.",
       "platform_default": "This theme is the platform default. Choose another platform default theme in platform settings first, then narrow, disable or remove it.",
       "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
@@ -3725,14 +3725,14 @@
       "request": {
         "kind": {
           "access": "Access request",
-          "import": "Import request"
+          "import": "Install request"
         },
         "requester": "Requested by",
         "version": "Version",
         "note": "Note",
         "hint": {
           "access": "{org} asks to use this plugin. Approve or reject it in the Pending tab of the Plugins page; once approved, the organization can use it at once.",
-          "import": "{org} asks to bring this plugin in from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the install review, scoped to that organization by default."
+          "import": "{org} asks to install this plugin from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the install review, scoped to that organization by default."
         }
       },
       "permission": {
@@ -3815,7 +3815,7 @@
         "marketplaceUpdated": "Updated a marketplace",
         "marketplaceRemoved": "Removed a marketplace",
         "marketplaceRefreshed": "Refreshed a marketplace",
-        "catalogImported": "Imported a plugin",
+        "catalogImported": "Installed a plugin",
         "catalogPluginStaged": "Staged a plugin package for review",
         "catalogRemoved": "Removed a plugin",
         "catalogScopeChanged": "Changed a plugin's scope",
@@ -4881,7 +4881,7 @@
         "noHash": "The plugin's extension package cannot be read, so it cannot be confirmed yet.",
         "kind": {
           "access": "Asks for access",
-          "import": "Asks to bring in",
+          "import": "Asks to install",
           "enable": "Asks to enable"
         },
         "requester": "By {name}",
@@ -5352,7 +5352,7 @@
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
-      "requestImport": "Request import",
+      "requestImport": "Request install",
       "connectors": "Complete setup",
       "withdraw": "Withdraw",
       "delete": "Delete"
@@ -5389,12 +5389,12 @@
     "market": {
       "title": "Marketplace",
       "empty": "The marketplaces have no entries yet.",
-      "adopted": "Imported",
-      "unavailable": "Cannot be imported",
+      "adopted": "Installed",
+      "unavailable": "Cannot be installed",
       "otherVersions": "Other versions",
       "deprecated": "{version} (deprecated)",
       "deprecatedReason": "{version} (deprecated: {reason})",
-      "requestVersion": "Request import of {version}",
+      "requestVersion": "Request install of {version}",
       "requestedVersion": "Requested {version}, waiting"
     },
     "detail": {

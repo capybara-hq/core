@@ -607,7 +607,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(src("plain")).toBeNull();
   });
 
-  it("org admins: the 市场 tab lists the entries with 申请引入; it is hidden when browsing is off", async () => {
+  it("org admins: the 市场 tab lists the entries with 申请安装; it is hidden when browsing is off", async () => {
     const p = en.plugins;
     const entry = {
       sourceId: "official",

@@ -229,7 +229,7 @@
       "single_provider_required": "这个能力由部署必需的插件提供，不能替换。",
       "package_invalid": "扩展包不合法：",
       "legacy_format": "该包是 0.1.0 之前的旧格式。请用 pnpm pack-plugin 重新打包为带 .capybara-plugin/plugin.json 的插件后再上传。",
-      "no_extension": "该插件不含扩展，部署上没有可安装的内容。请改为导入到目录。",
+      "no_extension": "该插件不含扩展，部署上没有可安装的扩展。请改为安装到平台目录。",
       "package_too_large": "扩展包超过大小上限。",
       "unavailable": "扩展当前不可用。",
       "field_not_overridable": "这个字段不能由组织设置。",
@@ -408,8 +408,8 @@
     },
     "payload_too_large": "内容超过大小上限。",
     "theme": {
-      "invalid": "该插件的某个主题不合法。请修正主题文件或其字体、标志后重新导入插件。",
-      "unreadable": "该插件的某个主题可读性不足：部分文字与背景的对比度不够。请修正列出的配色后重新导入插件。",
+      "invalid": "该插件的某个主题不合法。请修正主题文件或其字体、标志后重新安装插件。",
+      "unreadable": "该插件的某个主题可读性不足：部分文字与背景的对比度不够。请修正列出的配色后重新安装插件。",
       "not_available": "该主题在此处不可用。请从此设置列出的主题中选择。",
       "platform_default": "该主题是平台默认主题。请先在平台设置中选择其他平台默认主题，再收窄范围、停用或移除它。",
       "id_taken": "该组织中已启用了同一 ID 的另一个主题；请先关闭或移除它。",
@@ -3713,14 +3713,14 @@
       "request": {
         "kind": {
           "access": "申请使用",
-          "import": "申请引入"
+          "import": "申请安装"
         },
         "requester": "申请人",
         "version": "版本",
         "note": "说明",
         "hint": {
           "access": "{org} 申请使用这个插件。在插件页的待确认中批准或拒绝；批准后这个组织立即可以使用。",
-          "import": "{org} 申请从市场引入这个插件。在插件页的待确认中批准或拒绝；批准后进入安装审阅，范围默认是这个组织。"
+          "import": "{org} 申请从市场安装这个插件。在插件页的待确认中批准或拒绝；批准后进入安装审阅，范围默认是这个组织。"
         }
       },
       "permission": {
@@ -3803,7 +3803,7 @@
         "marketplaceUpdated": "修改了市场",
         "marketplaceRemoved": "移除了市场",
         "marketplaceRefreshed": "刷新了市场",
-        "catalogImported": "导入了插件",
+        "catalogImported": "安装了插件",
         "catalogPluginStaged": "上传了插件包待审阅",
         "catalogRemoved": "移除了插件",
         "catalogScopeChanged": "修改了插件范围",
@@ -4869,7 +4869,7 @@
         "noHash": "读不出这个插件的扩展包，暂时无法确认。",
         "kind": {
           "access": "申请使用",
-          "import": "申请引入",
+          "import": "申请安装",
           "enable": "申请启用"
         },
         "requester": "申请人 {name}",
@@ -5340,7 +5340,7 @@
       "disable": "停用",
       "request": "申请",
       "requestEnable": "申请启用",
-      "requestImport": "申请引入",
+      "requestImport": "申请安装",
       "connectors": "补充配置",
       "withdraw": "撤回",
       "delete": "删除"
@@ -5377,12 +5377,12 @@
     "market": {
       "title": "市场",
       "empty": "市场里还没有条目。",
-      "adopted": "已引入",
-      "unavailable": "不能引入",
+      "adopted": "已安装",
+      "unavailable": "不能安装",
       "otherVersions": "其他版本",
       "deprecated": "{version} 已废弃",
       "deprecatedReason": "{version} 已废弃：{reason}",
-      "requestVersion": "申请引入 {version}",
+      "requestVersion": "申请安装 {version}",
       "requestedVersion": "已申请 {version}，等待处理"
     },
     "detail": {
