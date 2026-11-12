@@ -73,8 +73,10 @@ const SPEC: ToolSpec = {
     "sandbox is suspended (it is suspended after it has been running for a while, " +
     "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.\n\n" +
     "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted'. A blocked domain is reported after " +
-    "the output.",
+    "that ignores them fails with 'Operation not permitted' or cannot resolve names. Such tools, " +
+    "browsers for example, need the proxy passed explicitly: for Chromium (also headless, as " +
+    "Playwright or Puppeteer launch it) pass --proxy-server=$HTTPS_PROXY. A blocked domain is " +
+    "reported after the output.",
   inputSchema: {
     type: "object",
     properties: {
