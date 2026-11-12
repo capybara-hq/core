@@ -597,8 +597,11 @@ the exclusive lease. Nothing in process memory. Every lookup is org-scoped as to
 
 - Kernel: `org.settings_updated` covers `sandboxTier` (before / after); `device.tier_changed`
   (cloud: by the owner; local: the `policy` op, recorded with the existing `device.policy_changed`
-  plus `tier`); `device.isolation_reported` when a device's hello first reports
-  `isolation: "none"` and when it returns to `sandbox`; a refused use of an unsandboxed device is
+  plus `tier`); `device.isolation_reported` when a device's hello or `policy` frame first reports
+  `isolation: "none"` and when it returns to `sandbox`. A connected program pushes a `policy`
+  frame (the summary now) whenever its summary changes while connected: its policy file edited on
+  the machine (checked every 2 s), the localhost proxy guard flipping, a new tier ceiling after an
+  exec; the kernel stores it as it stores the hello's; a refused use of an unsandboxed device is
   logged (warn), not audited per call.
 - Device: the local command log records tier and isolation per command and every policy change.
 - Web: the device page's recent changes include tier and isolation changes.
@@ -638,8 +641,14 @@ The device list and the composer's device picker show a badge for 开放 (warn t
 
 ### 11.3 Admin console (super admin)
 
-The deployment's tiers are config (`sandbox.tiers.*`, hot); the admin console's sandbox page shows
-them read-only with the config keys, as it does for `sandbox.limits` today.
+The deployment's tiers are config (`sandbox.tiers.*`, hot) and a deployment setting the super admin
+edits on the admin settings page, section 「沙箱级别」 (acceptance gap, 2026-11-12): 最高级别 as three
+cards (raising it to 开放 asks first with the risk text), 默认级别 (at most the highest) and
+「允许设备不使用沙箱」. Each field is read env > config file / Nacos > the stored setting
+(`deployment_settings` key `sandboxTiers`) > default; a field set in the startup config is shown
+read-only with its source. `PUT /api/v1/admin/settings` `sandboxTiers` refuses a default above the
+max; an API token or the Platform tool (`admin.update-settings`) may only lower the tiers. Lowering
+the max rewrites no org: the effective policy cuts every org's ceiling and default (§4.2).
 
 ### 11.4 Scheduled and unattended runs
 

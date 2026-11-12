@@ -8,6 +8,7 @@ import {
   mkdirSync,
   openSync,
   realpathSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -127,6 +128,65 @@ export function cacheEnv(root: string, opts: { create?: boolean } = {}): Record<
   // fixed-name folder (mode 0700, empty) in the link's target. Nothing is removed or followed
   // further, and this recheck of the root's device and inode drops every variable.
   if (create && realDirId(root) !== rootId) return {};
+  return out;
+}
+
+/**
+ * The data directories of version managers, relative to the home: the OS sandbox sets HOME to the
+ * workspace, so their shims would look there and fail ("unknown command: python3. Perhaps you
+ * have to reshim?"). mise's follow XDG_DATA_HOME / XDG_CONFIG_HOME when the device's environment
+ * sets them. CARGO_HOME is a package cache ({@link cacheEnv}).
+ */
+export const TOOL_HOME_DIRS: readonly (readonly [string, string])[] = [
+  ["ASDF_DATA_DIR", ".asdf"],
+  ["NVM_DIR", ".nvm"],
+  ["PYENV_ROOT", ".pyenv"],
+  ["RBENV_ROOT", ".rbenv"],
+  ["MISE_DATA_DIR", ".local/share/mise"],
+  ["MISE_CONFIG_DIR", ".config/mise"],
+  ["VOLTA_HOME", ".volta"],
+  ["SDKMAN_DIR", ".sdkman"],
+  ["RUSTUP_HOME", ".rustup"],
+];
+
+function isDir(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The version manager variables of an OS-sandboxed command ({@link TOOL_HOME_DIRS}): a variable
+ * the device's environment `env` sets to an absolute path is passed on; an unset one points at its
+ * default directory under the real `home` when that is a directory. The sandbox only reads them
+ * (they are never made writable); the secret paths stay denied. asdf's global `.tool-versions`
+ * is still found: asdf walks up from the working directory, and the device directory is under the
+ * home.
+ */
+export function toolHomeEnv(
+  home: string,
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const xdg = (name: string, rel: string): string => {
+    const v = env[name];
+    return v !== undefined && isAbsolute(v) ? v : join(home, rel);
+  };
+  const defaults: Record<string, string> = {
+    MISE_DATA_DIR: join(xdg("XDG_DATA_HOME", ".local/share"), "mise"),
+    MISE_CONFIG_DIR: join(xdg("XDG_CONFIG_HOME", ".config"), "mise"),
+  };
+  const out: Record<string, string> = {};
+  for (const [name, rel] of TOOL_HOME_DIRS) {
+    const set = env[name];
+    if (set !== undefined && set !== "") {
+      if (isAbsolute(set)) out[name] = set;
+      continue;
+    }
+    const dir = defaults[name] ?? join(home, rel);
+    if (isDir(dir)) out[name] = dir;
+  }
   return out;
 }
 

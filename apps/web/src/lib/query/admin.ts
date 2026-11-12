@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import {
   type DeploymentSettingsPatch,
   getAdminAttention,
@@ -135,6 +136,23 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
     ...[...orgIds].map((id) => keys.org(id).orgSettings()),
   ];
 };
+
+/**
+ * After a change of the platform's sandbox levels: every cached org's settings (the platform's
+ * levels ride on them) and devices (their effective level) are stale.
+ */
+export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
+  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
+    prefix.every((p, i) => k[i] === p);
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" &&
+      typeof k[1] === "string" &&
+      (under(k, keys.org(k[1]).orgSettings()) ||
+        under(k, keys.org(k[1]).devices()) ||
+        under(k, keys.org(k[1]).device(String(k[3])))),
+  });
+}
 
 /** The providers with their models and the price table. */
 export const adminModelsQuery = () =>

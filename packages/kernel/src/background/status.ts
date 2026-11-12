@@ -1,5 +1,5 @@
 import type { BackgroundFinish } from "./finish.js";
-import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
+import { SESSION_MODE_SCRIPT, TASK_ID_RE, TASKS_DIR } from "./launch.js";
 import { decodeTail, killSessionScript, SID_RE, tailCommand } from "./session.js";
 import { exitedAs } from "./stop.js";
 import type { BackgroundTaskRow } from "./store.js";
@@ -15,7 +15,7 @@ export interface TaskReport {
   /** The exit file's code; null while there is none. */
   exitCode: number | null;
   /**
-   * Whether the session still has a process: `pgrep -s <sid>`, or, for a task whose command
+   * Whether the session still has a process: `pgrep -s <sid>` (`-g` on macOS), or, for a task whose command
    * exited, whether its leftover processes could not be confirmed killed.
    */
   alive: boolean;
@@ -39,7 +39,7 @@ export function pollScript(tasks: { id: string; sid: string }[]): string {
     }
     const f = `${TASKS_DIR}/${id}`;
     return [
-      `if pgrep -s ${sid} >/dev/null 2>&1; then a=1; else a=0; fi`,
+      `if tk_alive ${sid}; then a=1; else a=0; fi`,
       `if [ -s ${f}.exit ]; then c=$(tr -dc '0-9-' < ${f}.exit); else c=-; fi`,
       `[ -n "$c" ] || c=-`,
       `if [ "$c" != - ] && [ "$a" = 1 ]; then ${killSessionScript(sid)}; [ "$ks" = 0 ] && a=0; fi`,
@@ -47,7 +47,7 @@ export function pollScript(tasks: { id: string; sid: string }[]): string {
       `echo "${id} $c $a \${t:--}"`,
     ].join("\n");
   });
-  return lines.join("\n");
+  return [SESSION_MODE_SCRIPT, ...lines].join("\n");
 }
 
 /** Parses {@link pollScript}'s output; a task missing from it is absent from the map. */

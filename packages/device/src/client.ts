@@ -59,6 +59,11 @@ export interface ConnectOptions {
   livenessMs?: number;
   /** Terminate a socket still closing this long after we asked it to close (default 2 s). */
   closeTimeoutMs?: number;
+  /**
+   * How often a connected program checks its policy summary for a change made on the machine
+   * (default 2 s); a change is pushed to the deployment as a `policy` frame.
+   */
+  policyCheckMs?: number;
 }
 
 /**
@@ -111,6 +116,7 @@ export function connect(
   const stableMs = opts.stableMs ?? 10_000;
   const livenessMs = opts.livenessMs ?? 60_000;
   const closeTimeoutMs = opts.closeTimeoutMs ?? 2000;
+  const policyCheckMs = opts.policyCheckMs ?? 2000;
 
   const lifetime = new AbortController();
   let ws: WebSocket | undefined;
@@ -143,6 +149,30 @@ export function connect(
   };
 
   const isOpen = (): boolean => ws !== undefined && ws.readyState === WebSocket.OPEN;
+
+  /** The policy summary now: the store's policy (re-read when its file changed) and the facts. */
+  const summaryNow = () =>
+    opts.policy === undefined
+      ? undefined
+      : policySummary(opts.policy.current(), summaryFacts(executor, ctx));
+  /** The summary the deployment last got on this connection (hello, `policy` op, `policy` frame). */
+  let sentPolicy: string | undefined;
+
+  /**
+   * Pushes the policy summary when it differs from the one the deployment last got: the owner
+   * changed the policy on the machine (`capybara-device policy ...`), the localhost proxy guard
+   * flipped, or an exec brought a new tier ceiling. Without it the deployment would learn the
+   * change only at the next connect.
+   */
+  const pushPolicy = (): void => {
+    if (!isOpen()) return;
+    const summary = summaryNow();
+    if (summary === undefined) return;
+    const json = JSON.stringify(summary);
+    if (json === sentPolicy) return;
+    sentPolicy = json;
+    ws?.send(JSON.stringify({ type: "policy", policy: summary }));
+  };
 
   /** `res`, or an error answer when its frame would exceed the deployment's frame limit. */
   const fit = (res: DeviceRes): DeviceRes =>
@@ -240,7 +270,13 @@ export function connect(
         }
         return;
       } else {
+        // a policy op's answer carries the summary the deployment stores
+        if (req.op === "policy" && res.ok) {
+          sentPolicy = JSON.stringify((res.result as { policy: unknown }).policy);
+        }
         deliver(res);
+        // an exec may have changed the facts (the proxy guard, the tier ceiling)
+        pushPolicy();
       }
       maybeFinishDrain();
     });
@@ -284,6 +320,8 @@ export function connect(
    * `devHosts`); the policy summary is the store's policy now, with the latest ceiling seen.
    */
   const hello = (): DeviceHello => {
+    const summary = summaryNow();
+    sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
     const features: DeviceFeature[] = [];
     if (executor.mode === "os") features.push("networkReport");
     if (opts.policy !== undefined) features.push("policyOp");
@@ -298,9 +336,7 @@ export function connect(
       roots: executor.roots,
       sessionIsolation: false,
       features,
-      ...(opts.policy !== undefined && {
-        policy: policySummary(opts.policy.current(), summaryFacts(executor, ctx)),
-      }),
+      ...(summary !== undefined && { policy: summary }),
     };
   };
 
@@ -328,6 +364,7 @@ export function connect(
       ws = sock;
       let liveness: ReturnType<typeof setTimeout> | undefined;
       let stable: ReturnType<typeof setTimeout> | undefined;
+      let policyCheck: ReturnType<typeof setInterval> | undefined;
       let opened = false;
       /** The deployment answered the upgrade with an HTTP status (already handled). */
       let answered = false;
@@ -344,6 +381,7 @@ export function connect(
           lastReport = undefined;
         }, stableMs);
         sock.send(JSON.stringify(hello()));
+        if (opts.policy !== undefined) policyCheck = setInterval(pushPolicy, policyCheckMs);
         prune();
         for (const [id, p] of pending) {
           pending.delete(id);
@@ -381,6 +419,7 @@ export function connect(
       sock.on("close", (code, reason) => {
         clearTimeout(liveness);
         clearTimeout(stable);
+        clearInterval(policyCheck);
         if (ws === sock) ws = undefined;
         if (exitAfterStop) return endSession(exitAfterStop);
         if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });

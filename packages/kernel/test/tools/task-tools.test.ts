@@ -329,10 +329,10 @@ describe("TaskOutput", () => {
     const s = taskReadScript({ id: "bt_abcdef", sid: "42", running: true }, 1000, SPILL);
     expect(s).toContain(`tail -c +1001 .capybara/tasks/bt_abcdef.out`);
     expect(s).toContain(`| head -c ${SPILL} |`);
-    expect(s).toContain("pgrep -s 42");
+    expect(s).toContain("tk_alive 42");
     // a finished task's read checks no liveness
     expect(taskReadScript({ id: "bt_abcdef", sid: "42", running: false }, 0, 10)).not.toContain(
-      "pgrep",
+      "tk_alive",
     );
   });
 

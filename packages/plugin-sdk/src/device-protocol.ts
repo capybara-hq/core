@@ -119,7 +119,18 @@ export interface KernelCancel {
   id: string;
 }
 
-export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+/**
+ * The device's local policy changed while connected (its file was edited on the machine, the
+ * localhost proxy guard flipped, a new tier ceiling): the summary as it is now, sent only when it
+ * differs from the last one sent on this connection. `policy` is absent when the frame's summary
+ * was unreadable; the kernel then keeps only its isolation, from the raw frame, as for the hello.
+ */
+export interface DevicePolicyChanged {
+  type: "policy";
+  policy?: DeviceLocalPolicySummary;
+}
+
+export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 export interface DeviceExecArgs {
   command: string;
@@ -344,14 +355,18 @@ function optionalHelloFields(o: Record<string, unknown>): Pick<DeviceHello, "fea
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
-  if (o.policy !== undefined) {
-    try {
-      out.policy = parsePolicySummary(o.policy);
-    } catch {
-      // an unreadable summary is the same as none: the kernel learns the policy later
-    }
+  return { ...out, ...optionalPolicy(o.policy) };
+}
+
+/** A summary field that is dropped when absent or unreadable. */
+function optionalPolicy(v: unknown): Pick<DeviceHello, "policy"> {
+  if (v === undefined) return {};
+  try {
+    return { policy: parsePolicySummary(v) };
+  } catch {
+    // an unreadable summary is the same as none: the kernel learns the policy later
+    return {};
   }
-  return out;
 }
 
 const BLOCK_LAYERS: readonly NetworkBlockLayer[] = ["device", "org", "address", "unknown"];
@@ -561,7 +576,8 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
 }
 
 /**
- * Parses one WebSocket text frame. `from` is the sender: a device may send `hello` and `res`, the
+ * Parses one WebSocket text frame. `from` is the sender: a device may send `hello`, `res` and
+ * `policy`, the
  * kernel `req` and `cancel`. Throws {@link DeviceProtocolError} on bad JSON, an unknown `type`,
  * missing fields or a frame of the wrong direction.
  */
@@ -577,7 +593,9 @@ export function parseDeviceFrame(raw: string, from: "device" | "kernel"): Device
   switch (type) {
     case "hello":
     case "res":
+    case "policy":
       if (from !== "device") throw new DeviceProtocolError(`"${type}" must come from the device`);
+      if (type === "policy") return { type, ...optionalPolicy(o.policy) };
       return type === "hello" ? parseHello(o) : parseRes(o);
     case "req":
     case "cancel":

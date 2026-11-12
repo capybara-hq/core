@@ -1,8 +1,8 @@
 # Scheduled tasks: a calendar view
 
 - Date: 2026-11-12, written against `origin/main` at `859a6639`.
-- Status: draft for the maintainer's review. No code before it is approved; then a plan in
-  `docs/superpowers/plans/`.
+- Status: approved by the maintainer on 2026-11-12 with every recommendation of §15 (Q1–Q5, recorded
+  there); implemented by `docs/superpowers/plans/2026-11-12-scheduled-tasks-calendar.md`.
 - Related: scheduled tasks (`2026-11-11-scheduled-tasks-design.md`, merged as core#179; "the tasks
   spec" below, cited by section), the design system (`docs/design/spec.md`, "the design spec"), the
   web query cache (`2026-11-03-web-query-cache-design.md`), the `writing-web-ui` and
@@ -85,16 +85,16 @@ Anti-goals (a failure even if it works):
 ### 4.1 Switch and URL
 
 - The page head of `/schedules` keeps its title, description and 新建定时任务 primary. Its **tab
-  row** holds 列表 / 日历 (designer's call, Q1): the design spec's tab row is the pattern for "pages
+  row** holds 列表 / 日历 (decided, Q1): the design spec's tab row is the pattern for "pages
   with views" (§4.2 row 4), while `Segmented` is a control inside content (§6.4). The tabs change the
   view with `onSelect` and a `router.replace` of the query, no reload.
 - URL: `/schedules` (list), `/schedules?view=calendar` (calendar), plus `&range=week|month`
   (absent = `week`), `&date=YYYY-MM-DD` (any day of the shown week or month, in the viewer's zone;
   absent = today) and `&scope=all` (admins; absent = mine). Every state is a URL, so a reload, Back
   and a shared link show the same view.
-- **Remembered view** (decided: URL plus a per-viewer convenience): the last chosen tab and range are
+- **Remembered view** (decided: URL plus a per-viewer convenience; a cookie, Q5): the last chosen tab and range are
   stored in a cookie `cap_schedules_view` (`list | calendar`, `week | month`; `SameSite=Lax`,
-  one year, not `HttpOnly` since only the client writes it) (designer's call). `page.tsx` reads the
+  one year, not `HttpOnly` since only the client writes it). `page.tsx` reads the
   cookie and `searchParams` (no kernel read, allowed by `web-query-page-read`) and passes the
   effective view to the view, so the first paint is already the remembered view; `localStorage` is
   not used because a server render cannot read it and the page would flash the list first. An
@@ -169,7 +169,7 @@ as `Subsection variant="divided"` regions (design spec §6.7, one box, no cards)
   the error as an `ErrorDetail` (own tasks only, §5.1), missing grants as a count linking to the task page, 试运行 / 手动
   marks, and a `LinkButton` 打开会话 to `/chat/<conversationId>` when the viewer is the task's
   creator (an admin viewing another member's run sees no link: the conversation is the creator's;
-  designer's call, Q3). For an occurrence: 「计划运行」 and one `prose-small` `muted` sentence:
+  decided, Q3). For an occurrence: 「计划运行」 and one `prose-small` `muted` sentence:
   「到时如遇上次运行未结束、组织运行上限或设备离线，本次会跳过。」.
 - **任务**: the schedule in words with its zone (the existing `useScheduleWords`), the agent, where
   runs go (new conversation / the conversation / the chat), the task status and its next run.
@@ -375,8 +375,7 @@ is told by color alone.
 
 - Selected block: a 1 px `line-strong` border (the neutral selection inside a control, §2.3), never
   the accent.
-- Q2 asks whether succeeded runs should be colored (the direction said "colored by state"); this
-  table keeps the system's rule.
+- Succeeded runs are not colored (decided, Q2): the table keeps the system's rule.
 - **Tokens**: all colors above are existing tokens; no new color token (designer's call). New
   `contrast` pairs in `docs/design/tokens.json`: `fail` on `selected` (4.5) and `ink` / `muted` on `hover`
   where missing, checked by `check:tokens`. New size tokens: `layout.calendar-axis` (48),
@@ -531,23 +530,18 @@ The SQL shape of the run read; where `ticksIn` checks the budget; the cookie hel
 exact skeleton shape of the loading grid; the Popover's max height; the scroll-to-07:00 mechanics;
 the collapsed label parser for step crons (anything it cannot name falls back to 「N 次运行」).
 
-## 15. Open questions for the maintainer
+## 15. Decided questions
 
-- **Q1. The 列表 / 日历 switch: head tabs or a Segmented?** The direction said a segmented switch;
-  the design spec puts a page's views in the head's tab row and keeps `Segmented` for controls inside
-  content. *Recommendation:* head tabs (no new head slot, same look as every other page with views).
-- **Q2. Color succeeded runs?** The direction said blocks are "colored by state"; design principle 3
-  leaves success uncolored (only failed in `fail`, running in the accent's text role, upcoming as a
-  dashed outline). *Recommendation:* keep the system's rule; states stay distinct through icon,
-  ground and outline.
-- **Q3. Admins and other members' conversations.** In 全组织 an admin sees another member's run.
-  *Recommendation:* show its status and skip reason only: no 打开会话 link, and the kernel does not
-  even return the conversation id or the error text for another member's run (the conversation and
-  what the run did are the creator's; admins do not read members' conversations elsewhere either).
-  If admins should see failures' error text, say so and §5.1 returns `error` for them.
-- **Q4. The run's reply in the panel?** *Recommendation:* not in this version: the panel links to
-  the conversation; an excerpt would need a new read of the conversation log and a privacy rule.
-- **Q5. Remember the view per browser (cookie) or per account (a kernel preference)?**
-  *Recommendation:* the cookie: no kernel change and no migration (a per-account preference would
-  add both), first paint correct, and the choice is a viewing
-  convenience, not a setting that should follow the person to another device.
+All five were answered by the maintainer on 2026-11-12, each with the recommendation:
+
+- **Q1. The 列表 / 日历 switch** (decided): the page head's tab row, not a `Segmented`.
+- **Q2. Succeeded runs** (decided): not colored; the run states follow the design system's status
+  rules (§6.2): failed in `fail`, running in the accent's text role, upcoming as a dashed outline,
+  succeeded and skipped neutral, every state with its icon and words.
+- **Q3. Admins and other members' runs** (decided): in 全组织 an admin gets a run's status and skip
+  reason only: no 打开会话 link, and the kernel returns no conversation id and no error text for
+  another member's run (route and Platform operation alike, §5.1).
+- **Q4. The run's reply in the panel** (decided): not in this version; the panel links to the
+  conversation (own runs only).
+- **Q5. Remembering the view** (decided): a per-browser cookie (`cap_schedules_view`, §4.1); no
+  kernel preference and no migration.

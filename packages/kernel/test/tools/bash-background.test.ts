@@ -51,7 +51,7 @@ let launchResult: ExecResult | undefined;
 let noInstance: boolean;
 /** The launch exec throws: before running the script, or after it ran (its output lost). */
 let launchThrows: "before" | "after" | undefined;
-/** Kill execs (`pkill -KILL -s` loops) answer exit status 2, when set. */
+/** Kill execs (`tk_kill KILL` loops) answer exit status 2, when set. */
 let killFails: boolean;
 /** `withSandbox` throws after its callback returned (a lease release failing), when set. */
 let leaveThrows: boolean;
@@ -109,7 +109,7 @@ beforeEach(async () => {
         if (t.sid === null) expect(await store.claimStop(t.id)).toBe(true);
       }
     }
-    if (killFails && args.command.includes("pkill -KILL -s")) {
+    if (killFails && args.command.includes("tk_kill KILL")) {
       return { exitCode: 2, stdout: "", stderr: "", truncated: false, timedOut: false };
     }
     const r = await impl.exec(h, args);
