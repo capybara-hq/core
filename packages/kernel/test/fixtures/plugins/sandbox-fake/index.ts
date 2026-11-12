@@ -64,7 +64,7 @@ import { z } from "zod";
  *   as stopping a container does.
  * - limits (sandbox dev tiers spec §7.1): `updateMode` (deployment config or
  *   {@link FakeSandboxOptions}) gives the provider an `update` that answers `updated` (and records
- *   the new limits in the instance's `meta.json`) or `recreate`; `none` (the default) has no
+ *   the new limits in the instance's `meta.json`), `recreate`, or fails (`throw`); `none` (the default) has no
  *   `update`. `limitsApplyAt` is declared as given. Every limits a `create-fs`, `create` or
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
@@ -77,14 +77,14 @@ import { z } from "zod";
 
 const Deployment = z.object({
   root: z.string().min(1),
-  updateMode: z.enum(["updated", "recreate", "none"]).optional(),
+  updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
   limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
 });
 
 /** How the fake applies new limits (see the file header). */
 export interface FakeSandboxOptions {
-  /** `update`'s answer; `none` (default): no `update` method. */
-  updateMode?: "updated" | "recreate" | "none";
+  /** `update`'s answer (`throw`: it fails with an ordinary error); `none` (default): no `update`. */
+  updateMode?: "updated" | "recreate" | "throw" | "none";
   limitsApplyAt?: "instance" | "fileSystem";
 }
 
@@ -852,13 +852,14 @@ export function createFakeSandbox(
       const meta = await fakeSandboxMeta(root, h.id);
       if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
       await logLimits({ op: "update", id: h.id, limits });
+      await log(`update ${h.id} ${mode}`);
+      if (mode === "throw") throw new Error("fake update failed");
       if (mode === "updated") {
         await writeFile(
           join(instanceDir(root, h.id), "meta.json"),
           JSON.stringify({ ...meta, limits }),
         );
       }
-      await log(`update ${h.id} ${mode}`);
       return mode;
     };
   }

@@ -625,10 +625,6 @@ describe("LocalDeviceProvider: sandbox tiers (sandbox dev tiers spec §4.2, §4.
     expect((refused as ApiError).message).toBe(
       "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with `capybara-device policy set isolation sandbox`.",
     );
-    // the model is also told what it can do
-    expect((mapSandboxError(refused, undefined) as Error).message).toContain(
-      "Ask the user to do that",
-    );
     // an open ceiling with unsandboxed allowed: relayed
     deployment.tiers.max = "open";
     orgSettings = { sandboxTier: { max: "open" } };

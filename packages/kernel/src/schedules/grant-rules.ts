@@ -118,7 +118,10 @@ export const networkGrantHost = (key: string): string => key.slice(NETWORK_GRANT
 
 /** What {@link networkGrantRefusal} checks a host against. */
 export interface NetworkGrantContext {
-  /** The org's effective sandbox egress now (`SandboxService.orgLimits`). */
+  /**
+   * The network of the org's sandbox ceiling now (`SandboxService.ceilingLimits`): the most a
+   * device's command may reach.
+   */
   limits: Pick<SandboxLimits, "egress" | "allowHosts">;
   /**
    * The local policy summary of the task's device (its active machine); null or undefined when

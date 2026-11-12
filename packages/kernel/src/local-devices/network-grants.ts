@@ -9,7 +9,6 @@ import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
 import { appendMissingGrant, taskGrantsRunOf, unattendedTierOf } from "../schedules/unattended.js";
-import { localPolicyOf } from "./policy-summary.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -236,8 +235,9 @@ export class NetworkGrants {
 
   /**
    * Whether the device's active machine last reported running commands without a sandbox
-   * (`device_machines.local_policy.isolation`, read fresh at each exec, spec §4.3). False without
-   * a machine or a valid summary: the device enforces its policy itself.
+   * (`device_machines.local_policy.isolation`, read fresh at each exec, spec §4.3), read from the
+   * stored JSON on its own. False without a machine or a summary: the device enforces its policy
+   * itself.
    */
   async unsandboxed(deviceId: string): Promise<boolean> {
     const row = await this.db
@@ -246,7 +246,14 @@ export class NetworkGrants {
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
       .executeTakeFirst();
-    return localPolicyOf(row?.local_policy)?.isolation === "none";
+    // the isolation field alone, whatever else the summary holds: an unparsable summary (a newer
+    // or broken program) must not hide that the machine runs without a sandbox
+    const raw = row?.local_policy;
+    return (
+      typeof raw === "object" &&
+      raw !== null &&
+      (raw as { isolation?: unknown }).isolation === "none"
+    );
   }
 
   /** The runs of the tree whose budget run is `root`. */

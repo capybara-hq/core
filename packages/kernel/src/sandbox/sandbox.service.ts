@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  compareTiers,
   type ExecResult,
   type FileSystemHandle,
   isFileSystemGoneError,
@@ -534,11 +535,13 @@ export class SandboxService {
   }
 
   /**
-   * The org's effective sandbox limits for a device that follows the org's default tier
-   * ({@link deviceLimits} without a device): what a network grant or approval is checked against.
+   * The limits of the org's ceiling (its highest tier, {@link deviceLimits} at `ceiling`): what a
+   * local device's exec may reach at most, so what a network grant or approval is checked
+   * against.
    */
-  async orgLimits(orgId: string): Promise<SandboxLimits> {
-    return this.deviceLimits({ orgId });
+  async ceilingLimits(orgId: string): Promise<SandboxLimits> {
+    const policy = await this.devicePolicy({ orgId });
+    return await this.deviceLimits({ orgId }, { policy, tier: policy.ceiling });
   }
 
   /**
@@ -750,7 +753,8 @@ export class SandboxService {
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const env = ctx.deviceId;
     const holder = ctx.holderConversationId;
-    const want = await this.wantedLimits(ctx, p);
+    // decides the shared fast path only: the exclusive path reads it again under the lease
+    let want = await this.wantedLimits(ctx, p);
     let e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, null, want));
     try {
       try {
@@ -762,6 +766,7 @@ export class SandboxService {
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(env, prev);
+        want = await this.wantedLimits(ctx, p);
         e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, gone, want));
         // a reset seen on the first try still has to be told (it covers the restart)
         const info: EnteredInfo = prev.info.filesReset
@@ -782,19 +787,24 @@ export class SandboxService {
   /**
    * The limits a cloud device's instance must run with for this use (sandbox dev tiers spec
    * §7.1), read fresh; null for a local device (its machine gets the tier with each command).
-   * A scheduled run without a person on a cloud device whose effective tier is open, without the
+   * `row`: the instance row read under the exclusive lease (read here when absent).
+   *
+   * A scheduled run without a person on a cloud device that may run in the open tier, without the
    * task's `tier:open` grant, is refused (`device.tier_not_granted`, recorded in the task run's
    * `missing_grants`): the tier belongs to the shared instance, so it is not switched under the
-   * device's attended sessions (spec §11.4).
+   * device's attended sessions (spec §11.4). The tier it may run in is the effective one, or for a
+   * provider whose limits are fixed at its file system the higher of that and the recorded one
+   * (a NULL record there counts as open: nothing says the file system is narrower).
    */
   private async wantedLimits(
     ctx: SandboxUseContext,
     p: SandboxProviderEntry,
+    row?: Row,
   ): Promise<SandboxLimits | null> {
     if (p.plugin === LOCAL_PROVIDER) return null;
     const policy = await this.devicePolicy(ctx);
     const runId = ctx.actor.runId;
-    if (policy.tier === "open" && runId !== undefined) {
+    if (runId !== undefined && (await this.mayRunOpen(ctx, p, policy.tier, row))) {
       const u = await unattendedTierOf(this.db.db, runId, ctx.deviceId);
       if (u !== null && !u.openGranted) {
         await appendMissingGrant(this.db.db, u.taskRunId, TIER_OPEN_GRANT_KEY).catch(
@@ -809,6 +819,31 @@ export class SandboxService {
       }
     }
     return await this.deviceLimits(ctx, { policy });
+  }
+
+  /**
+   * Whether the device's instance may run in the open tier during this use (see
+   * {@link wantedLimits}): the effective tier is open, or the provider fixes limits at its file
+   * system and the recorded tier is open or unknown.
+   */
+  private async mayRunOpen(
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    tier: SandboxTier,
+    row?: Row,
+  ): Promise<boolean> {
+    if (tier === "open") return true;
+    if (p.impl.limitsApplyAt !== "fileSystem") return false;
+    const r =
+      row ??
+      (await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", ctx.deviceId)
+        .executeTakeFirst());
+    if (r === undefined || r.fs_status !== "ready" || r.provider !== p.plugin) return false;
+    const applied = readInstanceLimits(r.instance_limits).applied;
+    return applied === null || compareTiers(applied.tier, "open") >= 0;
   }
 
   /**
@@ -933,7 +968,7 @@ export class SandboxService {
         } else {
           const lease = await this.leases.tryExclusive(env, { token, intent: true });
           intent = lease === null;
-          if (lease) return await this.asExclusive(ctx, p, lease, gone, signal, want);
+          if (lease) return await this.asExclusive(ctx, p, lease, gone, signal);
         }
         if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
         await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
@@ -1043,12 +1078,11 @@ export class SandboxService {
     lease: SandboxLease,
     gone: Instance | null,
     signal: AbortSignal,
-    want: SandboxLimits | null,
   ): Promise<Entered> {
     const env = ctx.deviceId;
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
-      const s = await this.ensure(ctx, p, lease, sig, gone, want);
+      const s = await this.ensure(ctx, p, lease, sig, gone);
       const dead = await this.claim(env);
       if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
       else if (!s.info.fresh) await this.killTagged(env, s.handle, p, dead, signal, lease);
@@ -1521,7 +1555,6 @@ export class SandboxService {
     held: SandboxLease,
     signal: AbortSignal,
     gone: Instance | null,
-    want: SandboxLimits | null,
   ): Promise<{
     handle: SandboxHandle;
     createdAt: number;
@@ -1590,6 +1623,9 @@ export class SandboxService {
       // provider may have made it by name, and nothing else would ever destroy it
       await this.dropUnrecordedFiles(id, row.provider, signal);
     }
+    // read under the lease, after the fence moved: a value read before the wait may be stale
+    // (another replica may have changed the tier meanwhile)
+    const want = await this.wantedLimits(ctx, p, row);
     const handle = row.handle;
     const createdAt = row.created_at.getTime();
     const fsResets = row.fs_resets;
@@ -1607,18 +1643,28 @@ export class SandboxService {
     if (handle && row.status === "suspended") {
       const r = await p.impl.resume(handle, signal);
       if (r === "resumed") {
+        // the new limits first: the row says running only once the instance runs with them
+        if (want !== null && this.mustApply(row, p, want)) {
+          let created: Instance | null;
+          try {
+            created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+          } catch (err) {
+            // the row still says suspended; the next use resumes and kills what is left
+            await this.bestEffort(id, "kill the commands left after a failed limits change", (s) =>
+              p.impl.killAll(handle, s),
+            );
+            throw err;
+          }
+          if (created) {
+            return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+          }
+        }
         await this.fenced(held, id, fence, {
           status: "running",
           running_since: sql<Date>`now()`,
           suspended_at: null,
           sweep_failed_at: null,
         });
-        if (want !== null && this.mustApply(row, p, want)) {
-          const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
-          if (created) {
-            return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-          }
-        }
         return {
           handle,
           createdAt,
@@ -1760,6 +1806,11 @@ export class SandboxService {
    * `want` and is returned (the caller reports a restart). A provider whose limits are fixed at
    * its file system is not recreated (that would not apply them): `want` is recorded as
    * `unapplied` and the instance keeps running as is until a file reset.
+   *
+   * An `update` that fails otherwise never records `want`: a provider whose limits apply at
+   * instance create is recreated (warned); after an abort, or for a provider bound to its file
+   * system, the instance is suspended ({@link quarantine}) and the error thrown, so the next use
+   * resumes it and tries again.
    */
   private async applyLimits(
     ctx: SandboxUseContext,
@@ -1784,8 +1835,20 @@ export class SandboxService {
           return null;
         }
       } catch (err) {
-        if (!isSandboxGoneError(err)) throw err;
-        gone = true;
+        if (isSandboxGoneError(err)) {
+          gone = true;
+        } else if (signal.aborted || p.impl.limitsApplyAt === "fileSystem") {
+          // the instance may run with half-applied limits and cannot be recreated here: stop it,
+          // so the next use resumes it and applies them again
+          await this.quarantine(held, id, handle, p, fence);
+          throw err;
+        } else {
+          // a new instance gets the limits at create: recreate rather than trust a failed update
+          this.log.warn("sandbox limits update failed; recreating the instance", {
+            ...facts,
+            err,
+          });
+        }
       }
     }
     if (p.impl.limitsApplyAt === "fileSystem" && !gone) {
@@ -1807,6 +1870,55 @@ export class SandboxService {
       }
     }
     return await this.create(ctx, p, held, row, fence, signal, want);
+  }
+
+  /**
+   * After a failed `update` that cannot be repaired by a recreate: best effort, with fresh short
+   * signals (the use's own may be aborted), suspends the instance (or kills its commands) and
+   * records it suspended (fenced: a lost lease leaves the record to the new holder).
+   */
+  private async quarantine(
+    held: SandboxLease,
+    id: string,
+    handle: SandboxHandle,
+    p: SandboxProviderEntry,
+    fence: Fence,
+  ): Promise<void> {
+    const suspended = await this.bestEffort(id, "suspend after a failed limits update", (s) =>
+      p.impl.suspend(handle, s),
+    );
+    if (!suspended) {
+      await this.bestEffort(id, "kill commands after a failed limits update", (s) =>
+        p.impl.killAll(handle, s),
+      );
+    }
+    try {
+      await this.fenced(held, id, fence, {
+        status: "suspended",
+        suspended_at: sql<Date>`now()`,
+        running_since: null,
+      });
+    } catch (err) {
+      this.log.warn("cannot record the sandbox suspended after a failed limits update", {
+        deviceId: id,
+        err,
+      });
+    }
+  }
+
+  /** Runs `call` with its own short signal; a failure is warned and returns false. */
+  private async bestEffort(
+    deviceId: string,
+    what: string,
+    call: (signal: AbortSignal) => Promise<void>,
+  ): Promise<boolean> {
+    try {
+      await call(AbortSignal.timeout(PENDING_KILL_TIMEOUT_MS));
+      return true;
+    } catch (err) {
+      this.log.warn(`cannot ${what}`, { deviceId, err });
+      return false;
+    }
   }
 
   /**

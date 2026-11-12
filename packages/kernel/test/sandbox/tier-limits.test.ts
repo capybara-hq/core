@@ -20,8 +20,10 @@ import {
   createFakeSandbox,
   type FakeSandboxOptions,
   fakeSandboxMeta,
+  fakeSandboxState,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -104,7 +106,7 @@ beforeEach(async () => {
   deviceId = await seedDevice(raw, orgId);
 });
 
-const service = (p: () => SandboxProvider = () => provider) =>
+const service = (p: () => SandboxProvider = () => provider, lockTtlMs?: number) =>
   sandboxServiceFor({
     db,
     redis,
@@ -112,6 +114,7 @@ const service = (p: () => SandboxProvider = () => provider) =>
     config: () => config,
     log,
     lockPollMs: 20,
+    ...(lockTtlMs !== undefined && { lockTtlMs }),
   });
 
 const setOrgSettings = (value: unknown) =>
@@ -140,6 +143,15 @@ const use = (s: SandboxService, runId?: string, id = deviceId) =>
     async (h, _p, info) => ({ h, info }),
     signal(),
   );
+
+const status = async (id = deviceId) =>
+  (
+    await db
+      .selectFrom("device_instances")
+      .select("status")
+      .where("device_id", "=", id)
+      .executeTakeFirst()
+  )?.status;
 
 const ops = async (op: string) => (await readFakeSandboxOps(root)).filter((o) => o[0] === op);
 
@@ -326,6 +338,70 @@ describe("a changed tier on use", () => {
   });
 });
 
+describe("a failed limits change", () => {
+  it("an update that fails on a provider bound to instances recreates it; nothing claims the update", async () => {
+    provider = fake({ updateMode: "throw" });
+    const s = service();
+    const first = await use(s);
+    await setTier("strict");
+    const again = await use(s);
+    expect(again.h).not.toEqual(first.h);
+    expect(again.info).toMatchObject({ fresh: true, restarted: true });
+    expect(await ops("update")).toEqual([["update", first.h.id, "throw"]]);
+    // recorded by the create that applied it
+    expect(await record()).toEqual({ tier: "strict", egress: "allowlist" });
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.tier).toBe("strict");
+    expect(warned.some((m) => m.includes("update failed"))).toBe(true);
+  });
+
+  it("an update that fails on a provider bound to its file system suspends the instance and throws", async () => {
+    provider = fake({ updateMode: "throw", limitsApplyAt: "fileSystem" });
+    const s = service();
+    const first = await use(s);
+    await setTier("strict");
+    const err = await use(s).catch((e: unknown) => e);
+    expect((err as Error).message).toBe("fake update failed");
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+    expect(await status()).toBe("suspended");
+    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    // the next use resumes it, tries again, and leaves it suspended when that fails too
+    await use(s).catch(() => undefined);
+    expect(await ops("resume")).toHaveLength(1);
+    expect(await ops("update")).toHaveLength(2);
+    expect(await status()).toBe("suspended");
+    expect(await ops("create")).toHaveLength(1);
+  });
+
+  it("a lease lost during update records nothing and stops the instance", async () => {
+    provider = fake({ updateMode: "updated" });
+    const s = service(undefined, 300);
+    const first = await use(s);
+    await setTier("strict");
+    await setFakeSandboxDelays(root, { update: 2000 });
+    const run = use(s).catch((e: unknown) => e);
+    // the exclusive lease expires under the slow update
+    await new Promise((r) => setTimeout(r, 150));
+    await redis.del(`capk:sandbox:${deviceId}`, `capk:sandbox-users:${deviceId}`);
+    const err = await run;
+    expect(err).toBeInstanceOf(Error);
+    await setFakeSandboxDelays(root, {});
+    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    expect(await ops("update")).toEqual([]);
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+  });
+
+  it("a file reset clears the record of an instance provider; the next create records again", async () => {
+    const s = service();
+    await use(s);
+    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
+    await s.resetFileSystem(deviceId);
+    expect(await record()).toBeNull();
+    await setTier("open");
+    await use(s);
+    expect(await record()).toEqual({ tier: "open", egress: "open" });
+  });
+});
+
 describe("scheduled runs on an open cloud device (spec §11.4)", () => {
   /** A task of the org's creator on `deviceId`, a task run and a kernel run serving it. */
   async function scheduledRun(
@@ -391,5 +467,27 @@ describe("scheduled runs on an open cloud device (spec §11.4)", () => {
     await use(s, trial.runId);
     await use(s);
     expect(await missing(run.taskRunId)).toEqual([]);
+  });
+
+  it("a provider bound to its file system that may still run open is refused (record open or unknown)", async () => {
+    provider = fake({ limitsApplyAt: "fileSystem" });
+    const s = service();
+    await setTier("open");
+    await use(s);
+    expect(await record()).toEqual({ tier: "open", egress: "open" });
+    // narrowed, but only a file reset applies it: the file system still runs open
+    await setTier("dev");
+    const run = await scheduledRun();
+    const err = await use(s, run.runId).catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("device.tier_not_granted");
+    // an unknown record (made before the upgrade) counts as open too
+    await sql`UPDATE capybara.device_instances SET instance_limits = NULL
+      WHERE device_id = ${deviceId}`.execute(raw);
+    const err2 = await use(s, run.runId).catch((e: unknown) => e);
+    expect((err2 as ApiError).code).toBe("device.tier_not_granted");
+    // after a file reset it runs dev
+    await s.resetFileSystem(deviceId);
+    await use(s, run.runId);
+    expect(await record()).toEqual({ tier: "dev", egress: "allowlist" });
   });
 });

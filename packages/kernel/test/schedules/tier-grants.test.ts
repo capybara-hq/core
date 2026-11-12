@@ -18,6 +18,7 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { isPolicyGrantKey, tierGrantRefusal } from "../../src/schedules/grant-rules.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
@@ -464,5 +465,19 @@ describe("unattended runs on a local device", { timeout: 60_000 }, () => {
     const last = execs(s.machine).at(-1)?.args as DeviceExecArgs | undefined;
     expect(last?.command.startsWith("curl")).toBe(true);
     expect(await missingOf(run2.taskRunId)).toEqual([]);
+  });
+});
+
+describe("the unsandboxed gate reads isolation alone", { timeout: 60_000 }, () => {
+  it("a summary the kernel cannot otherwise parse still reports isolation none", async () => {
+    const s = await setup();
+    const grants = k.app.get(NetworkGrants);
+    expect(await grants.unsandboxed(s.deviceId)).toBe(false);
+    await sql`UPDATE capybara.device_machines SET local_policy = '{"isolation":"none","tier":"x"}'::jsonb
+      WHERE device_id = ${s.deviceId} AND revoked_at IS NULL`.execute(raw);
+    expect(await grants.unsandboxed(s.deviceId)).toBe(true);
+    await sql`UPDATE capybara.device_machines SET local_policy = '{"isolation":"sandbox"}'::jsonb
+      WHERE device_id = ${s.deviceId} AND revoked_at IS NULL`.execute(raw);
+    expect(await grants.unsandboxed(s.deviceId)).toBe(false);
   });
 });

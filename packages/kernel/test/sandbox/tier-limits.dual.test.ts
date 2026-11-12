@@ -110,4 +110,53 @@ describe("sandbox tiers (two replicas)", () => {
     expect(row.rows[0]?.instance_limits).toEqual({ tier: "open", egress: "open" });
     await setFakeSandboxDelays(root, {});
   }, 60_000);
+
+  it("a replica that read a wider tier before waiting applies the tier read under the lease", async () => {
+    const [k1, k2] = kernels as [TestKernel, TestKernel];
+    const { orgId, accountId, deviceId } = await seed();
+    const ctx = () => ({
+      orgId,
+      deviceId,
+      holderConversationId: randomUUID(),
+      actor: { accountId, conversationId: randomUUID() },
+    });
+    const first = await k1.app
+      .get(SandboxService)
+      .withSandbox(ctx(), async (h) => h, AbortSignal.timeout(30_000));
+    const before = (await readFakeSandboxLimits(root)).length;
+
+    // replica 1 holds the instance (a shared lease) while replica 2 reads the tier open and waits
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let entered = () => {};
+    const inside = new Promise<void>((r) => {
+      entered = r;
+    });
+    const holder = k1.app.get(SandboxService).withSandbox(
+      ctx(),
+      async () => {
+        entered();
+        await held;
+      },
+      AbortSignal.timeout(30_000),
+    );
+    await inside;
+    await sql`UPDATE capybara.devices SET tier = 'open' WHERE id = ${deviceId}`.execute(raw);
+    const waiter = k2.app
+      .get(SandboxService)
+      .withSandbox(ctx(), async (h) => h, AbortSignal.timeout(30_000));
+    await new Promise((r) => setTimeout(r, 300));
+    // narrowed on another replica while replica 2 still waits for the exclusive lease
+    await sql`UPDATE capybara.devices SET tier = 'strict' WHERE id = ${deviceId}`.execute(raw);
+    release();
+    await holder;
+    expect(await waiter).toEqual(first);
+    const applied = (await readFakeSandboxLimits(root)).slice(before);
+    expect(applied.map((e) => [e.op, e.limits.tier])).toEqual([["update", "strict"]]);
+    const row = await sql<{ instance_limits: unknown }>`SELECT instance_limits
+      FROM capybara.device_instances WHERE device_id = ${deviceId}`.execute(raw);
+    expect(row.rows[0]?.instance_limits).toEqual({ tier: "strict", egress: "allowlist" });
+  }, 60_000);
 });

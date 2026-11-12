@@ -279,7 +279,7 @@ export class ScheduledTasksService {
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
     /** Network grants: the org's effective egress (network ask-to-allow spec §8.1). */
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "orgLimits" | "devicePolicy">,
+    private readonly sandbox: Pick<SandboxService, "ceilingLimits" | "devicePolicy">,
     /** Network grants: the task's device's local policy summary (`remoteGrants`). */
     @Inject(DevicePolicyService)
     private readonly devicePolicy: Pick<DevicePolicyService, "summary">,
@@ -888,10 +888,10 @@ export class ScheduledTasksService {
     let loaded = false;
     let role: OrgRole | null = null;
     const agentTools = new Map<string, Promise<AgentToolFacts | null>>();
-    // the org's effective egress, read once and only when a refused domain needs it
+    // the network of the org's ceiling, read once and only when a refused domain needs it
     let limitsOf: Promise<NetworkGrantContext["limits"]> | undefined;
     const orgLimits = () => {
-      limitsOf ??= this.sandbox.orgLimits(orgId);
+      limitsOf ??= this.sandbox.ceilingLimits(orgId);
       return limitsOf;
     };
     // the org's sandbox ceiling, read once and only when a refused sandbox level needs it
@@ -1371,15 +1371,15 @@ export class ScheduledTasksService {
   }
 
   /**
-   * What a network grant is checked against (network ask-to-allow spec §8.1): the org's effective
-   * egress now and the local policy summary of the task's device (null without a device or a
+   * What a network grant is checked against (network ask-to-allow spec §8.1): the network of the
+   * org's sandbox ceiling now (sandbox dev tiers spec §4.2) and the local policy summary of the task's device (null without a device or a
    * connected machine).
    */
   private async networkGrantContext(
     orgId: string,
     deviceId: string | null,
   ): Promise<NetworkGrantContext> {
-    const limits = await this.sandbox.orgLimits(orgId);
+    const limits = await this.sandbox.ceilingLimits(orgId);
     const summary = deviceId === null ? null : await this.devicePolicy.summary(deviceId);
     return { limits, deviceSummary: summary?.policy ?? null };
   }
