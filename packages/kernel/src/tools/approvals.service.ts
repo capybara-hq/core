@@ -26,6 +26,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
@@ -316,10 +317,11 @@ function canHandle(
  * 工具调用审批：新建（loop 调用）、列出 / 查看 / 处理（HTTP），以及「以后都允许」授权的查看与撤销。
  * 状态全部在 PG：处理决定在事务里 `SELECT … FOR UPDATE` 审批行，多副本并发处理同一审批时恰好一个生效。
  *
- * A decision is announced after the commit as the domain event `approval.decided` (exactly once:
- * only the decision that changed the row from pending), which the run's waits follow to resume it
- * (spec §3b; the wait sweep resumes a run whose resume was lost). Events are appended in the
- * context's transaction (`EventLog.appendIn`) and published after the commit.
+ * A decision resumes its waiting run in the decision's transaction (`RunResume.resumeIn`, after the
+ * decided row: lock order approval, then run; transactional outbox spec §6). It is announced after
+ * the commit as the domain event `approval.decided` (exactly once: only the decision that changed
+ * the row from pending), a hint for the IM card. Events are appended in the context's transaction
+ * (`EventLog.appendIn`) and published after the commit.
  */
 @Injectable()
 export class ApprovalsService {
@@ -340,6 +342,8 @@ export class ApprovalsService {
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ceilingLimits">,
+    /** A decision resumes its waiting run in the decision's transaction (`Waits.resumeIn`). */
+    @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
   ) {}
 
   /**
@@ -799,7 +803,7 @@ export class ApprovalsService {
   /** After the commit: the decision's events reach the page, the run's waits and IM delivery. */
   private async announceDecided(record: ApprovalRecord, toSeq: number): Promise<void> {
     await this.eventLog.notify(record.conversationId, toSeq);
-    // waits resume the run and its IM delivery is enqueued (handler failures are logged)
+    // its IM delivery is enqueued (handler failures are logged); the run resumed in the decision
     await this.events.emit("approval.decided", {
       id: record.id,
       orgId: record.orgId,
@@ -1002,6 +1006,7 @@ export class ApprovalsService {
           ...(reason !== undefined && { reason }),
         },
       });
+      await this.resumes.resumeIn(before.runId, id);
       return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
     }
     await audit(t, {
@@ -1022,6 +1027,9 @@ export class ApprovalsService {
         ...(reason !== undefined && { reason }),
       },
     });
+    // the run last (lock order: the decided row, then `runs`); a still-running run is resumed by
+    // its suspend's re-check
+    await this.resumes.resumeIn(before.runId, id);
     return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
@@ -1282,8 +1290,8 @@ export class ApprovalsService {
    * active runs `authorAccountId` started, in the conversation and in its sub-agents'
    * conversations at any depth (their asks are shown in the root). Each becomes `skipped` with
    * `approval_decided{skipped}` by the author; access stays blocked. Returns the skipped records and
-   * the highest seq written per conversation; the caller notifies and emits
-   * `approval.decided{skipped}` after the commit, so the runs resume.
+   * the highest seq written per conversation; a waiting run resumes in this transaction; the caller
+   * notifies and emits `approval.decided{skipped}` (the IM card's hint) after the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async skipNetworkIn(
@@ -1319,6 +1327,8 @@ export class ApprovalsService {
       seqs.set(row.conversation_id, Math.max(seqs.get(row.conversation_id) ?? 0, seq));
       records.push(toRecord(updated));
     }
+    // each run resumes in the message's transaction, after every skipped row (lock order)
+    for (const r of records) await this.resumes.resumeIn(r.runId, r.id);
     return { records, seqs };
   }
 

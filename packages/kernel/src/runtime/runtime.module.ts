@@ -32,7 +32,7 @@ import { StepLogModule } from "./step-log.js";
 import { ConversationStreams } from "./stream.js";
 import { SubagentsModule } from "./subagents/subagents.service.js";
 import { UsageReportModule } from "./usage-report.js";
-import { DecisionResumer, Waits } from "./waits.js";
+import { Waits } from "./waits.js";
 
 /**
  * The run runtime: the conversation run lock, this process's event streams, the run queue and its
@@ -60,7 +60,8 @@ import { DecisionResumer, Waits } from "./waits.js";
     BackgroundModule,
     // a scheduled task's run follows its kernel run's end (`RunFinish`)
     ScheduledTaskTrackerModule,
-    // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
+    // the maintenance queue's handle: the outbox delivers the `wait-timeout` jobs the waits owe
+    // (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
@@ -71,7 +72,6 @@ import { DecisionResumer, Waits } from "./waits.js";
     RunFinish,
     RunQueue,
     Waits,
-    DecisionResumer,
     RunControl,
     RunDrafts,
     AgentLoops,

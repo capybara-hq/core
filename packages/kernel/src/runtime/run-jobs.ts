@@ -1,8 +1,11 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
+import { sql } from "kysely";
 import type { ConversationKind } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { OUTBOX_JOBS } from "../infra/outbox/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
@@ -37,6 +40,13 @@ export interface RunJobData {
 /** 同一触发点（会话 + 最新用户消息 seq）只投递一次。 */
 export const runJobId = (conversationId: string, maxUserSeq: number): string =>
   `run-${conversationId}-${maxUserSeq}`;
+
+/**
+ * A resumed run's job id: apart from the per-message `run-<conversationId>-<seq>`, and one per wait,
+ * so the same wait resumes its run once.
+ */
+export const resumeJobId = (conversationId: string, waitId: string): string =>
+  `run-${conversationId}-resume-${waitId}`;
 
 /** The BullMQ job name of every run job, on both run queues (an outbox registry name). */
 export const RUN_JOB = "run";
@@ -167,13 +177,121 @@ export class RunJobs {
   }
 }
 
+/**
+ * What {@link RunResume.resumeIn} found: `queued`, the run was waiting on nothing else and now is
+ * queued with its resume job owed; `still-running`, the run has not reached `waiting` yet (its
+ * suspend's re-check resumes it); `other-wait-pending`, the run still waits on another approval,
+ * input request or fork sub-agent; `not-waiting`, the run is queued or finished (or gone).
+ */
+export type ResumeOutcome = "queued" | "still-running" | "other-wait-pending" | "not-waiting";
+
+/**
+ * The resume of a waiting run (transactional outbox spec §6 "Resumes and timeouts", "Decisions
+ * resume in their own transaction"), in the caller's transaction. A decision (approvals, questions,
+ * a reply's skips) calls it after writing the decided row, so the lock order is the decided row,
+ * then the `runs` row. It lives beside the run jobs, not in `Waits`, so the tools domain (which the
+ * runtime imports) can call it; `Waits.resumeIn` is the same call.
+ */
+@Injectable()
+export class RunResume {
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /**
+   * Locks the run row (`FOR UPDATE`); when it is `waiting` and waits on nothing else (no pending
+   * approval or input request, no active fork sub-agent), sets it `queued` (adding this wait's
+   * time to `waited_ms`, recording the resume job id) and owes the resume job
+   * {@link resumeJobId}`(conversation, waitId)` on its conversation kind's run queue. A `running`
+   * run is left alone: its suspend has not set `waiting` yet and re-checks the wait after.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async resumeIn(runId: string, waitId: string): Promise<ResumeOutcome> {
+    const t = this.kdb.db;
+    const run = await t
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (run?.status === "running") return "still-running";
+    if (run?.status !== "waiting") return "not-waiting";
+    const row = await t
+      .updateTable("runs")
+      .set({
+        status: "queued",
+        queued_at: sql<Date>`now()`,
+        job_id: sql<string>`'run-' || conversation_id || '-resume-' || ${waitId}::text`,
+        waited_ms: sql<string>`waited_ms + COALESCE(floor(extract(epoch FROM now() - waiting_since) * 1000), 0)::bigint`,
+        waiting_since: null,
+        wait_expires_at: null,
+      })
+      .where("id", "=", runId)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("approvals")
+              .select(sql`1`.as("one"))
+              .where("approvals.run_id", "=", runId)
+              .where("approvals.status", "=", "pending"),
+          ),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("questions")
+              .select(sql`1`.as("one"))
+              .where("questions.run_id", "=", runId)
+              .where("questions.status", "=", "pending"),
+          ),
+        ),
+      )
+      // a fork invocation's sub-agent (agent map spec §5.4: background `Agent` children never
+      // hold their parent run) is no longer active
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("subagent_dispatches as sd")
+              .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+              .select(sql`1`.as("one"))
+              .where("sd.parent_run_id", "=", runId)
+              .where("sd.for_skill", "=", true)
+              .where("cr.status", "in", ACTIVE_RUN_STATUSES),
+          ),
+        ),
+      )
+      .returning("conversation_id")
+      .executeTakeFirst();
+    if (!row) return "other-wait-pending";
+    const conv = await t
+      .selectFrom("conversations")
+      .select(["kind", "org_id"])
+      .where("id", "=", row.conversation_id)
+      .executeTakeFirstOrThrow();
+    await this.outbox.add<RunJobData>({
+      queue: runQueueNameFor(conv.kind),
+      name: RUN_JOB,
+      jobId: resumeJobId(row.conversation_id, waitId),
+      data: { runId, conversationId: row.conversation_id },
+      orgId: conv.org_id,
+    });
+    return "queued";
+  }
+}
+
 /** The run queues' registration (re-exported: the admin health reads their counts). */
 const RUN_QUEUES_MODULE = QueueModule.registerQueue(RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME);
 
-/** The run queues' producer (the sub-agent dispatch, the run queue and the waits use it). */
+/**
+ * The run queues' producer (the sub-agent dispatch, the run queue and the waits use it) and the
+ * resume of a waiting run (the waits and the decisions of the tools domain use it).
+ */
 @Module({
   imports: [RUN_QUEUES_MODULE],
-  providers: [RunJobs],
-  exports: [RunJobs, RUN_QUEUES_MODULE],
+  providers: [RunJobs, RunResume],
+  exports: [RunJobs, RunResume, RUN_QUEUES_MODULE],
 })
 export class RunJobsModule {}

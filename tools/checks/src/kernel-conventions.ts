@@ -437,7 +437,6 @@ export const KC_PENDING: KcPending = {
       max: 3,
       reason: "moves to the outbox in PR 3",
     },
-    { path: "packages/kernel/src/runtime/waits.ts", max: 2, reason: "moves to the outbox in PR 2" },
     { path: "packages/kernel/src/sandbox/jobs.ts", max: 2, reason: "moves to the outbox in PR 5" },
     {
       path: "packages/kernel/src/schedules/fire.ts",

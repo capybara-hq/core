@@ -10,6 +10,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { RunResume } from "../runtime/run-jobs.js";
 
 export type QuestionStatus = "pending" | "answered" | "skipped" | "expired" | "cancelled";
 
@@ -98,9 +99,10 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * 状态全部在 PG：回答 / 超时 / 取消都在事务里 `SELECT … FOR UPDATE` 该行，多副本并发时恰好一个生效，
  * 只有生效的那次写 `question_answered`。HTTP 接口见 questions.controller.ts。
  *
- * An answer is announced after the commit as the domain event `question.answered` (exactly once),
- * which the run's waits follow to resume it (spec §3b; the wait sweep resumes a run whose resume was
- * lost). Events are appended in the context's transaction (`EventLog.appendIn`).
+ * An answer resumes its waiting run in the answer's transaction (`RunResume.resumeIn`, after the
+ * question row: lock order conversation, question, then run; transactional outbox spec §6). It is
+ * announced after the commit as the domain event `question.answered` (exactly once), a hint for
+ * the IM card. Events are appended in the context's transaction (`EventLog.appendIn`).
  */
 @Injectable()
 export class QuestionsService {
@@ -110,6 +112,8 @@ export class QuestionsService {
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "appendIn" | "notify">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** An answer resumes its waiting run in the answer's transaction (`Waits.resumeIn`). */
+    @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
   ) {}
 
   /**
@@ -217,7 +221,7 @@ export class QuestionsService {
   ): Promise<QuestionRecord> {
     const { record, toSeq } = await this.answerIn(questionId, accountId, answer, orgId);
     await this.eventLog.notify(record.conversationId, toSeq);
-    // waits resume the run and its IM delivery is enqueued (handler failures are logged)
+    // its IM delivery is enqueued (handler failures are logged); the run resumed in the answer
     await this.events.emit("question.answered", {
       id: record.id,
       orgId: record.orgId,
@@ -309,6 +313,8 @@ export class QuestionsService {
       .returningAll()
       .executeTakeFirstOrThrow();
     const toSeq = await this.answeredEvent(before, answer as FormAnswer, accountId, "answered");
+    // the run last; a still-running run is resumed by its suspend's re-check
+    await this.resumes.resumeIn(before.runId, questionId);
     return { record: toRecord(updated), toSeq };
   }
 
@@ -463,8 +469,8 @@ export class QuestionsService {
    * by a run of it that is `running` or `waiting` and was started by `accountId`. The caller holds
    * the conversation row lock (its `appendIn`), so only questions logged before the message are
    * seen. Each becomes `skipped` with `question_answered { outcome: "skipped", skippedBySeq }`.
-   * Returns the records and the highest seq written (null: none); the caller notifies and emits
-   * `question.answered` after the commit.
+   * A waiting run resumes in this transaction. Returns the records and the highest seq written
+   * (null: none); the caller notifies and emits `question.answered` after the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async skipPendingIn(
@@ -498,6 +504,8 @@ export class QuestionsService {
       toSeq = await this.answeredEvent(toRecord(row), null, accountId, "skipped", messageSeq);
       records.push(toRecord(updated));
     }
+    // each run resumes in the message's transaction, after every skipped row (lock order)
+    for (const r of records) await this.resumes.resumeIn(r.runId, r.id);
     return { records, toSeq };
   }
 

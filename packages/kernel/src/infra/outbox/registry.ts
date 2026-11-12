@@ -13,7 +13,7 @@ export interface OutboxJobSpec {
    * BullMQ options the dispatcher adds the job with over the queue defaults
    * (`QUEUE_JOB_DEFAULTS`); the job id and the delay always come from the row.
    */
-  opts?: Pick<JobsOptions, "attempts" | "removeOnComplete" | "removeOnFail">;
+  opts?: Pick<JobsOptions, "attempts" | "backoff" | "removeOnComplete" | "removeOnFail">;
 }
 
 /**
@@ -22,7 +22,8 @@ export interface OutboxJobSpec {
  */
 export const OUTBOX_JOBS = {
   // `runtime/run-jobs.ts` RUN_JOB: one name on both run queues (a sub-agent's runs go to the
-  // sub-agent queue), under the job ids `runJobId` builds
+  // sub-agent queue), under the job ids `runJobId` builds and, for a waiting run's resume
+  // (`RunResume.resumeIn`), `resumeJobId`
   run: {
     queue: ["cap-kernel-runs", "cap-kernel-subagent-runs"],
     idempotent:
@@ -43,6 +44,21 @@ export const OUTBOX_JOBS = {
     // removed once done (the queue defaults keep finished jobs), so a later write under the same
     // seq (a queue change writes no event of its own) owes a job that is not deduped away
     opts: { removeOnComplete: true, removeOnFail: true },
+  },
+  // `runtime/waits.ts` WAIT_TIMEOUT_JOB: owed with the suspend that sets a run `waiting`, under
+  // `waitTimeoutJobId`, with `runAt` = the wait's deadline (spec §6 "Resumes and timeouts")
+  "wait-timeout": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "a timeout acts only on a still-pending wait (a row lock and status check) and a resume starts only a waiting run with nothing else pending",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // retried while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
   },
 } as const satisfies Record<string, OutboxJobSpec>;
 

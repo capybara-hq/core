@@ -1,7 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
-import { DelayedError, type Job, type Queue } from "bullmq";
+import { DelayedError, type Job } from "bullmq";
 import { sql } from "kysely";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
@@ -12,6 +11,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LockService } from "../infra/lock/lock.service.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -34,6 +34,7 @@ import { subagentsWaitId, subagentWaitingIdemKey, type WaitingFor } from "./loop
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
 import { notifyFinished, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
+import { type ResumeOutcome, RunResume, resumeJobId } from "./run-jobs.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
 import {
   childResult,
@@ -50,9 +51,8 @@ export { MAINTENANCE_QUEUE_NAME };
 export const WAIT_TIMEOUT_JOB = "wait-timeout";
 export const waitTimeoutJobId = (waitId: string): string => `wait-timeout-${waitId}`;
 
-/** 续跑任务的 jobId：与按消息生成的 `run-<conversationId>-<seq>` 不冲突，同一等待只会续跑一次。 */
-export const resumeJobId = (conversationId: string, waitId: string): string =>
-  `run-${conversationId}-resume-${waitId}`;
+/** A resumed run's job id (`run-<conversationId>-resume-<waitId>`; `RunResume` owes it). */
+export { resumeJobId };
 
 /**
  * 等待兜底扫描（Task 22）：任务名、job scheduler id（不含 `:`）、周期、宽限期与每类每次最多处理的条数。
@@ -114,17 +114,16 @@ export interface WaitTimeoutData {
   step?: number;
 }
 
-/** 超时任务处理出错（如 PG 暂不可用）时的重试。 */
-const TIMEOUT_JOB_ATTEMPTS = 5;
-const TIMEOUT_JOB_BACKOFF_MS = 5_000;
-
 /**
- * 运行等待人处理（spec 4.4 / Task 9）：暂停、续跑、超时与中止。状态全部在 PG（`runs.status = 'waiting'`、
- * `approvals` / `questions` 行），延迟与重试走 BullMQ（维护队列的 `wait-timeout` 任务），没有进程内状态。
+ * Runs waiting for a person (spec 4.4 / Task 9): suspend, resume, timeout and stop. All state is in
+ * PG (`runs.status = 'waiting'`, the `approvals` / `questions` rows); delays and retries are BullMQ
+ * jobs (the maintenance queue's `wait-timeout`) owed through the outbox; no in-process state.
  *
- * 只续跑一次：`resume` 是一条条件更新 `waiting → queued`（且该运行已没有 pending 的等待），并发调用只有一个成功，
- * 成功者投递 jobId 为 `run-<conversationId>-resume-<waitId>` 的运行任务。人工决定、超时任务、
- * 暂停后的复查都可能调用它，谁先谁后都只有一次续跑。
+ * One resume only: a resume locks the run row and moves it `waiting → queued` only when it waits on
+ * nothing else, owing the run job `run-<conversationId>-resume-<waitId>` in the same transaction
+ * (transactional outbox spec §6). A decision does it in its own transaction ({@link resumeIn});
+ * the timeout job, the suspend's re-check and the sweeps through {@link resume}. Whichever comes
+ * first, the run resumes once.
  */
 @Injectable()
 export class Waits implements OnApplicationShutdown {
@@ -139,10 +138,7 @@ export class Waits implements OnApplicationShutdown {
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "expire" | "cancelPendingIn">,
     @Inject(RunQueue)
-    private readonly runQueue: Pick<
-      RunQueue,
-      "enqueue" | "repairOrphan" | "abortIfOrphaned" | "ensureRun"
-    >,
+    private readonly runQueue: Pick<RunQueue, "repairOrphan" | "abortIfOrphaned" | "ensureRun">,
     /**
      * Writes, in the caller's transaction, the results of a stopped run's open `Agent` calls;
      * `fire` runs their observe hooks after the commit.
@@ -158,8 +154,10 @@ export class Waits implements OnApplicationShutdown {
      * `waiting` is set. Children are stopped through `request`.
      */
     @Inject(RunAbort) private readonly abort: Pick<RunAbort, "requested" | "request">,
-    /** The maintenance queue: wait timeout jobs (`MaintenanceProcessor` consumes them). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly timeouts: Pick<Queue, "add">,
+    /** Owes the wait timeout jobs (`MaintenanceProcessor` consumes them) with the suspend. */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The resume of a waiting run, in the caller's transaction ({@link resumeIn}). */
+    @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
     /** Stops a finished sub-agent run's background tasks ({@link childFinished}). */
@@ -223,12 +221,14 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * loop 返回 `suspended` 之后（worker 已释放会话锁与配额）：条件更新 `running → waiting`（记 `waiting_since`），
-   * 投递延迟到 `expiresAt` 的超时任务，再复查一次等待是否已被处理——处理者的 `resume` 可能发生在本次置 waiting
-   * 之前（那时条件更新不成立），复查保证这种情况下仍会续跑。
-   * 运行已不是 running（例如已被其他路径结束）→ 什么都不做。
-   * 暂停时已收到用户中止（`abort`），或置 waiting 之后补查到中止标记 → 直接按 {@link abortWaiting} 取消等待并结束
-   * 运行（置 waiting 之后到达的中止由 `POST .../abort` 看到 waiting 直接处理，两边不会都漏掉）。
+   * After the loop returned `suspended` (the worker released the conversation lock and the quota):
+   * in one transaction the conditional `running → waiting` (recording `waiting_since`) and the
+   * wait's timeout job (`runAt` = `expiresAt`); then a re-check whether the wait is already settled:
+   * a decision that came while the run was still `running` did not resume it, so the re-check does.
+   * A run no longer running (ended by another path) → nothing.
+   * A stop received while suspending (`abort`), or found in the stop marker after `waiting` is set
+   * → the wait is cancelled and the run ended as {@link abortWaiting} does (a stop arriving after
+   * `waiting` is set is handled by `POST .../abort`, which sees `waiting`; neither side misses it).
    */
   async suspend(
     runId: string,
@@ -236,18 +236,7 @@ export class Waits implements OnApplicationShutdown {
     waitingFor: WaitingFor,
     abort?: RunAbortBy,
   ): Promise<void> {
-    const r = await this.db
-      .updateTable("runs")
-      .set({
-        status: "waiting",
-        waiting_since: sql<Date>`now()`,
-        // a sub-agents wait has no row of its own: its expiry lives on the run, for the sweep
-        wait_expires_at: waitingFor.kind === "subagents" ? new Date(waitingFor.expiresAt) : null,
-      })
-      .where("id", "=", runId)
-      .where("status", "=", "running")
-      .executeTakeFirst();
-    if (Number(r.numUpdatedRows) === 0) {
+    if (!(await this.suspendIn(runId, waitingFor))) {
       this.log.warn("run is no longer running; not suspending", { runId });
       return;
     }
@@ -256,8 +245,35 @@ export class Waits implements OnApplicationShutdown {
       return;
     }
     await this.surfaceInRoot(runId, conversationId, waitingFor);
-    await this.scheduleTimeout(waitingFor, runId);
+    // A decision that locked the run while it was still `running` wrote nothing to it
+    // (`RunResume.resumeIn`: "still-running"); its row lock held this suspend's update until it
+    // committed, so this read, a new statement after that commit, sees the decided wait.
     if (await this.isSettled(waitingFor, runId)) await this.resume(runId, waitingFor.id);
+  }
+
+  /**
+   * {@link suspend}'s transaction: the conditional `running → waiting` and the wait's timeout job
+   * owed with it ({@link oweTimeout}). False when the run was no longer running (nothing written).
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async suspendIn(runId: string, waitingFor: WaitingFor): Promise<boolean> {
+    const row = await this.db
+      .updateTable("runs")
+      .set({
+        status: "waiting",
+        waiting_since: sql<Date>`now()`,
+        // a sub-agents wait has no row of its own: its expiry lives on the run, for the sweep
+        wait_expires_at: waitingFor.kind === "subagents" ? new Date(waitingFor.expiresAt) : null,
+      })
+      .from("conversations")
+      .whereRef("conversations.id", "=", "runs.conversation_id")
+      .where("runs.id", "=", runId)
+      .where("runs.status", "=", "running")
+      .returning("conversations.org_id")
+      .executeTakeFirst();
+    if (!row) return false;
+    await this.oweTimeout(waitingFor, runId, row.org_id);
+    return true;
   }
 
   /**
@@ -329,75 +345,24 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * 续跑：一条条件更新 `waiting → queued`（且该运行没有 pending 的审批 / 输入请求），把本次等待时长累加进
-   * `waited_ms`，记下续跑任务的 jobId；成功（只有一个调用方）则投递运行任务并返回 true。
-   * 投递失败 → 撤回为 waiting（等待时长已计入，重新从现在起计），之后超时任务到点会再次续跑，并抛出。
+   * Resumes the run in its own transaction ({@link resumeIn}); true when this call queued it. The
+   * wait timeout, the suspend's re-check, a fork child's finish and the sweeps use it.
    */
+  @Transactional()
   async resume(runId: string, waitId: string): Promise<boolean> {
-    const row = await this.db
-      .updateTable("runs")
-      .set({
-        status: "queued",
-        queued_at: sql<Date>`now()`,
-        job_id: sql<string>`'run-' || conversation_id || '-resume-' || ${waitId}::text`,
-        waited_ms: sql<string>`waited_ms + COALESCE(floor(extract(epoch FROM now() - waiting_since) * 1000), 0)::bigint`,
-        waiting_since: null,
-        wait_expires_at: null,
-      })
-      .where("id", "=", runId)
-      .where("status", "=", "waiting")
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("approvals")
-              .select(sql`1`.as("one"))
-              .where("approvals.run_id", "=", runId)
-              .where("approvals.status", "=", "pending"),
-          ),
-        ),
-      )
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("questions")
-              .select(sql`1`.as("one"))
-              .where("questions.run_id", "=", runId)
-              .where("questions.status", "=", "pending"),
-          ),
-        ),
-      )
-      // a fork invocation's sub-agent (phase D; agent map spec §5.4: background `Agent`
-      // children never hold their parent run) is no longer active
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("subagent_dispatches as sd")
-              .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
-              .select(sql`1`.as("one"))
-              .where("sd.parent_run_id", "=", runId)
-              .where("sd.for_skill", "=", true)
-              .where("cr.status", "in", ACTIVE_RUN_STATUSES),
-          ),
-        ),
-      )
-      .returning(["conversation_id"])
-      .executeTakeFirst();
-    if (!row) return false;
-    const jobId = resumeJobId(row.conversation_id, waitId);
-    try {
-      await this.runQueue.enqueue({ runId, conversationId: row.conversation_id }, jobId);
-    } catch (err) {
-      this.log.error("cannot enqueue resumed run; back to waiting", { runId, jobId, err });
-      await this.db
-        .updateTable("runs")
-        .set({ status: "waiting", waiting_since: sql<Date>`now()`, job_id: null, queued_at: null })
-        .where("id", "=", runId)
-        .where("status", "=", "queued")
-        .where("job_id", "=", jobId)
-        .execute();
-      throw err;
-    }
-    return true;
+    return (await this.resumeIn(runId, waitId)) === "queued";
+  }
+
+  /**
+   * In the caller's transaction (`mandatory`): locks the run row and, when it is `waiting` on
+   * nothing else, sets it `queued` and owes its resume job `run-<conversationId>-resume-<waitId>`
+   * (`RunResume.resumeIn`, which the tools domain's decisions call directly: the runtime imports
+   * the tools domain, so they cannot reach this class). "still-running": nothing is written, the
+   * run's suspend re-checks the wait after setting `waiting`.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async resumeIn(runId: string, waitId: string): Promise<ResumeOutcome> {
+    return this.resumes.resumeIn(runId, waitId);
   }
 
   /**
@@ -1215,24 +1180,23 @@ export class Waits implements OnApplicationShutdown {
     }
   }
 
-  /** 投递超时任务（延迟到 expiresAt）。失败只记日志：人工处理仍可续跑，只是不会自动超时。 */
-  private async scheduleTimeout(w: WaitingFor, runId: string): Promise<void> {
+  /**
+   * Owes the wait's timeout job (`wait-timeout-<waitId>`, `runAt` = the wait's deadline) in the
+   * suspend's transaction (transactional outbox spec §6 "Resumes and timeouts").
+   */
+  private async oweTimeout(w: WaitingFor, runId: string, orgId: string): Promise<void> {
     const data: WaitTimeoutData =
       w.kind === "subagents" && w.step !== undefined
         ? { kind: w.kind, id: w.id, runId, step: w.step }
         : { kind: w.kind, id: w.id };
-    try {
-      await this.timeouts.add(WAIT_TIMEOUT_JOB, data, {
-        jobId: waitTimeoutJobId(w.id),
-        delay: Math.max(0, new Date(w.expiresAt).getTime() - Date.now()),
-        attempts: TIMEOUT_JOB_ATTEMPTS,
-        backoff: { type: "exponential", delay: TIMEOUT_JOB_BACKOFF_MS },
-        removeOnComplete: true,
-        removeOnFail: true,
-      });
-    } catch (err) {
-      this.log.error("cannot schedule wait timeout", { waitId: w.id, err });
-    }
+    await this.outbox.add<WaitTimeoutData>({
+      queue: MAINTENANCE_QUEUE_NAME,
+      name: WAIT_TIMEOUT_JOB,
+      jobId: waitTimeoutJobId(w.id),
+      data,
+      runAt: new Date(w.expiresAt),
+      orgId,
+    });
   }
 
   /**
@@ -1607,35 +1571,6 @@ export function unreportedForkRuns(
       .limit(WAIT_SWEEP_BATCH)
       .execute()
   );
-}
-
-/**
- * A decided approval / answered question resumes the waiting run on this replica (domain events,
- * spec §3b; the wait sweep resumes a run whose resume was lost). Its IM delivery follows the same
- * events (`ChannelJobs`).
- */
-@Injectable()
-export class DecisionResumer implements OnApplicationShutdown {
-  private readonly unsubscribe: (() => void)[];
-
-  constructor(
-    @Inject(Waits) waits: Pick<Waits, "resume">,
-    @Inject(KernelEvents) events: Pick<KernelEvents, "on">,
-  ) {
-    this.unsubscribe = [
-      events.on("approval.decided", async (a) => {
-        await waits.resume(a.runId, a.id);
-      }),
-      events.on("question.answered", async (q) => {
-        await waits.resume(q.runId, q.id);
-      }),
-    ];
-  }
-
-  /** Unsubscribes after the stop phases: events emitted while they drain are still handled. */
-  onApplicationShutdown(): void {
-    for (const off of this.unsubscribe) off();
-  }
 }
 
 /**
