@@ -39,7 +39,7 @@ export class OrgSettingsController {
   async get(@CurrentOrg() org: OrgContext): Promise<SettingsResponse> {
     return {
       settings: await this.settings.get(org.orgId),
-      deployment: this.settings.deployment(),
+      deployment: await this.settings.deployment(),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
     };
   }
@@ -62,7 +62,7 @@ export class OrgSettingsController {
         undefined,
         { onlyNarrows: patTokenId(p) !== undefined },
       ),
-      deployment: this.settings.deployment(),
+      deployment: await this.settings.deployment(),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
     };
   }

@@ -13,7 +13,7 @@ import {
   SuperAdmin,
 } from "../identity/principal.js";
 import { SessionService } from "../identity/sessions.js";
-import { type DeploymentSettings, SettingsService } from "../identity/settings.js";
+import { type DeploymentSettingsView, SettingsService } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -186,17 +186,21 @@ export class AdminController {
   }
 
   @Get("settings")
-  async getSettings(): Promise<DeploymentSettings> {
-    return this.settings.get();
+  async getSettings(): Promise<DeploymentSettingsView> {
+    return this.settings.view();
   }
 
   @Put("settings")
   async putSettings(
     @CurrentPrincipal() principal: Principal,
     @ZBody(DeploymentSettingsBodyDto) body: z.infer<typeof DeploymentSettingsBody>,
-  ): Promise<DeploymentSettings> {
+  ): Promise<DeploymentSettingsView> {
     const actor = requireUser(principal);
-    return this.settings.update(body, actor.account.id, patTokenId(actor));
+    const tokenId = patTokenId(actor);
+    // an API token may lower the platform's sandbox tiers, never raise them (dev tiers spec §2)
+    return this.settings.update(body, actor.account.id, tokenId, undefined, {
+      onlyNarrows: tokenId !== undefined,
+    });
   }
 
   /**

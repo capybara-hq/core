@@ -349,7 +349,7 @@ export class CatalogRequestsService {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
     const hosts = [...new Set(input.hosts.map((h) => h.toLowerCase()))].sort();
-    const deployment = this.orgSettings.deployment().sandboxEgress;
+    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
     if (deployment.mode === "none") throw deploymentEgressNone();
     const settings = await readOrgSettings(t, orgId);
     if (settings.sandboxEgress?.mode === "none") {
@@ -848,7 +848,7 @@ export class CatalogRequestsService {
     opts: RequestActorOpts,
   ): Promise<void> {
     const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
-    const deployment = this.orgSettings.deployment().sandboxEgress;
+    const deployment = (await this.orgSettings.deployment()).sandboxEgress;
     if (deployment.mode === "none") throw deploymentEgressNone();
     const current = (await readOrgSettings(this.db, orgId)).sandboxEgress;
     if (current?.mode === "none") {

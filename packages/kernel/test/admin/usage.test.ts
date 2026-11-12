@@ -12,12 +12,11 @@ import {
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { SettingsService } from "../../src/identity/settings.js";
 import { CacheService } from "../../src/infra/cache/cache.service.js";
 import { createLogger } from "../../src/log.js";
 import { PricesService } from "../../src/models/prices.js";
 import { truncateTables } from "../helpers/db.js";
-import { handlesFor } from "../helpers/identity.js";
+import { handlesFor, settingsFor } from "../helpers/identity.js";
 
 /**
  * `AdminUsageService.week(tz)` (admin overview spec §4.3, §5.2, §5.4, §9, §11; D6): runs, tokens and
@@ -72,7 +71,7 @@ function replica(timings: Partial<AdminUsageTimings> = {}): AdminUsageService {
     h.txHost,
     new CacheService(redis, quiet),
     new PricesService(h.db, h.txHost, h.adminLock),
-    new SettingsService(h.db, h.txHost, h.adminLock, quiet),
+    settingsFor(raw, quiet),
     { now: () => NOW, ...timings },
   );
 }
