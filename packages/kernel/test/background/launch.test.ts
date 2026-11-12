@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKGROUND_LAUNCH_LINE, isBackgroundLaunch } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   GROUP_LAUNCHER,
@@ -71,6 +72,9 @@ describe("startedText", () => {
 describe("launchScript", { timeout: 30_000 }, () => {
   it("starts the command detached under timeout -s KILL, output and exit status in task files", () => {
     const s = launchScript("bt_abcdef", "echo hi", 60);
+    // a device leaves what a launch detaches running (it reaps every other exec's leftovers)
+    expect(isBackgroundLaunch(s)).toBe(true);
+    expect(s.startsWith(`${BACKGROUND_LAUNCH_LINE}\nset -e\n`)).toBe(true);
     expect(s).toContain(
       "setsid nohup sh -c 'timeout -s KILL 60 bash .capybara/tasks/bt_abcdef.sh; echo $? > .capybara/tasks/bt_abcdef.exit' > .capybara/tasks/bt_abcdef.out 2>&1 < /dev/null &\necho $! > .capybara/tasks/bt_abcdef.sid\n",
     );

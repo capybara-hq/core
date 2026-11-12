@@ -150,6 +150,9 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
+export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
+
+// @public
 export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
@@ -1600,6 +1603,9 @@ export interface InputRequired {
 
 // @public
 export function isAttachmentId(s: unknown): s is string;
+
+// @public
+export function isBackgroundLaunch(command: string): boolean;
 
 // @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;

@@ -21,7 +21,8 @@ the code to enter on any signed-in browser, where you pick the org and the devic
 an existing connected one of yours) after reading what the program can do. Logging in again from
 another machine into the same device replaces the first machine (its credential is revoked).
 `stop` ends the running program, `drain` makes it accept no new commands and exit when the running
-ones finish. `logout` stops a running program, then forgets the credential (the machine stays
+ones finish (`drain --wait [--timeout <seconds>]` returns only once it has exited, at most 600 s by
+default). `logout` stops a running program, then forgets the credential (the machine stays
 connected on the platform until it is revoked there). Deleting the device in the web app
 revokes the machine and stops the program; the files in the working directory stay on your machine.
 
@@ -43,7 +44,7 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]`, `start`, `stop`, `drain`,
+`status [--json]`, `start`, `stop`, `drain [--wait] [--timeout <seconds>]`,
 `policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
 `service install|uninstall`.
 
@@ -77,6 +78,15 @@ capybara-device policy show
 Changes apply at the next command; a running program does not need a restart. `add` and `remove`
 work on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name
 (optionally `*.` for subdomains, never the apex), never an IP address or an internal name.
+
+A command ends with everything it started: once it returns (or times out, or is stopped), the
+program kills what it left running, such as `server &` or `nohup …`, because inside the sandbox no
+later command may signal another command's processes. Its process group goes at once, and a process
+that left the group (`setsid`) is found by the marker every process of the command carries. On
+macOS only a background task launch (`Bash` with `run_in_background`, whose command starts with the
+line `# capybara: background task launch`) keeps what it starts. On Linux the sandbox's pid
+namespace already ends every process with its command. In Docker mode and without a sandbox, a
+later command can stop what an earlier one left, so nothing is killed.
 
 When a command is refused a domain, the program says why. Clients that print the proxy's answer
 show a reason such as `capybara: files.slack.com is not in this device's allowed domains`, and
@@ -148,6 +158,16 @@ default) and loses the key at the next change; `start` says so at each start whi
 
 #### Local servers, sockets and caches at `dev` and `open`
 
+- **Git.** Commands may write `.git/config`, so `git init`, `git clone`, `git config`,
+  `git remote add` and branch tracking work. `.git/hooks` stays unwritable at every tier (a hook is
+  code that runs unsandboxed when you later run git in that folder yourself), and `GIT_TEMPLATE_DIR`
+  points at an empty, read-only `<dir>/git-template`, so init and clone copy no sample hooks. At
+  `strict`, `.git/config` stays unwritable too. Remaining risk: a `.git/config` a command wrote can
+  set `core.hooksPath`, `core.fsmonitor`, `core.sshCommand` or similar, which run when you later
+  run git in that repository on your own machine. Treat a repository a command created or
+  configured like any downloaded one (check `git config --local --list` before running git there),
+  or keep the device at `strict`.
+
 - **Local servers (macOS).** Commands may listen on local ports (a dev server, a browser's
   debugging port) and connect to this machine's localhost. That also reaches any local proxy that
   forwards past the network allowlist (Clash and the like) or Docker's TCP API, so the program
@@ -179,12 +199,13 @@ default) and loses the key at the next change; `start` says so at each start whi
   including the host daemons' (Docker, D-Bus, ssh-agent). Allowing them with the daemons' sockets
   masked is planned after a spike that proves them unreachable; it has not been done yet. Use
   Docker mode for browsers on Linux.
-- **Package caches.** `XDG_CACHE_HOME`, `npm_config_cache`, `npm_config_store_dir` (pnpm),
-  `PIP_CACHE_DIR`, `UV_CACHE_DIR`, `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`,
-  `MAVEN_OPTS` (`-Dmaven.repo.local`), `PLAYWRIGHT_BROWSERS_PATH` and `COREPACK_HOME` point at
+- **Package caches.** `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`, `UV_CACHE_DIR`,
+  `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`, `MAVEN_OPTS` (`-Dmaven.repo.local`), `PLAYWRIGHT_BROWSERS_PATH` and `COREPACK_HOME` point at
   folders of `<dir>/cache/`, kept across commands. Your own `~/.npm`, `~/.cache` and pnpm store stay
   read only, so a sandboxed command cannot poison your own builds. A command that sets one of
-  these variables itself keeps its value.
+  these variables itself keeps its value. pnpm's store is not redirected (pnpm reads it only from
+  `npm_config_store_dir`, which makes npm warn on every command): it stays at pnpm's default under
+  the command's HOME, the workspace.
 
 ### Running without a sandbox
 
@@ -254,10 +275,10 @@ Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD gr
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.
 
 Not enforced yet in OS mode: the `cpu` and `memoryMb` ceilings, and `allowCredentials` (commands
-get no local credentials at all). Processes a command leaves running are killed with it by tag;
+get no local credentials at all). Processes a command leaves running are killed when it ends;
 on macOS a child that leaves the command's process group and runs only Apple system binaries
-cannot be found again (Linux runs each command in its own pid namespace, which takes every child
-down with it).
+cannot be found by its marker (`ps -E` hides their environment), so it survives (Linux runs each
+command in its own pid namespace, which takes every child down with it).
 
 ## Docker mode
 
@@ -291,4 +312,7 @@ program when it exits non-zero (systemd after 5 s) and leave it stopped after a 
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
 starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so
-`docker` is found). `service uninstall` reverses it.
+`docker` is found). `service uninstall` reverses it. On macOS, installing again first boots the old
+agent out and waits (up to 10 s) until launchd has let it go, because `launchctl bootout` returns
+before that; a `bootstrap` that still fails with error 5 (Input/output error) is retried a few
+times. On Linux, installing again restarts the unit so the new file applies.

@@ -227,7 +227,7 @@ The goal is that installs work and are fast, without letting a sandboxed command
 person's own caches **(designer's call)**:
 
 - **Local OS mode**: commands keep `HOME` = the workspace root (as today), and the device sets
-  `XDG_CACHE_HOME`, `npm_config_cache`, `npm_config_store_dir` (pnpm), `PIP_CACHE_DIR`,
+  `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`,
   `UV_CACHE_DIR`, `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`,
   `MAVEN_OPTS=-Dmaven.repo.local=…`, `PLAYWRIGHT_BROWSERS_PATH`, `COREPACK_HOME` to subdirectories of
   `<dir>/cache/` (one per device, outside `workspace/` so `Glob` / `Grep` don't wade through it,
@@ -235,12 +235,28 @@ person's own caches **(designer's call)**:
   `~/.cache`, pnpm store etc. stay read-only (not denied: reading them is how `npm` finds nothing
   and moves on) **(designer's call)**. A command that sets its own value wins (`args.env` is
   applied after).
+  No pnpm store variable: pnpm 10 reads its store only from `npm_config_store_dir`, which makes
+  every npm command warn about an unknown config (acceptance 2026-11-13); pnpm's store stays at its
+  default under `HOME`.
 - Sharing the host's real caches **writable** is rejected for `dev`: a poisoned cache entry would
   run in the person's own unsandboxed builds later. Unsandboxed devices use the real caches
   (they use everything).
 - **Cloud and Docker mode**: `HOME=/workspace` already; the image sets the same variables to
   `/workspace/.cache/...` (on the workspace volume, so they persist with the device's files and pnpm
   can hard-link into `node_modules`), and `pnpm` / `corepack` are told so (§8).
+
+#### 5.2.1a Git in local OS mode
+
+At `dev` and `open` the device sets the sandbox runtime's `allowGitConfig`, so commands may write
+`.git/config` (`git init`, `clone`, `config`, `remote add`, branch tracking failed without it,
+acceptance 2026-11-13). `.git/hooks` stays unwritable at every tier, and `.git/config` at
+`strict`: the device adds these write denies under each writable root itself, because the
+runtime's own mandatory denies are anchored at the device program's working directory, which need
+not contain the roots. `GIT_TEMPLATE_DIR` points at an empty `<dir>/git-template` outside the roots
+(read-only to commands), so init and clone copy no sample hooks into the denied directory.
+Residual risk, accepted for `dev` / `open`: a written `.git/config` can set `core.hooksPath`,
+`core.fsmonitor`, `core.sshCommand` and the like, which run unsandboxed when the person later runs
+git in that repository on the host. The README tells the person; `strict` keeps the deny.
 
 #### 5.2.2 The dev hosts preset `D`
 
@@ -603,8 +619,16 @@ the exclusive lease. Nothing in process memory. Every lookup is org-scoped as to
   the machine (checked every 2 s), the localhost proxy guard flipping, a new tier ceiling after an
   exec; the kernel stores it as it stores the hello's; a refused use of an unsandboxed device is
   logged (warn), not audited per call.
+- Changes made on the machine (2026-11-13): when a reported summary (frame or hello) differs from
+  the stored one in what the owner sets (tier, localhost, allowed domains, isolation, remote
+  grants), the kernel audits `device.policy_changed` with `via: "device"` (hosts added and
+  removed, `tier` with `tierFrom`, the changed fields), in place of `device.isolation_reported`.
+  A platform `policy` op is noted on the machine row (`pending_policy_ops`) before it is sent;
+  a reported change that op explains is left to the op's own audit, so a web change is listed
+  once. A summary reported again is no change (the machine row is locked while it is compared).
 - Device: the local command log records tier and isolation per command and every policy change.
-- Web: the device page's recent changes include tier and isolation changes.
+- Web: the device page's recent changes include tier and isolation changes, and those made on the
+  machine (source 本机, with the owner's name).
 
 ## 11. UI
 

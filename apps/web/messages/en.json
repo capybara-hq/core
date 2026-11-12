@@ -1728,6 +1728,10 @@
         "remove": "Removed {hosts}",
         "tier": "Level set to {tier}",
         "tierFollow": "Set to follow the organization default",
+        "tierFrom": "Level changed from {from} to {to}",
+        "followDefault": "the organization default",
+        "localhost": "Local ports: {value}",
+        "remoteGrants": "Changes from the platform: {value}",
         "isolation": {
           "none": "No sandbox",
           "sandbox": "Sandbox back on"
@@ -1737,7 +1741,7 @@
         "via": {
           "web": "web",
           "im": "IM",
-          "device": "reported by the machine"
+          "device": "on the machine"
         },
         "unconfirmed": "Not confirmed by the machine"
       },

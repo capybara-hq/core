@@ -62,14 +62,23 @@ describe("cacheEnv", () => {
   it("points every variable at a folder of the cache root, made on demand", () => {
     const root = join(base, "cache");
     const env = cacheEnv(root, { create: true });
-    expect(Object.keys(env)).toHaveLength(12);
+    expect(Object.keys(env)).toHaveLength(11);
     expect(env.npm_config_cache).toBe(join(root, "npm"));
     expect(env.MAVEN_OPTS).toBe(`-Dmaven.repo.local=${join(root, "maven")}`);
-    expect(statSync(join(root, "pnpm-store")).isDirectory()).toBe(true);
+    expect(statSync(join(root, "npm")).isDirectory()).toBe(true);
     expect(existsSync(join(base, "other"))).toBe(false);
     // without create nothing is made
     expect(cacheEnv(join(base, "none")).npm_config_cache).toBe(join(base, "none", "npm"));
     expect(existsSync(join(base, "none"))).toBe(false);
+  });
+
+  it("sets only npm_config_ variables npm knows (an unknown one makes every npm command warn)", () => {
+    const env = cacheEnv(join(base, "cache"));
+    const npmKeys = Object.keys(env).filter((k) => k.toLowerCase().startsWith("npm_config_"));
+    // pnpm 10 reads its store-dir only from npm_config_store_dir (no pnpm-only variable), which
+    // npm reports as 'Unknown env config "store-dir"': the store is left at pnpm's default.
+    expect(npmKeys).toEqual(["npm_config_cache"]);
+    expect(env).not.toHaveProperty("npm_config_store_dir");
   });
 
   it("leaves out a folder a command replaced with a file or a link, never touching it", () => {
@@ -109,7 +118,7 @@ describe("cacheEnv", () => {
   it("replaces a file in the cache root's place", () => {
     const root = join(base, "cache");
     writeFileSync(root, "x");
-    expect(Object.keys(cacheEnv(root, { create: true }))).toHaveLength(12);
+    expect(Object.keys(cacheEnv(root, { create: true }))).toHaveLength(11);
     expect(lstatSync(root).isDirectory()).toBe(true);
   });
 

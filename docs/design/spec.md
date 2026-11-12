@@ -150,6 +150,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Layout, cards (§6.34) | `card-min` | 280 (a CardGrid's narrowest card: three columns at the content width, one on a phone) | `--cb-layout-<name>` |
 | Layout, tool policies (§6.36) | `policy-select` | 160 (a ToolPolicyList row's policy select: fits 需审批 / Ask for approval at `dense`) | `--cb-layout-<name>` |
 | Layout, theme pickers (§6.38) | `swatch-min` | 160 (a ThemeSwatchGroup column's least width) | `--cb-layout-<name>` |
+| Layout, schedule calendar (§6.40) | `calendar-axis` / `calendar-hour` / `calendar-day-min` / `calendar-cell` | 48 (the week's time axis) / 48 (one hour row; a block is half of it, the 24 px tap-target floor) / 76 (the narrowest day column: 7 × 76 + 48 fits the 640 content width) / 112 (a month cell's least height: the date row and three 24 px lines) | `--cb-layout-<name>` |
 | Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
 
@@ -774,6 +775,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - Focus: `accent` border + 3px `focus-ring` halo (§2.5); error: `fail` border; disabled: `line` border, `hover` ground, `disabled` text. Hover and focus transition border and halo over `motion.hover`.
 - Prefix / suffix use `faint` / `muted` icons (such as `search`, `chevron-down`, `⌘K`).
 - Field: label on top (`body` `ink`), help and error below (`small`; error `fail` with `circle-alert` 12), `space.1` between them.
+- Field with an action (`Field.action`): a control that acts on the field's value (the device page's 「添加」 button after the host input) sits after the control on the control's own line, `space.2` apart, vertically centred on it; the control takes the rest of the width, the action keeps its own. The help, error and count stay below the whole line, so the action lines up with the control, never with the label or the help. Never a separate row of a Field and a Button (the button would sit level with the help text).
 - A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
 - Textareas are plain, as the signed reference: no line-number gutter and no resize grip (`resize: none`). Code-like input (prompts, JSON) keeps lines unwrapped in the mono font (`code`); read-only code is shown by CodeBlock (§6.9).
 - Stepper: `− value +`, with square buttons at the step's height on both sides.
@@ -782,7 +784,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - Reset to default: when a field has been set by the user, a ghost small link "Reset to default" with the `refresh` icon appears on the right of the label row; clicking clears the value and returns to the default display.
 
 <!-- states: input -->
-States: `default`, `focus`, `error`, `disabled`
+States: `default`, `focus`, `error`, `disabled`, `action`
 
 <!-- size-table: input -->
 | Part | State | Property | Value |
@@ -803,6 +805,8 @@ States: `default`, `focus`, `error`, `disabled`
 | input | disabled | background-color | color.hover |
 | input | disabled | border-top-color | color.line |
 | input-control | disabled | color | color.disabled |
+| field-control | action | column-gap | space.2 |
+| input | action | height | control.default |
 
 <!-- states: select -->
 States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
@@ -3226,6 +3230,72 @@ States: `default`, `group`
 | check-list-group | group | color | color.ink |
 | check-list-count | group | font-size | type.small |
 | check-list-count | group | color | color.muted |
+
+### 6.40 ScheduleCalendar
+
+`ScheduleCalendar({ range, days, today, now, timeZone, items, collapsed, selectedId?, onSelect, onNavigate, onRange, rangeLabel, scope?, footnote?, loading?, refreshing?, empty?, error?, notLoadedFrom?, onDay?, day? })`, `items` `{ id, day, minute, time, title, meta?, state, mark?, label }[]`, `collapsed` `{ id, day, title, summary, failed?, state, label }[]`, `state` `upcoming | running | completed | failed | skipped` (scheduled tasks calendar design §4, §6, §7, §8): the scheduled task runs of a week or a month, recorded runs and planned occurrences on one time grid. Named for its one use: no durations, all-day events or editing. Plain props: the page places every item in the viewer's zone (`day` YYYY-MM-DD, `minute` 0..1439) and writes every label; the component reads no clock and no zone of its own (§2.2): `now` (epoch ms, the page's `useNow`) and `timeZone` only place the now line.
+
+- **Toolbar** (a row of `default` controls on the page ground): 今天, the `chevron-left` / `chevron-right` icon buttons (上一周 / 下一周, 上个月 / 下个月), the range label (`rangeLabel`, mono; with `refreshing` a 14 px `spinner` in `accent` beside it while the previous range stays drawn), then at the right end a `Segmented` 周 / 月 (`onRange`) and, for org admins (`scope`), a `Segmented` 只看我的 / 全组织. Under the box a `small` `muted` footnote (`footnote`: the zone, the horizon).
+- **The box**: the grid on the `panel` ground with the `line-card` hairline, radius `md`; it is the one box (§1), nothing inside it is boxed.
+- **Week**: an axis column (`layout.calendar-axis`) and seven day columns (Monday first in both locales, at least `layout.calendar-day-min`), headed 「周四 11-12」 (`muted`; today `ink` 500 with its date on the `selected` ground). The axis holds 00:00–23:00, one `layout.calendar-hour` row each, its label `small` `muted` (it carries information, so never `faint`), a `line-soft` hairline per hour across the days and between the columns. The day rows scroll vertically inside the box (12 hours visible) under the pinned header; a new range opens at 07:00, or an hour before its earliest item when that is earlier, instantly, and again when its items first arrive unless the person has scrolled it. A **block** sits at its `minute`, half an hour high (half of `layout.calendar-hour`: 24 px, the tap-target floor), one line: the state icon, the time (mono) and the name (ellipsis), the `mark` (试运行) `muted` after it. Blocks whose half hours overlap share the column side by side, up to three; a cluster that needs more keeps two and draws 「+N」 in the third place (`line` border, `muted`), a Popover of the rest as buttons under the day's name. A Popover's items carry the item states (the dashed `upcoming` border, `muted` `upcoming` and `skipped` text, the `fail` time, the `line-strong` selected border); choosing one closes the Popover, then calls `onSelect`. The **now line** is 1 px `accent` across today's column with a 6 px square at its axis end (the text role of §2.3, "happening now"), `aria-hidden`, not drawn when today is outside the range. A **dense lane** under the day headers holds one chip per collapsed task-day (`collapsed`: the name, the `summary` 「每小时 · 24 次」 `muted`, `failed` 「· 2 次失败」 in `fail` with `circle-x`), drawn only when the range has one.
+- **Month**: weekday names (`small` `muted`) over 6 × 7 cells (Monday first, at least `layout.calendar-cell` high, `line-soft` between them). A cell is its day number (`small`; `muted` outside the month; today on the `selected` ground; a button to that day's week when `onDay` is given) and up to three one-line items by time (collapsed tasks first, counting toward the three); with more, the third line is 「+N 项」 (`muted`), a Popover listing the whole day. Days outside the month draw their items; no now line, no tint for past days.
+- **Item states** (§2.4; success is not colored, maintainer decision Q2): `upcoming` `clock`, no ground, a 1 px dashed `line` border, `muted` text; `running` `spinner` in `accent`, `selected` ground, `ink`; `completed` `check` in `muted`, `selected` ground, `ink`; `failed` `circle-x` in `fail`, `selected` ground with a 2 px `fail` left marker, `ink` with the time in `fail`; `skipped` `ban` in `muted`, `hover` ground, `muted`. Every block, chip, line and row carries its icon and its full `label`, so no state is told by color alone. Hover draws a 1 px `line` border and no new ground. The selected item (`selectedId`) gets a 1 px `line-strong` border (the neutral selection inside a control, §2.3), never the accent.
+- **Agenda** (phones, design §7): seven day buttons (40 px: the narrow weekday and the day number; today `ink` 600 and `aria-current="date"`, the chosen `day` on the `selected` ground and `aria-pressed`, a 4 px `fail` square under a day with a failed run, named in its label) over the chosen day's rows (40 px, `body`: the state icon, the time, the name, the agent `small` `muted` at the right), collapsed tasks first; a day with none says 这天没有运行。 in `muted`. A month's agenda pages by the week of `day`. The component draws the grid and the agenda and CSS shows the agenda below 640, so a phone never paints the grid first; `range="agenda"` forces it at every width (the grid is then not drawn) and folds 周 / 月 and the scope into one `sliders` options Menu (the range choices, a separator, the scope choices). Both the grid and the agenda are in the DOM at the other ranges (CSS hides one), so page tests scope their queries to one of them (`schedule-calendar-grid` or `schedule-calendar-agenda`).
+- **Keyboard and names**: the grid is a `group` named by `rangeLabel`, each day a `group` named 「11月12日 周四」 with a visually hidden `h3`; blocks, chips, lines, 「+N」 and the month day numbers are buttons with one tab stop for the grid (roving `tabindex`: the selected item, else today's first, else the first). ↑ / ↓ the previous / next item of the day (month: the same place in the week above / below); ← / → the nearest item in time on the previous / next day with one (month: the previous / next item in order); Home / End the first / last; PageUp / PageDown `onNavigate("prev" | "next")`, focus landing on the same weekday of the new range; `t` `onNavigate("today")` (the focus request waits until the new range has items, focus resting on the grid meanwhile); ↵ / Space open (`onSelect`). When the focused item leaves the data the tab stop falls back the same way. A new `rangeLabel` is announced in a polite live region. Focus draws the 1 px `accent` inset outline of list items (§2.5).
+- **States**: `loading` draws the toolbar for real and the grid frame with skeleton blocks (§6.29) in one busy region (`aria-busy`); `empty` (`{ text, hint?, action? }`) draws a `panel` EmptyState (§6.18) on the `panel` ground centered over the grid body, the grid still under it; `error` (`{ retry, code? }`) draws the load-failed line at the top of the box (「加载失败」 with `circle-x` in `fail`, the code `muted`, a `dense` 重试), the grid kept; days at or after `notLoadedFrom` draw no items and a `muted` 未加载 in their header (the kernel cut the range).
+- `forced-colors`: borders `CanvasText`, the failed marker, the now line and the agenda dot `Highlight`. Reduced motion: the spinner is static (§6.11).
+
+<!-- states: schedule-calendar -->
+States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `selected`
+
+<!-- size-table: schedule-calendar -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| schedule-calendar-box | week | background-color | color.panel |
+| schedule-calendar-axis | week | width | layout.calendar-axis |
+| schedule-calendar-hour | week | height | layout.calendar-hour |
+| schedule-calendar-hour | week | color | color.muted |
+| schedule-calendar-hour | week | font-size | type.small |
+| schedule-calendar-day | week | min-width | layout.calendar-day-min |
+| schedule-calendar-day-head | week | color | color.muted |
+| schedule-calendar-day-head[data-today=true] | week | color | color.ink |
+| schedule-calendar-date[data-today=true] | week | background-color | color.selected |
+| schedule-calendar-block | week | height | 24 |
+| schedule-calendar-block[data-state=completed] | week | background-color | color.selected |
+| schedule-calendar-block[data-state=completed] | week | color | color.ink |
+| schedule-calendar-block[data-state=running] | week | background-color | color.selected |
+| schedule-calendar-block[data-state=running] schedule-calendar-icon | week | color | color.accent |
+| schedule-calendar-block[data-state=failed] schedule-calendar-icon | week | color | color.fail |
+| schedule-calendar-block[data-state=failed] schedule-calendar-time | week | color | color.fail |
+| schedule-calendar-block[data-state=skipped] | week | background-color | color.hover |
+| schedule-calendar-block[data-state=skipped] | week | color | color.muted |
+| schedule-calendar-block[data-state=upcoming] | week | border-top-color | color.line |
+| schedule-calendar-block[data-state=upcoming] | week | color | color.muted |
+| schedule-calendar-more | week | height | 24 |
+| schedule-calendar-more | week | color | color.muted |
+| schedule-calendar-now | week | background-color | color.accent |
+| schedule-calendar-now | week | height | 1 |
+| schedule-calendar-footnote | week | color | color.muted |
+| schedule-calendar-chip | week-dense | height | 24 |
+| schedule-calendar-chip-failed | week-dense | color | color.fail |
+| schedule-calendar-summary | week-dense | color | color.muted |
+| schedule-calendar-cell | month | min-height | layout.calendar-cell |
+| schedule-calendar-weekday | month | color | color.muted |
+| schedule-calendar-cell[data-outside=true] schedule-calendar-day-number | month | color | color.muted |
+| schedule-calendar-number[data-today=true] | month | background-color | color.selected |
+| schedule-calendar-line | month | height | 24 |
+| schedule-calendar-more | month | color | color.muted |
+| schedule-calendar-agenda-day | agenda | height | space.8 |
+| schedule-calendar-agenda-day[aria-pressed=true] | agenda | background-color | color.selected |
+| schedule-calendar-dot | agenda | background-color | color.fail |
+| schedule-calendar-row | agenda | height | space.8 |
+| schedule-calendar-meta | agenda | color | color.muted |
+| skeleton-box | loading | background-color | color.selected |
+| skeleton-box | loading | height | 24 |
+| empty-state-text | empty | color | color.ink |
+| schedule-calendar-error-text | failed | color | color.fail |
+| schedule-calendar-error-text | failed | font-size | type.small |
+| schedule-calendar-block[data-selected=true] | selected | border-top-color | color.line-strong |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

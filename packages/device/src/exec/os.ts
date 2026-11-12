@@ -1,19 +1,20 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir, constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   type SandboxAskCallback,
   SandboxManager,
   type SandboxRuntimeConfig,
 } from "@anthropic-ai/sandbox-runtime";
-import type {
-  DeviceExecArgs,
-  ExecResult,
-  SandboxLimits,
-  SandboxRoots,
-  SandboxTier,
+import {
+  type DeviceExecArgs,
+  type ExecResult,
+  isBackgroundLaunch,
+  type SandboxLimits,
+  type SandboxRoots,
+  type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 import {
   type BlockedHost,
@@ -36,6 +37,7 @@ import { detectLocalProxy, PROXY_GUARD_TTL_MS, type ProxyGuardResult } from "../
 import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
+import { Reaper, type ReaperDeps } from "./reap.js";
 import {
   cacheEnv,
   cacheRoot,
@@ -131,6 +133,8 @@ export interface OsExecutorOptions {
   detectProxy?: () => Promise<ProxyGuardResult>;
   /** Where the macOS short socket directory is made (default `/private/tmp`). */
   socketBase?: string;
+  /** The reaper's process operations (default: the real ones); injectable for tests. */
+  reaper?: Partial<ReaperDeps>;
 }
 
 interface Spawned {
@@ -149,10 +153,12 @@ export class OsExecutor implements Executor {
   readonly mode = "os" as const;
   readonly roots: SandboxRoots;
   private readonly dir: string;
-  /** Marks every process of this device's commands: `<dirKey>.<tag>`. */
+  /** Marks every process of this device's commands: `<dirKey>.<tag>.<exec id>`. */
   private readonly dirKey: string;
   private readonly groups = new Set<Group>();
   private pruneTimer: NodeJS.Timeout | undefined;
+  /** Kills what a foreground exec left running once it ends. */
+  private readonly reaper: Reaper;
   private readonly guard: RootGuard;
   private readonly files: HostFiles;
   /**
@@ -177,6 +183,7 @@ export class OsExecutor implements Executor {
   private readonly openCommands = new Set<string>();
 
   constructor(private readonly opts: OsExecutorOptions) {
+    this.reaper = new Reaper(opts.reaper);
     const dir = resolve(opts.dir);
     // The roots are reported as real paths, so what commands print matches what the kernel sends.
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
@@ -306,9 +313,31 @@ export class OsExecutor implements Executor {
     return blockedHosts(lines, limits, policy);
   }
 
-  /** The marker value of a tag's processes. */
+  /**
+   * `<dir>/git-template`, an empty directory commands can read but not write (it is outside the
+   * roots), made on demand; undefined when it cannot be made.
+   */
+  private gitTemplate(): string | undefined {
+    const path = join(this.dir, "git-template");
+    try {
+      mkdirSync(path, { recursive: true, mode: 0o755 });
+      return lstatSync(path).isDirectory() ? path : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The marker value of a tag's processes. An exec's processes carry `<this>.<exec id>` (see
+   * {@link execMarker}); {@link killTagged} matches both.
+   */
   markerOf(tag: string): string {
     return `${this.dirKey}.${tag}`;
+  }
+
+  /** The marker value of one exec's processes: its tag's plus an id of its own (no dots in a tag). */
+  private execMarker(tag: string): string {
+    return `${this.markerOf(tag)}.${randomBytes(8).toString("hex")}`;
   }
 
   /**
@@ -320,7 +349,8 @@ export class OsExecutor implements Executor {
     o: {
       cwd: string;
       env?: Record<string, string>;
-      tag: string;
+      /** The marker value every process of the command carries. */
+      marker: string;
       egress: string[];
       policy: Policy;
       tier: SandboxTier;
@@ -335,6 +365,7 @@ export class OsExecutor implements Executor {
     if (dev && process.platform === "darwin") this.prepareSocketDir();
     // dev / open on macOS: the short socket directory, where unix sockets are allowed.
     const tmp = dev && this.socketDir !== undefined ? this.socketDir : this.roots.tmp;
+    const gitTemplate = dev ? this.gitTemplate() : undefined;
     const inner: Record<string, string> = {
       // The user's PATH applies inside the sandbox only (the wrapper runs with OUTER_ENV).
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -348,12 +379,14 @@ export class OsExecutor implements Executor {
       ...toolHomeEnv(this.opts.home ?? homedir()),
       // dev / open: package caches under <dir>/cache; the command's own values win.
       ...(dev && cacheEnv(this.cacheDir, { create: true })),
+      // dev / open may write .git/config but never .git/hooks: init and clone copy no sample hooks.
+      ...(dev && gitTemplate !== undefined && { GIT_TEMPLATE_DIR: gitTemplate }),
       ...o.env,
       // The runtime points TMPDIR at its own /tmp/claude (denied by the config): use ours.
       TMPDIR: tmp,
       // Chromium on macOS ignores TMPDIR and reads this instead (its singleton socket).
       ...(process.platform === "darwin" && { MAC_CHROMIUM_TMPDIR: tmp }),
-      [EXEC_MARKER]: this.markerOf(o.tag),
+      [EXEC_MARKER]: o.marker,
     };
     for (const [k, v] of Object.entries(inner)) {
       if (!ENV_NAME_RE.test(k))
@@ -441,10 +474,13 @@ export class OsExecutor implements Executor {
       allowedDomains: [...policy.allowedDomains, ...grantedHosts(policy, args.limits, args.grants)],
     };
     const egress = effectiveEgress(policy, args.limits, args.grants);
+    const marker = this.execMarker(args.tag);
+    // A background task launch detaches the task on purpose: what it leaves running stays.
+    const reap = !isBackgroundLaunch(args.command);
     const { child, commandId } = await this.spawnSandboxed(args.command, {
       cwd,
       ...(args.env !== undefined && { env: args.env }),
-      tag: args.tag,
+      marker,
       egress,
       policy,
       tier: deviceTier(policy, args.limits),
@@ -530,6 +566,10 @@ export class OsExecutor implements Executor {
       child.once("exit", (code, sig) => {
         exit = { code, sig };
         if (group) group.exited = true;
+        // The call is over (exit, timeout or abort): nothing it started may outlive it, because no
+        // later command can stop it (the sandbox lets no command signal another's processes).
+        // Its group goes before the result; processes that left the group soon after.
+        if (group && reap) void this.reaper.reap(group.pgid, marker);
         // A background child may hold the pipes open; do not wait for it past a short grace.
         grace = setTimeout(finish, PIPE_GRACE_MS);
       });
@@ -558,7 +598,7 @@ export class OsExecutor implements Executor {
       .join(" ");
     const { child, commandId } = await this.spawnSandboxed(script, {
       cwd: this.roots.workspace,
-      tag: "fs-helper",
+      marker: this.markerOf("fs-helper"),
       egress: [],
       policy: this.opts.policy(),
       tier: this.tier(),
@@ -636,7 +676,12 @@ export class OsExecutor implements Executor {
     const want = new Set(tags);
     for (const g of [...this.groups]) if (want.has(g.tag)) this.killGroup(g);
     const values = new Set(tags.map((t) => this.markerOf(t)));
-    await killMarked((v) => values.has(v));
+    // `<dirKey>.<tag>` or an exec's `<dirKey>.<tag>.<id>`: a tag has no dot, so `ab` never
+    // matches `ab-cd`'s processes.
+    await killMarked((v) => {
+      const dot = v.indexOf(".", this.dirKey.length + 1);
+      return values.has(dot < 0 ? v : v.slice(0, dot));
+    });
   }
 
   async killAll(): Promise<void> {

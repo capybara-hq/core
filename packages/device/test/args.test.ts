@@ -25,6 +25,16 @@ describe("parseCommandLine", () => {
     expect(parseCommandLine(["status", "--json"])).toEqual({ command: "status", json: true });
     expect(parseCommandLine(["logout"])).toEqual({ command: "logout" });
     expect(parseCommandLine(["drain"])).toEqual({ command: "drain" });
+    expect(parseCommandLine(["drain", "--wait"])).toEqual({ command: "drain", wait: true });
+    expect(parseCommandLine(["drain", "--wait", "--timeout", "30"])).toEqual({
+      command: "drain",
+      wait: true,
+      timeoutSeconds: 30,
+    });
+    expect(() => parseCommandLine(["drain", "--timeout", "30"])).toThrow(/--timeout needs --wait/);
+    expect(() => parseCommandLine(["drain", "--wait", "--timeout", "0"])).toThrow(UsageError);
+    expect(() => parseCommandLine(["drain", "--wait", "--timeout", "x"])).toThrow(UsageError);
+    expect(() => parseCommandLine(["drain", "now"])).toThrow(UsageError);
     expect(parseCommandLine(["policy"])).toEqual({ command: "policy", action: "show" });
     expect(parseCommandLine(["policy", "set", "cpu", "2"])).toEqual({
       command: "policy",

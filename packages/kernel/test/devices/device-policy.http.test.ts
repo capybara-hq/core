@@ -283,6 +283,8 @@ describe("POST /devices/:id/policy", () => {
       remove: [],
       tier: { to: "strict" },
       isolation: "sandbox",
+      localhost: null,
+      remoteGrants: null,
       by: `Name ${d.login}`,
       via: "web",
       confirmed: true,

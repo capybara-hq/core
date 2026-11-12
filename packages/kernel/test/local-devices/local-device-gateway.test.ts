@@ -236,14 +236,26 @@ describe("the hello's policy summary and the unsandboxed gate", () => {
       localhost: "on",
     });
     expect(await k.app.get(NetworkGrants).unsandboxed(m.deviceId)).toBe(true);
+    // each frame's change is listed as made on the machine, the isolation with it
     expect(
       await db
         .selectFrom("audit_events")
-        .select("detail")
+        .select(["action", "detail"])
         .where("target", "=", m.deviceId)
-        .where("action", "=", "device.isolation_reported")
+        .where("action", "in", ["device.isolation_reported", "device.policy_changed"])
+        .orderBy("at")
+        .orderBy("id")
         .execute(),
-    ).toEqual([{ detail: { machineId: m.machineId, isolation: "none", previous: "sandbox" } }]);
+    ).toEqual([
+      {
+        action: "device.policy_changed",
+        detail: expect.objectContaining({ localhost: "on", via: "device" }),
+      },
+      {
+        action: "device.policy_changed",
+        detail: expect.objectContaining({ isolation: "none", via: "device" }),
+      },
+    ]);
     // the connection stays up
     expect(machine.ws.readyState).toBe(machine.ws.OPEN);
     machine.close();
