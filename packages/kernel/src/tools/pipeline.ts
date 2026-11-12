@@ -400,14 +400,13 @@ export interface ToolStepContext {
   accountId: string;
   /**
    * The conversation's source (memory plugin spec §6.2): extension tools limited by
-   * `spec.sources` are resolved with it, and plugin handlers receive it. The loop always sets it;
-   * absent = `web`.
+   * `spec.sources` are resolved with it, and plugin handlers receive it.
    */
-  source?: ConversationSource;
+  source: ConversationSource;
   /** The conversation's owner (`conversations.account_id`), given to plugin handlers. */
-  ownerAccountId?: string;
+  ownerAccountId: string;
   /** The trigger account's current org role, given to plugin handlers. */
-  role?: OrgRole;
+  role: OrgRole;
   /** run 的中止信号（用户中止 / 截止时间）。 */
   signal: AbortSignal;
   /** run 的截止时间（epoch 毫秒）；传给内置工具（沙箱命令据此收紧超时，Ruling M20）。 */
@@ -703,7 +702,7 @@ export class ToolPipeline {
           forkChild: ctx.parent?.forSkill === true,
           sandboxConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
           replay: ctx.conversationKind === "eval",
-          ...(ctx.source !== undefined && { source: ctx.source }),
+          source: ctx.source,
         });
       }
       return resolved;
@@ -1527,9 +1526,9 @@ export class ToolPipeline {
       callId,
       ...(resume !== undefined && { resume }),
       // who and where (memory plugin spec §6.2): `accountId` stays the trigger account
-      ...(ctx.source !== undefined && { source: ctx.source }),
-      ...(ctx.ownerAccountId !== undefined && { ownerAccountId: ctx.ownerAccountId }),
-      ...(ctx.role !== undefined && { role: ctx.role }),
+      source: ctx.source,
+      ownerAccountId: ctx.ownerAccountId,
+      role: ctx.role,
       ...(tool.source.kind === "builtin" && stepTools !== undefined && { tools: stepTools }),
       ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
       ...(tool.source.kind === "builtin" &&

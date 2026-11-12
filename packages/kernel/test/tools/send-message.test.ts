@@ -44,6 +44,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 
 /**
  * Agent map spec §4.2, §5.1, §5.2, §6, §10 (Task A6): `SendMessage`. A message to a working
@@ -270,6 +271,7 @@ async function parentRun(): Promise<{ conv: string; runId: string; ctx: ToolStep
     agentVersion: version,
     agent,
     accountId: ownerId,
+    ...webCaller(ownerId),
     signal: new AbortController().signal,
   };
   return { conv, runId, ctx };

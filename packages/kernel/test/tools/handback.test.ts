@@ -36,6 +36,7 @@ import {
   type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { finishedDeliveries, subagentFinishes } from "../helpers/subagents.js";
 
 /**
@@ -167,6 +168,7 @@ async function parentRun(): Promise<{ conv: string; ctx: ToolStepContext }> {
       agentVersion: 1,
       agent: normalizeStoredDefinition(v.definition),
       accountId: ownerId,
+      ...webCaller(ownerId),
       signal: new AbortController().signal,
     },
   };

@@ -79,6 +79,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-im": { provides: ["channel@1", "identity-source@1", "directory@1"] },
   "fake-web": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
+  "fake-context": { provides: ["context@1"] },
   "fake-config-form": { provides: [] },
   "fake-client": { provides: [] },
   "fake-client-broken": { provides: [] },

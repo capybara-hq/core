@@ -54,6 +54,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 
 /**
@@ -669,6 +670,7 @@ describe("sub-agents and unattended runs", { timeout: 90_000 }, () => {
       agentVersion: 1,
       agent,
       accountId: s.accountId,
+      ...webCaller(s.accountId),
       signal: new AbortController().signal,
       unattended: {
         taskId,

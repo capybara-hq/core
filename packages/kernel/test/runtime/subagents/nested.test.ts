@@ -38,6 +38,7 @@ import {
   type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
+import { webCaller } from "../../helpers/step-context.js";
 import { finishedDeliveries } from "../../helpers/subagents.js";
 
 /**
@@ -457,6 +458,7 @@ describe("the depth limit and gates on a forged call", () => {
         agentVersion: 1,
         agent: agent ?? normalizeStoredDefinition(v.definition),
         accountId: ownerId,
+        ...webCaller(ownerId),
         signal: new AbortController().signal,
         ...(depth > 0 && {
           parent: {

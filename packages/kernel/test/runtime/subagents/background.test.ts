@@ -43,6 +43,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../../helpers/runs.js";
+import { webCaller } from "../../helpers/step-context.js";
 import { childRunsOf, finishChildByHand, runStatus } from "../../helpers/subagents.js";
 
 /**
@@ -282,6 +283,7 @@ describe("finish deliveries", () => {
       agentVersion: 1,
       agent: normalizeStoredDefinition(v.definition),
       accountId: ownerId,
+      ...webCaller(ownerId),
       signal: new AbortController().signal,
     };
     return { conv, runId, ctx };

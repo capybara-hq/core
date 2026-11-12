@@ -49,6 +49,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../../helpers/runs.js";
+import { webCaller } from "../../helpers/step-context.js";
 
 /**
  * Phase C Task 8: dispatching sub-agents as child runs on one kernel (`model-script` scripts the
@@ -632,6 +633,7 @@ describe("dispatch idempotency under the parent run lock", () => {
       agentVersion: 1,
       agent: normalizeStoredDefinition(v.definition),
       accountId: ownerId,
+      ...webCaller(ownerId),
       signal: new AbortController().signal,
     };
     return { conv, runId, ctx };

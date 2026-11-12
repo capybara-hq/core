@@ -20,6 +20,17 @@ export type PointResolution<T> =
   | { ok: true; extension: string; impl: T; orgConfig: unknown; config: unknown }
   | { ok: false; reason: "none" | "ambiguous" };
 
+/**
+ * One provider of a multi-provider extension point for an org ({@link ExtensionPointDefaults.providersFor}),
+ * with its org config and its effective deployment config for the org, both to pass back to it.
+ */
+export interface PointProvider<T> {
+  extension: string;
+  impl: T;
+  orgConfig: unknown;
+  config: unknown;
+}
+
 /** One `org-default` extension point of an org (the admin view). */
 export interface OrgPointDefaultView {
   point: string;
@@ -87,6 +98,21 @@ export class ExtensionPointDefaults {
       orgConfig: c.orgConfig,
       config: c.config,
     };
+  }
+
+  /**
+   * Every provider of `point` (the name without the major, e.g. `context`) that could serve
+   * `orgId` now, in extension-name order: the same candidates {@link resolve} chooses from (loaded
+   * here, enabled in the org, valid org and effective config, `configured()` not false), for
+   * points whose every enabled provider is used (no `selection`).
+   */
+  async providersFor<T>(orgId: string, point: string): Promise<PointProvider<T>[]> {
+    return (await this.candidates(orgId, point)).map((c) => ({
+      extension: c.extension,
+      impl: c.impl as T,
+      orgConfig: c.orgConfig,
+      config: c.config,
+    }));
   }
 
   /** Every `org-default` point with its candidates, stored default and effective provider. */
@@ -184,7 +210,7 @@ export class ExtensionPointDefaults {
       try {
         cfg = await this.orgConfigs.get(orgId, extension);
       } catch (err) {
-        this.log.warn("org default provider: provider excluded, its org config is invalid", {
+        this.log.warn("extension point provider excluded, its org config is invalid", {
           orgId,
           point,
           extension,
@@ -198,7 +224,7 @@ export class ExtensionPointDefaults {
       try {
         effective = await this.effective.get(orgId, extension);
       } catch (err) {
-        this.log.warn("org default provider: provider excluded, cannot read its effective config", {
+        this.log.warn("extension point provider excluded, cannot read its effective config", {
           orgId,
           point,
           extension,
@@ -214,7 +240,7 @@ export class ExtensionPointDefaults {
         try {
           ok = configured.call(impl, cfg.config, effective.config) !== false;
         } catch (err) {
-          this.log.warn("org default provider: provider excluded, configured() threw", {
+          this.log.warn("extension point provider excluded, configured() threw", {
             orgId,
             point,
             extension,
