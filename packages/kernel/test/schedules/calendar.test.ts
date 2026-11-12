@@ -323,7 +323,8 @@ describe("assembleCalendar", () => {
 
   it("the tick budget cuts at a whole local day, counting every task's ticks of each day", () => {
     const tasks = ["a", "b", "c"].map((id) => task(id));
-    // 3 ticks a day (13th..), budget 10: the 13th, 14th and 15th fit (9), the 16th would be 12
+    // 3 ticks a day; the first day (13th) is outside the budget; budget 10: the 14th, 15th and
+    // 16th fit (9), the 17th would be 12
     const a = assembleCalendar(
       input({
         tasks,
@@ -333,14 +334,15 @@ describe("assembleCalendar", () => {
       { ...CALENDAR_LIMITS, tickBudget: 10 },
     );
     expect(a.truncated).toBe(true);
-    expect(a.horizon).toBe("2026-11-16T00:00:00.000Z");
-    expect(a.items).toHaveLength(9);
-    expect(a.items.every((i) => i.scheduledFor < "2026-11-16")).toBe(true);
+    expect(a.horizon).toBe("2026-11-17T00:00:00.000Z");
+    expect(a.items).toHaveLength(12);
+    expect(a.items.every((i) => i.scheduledFor < "2026-11-17")).toBe(true);
   });
 
   it("a cut in the viewer's zone lands on the local midnight", () => {
     const tasks = ["a", "b"].map((id) => task(id, { trigger: cron("0 9 * * *", "Asia/Shanghai") }));
-    // 01:00Z ticks; budget 3: the first local day fits (2), the second would be 4
+    // 01:00Z ticks; the first local day is free (2); budget 3: the 14th fits (2), the 15th would
+    // be 4
     const a = assembleCalendar(
       input({
         tasks,
@@ -350,14 +352,15 @@ describe("assembleCalendar", () => {
       }),
       { ...CALENDAR_LIMITS, tickBudget: 3 },
     );
-    expect(a.horizon).toBe("2026-11-13T16:00:00.000Z");
-    expect(a.items).toHaveLength(2);
+    expect(a.horizon).toBe("2026-11-14T16:00:00.000Z");
+    expect(a.items).toHaveLength(4);
   });
 
   it("the item cap cuts at a whole day; collapsed task-days count as one entry", () => {
     const hourly = task("hourly", { trigger: cron("0 * * * *") });
     const tasks = [hourly, ...["a", "b"].map((id) => task(id))];
-    // per day: 1 collapsed + 2 items = 3 entries; cap 7: two days fit, the third would be 9
+    // per day: 1 collapsed + 2 items = 3 entries; the first day is free; cap 7: the 14th and 15th
+    // fit (6), the 16th would be 9
     const a = assembleCalendar(
       input({
         tasks,
@@ -367,9 +370,9 @@ describe("assembleCalendar", () => {
       { ...CALENDAR_LIMITS, itemCap: 7 },
     );
     expect(a.truncated).toBe(true);
-    expect(a.horizon).toBe("2026-11-15T00:00:00.000Z");
-    expect(a.items.length + a.collapsed.length).toBe(6);
-    expect(a.collapsed.map((c) => c.day)).toEqual(["2026-11-13", "2026-11-14"]);
+    expect(a.horizon).toBe("2026-11-16T00:00:00.000Z");
+    expect(a.items.length + a.collapsed.length).toBe(9);
+    expect(a.collapsed.map((c) => c.day)).toEqual(["2026-11-13", "2026-11-14", "2026-11-15"]);
   });
 
   it("past the run-row bound, the range ends at the day of the first unread row", () => {
@@ -377,14 +380,70 @@ describe("assembleCalendar", () => {
     const runs = Array.from({ length: 30 }, (_, i) =>
       run("hourly", new Date(Date.parse("2026-11-09T12:00:00Z") + i * HOUR).toISOString()),
     );
-    // budget 20: row 21 (2026-11-10T08:00Z) is over it; the 9th is whole
-    const a = assembleCalendar(input({ tasks: [t], runs: runs.slice(0, 21) }), {
-      ...CALENDAR_LIMITS,
-      tickBudget: 20,
-    });
+    // the 9th's 12 rows are free; runRowCap 5: the 10th's 6th row (05:00Z) is over it
+    const a = assembleCalendar(input({ tasks: [t], runs }), { ...CALENDAR_LIMITS, runRowCap: 5 });
     expect(a.truncated).toBe(true);
     expect(a.horizon).toBe("2026-11-10T00:00:00.000Z");
     expect(a.collapsed.map((c) => [c.day, c.count])).toEqual([["2026-11-09", 12]]);
+  });
+
+  it("first day over the limits still returns the first day", () => {
+    const tasks = ["a", "b", "c"].map((id) => task(id));
+    const range = {
+      tasks,
+      from: new Date("2026-11-13T00:00:00Z"),
+      to: new Date("2026-11-20T00:00:00Z"),
+    };
+    for (const limits of [
+      { ...CALENDAR_LIMITS, tickBudget: 1 },
+      { ...CALENDAR_LIMITS, itemCap: 1 },
+      { ...CALENDAR_LIMITS, tickBudget: 0, itemCap: 0, runRowCap: 0 },
+    ]) {
+      const a = assembleCalendar(
+        input({
+          ...range,
+          runs: [run("a", "2026-11-13T09:00:00Z"), run("a", "2026-11-14T09:00:00Z")],
+        }),
+        limits,
+      );
+      expect(a.truncated).toBe(true);
+      expect(a.horizon).toBe("2026-11-14T00:00:00.000Z");
+      expect(a.items.map((i) => [i.kind, i.taskId])).toEqual([
+        ["run", "a"],
+        ["occurrence", "b"],
+        ["occurrence", "c"],
+      ]);
+    }
+  });
+
+  it("past the first day's safety caps nothing is returned and horizon is from", () => {
+    const tasks = ["a", "b", "c"].map((id) => task(id));
+    const from = new Date("2026-11-13T00:00:00Z");
+    const range = { tasks, from, to: new Date("2026-11-20T00:00:00Z") };
+    const ticks = assembleCalendar(input(range), { ...CALENDAR_LIMITS, firstDayTickCap: 2 });
+    expect(ticks).toMatchObject({ items: [], collapsed: [], tasks: [], truncated: true });
+    expect(ticks.horizon).toBe(from.toISOString());
+    const runs = assembleCalendar(
+      input({
+        ...range,
+        runs: [run("a", "2026-11-13T01:00:00Z"), run("a", "2026-11-13T02:00:00Z")],
+      }),
+      { ...CALENDAR_LIMITS, firstDayRunCap: 1 },
+    );
+    expect(runs).toMatchObject({ items: [], collapsed: [], truncated: true });
+    expect(runs.horizon).toBe(from.toISOString());
+  });
+
+  it("horizon is never before from", () => {
+    const a = assembleCalendar(
+      input({
+        tasks: [task("daily")],
+        from: new Date("2027-01-01T00:00:00Z"),
+        to: new Date("2027-01-08T00:00:00Z"),
+      }),
+    );
+    expect(a.items).toEqual([]);
+    expect(a.horizon).toBe("2027-01-01T00:00:00.000Z");
   });
 
   it("orders items by scheduledFor, then taskId", () => {

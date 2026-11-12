@@ -126,6 +126,17 @@ export function nextTick(t: ScheduleTrigger, after: Date): Date | null {
   return ticker(t)(after);
 }
 
+/** The first tick strictly after `after` (before jitter) of one trigger; null when none. */
+export type Ticker = (after: Date) => Date | null;
+
+/**
+ * The scanner's ticker for one trigger ({@link nextTick} without rebuilding its `CronTime`s per
+ * call), for callers that walk the same trigger many times ({@link ticksIn}).
+ */
+export function tickerOf(t: ScheduleTrigger): Ticker {
+  return ticker(t);
+}
+
 /** How far back a DST transition can move a tick: longer than any gap (spec §5). */
 const TRANSITION_LOOKBACK_MS = 6 * 3600_000;
 
@@ -133,7 +144,7 @@ const TRANSITION_LOOKBACK_MS = 6 * 3600_000;
  * {@link nextTick} for one trigger, with its `CronTime`s built once: callers that walk many ticks
  * (the gap sample, the catch-up enumeration) reuse one ticker instead of rebuilding per tick.
  */
-function ticker(t: ScheduleTrigger): (after: Date) => Date | null {
+function ticker(t: ScheduleTrigger): Ticker {
   if (t.kind === "once") {
     const at = onceInstant(t.at, t.timeZone);
     return (after) => (at && at.getTime() > after.getTime() ? at : null);
@@ -165,17 +176,18 @@ function ticker(t: ScheduleTrigger): (after: Date) => Date | null {
  * {@link nextTick} and {@link dueTicks} use, so a list of planned runs equals what the scanner
  * fires (calendar spec §5.2). `exhausted`: `max` ticks were taken before a tick past `until` was
  * seen, so more may follow. A `once` trigger yields its one tick when it lies in the window.
- * Costs one tick evaluation per tick returned, plus one when the walk reaches `until`.
+ * Costs one tick evaluation per tick returned, plus one when the walk reaches `until`. A caller
+ * that walks one trigger in many windows passes a {@link tickerOf} it built once.
  */
 export function ticksIn(
-  t: ScheduleTrigger,
+  t: ScheduleTrigger | Ticker,
   after: Date,
   until: Date,
   max: number,
 ): { ticks: Date[]; exhausted: boolean } {
   const ticks: Date[] = [];
   if (after.getTime() >= until.getTime()) return { ticks, exhausted: false };
-  const next = ticker(t);
+  const next = typeof t === "function" ? t : ticker(t);
   let cursor = after;
   while (ticks.length < max) {
     const tick = next(cursor);

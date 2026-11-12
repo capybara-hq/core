@@ -34,6 +34,7 @@ import {
   CALENDAR_TASK_RANGE_DAYS,
   type CalendarAnswer,
   type CalendarLimits,
+  calendarRunReadLimit,
 } from "./calendar.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
 import {
@@ -654,11 +655,12 @@ export class ScheduledTasksService {
     }
     const runs = await this.store.listRunsBetween(
       t,
+      orgId,
       tasks.map((x) => x.id),
       q.from,
       q.to,
-      // one row past the budget tells the assembly where to cut
-      limits.tickBudget + 1,
+      // one row past the caps tells the assembly where to cut
+      calendarRunReadLimit(limits),
     );
     const settings = await readScheduleSettings(t, this.config, orgId);
     return assembleCalendar(

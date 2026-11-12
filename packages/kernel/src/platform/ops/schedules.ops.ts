@@ -145,7 +145,7 @@ export class SchedulesOperations implements OnModuleInit {
           },
           {
             code: "schedule.not_found",
-            next: "Check taskId with schedules.list: you only see your own tasks (org admins see all with all=true).",
+            next: "Check taskId with schedules.list: members see only their own tasks; an org admin finds another member's task id with schedules.list all=true, then reads it here by taskId (all is not needed).",
           },
         ],
         run: async (input, ctx) => {

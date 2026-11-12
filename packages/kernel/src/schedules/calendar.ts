@@ -1,4 +1,4 @@
-import { type ScanStep, scanStep, ticksIn } from "./schedule-math.js";
+import { type ScanStep, scanStep, type Ticker, tickerOf, ticksIn } from "./schedule-math.js";
 import type {
   ScheduledTask,
   ScheduleMode,
@@ -27,17 +27,37 @@ export const CALENDAR_RANGE_DAYS = 43;
 export const CALENDAR_TASK_RANGE_DAYS = 2;
 /** A task-day with more items than this is collapsed into one summary (§5.4). */
 export const CALENDAR_COLLAPSE_OVER = 6;
-/** Tick evaluations per request, across all tasks (§5.5). */
-export const CALENDAR_TICK_BUDGET = 20_000;
-/** Entries (`items` + `collapsed`) per request (§5.5). */
+/**
+ * Ticks taken per request after the first local day, across all tasks (§5.5). One tick costs
+ * about 150-340 µs (cron's `getNextDateFrom`, measured 2026-11-12 with a ticker built once per
+ * task), so 3,000 keeps a worst-case request near one second.
+ */
+export const CALENDAR_TICK_BUDGET = 3_000;
+/** Entries (`items` + `collapsed`) per request after the first local day (§5.5). */
 export const CALENDAR_ITEM_CAP = 3_000;
+/** Run rows read per request after the first local day (§5.5). */
+export const CALENDAR_RUN_ROW_CAP = 20_000;
+/**
+ * The first requested local day is always returned whole, outside the limits above; only these
+ * safety caps stop it (then nothing is returned, `truncated`, `horizon` = `from`).
+ */
+export const CALENDAR_FIRST_DAY_TICK_CAP = 10_000;
+export const CALENDAR_FIRST_DAY_RUN_CAP = 20_000;
 
 /** The limits of one assembly; tests lower them. */
 export interface CalendarLimits {
   horizonDays: number;
   collapseOver: number;
+  /**
+   * Ticks taken (planned ticks in the range, the due tick included), after the first day. Not
+   * counted: each stream's one lookahead evaluation past its `until` and the doubling search of
+   * `scanStep` for a task already due, at most about 2 × tasks evaluations more.
+   */
   tickBudget: number;
   itemCap: number;
+  runRowCap: number;
+  firstDayTickCap: number;
+  firstDayRunCap: number;
 }
 
 export const CALENDAR_LIMITS: CalendarLimits = {
@@ -45,7 +65,14 @@ export const CALENDAR_LIMITS: CalendarLimits = {
   collapseOver: CALENDAR_COLLAPSE_OVER,
   tickBudget: CALENDAR_TICK_BUDGET,
   itemCap: CALENDAR_ITEM_CAP,
+  runRowCap: CALENDAR_RUN_ROW_CAP,
+  firstDayTickCap: CALENDAR_FIRST_DAY_TICK_CAP,
+  firstDayRunCap: CALENDAR_FIRST_DAY_RUN_CAP,
 };
+
+/** How many run rows the service reads: enough to tell where either run cap cuts. */
+export const calendarRunReadLimit = (limits: CalendarLimits) =>
+  limits.firstDayRunCap + limits.runRowCap + 1;
 
 /** A task an entry of the answer names. */
 export interface CalendarTask {
@@ -117,8 +144,8 @@ export interface CalendarInput {
   /** The live tasks the viewer may see in this request. */
   tasks: readonly ScheduledTask[];
   /**
-   * Their runs with `scheduledFor` in `[from, to)`, trial included, ordered by `scheduledFor`: at
-   * most one more than the tick budget (rows past it are not read; the range is cut there).
+   * Their runs with `scheduledFor` in `[from, to)`, trial included, ordered by `scheduledFor`, at
+   * most {@link calendarRunReadLimit} (rows past it are not read; the range is cut before them).
    */
   runs: readonly TaskRun[];
   /** The viewer: another creator's runs lose `conversationId`, `error` and `missingGrants`. */
@@ -147,20 +174,33 @@ export function assembleCalendar(
 ): CalendarAnswer {
   const { timeZone, now } = input;
   const horizonAt = now.getTime() + limits.horizonDays * DAY_MS;
-  // `cut`: the exclusive end of what is returned; a limit moves it back to a local day start
+  const fromMs = input.from.getTime();
+  // `cut`: the exclusive end of what is returned; a limit moves it back to a local day start, and
+  // only a first-day safety cap moves it to `from` (nothing returned)
   let cut = input.to.getTime();
   let truncated = false;
-  // the run read is bounded too (the service reads one row more than the tick budget, by tick):
-  // past the budget, the range ends at the start of the local day of the first row over it
-  const overRun = input.runs[limits.tickBudget];
-  if (overRun !== undefined) {
+  // the first requested local day is returned whole, outside the budget and the caps
+  const firstDay = dayKey(fromMs, timeZone);
+  const firstDayEnd = Math.min(
+    cut,
+    startOfLocalDay(startOfLocalDay(fromMs, timeZone) + 26 * 3_600_000, timeZone),
+  );
+  // the run read is bounded too: past a cap, the range ends at the start of the local day of the
+  // first row over it
+  const firstDayRuns = input.runs.filter((r) => r.scheduledFor.getTime() < firstDayEnd).length;
+  const overRun = input.runs[firstDayRuns + limits.runRowCap];
+  if (firstDayRuns > limits.firstDayRunCap) {
+    cut = fromMs;
+    truncated = true;
+  } else if (overRun !== undefined) {
     cut = startOfLocalDay(overRun.scheduledFor.getTime(), timeZone);
     truncated = true;
   }
 
-  const planned = input.plan
-    ? planOccurrences(input, horizonAt, limits.tickBudget, cut)
-    : { ticks: new Map<string, number[]>(), cut };
+  const planned =
+    input.plan && cut > fromMs
+      ? planOccurrences(input, horizonAt, limits, firstDayEnd, cut)
+      : { ticks: new Map<string, number[]>(), cut };
   if (planned.cut < cut) {
     cut = planned.cut;
     truncated = true;
@@ -210,6 +250,8 @@ export function assembleCalendar(
 
   // walk the days in order; a day is added whole or not at all
   const entries: Entry[] = [];
+  // the first day's entries do not count against the cap (the day is always returned whole)
+  let counted = 0;
   for (const day of [...days.keys()].sort()) {
     const dayEntries: Entry[] = [];
     for (const [taskId, list] of days.get(day) ?? []) {
@@ -224,7 +266,7 @@ export function assembleCalendar(
         for (const e of list) dayEntries.push({ kind: "item", ...e });
       }
     }
-    if (entries.length + dayEntries.length > limits.itemCap) {
+    if (day !== firstDay && counted + dayEntries.length > limits.itemCap) {
       const start = startOfLocalDay(dayEntries[0]?.at ?? cut, timeZone);
       if (start < cut) {
         cut = start;
@@ -233,6 +275,7 @@ export function assembleCalendar(
       break;
     }
     entries.push(...dayEntries);
+    if (day !== firstDay) counted += dayEntries.length;
   }
 
   const kept = entries.filter((e) => e.at < cut);
@@ -249,7 +292,9 @@ export function assembleCalendar(
     tasks: input.tasks.filter((t) => named.has(t.id)).map(calendarTask),
     items,
     collapsed,
-    horizon: new Date(truncated ? Math.min(cut, horizonAt) : horizonAt).toISOString(),
+    horizon: new Date(
+      Math.max(fromMs, truncated ? Math.min(cut, horizonAt) : horizonAt),
+    ).toISOString(),
     truncated,
   };
 }
@@ -257,6 +302,8 @@ export function assembleCalendar(
 /** One active task's ticks, pulled one at a time (`after`: the last tick pulled). */
 interface TickStream {
   task: ScheduledTask;
+  /** The task's ticker, built once. */
+  ticker: Ticker;
   /** The last tick to plan (inclusive): `min(to, horizon, expires_at)`. */
   until: number;
   after: number;
@@ -266,7 +313,7 @@ interface TickStream {
 function pull(s: TickStream): number | null {
   if (s.after >= s.until) return null;
   try {
-    const tick = ticksIn(s.task.trigger, new Date(s.after), new Date(s.until), 1).ticks[0];
+    const tick = ticksIn(s.ticker, new Date(s.after), new Date(s.until), 1).ticks[0];
     s.after = tick === undefined ? Number.POSITIVE_INFINITY : tick.getTime();
     return tick === undefined ? null : s.after;
   } catch {
@@ -283,14 +330,19 @@ function pull(s: TickStream): number | null {
  * one `missed` run), then the ticks after it as the scan continues; a task not due starts at its
  * due tick, `next_run_at - jitter`.
  *
- * The tasks' ticks are taken in time order across all tasks (a merge), each one tick evaluation;
- * the first tick past the budget cuts the range at the start of its local day, and the ticks
- * already taken on that day are dropped, so the days before the cut are whole (spec §5.5).
+ * The tasks' ticks are taken in time order across all tasks (a merge), each one tick evaluation
+ * on the task's ticker (built once). Ticks of the first local day count against the first day's
+ * safety cap only (past it, nothing is returned: the cut moves to `from`); the first later tick
+ * past the budget cuts the range at the start of its local day, and the ticks already taken on
+ * that day are dropped, so the days before the cut are whole (spec §5.5). The counts are ticks
+ * taken: each stream's lookahead past its `until` and `scanStep`'s doubling search for a task
+ * already due are not counted (at most about 2 × tasks evaluations more).
  */
 function planOccurrences(
   input: CalendarInput,
   horizonAt: number,
-  budget: number,
+  limits: CalendarLimits,
+  firstDayEnd: number,
   end: number,
 ): { ticks: Map<string, number[]>; cut: number } {
   const fromMs = input.from.getTime();
@@ -330,21 +382,37 @@ function planOccurrences(
           ? Number.POSITIVE_INFINITY
           : step.nextRunAt.getTime() - jitterMs - 1;
     }
-    const stream: TickStream = { task, until, after: Math.max(after, fromMs - 1) };
+    let ticker: Ticker;
+    try {
+      ticker = tickerOf(task.trigger);
+    } catch {
+      continue;
+    }
+    const stream: TickStream = { task, ticker, until, after: Math.max(after, fromMs - 1) };
     const head = first ?? pull(stream);
     if (head === null) continue;
     ticks.set(task.id, []);
     heap.push({ at: head, stream });
   }
   let cut = end;
+  // the first local day has its own safety cap; the budget counts the days after it
   let used = 0;
+  let firstDayUsed = 0;
   for (let top = heap.pop(); top !== undefined; top = heap.pop()) {
-    if (used >= budget) {
-      cut = startOfLocalDay(top.at, input.timeZone);
-      break;
+    if (top.at < firstDayEnd) {
+      if (firstDayUsed >= limits.firstDayTickCap) {
+        cut = fromMs;
+        break;
+      }
+      firstDayUsed++;
+    } else {
+      if (used >= limits.tickBudget) {
+        cut = startOfLocalDay(top.at, input.timeZone);
+        break;
+      }
+      used++;
     }
     ticks.get(top.stream.task.id)?.push(top.at);
-    used++;
     const next = pull(top.stream);
     if (next !== null) heap.push({ at: next, stream: top.stream });
   }
