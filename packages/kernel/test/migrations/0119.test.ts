@@ -10,8 +10,8 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
  * 0119_outbox.sql (transactional outbox spec §4): the outbox table, one pending row per
- * (queue, job_id) (a dead row does not count, R8), and a partial index over the rows still owed. Migrates up to and including 0119,
- * then runs the file again (idempotent).
+ * (queue, job_id) (a dead row does not count, R8), and a partial index over the rows still owed.
+ * Migrates up to and including 0119, then runs the file again (idempotent).
  */
 const FILE = "0119_outbox.sql";
 

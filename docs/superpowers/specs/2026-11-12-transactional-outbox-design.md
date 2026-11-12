@@ -100,16 +100,23 @@ The row commits or rolls back with the business write.
   to deliver the rows this transaction wrote, right after the commit, on whatever replica role wrote
   them (it is a producer, not a consumer, so the api role may do it). It claims the rows with
   `SELECT … FOR UPDATE SKIP LOCKED`, adds the jobs to BullMQ, and deletes the rows in the same short
-  transaction. This keeps today's latency.
+  transaction. This keeps today's latency. The hint starts the dispatch detached and returns at once
+  (the commit's caller never waits on Redis). It never queues behind an outage: it skips the pass,
+  leaving the rows to the relay, when a kernel queue's Redis connection is not ready (checked without
+  waiting), or when 4 fast-path passes already run in the process (a local resource bound, no shared
+  state). So a Redis outage cannot take the PG pool.
 - **Relay.** A `@LockedInterval` job under `WorkerModule` (every 2 s, **designer's call**) claims due
-  rows (`run_at <= now()`, `next_attempt_at <= now()`) in batches of 500 with `SKIP LOCKED` and does
-  the same. It is the only backstop: whatever the fast path did not deliver (a crash, Redis down) it
+  rows (`next_attempt_at <= now()`, not dead; never by `run_at`, see delayed jobs) in batches of 500
+  with `SKIP LOCKED` and does the same. It is the only backstop: whatever the fast path did not deliver (a crash, Redis down) it
   delivers on its next tick.
 - **Redis calls inside the claim transaction.** The dispatcher adds the BullMQ jobs while holding row
   locks on outbox rows only (never on business rows), then deletes the rows and commits. This is the
   one sanctioned exception to "no Redis inside a transaction", and it lives in one file. A crash
   after the add and before the commit leaves the rows; the next attempt adds again, which BullMQ
   ignores while the job id exists, and which the job's own idempotency covers after it was removed.
+  The adds of one pass share one 2000 ms deadline, so a claim transaction holds its locks and its
+  pool connection for about 2 s at most; after the first queue fails or times out, the pass fails
+  the queues left without trying them.
 - **Delayed jobs.** `runAt` in the future becomes a BullMQ `delay` computed at dispatch
   (`max(0, runAt - now)`). Rows are dispatched as soon as they are written, not at `runAt`, so BullMQ
   stays the timer (**designer's call**: the relay never becomes a scheduler).
@@ -147,12 +154,15 @@ CREATE TABLE IF NOT EXISTS outbox (
   dead_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
--- one pending row per job: a second add of the same job before delivery is a no-op
-CREATE UNIQUE INDEX IF NOT EXISTS outbox_job_uniq ON outbox (queue, job_id);
+-- one pending row per job: a second add of the same job before delivery is a no-op; a dead row
+-- does not count, so it never blocks the same job owed again
+CREATE UNIQUE INDEX IF NOT EXISTS outbox_job_uniq ON outbox (queue, job_id) WHERE dead_at IS NULL;
 CREATE INDEX IF NOT EXISTS outbox_due ON outbox (next_attempt_at) WHERE dead_at IS NULL;
 ```
 
-`add` uses `ON CONFLICT (queue, job_id) DO NOTHING RETURNING id` and returns whether it inserted.
+`add` uses `ON CONFLICT (queue, job_id) WHERE dead_at IS NULL DO NOTHING RETURNING id` and returns
+whether it inserted. The unique index is partial (ruling R8): a dead row is not owed work, so it
+never blocks a new owed job with the same id, and the conflict lookup ignores dead rows too.
 A conflict means the same job is already owed; the job ids are built so that a conflict always
 carries the same data (a run job id names the conversation and its trigger seq, and one active run
 per conversation is a unique index, so two different runs cannot share it). As a guard, a conflict

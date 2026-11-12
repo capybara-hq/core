@@ -16,8 +16,17 @@ import { KERNEL_LOGGER } from "../tokens.js";
  */
 export const OUTBOX_BACKOFF = { baseMs: 1000, capMs: 300_000, maxAttempts: 20 } as const;
 
-/** How long one `addBulk` may take while the claim transaction holds the rows' locks. */
+/**
+ * How long the queue adds of one claim pass may take in all: the claim transaction holds its rows'
+ * locks and a pool connection for at most about this long.
+ */
 export const OUTBOX_REDIS_TIMEOUT_MS = 2000;
+
+/**
+ * Most fast-path passes running at once in one process; more are skipped and left to the relay,
+ * so a slow Redis cannot take the whole pool (a local resource bound, no shared state).
+ */
+export const OUTBOX_FAST_PATH_CONCURRENCY = 4;
 
 /**
  * Test seam (`KernelOverride`): returns true to make every queue add fail (a Redis outage) without
@@ -40,10 +49,29 @@ interface FailedGroup {
   error: string;
 }
 
+/** The queue handle the dispatcher uses: adds, and the connection's state. */
+export type OutboxQueue = Pick<Queue, "addBulk" | "getBackend">;
+
 /** Longest `last_error` kept on a row. */
 const MAX_ERROR_LENGTH = 2000;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const NOT_READY = Symbol("NOT_READY");
+
+/**
+ * Whether the queue's Redis connection is ready now, without waiting: the backend's client
+ * promise only settles once connected, so a pending one counts as not ready.
+ */
+async function connectionReady(queue: OutboxQueue): Promise<boolean> {
+  try {
+    // an already settled client promise wins the race (its callback is queued first)
+    const client = await Promise.race([queue.getBackend().client, Promise.resolve(NOT_READY)]);
+    return client !== NOT_READY && client.status === "ready";
+  } catch {
+    return false;
+  }
+}
 
 /** Rejects when `p` takes longer than `ms`; a late rejection of `p` is swallowed. */
 async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -67,23 +95,29 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
  * leaves the rows; the next pass adds again and BullMQ ignores the existing job id. A queue whose
  * add fails keeps its rows, and a second short update records the attempt with exponential
  * backoff, setting `dead_at` at the last one.
+ *
+ * The fast path never queues behind an outage: it skips the pass (the relay delivers the rows) when
+ * a queue's Redis connection is not ready or {@link OUTBOX_FAST_PATH_CONCURRENCY} passes already
+ * run. Within a pass, the first failed queue fails the queues after it without trying them.
  */
 @Injectable()
 export class OutboxDispatcher {
-  private readonly queues: Record<KernelQueueName, Pick<Queue, "addBulk">>;
+  private readonly queues: Record<KernelQueueName, OutboxQueue>;
+  /** Fast-path passes running in this process (bounded by OUTBOX_FAST_PATH_CONCURRENCY). */
+  private fastPaths = 0;
 
   constructor(
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
-    @Inject(getQueueToken("cap-kernel-runs")) runs: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-subagent-runs")) subagentRuns: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-channels")) channels: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-maintenance")) maintenance: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-plugin-scope")) pluginScope: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-titles")) titles: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-usage-report")) usageReport: Pick<Queue, "addBulk">,
-    @Inject(getQueueToken("cap-kernel-evals")) evals: Pick<Queue, "addBulk">,
+    @Inject(getQueueToken("cap-kernel-runs")) runs: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-subagent-runs")) subagentRuns: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-channels")) channels: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-maintenance")) maintenance: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-plugin-scope")) pluginScope: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-titles")) titles: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-usage-report")) usageReport: OutboxQueue,
+    @Inject(getQueueToken("cap-kernel-evals")) evals: OutboxQueue,
     @Optional()
     @Inject(OUTBOX_DISPATCH_FAILS)
     private readonly dispatchFails: () => boolean = () => false,
@@ -106,17 +140,42 @@ export class OutboxDispatcher {
    */
   async dispatchOwn(ids: readonly string[]): Promise<void> {
     if (ids.length === 0) return;
+    if (this.fastPaths >= OUTBOX_FAST_PATH_CONCURRENCY) {
+      this.log.debug("outbox fast path busy; the relay delivers the rows", { rows: ids.length });
+      return;
+    }
+    this.fastPaths++;
     try {
+      if (!(await this.redisReady())) {
+        this.log.debug("outbox fast path: Redis not ready; the relay delivers the rows", {
+          rows: ids.length,
+        });
+        return;
+      }
       await this.dispatch({ ids });
     } catch (e) {
       this.log.error("outbox fast path failed; the relay delivers the rows", {
         rows: ids.length,
         error: errMsg(e),
       });
+    } finally {
+      this.fastPaths--;
     }
   }
 
-  /** The relay: delivers up to `limit` due rows (not dead, `next_attempt_at` reached), oldest first. */
+  /**
+   * Every kernel queue's connection is ready (they reach the same Redis; the fast path does not
+   * read its rows' queues before claiming them).
+   */
+  private async redisReady(): Promise<boolean> {
+    const ready = await Promise.all(Object.values(this.queues).map(connectionReady));
+    return ready.every(Boolean);
+  }
+
+  /**
+   * The relay: delivers up to `limit` due rows (not dead, `next_attempt_at` reached), oldest
+   * first.
+   */
   dispatchDue(limit: number): Promise<DispatchResult> {
     return this.dispatch({ limit });
   }
@@ -131,8 +190,8 @@ export class OutboxDispatcher {
   /**
    * One claim transaction: locks the rows (skipping rows another pass holds), adds their jobs and
    * deletes the delivered rows. The only Redis calls made while a PG transaction is open in the
-   * kernel (spec §3.3): the locks held are outbox rows only, and each add is bounded by
-   * {@link OUTBOX_REDIS_TIMEOUT_MS}.
+   * kernel (spec §3.3): the locks held are outbox rows only, and the pass's adds together are
+   * bounded by {@link OUTBOX_REDIS_TIMEOUT_MS}.
    */
   @Transactional({ propagation: "requires_new" })
   private async claimAndSend(claim: Claim): Promise<{ sent: number; failed: FailedGroup[] }> {
@@ -155,14 +214,29 @@ export class OutboxDispatcher {
     }
 
     const now = Date.now();
+    const deadline = now + OUTBOX_REDIS_TIMEOUT_MS;
     const delivered: string[] = [];
     const failed: FailedGroup[] = [];
+    // after the first failure the queues left are failed without a try: Redis is likely down
+    let firstError: string | undefined;
     for (const [name, group] of byQueue) {
       const ids = group.map((r) => r.id);
+      if (firstError !== undefined) {
+        failed.push({
+          ids,
+          error: `not tried after an earlier queue failed: ${firstError}`.slice(
+            0,
+            MAX_ERROR_LENGTH,
+          ),
+        });
+        continue;
+      }
       try {
         if (this.dispatchFails()) throw new Error("outbox dispatch failure (test seam)");
         const queue = this.queues[name as KernelQueueName];
         if (!queue) throw new Error(`"${name}" is not a kernel queue`);
+        const left = deadline - Date.now();
+        if (left <= 0) throw new Error(`no time left of the pass's ${OUTBOX_REDIS_TIMEOUT_MS} ms`);
         await withTimeout(
           queue.addBulk(
             group.map((r) => ({
@@ -175,12 +249,13 @@ export class OutboxDispatcher {
               },
             })),
           ),
-          OUTBOX_REDIS_TIMEOUT_MS,
+          left,
           `addBulk to ${name}`,
         );
         delivered.push(...ids);
       } catch (e) {
-        failed.push({ ids, error: errMsg(e).slice(0, MAX_ERROR_LENGTH) });
+        firstError = errMsg(e);
+        failed.push({ ids, error: firstError.slice(0, MAX_ERROR_LENGTH) });
       }
     }
     if (delivered.length > 0)
@@ -196,12 +271,13 @@ export class OutboxDispatcher {
   private async recordFailure(group: FailedGroup): Promise<number> {
     const { baseMs, capMs, maxAttempts } = OUTBOX_BACKOFF;
     // the right-hand sides read the row before the update: the first failure waits baseMs
+    const backoffMs = sql`least(${capMs}::float8, ${baseMs}::float8 * power(2, attempts))`;
     const updated = await this.db
       .updateTable("outbox")
       .set({
         attempts: sql`attempts + 1`,
         last_error: group.error,
-        next_attempt_at: sql`now() + least(${capMs}::float8, ${baseMs}::float8 * power(2, attempts)) * interval '1 millisecond'`,
+        next_attempt_at: sql`now() + ${backoffMs} * interval '1 millisecond'`,
         dead_at: sql`case when attempts + 1 >= ${maxAttempts}::int then now() end`,
       })
       .where("id", "in", group.ids)

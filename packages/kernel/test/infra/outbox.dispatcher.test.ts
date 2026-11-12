@@ -3,17 +3,22 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import type { Kysely } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { OUTBOX_BACKOFF, OutboxDispatcher } from "../../src/infra/outbox/outbox.dispatcher.js";
+import {
+  OUTBOX_BACKOFF,
+  OUTBOX_FAST_PATH_CONCURRENCY,
+  OUTBOX_REDIS_TIMEOUT_MS,
+  OutboxDispatcher,
+} from "../../src/infra/outbox/outbox.dispatcher.js";
 import { outboxFastPath } from "../../src/infra/outbox/outbox.module.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import type { OutboxJobName } from "../../src/infra/outbox/registry.js";
-import { KERNEL_QUEUES } from "../../src/infra/queue/queue-names.js";
+import { KERNEL_QUEUES, type KernelQueueName } from "../../src/infra/queue/queue-names.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { waitFor } from "../helpers/runs.js";
@@ -52,11 +57,11 @@ const rows = () =>
     .execute();
 
 /** Writes a row the way a business transaction does, without the fast path. */
-const insertRow = async (jobId: string, extra: { runAt?: Date } = {}) => {
+const insertRow = async (jobId: string, extra: { runAt?: Date; queue?: KernelQueueName } = {}) => {
   const row = await db
     .insertInto("outbox")
     .values({
-      queue: QUEUE,
+      queue: extra.queue ?? QUEUE,
       job_name: TEST_JOB,
       job_id: jobId,
       data: JSON.stringify({ jobId }),
@@ -68,6 +73,50 @@ const insertRow = async (jobId: string, extra: { runAt?: Date } = {}) => {
 };
 
 const jobsIn = async (q: Queue) => q.getJobs(["waiting", "delayed", "active", "completed"]);
+
+/** A dispatcher over the given queue handles, in `KERNEL_QUEUES` order. */
+const dispatcherOver = (qs: readonly Queue[], dispatchFails: () => boolean) => {
+  const [runs, subRuns, channels, maint, scope, titles, usage, evals] = qs as [
+    Queue,
+    Queue,
+    Queue,
+    Queue,
+    Queue,
+    Queue,
+    Queue,
+    Queue,
+  ];
+  return new OutboxDispatcher(
+    host,
+    kdb,
+    silent(),
+    runs,
+    subRuns,
+    channels,
+    maint,
+    scope,
+    titles,
+    usage,
+    evals,
+    dispatchFails,
+  );
+};
+
+/** A queue handle without Redis: `client` is what its backend's client promise gives. */
+const fakeQueue = (
+  addBulk: (jobs: unknown[]) => Promise<unknown> = async () => [],
+  client: Promise<{ status: string }> = Promise.resolve({ status: "ready" }),
+) => {
+  const add = vi.fn(addBulk);
+  return { queue: { addBulk: add, getBackend: () => ({ client }) } as unknown as Queue, add };
+};
+
+/** A dispatcher whose queues are all fakes, with `over` in place of the named ones. */
+const fakeDispatcher = (over: Partial<Record<KernelQueueName, Queue>>) =>
+  dispatcherOver(
+    KERNEL_QUEUES.map((name) => over[name] ?? fakeQueue().queue),
+    () => false,
+  );
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -81,30 +130,7 @@ beforeAll(async () => {
   kdb = new KernelDb(pool, host);
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   queues = KERNEL_QUEUES.map((name) => new Queue(name, { connection: redis }));
-  const [runs, subRuns, channels, maint, scope, titles, usage, evals] = queues as [
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-  ];
-  dispatcher = new OutboxDispatcher(
-    host,
-    kdb,
-    silent(),
-    runs,
-    subRuns,
-    channels,
-    maint,
-    scope,
-    titles,
-    usage,
-    evals,
-    () => fails,
-  );
+  dispatcher = dispatcherOver(queues, () => fails);
   outbox = new OutboxService(host, kdb, silent(), outboxFastPath(dispatcher), true);
 }, 120_000);
 
@@ -201,5 +227,66 @@ describe("OutboxDispatcher", () => {
     expect(await rows()).toEqual([]);
     const jobs = await jobsIn(maintenance());
     expect(jobs.map((j) => j.id)).toEqual(["crash-1"]);
+  });
+
+  it("a fast path with Redis not ready skips the claim and leaves the row", async () => {
+    // a connection that never came up: its client promise never settles
+    const down = fakeQueue(undefined, new Promise(() => {}));
+    const d = fakeDispatcher({ [QUEUE]: down.queue });
+    const id = await insertRow("down-1");
+    const before = await rows();
+    await d.dispatchOwn([id]);
+    expect(down.add).not.toHaveBeenCalled();
+    expect(await rows()).toEqual(before);
+    expect(before[0]).toMatchObject({ attempts: 0, last_error: null });
+    // a connection that dropped (reconnecting) counts as not ready too
+    const dropped = fakeQueue(undefined, Promise.resolve({ status: "reconnecting" }));
+    await fakeDispatcher({ "cap-kernel-runs": dropped.queue }).dispatchOwn([id]);
+    expect(await rows()).toEqual(before);
+  });
+
+  it("a first-group timeout marks later groups failed without waiting for them", async () => {
+    const hung = fakeQueue(() => new Promise(() => {}));
+    const later = fakeQueue();
+    const d = fakeDispatcher({ "cap-kernel-runs": hung.queue, [QUEUE]: later.queue });
+    await insertRow("hung-1", { queue: "cap-kernel-runs" });
+    await insertRow("later-1");
+    const start = Date.now();
+    expect(await d.dispatchDue(500)).toEqual({ sent: 0, failed: 2, dead: 0 });
+    const took = Date.now() - start;
+    expect(took).toBeGreaterThanOrEqual(OUTBOX_REDIS_TIMEOUT_MS - 50);
+    expect(took).toBeLessThan(OUTBOX_REDIS_TIMEOUT_MS + 1_000);
+    expect(hung.add).toHaveBeenCalledTimes(1);
+    expect(later.add).not.toHaveBeenCalled();
+    const [first, second] = await rows();
+    expect(first).toMatchObject({ job_id: "hung-1", attempts: 1 });
+    expect(first?.last_error).toMatch(/timed out/);
+    expect(second).toMatchObject({ job_id: "later-1", attempts: 1 });
+    expect(second?.last_error).toMatch(/^not tried after an earlier queue failed/);
+  });
+
+  it("a 5th concurrent fast path is skipped", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const slow = fakeQueue(async () => {
+      await gate;
+      return [];
+    });
+    const d = fakeDispatcher({ [QUEUE]: slow.queue });
+    const ids: string[] = [];
+    for (let i = 0; i <= OUTBOX_FAST_PATH_CONCURRENCY; i++) ids.push(await insertRow(`busy-${i}`));
+    const running = ids.slice(0, OUTBOX_FAST_PATH_CONCURRENCY).map((id) => d.dispatchOwn([id]));
+    await waitFor(
+      async () => slow.add.mock.calls.length === OUTBOX_FAST_PATH_CONCURRENCY,
+      5_000,
+      "four passes in addBulk",
+    );
+    await d.dispatchOwn([ids[OUTBOX_FAST_PATH_CONCURRENCY] as string]);
+    expect(slow.add).toHaveBeenCalledTimes(OUTBOX_FAST_PATH_CONCURRENCY);
+    release();
+    await Promise.all(running);
+    expect(await rows()).toMatchObject([{ job_id: "busy-4", attempts: 0, last_error: null }]);
   });
 });

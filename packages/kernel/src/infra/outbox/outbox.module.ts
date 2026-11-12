@@ -18,8 +18,12 @@ export const outboxFastPath =
 /**
  * Global: `OutboxService` (owed work written in the caller's transaction, transactional outbox
  * spec §3.2), the `OutboxDispatcher` that delivers the rows (the relay drives it too) and the fast
- * path `add` hands each committed transaction's rows to. Every kernel queue is registered here: a
- * row may name any of them, and the dispatcher is a producer on every role.
+ * path `add` hands each committed transaction's rows to.
+ *
+ * Every kernel queue is registered here, so OutboxModule has its own Queue instance per kernel
+ * queue (one more Redis connection per queue per process, closed by `QueueShutdown` like the
+ * others): a row may name any of them, the dispatcher is a producer on every role, and the feature
+ * modules that register the same queues are not all present on every role.
  */
 @Global()
 @Module({
