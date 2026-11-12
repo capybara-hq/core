@@ -8,8 +8,13 @@ import { DeviceOpError } from "../src/exec/types.js";
 import { PolicyStore } from "../src/policy-store.js";
 import {
   DOCKER_WIDENING_MESSAGE,
+  ISOLATION_REMOTE_MESSAGE,
+  logEntryFor,
+  policySummary,
   REMOTE_GRANTS_OFF_MESSAGE,
+  REMOTE_TIER_OFF_MESSAGE,
   runOp,
+  type SeenState,
   serveOp,
 } from "../src/server-ops.js";
 import {
@@ -94,7 +99,10 @@ describe("the policy op", () => {
     writePolicy(dir, { ...DEFAULT_POLICY, ...over });
   };
   const policyOp = (args: Record<string, unknown>) =>
-    serveOp(new FakeExecutor(), r("policy", { source, ...args }), never, { policy: store });
+    serveOp(new FakeExecutor(), r("policy", { source, ...args }), never, {
+      policy: store,
+      platform: "darwin",
+    });
 
   it("answers unsupported without a policy store", async () => {
     const res = await runOp(new FakeExecutor(), r("policy", { source, add: ["a.com"] }), never);
@@ -110,10 +118,11 @@ describe("the policy op", () => {
       ok: true,
       result: {
         policy: {
-          effectiveTier: "strict",
+          // No exec seen yet: no ceiling known, so the owner's choice, else dev.
+          effectiveTier: "dev",
           isolation: "sandbox",
-          localhost: "off",
-          unixSockets: "off",
+          localhost: "on",
+          unixSockets: "roots",
           allowedDomains: ["a.com", "files.slack.com"],
           remoteGrants: "owner",
         },
@@ -163,20 +172,21 @@ describe("the policy op", () => {
   it("under remoteGrants off refuses every widening and changes nothing", async () => {
     seed({ allowedDomains: ["a.com"], remoteGrants: "off" });
     const before = readFileSync(policyPath(dir), "utf8");
-    for (const [args, what] of [
-      [{ add: ["b.com"] }, "add b.com"],
-      [{ tier: "open" }, "tier open"],
-      [{ tier: "dev" }, "tier dev"],
+    for (const [args, what, message] of [
+      [{ add: ["b.com"] }, "add b.com", REMOTE_GRANTS_OFF_MESSAGE],
+      [{ tier: "open" }, "tier open", REMOTE_TIER_OFF_MESSAGE],
+      // The org's default is not known on the device: a tier when the file has none may widen.
+      [{ tier: "dev" }, "tier dev", REMOTE_TIER_OFF_MESSAGE],
       // A request with any widening is refused whole, its narrowing part too.
-      [{ add: ["b.com"], remove: ["a.com"] }, "add b.com; remove a.com"],
-      [{ add: ["a.com"] }, "add a.com"],
+      [{ add: ["b.com"], remove: ["a.com"] }, "add b.com; remove a.com", REMOTE_GRANTS_OFF_MESSAGE],
+      [{ add: ["a.com"] }, "add a.com", REMOTE_GRANTS_OFF_MESSAGE],
     ] as const) {
       const { res, detail } = await policyOp(args);
       expect(res).toEqual({
         type: "res",
         id: "x",
         ok: false,
-        error: { kind: "policy", message: REMOTE_GRANTS_OFF_MESSAGE },
+        error: { kind: "policy", message },
       });
       // The attempt is recorded locally.
       expect(detail).toBe(`policy refused ${what} by Ada (acc_1) via web, approval apr_1`);
@@ -185,19 +195,100 @@ describe("the policy op", () => {
       "This device does not accept network changes from the deployment; allow it locally: " +
         "capybara-device policy add allowedDomains <host>",
     );
+    expect(REMOTE_TIER_OFF_MESSAGE).toBe(
+      "This device does not accept a higher tier from the deployment; raise it locally: " +
+        "capybara-device policy set tier <tier>",
+    );
     expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
   });
 
-  it("in docker mode refuses every widening: the container cannot limit single domains", async () => {
-    seed({ allowedDomains: ["a.com", "b.com"], tier: "open" });
+  it("under remoteGrants off refuses a higher tier and the org default over a set tier", async () => {
+    seed({ tier: "dev", remoteGrants: "off" });
+    const before = readFileSync(policyPath(dir), "utf8");
+    for (const tier of ["open", null]) {
+      const { res, detail } = await policyOp({ tier });
+      expect(res).toMatchObject({
+        ok: false,
+        error: { kind: "policy", message: REMOTE_TIER_OFF_MESSAGE },
+      });
+      expect(detail).toMatch(/^policy refused tier (open|org default) by /);
+    }
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+    // The same tier, and a lower one, apply.
+    expect((await policyOp({ tier: "dev" })).res).toMatchObject({ ok: true });
+    const { res, detail } = await policyOp({ tier: "strict" });
+    expect(res).toMatchObject({ ok: true, result: { policy: { tier: "strict" } } });
+    expect(detail).toBe("policy tier strict by Ada (acc_1) via web, approval apr_1");
+    expect(readPolicy(dir).tier).toBe("strict");
+  });
+
+  it("under remoteGrants owner applies a higher tier", async () => {
+    seed({ tier: "strict" });
+    const { res, detail } = await policyOp({ tier: "open" });
+    expect(res).toMatchObject({ ok: true, result: { policy: { tier: "open" } } });
+    expect(detail).toBe("policy tier open by Ada (acc_1) via web, approval apr_1");
+  });
+
+  it("never turns the sandbox off, whatever remoteGrants says and however the op is shaped", async () => {
+    seed({ tier: "open" });
+    const before = readFileSync(policyPath(dir), "utf8");
+    for (const isolation of ["none", "NONE", null, false, "", { none: true }, ["none"]]) {
+      const { res, detail } = await policyOp({ isolation });
+      expect(res, JSON.stringify(isolation)).toEqual({
+        type: "res",
+        id: "x",
+        ok: false,
+        error: { kind: "policy", message: ISOLATION_REMOTE_MESSAGE },
+      });
+      expect(detail).toMatch(/^policy refused isolation /);
+    }
+    // Bundled with an allowed change, the whole op is refused.
+    const both = await policyOp({ remove: ["a.com"], tier: "strict", isolation: "none" });
+    expect(both.res).toMatchObject({ ok: false, error: { message: ISOLATION_REMOTE_MESSAGE } });
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+    expect(ISOLATION_REMOTE_MESSAGE).toBe(
+      "This device turns its sandbox off only on the machine itself (capybara-device policy set " +
+        'isolation none); the deployment may only set isolation to "sandbox".',
+    );
+  });
+
+  it("turns the sandbox back on, also under remoteGrants off", async () => {
+    seed({ tier: "open", isolation: "none", remoteGrants: "off" });
+    const { res, detail } = await policyOp({ isolation: "sandbox" });
+    expect(res).toMatchObject({ ok: true, result: { policy: { isolation: "sandbox" } } });
+    expect(detail).toBe("policy isolation sandbox by Ada (acc_1) via web, approval apr_1");
+    expect(readPolicy(dir).isolation).toBe("sandbox");
+  });
+
+  it("a tier below open turns the sandbox back on: running without one needs open", async () => {
+    seed({ tier: "open", isolation: "none", remoteGrants: "off" });
+    const { res, detail } = await policyOp({ tier: "dev" });
+    expect(res).toMatchObject({
+      ok: true,
+      result: { policy: { tier: "dev", isolation: "sandbox" } },
+    });
+    expect(detail).toBe(
+      "policy tier dev; isolation sandbox (tier below open) by Ada (acc_1) via web, approval apr_1",
+    );
+    expect(readPolicy(dir)).toMatchObject({ tier: "dev", isolation: "sandbox" });
+  });
+
+  it("refuses an unknown tier with an audit line", async () => {
+    const { res, detail } = await policyOp({ tier: "wide" });
+    expect(res).toMatchObject({
+      ok: false,
+      error: { kind: "policy", message: "unknown tier wide" },
+    });
+    expect(detail).toBe("policy refused tier wide by Ada (acc_1) via web, approval apr_1");
+  });
+
+  it("in docker mode refuses added hosts (the container cannot limit single domains), not tiers", async () => {
+    seed({ allowedDomains: ["a.com", "b.com"], tier: "dev" });
     const docker = new FakeExecutor();
     (docker as { mode: string }).mode = "docker";
     const before = readFileSync(policyPath(dir), "utf8");
-    for (const args of [
-      { add: ["c.com"] },
-      { tier: "open" },
-      { add: ["c.com"], remove: ["a.com"] },
-    ]) {
+    for (const args of [{ add: ["c.com"] }, { add: ["c.com"], remove: ["a.com"] }]) {
       const { res, detail } = await serveOp(docker, r("policy", { source, ...args }), never, {
         policy: store,
       });
@@ -214,7 +305,11 @@ describe("the policy op", () => {
         "switch the device to OS mode to allow single domains.",
     );
     expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
-    // Narrowing still applies.
+    // A tier change follows remoteGrants, and narrowing applies.
+    const up = await serveOp(docker, r("policy", { source, tier: "open" }), never, {
+      policy: store,
+    });
+    expect(up.res).toMatchObject({ ok: true, result: { policy: { tier: "open" } } });
     const { res } = await serveOp(
       docker,
       r("policy", { source, remove: ["a.com"], tier: "strict" }),
@@ -430,5 +525,99 @@ describe("CommandLog", () => {
     log.append({ time: "t", op: "exec", tag: "a", actor: null, exitCode: 0 });
     expect(readFileSync(join(dir, "commands.log.1"), "utf8")).toBe("x".repeat(100));
     expect(readFileSync(join(dir, "commands.log"), "utf8")).toContain('"op":"exec"');
+  });
+});
+
+describe("tiers in the summary and the command log", () => {
+  let dir: string;
+  const never = new AbortController().signal;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "device-tiers-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const withTier = (tier: string, defaultTier?: string) => ({
+    ...execArgs("now"),
+    limits: {
+      ...execArgs("now").limits,
+      tier,
+      ...(defaultTier !== undefined && { defaultTier }),
+    },
+  });
+
+  it("the summary uses the latest exec's ceiling and default, and the proxy guard", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "open" });
+    const store = new PolicyStore(dir);
+    const seen: SeenState = {};
+    const ex = new FakeExecutor();
+    let proxy = false;
+    (ex as { proxyGuard?: () => { detected: boolean; reasons: string[] } }).proxyGuard = () => ({
+      detected: proxy,
+      reasons: [],
+    });
+    const ctx = { policy: store, seen, platform: "darwin" as const };
+    await serveOp(ex, r("exec", withTier("dev", "strict")), never, ctx);
+    expect(seen.limits).toEqual({ tier: "dev", defaultTier: "strict" });
+    let { res } = await serveOp(
+      ex,
+      r("policy", { source: { accountId: "a", accountName: "A", via: "web" } }),
+      never,
+      ctx,
+    );
+    expect(res).toMatchObject({
+      ok: true,
+      result: {
+        policy: { tier: "open", effectiveTier: "dev", localhost: "on", unixSockets: "roots" },
+      },
+    });
+    proxy = true;
+    ({ res } = await serveOp(
+      ex,
+      r("policy", { source: { accountId: "a", accountName: "A", via: "web" } }),
+      never,
+      ctx,
+    ));
+    expect(res).toMatchObject({ result: { policy: { localhost: "off-proxy-detected" } } });
+  });
+
+  it("reports isolation none in OS mode and sandbox in Docker mode", () => {
+    const p = { ...DEFAULT_POLICY, tier: "open" as const, isolation: "none" as const };
+    const limits = { tier: "open" as const };
+    expect(policySummary(p, { mode: "os", limits, platform: "linux" })).toMatchObject({
+      effectiveTier: "open",
+      isolation: "none",
+    });
+    expect(policySummary(p, { mode: "docker", limits })).toMatchObject({ isolation: "sandbox" });
+  });
+
+  it("every exec is logged with its tier and isolation", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
+    const store = new PolicyStore(dir);
+    const ex = new FakeExecutor();
+    const req = r("exec", withTier("open"));
+    const open = await serveOp(ex, req, never, { policy: store });
+    expect(open.run).toEqual({ tier: "open", isolation: "none" });
+    expect(logEntryFor(req, open.res, new Date(0), open.detail, open.run)).toMatchObject({
+      op: "exec",
+      tier: "open",
+      isolation: "none",
+    });
+    // Without a tier, the org's default cut to the ceiling.
+    writePolicy(dir, DEFAULT_POLICY);
+    const dflt = await serveOp(ex, r("exec", withTier("open", "dev")), never, { policy: store });
+    expect(dflt.run).toEqual({ tier: "dev", isolation: "sandbox" });
+    // A refused exec is logged too.
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
+    ex.exec = async () => {
+      throw new DeviceOpError("policy", "refused");
+    };
+    const refused = await serveOp(ex, r("exec", withTier("dev")), never, { policy: store });
+    expect(refused.res).toMatchObject({ ok: false, error: { kind: "policy" } });
+    expect(refused.run).toMatchObject({ tier: "dev", isolation: "none" });
+    // Docker mode ignores isolation.
+    const docker = new FakeExecutor();
+    (docker as { mode: string }).mode = "docker";
+    const d = await serveOp(docker, r("exec", withTier("open")), never, { policy: store });
+    expect(d.run).toEqual({ tier: "open", isolation: "sandbox" });
   });
 });

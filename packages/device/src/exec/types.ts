@@ -4,6 +4,7 @@ import type {
   ExecResult,
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
+import type { ProxyGuardResult } from "../proxy-guard.js";
 
 /** What runs the operations on this machine: the OS sandbox (os) or a container (docker). */
 export interface Executor {
@@ -29,6 +30,11 @@ export interface Executor {
    * before and has vanished; it is never recreated silently.
    */
   ensureRoot(): Promise<"ok" | "gone">;
+  /**
+   * OS mode: the latest localhost proxy guard result (a local forwarding proxy turns localhost
+   * off for `dev` / `open`, spec §5.2.3). Absent: none found.
+   */
+  proxyGuard?(): ProxyGuardResult;
 }
 
 /** An executor failure with a protocol error kind (default `error`). */
