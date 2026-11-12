@@ -120,7 +120,6 @@ function Inbox({
   const [rejectReason, setRejectReason] = useState("");
   const [configuring, setConfiguring] = useState<CatalogRequest | null>(null);
   const ts = useTranslations("inbox.setup");
-  const tn = useTranslations("inbox.skillRenamed");
   const tnn = useTranslations("inbox.orgNotice");
   const [noticePending, setNoticePending] = useState(false);
   // Dismissing a notice changes only the inbox
@@ -176,7 +175,6 @@ function Inbox({
   const labels: Labels = {
     skillChange: { share: t("skillChange.kind.share"), version: t("skillChange.kind.version") },
     request: td("label"),
-    skillRenamed: tn("label"),
     setup: ts("label"),
     setupDecided: ts("decidedLabel"),
     notice: tnn,
@@ -274,7 +272,7 @@ function Inbox({
     setNoticePending(true);
     try {
       await dismissDecidedMutation.mutateAsync(request.id);
-      handled(request.id, tn("dismissed"));
+      handled(request.id, tnn("dismissed"));
     } catch (e) {
       toast.error(errorMessage(e));
       handled(request.id, null);
@@ -287,7 +285,7 @@ function Inbox({
     setNoticePending(true);
     try {
       await dismissMutation.mutateAsync(notice.id);
-      handled(notice.id, tn("dismissed"));
+      handled(notice.id, tnn("dismissed"));
     } catch (e) {
       toast.error(errorMessage(e));
       handled(notice.id, null);
@@ -314,7 +312,6 @@ function Inbox({
               notice: active.notice,
               pending: noticePending,
               onDismiss: () => void dismiss(active.notice),
-              tn,
               tnn,
               t,
               locale,
@@ -489,7 +486,6 @@ const subjectOf = (i: InboxItem): string =>
 interface Labels {
   skillChange: Record<SkillChange["kind"], string>;
   request: string;
-  skillRenamed: string;
   setup: string;
   setupDecided: string;
   notice: Translate;
@@ -573,13 +569,6 @@ function rowOf(
   }
   if (hasNotice(item)) {
     const n = item.notice;
-    if (n.kind === "skill_renamed") {
-      return {
-        title: n.skillRenamed.to,
-        trailing: null,
-        description: joined(labels.skillRenamed, n.skillRenamed.from),
-      };
-    }
     const line = noticeLine(n, labels.notice, locale);
     return line.name === null
       ? { title: line.label, trailing: null, description: "" }
@@ -1323,12 +1312,11 @@ function decidedRequestDetail({
   };
 }
 
-/** A renamed skill (org admins): what happened and why; dismiss. */
+/** An org notice (org admins): what happened; dismiss. */
 function noticeDetail({
   notice,
   pending,
   onDismiss,
-  tn,
   tnn,
   t,
   locale,
@@ -1337,65 +1325,35 @@ function noticeDetail({
   notice: OrgNotice;
   pending: boolean;
   onDismiss(): void;
-  tn: Translate;
   tnn: Translate;
   t: Translate;
 }): Detail {
-  if (notice.kind !== "skill_renamed") {
-    const line = noticeLine(notice, tnn, locale);
-    return {
-      inspector: (
-        <KeyValue
-          keyWidth="10ch"
-          rows={[...line.rows, { k: t("requested"), v: <DateTime value={notice.createdAt} /> }]}
-        />
-      ),
-      actionRow: {
-        primary: {
-          label: tnn("dismiss"),
-          onSelect: onDismiss,
-          loading: pending,
-          disabled: pending,
-        },
-      },
-      content: (
-        <Card title={line.title}>
-          <Text variant="prose">{line.hint}</Text>
-        </Card>
-      ),
-    };
-  }
-  const r = notice.skillRenamed;
+  const line = noticeLine(notice, tnn, locale);
   return {
     inspector: (
       <KeyValue
         keyWidth="10ch"
-        rows={[
-          { k: tn("from"), v: r.from },
-          { k: tn("to"), v: r.to },
-          ...(r.plugin !== null ? [{ k: tn("plugin"), v: r.plugin }] : []),
-          { k: t("requested"), v: <DateTime value={notice.createdAt} /> },
-        ]}
+        rows={[...line.rows, { k: t("requested"), v: <DateTime value={notice.createdAt} /> }]}
       />
     ),
     actionRow: {
       primary: {
-        label: tn("dismiss"),
+        label: tnn("dismiss"),
         onSelect: onDismiss,
         loading: pending,
         disabled: pending,
       },
     },
     content: (
-      <Card title={tn("title", { from: r.from, to: r.to })}>
-        <Text variant="prose">{tn("hint", { from: r.from, to: r.to })}</Text>
+      <Card title={line.title}>
+        <Text variant="prose">{line.hint}</Text>
       </Card>
     ),
   };
 }
 
 /**
- * The texts of an org notice other than `skill_renamed`: the row label, the item name (null for a
+ * The texts of an org notice: the row label, the item name (null for a
  * kind this app does not know), the row's second line, the detail's title, hint and key rows. A
  * kind or a detail it does not know reads generically.
  */

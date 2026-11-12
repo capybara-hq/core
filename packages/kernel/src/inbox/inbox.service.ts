@@ -27,29 +27,14 @@ import type { OrgNoticeDetails } from "./org-notices.js";
 /** The most open org notices one inbox read returns. */
 export const ORG_NOTICES_LIST_MAX = 100;
 
-/** The skill the platform components migration renamed (`skill_renamed`). */
-export interface SkillRenamedDetail {
-  skillId: string;
-  from: string;
-  to: string;
-  platformSkillId: string;
-  plugin: string | null;
-}
-
 /**
- * A notice for the org's admins (`org_notices`), shown until one of them dismisses it; `kind`
- * picks the detail field that is set:
- * - `skill_renamed` (`skillRenamed`): the platform components migration renamed an org skill whose
- *   name a platform skill on in the org has; agents keep it, by id;
- * - `item_shared`, `shared_item_updated`, `upload_confirmed`, `upload_rejected` (`detail`): the
- *   shapes of {@link OrgNoticeDetails} (plugin scope phase 3, P3-22).
+ * A notice for the org's admins (`org_notices`), shown until one of them dismisses it:
+ * `item_shared`, `shared_item_updated`, `upload_confirmed`, `upload_rejected`, `detail` in the
+ * shape of {@link OrgNoticeDetails} (plugin scope phase 3, P3-22).
  */
-export type OrgNoticeView = { id: string; createdAt: string } & (
-  | { kind: "skill_renamed"; skillRenamed: SkillRenamedDetail }
-  | {
-      [K in keyof OrgNoticeDetails]: { kind: K; detail: OrgNoticeDetails[K] };
-    }[keyof OrgNoticeDetails]
-);
+export type OrgNoticeView = { id: string; createdAt: string } & {
+  [K in keyof OrgNoticeDetails]: { kind: K; detail: OrgNoticeDetails[K] };
+}[keyof OrgNoticeDetails];
 
 /** 收件箱一次最多返回的事项数。 */
 export const INBOX_MAX_ITEMS = 100;
@@ -69,7 +54,7 @@ export const INBOX_MAX_ITEMS = 100;
  * - `schedule_attention`: the current user's own scheduled task that needs them (spec §8): paused
  *   for any reason but their own pause, its latest run failed, or its latest run was refused tools
  *   or connections; derived live, gone once the task is resumed or runs clean;
- * - the org notices (`skill_renamed`, `item_shared`, `shared_item_updated`, `upload_confirmed`,
+ * - the org notices (`item_shared`, `shared_item_updated`, `upload_confirmed`,
  *   `upload_rejected`; `type` = the notice's kind): for org admins, until one dismisses it
  *   (`POST inbox/notices/:id/dismiss`).
  */
@@ -217,9 +202,6 @@ export class InboxService {
       .execute();
     return rows.map((r): OrgNoticeView => {
       const base = { id: r.id, createdAt: r.created_at.toISOString() };
-      if (r.kind === "skill_renamed") {
-        return { ...base, kind: r.kind, skillRenamed: r.detail as unknown as SkillRenamedDetail };
-      }
       return { ...base, kind: r.kind, detail: r.detail } as OrgNoticeView;
     });
   }

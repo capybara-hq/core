@@ -1,6 +1,7 @@
 import type { NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
+import { SCOPE_BACKSTOP_DELAY } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
@@ -50,6 +51,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `OUTBOX_FAST_PATH_SETTLED`: receives each detached outbox fast-path pass (a test awaits them);
  * - `ENSURE_RUN_FAILS`: returns true to make `RunQueue.ensureRun` throw (Redis unreachable, or the
  *   direct call after a commit skipped by a crash);
+ * - `SCOPE_BACKSTOP_DELAY`: the delay of a confirmation's scope sync backstop (ruling R24);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -73,6 +75,7 @@ interface KernelSeams {
   [USAGE_SUBSCRIBERS_CLOCK]: () => number;
   [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
   [ENSURE_RUN_FAILS]: () => boolean;
+  [SCOPE_BACKSTOP_DELAY]: number;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
 
@@ -107,6 +110,7 @@ const SEAM_TOKENS = [
   OUTBOX_DISPATCH_FAILS,
   OUTBOX_FAST_PATH_SETTLED,
   ENSURE_RUN_FAILS,
+  SCOPE_BACKSTOP_DELAY,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];
 

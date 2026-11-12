@@ -270,13 +270,6 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "transactions, so there is no kernel row for the job to be owed by",
   },
   {
-    rule: "kc-enqueue-via-outbox",
-    path: "packages/kernel/src/infra/queue/add-job-once.ts",
-    reason:
-      "the CLI adds one job from a process that has no kernel database transaction and hosts " +
-      "no queue of its own",
-  },
-  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -345,26 +338,6 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
  */
 export const KC_PENDING: KcPending = {
   "kc-enqueue-via-outbox": [
-    {
-      path: "packages/kernel/src/catalog/catalog-scope.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 4",
-    },
-    {
-      path: "packages/kernel/src/catalog/owned-items.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 4",
-    },
-    {
-      path: "packages/kernel/src/catalog/plugin-import.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 4",
-    },
-    {
-      path: "packages/kernel/src/catalog/scope-sync.ts",
-      max: 3,
-      reason: "moves to the outbox in PR 4",
-    },
     {
       path: "packages/kernel/src/channels/actions.ts",
       max: 1,

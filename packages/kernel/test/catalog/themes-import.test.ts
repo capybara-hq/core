@@ -22,7 +22,7 @@ import {
 /**
  * Themes spec §5-§6 (plan Task 6): a plugin's themes are read and checked at import (an invalid or
  * unreadable theme refuses the whole plugin), synced as platform components with their sanitized
- * assets under `deployment/platform/themes/<id>/<version>-<catalogVersion>/`, updated with their
+ * assets under `deployment/platform/themes/sha256-<digest>/` (keyed by content), updated with their
  * plugin and removed with it. An org upload of a themes-only plugin is not gated by the custom
  * content switches.
  */
@@ -270,7 +270,7 @@ describe("themes as platform components", () => {
     ).toMatchObject({ description: "Neon on black.", descriptionZh: "黑底霓虹。" });
     const v = await versionRow(row.id, 1);
     expect(v.catalog_version).toBe("1.0.0");
-    expect(v.object_prefix).toBe(`platform/themes/${row.id}/1-1.0.0/`);
+    expect(v.object_prefix).toMatch(/^platform\/themes\/sha256-[0-9a-f]{64}\/$/);
     expect(v.definition).toMatchObject({ id: "neon-grid", logo: { wordmark: "NEON GRID" } });
     expect(await stored(`${v.object_prefix}fonts/Fixture-Regular.woff2`)).toEqual(FONT);
     const logo = new TextDecoder().decode(
@@ -373,7 +373,8 @@ describe("themes as platform components", () => {
     ]);
     expect((await themeRow()).current_version).toBe(2);
     const v2 = await versionRow(first.id, 2);
-    expect(v2.object_prefix).toBe(`platform/themes/${first.id}/2-2.0.0/`);
+    // only the definition changed: the assets' objects (keyed by content) are shared
+    expect(v2.object_prefix).toBe((await versionRow(first.id, 1)).object_prefix);
     expect(v2.definition).toMatchObject({ schemes: { dark: { color: { accent: "#FFD000" } } } });
 
     // the same file, a changed font: still a new version
@@ -390,6 +391,7 @@ describe("themes as platform components", () => {
     expect(p3.components[0]).toMatchObject({ kind: "theme", change: "upgrade" });
     expect((await themeRow()).current_version).toBe(3);
     const v3 = await versionRow(first.id, 3);
+    expect(v3.object_prefix).not.toBe(v2.object_prefix);
     expect(await stored(`${v3.object_prefix}fonts/Fixture-Regular.woff2`)).toEqual(font);
 
     // the same content again: unchanged

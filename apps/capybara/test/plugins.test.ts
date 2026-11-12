@@ -181,7 +181,7 @@ describe("capybara plugins list / import", () => {
     expect(list.stdout).toMatch(/notes\t1\.2\.0\t1 skill\toptional/);
   }, 90_000);
 
-  it("import --yes of a new version of an all item enqueues the item's scope sync", async () => {
+  it("import --yes of a new version of an all item owes the item's scope sync in the outbox", async () => {
     const item = await query((db) =>
       db
         .selectFrom("catalog_items")
@@ -198,14 +198,35 @@ describe("capybara plugins list / import", () => {
     const r = await run(["plugins", "import", file, "--yes"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("Imported notes 1.3.0");
-    // the job of the item's scope version, as the admin console's confirm adds it (no worker runs
-    // in this test, so it waits in the queue)
+    // owed in the outbox, as the admin console's confirm owes it: the job of the item's scope
+    // version (after the deploy) and its backstop (the confirm's commit); no worker runs in this
+    // test, so the rows wait for a relay, and nothing was added to BullMQ directly
+    const owed = await query((db) =>
+      db
+        .selectFrom("outbox")
+        .select(["job_name", "job_id", "data"])
+        .where("queue", "=", "cap-kernel-plugin-scope")
+        .orderBy("job_id")
+        .execute(),
+    );
+    expect(owed).toEqual([
+      {
+        job_name: "scope-item",
+        job_id: `scope-item-${item.id}-${item.scope_version}`,
+        data: { kind: "item", itemId: item.id },
+      },
+      {
+        job_name: "scope-item-backstop",
+        job_id: `scope-item-${item.id}-${item.scope_version}-backstop`,
+        data: { kind: "item", itemId: item.id, backstop: true },
+      },
+    ]);
     expect(
       await redisExists(
         rd.url,
         `bull:cap-kernel-plugin-scope:scope-item-${item.id}-${item.scope_version}`,
       ),
-    ).toBe(true);
+    ).toBe(false);
   }, 90_000);
 
   it("a template of another connector extension is imported with static checks only", async () => {

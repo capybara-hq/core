@@ -6,7 +6,6 @@ import {
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
 } from "@capybara-hq/plugin-sdk";
-import type { Redis } from "ioredis";
 import { ClientBuilds } from "../client/client-builds.service.js";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
@@ -17,8 +16,8 @@ import { importExtensionModule, matchesSection } from "../extensions/instance.js
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { addJobOnce } from "../infra/queue/add-job-once.js";
-import { REDIS } from "../infra/tokens.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
@@ -26,7 +25,7 @@ import { CatalogImportModule } from "./catalog.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
 import type { PluginScope } from "./scope.js";
-import { PLUGIN_SCOPE_QUEUE, scopeItemJob } from "./scope-sync.js";
+import { oweScopeItem } from "./scope-jobs.js";
 
 /** {@link openCatalogCli}'s result: the extension CLI context plus the catalog services. */
 export interface CatalogCli extends ExtensionCli {
@@ -34,9 +33,10 @@ export interface CatalogCli extends ExtensionCli {
   /** Plugin import (prepare / confirm). The CLI acts without an account (actor `null`). */
   imports: PluginImport;
   /**
-   * After an import's confirm: enqueues the item's plugin scope sync, as the admin console's
-   * confirm does, when its scope turns it on by itself (`all` or `named`). A failure only warns
-   * (the next worker start enqueues every item); returns whether it was enqueued.
+   * After an import's confirm (and its deploy): owes the item's plugin scope sync in the outbox, as
+   * the admin console's confirm does, when its scope turns it on by itself (`all` or `named`); a
+   * worker's relay delivers it. A failure only warns (the confirm's commit owed a backstop that
+   * converges the orgs a few minutes later); returns whether it was owed.
    */
   enqueueScopeSync(item: { id: string; scope: PluginScope }): Promise<boolean>;
 }
@@ -251,7 +251,8 @@ export async function openCatalogCli(
     cli.app.get(ClientBuilds).useCliStorage(storage);
     const catalog = cli.app.get(CatalogService);
     const db = cli.app.get(KernelDb);
-    const redis = cli.app.get<Redis>(REDIS);
+    const txHost = cli.app.get(TransactionHost);
+    const outbox = cli.app.get(OutboxService);
     return {
       ...cli,
       catalog,
@@ -259,17 +260,12 @@ export async function openCatalogCli(
       async enqueueScopeSync(item) {
         if (item.scope === "optional") return false;
         try {
-          const row = await db.db
-            .selectFrom("catalog_items")
-            .select("scope_version")
-            .where("id", "=", item.id)
-            .executeTakeFirst();
-          if (!row) return false;
-          await addJobOnce(redis, PLUGIN_SCOPE_QUEUE, scopeItemJob(item.id, row.scope_version));
+          // owed in a transaction of its own after the deploy; a worker's relay delivers it
+          await txHost.run(() => oweScopeItem(outbox, db.db, item.id));
           return true;
         } catch (err) {
           log.warn(
-            "cannot enqueue the plugin scope sync; the next worker start converges the orgs",
+            "cannot owe the plugin scope sync; the import's backstop converges the orgs in a few minutes",
             { itemId: item.id, err },
           );
           return false;

@@ -13,9 +13,7 @@ import {
   SKILL_ENTRY_FILE,
   type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
-import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable } from "@nestjs/common";
-import type { Queue } from "bullmq";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
 import { ClientBuilds } from "../client/client-builds.service.js";
@@ -60,12 +58,12 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -116,8 +114,7 @@ import {
   shareGate,
   usableBy,
 } from "./ownership.js";
-import { PlatformComponents } from "./platform-components.js";
-import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
+import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-components.js";
 import {
   type PluginContents,
   PluginPackageError,
@@ -128,11 +125,9 @@ import {
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
+import { oweScopeItem, SCOPE_BACKSTOP_DELAY, SCOPE_BACKSTOP_DELAY_MS } from "./scope-jobs.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
-
-/** How long after a failed post-import platform sync the migration job runs for the item. */
-export const PLATFORM_SYNC_RETRY_MS = 60_000;
 
 /**
  * Platform import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
@@ -159,8 +154,10 @@ export const PLATFORM_SYNC_RETRY_MS = 60_000;
  * snapshot when it is installed or upgraded by this import (source web, audit
  * `extension.permissions_approved` carrying the plugin), and creates the item (with the scope the
  * admin chose, default `optional`) or adds the version (`manifest` = the normalized plugin.json,
- * `extension_sha256`, the files under the staging prefix). After the commit the plugin's own
- * extension is installed on the deployment and enabled (`ExtensionAdminOps.install` + `enable`;
+ * `extension_sha256`, the files under the staging prefix); an item's first usable version also
+ * gets its platform component rows there (their files copied before, keyed by content: a failure
+ * leaves nothing a retry copies again; no job heals an item later). After the commit the plugin's
+ * own extension is installed on the deployment and enabled (`ExtensionAdminOps.install` + `enable`;
  * each replica reconciles, no restart); a failure is returned, not thrown, and an upgrade that was
  * not installed gets its old snapshot back.
  *
@@ -631,12 +628,16 @@ export class PluginImport {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The platform rows of a new item's components, written after the confirm's commit. */
+    /** The platform rows of a new item's components, written in the confirm's transaction. */
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
-    /** A failed platform sync enqueues a run of the migration job here (it heals the item). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
     /** The client build of a dropped org upload's package is deleted with it. */
     @Inject(ClientBuilds) private readonly clientBuilds: ClientBuilds,
+    /** The scope sync's backstop, owed by the confirm's commit (ruling R24). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** The backstop's delay (a test seam; default `SCOPE_BACKSTOP_DELAY_MS`). */
+    @Optional()
+    @Inject(SCOPE_BACKSTOP_DELAY)
+    private readonly backstopDelayMs: number = SCOPE_BACKSTOP_DELAY_MS,
   ) {
     this.files = storage;
   }
@@ -1334,6 +1335,12 @@ export class PluginImport {
       reviewed && reviewed.action !== "keep" && owner === undefined
         ? await this.readStored(reviewed.sha256)
         : undefined;
+    // The platform components of the item's first usable version: planned and their files copied
+    // (keyed by content) before the transaction, their rows written in it
+    const prepared =
+      staged.retry === true || (owner !== undefined && reviewed !== undefined)
+        ? undefined
+        : await this.prepareFirstVersion(staged, row.object_prefix, owner);
 
     const committed = await this.commit(
       actor,
@@ -1345,6 +1352,7 @@ export class PluginImport {
       },
       stored,
       opts,
+      prepared,
     );
 
     const { now } = committed;
@@ -1358,10 +1366,6 @@ export class PluginImport {
         firstVersion: false,
       };
     }
-    // A new item's skills, agent templates and connector templates become platform components
-    // (plugin scope phase 2); a new version of an existing item leaves them to the platform
-    // update. After the commit: it copies files in object storage
-    if (committed.firstVersion) await this.syncPlatform(committed.itemId, staged.version);
     if (input.deploy === false) {
       return {
         item: await this.itemView(committed.itemId),
@@ -1397,12 +1401,35 @@ export class PluginImport {
   }
 
   /**
-   * Writes the platform components of an item's first usable version after a commit made
-   * elsewhere (the super admin's confirmation of an org upload, `CatalogScopeService`); a failure
-   * is logged and retried by the migration job (see {@link syncPlatform}).
+   * The platform components of the staged version when its confirm will most likely make it the
+   * item's first usable version ({@link commit} decides under its locks): no live item of the name
+   * yet, or an org upload replacing its own first upload still awaiting confirmation. Planned from
+   * the staged content and their files copied, outside any transaction; otherwise undefined.
    */
-  async writePlatformComponents(itemId: string, version: string): Promise<void> {
-    await this.syncPlatform(itemId, version);
+  private async prepareFirstVersion(
+    staged: StagedPlugin,
+    objectPrefix: string | null,
+    owner: ImportOwner | undefined,
+  ): Promise<PreparedSync | undefined> {
+    const live = await this.db
+      .selectFrom("catalog_items")
+      .select(["id", "awaiting_confirmation", "owner_org_id"])
+      .where("name", "=", staged.manifest.name)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    const first =
+      live === undefined ||
+      (owner !== undefined && live.awaiting_confirmation && live.owner_org_id === owner.orgId);
+    if (!first) return undefined;
+    return this.platform.prepareImport({
+      itemId: live?.id ?? staged.itemId,
+      plugin: staged.manifest.name,
+      version: staged.version,
+      manifest: staged.manifest,
+      objectPrefix,
+      files: staged.files,
+      sourceFormat: staged.sourceFormat ?? "capybara",
+    });
   }
 
   /**
@@ -1418,6 +1445,13 @@ export class PluginImport {
    * upload without an extension for an item whose first version still waits (plan Task 6) replaces
    * that upload and applies at once: the item stops waiting and the claim is released (nothing
    * was installed under it).
+   *
+   * The item's first usable version (a new item not waiting, or an awaiting first upload replaced)
+   * writes the platform rows of its skills, agent templates, connector templates and themes
+   * (plugin scope phase 2) from `prepared` (their files copied before the transaction, keyed by
+   * content): a failure rolls the whole confirm back, and a retry copies nothing again. A plan made
+   * for another item or version, or a component changed since it -> `plugin.review_stale`. A new
+   * version of an existing item leaves them to the platform update.
    */
   @Transactional()
   private async commit(
@@ -1433,6 +1467,7 @@ export class PluginImport {
     scope: { scope: PluginScope; orgs: string[]; owner?: ImportOwner; shareable?: boolean },
     stored: ExtensionPackage | undefined,
     opts: ActorOpts,
+    prepared: PreparedSync | undefined,
   ): Promise<{
     itemId: string;
     /** This confirm created the catalog item (a first import of the name). */
@@ -1681,63 +1716,41 @@ export class PluginImport {
       await markVersionApplied(t, itemId, staged.version);
       await releaseExtensionClaim(t, m.name, existing.package_name);
     }
+    const firstVersion = (created && !pending) || replacedAwaiting;
+    if (firstVersion) {
+      if (prepared?.plan.itemId !== itemId || prepared.plan.version !== staged.version) {
+        throw stale();
+      }
+      try {
+        await this.platform.applySyncIn(prepared);
+      } catch (e) {
+        if (e instanceof PlanStale) throw stale();
+        throw e;
+      }
+    }
+    // The commit owes the scope sync's backstop (ruling R24) when the item's scope turns it on by
+    // itself: the caller owes the immediate sync after the deploy, which a crash may lose
+    if (!pending) {
+      const item = await t
+        .selectFrom("catalog_items")
+        .select("scope")
+        .where("id", "=", itemId)
+        .executeTakeFirstOrThrow();
+      if (item.scope !== "optional") {
+        await oweScopeItem(this.outbox, t, itemId, {
+          backstop: true,
+          backstopDelayMs: this.backstopDelayMs,
+        });
+      }
+    }
     return {
       itemId,
       created,
-      firstVersion: (created && !pending) || replacedAwaiting,
+      firstVersion,
       pending,
       now,
       previous,
     };
-  }
-
-  /**
-   * The platform components of a new item. The item is committed already, so a failure is logged
-   * and not thrown (like a failed deploy, the import itself succeeded); a run of the platform
-   * components migration job (which writes what is missing) is enqueued on `cap-kernel-maintenance`
-   * after {@link PLATFORM_SYNC_RETRY_MS}, one per item (deterministic job id). If that run fails
-   * too, its `itemsFailed` shows in the super admin's inbox; the daily run and every worker start
-   * try again.
-   */
-  private async syncPlatform(itemId: string, version: string): Promise<void> {
-    try {
-      await this.platform.syncFromVersion(itemId, version, { initial: true });
-    } catch (err) {
-      // Removed meanwhile (an org deletion racing a confirmation, P3-20): nothing to write
-      const live = await this.db
-        .selectFrom("catalog_items")
-        .select("id")
-        .where("id", "=", itemId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (live === undefined) {
-        this.log.info("catalog item removed before its platform components were written", {
-          itemId,
-          version,
-        });
-        return;
-      }
-      this.log.error("writing the platform components of a new catalog item failed", {
-        itemId,
-        version,
-        err,
-      });
-      try {
-        await this.maintenance.add(
-          PLATFORM_MIGRATION_JOB,
-          {},
-          {
-            jobId: `${PLATFORM_MIGRATION_JOB}-retry-${itemId}`,
-            delay: PLATFORM_SYNC_RETRY_MS,
-            attempts: 1,
-            removeOnComplete: true,
-            removeOnFail: { age: 86_400 },
-          },
-        );
-      } catch (e) {
-        this.log.warn("cannot enqueue the platform components migration", { itemId, err: e });
-      }
-    }
   }
 
   /**

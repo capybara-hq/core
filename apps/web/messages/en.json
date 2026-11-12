@@ -1933,16 +1933,6 @@
       "approved": "Skill change approved",
       "rejected": "Skill change rejected"
     },
-    "skillRenamed": {
-      "label": "Skill renamed",
-      "title": "Skill {from} was renamed to {to}",
-      "hint": "A platform skill named {from} is now available to this organization, so your organization's own skill {from} was renamed to {to}. Agents that use it keep it under the new name. The platform skill is switched off in this organization; an admin can switch it on on the Skills page. Its stored SKILL.md still says {from}: when you upload a new version, set the name in SKILL.md to {to}.",
-      "from": "Old name",
-      "to": "New name",
-      "plugin": "Plugin",
-      "dismiss": "Got it",
-      "dismissed": "Notice dismissed"
-    },
     "orgNotice": {
       "itemSharedLabel": "Item shared",
       "itemSharedTitle": "{org} can now use {name}",
@@ -3582,7 +3572,6 @@
           "catalog_request": "Catalog requests",
           "permission_confirmation": "Permission confirmations",
           "scope_sync_failed": "Scope sync failures",
-          "platform_migration": "Migration needs a look",
           "ownership_transferred": "Ownership transfers",
           "org_upload_pending": "Org uploads to confirm"
         },
@@ -3776,16 +3765,6 @@
           "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
           "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (install a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
         }
-      },
-      "migration": {
-        "label": "Platform components migration",
-        "stuck": "Unfinished",
-        "failed": "{n, plural, one {# plugin failed} other {# plugins failed}}",
-        "started": "Started",
-        "finished": "Finished",
-        "items": "Failed plugins",
-        "hintStuck": "The latest run has not finished an hour after it started; its worker may have stopped. It runs again at the next worker start or daily run.",
-        "hintFailed": "The latest run could not write these plugins' platform components; the next run tries again. See the kernel log for the cause."
       },
       "orgUpload": {
         "label": "Upload to confirm",

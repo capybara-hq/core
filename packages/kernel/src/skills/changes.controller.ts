@@ -86,7 +86,7 @@ export class InboxController {
     return this.inbox.list(org.orgId, p.account.id);
   }
 
-  /** An org admin dismisses an org notice (`skill_renamed`) -> 204. */
+  /** An org admin dismisses an org notice -> 204. */
   @Post("notices/:id/dismiss")
   @HttpCode(204)
   @OrgAction("approvals.decide")

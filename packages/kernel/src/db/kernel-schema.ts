@@ -1476,7 +1476,6 @@ export interface KernelDatabase {
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
   bootstrap_runs: BootstrapRunsTable;
-  platform_migration_runs: PlatformMigrationRunsTable;
   org_notices: OrgNoticesTable;
   platform_notices: PlatformNoticesTable;
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
@@ -1544,17 +1543,8 @@ export interface ExtensionClientReportsTable {
   last_message: string;
 }
 
-/** 0082: one run of the platform components migration job (`catalog/platform-migration.ts`). */
-export interface PlatformMigrationRunsTable {
-  id: string;
-  started_at: Ts;
-  finished_at: TsNullable;
-  stats: Json<Record<string, unknown>>;
-}
-
-/** 0082: the kinds of {@link OrgNoticesTable}. */
+/** 0084 (0121 dropped `skill_renamed`): the kinds of {@link OrgNoticesTable}. */
 export type OrgNoticeKind =
-  | "skill_renamed"
   | "item_shared"
   | "shared_item_updated"
   | "upload_confirmed"
@@ -1565,7 +1555,7 @@ export interface OrgNoticesTable {
   id: string;
   org_id: string;
   kind: OrgNoticeKind;
-  /** `skill_renamed`: `{ skillId, from, to, platformSkillId, plugin }`. */
+  /** The kind's shape (`OrgNoticeDetails` in `inbox/org-notices.ts`). */
   detail: Json<Record<string, unknown>>;
   created_at: Ts;
   dismissed_at: TsNullable;

@@ -23,8 +23,7 @@ import {
 /**
  * The super admin's inbox (`GET /api/v1/admin/inbox`, plugin scope phase 2 Task 11, spec §5.1 rule
  * 5 and §13.5): requests to the platform (`access` / `import`), plugins waiting for a permission
- * confirmation, failed scope syncs and a failed or stuck platform components migration run. Read
- * live; nothing is decided here (each item names what it is about, the web links to its page).
+ * confirmation, failed scope syncs and platform notices. Read live; nothing is decided here (each item names what it is about, the web links to its page).
  */
 
 let env: OrgEnv;
@@ -39,7 +38,6 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetOrgCatalog(env);
-  await env.db.deleteFrom("platform_migration_runs").execute();
   await env.db.deleteFrom("platform_notices").execute();
 });
 
@@ -48,7 +46,6 @@ const NO_ITEMS = {
   permission_confirmation: 0,
   org_upload_pending: 0,
   scope_sync_failed: 0,
-  platform_migration: 0,
   ownership_transferred: 0,
 };
 
@@ -205,56 +202,6 @@ describe("platform inbox", { timeout: 90_000 }, () => {
     expect(await ofType("scope_sync_failed")).toEqual([]);
   });
 
-  it("lists the latest platform components migration run when it failed items or is stuck", async () => {
-    const now = Date.now();
-    const ok = randomUUID();
-    await env.db
-      .insertInto("platform_migration_runs")
-      .values({
-        id: ok,
-        started_at: new Date(now - 3 * 3_600_000),
-        finished_at: new Date(now - 3 * 3_600_000 + 1_000),
-        stats: JSON.stringify({ itemsFailed: [] }),
-      })
-      .execute();
-    expect(await ofType("platform_migration")).toEqual([]);
-    // the latest run failed an item
-    const failed = randomUUID();
-    await env.db
-      .insertInto("platform_migration_runs")
-      .values({
-        id: failed,
-        started_at: new Date(now - 2 * 3_600_000),
-        finished_at: new Date(now - 2 * 3_600_000 + 1_000),
-        stats: JSON.stringify({ itemsFailed: ["crm@1.0.0"] }),
-      })
-      .execute();
-    expect(await ofType("platform_migration")).toEqual([
-      expect.objectContaining({
-        id: failed,
-        run: expect.objectContaining({ id: failed, stuck: false, itemsFailed: ["crm@1.0.0"] }),
-      }),
-    ]);
-    // a later run that started long ago and never finished is stuck
-    const stuck = randomUUID();
-    await env.db
-      .insertInto("platform_migration_runs")
-      .values({ id: stuck, started_at: new Date(now - 3_600_000 - 60_000) })
-      .execute();
-    expect(await ofType("platform_migration")).toEqual([
-      expect.objectContaining({
-        id: stuck,
-        run: expect.objectContaining({ id: stuck, stuck: true, finishedAt: null, itemsFailed: [] }),
-      }),
-    ]);
-    // one still running (recent) is not listed, and hides the older failure
-    await env.db.deleteFrom("platform_migration_runs").where("id", "=", stuck).execute();
-    await env.db
-      .insertInto("platform_migration_runs")
-      .values({ id: randomUUID(), started_at: new Date(now - 60_000) })
-      .execute();
-    expect(await ofType("platform_migration")).toEqual([]);
-  });
   it("a dependency a platform update added that fails to install is listed until it installs", async () => {
     const depId = await seedPlugin(env, { name: "depb", skills: ["depb-skill"], templates: false });
     const itemId = await seedPlugin(env, {
@@ -416,7 +363,6 @@ describe("platform inbox", { timeout: 90_000 }, () => {
       permission_confirmation: 1,
       org_upload_pending: 1,
       scope_sync_failed: 1,
-      platform_migration: 0,
       ownership_transferred: 1,
     });
     expect(Object.keys(view.byType).sort()).toEqual([...PLATFORM_INBOX_TYPES].sort());
