@@ -328,7 +328,9 @@ function Wizard({
   const catalogLines = useCatalogErrorLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
-  const templates = detail.templates;
+  // A default-off template starts switched off in every org: it is set up when an org admin
+  // switches it on, so the wizard does not ask for it.
+  const templates = detail.templates.filter((c) => c.defaultOff !== true);
   // The plugin's own extension in this org: its org config is asked only when this install enables it
   const own =
     detail.extension === null
