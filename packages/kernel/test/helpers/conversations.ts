@@ -78,6 +78,7 @@ export interface DbHandles {
 /** A run control that starts and stops nothing (the old optional `runs` left out). */
 const noRuns: RunControl = {
   ensureRun: async () => null,
+  ensureRunAfterCommit: async () => {},
   oweEnsureRun: async () => true,
   wakeHeldTree: async () => {},
   abortIfOrphaned: async () => false,

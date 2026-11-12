@@ -34,6 +34,22 @@ export class RunControl {
   }
 
   /**
+   * The direct `ensureRun` right after a commit that owes the ensure-run backstop (a message, a
+   * queue change): a failure (Redis unreachable) is logged and never thrown, since the committed
+   * write is not undone and the backstop starts the run later (transactional outbox spec §6).
+   */
+  async ensureRunAfterCommit(conversationId: string): Promise<void> {
+    try {
+      await this.queue.ensureRun(conversationId);
+    } catch (err) {
+      this.log.error("cannot start the conversation's run now; the ensure-run backstop will", {
+        conversationId,
+        err,
+      });
+    }
+  }
+
+  /**
    * Owes the ensure-run backstop in the caller's transaction (transactional outbox spec §6): `seq`
    * is the event it wrote (or the conversation's newest), `orgId` the conversation's.
    */

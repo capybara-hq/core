@@ -22,6 +22,7 @@ import {
   RUN_QUEUE_NAME,
   runJobId,
 } from "../../src/runtime/run-queue.js";
+import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
@@ -311,5 +312,36 @@ describe("the ensure-run backstop", () => {
     const [terminal] = await waitForTerminal(db, convId);
     expect(terminal?.type).toBe("run_finished");
     expect(await consumedSeq(db, convId)).toBe(seq);
+  }, 60_000);
+
+  it("with Redis unreachable a queued item is added (201) and goes out once ensure-run fires", async () => {
+    const { orgId, convId } = await setup();
+    ensureFails = true;
+    const res = await seedQueued(api.app, orgId, convId, ownerId, {
+      text: "echo:queued",
+      clientMessageId: randomUUID(),
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    // committed, nothing sent: the queue change owes the backstop under the newest seq
+    expect(await runRows(convId)).toEqual([]);
+    const { last_seq } = await db
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", convId)
+      .executeTakeFirstOrThrow();
+    await expectEnsureRunOwed(convId, orgId, Number(last_seq));
+
+    ensureFails = false;
+    await deliverOwed();
+    worker = await startKernel(runConfig(urls(), { roles: ["worker"] }));
+    const [terminal] = await waitForTerminal(db, convId);
+    expect(terminal?.type).toBe("run_finished");
+    expect(
+      await db
+        .selectFrom("conversation_queue")
+        .select("id")
+        .where("conversation_id", "=", convId)
+        .execute(),
+    ).toEqual([]);
   }, 60_000);
 });

@@ -65,9 +65,12 @@ export class ConversationQueue {
       | "skipWaitsIn"
       | "announceSkipped"
     >,
-    /** Starts the conversation's next run (`ensureRun`). */
+    /** Starts the conversation's next run after a commit (a failure is logged, never thrown). */
     @Inject(RunControlService)
-    private readonly runs: Pick<RunControl, "ensureRun" | "oweEnsureRun" | "wakeHeldTree">,
+    private readonly runs: Pick<
+      RunControl,
+      "ensureRunAfterCommit" | "oweEnsureRun" | "wakeHeldTree"
+    >,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -158,7 +161,7 @@ export class ConversationQueue {
     }
     if (out.created) {
       await this.eventLog.publishChanged(conversationId, "queue");
-      await this.runs.ensureRun(conversationId);
+      await this.runs.ensureRunAfterCommit(conversationId);
     }
     return { item: toItem(out.row), created: out.created };
   }
@@ -376,7 +379,7 @@ export class ConversationQueue {
     if (switched) await this.eventLog.publishChanged(conversationId, "selection");
     if (unarchived) await this.eventLog.publishChanged(conversationId, "archived");
     await this.eventLog.publishChanged(conversationId, "queue");
-    await this.runs.ensureRun(conversationId);
+    await this.runs.ensureRunAfterCommit(conversationId);
     await this.runs.wakeHeldTree(conversationId);
     return event;
   }
@@ -443,7 +446,7 @@ export class ConversationQueue {
     await this.conversations.writable(orgId, conversationId, accountId);
     await this.resumeIn(orgId, conversationId);
     await this.eventLog.publishChanged(conversationId, "queue");
-    await this.runs.ensureRun(conversationId);
+    await this.runs.ensureRunAfterCommit(conversationId);
     // a paused root holds the wakes of its whole tree (agent map spec §5.3)
     await this.runs.wakeHeldTree(conversationId);
   }

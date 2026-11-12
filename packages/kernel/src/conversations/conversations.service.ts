@@ -162,6 +162,11 @@ export interface RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null>;
   /**
+   * The direct `ensureRun` after a commit that owes the ensure-run backstop: a failure is logged,
+   * never thrown (transactional outbox spec §6).
+   */
+  ensureRunAfterCommit(conversationId: string): Promise<void>;
+  /**
    * Owes the ensure-run backstop in the caller's transaction (transactional outbox spec §6): `seq`
    * is the event it wrote (or the conversation's newest), `orgId` the conversation's.
    */
@@ -555,19 +560,11 @@ export class ConversationsService {
   }
 
   /**
-   * The direct `ensureRun` after a message's commit: a failure (Redis unreachable) is logged and
-   * never fails the request, since the message is committed and its transaction owes the
-   * ensure-run backstop (transactional outbox spec §6), which starts the run later.
+   * The direct `ensureRun` after a message's commit ({@link RunControl.ensureRunAfterCommit}): a
+   * failure never fails the request, since the message's transaction owes the ensure-run backstop.
    */
-  private async startRun(conversationId: string): Promise<void> {
-    try {
-      await this.runs.ensureRun(conversationId);
-    } catch (err) {
-      this.log.warn("cannot start the conversation's run now; the ensure-run backstop will", {
-        conversationId,
-        err,
-      });
-    }
+  private startRun(conversationId: string): Promise<void> {
+    return this.runs.ensureRunAfterCommit(conversationId);
   }
 
   private async rowView(id: string): Promise<ConversationView> {
