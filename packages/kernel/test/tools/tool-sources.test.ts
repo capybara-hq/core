@@ -188,6 +188,7 @@ describe("extension tools by conversation source", { timeout: 60_000 }, () => {
       const conv = await createConv(owner, orgId, agentId);
       await setSource(conv, source);
       const op = k.app.get(PlatformOperations).get("platform.me");
+      if (op === null) throw new Error("no platform.me operation");
       const ctx = {
         orgId,
         actorAccountId: ownerId,
@@ -196,7 +197,7 @@ describe("extension tools by conversation source", { timeout: 60_000 }, () => {
         runId: randomUUID(),
         signal: new AbortController().signal,
       };
-      return ((await op?.run({}, ctx)) as { tools: string[] }).tools;
+      return ((await op.run({}, ctx)) as { tools: string[] }).tools;
     };
     expect(await me("web")).toContain(KEY);
     expect(await me("channel_group")).not.toContain(KEY);
