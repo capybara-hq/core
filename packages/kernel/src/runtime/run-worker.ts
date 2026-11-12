@@ -80,6 +80,8 @@ export interface RunHooks {
   afterRunRead?(runId: string, conversationId: string): Promise<void>;
   /** Called with the conversation lock held, before a queued run's `run_started` is written. */
   beforeRunStarted?(runId: string, conversationId: string): Promise<void>;
+  /** Called with the conversation lock held, before a queued run's status becomes `running`. */
+  beforeRunning?(runId: string, conversationId: string): Promise<void>;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -510,8 +512,6 @@ export class RunWorker {
       if (!entered) {
         delayMs = QUOTA_FULL_DELAY_MS;
       } else {
-        // 运行开始执行（含续跑、stalled 后接手）：通知旁路（渠道出站投递据此把输出投到 IM），失败不影响运行
-        void this.events.emit("run.started", { conversationId, runId });
         const r = await this.execute(run, { id: conversationId, ...conv }, state).catch(
           async (err: unknown): Promise<ExecResult> => {
             if (state.abandoned) return "abandoned";
@@ -711,6 +711,7 @@ export class RunWorker {
           },
         }),
       });
+      await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db
         .updateTable("runs")
@@ -722,6 +723,10 @@ export class RunWorker {
       if (updated === undefined) return "finished";
       startedAt = updated.started_at as Date;
     }
+    // the run executes (a first start, a resume, a stalled takeover): a hint to the side paths (the
+    // channel outbound delivers its output to IM), after the start went through, never for a run a
+    // stop ended first; a failure does not affect the run
+    void this.events.emit("run.started", { conversationId, runId });
     // 截止时间以首次开始为准：停机后在其他 worker 续跑也不重新计时；等人处理的时长（waited_ms）不计入。
     const deadline = startedAt.getTime() + Number(run.waited_ms) + runtime.maxRunSeconds * 1000;
 
