@@ -22,6 +22,7 @@ import { databaseCheck, HEALTH_CHECKS, redisCheck } from "./infra/health/health.
 import { GracefulShutdownModule } from "./infra/lifecycle/graceful-shutdown.module.js";
 import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
+import { OutboxModule } from "./infra/outbox/outbox.module.js";
 import { PresenceModule } from "./infra/presence/presence.module.js";
 import { QueueModule } from "./infra/queue/queue.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
@@ -94,6 +95,8 @@ export class KernelModule {
         ConfigModule.forRoot(config, options.env !== undefined ? { env: options.env } : {}),
         GracefulShutdownModule,
         DatabaseModule.forRoot(),
+        // owed jobs written in the caller's transaction (transactional outbox spec §3.2)
+        OutboxModule,
         RedisModule,
         LockModule,
         CacheModule,

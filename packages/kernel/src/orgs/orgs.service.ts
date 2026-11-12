@@ -262,6 +262,13 @@ export class OrgsService {
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", orgId)
       .execute();
+    // the org's owed jobs go with it; dead letters stay for the overview, and the deletion's own
+    // cleanup work carries no org_id (transactional outbox spec §9)
+    await this.db
+      .deleteFrom("outbox")
+      .where("org_id", "=", orgId)
+      .where("dead_at", "is", null)
+      .execute();
     // after the org is marked deleted, so it counts as no user of what it shared (P3-18)
     await this.ownedItems.onOrgDeleted(orgId, actor.id, {
       ...(actorTokenId !== undefined && { actorTokenId }),

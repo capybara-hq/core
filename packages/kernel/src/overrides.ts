@@ -6,6 +6,8 @@ import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
+import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
@@ -37,6 +39,10 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
  * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
  *   `CurrentTime` builtin the time;
+ * - `OUTBOX_STRICT_CONFLICTS`: a reused outbox job id with different data throws (tests) instead
+ *   of logging an error;
+ * - `OUTBOX_DISPATCH_FAILS`: returns true to make the outbox dispatcher's queue adds fail (a Redis
+ *   outage);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -56,6 +62,8 @@ interface KernelSeams {
   [ADMIN_USAGE_TIMINGS]: Partial<AdminUsageTimings>;
   [EMBED_TOKEN_CLOCK]: () => number;
   [RUN_CONTEXT_CLOCK]: () => number;
+  [OUTBOX_STRICT_CONFLICTS]: boolean;
+  [OUTBOX_DISPATCH_FAILS]: () => boolean;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
 
@@ -86,6 +94,8 @@ const SEAM_TOKENS = [
   ADMIN_USAGE_TIMINGS,
   EMBED_TOKEN_CLOCK,
   RUN_CONTEXT_CLOCK,
+  OUTBOX_STRICT_CONFLICTS,
+  OUTBOX_DISPATCH_FAILS,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];
 

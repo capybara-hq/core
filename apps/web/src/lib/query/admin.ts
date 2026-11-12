@@ -8,6 +8,7 @@ import {
   getDeploymentSettings,
   listAdminAccounts,
   listAdminOrgs,
+  listOutboxDead,
   listPlatformAudit,
 } from "../admin";
 import {
@@ -48,6 +49,18 @@ export const adminAttentionQuery = () =>
   defineQuery({
     key: d().adminAttention(),
     fn: () => getAdminAttention(),
+    freshness: "deployment",
+  });
+
+/**
+ * The dead outbox rows the overview's 待处理 lists with 重试 / 丢弃: under `adminOverview`, so a
+ * retry or discard (which invalidates the overview) reads them again. Read only when the attention
+ * lists name dead rows.
+ */
+export const adminOutboxDeadQuery = () =>
+  defineQuery({
+    key: d().adminOutboxDead(),
+    fn: () => listOutboxDead(),
     freshness: "deployment",
   });
 

@@ -15,7 +15,8 @@ export interface AdminOverview {
   accounts: number;
   /**
    * What waits for a super admin: the platform inbox total plus the extensions, plugin updates and
-   * model providers of {@link AdminAttention} (counted in full, not capped).
+   * model providers of {@link AdminAttention} (counted in full, not capped) and every dead outbox
+   * row.
    */
   attentionTotal: number;
   /** An attention list could not be read: `attentionTotal` leaves its items out. */
@@ -39,7 +40,7 @@ export type AttentionExtensionReason =
 export type AttentionProviderProblem = "list_failed" | "no_chat_model";
 
 /** An attention list (a source the kernel reads on its own). */
-export type AttentionSource = "extensions" | "updates" | "providers";
+export type AttentionSource = "extensions" | "updates" | "providers" | "outbox";
 
 export interface AttentionExtension {
   name: string;
@@ -72,6 +73,16 @@ export interface AttentionProvider {
 }
 
 /**
+ * Background work the kernel could not queue: how many outbox rows are dead, and since when (the
+ * rows: `GET /admin/outbox/dead`).
+ */
+export interface AttentionOutboxDead {
+  kind: "outbox_dead";
+  count: number;
+  oldestAt: string;
+}
+
+/**
  * `GET /admin/overview/attention`: what needs a super admin besides the inbox, each list capped
  * (the rest counted in `more`); `unavailable` names the lists the kernel could not read.
  */
@@ -79,6 +90,8 @@ export interface AdminAttention {
   extensions: AttentionExtension[];
   updates: AttentionUpdate[];
   providers: AttentionProvider[];
+  /** At most one item, when some outbox rows are dead. */
+  outbox: AttentionOutboxDead[];
   more: Record<AttentionSource, number>;
   unavailable: AttentionSource[];
 }
@@ -367,6 +380,38 @@ export const getAdminOverview = () => apiFetch<AdminOverview>("/api/v1/admin/ove
 
 /** The overview's 待处理 lists (may wait on a provider's model list). */
 export const getAdminAttention = () => apiFetch<AdminAttention>("/api/v1/admin/overview/attention");
+
+/** A dead outbox row (`GET /admin/outbox/dead`, kernel `admin/outbox-dead.service.ts`). */
+export interface OutboxDeadRow {
+  id: string;
+  queue: string;
+  jobName: string;
+  jobId: string;
+  /** Null for platform work. */
+  orgId: string | null;
+  attempts: number;
+  lastError: string | null;
+  deadAt: string;
+  createdAt: string;
+}
+
+/** What a retry did: due again, or discarded because the same job is owed already. */
+export type OutboxRetryOutcome = "retried" | "already_owed";
+
+/** The dead outbox rows, oldest first (at most 200). */
+export const listOutboxDead = () =>
+  apiFetch<{ items: OutboxDeadRow[] }>("/api/v1/admin/outbox/dead");
+
+/** Queues a dead outbox row again (or drops it when the same job is owed already). */
+export const retryOutboxDead = (id: string) =>
+  apiFetch<{ outcome: OutboxRetryOutcome }>(
+    `/api/v1/admin/outbox/dead/${encodeURIComponent(id)}/retry`,
+    { method: "POST" },
+  );
+
+/** Discards a dead outbox row: its job never runs. */
+export const discardOutboxDead = (id: string) =>
+  apiFetch<void>(`/api/v1/admin/outbox/dead/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 /** The overview's 运行状况 (replicas, queues, connections; polled while the page shows). */
 export const getAdminHealth = () => apiFetch<AdminHealth>("/api/v1/admin/overview/health");

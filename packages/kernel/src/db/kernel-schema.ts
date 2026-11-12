@@ -1490,6 +1490,30 @@ export interface KernelDatabase {
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
   extension_client_builds: ExtensionClientBuildsTable;
   extension_client_reports: ExtensionClientReportsTable;
+  outbox: OutboxTable;
+}
+
+/**
+ * 0119: the transactional outbox (transactional outbox spec §4). A row is a BullMQ job owed by a
+ * committed transaction; deleted on delivery, so only dead rows (`dead_at` set) stay.
+ */
+export interface OutboxTable {
+  /** bigint identity; the pg driver reads it as a string. */
+  id: Generated<string>;
+  queue: string;
+  job_name: string;
+  /** Unique per queue: a second add of the same job before delivery is a no-op. */
+  job_id: string;
+  data: Json;
+  /** The job's delay target; null runs it now. */
+  run_at: Date | null;
+  /** Null for platform work. */
+  org_id: string | null;
+  attempts: Generated<number>;
+  next_attempt_at: Generated<Date>;
+  last_error: string | null;
+  dead_at: Date | null;
+  created_at: Generated<Date>;
 }
 
 /**

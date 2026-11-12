@@ -9,7 +9,7 @@ import { activeNavOf } from "../src/components/shell/nav";
 import { Catalog } from "../src/dev/catalog";
 import { adminUsageQuery } from "../src/lib/query/admin";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
@@ -82,14 +82,16 @@ const ATTENTION = {
     },
   ],
   providers: [{ plugin: "model-openai", displayName: null, icon: null, problem: "list_failed" }],
-  more: { extensions: 2, updates: 0, providers: 0 },
+  outbox: [],
+  more: { extensions: 2, updates: 0, providers: 0, outbox: 0 },
   unavailable: [],
 };
 const EMPTY_ATTENTION = {
   extensions: [],
   updates: [],
   providers: [],
-  more: { extensions: 0, updates: 0, providers: 0 },
+  outbox: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0 },
   unavailable: [],
 };
 const AUDIT = {
@@ -350,11 +352,85 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(within(section(o.title)).queryByRole("list")).toBeNull();
   });
 
+  it.each(LOCALES)(
+    "待处理：无法排入队列的后台任务逐条列出，重试与丢弃（丢弃先确认）（%s）",
+    async (locale) => {
+      const o = msgs[locale].admin.overview.attention;
+      const deadRow = (id: string, jobName: string) => ({
+        id,
+        queue: "cap-kernel-maintenance",
+        jobName,
+        jobId: `job-${id}`,
+        orgId: null,
+        attempts: 20,
+        lastError: "connect ECONNREFUSED",
+        deadAt: "2026-11-12T08:00:00.000Z",
+        createdAt: "2026-11-12T07:00:00.000Z",
+      });
+      let items = [deadRow("7", "plugin-scope-sync"), deadRow("8", "device-destroy")];
+      const calls = stubApi(
+        overviewRoutes({
+          "GET /api/v1/admin/overview/attention": () =>
+            json(200, {
+              ...EMPTY_ATTENTION,
+              outbox: items.length
+                ? [
+                    {
+                      kind: "outbox_dead",
+                      count: items.length,
+                      oldestAt: "2026-11-12T08:00:00.000Z",
+                    },
+                  ]
+                : [],
+            }),
+          "GET /api/v1/admin/outbox/dead": () => json(200, { items }),
+          "POST /api/v1/admin/outbox/dead/7/retry": () => {
+            items = items.filter((i) => i.id !== "7");
+            return json(200, { outcome: "retried" });
+          },
+          "DELETE /api/v1/admin/outbox/dead/8": () => {
+            items = items.filter((i) => i.id !== "8");
+            return noContent();
+          },
+        }),
+      );
+      await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+      const list = await screen.findByRole("list", { name: o.groups.outbox });
+      const rowOf = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+      await within(list).findByText("plugin-scope-sync");
+      expect(
+        within(rowOf("plugin-scope-sync")).getByText(
+          "cap-kernel-maintenance · connect ECONNREFUSED",
+        ),
+      ).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(
+        within(rowOf("plugin-scope-sync")).getByRole("button", { name: o.outbox.retry }),
+      );
+      await waitFor(() => expect(within(list).queryByText("plugin-scope-sync")).toBeNull());
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/outbox/dead/7/retry"))).toBe(
+        true,
+      );
+      // discard asks first: nothing is deleted until confirmed
+      await user.click(
+        within(rowOf("device-destroy")).getByRole("button", { name: o.outbox.discard }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+      await user.click(within(dialog).getByRole("button", { name: o.outbox.discard }));
+      await waitFor(() => expect(screen.queryByRole("list", { name: o.groups.outbox })).toBeNull());
+      expect(calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual([
+        "/api/v1/admin/outbox/dead/8",
+      ]);
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
   const boom = () => json(500, { error: { code: "internal", message: "boom" } });
   const pathsAfter = (calls: { url: string }[], from: number) =>
     calls.slice(from).map((c) => new URL(c.url, "http://x").pathname);
 
-  it("待处理的扩展等列表读取失败：这三组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
+  it("待处理的扩展等列表读取失败：这四组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
     const o = zh.admin.overview;
     let failing = true;
     const calls = stubApi(
@@ -373,7 +449,7 @@ describe("/admin 概览（OverviewPage）", () => {
       },
       { timeout: 3000 },
     );
-    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(3);
+    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(4);
     expect(box.getByRole("list", { name: o.attention.groups.inbox })).toBeTruthy();
     expect(box.queryByRole("alert")).toBeNull();
     const metrics = await metricsOf(container);

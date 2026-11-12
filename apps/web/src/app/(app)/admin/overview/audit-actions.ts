@@ -47,6 +47,8 @@ const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "model_price.deleted": "modelPriceDeleted",
   "model.purpose_mapped": "modelPurposeMapped",
   "model.disabled_set": "modelDisabledSet",
+  "outbox.retried": "outboxRetried",
+  "outbox.discarded": "outboxDiscarded",
 };
 
 /** The `admin.audit.actions` key of `action`, or null when it has no label. */

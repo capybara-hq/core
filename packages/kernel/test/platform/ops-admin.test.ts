@@ -172,6 +172,9 @@ describe("registration and who may call", () => {
       "admin.connectors-list",
       "admin.health",
       "admin.org-members",
+      "admin.outbox-discard",
+      "admin.outbox-list-dead",
+      "admin.outbox-retry",
       "admin.overview",
       "admin.settings",
       "admin.update-settings",
@@ -451,7 +454,7 @@ describe("admin and models", () => {
         unavailable: string[];
       };
       expect(Object.keys(out).sort()).toEqual(["items", "more", "unavailable"]);
-      expect(out.more).toEqual({ extensions: 0, updates: 0, providers: 0 });
+      expect(out.more).toEqual({ extensions: 0, updates: 0, providers: 0, outbox: 0 });
       expect(out.unavailable).toEqual([]);
       const row = out.items.find((r) => r.kind === "provider");
       expect(row).toEqual({

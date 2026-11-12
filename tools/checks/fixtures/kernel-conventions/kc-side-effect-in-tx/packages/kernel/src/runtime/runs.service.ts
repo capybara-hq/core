@@ -11,17 +11,17 @@ export class RunsService {
 
   @Transactional()
   async start(): Promise<void> {
-    await this.runQueue.add("run", {}); // expect: kc-side-effect-in-tx
+    await this.runQueue.add("run", {}); // expect: kc-side-effect-in-tx, kc-enqueue-via-outbox
     await this.redis.set("k", "v"); // expect: kc-side-effect-in-tx
     await this.bus.publish("topic", {}); // expect: kc-side-effect-in-tx
     afterCommit(async () => {
-      await this.runQueue.add("run", {});
+      await this.runQueue.add("run", {}); // expect: kc-enqueue-via-outbox, kc-after-commit-hint
       await this.redis.del("k");
       await this.bus.publish("topic", {});
     });
   }
 
   async notInTx(): Promise<void> {
-    await this.runQueue.add("run", {});
+    await this.runQueue.add("run", {}); // expect: kc-enqueue-via-outbox
   }
 }
