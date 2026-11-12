@@ -1,4 +1,9 @@
-import type { FileSystemHandle, ParsedTheme, SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type {
+  FileSystemHandle,
+  GitHostEntry,
+  ParsedTheme,
+  SkillInvocation,
+} from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
 import type {
@@ -494,7 +499,7 @@ export interface ConnectorsTable {
    */
   guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
   /** 0118: the git hosts this connector declares (null: none). */
-  git_hosts: ColumnType<string[] | null, string | null | undefined, string | null>;
+  git_hosts: ColumnType<GitHostEntry[] | null, string | null | undefined, string | null>;
   /** 0118: an org-owned connector serves as a git gateway source (personal ones always do). */
   use_for_git: Generated<boolean>;
 }
