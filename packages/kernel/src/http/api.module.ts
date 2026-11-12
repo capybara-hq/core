@@ -61,6 +61,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionPointDefaultsController } from "../extensions/point-defaults.controller.js";
 import { FilesModule } from "../files/files.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
+import { GitModule } from "../git/git.module.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -231,6 +232,8 @@ const CONTROLLERS: Type[] = [
     SetupModule,
     // scheduled tasks (the controller comes with the HTTP routes)
     SchedulesModule,
+    // the git gateway (run tickets; the gateway route comes with it)
+    GitModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],

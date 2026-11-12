@@ -36,6 +36,8 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   absent (or an invalid stored value) = follow the platform, personal picks allowed.
  * - `uiArrangement`: per slot, the extension contributions the org hides and their order (UI slots
  *   spec §5); a slot with no entry follows the platform's; an invalid stored value reads as absent.
+ * - `gitGateway`: the org's git gateway switch and host sources (sandbox git credentials spec §9);
+ *   not in the PATCH yet; an invalid stored value reads as absent (gateway on).
  */
 
 /** 组织沙箱出站白名单的主机数上限。 */
@@ -137,6 +139,18 @@ export const ScheduledTasksPatchSchema = z
   .partial()
   .strict();
 
+/**
+ * The org's git gateway setting (sandbox git credentials spec §9): `enabled: false` switches the
+ * gateway off for the org (absent = on); `hostSources` names, per git host, the connector whose
+ * credential the gateway uses there. Reads leniently: an invalid stored value reads as absent.
+ */
+export const GitGatewaySettingSchema = z.object({
+  enabled: z.boolean().optional().catch(undefined),
+  hostSources: z.record(z.string(), z.string()).optional().catch(undefined),
+});
+
+export type GitGatewaySetting = z.infer<typeof GitGatewaySettingSchema>;
+
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
@@ -151,6 +165,8 @@ export const OrgSettingsSchema = z.object({
   theme: OrgThemeSettingSchema.optional().catch(undefined),
   /** Hidden and ordered extension contributions per slot; absent = follow the platform. */
   uiArrangement: UiArrangementSchema.optional().catch(undefined),
+  /** The org's git gateway switch and host sources; absent = on, sources chosen by default. */
+  gitGateway: GitGatewaySettingSchema.optional().catch(undefined),
   /** Scheduled tasks (spec §9); the platform bounds clamp it, see `effectiveScheduleSettings`. */
   scheduledTasks: ScheduledTasksSettingsSchema.prefault({}).catch(
     ScheduledTasksSettingsSchema.parse({}),
@@ -378,6 +394,7 @@ export class OrgSettingsService {
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
     if (after.uiArrangement === undefined) delete after.uiArrangement;
+    if (after.gitGateway === undefined) delete after.gitGateway;
     if (sameSettings(before, after)) return before;
     // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
     // SHARE (assertThemeOnIn), then the check, so no scope writer changes what it read first
