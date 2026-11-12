@@ -325,5 +325,72 @@ describe("schedule reads for the web", () => {
     for (const id of ["schedules.chat-targets", "schedules.grantable-tools"]) {
       expect(ops.get(id), id).toMatchObject({ confirm: "read" });
     }
+    expect(ops.get("schedules.calendar")).toMatchObject({
+      confirm: "read",
+      authz: { orgAction: "org.read" },
+      mirrors: ["GET /api/v1/orgs/:orgId/schedules/calendar"],
+    });
+  });
+
+  it("the calendar: runs and planned occurrences of a range, before the :id routes", async () => {
+    let res = await alice({
+      method: "POST",
+      url: base(),
+      payload: {
+        agentId,
+        name: "Calendar digest",
+        prompt: "Go.",
+        trigger: { kind: "cron", expr: "0 9 * * *" },
+        timeZone: "UTC",
+        mode: "new",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const task = (res.json() as { task: { id: string; nextRunAt: string; jitterSeconds: number } })
+      .task;
+    const day = 86_400_000;
+    const today = Math.floor(Date.now() / day) * day;
+    const range = (from: number, to: number, extra = "") =>
+      `${base()}/calendar?from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}&timeZone=Asia%2FShanghai${extra}`;
+    res = await alice({ method: "GET", url: range(today, today + 7 * day) });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as {
+      tasks: { id: string; name: string }[];
+      items: { kind: string; taskId: string; scheduledFor: string; at?: string }[];
+      collapsed: unknown[];
+      horizon: string;
+      truncated: boolean;
+    };
+    expect(body.tasks.find((t) => t.id === task.id)).toMatchObject({ name: "Calendar digest" });
+    const first = body.items.find((i) => i.taskId === task.id);
+    expect(first).toEqual({
+      kind: "occurrence",
+      taskId: task.id,
+      scheduledFor: new Date(Date.parse(task.nextRunAt) - task.jitterSeconds * 1000).toISOString(),
+      at: new Date(task.nextRunAt).toISOString(),
+    });
+    expect(body).toMatchObject({ collapsed: [], truncated: false });
+    expect(Date.parse(body.horizon)).toBeGreaterThan(Date.now() + 41 * day);
+
+    res = await alice({ method: "GET", url: range(today, today + 44 * day) });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: "validation_failed" } });
+    res = await alice({ method: "GET", url: range(today, today + day, "&all=true") });
+    expect(res.statusCode).toBe(403);
+    res = await alice({
+      method: "GET",
+      url: `${base()}/calendar?from=${encodeURIComponent(new Date(today).toISOString())}&to=x&timeZone=UTC`,
+    });
+    expect(res.statusCode).toBe(400);
+    res = await alice({
+      method: "GET",
+      url: range(today, today + day, "").replace("Asia%2FShanghai", "Mars%2FBase"),
+    });
+    expect(res.statusCode).toBe(400);
+    res = await owner({
+      method: "GET",
+      url: range(today, today + day, `&taskId=${task.id}`),
+    });
+    expect(res.statusCode, res.body).toBe(200);
   });
 });

@@ -254,9 +254,13 @@ will not fire until someone resumes it):
 The **horizon** is `now + 42 days` (decided: "about 6 weeks"); it is a constant next to the route,
 not a config option (designer's call).
 
-A parity test (§10) runs the scanner's `dueTicks` / `nextTick` minute by minute over a simulated
-window and asserts the ticks it fires equal `ticksIn`'s list, across DST in `Asia/Shanghai` (no
-DST), `America/New_York` and `Europe/London`, for daily, hourly, weekly, `once`-in-a-gap and an
+The scanner's decision for one due task is a pure function in `schedule-math.ts`, `scanStep`
+(the first missed tick, the tick to fire, the next `next_run_at` or why the task ends); `scan.job.ts`
+applies its result, and the calendar calls the same function for a task that is already due but not
+yet scanned, so both share one implementation. A parity test (§10) drives `scanStep` minute by
+minute (on time and late) and by jumps to each `next_run_at`, with jitter, over 10-day windows, and
+asserts the ticks it fires equal `ticksIn`'s list, across DST in `Asia/Shanghai` (no DST),
+`America/New_York` and `Europe/London`, for daily, hourly, weekly, `*/15`, `once`-in-a-gap and an
 expiring task.
 
 ### 5.3 Time zones and DST
@@ -293,22 +297,39 @@ expiring task.
 
 - A range is at most 43 days, an org at most `maxTasksPerOrg` tasks (platform ceiling), so there is
   no pagination (designer's call): one request answers one view.
-- Two limits per request: a **tick budget** of 20,000 tick evaluations across all tasks (collapsed
-  task-days need their count, so their ticks are evaluated too) and an **item cap** of 3,000
-  entries in `items` + `collapsed` (starting values; the plan measures them). The platform ceiling
-  for tasks per org is 2,000 (`schedules.maxTasksPerOrgCap`), so a month of 2,000 daily tasks
-  (84,000 ticks) cannot fit, and the answer must say so instead of dropping items silently.
+- **Tick cost (measured 2026-11-12).** One tick evaluation of the scheduler's ticker (cron's
+  `getNextDateFrom` plus the DST check) costs about 150–340 µs on a developer laptop: `*/5` about
+  160 µs, hourly about 260 µs, daily about 300 µs, weekly about 340 µs, with the ticker built once
+  per task (`tickerOf`; rebuilding it per call added about 15 %). Ticks dominate the request time.
+- Three limits per request, all named constants in `schedules/calendar.ts`: a **tick budget** of
+  3,000 ticks taken across all tasks (collapsed task-days need their count, so their ticks are
+  taken too; each task's one lookahead past its window end and `scanStep`'s search for a task
+  already due are not counted, at most about 2 × tasks evaluations more), an **item cap** of 3,000
+  entries in `items` + `collapsed`, and a **run-row cap** of 20,000 run rows read. The budget was
+  chosen so a worst-case request stays near one second. The platform ceiling for tasks per org is
+  2,000 (`schedules.maxTasksPerOrgCap`), so a month of 2,000 daily tasks (84,000 ticks) cannot fit,
+  and the answer must say so instead of dropping items silently. A month of 200 daily tasks (the
+  default org cap, about 8,400 ticks) is cut too, after about two weeks; the week view of the same
+  org fits.
+- **The first day is always returned.** The first requested local day is returned whole, outside
+  the three limits, so a view is never empty because of them. Only safety caps stop it: 10,000 ticks
+  and 20,000 run rows on that day; past either, the answer is empty with `truncated: true` and
+  `horizon` equal to `from`. `horizon` is never before `from`.
 - **One cut rule** (designer's call): the kernel walks the range day by day (viewer-local days of
-  `timeZone`), adding each day's runs and occurrences for every task; when the next day would pass
-  either limit, it stops, returns the whole days so far and sets `truncated: true` with `horizon`
+  `timeZone`), adding each day's runs and occurrences for every task (planned ticks are taken in
+  time order across all tasks); when the next day would pass any limit, it stops, returns the whole days so far and sets `truncated: true` with `horizon`
   moved back to the cut. Nothing inside a returned day is ever dropped or uncounted. The page shows
   a `warn` callout 「运行太多，只显示到 12-03，请切到周视图」 and the grid draws the days after the cut
   as not loaded (no items, a `muted` 「未加载」 in their header). A week at the platform ceiling of
   2,000 daily tasks (14,000 items) is also cut; such an org reads the calendar with 只看我的 or the
   list.
-- Response time target: p95 under 300 ms for the month view at the default org cap (200 tasks); the
-  plan benchmarks the default cap and the platform ceiling, and the kernel tests assert the
-  evaluation count, not the time.
+- Response time (measured 2026-11-12, the pure assembly with no database, viewer in
+  `Asia/Shanghai`): a week of 200 daily tasks about 250 ms; a 42-day month of 200 daily tasks about
+  780 ms (cut after about two weeks); 20 hourly tasks over a month about 650 ms (cut); 200 hourly
+  tasks over a week about 650 ms (cut); 2,000 daily tasks over a month about 880 ms (cut). A first
+  day that reaches its 10,000-tick safety cap would take about 1.5–3.4 s. The 300 ms target of the
+  first draft is not reachable with the scheduler's own ticker; the kernel tests assert the counts
+  and the cuts, not the time.
 
 ### 5.6 Platform operation
 
