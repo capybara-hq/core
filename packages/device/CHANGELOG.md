@@ -1,5 +1,19 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.5
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- 204a7ed: Version managers work inside the OS sandbox: asdf, nvm, pyenv, rbenv, mise, volta, sdkman and
+  rustup get their data directories under the real home (read only) instead of the workspace HOME.
+- Updated dependencies [8471657]
+- Updated dependencies [a3ca5ef]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.17
+
 ## 0.1.0-rc.4
 
 ### Minor Changes
