@@ -39,7 +39,10 @@ export const DEV_HOSTS: readonly string[] = Object.freeze([
   "registry-1.docker.io",
   "auth.docker.io",
   "production.cloudflare.docker.com",
-  // Playwright browsers
+  // Playwright browsers (`npx playwright install`, checked against playwright-core 1.64): Firefox,
+  // WebKit and ffmpeg come from the Playwright CDN and its Microsoft mirror; Chromium is Chrome
+  // for Testing, which cdn.playwright.dev redirects to storage.googleapis.com
   "cdn.playwright.dev",
   "playwright.download.prss.microsoft.com",
+  "storage.googleapis.com",
 ]);

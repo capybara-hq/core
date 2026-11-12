@@ -30,7 +30,11 @@ import type { DeviceSandboxLevel } from "../runtime/context/device-paths.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
 import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
+import {
+  type EffectiveSandboxPolicy,
+  effectiveSandboxPolicy,
+  readDeploymentSandboxPolicy,
+} from "../sandbox/tiers.js";
 import { unattendedTierOf } from "../schedules/unattended.js";
 import {
   DeviceAccess,
@@ -532,11 +536,11 @@ export class DevicesService {
     orgId: string,
     tier: SandboxTier | null,
   ): Promise<EffectiveSandboxPolicy> {
-    return effectiveSandboxPolicy(
-      this.config.get().sandbox,
-      await readOrgSettings(this.db.db, orgId),
-      tier,
-    );
+    const [deployment, settings] = await Promise.all([
+      readDeploymentSandboxPolicy(this.db.db, this.config),
+      readOrgSettings(this.db.db, orgId),
+    ]);
+    return effectiveSandboxPolicy(deployment, settings, tier);
   }
 
   /**
@@ -567,12 +571,13 @@ export class DevicesService {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return null;
-    const [settings, unattended] = await Promise.all([
+    const [deployment, settings, unattended] = await Promise.all([
+      readDeploymentSandboxPolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
       runId === undefined ? null : unattendedTierOf(this.db.db, runId, deviceId),
     ]);
     const policyOf = (tier: SandboxTier | null) =>
-      effectiveSandboxPolicy(this.config.get().sandbox, settings, tier);
+      effectiveSandboxPolicy(deployment, settings, tier);
     const summary = localPolicyOf(row.local_policy);
     const s = sandboxStateOf(policyOf, {
       source: row.source,
@@ -1126,16 +1131,17 @@ export class DevicesService {
     const demotedProviders = [
       ...new Set(rows.flatMap((r) => (demoted.get(r.id) ? [demoted.get(r.id) as string] : []))),
     ];
-    const [names, recent, settings] = await Promise.all([
+    const [names, recent, settings, deployment] = await Promise.all([
       this.displayNames.many(demotedProviders),
       this.recentSandboxChanges(
         orgId,
         rows.map((r) => r.id),
       ),
       readOrgSettings(this.db.db, orgId),
+      readDeploymentSandboxPolicy(this.db.db, this.config),
     ]);
     const policyOf = (tier: SandboxTier | null) =>
-      effectiveSandboxPolicy(this.config.get().sandbox, settings, tier);
+      effectiveSandboxPolicy(deployment, settings, tier);
     // each device's limits (a cloud device's own tier) and its instance's pending change
     const perDevice = new Map(
       await Promise.all(

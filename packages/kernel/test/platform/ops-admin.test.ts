@@ -500,6 +500,49 @@ describe("admin and models", () => {
     expect(http.json()).toEqual(all);
   });
 
+  it("admin.update-settings lowers the platform's sandbox tiers but never raises them", async () => {
+    expect(await run("admin.settings", {})).toMatchObject({
+      sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true },
+    });
+    for (const sandboxTiers of [{ max: "open" }, { max: null }]) {
+      // { max: null } is no raise while the stored max is the default; set it first
+      await root({
+        method: "PUT",
+        url: "/api/v1/admin/settings",
+        payload: { sandboxTiers: { max: "dev" } },
+      });
+      expect(await precheck("admin.update-settings", { sandboxTiers })).toMatchObject({
+        ok: sandboxTiers.max === null,
+      });
+    }
+    await root({
+      method: "PUT",
+      url: "/api/v1/admin/settings",
+      payload: { sandboxTiers: { max: "strict", default: "strict" } },
+    });
+    for (const sandboxTiers of [{ max: "dev" }, { max: null, default: null }, { default: "dev" }]) {
+      expect(await precheck("admin.update-settings", { sandboxTiers })).toMatchObject({
+        ok: false,
+        code:
+          sandboxTiers.default === "dev"
+            ? "validation_failed"
+            : "deployment.sandbox_tier_not_allowed",
+      });
+      await expect(run("admin.update-settings", { sandboxTiers })).rejects.toThrow();
+    }
+    const out = await run("admin.update-settings", { sandboxTiers: { allowUnsandboxed: false } });
+    expect(out).toMatchObject({
+      sandboxTiers: { max: "strict", default: "strict", allowUnsandboxed: false },
+    });
+    // a person raises them again
+    const back = await root({
+      method: "PUT",
+      url: "/api/v1/admin/settings",
+      payload: { sandboxTiers: { max: null, default: null, allowUnsandboxed: null } },
+    });
+    expect(back.statusCode, back.body).toBe(200);
+  });
+
   it("admin.update-settings: theme.not_available says the default must be on in every org", () => {
     const next = op("admin.update-settings").errors?.find(
       (e) => e.code === "theme.not_available",

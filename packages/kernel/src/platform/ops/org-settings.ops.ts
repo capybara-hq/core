@@ -42,7 +42,7 @@ export class OrgSettingsOperations implements OnModuleInit {
         confirm: "read",
         run: async (_input, ctx) => ({
           settings: await this.settings.get(ctx.orgId),
-          deployment: this.settings.deployment(),
+          deployment: await this.settings.deployment(),
           sandboxLimits: await this.settings.sandboxLimits(ctx.orgId),
         }),
       }),
@@ -77,8 +77,8 @@ export class OrgSettingsOperations implements OnModuleInit {
         ],
         precheck: (i, ctx) =>
           precheckBy(async () => {
-            this.settings.check(i);
-            this.settings.assertOnlyNarrows(await this.settings.get(ctx.orgId), i);
+            await this.settings.check(i);
+            await this.settings.assertOnlyNarrows(await this.settings.get(ctx.orgId), i);
           }),
         summary: async (i, ctx) => {
           const { theme, ...rest } = i;

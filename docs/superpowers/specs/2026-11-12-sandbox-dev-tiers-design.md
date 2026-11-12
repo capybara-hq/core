@@ -641,8 +641,14 @@ The device list and the composer's device picker show a badge for 开放 (warn t
 
 ### 11.3 Admin console (super admin)
 
-The deployment's tiers are config (`sandbox.tiers.*`, hot); the admin console's sandbox page shows
-them read-only with the config keys, as it does for `sandbox.limits` today.
+The deployment's tiers are config (`sandbox.tiers.*`, hot) and a deployment setting the super admin
+edits on the admin settings page, section 「沙箱级别」 (acceptance gap, 2026-11-12): 最高级别 as three
+cards (raising it to 开放 asks first with the risk text), 默认级别 (at most the highest) and
+「允许设备不使用沙箱」. Each field is read env > config file / Nacos > the stored setting
+(`deployment_settings` key `sandboxTiers`) > default; a field set in the startup config is shown
+read-only with its source. `PUT /api/v1/admin/settings` `sandboxTiers` refuses a default above the
+max; an API token or the Platform tool (`admin.update-settings`) may only lower the tiers. Lowering
+the max rewrites no org: the effective policy cuts every org's ceiling and default (§4.2).
 
 ### 11.4 Scheduled and unattended runs
 
