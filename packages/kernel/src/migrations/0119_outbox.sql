@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS outbox (
   dead_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
--- one pending row per job: a second add of the same job before delivery is a no-op
-CREATE UNIQUE INDEX IF NOT EXISTS outbox_job_uniq ON outbox (queue, job_id);
+-- one pending row per job: a second add of the same job before delivery is a no-op; a dead row
+-- does not count, so it never blocks the same job owed again
+CREATE UNIQUE INDEX IF NOT EXISTS outbox_job_uniq ON outbox (queue, job_id) WHERE dead_at IS NULL;
 CREATE INDEX IF NOT EXISTS outbox_due ON outbox (next_attempt_at) WHERE dead_at IS NULL;

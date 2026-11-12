@@ -295,6 +295,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "never a cron or a queue consumer",
   },
   {
+    rule: "kc-side-effect-in-tx",
+    path: "packages/kernel/src/infra/outbox/outbox.dispatcher.ts",
+    within: "claimAndSend",
+    reason:
+      "Only infra/outbox/outbox.dispatcher.ts calls Redis while holding a PG transaction, and " +
+      "only with outbox rows locked (spec §3.3)",
+  },
+  {
     rule: "kc-ported-header",
     path: "packages/kernel/src/infra/schedule/locked-cron.decorator.ts",
     reason:

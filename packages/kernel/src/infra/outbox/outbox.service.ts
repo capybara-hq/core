@@ -15,7 +15,7 @@ export interface OutboxJob<T> {
   queue: KernelQueueName;
   /** A registered job name ({@link OutboxJobName}). */
   name: OutboxJobName;
-  /** Deterministic, no `:`; one pending row per (queue, jobId). */
+  /** Deterministic, no `:`; one pending (not dead) row per (queue, jobId). */
   jobId: string;
   /** JSON data: stored as jsonb, so what JSON cannot carry (undefined, Date objects) is lost. */
   data: T;
@@ -61,12 +61,19 @@ export class OutboxService {
 
   /**
    * Adds the job to the outbox in the transaction in context (throws outside one). Returns true when
-   * it inserted a row, false when the same (queue, jobId) is already owed (a no-op). A conflict whose
-   * stored data differs is a bug in the job id: it throws under strict conflicts, else logs an error.
+   * it inserted a row, false when the same (queue, jobId) is already owed (a no-op; a dead row is
+   * not owed). A conflict whose stored data differs is a bug in the job id: it throws under strict
+   * conflicts, else logs an error. Undefined data is stored as JSON null.
    */
   @Transactional({ propagation: "mandatory" })
   async add<T>(job: OutboxJob<T>): Promise<boolean> {
-    const json = JSON.stringify(job.data);
+    if (job.jobId.includes(":")) {
+      throw new Error(
+        `outbox job id "${job.jobId}" must not contain ":" (BullMQ uses it as its key separator); ` +
+          'join the id\'s parts with "-" instead',
+      );
+    }
+    const json = JSON.stringify(job.data ?? null);
     const row = await this.db
       .insertInto("outbox")
       .values({
@@ -77,7 +84,7 @@ export class OutboxService {
         run_at: job.runAt ?? null,
         org_id: job.orgId ?? null,
       })
-      .onConflict((oc) => oc.columns(["queue", "job_id"]).doNothing())
+      .onConflict((oc) => oc.columns(["queue", "job_id"]).where("dead_at", "is", null).doNothing())
       .returning("id")
       .executeTakeFirst();
     if (row) {
@@ -89,6 +96,7 @@ export class OutboxService {
       .select(["job_name", "data"])
       .where("queue", "=", job.queue)
       .where("job_id", "=", job.jobId)
+      .where("dead_at", "is", null)
       .executeTakeFirst();
     // no row: the owed one was delivered (and deleted) since the conflict; BullMQ dedupes the id
     if (stored && !isDeepStrictEqual(stored.data, JSON.parse(json))) {

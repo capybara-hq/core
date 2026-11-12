@@ -147,6 +147,36 @@ describe("OutboxService.add", () => {
     );
     expect(await rows()).toMatchObject([{ job_id: "a", data: { n: 1 } }]);
   });
+
+  it("a dead row does not block a new owed job with the same id", async () => {
+    const outbox = outboxWith(true);
+    await host.run(() => outbox.add(job("a", { n: 1 })));
+    await db.updateTable("outbox").set({ dead_at: new Date() }).where("job_id", "=", "a").execute();
+    // other data than the dead row's: no conflict either, the dead row is not owed
+    expect(await host.run(() => outbox.add(job("a", { n: 2 })))).toBe(true);
+    expect(await rows()).toMatchObject([
+      { job_id: "a", data: { n: 1 } },
+      { job_id: "a", data: { n: 2 } },
+    ]);
+    // the new pending row still dedupes, and its different data is still caught
+    expect(await host.run(() => outbox.add(job("a", { n: 2 })))).toBe(false);
+    await expect(host.run(() => outbox.add(job("a", { n: 3 })))).rejects.toThrow(
+      /outbox job id reused with different data/,
+    );
+  });
+
+  it("a job id containing ':' is refused", async () => {
+    const outbox = outboxWith(true);
+    await expect(host.run(() => outbox.add(job("run:1")))).rejects.toThrow(/must not contain ":"/);
+    expect(await rows()).toEqual([]);
+  });
+
+  it("undefined data is stored as null and a second add is a no-op", async () => {
+    const outbox = outboxWith(true);
+    expect(await host.run(() => outbox.add({ ...job("a"), data: undefined }))).toBe(true);
+    expect(await host.run(() => outbox.add({ ...job("a"), data: undefined }))).toBe(false);
+    expect(await rows()).toMatchObject([{ job_id: "a", data: null }]);
+  });
 });
 
 describe("org deletion", () => {

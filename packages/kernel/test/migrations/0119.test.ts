@@ -10,7 +10,7 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
  * 0119_outbox.sql (transactional outbox spec §4): the outbox table, one pending row per
- * (queue, job_id), and a partial index over the rows still owed. Migrates up to and including 0119,
+ * (queue, job_id) (a dead row does not count, R8), and a partial index over the rows still owed. Migrates up to and including 0119,
  * then runs the file again (idempotent).
  */
 const FILE = "0119_outbox.sql";
@@ -48,7 +48,7 @@ const insertJob = (jobId: string) =>
     values ('cap-q', 'run', ${jobId}, '{}'::jsonb)`.execute(db);
 
 describe("0119_outbox", () => {
-  it("0119 creates outbox with a unique (queue, job_id) and a partial due index", async () => {
+  it("0119 creates outbox with a unique pending (queue, job_id) and a partial due index", async () => {
     const cols = await sql<{ column_name: string; data_type: string; is_nullable: string }>`
       select column_name, data_type, is_nullable from information_schema.columns
       where table_schema = 'capybara' and table_name = 'outbox' order by ordinal_position`.execute(
@@ -84,5 +84,19 @@ describe("0119_outbox", () => {
     const uniq = idx.rows.find((r) => r.indexname === "outbox_job_uniq");
     expect(uniq?.indexdef).toContain("UNIQUE INDEX");
     expect(uniq?.indexdef).toContain("(queue, job_id)");
+    expect(uniq?.indexdef).toContain("WHERE (dead_at IS NULL)");
+  });
+
+  it("0119 allows a pending row next to a dead row with the same job id", async () => {
+    await insertJob("j2");
+    await sql`update capybara.outbox set dead_at = now() where job_id = 'j2'`.execute(db);
+    await insertJob("j2");
+    // still one pending row per job
+    await expect(insertJob("j2")).rejects.toMatchObject({ code: "23505" });
+    const rows = await sql<{ dead: boolean }>`
+      select dead_at is not null as dead from capybara.outbox where job_id = 'j2' order by id`.execute(
+      db,
+    );
+    expect(rows.rows).toEqual([{ dead: true }, { dead: false }]);
   });
 });
