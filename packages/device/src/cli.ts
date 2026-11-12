@@ -5,7 +5,7 @@ import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import {
   confirmRisk,
-  DOCKER_ISOLATION_REFUSED,
+  isolationRefusal,
   needsConfirmation,
   policyCommand,
   policyRisk,
@@ -16,7 +16,7 @@ import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
 import type { Executor } from "./exec/types.js";
 import type { PolicyStore } from "./policy-store.js";
-import { type Credential, readCredential, stateDir } from "./state.js";
+import { type Credential, stateDir } from "./state.js";
 
 export interface CliEnv {
   env?: Record<string, string | undefined>;
@@ -94,15 +94,6 @@ function defaultCreateExecutor(stateDir: string, home: string, err: (line: strin
   };
 }
 
-/** Whether this machine is logged in in Docker mode (false when unknown). */
-function dockerCredential(dir: string): boolean {
-  try {
-    return readCredential(dir)?.mode === "docker";
-  } catch {
-    return false;
-  }
-}
-
 /** Runs one command line and returns the exit code. */
 export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
   const out = io.out ?? ((l: string) => console.log(l));
@@ -154,14 +145,11 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
     case "drain":
       return drain(dir, out, err, io.kill);
     case "policy": {
-      // Docker mode: refused before any risk text or question (policyCommand refuses it too).
-      if (
-        cmd.action === "set" &&
-        cmd.key === "isolation" &&
-        cmd.value.trim().toLowerCase() === "none" &&
-        dockerCredential(dir)
-      ) {
-        err(DOCKER_ISOLATION_REFUSED);
+      // `set isolation none` that cannot apply (Docker mode, no local tier open): refused before
+      // any risk text or question (policyCommand refuses it too, under the lock).
+      const refusal = isolationRefusal(cmd, dir);
+      if (refusal !== undefined) {
+        err(refusal);
         return 2;
       }
       // `set tier open` / `set isolation none` without --yes: ask on a terminal (after printing

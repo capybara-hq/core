@@ -364,6 +364,28 @@ describe("SwitchingExecutor", () => {
     expect(host.killed).toEqual([["*"]]);
   });
 
+  it("a failed kill keeps the unsandboxed state and is tried again at the next sync", async () => {
+    setup();
+    policy = { ...policy, tier: "open", isolation: "none" };
+    expect(await ex.sync()).toBe(true);
+    let fail = true;
+    host.killAll = async () => {
+      host.killed.push(["*"]);
+      if (fail) throw new Error("kill failed");
+    };
+    policy = { ...policy, isolation: "sandbox" };
+    // Routing follows the policy at once, but the switch back waits for a successful kill.
+    expect(await ex.sync()).toBe(false);
+    expect(switches).toEqual(["none"]);
+    fail = false;
+    expect(await ex.sync()).toBe(false);
+    expect(host.killed).toEqual([["*"], ["*"]]);
+    expect(switches).toEqual(["none", "sandbox"]);
+    // Settled: no more kills.
+    await ex.sync();
+    expect(host.killed).toHaveLength(2);
+  });
+
   it("refuses a command the policy wants unsandboxed below tier open, never runs it sandboxed", async () => {
     setup();
     policy = { ...policy, tier: "open", isolation: "none" };

@@ -133,6 +133,29 @@ export const ISOLATION_NEEDS_OPEN =
   "Nothing changed. Running without a sandbox needs tier open set on this device first: " +
   "capybara-device policy set tier open --yes";
 
+/** A refusal found under the policy lock, reported as a usage refusal (exit 2). */
+class LockedRefusal extends Error {}
+
+/**
+ * Why `set isolation none` cannot apply on this machine now (Docker mode, or the local tier is
+ * not explicitly `open`), checked before any risk text or question; undefined for every other
+ * command line. The tier is checked again under the policy lock when the change is written.
+ */
+export function isolationRefusal(
+  cmd: Extract<Command, { command: "policy" }>,
+  stateDir: string,
+): string | undefined {
+  if (cmd.action !== "set" || cmd.key !== "isolation") return undefined;
+  if (cmd.value.trim().toLowerCase() !== "none") return undefined;
+  if (dockerMode(stateDir)) return DOCKER_ISOLATION_REFUSED;
+  try {
+    if (new PolicyStore(stateDir).current().tier !== "open") return ISOLATION_NEEDS_OPEN;
+  } catch {
+    // An unreadable policy file is reported by the command itself.
+  }
+  return undefined;
+}
+
 /** Whether this machine is logged in in Docker mode (false when unknown). */
 function dockerMode(stateDir: string): boolean {
   try {
@@ -306,7 +329,11 @@ export async function policyCommand(
             err(ISOLATION_NEEDS_OPEN);
             return 2;
           }
-          change = (p) => ({ ...p, isolation: v });
+          change = (p) => {
+            // Judged again on the file as it is under the lock (the tier may have changed).
+            if (v === "none" && p.tier !== "open") throw new LockedRefusal(ISOLATION_NEEDS_OPEN);
+            return { ...p, isolation: v };
+          };
           break;
         }
         case "localhost": {
@@ -364,6 +391,10 @@ export async function policyCommand(
   try {
     next = store.update((p) => change(p, (l) => lines.push(l)));
   } catch (e) {
+    if (e instanceof LockedRefusal) {
+      err(e.message);
+      return 2;
+    }
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }

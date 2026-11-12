@@ -97,16 +97,26 @@ export class SwitchingExecutor implements Executor {
   async sync(policy: Policy = this.policy()): Promise<boolean> {
     const none = policyUnsandboxed(policy);
     if (none === this.unsandboxed) return none;
-    this.unsandboxed = none;
     if (none) {
+      this.unsandboxed = true;
       this.watch ??= setInterval(() => void this.sync().catch(() => {}), WATCH_INTERVAL_MS);
       this.watch.unref();
-    } else {
-      if (this.watch !== undefined) clearInterval(this.watch);
-      this.watch = undefined;
+      this.onSwitch?.("none");
+      return none;
     }
-    this.onSwitch?.(none ? "none" : "sandbox");
-    if (!none) await this.host.killAll();
+    // Back in the sandbox only once the unsandboxed commands are gone: a failed kill keeps the
+    // state (and the watch), so the next sync tries again. Routing follows the policy meanwhile.
+    try {
+      await this.host.killAll();
+    } catch {
+      return none;
+    }
+    // The policy may have changed again while the kill ran: the next sync judges that.
+    if (!this.unsandboxed || policyUnsandboxed(this.policy())) return none;
+    this.unsandboxed = false;
+    if (this.watch !== undefined) clearInterval(this.watch);
+    this.watch = undefined;
+    this.onSwitch?.("sandbox");
     return none;
   }
 

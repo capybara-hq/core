@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
-import { DOCKER_ISOLATION_REFUSED, UNSANDBOXED_RISK_TEXT } from "../src/commands/policy.js";
+import {
+  DOCKER_ISOLATION_REFUSED,
+  ISOLATION_NEEDS_OPEN,
+  UNSANDBOXED_RISK_TEXT,
+} from "../src/commands/policy.js";
 import { DEFAULT_POLICY, readPolicy, writeCredential, writePolicy } from "../src/state.js";
 
 describe("capybara-device policy set isolation none", () => {
@@ -83,5 +87,23 @@ describe("capybara-device policy set isolation none", () => {
     expect(out).not.toContain(UNSANDBOXED_RISK_TEXT);
     expect(asked).toEqual([]);
     expect(readPolicy(dir).isolation).toBe("sandbox");
+  });
+
+  it("without the local tier open is refused before any risk text or question", async () => {
+    for (const over of [{}, { tier: "dev" as const }]) {
+      writePolicy(dir, { ...DEFAULT_POLICY, ...over });
+      out = [];
+      err = [];
+      for (const argv of [
+        ["set", "isolation", "none"],
+        ["set", "isolation", "none", "--yes"],
+      ]) {
+        expect(await cli(argv, { isTTY: true, answer: "y" })).toBe(2);
+        expect(err.at(-1)).toBe(ISOLATION_NEEDS_OPEN);
+      }
+      expect(asked).toEqual([]);
+      expect(out).not.toContain(UNSANDBOXED_RISK_TEXT);
+      expect(readPolicy(dir).isolation).toBe("sandbox");
+    }
   });
 });

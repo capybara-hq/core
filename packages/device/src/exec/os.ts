@@ -321,13 +321,9 @@ export class OsExecutor implements Executor {
   ): Promise<Spawned> {
     const exports: string[] = [];
     const dev = o.tier !== "strict";
-    if (
-      dev &&
-      process.platform === "darwin" &&
-      (this.socketDir === undefined || !existsSync(this.socketDir))
-    ) {
-      this.prepareSocketDir();
-    }
+    // Re-checked before every dev / open command (macOS prunes /tmp, and a path swapped for a
+    // link or another user's directory must not be used): prepareSocketDir never follows links.
+    if (dev && process.platform === "darwin") this.prepareSocketDir();
     // dev / open on macOS: the short socket directory, where unix sockets are allowed.
     const tmp = dev && this.socketDir !== undefined ? this.socketDir : this.roots.tmp;
     const inner: Record<string, string> = {
