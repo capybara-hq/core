@@ -1,5 +1,6 @@
 import { type CSSProperties, type JSX, type KeyboardEvent, type ReactNode, useRef } from "react";
 import { Button, IconButton } from "../controls/button";
+import { Badge } from "../display/basic";
 import { useSkeletonAnnounces } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
@@ -221,6 +222,7 @@ export function ContextSection({
   ratio,
   model,
   sandbox,
+  sandboxBadge,
   connectors,
   lastRun,
   total,
@@ -229,6 +231,8 @@ export function ContextSection({
   ratio: number;
   model: string;
   sandbox?: string;
+  /** An attention mark after the model · sandbox line, as a `warn` Badge (「不限网络」). */
+  sandboxBadge?: string;
   connectors: string[];
   /** The last run's line ("上次运行 · <model> · <duration> · <tokens>"), worded by the page. */
   lastRun?: string;
@@ -253,6 +257,12 @@ export function ContextSection({
       </div>
       <div className="cb-muted cb-small cb-context-line">
         {[model, sandbox].filter(Boolean).join(" · ")}
+        {sandboxBadge ? (
+          <>
+            {" "}
+            <Badge tone="warn">{sandboxBadge}</Badge>
+          </>
+        ) : null}
       </div>
       {connectors.length > 0 ? (
         <div className="cb-muted cb-small cb-context-line">

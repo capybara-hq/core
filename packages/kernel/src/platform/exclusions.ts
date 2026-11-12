@@ -166,6 +166,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Body carries connector credentials and client secrets entered by a person",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/catalog-requests/network",
+    category: "human-only",
+    reason:
+      "A member asks org admins to allow a domain from a blocked command's card; agents never file network requests",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/catalog-requests/:id/decide",
     category: "human-only",
     reason: "Decides another person's catalog request",
@@ -298,6 +304,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason:
       "Disconnects a person's own machine (revokes its credential); a trust decision taken on the device's page",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/devices/:id/policy",
+    category: "human-only",
+    reason:
+      "A person changes their own machine's network policy; agents never widen a device's network",
   },
   {
     route: "POST /api/v1/device/authorize",
@@ -590,7 +602,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/approvals/:id/decision",
     category: "human-only",
     reason:
-      "Decides a tool permission approval; only the person decides (spec §6.4); reading what waits is approvals.waiting / approvals.get",
+      "Decides a tool permission approval or a network ask; only the person decides (spec §6.4); a person must decide network access on their own device; reading what waits is approvals.waiting / approvals.get",
   },
   {
     route: "GET /api/v1/orgs/:orgId/me/tool-grants",

@@ -5,13 +5,41 @@ import { apiFetch } from "./api";
  * 只声明界面用到的字段）。Web 层不 import 内核代码。
  */
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+/** `skipped`: a network ask the person answered with a message instead (network ask spec §6.7). */
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "skipped";
 export type ApprovalScope = "once" | "session" | "always";
 
 export const APPROVAL_SCOPES = ["once", "session", "always"] as const satisfies ApprovalScope[];
 
+/**
+ * A network ask's detail (network ask spec §6.1): a command on a device was refused these hosts by
+ * the device's own policy. `grantedHosts` / `outcome` / `fallback` are set once decided.
+ */
+export interface NetworkApprovalDetail {
+  deviceId: string;
+  hosts: { host: string; port: number }[];
+  command: string;
+  description: string | null;
+  /** The hosts the decision allowed (the checked subset). */
+  grantedHosts?: string[];
+  /** `once_fallback`: "always" was chosen but the device took it as "this time". */
+  outcome?: "once" | "always" | "once_fallback";
+  /** Why "always" fell back to "this time". */
+  fallback?: "offline" | "refused" | "unsupported";
+}
+
 export interface Approval {
   id: string;
+  /** `network`: a device refused a command network hosts (absent in older kernels = `tool`). */
+  kind?: "tool" | "network";
+  /** A network ask's detail; null for tool approvals. */
+  detail?: NetworkApprovalDetail | null;
   conversationId: string;
   runId: string;
   callId: string;
@@ -79,7 +107,14 @@ export const getApproval = (orgId: string, id: string) =>
 export const decideApproval = (
   orgId: string,
   id: string,
-  body: { decision: "approve" | "deny"; scope?: ApprovalScope; note?: string; reason?: string },
+  body: {
+    decision: "approve" | "deny";
+    scope?: ApprovalScope;
+    note?: string;
+    reason?: string;
+    /** A network ask: the checked hosts (absent = all; the unchecked ones count as denied). */
+    hosts?: string[];
+  },
 ) =>
   apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "extension" | "agent"> }>(
     `${base(orgId)}/approvals/${encodeURIComponent(id)}/decision`,

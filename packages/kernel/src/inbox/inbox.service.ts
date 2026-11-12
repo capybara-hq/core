@@ -59,9 +59,11 @@ export const INBOX_MAX_ITEMS = 100;
  * - `tool_approval`：当前用户能处理的待处理工具调用审批（与 `GET /approvals?status=pending` 同一视图）；
  * - `skill_change`: pending skill share requests and proposed versions of shared skills, when the
  *   current user is an org admin (`skillChange.kind`; spec §5.4, §5.5);
- * - `catalog_request`: pending `enable` requests from members and pending `connector_setup`
- *   requests (`request.kind`; `request.agent` and `request.connectors` set, `item` null; ruling
- *   P4-T6-5), when the current user is an org admin (M6 T26, C22; plugin scope spec §5.1);
+ * - `catalog_request`: pending `enable` and `network_allowlist` requests from members and pending
+ *   `connector_setup` requests (`request.kind`; for `connector_setup` `request.agent` and
+ *   `request.connectors` set, `item` null, ruling P4-T6-5; for `network_allowlist`
+ *   `request.network` set, network ask-to-allow spec §5.3), when the current user is an org admin
+ *   (M6 T26, C22; plugin scope spec §5.1);
  * - `catalog_request_decided`: the current user's own requests in this org that were approved or
  *   rejected (with the reason), until dismissed (`POST catalog-requests/:id/dismiss`);
  * - `schedule_attention`: the current user's own scheduled task that needs them (spec §8): paused

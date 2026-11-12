@@ -1,3 +1,4 @@
+import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { CredentialValue } from "../tools/connectors.schemas.js";
@@ -6,6 +7,43 @@ export const CatalogRequestBody = z
   .object({
     kind: z.enum(["access", "enable"]),
     note: z.string().max(1000).optional(),
+  })
+  .strict();
+
+/** The most hosts one network request asks for. */
+export const NETWORK_REQUEST_HOSTS_MAX = 20;
+
+/**
+ * A member asks the org admins to allow hosts in the org's sandbox egress (network ask-to-allow
+ * spec §5.3): exact hosts (no wildcard), lowercased, each passing `validateAllowHost`; the
+ * conversation and agent the blocked command ran in, for the admins' context.
+ */
+export const NetworkRequestBody = z
+  .object({
+    hosts: z
+      .array(
+        z
+          .string()
+          .max(253)
+          .transform((h) => h.trim().toLowerCase())
+          .superRefine((h, ctx) => {
+            if (h.startsWith("*.")) {
+              ctx.addIssue({
+                code: "custom",
+                message: `${h}: ask for an exact host, not a wildcard`,
+              });
+              return;
+            }
+            for (const message of validateAllowHost(h)) {
+              ctx.addIssue({ code: "custom", message: `${h}: ${message}` });
+            }
+          }),
+      )
+      .min(1)
+      .max(NETWORK_REQUEST_HOSTS_MAX),
+    note: z.string().max(500).optional(),
+    conversationId: z.string().min(1).max(100).optional(),
+    agentId: z.string().min(1).max(100).optional(),
   })
   .strict();
 

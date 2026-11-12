@@ -29,7 +29,8 @@ export interface KernelEventMap {
     orgId: string;
     conversationId: string;
     runId: string;
-    status: "approved" | "denied";
+    /** `skipped`: a network ask closed by the run's starter's message (network ask-to-allow §6.7). */
+    status: "approved" | "denied" | "skipped";
   };
   /**
    * A person answered a tool call's input request, or skipped it with a message (after the commit,

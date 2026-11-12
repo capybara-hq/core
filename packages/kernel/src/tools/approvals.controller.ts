@@ -1,5 +1,6 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
+import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -13,9 +14,10 @@ import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { ApprovalsListQuerySchema } from "./approvals.schemas.js";
 import {
   APPROVAL_DENY_REASON_MAX_CHARS,
-  type ApprovalRecord,
+  type ApprovalPublicRecord,
   ApprovalsService,
   type ApprovalView,
+  publicRecord,
   type ToolGrantView,
 } from "./approvals.service.js";
 
@@ -39,11 +41,24 @@ const DecisionBody = z
         "reason must not contain control or format characters",
       )
       .optional(),
+    /**
+     * A network ask only: the hosts allowed, a subset of those asked (absent: all of them); the
+     * others count as denied.
+     */
+    hosts: z
+      .array(z.string().min(1).max(NETWORK_HOST_MAX_CHARS))
+      .min(1)
+      .max(NETWORK_ASK_MAX_HOSTS)
+      .optional(),
   })
   .strict()
   .refine((b) => b.reason === undefined || b.decision === "deny", {
     path: ["reason"],
     message: "A reason can only be given with deny",
+  })
+  .refine((b) => b.hosts === undefined || b.decision === "approve", {
+    path: ["hosts"],
+    message: "Hosts can only be given with approve",
   });
 
 class ApprovalsListQuery extends createZodDto(ListQuery, "ApprovalsListQuery") {}
@@ -87,10 +102,13 @@ export class ApprovalsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZBody(ApprovalDecisionBody) body: z.infer<typeof DecisionBody>,
-  ): Promise<{ approval: ApprovalRecord }> {
+  ): Promise<{ approval: ApprovalPublicRecord }> {
     const p = requireUser(principal);
+    // a network ask's kept command result stays in the kernel
     return {
-      approval: await this.approvals.decide(org.orgId, id, p.account.id, body, patTokenId(p)),
+      approval: publicRecord(
+        await this.approvals.decide(org.orgId, id, p.account.id, body, patTokenId(p), "web"),
+      ),
     };
   }
 }

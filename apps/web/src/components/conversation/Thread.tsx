@@ -51,6 +51,7 @@ import { ConnectCard } from "../ConnectCard";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
+import { NetworkFacts } from "./NetworkFacts";
 import { SubagentWait } from "./SubagentWait";
 
 /** Sizes of archived outputs (`outputId` → characters), read once each for "View all". */
@@ -757,6 +758,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return <ConnectCard orgId={orgId} item={e.item} />;
       case "card":
         return renderCard?.(e) ?? null;
+      case "network-facts":
+        return <NetworkFacts orgId={orgId} conversationId={conversationId} hosts={e.hosts} />;
       case "files":
         return files(e.files);
       case "divider":

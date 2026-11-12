@@ -23,6 +23,7 @@ import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
+import { type ApprovalRecord, ApprovalsService } from "../tools/approvals.service.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { type QuestionRecord, QuestionsService } from "../tools/questions.service.js";
 import { ConversationAccess, parentReachable } from "./access.js";
@@ -142,6 +143,19 @@ export interface SubagentView {
 }
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
+
+/**
+ * What a message skipped (reply-while-question spec §8.1, network ask-to-allow spec §6.7): its
+ * author's pending questions and network asks, and the highest seq the network skips wrote per
+ * conversation (a sub-agent's ask is in its own conversation).
+ */
+export interface ReplySkips {
+  questions: QuestionRecord[];
+  network: ApprovalRecord[];
+  seqs: ReadonlyMap<string, number>;
+}
+
+export const NO_REPLY_SKIPS: ReplySkips = { questions: [], network: [], seqs: new Map() };
 
 /** 会话服务用到的运行控制：投递运行（RunQueue）与跨副本中止（RunAbort）。 */
 export interface RunControl {
@@ -350,6 +364,9 @@ export class ConversationsService {
     /** A starter's message skips the run's pending questions (reply-while-question spec §8.1). */
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "skipPendingIn">,
+    /** ... and its pending network asks (network ask-to-allow spec §6.7). */
+    @Inject(ApprovalsService)
+    private readonly approvals: Pick<ApprovalsService, "skipNetworkIn">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -1150,7 +1167,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
-  ): Promise<{ event: ConversationEvent; skipped: QuestionRecord[]; toSeq: number }> {
+  ): Promise<{ event: ConversationEvent; skipped: ReplySkips; toSeq: number }> {
     const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
     const written = await this.writeMessage(
       orgId,
@@ -1220,30 +1237,49 @@ export class ConversationsService {
   /**
    * Skips, in the caller's transaction (it wrote `accountId`'s message at `messageSeq` and holds the
    * conversation row lock), the pending questions that message closes (reply-while-question spec
-   * §8.1). The queue's "send now" uses it as the direct send does; announce after the commit with
-   * {@link announceSkipped}.
+   * §8.1) and the pending network asks of the author's runs, here and in the sub-agents'
+   * conversations (network ask-to-allow spec §6.7). The queue's "send now" uses it as the direct
+   * send does; announce after the commit with {@link announceSkipped}. `toSeq` is the highest seq
+   * written in this conversation (null: none).
    */
   @Transactional({ propagation: "mandatory" })
-  async skipQuestionsIn(
+  async skipWaitsIn(
     conversationId: string,
     accountId: string,
     messageSeq: number,
-  ): Promise<{ records: QuestionRecord[]; toSeq: number | null }> {
-    return this.questions.skipPendingIn(conversationId, accountId, messageSeq);
+  ): Promise<{ skipped: ReplySkips; toSeq: number | null }> {
+    const q = await this.questions.skipPendingIn(conversationId, accountId, messageSeq);
+    const n = await this.approvals.skipNetworkIn(conversationId, accountId);
+    const here = n.seqs.get(conversationId);
+    const toSeq = q.toSeq === null && here === undefined ? null : Math.max(q.toSeq ?? 0, here ?? 0);
+    return { skipped: { questions: q.records, network: n.records, seqs: n.seqs }, toSeq };
   }
 
   /**
-   * After the commit: announces each skipped question (`question.answered`, outcome `skipped`), so
-   * its run resumes (waits) and its IM card updates (channel jobs).
+   * After the commit: announces each skipped question (`question.answered`, outcome `skipped`) and
+   * network ask (`approval.decided`, status `skipped`; a sub-agent's conversation is notified
+   * first), so its run resumes (waits) and its IM card updates (channel jobs).
    */
-  async announceSkipped(records: readonly QuestionRecord[]): Promise<void> {
-    for (const q of records) {
+  async announceSkipped(skipped: ReplySkips): Promise<void> {
+    for (const q of skipped.questions) {
       await this.events.emit("question.answered", {
         id: q.id,
         orgId: q.orgId,
         conversationId: q.conversationId,
         runId: q.runId,
         outcome: "skipped",
+      });
+    }
+    for (const [conversationId, seq] of skipped.seqs) {
+      await this.eventLog.notify(conversationId, seq);
+    }
+    for (const a of skipped.network) {
+      await this.events.emit("approval.decided", {
+        id: a.id,
+        orgId: a.orgId,
+        conversationId: a.conversationId,
+        runId: a.runId,
+        status: "skipped",
       });
     }
   }
@@ -1268,7 +1304,7 @@ export class ConversationsService {
     internal: InternalMessageOptions = {},
   ): Promise<{
     events: ConversationEvent[];
-    skipped: QuestionRecord[];
+    skipped: ReplySkips;
     skippedToSeq: number | null;
   }> {
     const events: AppendEvent[] = [];
@@ -1296,8 +1332,8 @@ export class ConversationsService {
     const message = written.at(-1) as ConversationEvent;
     const skips =
       fresh.at(-1) === true
-        ? await this.skipQuestionsIn(conversationId, accountId, message.seq)
-        : { records: [], toSeq: null };
+        ? await this.skipWaitsIn(conversationId, accountId, message.seq)
+        : { skipped: NO_REPLY_SKIPS, toSeq: null };
     if (next !== null) {
       const t = this.db.db;
       // the cache follows the log (a retried message's switch may be an old, deduped event that a
@@ -1308,7 +1344,7 @@ export class ConversationsService {
         .where("id", "=", conversationId)
         .execute();
     }
-    return { events: written, skipped: skips.records, skippedToSeq: skips.toSeq };
+    return { events: written, skipped: skips.skipped, skippedToSeq: skips.toSeq };
   }
 
   /**

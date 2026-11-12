@@ -3,6 +3,8 @@
 import {
   ApprovalBlock,
   type ApprovalState,
+  type NetworkAsk,
+  type NetworkFallback,
   RadioGroup,
   Stack,
   StatusMark,
@@ -101,7 +103,7 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
       ? "success"
       : outcome.decision === "denied"
         ? "failed"
-        : "cancelled";
+        : "cancelled"; // expired, cancelled and skipped alike
   return (
     <Stack direction="row" gap={12} align="center" wrap>
       <StatusMark status={status} label={t(`decision.${outcome.decision}`)} />
@@ -129,17 +131,31 @@ export function useDecide(orgId: string) {
   // The answer is the decided approval: it replaces the cached one. The inbox and its count
   // change too, wherever the decision was taken (here in a conversation, or on /inbox).
   const { mutateAsync } = useAppMutation({
-    fn: (v: { id: string; decision: "approve" | "deny"; scope: ApprovalScope; reason?: string }) =>
+    fn: (v: {
+      id: string;
+      decision: "approve" | "deny";
+      scope: ApprovalScope;
+      reason?: string;
+      hosts?: string[];
+    }) =>
       decideApproval(orgId, v.id, {
         decision: v.decision,
         ...(v.decision === "approve" ? { scope: v.scope } : {}),
+        ...(v.decision === "approve" && v.hosts !== undefined ? { hosts: v.hosts } : {}),
         ...(v.decision === "deny" && v.reason !== undefined ? { reason: v.reason } : {}),
       }),
     invalidates: () => inboxChangeKeys(orgId),
     onSuccess: ({ approval }, v) => qc.setQueryData(keys.org(orgId).approval(v.id), approval),
   });
   const decide = useCallback(
-    async (id: string, decision: "approve" | "deny", scope: ApprovalScope, reason?: string) => {
+    async (
+      id: string,
+      decision: "approve" | "deny",
+      scope: ApprovalScope,
+      reason?: string,
+      /** A network ask's checked hosts. */
+      hosts?: string[],
+    ) => {
       setPending(decision);
       try {
         const { approval } = await mutateAsync({
@@ -147,6 +163,7 @@ export function useDecide(orgId: string) {
           decision,
           scope,
           ...(reason !== undefined ? { reason } : {}),
+          ...(hosts !== undefined ? { hosts } : {}),
         });
         return approval;
       } catch (e) {
@@ -172,6 +189,11 @@ export function useDecide(orgId: string) {
  * who, the scope, when, and the reason of a denial. With `fromRead` (a sub-agent's wait, whose
  * decision the parent's log does not carry) the item's `decided: null` means unknown, not pending:
  * nothing is drawn until the read answers, so a decided approval never paints as pending first.
+ *
+ * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
+ * hosts, the refused command, 「这次允许」 / 「这台设备一直允许」 / 「拒绝」 and the checked hosts in
+ * the decision. Decided, it still reads the approval: the granted hosts and a fallback from
+ * "always" to "this time" are only there.
  */
 export function ApprovalCard({
   orgId,
@@ -192,11 +214,11 @@ export function ApprovalCard({
   const { decide, pending } = useDecide(orgId);
   const decided = item.decided;
   // Pending, the approval tells who may decide; not visible = may not decide (assigned to
-  // someone else, or the role is too low).
+  // someone else, or the role is too low). A network ask reads it decided too (granted hosts).
   const approvalQ = approvalQuery(orgId, item.approvalId);
   const approval = useQuery({
     ...approvalQ,
-    enabled: decided === null,
+    enabled: decided === null || item.network !== undefined,
     retry: false,
     // a 404 the server read (not this viewer's to decide) stays as it was painted
     retryOnMount: retryOnMountOf(approvalQ.queryKey),
@@ -220,8 +242,13 @@ export function ApprovalCard({
   const who = (id: string | null) =>
     id === null ? t("system") : (words({ kind: "account", accountId: id }) ?? t("you"));
 
-  async function onDecide(decision: "approve" | "deny", scope: ApprovalScope, reason?: string) {
-    const r = await decide(item.approvalId, decision, scope, reason);
+  async function onDecide(
+    decision: "approve" | "deny",
+    scope: ApprovalScope,
+    reason?: string,
+    hosts?: string[],
+  ) {
+    const r = await decide(item.approvalId, decision, scope, reason, hosts);
     if (r) {
       setLocal({
         decision: r.status === "pending" ? "cancelled" : r.status,
@@ -252,17 +279,36 @@ export function ApprovalCard({
     outcome.byAccountId === me.account.id &&
     ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${CREATE_ACCOUNT_OPERATION}` ||
       (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
+  const network = networkAskOf(item, view);
+  const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   let state: ApprovalState;
   if (outcome !== null) {
+    const fallback: NetworkFallback | undefined =
+      detail?.outcome === "once_fallback" ? (detail.fallback ?? "unsupported") : undefined;
+    const granted = outcome.decision === "approved" ? detail?.grantedHosts : undefined;
     state = {
       kind: "decided",
       decision: outcome.decision,
       who: who(outcome.byAccountId),
       when: outcome.at ? shortTime(outcome.at, locale, timeZone) : "",
-      ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
+      ...(fallback !== undefined
+        ? { scope: "once" as const, fallback }
+        : outcome.scope !== undefined
+          ? { scope: outcome.scope }
+          : {}),
+      ...(granted !== undefined && granted.length > 0 ? { hosts: granted } : {}),
       ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     };
   } else if (view === null) {
+    if (network !== undefined) {
+      return (
+        <div data-role="approval" data-approval-id={item.approvalId}>
+          <Text variant="small" tone="muted">
+            {t("network.otherApprover", { hosts: network.hosts.join(", ") })}
+          </Text>
+        </div>
+      );
+    }
     return (
       <div data-role="approval" data-approval-id={item.approvalId}>
         <Text variant="small" tone="muted">
@@ -286,12 +332,48 @@ export function ApprovalCard({
         input={input}
         keyArgs={info?.keyArgs ?? []}
         scopes={view ? scopesFor(view) : ["once"]}
-        {...(item.policy !== undefined ? { policy: t(`policy.${item.policy}`) } : {})}
+        {...(item.policy !== undefined && network === undefined
+          ? { policy: t(`policy.${item.policy}`) }
+          : {})}
+        {...(network !== undefined ? { network } : {})}
         state={state}
-        onApprove={(scope) => void onDecide("approve", scope)}
+        onApprove={(scope, hosts) =>
+          void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
+        }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
       />
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
   );
+}
+
+const stringField = (input: unknown, key: string): string | undefined => {
+  if (typeof input !== "object" || input === null) return undefined;
+  const v = (input as Record<string, unknown>)[key];
+  return typeof v === "string" ? v : undefined;
+};
+
+/**
+ * The network ask of an approval: from its detail once read, else from the log (the hosts of
+ * `approval_requested.network`, the command of the call's input); undefined for a tool approval.
+ */
+export function networkAskOf(
+  item: Pick<ApprovalItem, "network" | "input">,
+  view: Approval | null | undefined,
+): NetworkAsk | undefined {
+  const detail = view?.kind === "network" ? view.detail : undefined;
+  if (detail) {
+    return {
+      hosts: detail.hosts.map((h) => h.host),
+      command: detail.command,
+      ...(detail.description ? { description: detail.description } : {}),
+    };
+  }
+  if (item.network === undefined) return undefined;
+  const description = stringField(item.input, "description");
+  return {
+    hosts: item.network.hosts,
+    command: stringField(item.input, "command") ?? "",
+    ...(description ? { description } : {}),
+  };
 }

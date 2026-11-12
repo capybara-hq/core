@@ -1,5 +1,5 @@
 import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import { z } from "zod";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -16,7 +16,7 @@ import {
   OrgUiArrangementPatchSchema,
   UiArrangementSchema,
 } from "../ui/arrangement.js";
-import { OrgLock } from "./org-lock.js";
+import { OrgLock, OrgLockModule } from "./org-lock.js";
 
 /**
  * 组织设置（`capybara.orgs.settings` jsonb）。读取宽松：缺失或非法的字段按默认值，未知键保留不动
@@ -410,3 +410,14 @@ export class OrgSettingsService {
     return after;
   }
 }
+
+/**
+ * The one {@link OrgSettingsService}: the orgs module re-exports it, and the catalog imports it
+ * directly (approving a network request writes `sandboxEgress`) without a cycle through OrgsModule.
+ */
+@Module({
+  imports: [OrgLockModule],
+  providers: [OrgSettingsService],
+  exports: [OrgSettingsService],
+})
+export class OrgSettingsModule {}

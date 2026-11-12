@@ -123,7 +123,7 @@ function orgRow(i: InboxItem) {
       const a = i.attention;
       const summary =
         a.reason === "missing_grants"
-          ? `Scheduled task "${a.name}" ran without: ${a.missing.join(", ")}.${a.needsRole.length > 0 ? ` Needing a higher role than the owner has (cannot be pre-approved): ${a.needsRole.join(", ")}.` : ""}`
+          ? `Scheduled task "${a.name}" ran without: ${a.missing.join(", ")}.${a.needsRole.length > 0 ? ` Needing a higher role than the owner has (cannot be pre-approved): ${a.needsRole.join(", ")}.` : ""}${a.needsAdmin.length > 0 ? ` Outside the organization's network allowlist (only an org admin can add them): ${a.needsAdmin.join(", ")}.` : ""}${a.deviceRefuses ? " The task's device does not accept network grants; its owner allows domains locally (capybara-device policy add allowedDomains <host>)." : ""}`
           : a.reason === "failed"
             ? `Scheduled task "${a.name}"'s latest run failed${a.error ? `: ${a.error}` : ""}.`
             : `Scheduled task "${a.name}" is paused (${a.reason}${a.pausedBy ? ` by ${a.pausedBy.name || a.pausedBy.id}` : ""}).`;
@@ -134,7 +134,7 @@ function orgRow(i: InboxItem) {
         summary,
         next:
           a.reason === "missing_grants"
-            ? "Add the missing tools to the task's approved tools and connect the missing connectors on the web; tools that need a higher role cannot be pre-approved."
+            ? "Add the missing tools to the task's approved tools and connect the missing connectors on the web; tools that need a higher role cannot be pre-approved; network domains (network:<host>) are approved only by the person on the task page."
             : a.reason === "failed"
               ? "Check the run's error and the task's settings; the next good run clears this, and repeated failures pause the task."
               : "Resume the task once the cause is fixed.",

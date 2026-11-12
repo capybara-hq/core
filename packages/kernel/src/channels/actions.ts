@@ -46,6 +46,8 @@ const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "question.already_answered": "alreadyHandled",
   validation_failed: "invalidAction",
   "approval.scope_not_allowed": "invalidAction",
+  // a network ask clicked by someone other than the device's owner
+  "approval.not_yours": "cannotHandle",
 };
 
 /**
@@ -142,14 +144,24 @@ export class ChannelCardActions {
         await reply("cannotHandle");
         return;
       }
+      // a network ask is the device owner's, decided by them in person (network ask-to-allow
+      // spec §5.2): the shared guest account never decides one, whoever clicks
+      if (a.cardKind === "approval" && (await this.isNetworkAsk(row.orgId, a.cardId))) {
+        await reply("cannotHandle");
+        return;
+      }
     }
     try {
       if (a.cardKind === "approval" && (a.action === "approve" || a.action === "deny")) {
         const scope = anonymous ? "once" : a.scope;
-        await this.deps.approvals.decide(row.orgId, a.cardId, who.accountId, {
-          decision: a.action,
-          ...(scope !== undefined && { scope }),
-        });
+        await this.deps.approvals.decide(
+          row.orgId,
+          a.cardId,
+          who.accountId,
+          { decision: a.action, ...(scope !== undefined && { scope }) },
+          undefined,
+          "im",
+        );
       } else if (a.cardKind === "question" && a.action === "answer") {
         await this.deps.questions.answer(a.cardId, who.accountId, a.answer ?? {}, row.orgId);
       } else {
@@ -165,5 +177,16 @@ export class ChannelCardActions {
     // the delivery of the card's conversation (the thread's): for a sub-agent's card the decided
     // row is the child's, which has no delivery of its own
     await this.deps.outbound.enqueue(card.conversation_id);
+  }
+
+  /** Whether the approval `id` of the org is a network ask. */
+  private async isNetworkAsk(orgId: string, id: string): Promise<boolean> {
+    const r = await this.deps.db
+      .selectFrom("approvals")
+      .select("kind")
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    return r?.kind === "network";
   }
 }

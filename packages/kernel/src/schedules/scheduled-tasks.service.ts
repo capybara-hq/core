@@ -17,11 +17,14 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { DevicePolicyService } from "../local-devices/device-policy.service.js";
+import { orgAllows } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../runtime/providers.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { isTimeZone } from "../time-zone.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
@@ -37,6 +40,12 @@ import {
   type GrantRefusalCode,
   grantRefusal,
   grantRefusalOf,
+  isNetworkGrantKey,
+  NETWORK_GRANT_PREFIX,
+  NETWORK_GRANT_SPEC_HASH,
+  type NetworkGrantContext,
+  networkGrantHost,
+  networkGrantRefusal,
 } from "./grant-rules.js";
 import { schedFireJob } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
@@ -52,7 +61,13 @@ import type {
   TaskRun,
 } from "./types.js";
 
-export { type GrantContext, type GrantRefusalCode, grantRefusal, grantRefusalOf };
+export {
+  type GrantContext,
+  type GrantRefusalCode,
+  grantRefusal,
+  grantRefusalOf,
+  networkGrantRefusal,
+};
 
 /** When a task fires, before the zone is fixed (spec §5). */
 export type TriggerInput = { kind: "cron"; expr: string } | { kind: "once"; at: string };
@@ -70,18 +85,34 @@ export interface ScheduleAttention {
   pausedBy: { id: string; name: string } | null;
   /**
    * `missing_grants` only: tool keys the latest run was refused and the task has no grant for now,
-   * or `connection:<slug>` (connect that connector).
+   * `connection:<slug>` (connect that connector), or `network:<host>` (a domain the run was
+   * refused: the task has no grant for it, or the org's network allowlist no longer admits it).
    */
   missing: string[];
   /** The subset of `missing` the creator cannot pre-approve (the tool needs a higher role). */
   needsRole: string[];
+  /**
+   * The `network:<host>` keys of `missing` outside the org's network allowlist: only an org admin
+   * can add the host (network ask-to-allow spec §8.3); the creator cannot pre-approve them.
+   */
+  needsAdmin: string[];
+  /**
+   * `missing` holds `network:` keys and the task's device reports it takes no network grants from
+   * the deployment (`remoteGrants` off): a task grant would not reach it; its owner allows the
+   * domains locally (`capybara-device policy add allowedDomains <host>`).
+   */
+  deviceRefuses: boolean;
   /** `failed` only: the run's error; else null. */
   error: string | null;
   /** When the pause happened, or when the refused or failed run was due. */
   at: Date;
 }
 
-/** A tool the creator pre-approves for the task; the service resolves its current `spec_hash`. */
+/**
+ * A tool the creator pre-approves for the task; the service resolves its current `spec_hash`. Or a
+ * domain (`toolKey: "network:<host>"`, network ask-to-allow spec §8.1): one exact host the task's
+ * unattended runs may reach on the task's device, checked by `networkGrantRefusal`.
+ */
 export interface GrantInput {
   toolKey: string;
   /** The connector the tool comes from; when given it must be the tool's own. */
@@ -133,6 +164,18 @@ export interface UpdateTaskInput {
   deviceId?: string | null;
   expiresAt?: Date | null;
 }
+
+/**
+ * Where a grant write comes from: `fromSession` only for a person in a signed-in web session (not a
+ * personal access token, the Platform tool or the schedule tools). Network domains are approved
+ * only there (network ask-to-allow spec §8.1): an agent must never pre-approve a domain for itself.
+ */
+export interface GrantWriteSource {
+  fromSession?: boolean;
+}
+
+/** The refusal of a network grant written outside a person's web session. */
+const NETWORK_GRANT_NEEDS_PERSON = "Network domains are approved on the task page by a person.";
 
 /** Who acts on a task: the service reads their live role itself and decides by that one. */
 export interface ScheduleActor {
@@ -227,6 +270,11 @@ export class ScheduledTasksService {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** "Run now" enqueues the fire job (consumed by the worker role). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
+    /** Network grants: the org's effective egress (network ask-to-allow spec §8.1). */
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    /** Network grants: the task's device's local policy summary (`remoteGrants`). */
+    @Inject(DevicePolicyService)
+    private readonly devicePolicy: Pick<DevicePolicyService, "summary">,
   ) {}
 
   @Transactional()
@@ -235,6 +283,7 @@ export class ScheduledTasksService {
     accountId: string,
     input: CreateTaskInput,
     browserTimeZone?: string,
+    source: GrantWriteSource = {},
   ): Promise<ScheduledTask> {
     const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
     const t = this.db.db;
@@ -281,7 +330,15 @@ export class ScheduledTasksService {
     };
     await this.checkPick(orgId, accountId, agent, target.mode, pick);
     const expiresAt = expiryOf(input.expiresAt ?? null, trigger, now, settings);
-    const grants = await this.resolveGrants(orgId, role, agent, settings, input.grants ?? []);
+    const grants = await this.resolveGrants(
+      orgId,
+      role,
+      agent,
+      settings,
+      input.grants ?? [],
+      await this.taskDeviceOf(orgId, { ...target, deviceId: pick.deviceId }),
+      source,
+    );
     const id = randomUUID();
     const jitter = jitterForGap(id, gap);
     const task = await this.store.insertTask(t, {
@@ -342,8 +399,11 @@ export class ScheduledTasksService {
       newAgent = agent;
       changes.agentId = agent.id;
       // the grants were approved for the old agent's tools: each must hold for the new agent
-      // too (refused, so the creator sees which), and takes the new agent's definition
-      const held = await this.store.listGrants(t, task.id);
+      // too (refused, so the creator sees which), and takes the new agent's definition; network
+      // grants belong to no tool and stay as they are
+      const held = (await this.store.listGrants(t, task.id)).filter(
+        (g) => !isNetworkGrantKey(g.toolKey),
+      );
       const regranted = await this.resolveGrants(
         orgId,
         role,
@@ -353,6 +413,7 @@ export class ScheduledTasksService {
           toolKey: g.toolKey,
           ...(g.connectorId !== null && { connectorId: g.connectorId }),
         })),
+        null,
       );
       for (const g of regranted) await this.store.addGrant(t, task.id, g);
     }
@@ -696,27 +757,46 @@ export class ScheduledTasksService {
     if (grants.length === 0) return [];
     // the creator's view of the agent's tools: a grant whose tool changed or left is stale;
     // unknown (null) when the tools cannot be read now, rather than failing the task page
-    const current = await this.agentToolFacts(orgId, task.accountId, task.agentId);
+    const current = grants.every((g) => isNetworkGrantKey(g.toolKey))
+      ? new Map()
+      : await this.agentToolFacts(orgId, task.accountId, task.agentId);
     return grants.map((g) => ({
       ...g,
-      stale: current === null ? null : current.get(g.toolKey)?.specHash !== g.specHash,
+      // a network grant names a domain, not a tool definition: never stale
+      stale: isNetworkGrantKey(g.toolKey)
+        ? false
+        : current === null
+          ? null
+          : current.get(g.toolKey)?.specHash !== g.specHash,
     }));
   }
 
-  /** Creator only; each grant is checked as at create (spec §7). */
+  /**
+   * Creator only; each grant is checked as at create (spec §7); network domains only from a web
+   * session (`source.fromSession`).
+   */
   @Transactional()
   async addGrants(
     orgId: string,
     accountId: string,
     id: string,
     grants: GrantInput[],
+    source: GrantWriteSource = {},
   ): Promise<ScheduledTaskGrant[]> {
     const { role } = await this.orgLock.lockAndAuthorize(orgId, accountId, "schedules.use");
     const t = this.db.db;
     const task = await this.lockOwn(orgId, accountId, role, id);
     const settings = await readScheduleSettings(t, this.config, orgId);
     const agent = await this.agents.get(orgId, task.agentId, accountId);
-    const resolved = await this.resolveGrants(orgId, role, agent, settings, grants);
+    const resolved = await this.resolveGrants(
+      orgId,
+      role,
+      agent,
+      settings,
+      grants,
+      await this.taskDeviceOf(orgId, task),
+      source,
+    );
     for (const g of resolved) await this.store.addGrant(t, task.id, g);
     await audit(t, {
       actorAccountId: accountId,
@@ -749,8 +829,8 @@ export class ScheduledTasksService {
    * The creator's scheduled tasks that need attention (spec §8), derived live: a paused task whose
    * reason is not `creator` (resuming clears it), an active task whose latest settled non-trial
    * run failed (the next good run clears it), and a task whose latest settled non-trial run was
-   * refused tools or connections (a tool granted since drops out; the next clean run clears the
-   * rest). Newest first.
+   * refused tools, connections or domains (a tool granted since drops out, a domain too while the
+   * org's network allowlist admits it; the next clean run clears the rest). Newest first.
    */
   async attentionFor(orgId: string, accountId: string): Promise<ScheduleAttention[]> {
     const db = this.db.db;
@@ -800,6 +880,12 @@ export class ScheduledTasksService {
     let loaded = false;
     let role: OrgRole | null = null;
     const agentTools = new Map<string, Promise<AgentToolFacts | null>>();
+    // the org's effective egress, read once and only when a refused domain needs it
+    let limitsOf: Promise<NetworkGrantContext["limits"]> | undefined;
+    const orgLimits = () => {
+      limitsOf ??= this.sandbox.orgLimits(orgId);
+      return limitsOf;
+    };
     const toolsOf = (agentId: string) => {
       const lookup = agentTools.get(agentId) ?? this.agentToolFacts(orgId, accountId, agentId);
       agentTools.set(agentId, lookup);
@@ -817,6 +903,8 @@ export class ScheduledTasksService {
               : { id: task.pausedBy, name: names.get(task.pausedBy) ?? "" },
           missing: [],
           needsRole: [],
+          needsAdmin: [],
+          deviceRefuses: false,
           error: null,
           at: task.updatedAt,
         });
@@ -832,6 +920,8 @@ export class ScheduledTasksService {
           pausedBy: null,
           missing: [],
           needsRole: [],
+          needsAdmin: [],
+          deviceRefuses: false,
           error: run.error,
           at: run.fired_at ?? new Date(run.scheduled_for),
         });
@@ -839,24 +929,36 @@ export class ScheduledTasksService {
       const have = granted.get(task.id);
       const refused = run.missing_grants;
       // a refused tool granted since drops out, unless its grant no longer matches the tool's
-      // definition (stale: it would be refused again)
-      const facts = refused.some((k) => !k.startsWith("connection:"))
-        ? await toolsOf(task.agentId)
-        : null;
+      // definition (stale: it would be refused again); a refused domain granted since drops out
+      // while the org's network allowlist admits it (network ask-to-allow spec §8.3)
+      const isTool = (k: string) => !k.startsWith("connection:") && !isNetworkGrantKey(k);
+      const facts = refused.some(isTool) ? await toolsOf(task.agentId) : null;
+      const limits = refused.some(isNetworkGrantKey) ? await orgLimits() : null;
+      const admits = (k: string) => limits !== null && orgAllows(networkGrantHost(k), limits);
       const missing = refused.filter((k) => {
         const hash = have?.get(k);
+        if (isNetworkGrantKey(k)) return hash === undefined || !admits(k);
         if (hash === undefined) return true;
         const current = facts?.get(k);
         return facts !== null && current?.specHash !== hash;
       });
       if (missing.length === 0) continue;
+      const needsAdmin = missing.filter((k) => isNetworkGrantKey(k) && !admits(k));
+      let deviceRefuses = false;
+      if (missing.some(isNetworkGrantKey)) {
+        const deviceId = await this.taskDeviceOf(orgId, task).catch(() => null);
+        const summary =
+          deviceId === null ? null : await this.devicePolicy.summary(deviceId).catch(() => null);
+        deviceRefuses = summary?.policy?.remoteGrants === "off";
+      }
       let needsRole: string[] = [];
-      if (facts !== null && missing.some((k) => !k.startsWith("connection:"))) {
+      if (facts !== null && missing.some(isTool)) {
         if (!loaded) {
           role = await this.roleOrNull(orgId, accountId);
           loaded = true;
         }
         needsRole = missing.filter((k) => {
+          if (!isTool(k)) return false;
           const req = facts.get(k)?.requiredRole;
           return req !== undefined && (role === null || !roleAtLeast(role, req));
         });
@@ -868,6 +970,8 @@ export class ScheduledTasksService {
         pausedBy: null,
         missing,
         needsRole,
+        needsAdmin,
+        deviceRefuses,
         error: null,
         at: run.fired_at ?? new Date(run.scheduled_for),
       });
@@ -1175,7 +1279,12 @@ export class ScheduledTasksService {
 
   /**
    * The grants as stored: each tool resolved among the agent's tools now (its `spec_hash` and
-   * source connector), refused by {@link grantRefusal}. Duplicates keep the last.
+   * source connector), refused by {@link grantRefusal}; each `network:<host>` key (lower-cased)
+   * refused by {@link networkGrantRefusal} against the org's effective egress and the summary of
+   * `deviceId`, the task's device (null: none can be determined, the device rule is skipped),
+   * stored with `spec_hash` `network` and no connector (plan P-D7), and only when
+   * `source.fromSession` (a person on the task page; never a token, the Platform tool or the
+   * schedule tools). Duplicates keep the last.
    */
   private async resolveGrants(
     orgId: string,
@@ -1183,16 +1292,35 @@ export class ScheduledTasksService {
     agent: AgentView,
     settings: EffectiveScheduleSettings,
     grants: readonly GrantInput[],
+    deviceId: string | null,
+    source: GrantWriteSource = {},
   ): Promise<ScheduledTaskGrant[]> {
     if (grants.length === 0) return [];
+    const out = new Map<string, ScheduledTaskGrant>();
+    const network = grants.filter((g) => isNetworkGrantKey(g.toolKey));
+    if (network.length > 0) {
+      if (source.fromSession !== true) throw grantNotAllowed(NETWORK_GRANT_NEEDS_PERSON);
+      const ctx = await this.networkGrantContext(orgId, deviceId);
+      for (const g of network) {
+        if (g.connectorId !== undefined) {
+          throw grantNotAllowed(`${g.toolKey} is a domain and comes from no connector`);
+        }
+        const host = networkGrantHost(g.toolKey).trim().toLowerCase().replace(/\.$/, "");
+        const why = networkGrantRefusal(host, ctx);
+        if (why !== null) throw grantNotAllowed(why.message);
+        const toolKey = `${NETWORK_GRANT_PREFIX}${host}`;
+        out.set(toolKey, { toolKey, specHash: NETWORK_GRANT_SPEC_HASH, connectorId: null });
+      }
+    }
+    const toolGrants = grants.filter((g) => !isNetworkGrantKey(g.toolKey));
+    if (toolGrants.length === 0) return [...out.values()];
     const d = agent.definition;
     const { tools } = await this.tools.forAgent(orgId, {
       disabledTools: d.disabledTools ?? [],
       subagentTools: d.subagentTools,
       subagents: d.subagents,
     });
-    const out = new Map<string, ScheduledTaskGrant>();
-    for (const g of grants) {
+    for (const g of toolGrants) {
       const tool = tools.find((x) => x.key === g.toolKey);
       const why = grantRefusal(g.toolKey, tool, {
         role,
@@ -1206,6 +1334,46 @@ export class ScheduledTasksService {
       out.set(g.toolKey, { toolKey: g.toolKey, specHash: tool.specHash, connectorId });
     }
     return [...out.values()];
+  }
+
+  /**
+   * What a network grant is checked against (network ask-to-allow spec §8.1): the org's effective
+   * egress now and the local policy summary of the task's device (null without a device or a
+   * connected machine).
+   */
+  private async networkGrantContext(
+    orgId: string,
+    deviceId: string | null,
+  ): Promise<NetworkGrantContext> {
+    const limits = await this.sandbox.orgLimits(orgId);
+    const summary = deviceId === null ? null : await this.devicePolicy.summary(deviceId);
+    return { limits, deviceSummary: summary?.policy ?? null };
+  }
+
+  /**
+   * The device a task's runs use, as far as the task tells: a `new` task's own device, a
+   * `conversation` task's conversation's device (in the org); null when none is chosen, and for a
+   * chat task: its IM conversation's device is not known until it runs, so the device rule of a
+   * network grant is skipped there (the device still refuses grants at the command when its owner
+   * turned them off, and the run notes it).
+   */
+  private async taskDeviceOf(
+    orgId: string,
+    task: {
+      mode: ScheduleMode;
+      deviceId: string | null;
+      conversationId: string | null;
+    },
+  ): Promise<string | null> {
+    if (task.mode === "new") return task.deviceId;
+    if (task.mode !== "conversation" || task.conversationId === null) return null;
+    const c = await this.db.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", task.conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    return c?.device_id ?? null;
   }
 }
 

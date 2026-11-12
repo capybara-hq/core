@@ -22,8 +22,16 @@ export type ChannelCard =
        */
       inputPreview: string;
       scopes: ("once" | "session" | "always")[];
+      /**
+       * The kernel's names for the scopes when they mean something other than the default (a
+       * network ask: `once` = "Allow this time", `always` = "Always allow on this device"). Plain
+       * text, 1 to 40 characters; a channel that does not know the field renders its default
+       * scope labels. Kernel-written, never model-controlled.
+       */
+      scopeLabels?: Partial<Record<"once" | "session" | "always", string>>;
       expiresAt: string;
-      state: "pending" | "approved" | "denied" | "expired" | "cancelled";
+      /** `skipped`: the person sent a message instead of deciding (the run went on with it). */
+      state: "pending" | "approved" | "denied" | "expired" | "cancelled" | "skipped";
       decidedBy?: string;
       /** A denied approval: the reason the person gave (plain text, never formatted). */
       denyReason?: string;
@@ -84,7 +92,15 @@ export function questionRenderableInline(form: InputForm, opts?: { textReply?: b
 
 const KINDS = ["approval", "question", "connect", "bind"] as const;
 const SCOPES = ["once", "session", "always"] as const;
-const APPROVAL_STATES = ["pending", "approved", "denied", "expired", "cancelled"] as const;
+const APPROVAL_STATES = [
+  "pending",
+  "approved",
+  "denied",
+  "expired",
+  "cancelled",
+  "skipped",
+] as const;
+const MAX_SCOPE_LABEL = 40;
 const QUESTION_STATES = ["pending", "answered", "skipped", "expired", "cancelled"] as const;
 const TEXT_REPLY = ["plain", "mention"] as const;
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
@@ -125,6 +141,23 @@ export function validateChannelCard(card: unknown): string[] {
         s.some((x) => !(SCOPES as readonly unknown[]).includes(x))
       )
         out.push(`scopes must be a non-empty array of ${list(SCOPES)} without duplicates`);
+      const labels = c.scopeLabels;
+      if (
+        labels !== undefined &&
+        (typeof labels !== "object" ||
+          labels === null ||
+          Array.isArray(labels) ||
+          Object.entries(labels).some(
+            ([k, v]) =>
+              !(SCOPES as readonly string[]).includes(k) ||
+              typeof v !== "string" ||
+              v.length === 0 ||
+              v.length > MAX_SCOPE_LABEL,
+          ))
+      )
+        out.push(
+          `scopeLabels must map ${list(SCOPES)} to strings of 1 to ${MAX_SCOPE_LABEL} characters`,
+        );
       if (
         typeof c.expiresAt !== "string" ||
         !ISO_8601.test(c.expiresAt) ||
@@ -204,12 +237,15 @@ const TEXT = {
     answerOnWeb: "Answer on the web",
     details: "Details",
     connectLink: "Connect",
+    options: "Options",
+    scopes: { once: "Once", session: "This session", always: "Always" },
     approvalStates: {
       pending: "Pending",
       approved: "Approved",
       denied: "Denied",
       expired: "Expired",
       cancelled: "Cancelled",
+      skipped: "Skipped",
     },
     questionStates: {
       pending: "Pending",
@@ -239,12 +275,15 @@ const TEXT = {
     answerOnWeb: "到网页上回答",
     details: "详情",
     connectLink: "连接",
+    options: "选项",
+    scopes: { once: "这次", session: "本会话", always: "一直" },
     approvalStates: {
       pending: "待审批",
       approved: "已批准",
       denied: "已拒绝",
       expired: "已过期",
       cancelled: "已取消",
+      skipped: "已跳过",
     },
     questionStates: {
       pending: "待回答",
@@ -293,6 +332,12 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
       ];
       if (card.state === "denied" && card.denyReason)
         lines.push(line(t.reason, asCode(card.denyReason)));
+      // the scopes are listed only when the kernel named them (a network ask): the default
+      // approval text stays as it was
+      if (card.state === "pending" && card.scopeLabels) {
+        const labels = card.scopes.map((s) => card.scopeLabels?.[s] ?? t.scopes[s]);
+        lines.push(line(t.options, labels.join(" / ")));
+      }
       if (card.state === "pending")
         lines.push(line(t.expires, card.expiresAt), line(t.approveOnWeb, card.webUrl));
       else lines.push(line(t.details, card.webUrl));

@@ -5,7 +5,13 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
-import { type Device, type DeviceList, devicePickable, deviceState } from "../../lib/devices";
+import {
+  type Device,
+  type DeviceList,
+  deviceNetworkOpen,
+  devicePickable,
+  deviceState,
+} from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
 import { useDeviceName } from "../use-device-name";
 
@@ -248,6 +254,7 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
             label: nameOf(e),
             checked: e.id === id,
             ...tagOf(e),
+            ...(deviceNetworkOpen(e) ? { badge: te("network.open") } : {}),
           })),
         },
       ],

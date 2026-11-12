@@ -166,8 +166,38 @@ describe("validateChannelCard", () => {
     ]);
     expect(validateChannelCard({ ...approval, webUrl: undefined }).length).toBe(1);
     expect(validateChannelCard({ ...approval, state: "answered" })).toEqual([
-      'state must be one of "pending", "approved", "denied", "expired", "cancelled"',
+      'state must be one of "pending", "approved", "denied", "expired", "cancelled", "skipped"',
     ]);
+  });
+
+  it("approval: the skipped state and scopeLabels", () => {
+    expect(validateChannelCard({ ...approval, state: "skipped" })).toEqual([]);
+    expect(
+      validateChannelCard({
+        ...approval,
+        scopes: ["once", "always"],
+        scopeLabels: { once: "Allow this time", always: "Always allow on this device" },
+      }),
+    ).toEqual([]);
+    expect(validateChannelCard({ ...approval, scopeLabels: {} })).toEqual([]);
+    expect(validateChannelCard({ ...approval, scopeLabels: { session: "x".repeat(40) } })).toEqual(
+      [],
+    );
+    const msg = 'scopeLabels must map "once", "session", "always" to strings of 1 to 40 characters';
+    for (const scopeLabels of [
+      "x",
+      null,
+      [],
+      { forever: "Forever" },
+      { once: "" },
+      { once: 1 },
+      { always: "x".repeat(41) },
+    ]) {
+      expect(
+        validateChannelCard({ ...approval, scopeLabels }),
+        JSON.stringify(scopeLabels),
+      ).toEqual([msg]);
+    }
   });
 
   it("question：id、state、webUrl、form", () => {
@@ -336,6 +366,37 @@ describe("renderCardAsText", () => {
         "此处不支持卡片，请到网页上批准或拒绝：https://capy.example.com/c/1",
       ].join("\n"),
     );
+  });
+
+  it("a pending approval lists its scopes with scopeLabels when present", () => {
+    const c: ChannelCard = {
+      ...approval,
+      scopes: ["once", "always"],
+      scopeLabels: { once: "Allow this time", always: "Always allow on this device" },
+    };
+    expect(renderCardAsText(c, "en")).toContain(
+      "Status: Pending\nOptions: Allow this time / Always allow on this device\nExpires:",
+    );
+    const zh: ChannelCard = {
+      ...approval,
+      scopes: ["once", "always"],
+      scopeLabels: { once: "这次允许", always: "这台设备一直允许" },
+    };
+    expect(renderCardAsText(zh, "zh")).toContain(
+      "状态：待审批\n选项：这次允许 / 这台设备一直允许\n",
+    );
+    // a scope without a label falls back to the default name
+    expect(
+      renderCardAsText({ ...approval, scopeLabels: { once: "Allow this time" } }, "en"),
+    ).toContain("Options: Allow this time / This session / Always\n");
+    // without labels (and once decided) the text is unchanged
+    expect(renderCardAsText(approval, "en")).not.toContain("Options");
+    expect(renderCardAsText({ ...c, state: "approved" }, "en")).not.toContain("Options");
+  });
+
+  it("a skipped approval: zh 已跳过 / en Skipped", () => {
+    expect(renderCardAsText({ ...approval, state: "skipped" }, "zh")).toContain("状态：已跳过");
+    expect(renderCardAsText({ ...approval, state: "skipped" }, "en")).toContain("Status: Skipped");
   });
 
   it("a denied approval with a reason shows the reason as code (person-written text)", () => {

@@ -130,6 +130,7 @@ export function conversationsFor(
     { forNew: async () => null },
     // no runs here: a message skips no question
     { skipPendingIn: async () => ({ records: [], toSeq: null }) },
+    { skipNetworkIn: async () => ({ records: [], seqs: new Map() }) },
     { emit: async () => {} },
     h.txHost,
   );

@@ -98,9 +98,22 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
+      network: "allowlist",
+      remoteGrants: "owner",
     });
-    writePolicy(dir, { allowedDomains: ["a.test"], allowCredentials: [], cpu: 2, memoryMb: null });
-    expect(readPolicy(dir).allowedDomains).toEqual(["a.test"]);
+    writePolicy(dir, {
+      allowedDomains: ["a.test"],
+      allowCredentials: [],
+      cpu: 2,
+      memoryMb: null,
+      network: "open",
+      remoteGrants: "off",
+    });
+    expect(readPolicy(dir)).toMatchObject({
+      allowedDomains: ["a.test"],
+      network: "open",
+      remoteGrants: "off",
+    });
   });
 
   it("readPolicy names the file on bad JSON and on wrong field types", () => {
@@ -114,6 +127,10 @@ describe("state", () => {
       [{ cpu: "2" }, "cpu"],
       [{ cpu: 0 }, "cpu"],
       [{ memoryMb: -1 }, "memoryMb"],
+      [{ network: "any" }, "network"],
+      [{ network: null }, "network"],
+      [{ remoteGrants: "always" }, "remoteGrants"],
+      [{ remoteGrants: true }, "remoteGrants"],
     ] as const) {
       writeFileSync(file, JSON.stringify(body));
       expect(() => readPolicy(dir)).toThrow(new RegExp(`policy\\.json is invalid: ${field} must`));
@@ -126,6 +143,8 @@ describe("state", () => {
       allowCredentials: [],
       cpu: 1.5,
       memoryMb: null,
+      network: "allowlist",
+      remoteGrants: "owner",
     });
   });
 });

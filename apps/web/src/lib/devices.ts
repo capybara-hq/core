@@ -27,6 +27,39 @@ export interface DeviceMachine {
   lastSeenAt: string | null;
 }
 
+/** A local device's network policy as its machine last reported it (kernel `DeviceLocalPolicySummary`). */
+export interface DeviceNetworkPolicy {
+  /** `open`: the local policy no longer narrows (「不限网络」); the org's egress still applies. */
+  network: "allowlist" | "open";
+  allowedDomains: string[];
+  /** `off`: the machine refuses every widening from the deployment (set only on the machine). */
+  remoteGrants: "owner" | "off";
+}
+
+/** One change of a device's network policy (kernel `DevicePolicyChangeView`), newest first. */
+export interface DevicePolicyChange {
+  at: string;
+  add: string[];
+  remove: string[];
+  network: "allowlist" | "open" | null;
+  /** The deciding account's display name (null once the account is gone). */
+  by: string | null;
+  via: "web" | "im";
+  /** The machine answered with the policy as written (false: the answer never came). */
+  confirmed: boolean;
+}
+
+/**
+ * A local device's network facts (network ask-to-allow spec §5.4, §7): the program's features
+ * (`policyOp`: it takes policy changes from the deployment), its policy summary (null when it
+ * reported none) and the recent changes.
+ */
+export interface DeviceNetwork {
+  features: string[];
+  policy: DeviceNetworkPolicy | null;
+  recent: DevicePolicyChange[];
+}
+
 export interface Device {
   id: string;
   /**
@@ -51,6 +84,11 @@ export interface Device {
   online: boolean | null;
   /** A local device's connected machine; null for a cloud one, or when none is connected. */
   machine: DeviceMachine | null;
+  /**
+   * A local device's network facts while a machine is connected; null for a cloud device or
+   * none connected (absent from older kernels).
+   */
+  network?: DeviceNetwork | null;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; resetting the files makes it usable again. */
   filesLost: boolean;
@@ -148,3 +186,25 @@ export const revokeDeviceMachine = (orgId: string, id: string) =>
 
 export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
+
+/** Whether the device's local policy is 「不限网络」 (`network: "open"`), as its machine reported. */
+export const deviceNetworkOpen = (e: Pick<Device, "network">): boolean =>
+  e.network?.policy?.network === "open";
+
+/** A change of a device's network policy by its owner (`POST …/devices/:id/policy`). */
+export interface DevicePolicyPatch {
+  /** Hosts to allow (wildcards `*.` allowed); at most {@link MAX_POLICY_HOSTS}. */
+  add?: string[];
+  remove?: string[];
+  network?: "allowlist" | "open";
+}
+
+/** The most hosts one policy change adds. */
+export const MAX_POLICY_HOSTS = 20;
+
+/** Sent to the machine, which writes it and answers with the policy as written. */
+export const updateDevicePolicy = (orgId: string, id: string, patch: DevicePolicyPatch) =>
+  apiFetch<{ policy: DeviceNetworkPolicy }>(`${org(orgId)}/${enc(id)}/policy`, {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });

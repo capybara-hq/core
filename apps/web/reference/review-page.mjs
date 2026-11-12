@@ -46,6 +46,7 @@ const GROUPS = [
       "tool-row",
       "diff-block",
       "approval-block",
+      "network-facts",
       "question-block",
       "connect-block",
       "queued-message",

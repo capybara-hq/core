@@ -74,7 +74,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     dir = join(base, "env");
     mkdirSync(dir);
     envId = `t${randomBytes(6).toString("hex")}`;
-    ex = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: () => DEFAULT_POLICY });
     await ex.ensureRoot();
   });
 
@@ -109,7 +109,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const id1 = execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)], {
       encoding: "utf8",
     });
-    const again = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
+    const again = new DockerExecutor({ dir, deviceId: envId, policy: () => DEFAULT_POLICY });
     await again.exec(execArgs("true"), live);
     const id2 = execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)], {
       encoding: "utf8",
@@ -117,7 +117,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(id2).toBe(id1);
     const other = join(base, "env2");
     mkdirSync(other);
-    const moved = new DockerExecutor({ dir: other, deviceId: envId, policy: DEFAULT_POLICY });
+    const moved = new DockerExecutor({ dir: other, deviceId: envId, policy: () => DEFAULT_POLICY });
     await moved.exec(execArgs("touch here"), live);
     expect(existsSync(join(other, "workspace", "here"))).toBe(true);
     await moved.dispose();
@@ -150,7 +150,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
       SANDBOX_IMAGE,
       "infinity",
     ]);
-    const fresh = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
+    const fresh = new DockerExecutor({ dir, deviceId: envId, policy: () => DEFAULT_POLICY });
     await fresh.exec(execArgs("true"), live);
     expect(inspect("{{.Config.Labels}}")).not.toContain("spec:old");
     expect(inspect("{{.HostConfig.ReadonlyRootfs}}")).toBe("true");
@@ -161,7 +161,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const limited = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: { ...DEFAULT_POLICY, memoryMb: 256 },
+      policy: () => ({ ...DEFAULT_POLICY, memoryMb: 256 }),
     });
     await limited.exec(execArgs("true"), live);
     const out = execFileSync(
@@ -206,7 +206,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const open = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
+      policy: () => ({ ...DEFAULT_POLICY, allowedDomains: ["example.com"] }),
     });
     const stamp = "date +%s%N";
     const a = open.exec(execArgs(`${stamp}; sleep 2`, { tag: "a" }), live);
@@ -226,7 +226,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const open = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
+      policy: () => ({ ...DEFAULT_POLICY, allowedDomains: ["example.com"] }),
     });
     await open.exec(execArgs("true"), live); // container exists, network closed
     const ac = new AbortController();
@@ -249,7 +249,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const limited = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: { ...DEFAULT_POLICY, cpu: 1.5, memoryMb: 256 },
+      policy: () => ({ ...DEFAULT_POLICY, cpu: 1.5, memoryMb: 256 }),
     });
     await limited.exec(execArgs("true"), live);
     const out = execFileSync(
@@ -339,7 +339,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const open = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
+      policy: () => ({ ...DEFAULT_POLICY, allowedDomains: ["example.com"] }),
     });
     const state = async () =>
       execFileSync(
@@ -424,7 +424,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const first = id();
     await ex.dispose();
     // A new program over the same directory reuses the container while its mounts still match.
-    ex = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: () => DEFAULT_POLICY });
     expect(await ex.ensureRoot()).toBe("ok");
     expect((await ex.exec(execArgs("cat /workspace/old"), live)).stdout).toBe("old");
     expect(id()).toBe(first);
@@ -433,7 +433,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     rmSync(dir, { recursive: true });
     prepareDeviceDir(dir);
     writeFileSync(join(dir, "workspace", "new"), "new");
-    ex = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: () => DEFAULT_POLICY });
     expect(await ex.ensureRoot()).toBe("ok");
     const r = await ex.exec(execArgs("cat /workspace/new; ls /workspace"), live);
     expect(r.stdout).toBe("newnew\n");

@@ -266,6 +266,12 @@ connection_id)` for the chat targets.
 
 The goal is that automation is not blocked (*decided*), and the prompt is never consent.
 
+> Amended by the network ask-to-allow spec (`2026-11-12-network-ask-to-allow-design.md` §8,
+> 2026-11-12): task grants also hold pre-approved network domains as `network:<host>` (exact hosts,
+> within the org's egress, only while the task's device accepts remote grants). Only a person in a
+> web session adds them (task page) or collects them in a trial run; tokens and the Platform tool
+> cannot.
+
 - **Task grants**: the creator pre-approves tools for the task. In an unattended run the policy
   check (`createDecidePolicy`) also looks up `scheduled_task_grants` of the run's task: a matching
   grant turns `ask` into `allow`, exactly like a `tool_grants` entry. It never turns `deny` into

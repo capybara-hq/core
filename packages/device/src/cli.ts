@@ -3,13 +3,19 @@ import { parseCommandLine, USAGE, UsageError } from "./args.js";
 import { drain } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
-import { policyCommand } from "./commands/policy.js";
+import {
+  confirmOpenNetwork,
+  needsOpenConfirmation,
+  OPEN_NETWORK_NEEDS_YES,
+  policyCommand,
+} from "./commands/policy.js";
 import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
 import type { Executor } from "./exec/types.js";
-import { type Credential, type Policy, stateDir } from "./state.js";
+import type { PolicyStore } from "./policy-store.js";
+import { type Credential, stateDir } from "./state.js";
 
 export interface CliEnv {
   env?: Record<string, string | undefined>;
@@ -20,15 +26,31 @@ export interface CliEnv {
   openBrowser?: (url: string) => void;
   out?: (line: string) => void;
   err?: (line: string) => void;
-  createExecutor?: (cred: Credential, policy: Policy) => Promise<Executor> | Executor;
+  createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
   kill?: typeof process.kill;
   /** Runs a system command for `service` (default: execFileSync). */
   runSystem?: (cmd: string, args: string[]) => void;
+  /** Standard input is a terminal (default: `process.stdin.isTTY`): a confirmation may be asked. */
+  stdinIsTTY?: boolean;
+  /** Asks one question on the terminal and resolves the answer (default: node:readline). */
+  ask?: (question: string) => Promise<string>;
+}
+
+/** Asks one question on the process's terminal. */
+async function askOnTerminal(question: string): Promise<string> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
 }
 
 /** The executor for the credential's mode; the program's state directory is unreadable to commands. */
 function defaultCreateExecutor(stateDir: string, home: string) {
-  return async (cred: Credential, policy: Policy): Promise<Executor> => {
+  return async (cred: Credential, store: PolicyStore): Promise<Executor> => {
+    const policy = () => store.current();
     if (cred.mode === "docker") {
       const { createDockerExecutor } = await import("./exec/docker.js");
       return createDockerExecutor({
@@ -93,8 +115,17 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       return stop(dir, out, err, io.kill);
     case "drain":
       return drain(dir, out, err, io.kill);
-    case "policy":
+    case "policy": {
+      // `set network open` without --yes: ask on a terminal; elsewhere policyCommand refuses it
+      if (needsOpenConfirmation(cmd) && (io.stdinIsTTY ?? process.stdin.isTTY === true)) {
+        if (!(await confirmOpenNetwork({ out, ask: io.ask ?? askOnTerminal }))) {
+          err(OPEN_NETWORK_NEEDS_YES);
+          return 1;
+        }
+        return policyCommand(cmd, { stateDir: dir, out, err, confirmed: true });
+      }
       return policyCommand(cmd, { stateDir: dir, out, err });
+    }
     case "service":
       return serviceCommand(cmd.action, {
         stateDir: dir,

@@ -1,14 +1,59 @@
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
-import { type Policy, policyPath, readPolicy, writePolicy } from "../state.js";
+import { PolicyStore } from "../policy-store.js";
+import { type Policy, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
   out: (line: string) => void;
   err: (line: string) => void;
+  /**
+   * The person already read {@link OPEN_NETWORK_RISK} and answered `y` at the prompt
+   * ({@link confirmOpenNetwork}); otherwise `set network open` needs `--yes`.
+   */
+  confirmed?: boolean;
 }
 
-const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
+const KEYS = [
+  "allowedDomains",
+  "allowCredentials",
+  "cpu",
+  "memoryMb",
+  "network",
+  "remoteGrants",
+] as const;
+
+/** Shown before `set network open` takes effect (network ask-to-allow spec §7). */
+export const OPEN_NETWORK_RISK =
+  "With no network limit, agent commands on this device can reach any address the organization " +
+  "allows (any public address if the organization has no limit), including uploading files to " +
+  "outside sites. Prompt injection can make an agent do that. Turn it on only on your own " +
+  "development machine, with agents and material you trust.";
+
+/** Refusal of `set network open` without a confirmation. */
+export const OPEN_NETWORK_NEEDS_YES =
+  "Nothing changed. To turn off the network limit, run: capybara-device policy set network open --yes";
+
+/** The prompt of an interactive `set network open`. */
+export const OPEN_NETWORK_PROMPT = "Turn off the network limit on this device? [y/N] ";
+
+/** `policy set network open` without `--yes`: the one change that asks first. */
+export function needsOpenConfirmation(cmd: Extract<Command, { command: "policy" }>): boolean {
+  return cmd.action === "set" && cmd.key === "network" && cmd.value === "open" && cmd.yes !== true;
+}
+
+/**
+ * Asks on a terminal before `set network open`: prints {@link OPEN_NETWORK_RISK} and the prompt;
+ * true only for an answer of `y` or `yes`.
+ */
+export async function confirmOpenNetwork(deps: {
+  out: (line: string) => void;
+  ask: (question: string) => Promise<string>;
+}): Promise<boolean> {
+  deps.out(OPEN_NETWORK_RISK);
+  const answer = (await deps.ask(OPEN_NETWORK_PROMPT)).trim().toLowerCase();
+  return answer === "y" || answer === "yes";
+}
 
 /** What the OS mode does not enforce yet, shown with every `show` and `set`. */
 export const NOT_ENFORCED_NOTE =
@@ -31,56 +76,181 @@ function ceiling(key: string, value: string): number | null {
   return n;
 }
 
+/** Shown when a docker-mode device is given an allowed domain. */
+export const DOCKER_NETWORK_NOTE =
+  "Note: this device runs commands in Docker mode, which cannot limit network access per " +
+  "domain: while any domain is allowed (and the organization allows network), commands reach " +
+  "the whole internet. Use OS mode to allow single domains.";
+
+/** Whether this machine is logged in in Docker mode (false when unknown). */
+function dockerMode(stateDir: string): boolean {
+  try {
+    return readCredential(stateDir)?.mode === "docker";
+  } catch {
+    return false;
+  }
+}
+
+/** The keys `add` and `remove` work on: the list fields. */
+const LIST_KEYS = ["allowedDomains", "allowCredentials"] as const;
+type ListKey = (typeof LIST_KEYS)[number];
+
+/** Lowercased, validated hosts; throws naming the first bad one. */
+function domains(value: string): string[] {
+  const out = list(value).map((d) => d.toLowerCase());
+  for (const d of out) {
+    const errors = validateAllowHost(d);
+    if (errors.length > 0) throw new Error(`"${d}": ${errors.join("; ")}`);
+  }
+  return out;
+}
+
+/** The new value of a list field after `add` / `remove`; unchanged entries are reported. */
+function edit(
+  current: readonly string[],
+  action: "add" | "remove",
+  key: ListKey,
+  values: string[],
+  out: (line: string) => void,
+): string[] {
+  // Domains compare ignoring case (a hand-edited file may hold any spelling).
+  const norm = key === "allowedDomains" ? (v: string) => v.toLowerCase() : (v: string) => v;
+  const has = (list: readonly string[], v: string) => list.some((x) => norm(x) === norm(v));
+  if (action === "add") {
+    const next = [...current];
+    for (const v of values) {
+      if (has(next, v)) out(`${v} is already in ${key}.`);
+      else {
+        next.push(v);
+        out(`Added ${v} to ${key}.`);
+      }
+    }
+    return next;
+  }
+  for (const v of values)
+    out(has(current, v) ? `Removed ${v} from ${key}.` : `${v} is not in ${key}.`);
+  return current.filter((x) => !has(values, x));
+}
+
 /**
- * `policy show` prints the local policy; `policy set <key> <value>` changes one field. Only the
- * machine's user edits this file: the cloud never writes it. Changes apply at the next start.
+ * `policy show` prints the local policy; `policy set <key> <value>` replaces one field
+ * (`set network open` prints the risk and needs `--yes` or a confirmation at the prompt);
+ * `policy add|remove <key> <value>` adds or removes entries of a list field. The machine's user
+ * edits this file; the deployment changes it only through the `policy` op, on the device owner's
+ * decision and only while `remoteGrants` is `owner` (narrowing always). Writes take
+ * policy.json.lock, and a running program applies the change at its next command.
  */
 export function policyCommand(
   cmd: Extract<Command, { command: "policy" }>,
   deps: PolicyDeps,
 ): number {
   const { stateDir, out, err } = deps;
-  let policy: Policy;
+  let store: PolicyStore;
   try {
-    policy = readPolicy(stateDir);
+    store = new PolicyStore(stateDir);
   } catch (e) {
     err(`Cannot read ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
   if (cmd.action === "show") {
-    out(JSON.stringify(policy, null, 2));
+    out(JSON.stringify(store.current(), null, 2));
     out(NOT_ENFORCED_NOTE);
     return 0;
   }
-  const { key, value } = cmd;
-  const next: Policy = { ...policy };
+  const { action, key, value } = cmd;
+  // Parse and validate before taking the lock; apply inside it, against the file as it is then.
+  let change: (p: Policy, say: (line: string) => void) => Policy;
   try {
-    switch (key) {
-      case "allowedDomains": {
-        const domains = list(value).map((d) => d.toLowerCase());
-        for (const d of domains) {
-          const errors = validateAllowHost(d);
-          if (errors.length > 0) throw new Error(`"${d}": ${errors.join("; ")}`);
+    if (action === "set") {
+      switch (key) {
+        case "allowedDomains": {
+          const next = [...new Set(domains(value))];
+          change = (p) => ({ ...p, allowedDomains: next });
+          break;
         }
-        next.allowedDomains = [...new Set(domains)];
-        break;
+        case "allowCredentials": {
+          const next = [...new Set(list(value))];
+          change = (p) => ({ ...p, allowCredentials: next });
+          break;
+        }
+        case "cpu":
+        case "memoryMb": {
+          const next = ceiling(key, value);
+          change = (p) => ({ ...p, [key]: next });
+          break;
+        }
+        case "network": {
+          if (value !== "allowlist" && value !== "open") {
+            throw new Error(`network must be allowlist or open, got "${value}"`);
+          }
+          if (value === "open") {
+            // Narrowing back to allowlist is always accepted; opening needs a confirmation.
+            if (deps.confirmed !== true) {
+              out(OPEN_NETWORK_RISK);
+              if (cmd.yes !== true) {
+                err(OPEN_NETWORK_NEEDS_YES);
+                return 2;
+              }
+            }
+          }
+          change = (p) => ({ ...p, network: value });
+          break;
+        }
+        case "remoteGrants": {
+          if (value !== "owner" && value !== "off") {
+            throw new Error(`remoteGrants must be owner or off, got "${value}"`);
+          }
+          change = (p) => ({ ...p, remoteGrants: value });
+          break;
+        }
+        default:
+          throw new Error(`unknown policy key "${key}"; one of ${KEYS.join(", ")}`);
       }
-      case "allowCredentials":
-        next.allowCredentials = [...new Set(list(value))];
-        break;
-      case "cpu":
-      case "memoryMb":
-        next[key] = ceiling(key, value);
-        break;
-      default:
-        throw new Error(`unknown policy key "${key}"; one of ${KEYS.join(", ")}`);
+    } else {
+      if (!(LIST_KEYS as readonly string[]).includes(key)) {
+        throw new Error(`${action} works on ${LIST_KEYS.join(" and ")} only; use set for ${key}`);
+      }
+      const listKey = key as ListKey;
+      // Only additions are validated: any entry already in the file can be removed.
+      const values =
+        listKey !== "allowedDomains"
+          ? list(value)
+          : action === "add"
+            ? domains(value)
+            : list(value).map((d) => d.toLowerCase());
+      if (values.length === 0) throw new Error(`${action} needs at least one value`);
+      change = (p, say) => ({ ...p, [listKey]: edit(p[listKey], action, listKey, values, say) });
     }
   } catch (e) {
     err((e as Error).message);
     return 2;
   }
-  writePolicy(stateDir, next);
-  out(`Saved ${policyPath(stateDir)}. Restart capybara-device for it to take effect.`);
-  out(NOT_ENFORCED_NOTE);
+  const lines: string[] = [];
+  try {
+    store.update((p) => change(p, (l) => lines.push(l)));
+  } catch (e) {
+    err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
+    return 1;
+  }
+  for (const l of lines) out(l);
+  out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next command.`);
+  if (key === "allowedDomains" && action !== "remove" && dockerMode(stateDir)) {
+    if (store.current().allowedDomains.length > 0) out(DOCKER_NETWORK_NOTE);
+  }
+  if (key === "network" && value === "open") {
+    out(
+      "Network is no longer limited by this device: commands reach what the organization allows.",
+    );
+  }
+  if (key === "remoteGrants") {
+    out(
+      value === "owner"
+        ? "The device owner can now widen this device's network from the web or a chat card."
+        : "The deployment can no longer widen this device's network; it can still narrow it.",
+    );
+  }
+  if (key !== "allowedDomains" && key !== "network" && key !== "remoteGrants") {
+    out(NOT_ENFORCED_NOTE);
+  }
   return 0;
 }

@@ -119,6 +119,9 @@ export const UNATTENDED_ELICITATION_NOTE =
 /** The `missing_grants` entry of a personal connector the creator has not connected (§7). */
 export const connectionGrantKey = (connectorSlug: string) => `connection:${connectorSlug}`;
 
+/** The `missing_grants` entry of a refused network host (network ask-to-allow spec §8.1, §8.3). */
+export const networkGrantKey = (host: string) => `network:${host}`;
+
 /**
  * What the tool policy knows of the scheduled task run a kernel run serves (`PolicyContext`): the
  * task (its grants), the task run (its `missing_grants`), whether it is a trial run (attended), and
@@ -194,6 +197,28 @@ export async function unattendedRunOf(
   if (!run.trial && (await personJoined(db, runId))) return null;
   const s = await readScheduleSettings(db, config, orgId);
   return { ...run, unattendedAsk: s.unattendedAsk, forbiddenTools: s.forbiddenTools };
+}
+
+/**
+ * The scheduled task whose grants a run's actions use (spec §7; network ask-to-allow spec §8.1),
+ * or null: the run serves a task run that is no trial run and no person joined
+ * ({@link personJoined}): the same rule as {@link unattendedRules} on {@link unattendedRunOf},
+ * without the org's settings. `accountId`: the task's creator; `orgId`: the task's org.
+ */
+export async function taskGrantsRunOf(
+  db: KernelSchemaDb,
+  runId: string,
+): Promise<{ taskId: string; accountId: string; orgId: string } | null> {
+  const run = await unattendedTaskRunOf(db, runId);
+  if (run === null || run.trial) return null;
+  if (await personJoined(db, runId)) return null;
+  const task = await db
+    .selectFrom("scheduled_tasks")
+    .select(["id", "account_id", "org_id"])
+    .where("id", "=", run.taskId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  return task ? { taskId: task.id, accountId: task.account_id, orgId: task.org_id } : null;
 }
 
 /**

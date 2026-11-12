@@ -1,8 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { connectorToolKey, type LocalizedName, parseToolKey } from "@capybara-hq/plugin-sdk";
+import {
+  connectorToolKey,
+  type LocalizedName,
+  parseToolKey,
+  type ToolDisplay,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
+import {
+  NETWORK_ASK_MAX_HOSTS,
+  NETWORK_HOST_MAX_CHARS,
+  type ToolView,
+} from "../conversations/events.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -11,10 +22,19 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { WithLock } from "../infra/lock/with-lock.decorator.js";
+import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
-import { grantRefusalOf } from "../schedules/grant-rules.js";
+import {
+  grantRefusalOf,
+  NETWORK_GRANT_PREFIX,
+  NETWORK_GRANT_SPEC_HASH,
+  networkGrantRefusal,
+} from "../schedules/grant-rules.js";
 import { ScheduledTaskStore } from "../schedules/store.js";
 import { unattendedTaskRunOf } from "../schedules/unattended.js";
 import { pluginDisplayNames } from "./display-names.js";
@@ -27,8 +47,61 @@ export { APPROVAL_DENY_REASON_MAX_CHARS } from "../conversations/events.js";
 /** `list` 一次最多返回的审批数（收件箱据此判断这个来源是否取满）。 */
 export const APPROVALS_LIST_MAX = 100;
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled"
+  | "skipped";
 export type ApprovalScope = "once" | "session" | "always";
+/** What an approval asks: a tool call, or the device owner about refused network hosts. */
+export type ApprovalKind = "tool" | "network";
+
+/**
+ * A network ask's `detail` (network ask-to-allow spec §6.1, P-D2): the device, the refused hosts,
+ * the command and its kept `tool_result` (written with a note when the ask settles; the command is
+ * never run again), and once approved what took effect.
+ */
+export interface NetworkAskDetail {
+  deviceId: string;
+  hosts: { host: string; port: number }[];
+  command: string;
+  description: string | null;
+  /**
+   * The formatted `tool_result` of the command (≤ 16 KB; larger output already archived), and the
+   * display-only fields the pipeline writes with it when the ask settles.
+   */
+  result: {
+    content: string;
+    isError: boolean;
+    outputId?: string;
+    contentTypes?: string[];
+    display?: ToolDisplay;
+    view?: ToolView;
+  };
+  /** The hosts the decision allowed (every approved decision writes them; none: nothing). */
+  grantedHosts?: string[];
+  /** What took effect: a run grant, the device's policy, or a run grant because the device did not apply it. */
+  /**
+   * What took effect: a run grant (`once`), the device's policy (`always`), a run grant because
+   * the device could not be reached or lacks the feature (`once_fallback`), or nothing because the
+   * device refused the change (`refused`: its owner takes no remote grants; no run grant either).
+   */
+  outcome?: "once" | "always" | "once_fallback" | "refused";
+  /** Why 「一直允许」 did not reach the device's policy. */
+  fallback?: "offline" | "refused" | "unsupported";
+}
+
+/** A network ask's detail as the API shows it: without the kept command result. */
+export type NetworkAskView = Omit<NetworkAskDetail, "result">;
+
+/**
+ * The model-visible note written after a network ask's kept result when its run is stopped before
+ * the device owner answered (spec §6.7).
+ */
+export const NETWORK_ASK_CANCELLED_NOTE =
+  "[network] The run was stopped before the user answered; access stays blocked.";
 
 /** 一条审批记录。 */
 export interface ApprovalRecord {
@@ -39,6 +112,10 @@ export interface ApprovalRecord {
   callId: string;
   /** 同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: number;
+  /** `network`: a network ask (its tool key is `Bash`, its facts in {@link detail}). */
+  kind: ApprovalKind;
+  /** A network ask's hosts, command, kept result and outcome; null for a tool approval. */
+  detail: NetworkAskDetail | null;
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -62,8 +139,20 @@ export interface ApprovalRecord {
   createdAt: string;
 }
 
+/** An approval as a route answers it: a network ask's detail without the kept command result. */
+export interface ApprovalPublicRecord extends Omit<ApprovalRecord, "detail"> {
+  detail: NetworkAskView | null;
+}
+
+/** The record without a network ask's kept command result (what routes and cards may show). */
+export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
+  if (r.detail === null) return { ...r, detail: null };
+  const { result: _result, ...detail } = r.detail;
+  return { ...r, detail };
+}
+
 /** 审批详情（列表与详情接口返回）。 */
-export interface ApprovalView extends ApprovalRecord {
+export interface ApprovalView extends ApprovalPublicRecord {
   /** 来源内的工具原名（连接器工具为连接器里的名字；否则同 `toolKey`）。 */
   toolName: string;
   connector: { id: string; name: string; slug: string } | null;
@@ -114,7 +203,47 @@ export interface DecisionInput {
   note?: string | undefined;
   /** Only with `deny` (trimmed, 1–500 characters; checked by the route). */
   reason?: string | undefined;
+  /**
+   * A network ask's approval only: the hosts allowed, a subset of those asked (absent: all); the
+   * unchecked ones count as denied (P-D5).
+   */
+  hosts?: string[] | undefined;
 }
+
+/** Where a decision was made (the device's local audit line and `device.network_*`). */
+export type DecisionVia = "web" | "im";
+
+/** A new network ask (network ask-to-allow spec §6.2), made by the tool pipeline. */
+export interface NetworkAskInput {
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  /** The call's step (written to `approval_requested`). */
+  step: number;
+  callId: string;
+  /** The device owner: the only person who may decide. */
+  requestedFor: string;
+  detail: Omit<NetworkAskDetail, "grantedHosts" | "outcome" | "fallback">;
+  /** `["once", "always"]`, or `["once"]` when the device takes no remote grants. */
+  scopes: ("once" | "always")[];
+}
+
+/** What a network ask's decision took effect as, passed to the decision's transaction. */
+interface NetworkDecision {
+  /** The hosts the owner chose to allow (empty when denied). */
+  wanted: string[];
+  /** The hosts allowed (empty when denied or refused by the device). */
+  granted: string[];
+  /** Null when denied. */
+  outcome: "once" | "always" | "once_fallback" | "refused" | null;
+  fallback?: "offline" | "refused" | "unsupported";
+  via: DecisionVia;
+}
+
+/** The tool key a network ask is recorded under (the command ran in `Bash`). */
+export const NETWORK_ASK_TOOL_KEY = "Bash";
+/** The spec hash of a network ask (no tool definition is approved). */
+const NETWORK_ASK_SPEC_HASH = "network";
 
 /** 「以后都允许」授权（本人可撤销）。 */
 export interface ToolGrantView {
@@ -142,6 +271,8 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     runId: r.run_id,
     callId: r.call_id,
     attempt: r.attempt,
+    kind: r.kind,
+    detail: r.kind === "network" ? ((r.detail as NetworkAskDetail | null) ?? null) : null,
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,
@@ -202,6 +333,13 @@ export class ApprovalsService {
     private readonly schedules: Pick<ScheduledTaskStore, "addGrant">,
     /** A trial approval is kept only for a tool the task may hold as a grant (its agent's tools). */
     @Inject(ToolRegistry) private readonly registry: Pick<ToolRegistry, "forAgent">,
+    /** 「这台设备一直允许」 sends the `policy` op to the device before the decision is recorded. */
+    @Inject(DevicePolicyService)
+    private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
+    /** One decision of a network ask at a time, across replicas (the op is sent before the transaction). */
+    @Inject(LockService) readonly lockService: LockService,
+    /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
   ) {}
 
   /**
@@ -283,6 +421,102 @@ export class ApprovalsService {
     return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
+  /**
+   * A network ask (network ask-to-allow spec §6.2): a pending approval of kind `network` for the
+   * device owner, expiring like a tool approval (`tools.approvalTimeoutHours`), and its
+   * `approval_requested` (tool key `Bash`, the display-only `network.hosts`), in one transaction.
+   * It takes the attempt after the call's other approvals (P-D4: the command ran, so no tool
+   * approval of the call follows it). One per call: a second request returns the first.
+   */
+  async requestNetwork(input: NetworkAskInput): Promise<ApprovalRecord> {
+    const hosts = input.detail.hosts;
+    if (hosts.length === 0 || hosts.length > NETWORK_ASK_MAX_HOSTS) {
+      throw new Error(`a network ask lists 1 to ${NETWORK_ASK_MAX_HOSTS} hosts`);
+    }
+    if (hosts.some((h) => h.host.length === 0 || h.host.length > NETWORK_HOST_MAX_CHARS)) {
+      throw new Error("a network ask's host is 1 to 255 characters");
+    }
+    if (input.scopes.length === 0 || !input.scopes.includes("once")) {
+      throw new Error('a network ask offers at least "once"');
+    }
+    const { record, toSeq } = await this.requestNetworkIn(input);
+    if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
+    return record;
+  }
+
+  @Transactional()
+  private async requestNetworkIn(
+    input: NetworkAskInput,
+  ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
+    const hours = this.config.get().tools.approvalTimeoutHours;
+    const t = this.db.db;
+    // the conversation row first (as `requestIn`): it also serializes two asks of one call
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", input.conversationId)
+      .forUpdate()
+      .execute();
+    // only the device's owner is ever asked: never another account the caller names
+    const owner = await this.deviceOwnerOf(input.orgId, input.detail.deviceId);
+    if (owner === null || owner !== input.requestedFor) {
+      throw new Error(
+        `a network ask is for the owner of a live device of the org (device ${input.detail.deviceId})`,
+      );
+    }
+    const existing = await this.networkForCall(input.runId, input.callId);
+    if (existing !== null) return { record: existing, toSeq: null };
+    const last = await t
+      .selectFrom("approvals")
+      .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("run_id", "=", input.runId)
+      .where("call_id", "=", input.callId)
+      .executeTakeFirst();
+    const row = await t
+      .insertInto("approvals")
+      .values({
+        id: randomUUID(),
+        org_id: input.orgId,
+        conversation_id: input.conversationId,
+        run_id: input.runId,
+        call_id: input.callId,
+        attempt: Number(last?.attempt ?? 0) + 1,
+        kind: "network",
+        detail: JSON.stringify(input.detail),
+        tool_key: NETWORK_ASK_TOOL_KEY,
+        spec_hash: NETWORK_ASK_SPEC_HASH,
+        connector_id: null,
+        input: JSON.stringify({}),
+        requested_for: input.requestedFor,
+        approver_role: null,
+        scopes: [...new Set(input.scopes)],
+        scope: null,
+        decided_by: null,
+        expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const rec = toRecord(row);
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "approval_requested",
+        runId: rec.runId,
+        idemKey: `approval_requested:${rec.id}`,
+        payload: {
+          step: input.step,
+          callId: rec.callId,
+          approvalId: rec.id,
+          toolKey: rec.toolKey,
+          expiresAt: rec.expiresAt,
+          network: { hosts: input.detail.hosts.map((h) => h.host) },
+          requestedFor: rec.requestedFor,
+          approverRole: null,
+        },
+      },
+    ]);
+    return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
+  }
+
   /** 当前用户能处理的审批（新的在前，最多 {@link APPROVALS_LIST_MAX} 条）；`status` 缺省为全部。 */
   async list(orgId: string, accountId: string, status?: ApprovalStatus): Promise<ApprovalView[]> {
     const role = await this.roleOf(orgId, accountId);
@@ -343,8 +577,227 @@ export class ApprovalsService {
     accountId: string,
     body: DecisionInput,
     actorTokenId?: string,
+    via: DecisionVia = "web",
   ): Promise<ApprovalRecord> {
+    const kind = await this.db
+      .selectFrom("approvals")
+      .select("kind")
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!kind) throw notFound();
+    if (kind.kind === "network") {
+      return this.decideNetwork(orgId, id, accountId, body, actorTokenId, via);
+    }
+    if (body.hosts !== undefined) {
+      throw new ApiError("validation_failed", "hosts are only for network asks", [
+        { path: "hosts", message: "Only a network ask takes hosts" },
+      ]);
+    }
     const { record, toSeq } = await this.decideIn(orgId, id, accountId, body, actorTokenId);
+    await this.announceDecided(record, toSeq);
+    return record;
+  }
+
+  /**
+   * A network ask's decision (network ask-to-allow spec §5.2), one at a time per ask across
+   * replicas: only the device owner (`requested_for`) decides, in a signed-in session (a personal
+   * access token is refused; the route already refuses service and embed tokens); the allowed
+   * hosts are a subset of those asked. 「这台设备一直允许」 sends the `policy` op first, outside any
+   * transaction; when the device cannot be reached or lacks the feature the decision is recorded
+   * as a run grant with the reason, and when the device refuses (its owner takes no remote grants)
+   * as `always` with outcome `refused` and nothing granted. Then {@link decideIn} records what took
+   * effect and the run resumes after the commit; a change the device applied after the ask closed
+   * is audited (`late`) and answered with a 409 that says so.
+   */
+  @WithLock({ key: "network-ask-#{1}", ttl: 60_000, waitTimeout: 45_000 })
+  private async decideNetwork(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    actorTokenId: string | undefined,
+    via: DecisionVia,
+  ): Promise<ApprovalRecord> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .select(sql<boolean>`expires_at <= now()`.as("expired"))
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const ask = toRecord(row);
+    const detail = ask.detail;
+    if (detail === null) throw new Error(`network ask ${id} has no detail`);
+    // the device's owner now (an ownership change since the ask is honored), never anyone else
+    const owner = await this.deviceOwnerOf(orgId, detail.deviceId);
+    if (ask.requestedFor !== accountId || owner !== accountId) {
+      // named only to the people the ask is shown to (the run's starter, the asked owner); any
+      // other member learns nothing about it, as `get` (approval.not_found)
+      const trigger = await this.db
+        .selectFrom("runs")
+        .select("trigger_account_id")
+        .where("id", "=", ask.runId)
+        .executeTakeFirst();
+      if (accountId !== ask.requestedFor && accountId !== trigger?.trigger_account_id) {
+        throw notFound();
+      }
+      const name = owner === null ? null : await this.displayNameOf(owner);
+      throw new ApiError(
+        "approval.not_yours",
+        `Only ${name ?? "the device's owner"} can allow network access on this device.`,
+      );
+    }
+    if (actorTokenId !== undefined) {
+      throw new ApiError(
+        "auth.session_required",
+        "Network access is decided in a signed-in session, not with a personal access token.",
+      );
+    }
+    if (ask.status !== "pending") {
+      throw new ApiError("approval.already_decided", "Approval has already been decided");
+    }
+    if (row.expired) throw new ApiError("approval.already_decided", "Approval has expired");
+    const asked = [...new Set(detail.hosts.map((h) => h.host))];
+    let network: NetworkDecision;
+    if (body.decision === "approve") {
+      const scope = body.scope ?? "once";
+      if (scope === "session" || !ask.scopes.includes(scope)) {
+        throw new ApiError(
+          "approval.scope_not_allowed",
+          `Scope "${scope}" is not allowed for this approval; allowed: ${ask.scopes.join(", ")}`,
+        );
+      }
+      const unknown = (body.hosts ?? []).filter((h) => !asked.includes(h));
+      if (unknown.length > 0) {
+        throw new ApiError("validation_failed", "hosts must be among the hosts asked about", [
+          { path: "hosts", message: `Not asked about: ${unknown.join(", ")}` },
+        ]);
+      }
+      // exact hosts only: the device and the run grants never take anything else
+      const granted = [...new Set(body.hosts ?? asked)].filter(
+        (h) => !h.startsWith("*.") && validateAllowHost(h).length === 0,
+      );
+      if (granted.length === 0) {
+        throw new ApiError("validation_failed", "No host to allow", [
+          { path: "hosts", message: "Choose at least one host" },
+        ]);
+      }
+      network = { wanted: granted, granted, outcome: "once", via };
+      if (scope === "always") {
+        const applied = await this.applyAlways(orgId, detail.deviceId, granted, {
+          approvalId: id,
+          accountId,
+          via,
+        });
+        network =
+          applied === null
+            ? { wanted: granted, granted, outcome: "always", via }
+            : applied === "refused"
+              ? // the device's owner takes no remote grants: nothing is allowed, not even this run
+                { wanted: granted, granted: [], outcome: "refused", fallback: applied, via }
+              : { wanted: granted, granted, outcome: "once_fallback", fallback: applied, via };
+      }
+    } else {
+      if (body.hosts !== undefined) {
+        throw new ApiError("validation_failed", "hosts are only given when allowing", [
+          { path: "hosts", message: "Only an approval takes hosts" },
+        ]);
+      }
+      network = { wanted: [], granted: [], outcome: null, via };
+    }
+    let decided: { record: ApprovalRecord; toSeq: number };
+    try {
+      decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, network);
+    } catch (e) {
+      // the device took the hosts, but a reply, the expiry or a stop closed the ask meanwhile:
+      // the change stands (the owner chose it), so it is audited and said
+      if (
+        network.outcome === "always" &&
+        e instanceof ApiError &&
+        e.code === "approval.already_decided"
+      ) {
+        await this.auditLateAllow(orgId, ask, network);
+        throw new ApiError(
+          "approval.already_decided",
+          `The device now allows ${network.granted.join(", ")}; the request had already closed.`,
+        );
+      }
+      throw e;
+    }
+    await this.announceDecided(decided.record, decided.toSeq);
+    return decided.record;
+  }
+
+  /** `device.network_allowed` of a policy change that reached the device after the ask closed. */
+  @Transactional()
+  private async auditLateAllow(
+    orgId: string,
+    ask: ApprovalRecord,
+    network: NetworkDecision,
+  ): Promise<void> {
+    if (ask.detail === null) return;
+    await audit(this.db.db, {
+      actorAccountId: ask.requestedFor,
+      orgId,
+      action: "device.network_allowed",
+      target: ask.detail.deviceId,
+      detail: {
+        approvalId: ask.id,
+        deviceId: ask.detail.deviceId,
+        hosts: network.granted,
+        scope: "always",
+        outcome: "always",
+        late: true,
+        by: ask.requestedFor,
+        via: network.via,
+        conversationId: ask.conversationId,
+        runId: ask.runId,
+      },
+    });
+  }
+
+  /** The owner of a live device of the org (null: none, deleted, or of another org). */
+  private async deviceOwnerOf(orgId: string, deviceId: string): Promise<string | null> {
+    const d = await this.db
+      .selectFrom("devices")
+      .select("owner_account_id")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    return d?.owner_account_id ?? null;
+  }
+
+  /**
+   * Adds the hosts to the device's local policy (the `policy` op; never inside a transaction).
+   * Null when it was applied, else why not: the decision falls back to a run grant.
+   */
+  private async applyAlways(
+    orgId: string,
+    deviceId: string,
+    hosts: string[],
+    source: { approvalId: string; accountId: string; via: DecisionVia },
+  ): Promise<"offline" | "refused" | "unsupported" | null> {
+    const accountName = (await this.displayNameOf(source.accountId)) ?? source.accountId;
+    try {
+      const out = await this.policies.apply({
+        orgId,
+        deviceId,
+        change: { add: hosts },
+        source: { ...source, accountName },
+      });
+      return out.applied ? null : out.reason;
+    } catch (e) {
+      // the device was deleted meanwhile: nothing to write to, the run cannot go on there either
+      if (e instanceof ApiError && e.code === "device.not_found") return "offline";
+      throw e;
+    }
+  }
+
+  /** After the commit: the decision's events reach the page, the run's waits and IM delivery. */
+  private async announceDecided(record: ApprovalRecord, toSeq: number): Promise<void> {
     await this.eventLog.notify(record.conversationId, toSeq);
     // waits resume the run and its IM delivery is enqueued (handler failures are logged)
     await this.events.emit("approval.decided", {
@@ -354,7 +807,16 @@ export class ApprovalsService {
       runId: record.runId,
       status: record.status === "approved" ? "approved" : "denied",
     });
-    return record;
+  }
+
+  /** An account's display name (null when unknown). */
+  private async displayNameOf(accountId: string): Promise<string | null> {
+    const a = await this.db
+      .selectFrom("accounts")
+      .select("display_name")
+      .where("id", "=", accountId)
+      .executeTakeFirst();
+    return a?.display_name ?? null;
   }
 
   // its own transaction (as the legacy one was): `approval.decided` is emitted only after the
@@ -366,6 +828,7 @@ export class ApprovalsService {
     accountId: string,
     body: DecisionInput,
     actorTokenId: string | undefined,
+    network?: NetworkDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     const t = this.db.db;
     const locked = await t
@@ -396,9 +859,19 @@ export class ApprovalsService {
     if (locked.expired) {
       throw new ApiError("approval.already_decided", "Approval has expired");
     }
+    // a network ask is decided only through decideNetwork (its policy op went first)
+    if ((before.kind === "network") !== (network !== undefined)) {
+      throw new Error(`approval ${id} is of kind ${before.kind}`);
+    }
     const approved = body.decision === "approve";
     const reason = approved ? undefined : body.reason?.trim() || undefined;
-    const scope: ApprovalScope | null = approved ? (body.scope ?? "once") : null;
+    const scope: ApprovalScope | null = !approved
+      ? null
+      : network === undefined
+        ? (body.scope ?? "once")
+        : network.outcome === "always" || network.outcome === "refused"
+          ? "always"
+          : "once";
     // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
     if (scope !== null && scope !== "once" && before.requestedFor === null) {
       throw new ApiError(
@@ -423,6 +896,17 @@ export class ApprovalsService {
         decided_by: accountId,
         decided_at: sql<Date>`now()`,
         deny_reason: reason ?? null,
+        ...(network?.outcome != null &&
+          before.detail !== null && {
+            // what took effect; run grants read grantedHosts (an always grant's hosts are on
+            // the device's policy already, so it carries them harmlessly)
+            detail: JSON.stringify({
+              ...before.detail,
+              grantedHosts: network.granted,
+              outcome: network.outcome,
+              ...(network.fallback !== undefined && { fallback: network.fallback }),
+            } satisfies NetworkAskDetail),
+          }),
       })
       .where("id", "=", id)
       .returningAll()
@@ -430,7 +914,9 @@ export class ApprovalsService {
     // 授权绑定所批准的定义指纹与来源连接器（同 slug 重新安装的连接器 id 不同，不继承）
     const hash = before.specHash;
     const connectorId = before.connectorId;
-    if (scope === "session") {
+    if (network !== undefined) {
+      // a network ask grants nothing of the tool kind: its run grant is the row itself
+    } else if (scope === "session") {
       // a sub-agent's grant is the root conversation's (agent map spec §7): the root and every
       // agent of its tree, at any depth, are not asked again for the same call
       await t
@@ -470,7 +956,14 @@ export class ApprovalsService {
         )
         .execute();
     }
-    if (approved && scope !== null) await this.keepTrialGrant(before, accountId);
+    if (approved && scope !== null && network === undefined) {
+      await this.keepTrialGrant(before, accountId);
+    }
+    // 「这次允许」 in a trial run (also an 「一直允许」 the device could not take): the task's
+    // grants; one the device took needs none (network ask-to-allow spec §8.1)
+    if (network?.outcome === "once" || network?.outcome === "once_fallback") {
+      await this.keepTrialNetworkGrant(before, accountId, network.granted);
+    }
     const written = await this.eventLog.appendIn(before.conversationId, [
       {
         type: "approval_decided",
@@ -486,6 +979,31 @@ export class ApprovalsService {
         },
       },
     ]);
+    if (network !== undefined && before.detail !== null) {
+      const asked = [...new Set(before.detail.hosts.map((h) => h.host))];
+      const refused = asked.filter((h) => !network.wanted.includes(h));
+      await audit(t, {
+        actorAccountId: accountId,
+        orgId,
+        action: approved ? "device.network_allowed" : "device.network_denied",
+        target: before.detail.deviceId,
+        detail: {
+          approvalId: id,
+          deviceId: before.detail.deviceId,
+          hosts: approved ? network.wanted : asked,
+          ...(approved && refused.length > 0 && { refused }),
+          scope,
+          outcome: approved ? network.outcome : "denied",
+          ...(network.fallback !== undefined && { fallback: network.fallback }),
+          by: accountId,
+          via: network.via,
+          conversationId: before.conversationId,
+          runId: before.runId,
+          ...(reason !== undefined && { reason }),
+        },
+      });
+      return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
+    }
     await audit(t, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -566,6 +1084,46 @@ export class ApprovalsService {
   }
 
   /**
+   * A trial run of a scheduled task (network ask-to-allow spec §8.1): the hosts its creator allowed
+   * for this run (「这次允许」) on a network ask about one of their devices become the task's
+   * `network:<host>` grants, each only when `networkGrantRefusal` allows it (exact host, within the
+   * org's effective egress, the device takes remote grants). Never for an ask another account
+   * decided or one asked of someone else. In the decision's transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async keepTrialNetworkGrant(
+    a: ApprovalRecord,
+    decidedBy: string,
+    hosts: readonly string[],
+  ): Promise<void> {
+    if (hosts.length === 0 || a.detail === null) return;
+    if (a.requestedFor === null || a.requestedFor !== decidedBy) return;
+    const t = this.db.db;
+    const served = await unattendedTaskRunOf(t, a.runId);
+    if (served === null || !served.trial) return;
+    const task = await t
+      .selectFrom("scheduled_tasks")
+      .select("account_id")
+      .where("id", "=", served.taskId)
+      .where("org_id", "=", a.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (task?.account_id !== decidedBy) return;
+    const limits = await this.sandbox.orgLimits(a.orgId);
+    const summary = await this.policies.summary(a.detail.deviceId);
+    for (const host of hosts) {
+      if (networkGrantRefusal(host, { limits, deviceSummary: summary?.policy ?? null }) !== null) {
+        continue;
+      }
+      await this.schedules.addGrant(t, served.taskId, {
+        toolKey: `${NETWORK_GRANT_PREFIX}${host}`,
+        specHash: NETWORK_GRANT_SPEC_HASH,
+        connectorId: null,
+      });
+    }
+  }
+
+  /**
    * 详情，不做处理人校验（内核内部用：渠道出站投递组装 IM 审批卡片）；不存在返回 null。
    * 不得直接回给请求方——HTTP 接口用 {@link get}。
    */
@@ -580,13 +1138,28 @@ export class ApprovalsService {
     return view ?? null;
   }
 
-  /** 某个工具调用最近一次的审批（attempt 最大者）；没有则返回 null。 */
+  /** 某个工具调用最近一次的工具审批（attempt 最大者，网络询问除外）；没有则返回 null。 */
   async forCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
     const row = await this.db
       .selectFrom("approvals")
       .selectAll()
       .where("run_id", "=", runId)
       .where("call_id", "=", callId)
+      .where("kind", "=", "tool")
+      .orderBy("attempt", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row ? toRecord(row) : null;
+  }
+
+  /** The network ask of a tool call (at most one per call); null when it has none. */
+  async networkForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .where("kind", "=", "network")
       .orderBy("attempt", "desc")
       .limit(1)
       .executeTakeFirst();
@@ -702,17 +1275,83 @@ export class ApprovalsService {
     return { records, seqs };
   }
 
-  /** 系统写的 `approval_decided`（超时 / 取消，处理人为 null），在当前事务内；返回事件 seq。 */
+  /**
+   * In the caller's transaction (`mandatory`; it wrote `authorAccountId`'s message in
+   * `conversationId` and holds that conversation's row lock): the message skips the pending
+   * network asks it closes (network ask-to-allow spec §6.7), as it skips questions: the asks of
+   * active runs `authorAccountId` started, in the conversation and in its sub-agents'
+   * conversations at any depth (their asks are shown in the root). Each becomes `skipped` with
+   * `approval_decided{skipped}` by the author; access stays blocked. Returns the skipped records and
+   * the highest seq written per conversation; the caller notifies and emits
+   * `approval.decided{skipped}` after the commit, so the runs resume.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async skipNetworkIn(
+    conversationId: string,
+    authorAccountId: string,
+  ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
+    const t = this.db.db;
+    const tree = await this.subtreeOf(conversationId);
+    const rows = await t
+      .selectFrom("approvals as a")
+      .innerJoin("runs as r", "r.id", "a.run_id")
+      .selectAll("a")
+      .where("a.conversation_id", "in", tree)
+      .where("a.kind", "=", "network")
+      .where("a.status", "=", "pending")
+      .where(sql<boolean>`a.expires_at > now()`)
+      .where("r.status", "in", ["running", "waiting"])
+      .where("r.trigger_account_id", "=", authorAccountId)
+      .orderBy("a.created_at")
+      .orderBy("a.id")
+      .forUpdate("a")
+      .execute();
+    const records: ApprovalRecord[] = [];
+    const seqs = new Map<string, number>();
+    for (const row of rows) {
+      const updated = await t
+        .updateTable("approvals")
+        .set({ status: "skipped", decided_by: authorAccountId, decided_at: sql<Date>`now()` })
+        .where("id", "=", row.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const seq = await this.decidedEvent(toRecord(row), "skipped", authorAccountId);
+      seqs.set(row.conversation_id, Math.max(seqs.get(row.conversation_id) ?? 0, seq));
+      records.push(toRecord(updated));
+    }
+    return { records, seqs };
+  }
+
+  /** `conversationId` and its sub-agents' conversations at any depth (at most 16 levels). */
+  private async subtreeOf(conversationId: string): Promise<string[]> {
+    const all = [conversationId];
+    let level = [conversationId];
+    for (let depth = 0; depth < 16 && level.length > 0; depth++) {
+      const rows = await this.db
+        .selectFrom("conversations")
+        .select("id")
+        .where("parent_conversation_id", "in", level)
+        .execute();
+      level = rows.map((r) => r.id).filter((id) => !all.includes(id));
+      all.push(...level);
+    }
+    return all;
+  }
+
+  /**
+   * 系统写的 `approval_decided`（超时 / 取消，处理人为 null；跳过，处理人为消息作者），在当前事务内；返回事件 seq。
+   */
   private async decidedEvent(
     a: ApprovalRecord,
-    decision: "expired" | "cancelled",
+    decision: "expired" | "cancelled" | "skipped",
+    byAccountId: string | null = null,
   ): Promise<number> {
     const written = await this.eventLog.appendIn(a.conversationId, [
       {
         type: "approval_decided",
         runId: a.runId,
         idemKey: `approval_decided:${a.id}`,
-        payload: { approvalId: a.id, callId: a.callId, decision, byAccountId: null },
+        payload: { approvalId: a.id, callId: a.callId, decision, byAccountId },
       },
     ]);
     return Math.max(...written.map((e) => e.seq));
@@ -860,7 +1499,7 @@ export class ApprovalsService {
       const prefix = app ? connectorToolKey(app.slug, "") : undefined;
       return [
         {
-          ...r,
+          ...publicRecord(r),
           toolName:
             prefix !== undefined && r.toolKey.startsWith(prefix)
               ? r.toolKey.slice(prefix.length)

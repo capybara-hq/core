@@ -8,7 +8,8 @@ import { drain } from "../src/commands/drain.js";
 import { start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { pidPath, writePid } from "../src/pid.js";
-import { writeCredential } from "../src/state.js";
+import type { PolicyStore } from "../src/policy-store.js";
+import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
 let dir: string;
@@ -125,6 +126,33 @@ describe("start, stop, drain", () => {
     });
     expect(code).toBe(1);
     expect(err[0]).toMatch(/policy\.json is invalid: cpu must/);
+  });
+
+  it("the executor gets a policy store that follows policy.json while serving", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
+    let store: PolicyStore | undefined;
+    let served: PolicyStore | undefined;
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: Object.assign(new EventEmitter(), { pid: 4500 }) as never,
+      createExecutor: (_cred, s) => {
+        store = s;
+        return new FakeExecutor();
+      },
+      connect: (_cred, _ex, opts) => {
+        served = opts?.policy;
+        return { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
+      },
+    });
+    expect(code).toBe(0);
+    // The policy op and the hello work on the store the executor reads.
+    expect(served).toBe(store);
+    expect(store?.current().allowedDomains).toEqual(["a.com"]);
+    writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["b.com"] });
+    expect(store?.current().allowedDomains).toEqual(["b.com"]);
   });
 
   it("stop and drain signal the running pid, and fail when none runs", () => {
