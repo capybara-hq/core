@@ -284,6 +284,7 @@ describe("registry without a sandbox provider", () => {
       "Deliver",
       "TaskOutput",
       "TaskStop",
+      "TaskList",
     ];
     for (const t of names) {
       expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(t);
@@ -913,9 +914,18 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
   it("descriptions name no root path and no operating system (the agreed wording)", () => {
     const d = device();
     const specs = [
-      ...["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver", "TaskOutput", "TaskStop"].map(
-        (n) => d.tool(n).spec,
-      ),
+      ...[
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Deliver",
+        "TaskOutput",
+        "TaskStop",
+        "TaskList",
+      ].map((n) => d.tool(n).spec),
       skillLoadTool({} as never).spec,
     ];
     for (const spec of specs) {

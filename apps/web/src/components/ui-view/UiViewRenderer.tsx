@@ -118,9 +118,10 @@ function isEmptyListBlock(block: UiBlock): boolean {
 
 /**
  * A view with nothing to show: no blocks, or only list blocks without items (the todo panel with no
- * tasks). The host then draws one empty state in place of the blocks.
+ * items). The host then draws one empty state in place of the blocks; a properties section is not
+ * drawn at all.
  */
-function isEmptyView(view: UiView): boolean {
+export function isEmptyView(view: UiView): boolean {
   return view.blocks.every(isEmptyListBlock);
 }
 
@@ -232,8 +233,8 @@ export function UiViewRenderer({
   onOpen?(target: UiOpen): void;
   /**
    * The empty state's style when the view has nothing to show (spec §6.18): `panel` (default) in a
-   * box (a properties section, a right panel, an inline card, a file preview); `page` for an
-   * extension's own page.
+   * box (a right panel, an inline card, a file preview; an empty properties section is not drawn);
+   * `page` for an extension's own page.
    */
   emptySize?: "page" | "panel";
 }) {

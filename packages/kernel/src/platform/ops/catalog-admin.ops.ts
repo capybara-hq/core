@@ -15,6 +15,7 @@ import {
 import { type AppearanceResult, AppearanceService } from "../../catalog/appearance.service.js";
 import { CatalogService } from "../../catalog/catalog.service.js";
 import { CatalogScopeService, type ScopePreview } from "../../catalog/catalog-scope.service.js";
+import { PlatformImportUpdate } from "../../catalog/platform-import-update.js";
 import { PluginImport, type PluginReview } from "../../catalog/plugin-import.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -149,6 +150,7 @@ export class CatalogAdminOperations implements OnModuleInit {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    @Inject(PlatformImportUpdate) private readonly importUpdate: PlatformImportUpdate,
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
     @Inject(ThemesService) private readonly themes: ThemesService,
@@ -356,6 +358,31 @@ export class CatalogAdminOperations implements OnModuleInit {
             next: CONFIRM_ON_WEB,
           };
         },
+      }),
+      defineOperation({
+        id: "plugins.import-update-preview",
+        description:
+          "Preview what a staged new version of an installed platform plugin does as the platform update (super admin): every component's change, the extension step and the org connectors it touches. Nothing is imported or changed; the person confirms the review and the update together on the web (reviewUrl).",
+        input: z.object({ stagingId: StagingId }).strict(),
+        example: { stagingId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/catalog/imports/:stagingId/update-preview"],
+        confirm: "read",
+        errors: [
+          {
+            code: "plugin.staging_not_found",
+            next: "The staged import expired (24 hours) or was confirmed already: prepare it again with plugins.import-npm or plugins.import-git.",
+          },
+          {
+            code: "plugin.upgrade_target_invalid",
+            next: "The plugin is not installed on the platform yet (reason not_installed: the review installs it), or the platform cannot move to this version (the details say why).",
+          },
+        ],
+        run: async (input) => ({
+          preview: await this.importUpdate.preview(input.stagingId),
+          reviewUrl: reviewUrl(input.stagingId),
+          next: CONFIRM_ON_WEB,
+        }),
       }),
       defineOperation({
         id: "plugins.scope-preview",

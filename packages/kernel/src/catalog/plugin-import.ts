@@ -431,6 +431,19 @@ export interface PluginConfirmResult {
    * extension (applied at once, plan Task 6).
    */
   firstVersion: boolean;
+  /**
+   * A confirm with `deploy: false` that approved the extension's permissions (its snapshot
+   * written): what {@link PluginImport.restoreApproval} needs to put the previous approval back
+   * when the step that was to deploy it fails. Never sent over HTTP (the route always deploys).
+   */
+  approval?: HeldApproval;
+}
+
+/** The approval a confirm without its deploy wrote (see {@link PluginConfirmResult.approval}). */
+export interface HeldApproval {
+  review: PluginReview;
+  extension: PluginReviewExtension;
+  previous: PreviousSnapshot | null;
 }
 
 /** What prepare checks besides the package itself (npm and marketplace imports). */
@@ -459,7 +472,7 @@ export interface ReviewProvenance {
 const NOT_NPM: ReviewProvenance = { provenance: { checked: false, reason: "not an npm package" } };
 
 /** The snapshot overwritten at confirm (restored when deploying an upgrade fails). */
-interface PreviousSnapshot {
+export interface PreviousSnapshot {
   version: string;
   permissions: PermissionSet;
   approvedBy: string | null;
@@ -1167,8 +1180,10 @@ export class PluginImport {
    * whether the item exists (a new version of the org's own plugin) or the version is imported
    * already (F4), and the target as the platform updater reads it: the staged manifest and files,
    * or the imported version's for a retry. Another org's staging -> 404 `plugin.staging_not_found`.
+   * Without `owner`: a platform staging, and `existing` means a live platform-owned item (the
+   * platform's import and update, `PlatformImportUpdate`).
    */
-  async stagedTarget(stagingId: string, owner: ImportOwner): Promise<StagedTarget> {
+  async stagedTarget(stagingId: string, owner?: ImportOwner): Promise<StagedTarget> {
     if (!UUID_RE.test(stagingId)) throw notFound();
     const row = await this.db
       .selectFrom("plugin_import_staging")
@@ -1185,7 +1200,9 @@ export class PluginImport {
       .select(["id", "awaiting_confirmation"])
       .where("id", "=", staged.itemId)
       .where("deleted_at", "is", null)
-      .where("owner_org_id", "=", owner.orgId)
+      .where((eb) =>
+        owner === undefined ? eb("owner_org_id", "is", null) : eb("owner_org_id", "=", owner.orgId),
+      )
       .executeTakeFirst();
     const imported =
       staged.retry === true
@@ -1259,6 +1276,13 @@ export class PluginImport {
       orgs?: string[];
       /** An org upload's new item: shared with other orgs by its owner (default false, P3-16). */
       shareable?: boolean;
+      /**
+       * Deploy the extension after the commit (default true). false (the platform's import and
+       * update, `PlatformImportUpdate`) leaves the deployment to the platform update that follows,
+       * which moves the extension with its own rollback; the approval written is returned in
+       * `approval`.
+       */
+      deploy?: boolean;
     },
     opts: ActorOpts & { owner?: ImportOwner } = {},
   ): Promise<PluginConfirmResult> {
@@ -1340,6 +1364,19 @@ export class PluginImport {
         deploy: null,
         pending: true,
         firstVersion: false,
+      };
+    }
+    if (input.deploy === false) {
+      return {
+        item: await this.itemView(committed.itemId),
+        created: committed.created,
+        deploy: null,
+        pending: false,
+        firstVersion: committed.firstVersion,
+        ...(now &&
+          committed.previous !== undefined && {
+            approval: { review, extension: now, previous: committed.previous },
+          }),
       };
     }
     const deploy =
@@ -1841,6 +1878,18 @@ export class PluginImport {
       this.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
       return { ...base, result: "failed", ...failure(e) };
     }
+  }
+
+  /**
+   * Puts back the approval a confirm with `deploy: false` wrote, after the step that was to deploy
+   * the extension failed (see {@link restoreSnapshot}; false when someone changed it meanwhile).
+   */
+  async restoreApproval(
+    actor: string | null,
+    held: HeldApproval,
+    opts: ActorOpts = {},
+  ): Promise<boolean> {
+    return this.restoreSnapshot(actor, held.review, held.extension, held.previous, opts);
   }
 
   /**

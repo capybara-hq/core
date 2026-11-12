@@ -1,5 +1,28 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.25
+
+### Patch Changes
+
+- c619811: A transactional outbox: work that must follow a commit is a row in `capybara.outbox` written in the
+  same transaction (`OutboxService.add`), delivered right after the commit by a fast path and, when
+  that fails, by a relay on the worker role every 2 s; failures back off and after 20 attempts the
+  row is a dead letter the super admin sees in the overview (无法排入队列的后台任务) and can retry or
+  discard (`/api/v1/admin/outbox/dead`, Platform operations). New checks `kc-enqueue-via-outbox`,
+  `kc-after-commit-hint` and `check:outbox-registry` (migration 0119).
+- b8a3c5b: Runs follow the transactional outbox: a run's job, its ensure-run backstop, resumes, wait timeouts,
+  sub-agent dispatches, deliveries and tree stops are owed in the transactions that cause them. A run
+  nobody runs any more is repaired by one `run-orphan-check` (worker role, every minute): a running
+  run whose replica died is failed `run.orphaned` and reported to its parent; a queued run whose job
+  the queue lost is queued again and shown in the admin overview (队列丢失了后台任务). Reading a
+  conversation (events, SSE) no longer changes run state, the wait sweep is gone, and a finished run
+  cancels its pending approvals and questions in its terminal transaction. The dual-replica harness
+  fails `stop()` when the replicas left a queued run without its job.
+- Updated dependencies [ba36733]
+- Updated dependencies [e76028b]
+- Updated dependencies [8f08231]
+  - @capybara-hq/design@0.2.0-rc.8
+
 ## 0.1.0-rc.24
 
 ### Patch Changes

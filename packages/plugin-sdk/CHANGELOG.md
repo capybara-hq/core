@@ -1,5 +1,17 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.18
+
+### Patch Changes
+
+- 67e6ad5: A local OS-sandboxed device now kills what a foreground command leaves running (`server &`,
+  `nohup …`) when the command ends, by its process group and by a per-command marker for processes
+  that left the group. Inside the sandbox no later command could signal them, so they leaked. A
+  background task launch, whose command starts with the new `BACKGROUND_LAUNCH_LINE`
+  (`@capybara-hq/plugin-sdk`), keeps what it starts. The `Bash` description tells the model to use
+  `run_in_background` for servers and watchers.
+- e76028b: ScheduleCalendar: the scheduled task runs of a week or a month (time grid with a now line, three blocks side by side then +N, a dense lane, 6 × 7 month cells, the phone agenda, roving keyboard focus, loading, empty and load-failed states); the layout.calendar-* sizes and the ink / fail on hover and selected contrast pairs (also in the SDK's theme readability check)
+
 ## 0.1.0-rc.17
 
 ### Patch Changes

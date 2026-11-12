@@ -1,5 +1,66 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.24
+
+### Minor Changes
+
+- c619811: A transactional outbox: work that must follow a commit is a row in `capybara.outbox` written in the
+  same transaction (`OutboxService.add`), delivered right after the commit by a fast path and, when
+  that fails, by a relay on the worker role every 2 s; failures back off and after 20 attempts the
+  row is a dead letter the super admin sees in the overview (无法排入队列的后台任务) and can retry or
+  discard (`/api/v1/admin/outbox/dead`, Platform operations). New checks `kc-enqueue-via-outbox`,
+  `kc-after-commit-hint` and `check:outbox-registry` (migration 0119).
+- b8a3c5b: Runs follow the transactional outbox: a run's job, its ensure-run backstop, resumes, wait timeouts,
+  sub-agent dispatches, deliveries and tree stops are owed in the transactions that cause them. A run
+  nobody runs any more is repaired by one `run-orphan-check` (worker role, every minute): a running
+  run whose replica died is failed `run.orphaned` and reported to its parent; a queued run whose job
+  the queue lost is queued again and shown in the admin overview (队列丢失了后台任务). Reading a
+  conversation (events, SSE) no longer changes run state, the wait sweep is gone, and a finished run
+  cancels its pending approvals and questions in its terminal transaction. The dual-replica harness
+  fails `stop()` when the replicas left a queued run without its job.
+- 36d904d: Usage reports follow the transactional outbox: a `usage.report` delivery is owed in the transaction
+  that writes the usage it reports (a model call's, compaction's, title's or `WebFetch` extraction's
+  `usage` event, an embed call's `model_usage` row), while the deployment has at least one enabled
+  extension that declares the hook. That is read from the database (cached 30 s per replica, cleared
+  when plugins change), so a replica without the handler still owes the report another replica
+  delivers. Usage written while no extension subscribed is not reported later. The usage sweep, its
+  watermark table (migration 0120) and `hooks.usageReportKeepHours` are gone: finished delivery jobs
+  are kept 24 hours.
+  
+  IM delivery is owed too: an event append to a conversation with a channel target (a reply, an
+  approval decision, a question answer, a wait stop) adds the conversation's deliver job to the outbox
+  in its own transaction, and binding a conversation to its IM target owes the first one with it, so a
+  crash or a Redis outage after the commit no longer loses the reply or the card update. A
+  conversation without a channel target writes nothing more. The in-process
+  `conversation.event-appended` and `run.wait-stopped` events are gone; `run.started` stays a hint
+  that starts streaming drafts at once.
+
+### Patch Changes
+
+- ba36733: A device's recent sandbox changes now list the policy changes its owner makes on the machine
+  (`capybara-device policy ...`: tier from and to, localhost, allowed domains added and removed,
+  isolation, remote grants) as 本机 beside the web's, each change once.
+- 9370947: Updating an installed platform plugin to a newer version is one wizard: 更新到 vX on the admin
+  plugin list, the plugin's page and the marketplace tab stages the version and shows the import
+  review, then the platform update preview; one confirm applies both (`GET
+  /api/v1/admin/catalog/imports/:stagingId/update-preview`, `POST …/imports/:stagingId/update`).
+  Cancelling writes nothing; an update failing after the import says so (409
+  `plugin.imported_not_updated`) and leaves the platform on its version. An installed plugin is no
+  longer imported on its own; the 版本 tab moves the platform to another imported version (更新到 /
+  回退到). A plugin not installed yet shows 安装 instead of 导入 / 引入.
+- e2731bd: New builtin tool `TaskList`, offered with `Bash` like `TaskOutput` and `TaskStop`: it lists the
+  conversation's own background tasks (running first, then the 20 most recently finished, with id,
+  description, status, elapsed time, exit code and output file) and the sub-agents it dispatched.
+  Read-only and allowed by default; `status: "running"` lists only what still runs. `TaskOutput`'s
+  not-found error and the `Bash` description point to it.
+- 86c258c: Agent runs have no step limit and no duration limit by default: `runtime.maxSteps` and
+  `runtime.maxRunSeconds` default to 0 (no limit), so a run goes on until the model stops calling
+  tools or someone stops it. Without a run duration limit, sandbox commands are limited only by
+  `sandbox.limits.maxCommandSeconds` and the tool timeouts; explicit positive limits work as before.
+- Updated dependencies [67e6ad5]
+- Updated dependencies [e76028b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.18
+
 ## 0.1.0-rc.23
 
 ### Patch Changes

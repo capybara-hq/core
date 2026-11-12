@@ -21,6 +21,7 @@ import { getPlatformInbox, getPlatformInboxCount } from "../admin-inbox";
 import {
   getCatalogItem,
   getStagedImport,
+  getStagedUpdatePreview,
   listCatalogItems,
   listDeploymentRequests,
   listMarketplaceEntries,
@@ -269,6 +270,17 @@ export const stagedImportQuery = (stagingId: string) =>
   defineQuery({
     key: d().stagedImport(stagingId),
     fn: () => getStagedImport(stagingId),
+    freshness: "deployment",
+  });
+
+/**
+ * The platform update a staged new version of an installed plugin applies (the 更新到 wizard's
+ * update preview; `plugin.upgrade_target_invalid` when it is not installed).
+ */
+export const stagedUpdatePreviewQuery = (stagingId: string) =>
+  defineQuery({
+    key: d().stagedUpdatePreview(stagingId),
+    fn: () => getStagedUpdatePreview(stagingId),
     freshness: "deployment",
   });
 
