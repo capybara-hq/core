@@ -14,8 +14,9 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
+import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../src/runtime/run-orphan-check.job.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
-import { Waits } from "../../src/runtime/waits.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -237,9 +238,10 @@ describe("forked skills across two replicas", () => {
     expect(a2).toBeDefined();
   }, 120_000);
 
-  it("a lost enqueue of the sub-agent: both replicas sweep, it runs once and the parent answers", async () => {
+  it("a sub-agent job the queue lost: both replicas run the run-orphan-check, it runs once and the parent answers", async () => {
     const a = await boot();
     const b = await boot();
+    for (const k of [a, b]) k.app.get(LockedIntervalScheduler).stop(RUN_ORPHAN_CHECK_JOB);
     const reqA = await login(a);
     const { orgId, conv } = await setup(a, reqA);
     await subQueue.pause();
@@ -250,8 +252,11 @@ describe("forked skills across two replicas", () => {
     await dropChildJobs(subQueue, [child.conversationId]);
     await backdateRun(db, child.runId);
     await subQueue.resume();
-    const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
-    expect(ra.requeued + rb.requeued).toBeGreaterThanOrEqual(1);
+    const [ra, rb] = await Promise.all([
+      a.app.get(RunOrphanCheck).check(),
+      b.app.get(RunOrphanCheck).check(),
+    ]);
+    expect(ra.queuedReadded + rb.queuedReadded).toBeGreaterThanOrEqual(1);
     await waitForTerminal(db, conv, 1, 30_000);
     await sleep(500);
     const cev = await eventsOf(db, child.conversationId);

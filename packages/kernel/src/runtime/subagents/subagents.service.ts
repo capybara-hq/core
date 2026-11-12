@@ -63,7 +63,7 @@ export class SubagentsService {
       purposes,
       registry,
       config,
-      enqueue: (data, jobId, kind) => jobs.enqueue(data, jobId, kind),
+      owe: (data, jobId, kind, orgId) => jobs.owe(data, jobId, kind, orgId),
       log,
       invoker,
       commitDispatch: (a, plan, child) => this.commitDispatch(a, plan, child),

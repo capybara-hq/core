@@ -44,7 +44,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 type T = ReturnType<typeof useTranslations<"admin.overview.attention">>;
 
 /** Where the "+n" row of a capped list leads: the page that lists them all. */
-const MORE_HREF: Record<Exclude<AttentionSource, "outbox">, string> = {
+const MORE_HREF: Record<Exclude<AttentionSource, "outbox" | "queue">, string> = {
   extensions: "/admin/extensions",
   updates: "/admin/plugins",
   providers: "/admin/models",
@@ -59,10 +59,11 @@ const reasonOf = (e: AttentionExtension, t: T): string =>
     : t(`reasons.${e.reason}`);
 
 /**
- * 待处理 (spec §6.1): one section with up to five groups, each only when it has rows: the inbox by
+ * 待处理 (spec §6.1): one section with up to six groups, each only when it has rows: the inbox by
  * type (a count per type, each linking where it is handled), extensions needing a look, plugins
- * with a newer marketplace version, model providers with problems and background work the kernel
- * could not queue (dead outbox rows, each with 重试 and 丢弃: transactional outbox spec §3.4).
+ * with a newer marketplace version, model providers with problems, background work the kernel
+ * could not queue (dead outbox rows, each with 重试 and 丢弃: transactional outbox spec §3.4) and
+ * the run queue's lost jobs (Redis lost data; the runs were queued again: spec §8.3).
  * Reads the cached inbox (the layout prefetched it) and the attention lists, which are not
  * prefetched (a provider's model list may be slow), so this section draws its own skeleton and its
  * own error with 重试.
@@ -120,8 +121,9 @@ const NO_ATTENTION: AdminAttention = {
   updates: [],
   providers: [],
   outbox: [],
-  more: { extensions: 0, updates: 0, providers: 0, outbox: 0 },
-  unavailable: ["extensions", "updates", "providers", "outbox"],
+  queue: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
+  unavailable: ["extensions", "updates", "providers", "outbox", "queue"],
 };
 
 function AttentionGroups({
@@ -144,7 +146,7 @@ function AttentionGroups({
   const attention = read ?? NO_ATTENTION;
   const unavailable = new Set<string>(attention.unavailable);
   if (inbox === null) unavailable.add("inbox");
-  const more = (source: Exclude<AttentionSource, "outbox">): ItemListRow[] =>
+  const more = (source: Exclude<AttentionSource, "outbox" | "queue">): ItemListRow[] =>
     attention.more[source] > 0
       ? [
           {
@@ -209,6 +211,17 @@ function AttentionGroups({
       title: t("groups.outbox"),
       rows: attention.outbox.map((o) => ({ id: o.kind, title: o.kind })),
       source: "outbox",
+    },
+    {
+      id: "queue",
+      title: t("groups.queue"),
+      rows: attention.queue.map((q) => ({
+        id: q.kind,
+        title: t("queue.lostJobs"),
+        meta: t("queue.hint"),
+        status: { label: t("queue.count", { n: q.count }), tone: "accent" },
+      })),
+      source: "queue",
     },
   ];
   // A group shows when it has rows, or when its list could not be read (it says so).

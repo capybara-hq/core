@@ -234,8 +234,13 @@ describe("审批等待", () => {
       .where("id", "=", approvalIdOf(event))
       .executeTakeFirstOrThrow();
     expect(approval).toMatchObject({ run_id: runId, status: "pending", requested_for: ownerId });
-    // 超时任务已投递（延迟到 expires_at）
-    const job = await maint.getJob(waitTimeoutJobId(approval.id));
+    // the timeout job is owed with the suspend (delayed to expires_at): the relay delivers it at
+    // its next tick (a delayed row skips the fast path, ruling R20)
+    const job = await waitFor(
+      () => maint.getJob(waitTimeoutJobId(approval.id)),
+      10_000,
+      "the timeout job delivered",
+    );
     expect(job).toBeTruthy();
     expect(await job?.isDelayed()).toBe(true);
 

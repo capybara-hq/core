@@ -16,8 +16,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
@@ -159,10 +157,34 @@ export const NO_REPLY_SKIPS: ReplySkips = { questions: [], network: [], seqs: ne
 
 /** 会话服务用到的运行控制：投递运行（RunQueue）与跨副本中止（RunAbort）。 */
 export interface RunControl {
-  /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
-  ensureRun(conversationId: string): Promise<string | null>;
+  /**
+   * The direct `ensureRun` after a commit that owes the ensure-run backstop: a failure is logged,
+   * never thrown (transactional outbox spec §6).
+   */
+  ensureRunAfterCommit(conversationId: string): Promise<void>;
+  /**
+   * Owes the ensure-run backstop in the caller's transaction (transactional outbox spec §6): `seq`
+   * is the event it wrote (or the conversation's newest), `orgId` the conversation's.
+   */
+  oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean>;
   /** After a root's queue was unpaused: the wakes it held for its tree (agent map spec §5.3). */
   wakeHeldTree(rootId: string): Promise<void>;
+  /**
+   * In the transaction that may release a root's hold: owes the ensure-run backstop of each
+   * sub-agent {@link wakeHeldTree} wakes after the commit (transactional outbox spec §6).
+   */
+  oweHeldTreeIn(rootId: string): Promise<void>;
+  /**
+   * In a decision's transaction, after its decided rows: resumes the waiting run when it waits on
+   * nothing else (lock order: conversations, decided rows, runs).
+   */
+  resumeIn(runId: string, waitId: string): Promise<unknown>;
+  /** In a root's delete transaction: owes the stop of its sub-agent tree (`stop-tree`). */
+  oweStopDeletedTree(
+    conversationId: string,
+    byAccountId: string | null,
+    orgId: string,
+  ): Promise<boolean>;
   /**
    * 运行是孤儿（会话锁空闲、任务已不存在，没有 worker 会收到中止广播）时直接把它写成 aborted，返回 true；
    * 否则返回 false。
@@ -346,7 +368,6 @@ export class ConversationsService {
     @Inject(RunControlService) private readonly runs: RunControl,
     /** Resolves a switched-to model and its declared parameters (UI refresh B). */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** Reads `@` resources with the sender's credentials. */
     @Inject(ConnectorContent)
     private readonly content: Pick<ConnectorContent, "resolveAttachments">,
@@ -370,18 +391,6 @@ export class ConversationsService {
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
-
-  /**
-   * 不阻塞地调用一次 `ensureRun`（打开 SSE、读事件时）：它幂等，并顺带清理孤儿运行，
-   * 会话不会因为某次运行结束后的投递失败而永远停在「运行中」。失败只记日志。
-   */
-  kickRun(conversationId: string): void {
-    this.runs
-      .ensureRun(conversationId)
-      .catch((err) =>
-        this.log.warn("ensureRun on conversation open failed", { conversationId, err }),
-      );
-  }
 
   /**
    * Creates an empty conversation bound to its device (`pick`, see
@@ -458,7 +467,7 @@ export class ConversationsService {
       return raced;
     }
     await this.eventLog.notify(id, written.seq);
-    await this.runs.ensureRun(id);
+    await this.startRun(id);
     return { conversation: await this.rowView(id), event: written, events: all, created: true };
   }
 
@@ -545,8 +554,16 @@ export class ConversationsService {
     const events = (await this.eventLog.readAfter(row.id, 0, event.seq)).filter(
       (e) => e.seq <= event.seq,
     );
-    await this.runs.ensureRun(row.id);
+    await this.startRun(row.id);
     return { conversation: toView(row), event, events, created: false };
+  }
+
+  /**
+   * The direct `ensureRun` after a message's commit ({@link RunControl.ensureRunAfterCommit}): a
+   * failure never fails the request, since the message's transaction owes the ensure-run backstop.
+   */
+  private startRun(conversationId: string): Promise<void> {
+    return this.runs.ensureRunAfterCommit(conversationId);
   }
 
   private async rowView(id: string): Promise<ConversationView> {
@@ -619,7 +636,7 @@ export class ConversationsService {
     } catch (e) {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
-    await this.markDeleted(conversationId);
+    await this.markDeleted(orgId, conversationId, accountId);
     // after the mark, so no finish or delivery of the stops below can start a run on the deleted
     // root (`ensureRun` refuses it). The sandbox's tasks stop first, so the sub-agents' tasks end
     // as a deletion; the tree stop then only stops a task a sub-agent started in between
@@ -630,14 +647,20 @@ export class ConversationsService {
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 
-  // the publish happens after the commit, in the caller
+  // the publish happens after the commit, in the caller; the tree stop after it is owed here
+  // (transactional outbox spec §6), so a process that dies before it still stops the tree
   @Transactional()
-  private async markDeleted(conversationId: string): Promise<void> {
+  private async markDeleted(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+  ): Promise<void> {
     await this.db
       .updateTable("conversations")
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", conversationId)
       .execute();
+    await this.runs.oweStopDeletedTree(conversationId, accountId, orgId);
     // Queued messages must not start a run on a deleted conversation
     await this.db
       .deleteFrom("conversation_queue")
@@ -1046,7 +1069,10 @@ export class ConversationsService {
     return rootConversationOf(this.db.db, row.parent_conversation_id);
   }
 
-  /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */
+  /**
+   * 读事件（先做 `get` 的可见性判定）. A read never changes run state (transactional outbox spec
+   * §6): a run nobody runs is the `run-orphan-check`'s to repair.
+   */
   async listEvents(
     orgId: string,
     conversationId: string,
@@ -1055,14 +1081,13 @@ export class ConversationsService {
     limit: number,
   ): Promise<ConversationEvent[]> {
     await this.get(orgId, conversationId, viewerAccountId);
-    this.kickRun(conversationId);
     return this.eventLog.readAfter(conversationId, afterSeq, limit);
   }
 
   /**
    * The turn-aligned page of events before `beforeSeq` (`null`: the log's last page), with how
    * many runs started before it ({@link EventLog.readTurnPageBefore}; history paging spec §2).
-   * Visibility as {@link get}; kicks a stalled run as {@link listEvents} does.
+   * Visibility as {@link get}; a read only, as {@link listEvents}.
    */
   async listEventsBefore(
     orgId: string,
@@ -1072,14 +1097,14 @@ export class ConversationsService {
     limit: number,
   ): Promise<{ events: ConversationEvent[]; turnsBefore: number }> {
     await this.get(orgId, conversationId, viewerAccountId);
-    this.kickRun(conversationId);
     return this.eventLog.readTurnPageBefore(conversationId, beforeSeq, limit, EVENTS_TURN_EXTEND);
   }
 
   /**
    * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
    * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
-   * 投递失败时抛错（消息已写入；客户端带同一 `clientMessageId` 重试会再次触发投递）。
+   * A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
+   * backstop, which starts the run once the queue is reachable (transactional outbox spec §6).
    *
    * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
    * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
@@ -1108,7 +1133,7 @@ export class ConversationsService {
         userMessageIdemKey(input.clientMessageId),
       );
       if (existing) {
-        await this.runs.ensureRun(conversationId);
+        await this.startRun(conversationId);
         return existing;
       }
     }
@@ -1149,7 +1174,7 @@ export class ConversationsService {
         .execute();
       await this.eventLog.publishChanged(conversationId, "archived");
     }
-    await this.runs.ensureRun(conversationId);
+    await this.startRun(conversationId);
     return event;
   }
 
@@ -1241,6 +1266,13 @@ export class ConversationsService {
    * conversations (network ask-to-allow spec §6.7). The queue's "send now" uses it as the direct
    * send does; announce after the commit with {@link announceSkipped}. `toSeq` is the highest seq
    * written in this conversation (null: none).
+   *
+   * Lock order: this (root) conversation (the caller's), its pending questions, the sub-agents'
+   * conversations with a pending network ask (id order), the asks themselves (the root's and the
+   * sub-agents'), and only then the run rows, as each skipped wait's run resumes in this
+   * transaction. Every run row comes after every conversation and decided row (ruling R19); a
+   * sub-agent's conversation comes after the root's questions, which only this path locks with a
+   * sub-agent conversation after them.
    */
   @Transactional({ propagation: "mandatory" })
   async skipWaitsIn(
@@ -1250,6 +1282,7 @@ export class ConversationsService {
   ): Promise<{ skipped: ReplySkips; toSeq: number | null }> {
     const q = await this.questions.skipPendingIn(conversationId, accountId, messageSeq);
     const n = await this.approvals.skipNetworkIn(conversationId, accountId);
+    for (const w of [...q.records, ...n.records]) await this.runs.resumeIn(w.runId, w.id);
     const here = n.seqs.get(conversationId);
     const toSeq = q.toSeq === null && here === undefined ? null : Math.max(q.toSeq ?? 0, here ?? 0);
     return { skipped: { questions: q.records, network: n.records, seqs: n.seqs }, toSeq };
@@ -1258,7 +1291,7 @@ export class ConversationsService {
   /**
    * After the commit: announces each skipped question (`question.answered`, outcome `skipped`) and
    * network ask (`approval.decided`, status `skipped`; a sub-agent's conversation is notified
-   * first), so its run resumes (waits) and its IM card updates (channel jobs).
+   * first), so its IM card updates (channel jobs); the run resumed in the message's transaction.
    */
   async announceSkipped(skipped: ReplySkips): Promise<void> {
     for (const q of skipped.questions) {
@@ -1330,6 +1363,9 @@ export class ConversationsService {
     );
     const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
     const message = written.at(-1) as ConversationEvent;
+    // the run this message starts is owed with it: the direct ensureRun after the commit may never
+    // happen (the process died) or fail (transactional outbox spec §6)
+    if (fresh.at(-1) === true) await this.runs.oweEnsureRun(conversationId, message.seq, orgId);
     const skips =
       fresh.at(-1) === true
         ? await this.skipWaitsIn(conversationId, accountId, message.seq)
@@ -1478,13 +1514,15 @@ export class ConversationsService {
     if (!run) throw new ApiError("run.not_active", "No active run to abort");
     const runs = this.runs;
     // 等待中：直接结束；没成功（刚被续跑、已回到 queued）则按下面的常规路径中止。
+    // the stop's terminal transaction owed the ensure-run backstop; the direct call starts what
+    // waited for the stopped run now
     if (run.status === "waiting" && (await runs.abortWaiting(conversationId, run.id, accountId))) {
-      this.kickRun(conversationId);
+      await runs.ensureRunAfterCommit(conversationId);
       return run.id;
     }
     // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。
     if (await runs.abortIfOrphaned(conversationId, run.id, accountId)) {
-      this.kickRun(conversationId);
+      await runs.ensureRunAfterCommit(conversationId);
       return run.id;
     }
     await runs.requestAbort(run.id, accountId);

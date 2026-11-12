@@ -14,7 +14,8 @@ import {
  * `packages/kernel/src/infra/outbox/registry.ts` has
  *
  * - a non-empty `idempotent` sentence (why a duplicate delivery is harmless), and
- * - a `processedIn` that is an existing file containing `@Processor(` and mentioning the job
+ * - a `processedIn` that is an existing file containing `@Processor(` (or `configuredProcessor(`,
+ *   which applies `@Processor` with the startup config's worker options) and mentioning the job
  *   name: a string literal equal to it, or an identifier of an exported constant whose value is
  *   it (`export const WAKE_JOB = "bg-wake"` anywhere in the kernel source).
  *
@@ -23,6 +24,8 @@ import {
  */
 export const REGISTRY_FILE = "packages/kernel/src/infra/outbox/registry.ts";
 const RULE = "outbox-registry";
+/** A processor: a `@Processor(` class, or one registered through `configuredProcessor(`. */
+const PROCESSOR = /@Processor\(|\bconfiguredProcessor\(/;
 
 const isNode = (v: unknown): v is Node =>
   typeof v === "object" && v !== null && typeof (v as Node).type === "string";
@@ -127,8 +130,11 @@ export function checkOutboxRegistry(root: string): Finding[] {
       continue;
     }
     const text = readFileSync(path, "utf8");
-    if (!text.includes("@Processor(")) {
-      report(entry, `job "${name}": ${processedIn} has no @Processor( class`);
+    if (!PROCESSOR.test(text)) {
+      report(
+        entry,
+        `job "${name}": ${processedIn} has no @Processor( class (nor a configuredProcessor( provider)`,
+      );
       continue;
     }
     const p = parseFile(path);

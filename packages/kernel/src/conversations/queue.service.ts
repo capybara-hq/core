@@ -65,9 +65,12 @@ export class ConversationQueue {
       | "skipWaitsIn"
       | "announceSkipped"
     >,
-    /** Starts the conversation's next run (`ensureRun`). */
+    /** Starts the conversation's next run after a commit (a failure is logged, never thrown). */
     @Inject(RunControlService)
-    private readonly runs: Pick<RunControl, "ensureRun" | "wakeHeldTree">,
+    private readonly runs: Pick<
+      RunControl,
+      "ensureRunAfterCommit" | "oweEnsureRun" | "wakeHeldTree" | "oweHeldTreeIn"
+    >,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -158,7 +161,7 @@ export class ConversationQueue {
     }
     if (out.created) {
       await this.eventLog.publishChanged(conversationId, "queue");
-      await this.runs.ensureRun(conversationId);
+      await this.runs.ensureRunAfterCommit(conversationId);
     }
     return { item: toItem(out.row), created: out.created };
   }
@@ -176,9 +179,9 @@ export class ConversationQueue {
     internal: InternalMessageOptions,
   ): Promise<{ row: QueueRow; created: boolean } | null> {
     const t = this.db.db;
-    await t
+    const conv = await t
       .selectFrom("conversations")
-      .select("id")
+      .select("last_seq")
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirstOrThrow();
@@ -236,6 +239,9 @@ export class ConversationQueue {
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
+    // on an idle conversation the item goes out at once: owed with it (no event of its own, so
+    // under the conversation's newest seq; transactional outbox spec §6)
+    await this.runs.oweEnsureRun(conversationId, conv.last_seq, orgId);
     return { row, created: true };
   }
 
@@ -347,6 +353,8 @@ export class ConversationQueue {
     // a task's queued message deleted by a person: its run is skipped (scheduled tasks §6)
     await releaseQueuedTaskRunIn(t, gone.schedule);
     await unpauseIfEmpty(t, conversationId);
+    // the wakes an unpause releases for the tree are owed with it (transactional outbox spec §6)
+    await this.runs.oweHeldTreeIn(conversationId);
   }
 
   /**
@@ -364,6 +372,7 @@ export class ConversationQueue {
   ): Promise<ConversationEvent> {
     await this.conversations.writable(orgId, conversationId, accountId);
     const { event, fresh, switched, unarchived, skipped, toSeq } = await this.sendNowIn(
+      orgId,
       conversationId,
       itemId,
     );
@@ -372,7 +381,7 @@ export class ConversationQueue {
     if (switched) await this.eventLog.publishChanged(conversationId, "selection");
     if (unarchived) await this.eventLog.publishChanged(conversationId, "archived");
     await this.eventLog.publishChanged(conversationId, "queue");
-    await this.runs.ensureRun(conversationId);
+    await this.runs.ensureRunAfterCommit(conversationId);
     await this.runs.wakeHeldTree(conversationId);
     return event;
   }
@@ -380,6 +389,7 @@ export class ConversationQueue {
   // its own transaction: the caller notifies and publishes after the commit
   @Transactional({ propagation: "requires_new" })
   private async sendNowIn(
+    orgId: string,
     conversationId: string,
     itemId: string,
   ): Promise<{
@@ -423,6 +433,10 @@ export class ConversationQueue {
     const skips = sent
       ? { skipped: NO_REPLY_SKIPS, toSeq: null }
       : await this.conversations.skipWaitsIn(conversationId, row.account_id, out.event.seq);
+    // the run the sent message starts is owed with it (transactional outbox spec §6), and so are
+    // the wakes the unpause releases for the tree
+    await this.runs.oweEnsureRun(conversationId, out.event.seq, orgId);
+    await this.runs.oweHeldTreeIn(conversationId);
     return {
       ...out,
       fresh: !sent,
@@ -434,15 +448,29 @@ export class ConversationQueue {
   /** "Continue sending": clears the pause and lets `ensureRun` send the head item. */
   async resume(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.conversations.writable(orgId, conversationId, accountId);
-    await this.db
+    await this.resumeIn(orgId, conversationId);
+    await this.eventLog.publishChanged(conversationId, "queue");
+    await this.runs.ensureRunAfterCommit(conversationId);
+    // a paused root holds the wakes of its whole tree (agent map spec §5.3)
+    await this.runs.wakeHeldTree(conversationId);
+  }
+
+  /**
+   * Clears the pause and owes the ensure-run backstop that sends the head item (no event of its
+   * own, so under the conversation's newest seq; transactional outbox spec §6).
+   */
+  // its own transaction: the caller publishes and starts the run after the commit
+  @Transactional({ propagation: "requires_new" })
+  private async resumeIn(orgId: string, conversationId: string): Promise<void> {
+    const conv = await this.db.db
       .updateTable("conversations")
       .set({ queue_paused: false, queue_pause_reason: null })
       .where("id", "=", conversationId)
-      .execute();
-    await this.eventLog.publishChanged(conversationId, "queue");
-    await this.runs.ensureRun(conversationId);
-    // a paused root holds the wakes of its whole tree (agent map spec §5.3)
-    await this.runs.wakeHeldTree(conversationId);
+      .returning("last_seq")
+      .executeTakeFirstOrThrow();
+    await this.runs.oweEnsureRun(conversationId, conv.last_seq, orgId);
+    // the wakes the root held for its tree (agent map spec §5.3) are owed with the unpause
+    await this.runs.oweHeldTreeIn(conversationId);
   }
 
   /** A queued item or a sent message for this client id (outside any transaction). */

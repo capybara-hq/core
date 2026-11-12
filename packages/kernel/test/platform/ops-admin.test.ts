@@ -18,6 +18,7 @@ import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { QueueLostJobs } from "../../src/runtime/queue-lost-jobs.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -454,7 +455,7 @@ describe("admin and models", () => {
         unavailable: string[];
       };
       expect(Object.keys(out).sort()).toEqual(["items", "more", "unavailable"]);
-      expect(out.more).toEqual({ extensions: 0, updates: 0, providers: 0, outbox: 0 });
+      expect(out.more).toEqual({ extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 });
       expect(out.unavailable).toEqual([]);
       const row = out.items.find((r) => r.kind === "provider");
       expect(row).toEqual({
@@ -475,6 +476,27 @@ describe("admin and models", () => {
       expect(failed.unavailable).toEqual(["providers"]);
       expect(failed.items.some((r) => r.kind === "provider")).toBe(false);
       expect(JSON.stringify(failed)).not.toContain("sk-SECRET");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("admin.attention lists the run queue's lost jobs as one queue row with its next step", async () => {
+    const spy = vi
+      .spyOn(k.app.get(QueueLostJobs), "summary")
+      .mockResolvedValue({ count: 2, lastAt: "2026-11-12T08:00:00.000Z" });
+    try {
+      const out = (await run("admin.attention", {})) as { items: Record<string, unknown>[] };
+      expect(out.items.filter((r) => r.kind === "queue")).toEqual([
+        {
+          kind: "queue",
+          id: "queue_lost_jobs",
+          name: "The queue lost background jobs",
+          state: "lost_jobs",
+          reason: expect.stringContaining("2 queued run job(s)"),
+          next: expect.stringContaining("Redis lost data"),
+        },
+      ]);
     } finally {
       spy.mockRestore();
     }

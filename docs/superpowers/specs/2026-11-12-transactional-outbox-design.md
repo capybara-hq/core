@@ -96,8 +96,9 @@ The row commits or rolls back with the business write.
 
 ### 3.3 Delivery: fast path plus relay
 
-- **Fast path.** `add` also registers an `afterCommit` hint that asks the local `OutboxDispatcher`
-  to deliver the rows this transaction wrote, right after the commit, on whatever replica role wrote
+- **Fast path.** For a row due now (no `runAt`, or one already reached), `add` also registers an
+  `afterCommit` hint that asks the local `OutboxDispatcher` to deliver the rows this transaction
+  wrote, right after the commit, on whatever replica role wrote
   them (it is a producer, not a consumer, so the api role may do it). It claims the rows with
   `SELECT … FOR UPDATE SKIP LOCKED`, adds the jobs to BullMQ, and deletes the rows in the same short
   transaction. This keeps today's latency. The hint starts the dispatch detached and returns at once
@@ -122,8 +123,11 @@ The row commits or rolls back with the business write.
   registers no queue of its own. A pass claims only rows of queues this process can reach, so a role
   without a queue's owner leaves those rows to one that has it (today every role loads all 8).
 - **Delayed jobs.** `runAt` in the future becomes a BullMQ `delay` computed at dispatch
-  (`max(0, runAt - now)`). Rows are dispatched as soon as they are written, not at `runAt`, so BullMQ
-  stays the timer (**designer's call**: the relay never becomes a scheduler).
+  (`max(0, runAt - now)`). Such a row skips the fast path (ruling R20): the relay claims it at its
+  next tick (its claim is by `next_attempt_at`, which is the insert time) and adds it with the
+  remaining delay, so BullMQ stays the timer (**designer's call**: the relay never becomes a
+  scheduler) and the writing request spends no claim transaction on work due later (the ensure-run
+  backstop of every message, wait timeouts, tree backstops).
 
 ### 3.4 Failures and dead letters
 
@@ -334,7 +338,13 @@ it removes the last user of the platform-migration retry.
     next run started (the repair §6 keeps, for a replica that died while running);
   - `queued` → a canary: with the outbox this must never happen; it logs an error and shows in the
     overview as "the queue lost jobs" (Redis durability broke), and re-adds the job so the run is not
-    stuck. Both counts are reported.
+    stuck. Both counts are reported. Implementation note (Task 11): the canary's count and last
+    time live in a Redis hash (`capk:queue-lost-jobs`) that expires a week after the last loss, and
+    the overview shows it until then; there is no dismiss action. A PG row with a dismiss route,
+    Platform operation and button was weighed and left out (about twice the code of the check
+    itself); the cost is that a second Redis data loss also loses the count (the error log keeps
+    each occurrence, and the re-added runs are not affected). A queued run whose outbox row is dead
+    is not counted: it shows under `outbox_dead`.
 
 ## 9. Multi-replica and ordering
 
@@ -377,8 +387,12 @@ it removes the last user of the platform-migration retry.
 - `run-orphan-check` finds zero `queued` orphans across the whole kernel test suite (an assertion in
   the dual-replica harness teardown); a test kills a worker inside `onFailed` and sees the running
   orphan repaired.
-- Latency: the message path gains exactly the outbox inserts in the message transaction and one
-  claim transaction (select, delete, commit) after it. PR 2 measures message-to-run-job-added on the
+- Latency: the message path gains exactly the outbox inserts (the ensure-run backstop in the
+  message transaction, the run job in `ensureRun`'s) and one claim transaction (BEGIN, select,
+  delete, COMMIT) for the run job; the delayed backstop goes through the relay. Measured with the
+  counting test (`runtime/latency.test.ts`): 27 PG statements and 6 Redis commands before the outbox,
+  34 and 4 after (the run job's Redis read-back is gone, and the duplicate-trigger guard reads PG
+  instead of BullMQ, R21). PR 2 measures message-to-run-job-added on the
   test stack before and after and reports it; the budget is +5 ms at p50 (**designer's call**).
 
 ## 12. Rollout (one PR each, in order)

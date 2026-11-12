@@ -23,7 +23,6 @@ import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run
 import { RUN_HOOKS, type RunHooks } from "../../src/runtime/run-worker.js";
 import { looperState } from "../fixtures/plugins/model-looper/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
   consumedSeq,
@@ -813,31 +812,25 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(await consumedSeq(db, convId)).toBe(hello);
   });
 
-  it("同一触发点的任务已存在（属于另一个运行）→ ensureRun 不投递、不留下 queued 行", async () => {
-    const { orgId, convId } = await setup();
-    const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
-    const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
-    try {
-      // 预先放一个同 jobId 的延迟任务（模拟仍在队列中的旧运行任务）
-      await q.add(
-        "run",
-        { runId: "other-run", conversationId: convId },
-        { jobId: runJobId(convId, 1), delay: 60_000 },
-      );
-      await postMessage(req, orgId, convId, "echo:x");
-      expect(await runsOf(db, convId)).toEqual([]);
-      const job = await q.getJob(runJobId(convId, 1));
-      expect(job?.data.runId).toBe("other-run");
-      await job?.remove();
-    } finally {
-      await q.close();
-      conn.disconnect();
-    }
-  });
+  // A second run of the same trigger gets its own job id (`<runJobId>-<n>`, read from PG; ruling
+  // R21): run-queue-outbox.test.ts "a second run of the same trigger gets its own job id".
 });
+
+/**
+ * Waits until the outbox delivered the run job of the message at `seq` (its fast path adds the job
+ * after the commit, so it may not be in Redis yet when the message request returns).
+ */
+async function jobDelivered(convId: string, seq: number): Promise<void> {
+  await waitFor(
+    async () => (await runJobState(convId, seq)) !== undefined,
+    10_000,
+    `run job of seq ${seq} delivered`,
+  );
+}
 
 /** 删除某个触发点的运行任务（模拟任务丢失）。 */
 async function removeJob(convId: string, seq: number): Promise<void> {
+  await jobDelivered(convId, seq);
   const conn = new Redis(rd.url, { maxRetriesPerRequest: null });
   const q = new Queue(RUN_QUEUE_NAME, { connection: conn });
   try {
@@ -956,6 +949,7 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     const seq = await postMessage(req, orgId, convId, "echo:x");
     const [run] = await runsOf(db, convId);
     // 模拟 stalled 超限：BullMQ 把任务放回等待并记下延迟失败原因，下一个领取它的 worker 直接判失败
+    await jobDelivered(convId, seq);
     await redis.hset(
       `bull:${RUN_QUEUE_NAME}:${runJobId(convId, seq)}`,
       "defa",
@@ -978,109 +972,9 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     expect(await consumedSeq(db, convId)).toBe(next);
   });
 
-  it("孤儿运行（queued 但任务已不存在、会话锁空闲、超过宽限期）→ ensureRun 标记 run.orphaned 并起新一轮", async () => {
-    const { orgId, convId } = await setup();
-    const first = await postMessage(req, orgId, convId, "echo:lost");
-    const [orphan] = await runsOf(db, convId);
-    await removeJob(convId, first);
-    // 宽限期内（刚创建、任务可能还没投递）不清理
-    await postMessage(req, orgId, convId, "echo:early");
-    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["queued"]);
-    await db
-      .updateTable("runs")
-      .set({ created_at: sql`now() - interval '1 minute'` })
-      .where("id", "=", orphan?.id as string)
-      .execute();
-    const second = await postMessage(req, orgId, convId, "echo:found");
-    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed", "queued"]);
-    const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
-    expect(failed?.runId).toBe(orphan?.id);
-    expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
-    expect(await consumedSeq(db, convId)).toBe(first);
-    await worker();
-    const terms = await waitForTerminal(db, convId, 2);
-    expect(terms[1]?.type).toBe("run_finished");
-    expect(terms[1]?.payload).toMatchObject({ consumedUpToSeq: second });
-    expect(await consumedSeq(db, convId)).toBe(second);
-  });
-
-  it("running 的孤儿（没能写终态、任务已结束）无宽限期即被清理，且只有一条终态事件", async () => {
-    const { orgId, convId } = await setup();
-    const first = await postMessage(req, orgId, convId, "echo:a");
-    const [run] = await runsOf(db, convId);
-    await removeJob(convId, first);
-    await db
-      .updateTable("runs")
-      .set({ status: "running", started_at: sql`now()` })
-      .where("id", "=", run?.id as string)
-      .execute();
-    await postMessage(req, orgId, convId, "echo:b");
-    expect((await runsOf(db, convId)).map((r) => r.status)).toEqual(["failed", "queued"]);
-    await worker();
-    await waitForTerminal(db, convId, 2);
-    const evs = await eventsOf(db, convId);
-    expect(evs.filter((e) => e.runId === run?.id && e.type.startsWith("run_"))).toHaveLength(1);
-  });
-  it.each(["stream", "events"] as const)(
-    "running 孤儿时打开会话（%s）→ 触发 ensureRun：孤儿标记 run.orphaned，等待中的消息起新一轮并被回复",
-    async (via) => {
-      {
-        const { orgId, convId } = await setup();
-        const first = await postMessage(req, orgId, convId, "echo:a");
-        // 运行进行中到达的消息：ensureRun 看到已有运行，不投递
-        const second = await postMessage(req, orgId, convId, "echo:b");
-        expect(await runsOf(db, convId)).toHaveLength(1);
-        const orphan = await orphanRunning(convId, first);
-        await seedCheckpoint(orphan);
-        if (via === "stream") {
-          const jar = cookieJar();
-          const r = asUser(api.http, jar);
-          const login = await r({
-            method: "POST",
-            url: "/api/v1/auth/login",
-            payload: { login: "owner", password: PW },
-          });
-          expect(login.statusCode).toBe(200);
-          const ac = new AbortController();
-          const res = await fetch(
-            `http://127.0.0.1:${api.port}/api/v1/orgs/${orgId}/conversations/${convId}/stream`,
-            { headers: { cookie: jar.header() as string }, signal: ac.signal },
-          );
-          expect(res.status).toBe(200);
-          ac.abort();
-        } else {
-          const res = await req({
-            method: "GET",
-            url: `/api/v1/orgs/${orgId}/conversations/${convId}/events`,
-          });
-          expect(res.statusCode).toBe(200);
-        }
-        await waitFor(
-          async () => (await runsOf(db, convId)).map((r) => r.status).join() === "failed,queued",
-          3_000,
-          `orphan swept via ${via}`,
-        );
-        const failed = (await eventsOf(db, convId)).find((e) => e.type === "run_failed");
-        expect(failed?.runId).toBe(orphan);
-        expect(failed?.payload).toMatchObject({ error: { code: "run.orphaned" } });
-        // 孤儿的检查点在收尾时异步清理：等清理完成再断言
-        await waitFor(
-          async () =>
-            ((await checkpointsOf(orphan)).length === 0 && (await writesOf(orphan)).length === 0) ||
-            undefined,
-          5_000,
-          `orphan checkpoints cleaned via ${via}`,
-        );
-        expect(await checkpointsOf(orphan)).toEqual([]);
-        expect(await writesOf(orphan)).toEqual([]);
-        await worker();
-        const terms = await waitForTerminal(db, convId, 2);
-        expect(terms[1]?.payload).toMatchObject({ reason: "completed", consumedUpToSeq: second });
-        const replies = (await eventsOf(db, convId)).filter((e) => e.type === "assistant_message");
-        expect(replies.map(textOf)).toEqual(["b"]);
-      }
-    },
-  );
+  // A `running` run nobody runs (no job, no lock holder) is no longer repaired by a message's or a
+  // read's ensureRun: the run-orphan-check fails it (run-orphan-check.test.ts covers the single
+  // terminal event, the dropped checkpoints and the waiting message's next run).
 
   it("abort 孤儿运行（running、任务不存在、会话锁空闲）→ 直接写 run_aborted，202，运行 aborted，consumed_seq 推进到触发消息", async () => {
     const { orgId, convId } = await setup();
@@ -1114,6 +1008,7 @@ describe("RunWorker（默认 loop、R29 失败与孤儿运行）", () => {
     const seq = await postMessage(req, orgId, convId, "echo:x");
     const [run] = await runsOf(db, convId);
     await seedCheckpoint(run?.id as string);
+    await jobDelivered(convId, seq);
     await redis.hset(
       `bull:${RUN_QUEUE_NAME}:${runJobId(convId, seq)}`,
       "defa",

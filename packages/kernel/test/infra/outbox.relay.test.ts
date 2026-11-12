@@ -33,7 +33,7 @@ import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/run
  * test never depends on where the commit falls in the relay's period.
  */
 
-const TEST_JOB = "outbox-relay-test-job" as OutboxJobName;
+const TEST_JOB = "outbox-relay-test-job" as string as OutboxJobName;
 const QUEUE = "cap-kernel-maintenance" as const;
 
 describe("outbox relay (two kernels, shared PG and Redis)", () => {

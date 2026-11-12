@@ -4,6 +4,8 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { oweEnsureRun } from "../runtime/run-jobs.js";
 import { taskOutputFile } from "./launch.js";
 import { LAST_LINES_MAX_CHARS } from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
@@ -28,7 +30,8 @@ export const finishedEventKey = (taskId: string): string => `background_task_fin
  * task (two pollers, a poll and a stop) exactly one writes it. After the commit: the log's notify,
  * the `changed: "background"` frame (to the owner and, for a sub-agent's task, the conversation
  * that owns the sandbox, whose panel lists it too) and the `background_task.finished` domain event
- * (`BackgroundWake` wakes an idle conversation; it lives in the runtime, above this module).
+ * (`BackgroundWake` wakes an idle conversation; it lives in the runtime, above this module). A
+ * finish that may wake the conversation also owes the ensure-run backstop in the transaction.
  *
  * Holds no lock and runs no sandbox command: the caller reads `lastLines` before.
  */
@@ -39,6 +42,7 @@ export class BackgroundTaskFinisher {
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   /**
@@ -79,6 +83,11 @@ export class BackgroundTaskFinisher {
         },
       },
     ]);
+    // a finish that may wake the conversation owes the ensure-run backstop with its event: the
+    // wake after the commit (`BackgroundWake`) may never happen (transactional outbox spec §6)
+    if (event && !reported && opts.stoppedBy === undefined) {
+      await oweEnsureRun(this.outbox, task.conversationId, event.seq, task.orgId);
+    }
     const conversations = [...new Set([task.conversationId, task.sandboxConversationId])];
     afterCommit(async () => {
       if (event) await this.eventLog.notify(task.conversationId, event.seq);

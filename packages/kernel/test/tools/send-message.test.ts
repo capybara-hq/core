@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Queue } from "bullmq";
+import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../src/agents/definition.js";
@@ -13,10 +15,12 @@ import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { ensureRunJobId, RunQueue } from "../../src/runtime/run-queue.js";
 import { RUN_HOOKS } from "../../src/runtime/run-worker.js";
 import { SUBAGENT_MESSAGES_HOOKS, SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SubagentsService } from "../../src/runtime/subagents/subagents.service.js";
-import { WAIT_SWEEP_BATCH, Waits } from "../../src/runtime/waits.js";
+import { Waits } from "../../src/runtime/waits.js";
 import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
 import {
   SEND_MESSAGE_REFUSALS,
@@ -686,7 +690,7 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     ]);
   });
 
-  it("the wait sweep starts a parked message no run took (a lost post-run ensureRun)", async () => {
+  it("a parked message no run took (a lost post-run ensureRun) is started by the ensure-run backstop the run's end owed", async () => {
     const { ctx } = await parentRun();
     const { childId } = await dispatch(ctx, "c1", "end-hold: go", "Parked");
     await waiting("end");
@@ -704,58 +708,28 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     const message = ofType(await eventsOf(db, childId), "user_message").find(
       (m) => m.payload.dispatch?.callId === "s1",
     );
-    // not before the grace period
-    expect((await k.app.get(Waits).sweep()).restarted).toBe(0);
-    await sql`UPDATE capybara.conversation_events SET created_at = now() - interval '5 minutes'
-      WHERE conversation_id = ${childId} AND seq = ${message?.seq}`.execute(raw);
-    expect((await k.app.get(Waits).sweep()).restarted).toBe(1);
+    // the run's terminal transaction owed the ensure-run backstop under its terminal event
+    const terminal = ofType(await eventsOf(db, childId), "run_finished").at(-1);
+    const redis = new Redis(rd.url, { maxRetriesPerRequest: null });
+    const maintenance = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redis });
+    try {
+      const job = await waitFor(
+        () => maintenance.getJob(ensureRunJobId(childId, terminal?.seq as number)),
+        10_000,
+        "the owed ensure-run job",
+      );
+      expect(job.data).toEqual({ conversationId: childId });
+    } finally {
+      await maintenance.close();
+      redis.disconnect();
+    }
+    // the job's body, when its delay ends
+    expect(await k.app.get(RunQueue).ensureRun(childId)).not.toBeNull();
     const rows = await settled(childId, 2);
     expect(Number(rows[1]?.trigger_seq)).toBe(message?.seq);
     expect(finalText(await eventsOf(db, childId), rows[1]?.id as string)).toBe("late seen");
-    // consumed now: the next sweep starts nothing
-    expect((await k.app.get(Waits).sweep()).restarted).toBe(0);
-  });
-
-  it("stopped sub-agents' parked messages never fill the sweep's batch: they cannot start", async () => {
-    const { conv, ctx } = await parentRun();
-    // four batches of stopped sub-agents, each with an old message no run will take
-    const payload = JSON.stringify({
-      content: [{ type: "text", text: "parked for good" }],
-      authorAccountId: ownerId,
-    });
-    await sql`
-      WITH c AS (
-        INSERT INTO capybara.conversations
-          (id, org_id, agent_id, account_id, kind, parent_conversation_id, title, last_seq,
-           subagent_depth)
-        SELECT gen_random_uuid()::text, ${orgId}, ${agentId}, ${ownerId}, 'subagent', ${conv},
-          'Stopped', 1, 1
-        FROM generate_series(1, ${4 * WAIT_SWEEP_BATCH})
-        RETURNING id
-      ), r AS (
-        INSERT INTO capybara.runs
-          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
-        SELECT gen_random_uuid()::text, id, 'aborted', 1, ${ownerId}, 1 FROM c
-        RETURNING conversation_id
-      )
-      INSERT INTO capybara.conversation_events (conversation_id, seq, type, payload, created_at)
-      SELECT conversation_id, 1, 'user_message', ${payload}::jsonb, now() - interval '5 minutes'
-      FROM r`.execute(raw);
-    // then one parked message that can start (a lost post-run ensureRun)
-    const { childId } = await dispatch(ctx, "c1", "end-hold: go", "Parked late");
-    await waiting("end");
-    expect((await send(ctx, "s1", childId, "LATE-MSG: parked")).isError).toBe(false);
-    dropEnsure.add(childId);
-    release("end");
-    await waitFor(
-      async () => (ensureAttempts.get(childId) ?? 0) >= 4,
-      20_000,
-      "the post-run ensureRun given up",
-    );
-    await sql`UPDATE capybara.conversation_events SET created_at = now() - interval '5 minutes'
-      WHERE conversation_id = ${childId} AND type = 'user_message'`.execute(raw);
-    expect((await k.app.get(Waits).sweep()).restarted).toBe(1);
-    await settled(childId, 2);
+    // consumed now: a second firing starts nothing
+    expect(await k.app.get(RunQueue).ensureRun(childId)).toBeNull();
   });
 
   it("a run started from a message holds its sub-agent's concurrency slot", async () => {

@@ -83,7 +83,8 @@ const ATTENTION = {
   ],
   providers: [{ plugin: "model-openai", displayName: null, icon: null, problem: "list_failed" }],
   outbox: [],
-  more: { extensions: 2, updates: 0, providers: 0, outbox: 0 },
+  queue: [],
+  more: { extensions: 2, updates: 0, providers: 0, outbox: 0, queue: 0 },
   unavailable: [],
 };
 const EMPTY_ATTENTION = {
@@ -91,7 +92,8 @@ const EMPTY_ATTENTION = {
   updates: [],
   providers: [],
   outbox: [],
-  more: { extensions: 0, updates: 0, providers: 0, outbox: 0 },
+  queue: [],
+  more: { extensions: 0, updates: 0, providers: 0, outbox: 0, queue: 0 },
   unavailable: [],
 };
 const AUDIT = {
@@ -426,11 +428,32 @@ describe("/admin 概览（OverviewPage）", () => {
     },
   );
 
+  it.each(LOCALES)("待处理：队列丢失了后台任务时显示一项，说明已重新排入（%s）", async (locale) => {
+    const o = msgs[locale].admin.overview.attention;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, {
+            ...EMPTY_ATTENTION,
+            queue: [{ kind: "queue_lost_jobs", count: 3, lastAt: "2026-11-12T08:00:00.000Z" }],
+          }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale });
+    const list = await screen.findByRole("list", { name: o.groups.queue });
+    expect(within(list).getByText(o.queue.lostJobs)).toBeTruthy();
+    expect(within(list).getByText(o.queue.hint)).toBeTruthy();
+    expect(
+      within(list).getByText(locale === "zh" ? "已重新排入 3 项" : "3 jobs queued again"),
+    ).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   const boom = () => json(500, { error: { code: "internal", message: "boom" } });
   const pathsAfter = (calls: { url: string }[], from: number) =>
     calls.slice(from).map((c) => new URL(c.url, "http://x").pathname);
 
-  it("待处理的扩展等列表读取失败：这四组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
+  it("待处理的扩展等列表读取失败：这五组显示「暂时无法读取」与重试，收件箱组、数字与平台操作照常", async () => {
     const o = zh.admin.overview;
     let failing = true;
     const calls = stubApi(
@@ -449,7 +472,7 @@ describe("/admin 概览（OverviewPage）", () => {
       },
       { timeout: 3000 },
     );
-    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(4);
+    expect(box.getAllByText(o.attention.unavailable)).toHaveLength(5);
     expect(box.getByRole("list", { name: o.attention.groups.inbox })).toBeTruthy();
     expect(box.queryByRole("alert")).toBeNull();
     const metrics = await metricsOf(container);

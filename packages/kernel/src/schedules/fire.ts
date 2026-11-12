@@ -21,7 +21,6 @@ import { deviceLeaseKey } from "../local-devices/keys.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
-import { RunControl } from "../runtime/run-control.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
 import { pauseTaskIn } from "./pause.js";
@@ -121,7 +120,6 @@ export class ScheduledTaskFirer {
     @Inject(ConversationQueue) private readonly queue: Pick<ConversationQueue, "add">,
     @Inject(ChannelConnections)
     private readonly connections: Pick<ChannelConnections, "row" | "channel">,
-    @Inject(RunControl) private readonly runs: Pick<RunControl, "ensureRun">,
     /** Reads a local device's connection lease (online or not). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "info">,
@@ -295,9 +293,9 @@ export class ScheduledTaskFirer {
           task.deviceId === null ? {} : { deviceId: task.deviceId },
           internal,
         );
+        // a retried start found the conversation made before: `createWithMessage` already asked
+        // for its run (and the first start's message owes the ensure-run backstop)
         await this.setConversation(run.id, out.conversation.id);
-        // a retried start found the conversation made before: its run may be still to start
-        if (!out.created) await this.runs.ensureRun(out.conversation.id);
         return;
       }
       let conversationId: string;

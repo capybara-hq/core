@@ -42,8 +42,11 @@ export interface DispatchDeps {
   purposes: Pick<ModelPurposesService, "resolve">;
   registry: Pick<ProviderRegistry, "resolve">;
   config: Pick<KernelConfigService, "get">;
-  /** Enqueues a child run (on the sub-agent run queue: `kind` is always `subagent`). */
-  enqueue: (data: RunJobData, jobId: string, kind: ConversationKind) => Promise<void>;
+  /**
+   * Owes a child run's job in the dispatch's transaction (`RunJobs.owe`: on the sub-agent run
+   * queue, `kind` is always `subagent`); false when the job id is already owed.
+   */
+  owe: (data: RunJobData, jobId: string, kind: ConversationKind, orgId: string) => Promise<boolean>;
   log: Pick<Logger, "error" | "warn">;
   /**
    * Runs {@link commitDispatchIn} in a transaction of its own (`SubagentsService.commitDispatch`,
@@ -162,9 +165,9 @@ export interface DispatchPlan {
  * dispatches of one run serialize) inserts the child conversation, appends `subagent_started` and
  * the task message, inserts the child run (`queued`) and the `subagent_dispatches` row, appends
  * `subagent_dispatched` and the call's `tool_result` ({@link agentStartedText}: the sub-agent runs
- * in the background) to the parent and audits `subagent.dispatched` and `tool.called`. After
- * commit the child run is enqueued; a failed enqueue only logs (the dispatch is durable, the wait
- * sweep re-enqueues it). A fork invocation (`forSkill`) writes no `tool_result`: its run waits on
+ * in the background) to the parent and audits `subagent.dispatched` and `tool.called`. The child
+ * run's job is owed in the same transaction (transactional outbox spec §6), so the committed
+ * dispatch always starts its child. A fork invocation (`forSkill`) writes no `tool_result`: its run waits on
  * the child (`advanceSkillForks`).
  *
  * Refusals (§4.5) start nothing: a call from a run at `subagents.maxDepth` (agent map spec §4.1:
@@ -382,7 +385,8 @@ export const sentMessageIdemKey = (runId: string, callId: string): string =>
  * row, then the parent run row (the order every terminal path uses),
  * runs `child` (writes the child conversation's first events and returns the task message, or
  * null to refuse), then inserts the child run and the dispatch row, appends `subagent_dispatched`
- * and the audit row. After commit: notifies both conversations and enqueues the child run.
+ * and the audit row, and owes the child run's job (transactional outbox spec §6). After commit:
+ * notifies both conversations.
  * Returns null when `child` refused.
  *
  * Under the parent run's row lock it first re-checks what the pipeline checked without it: a call
@@ -400,7 +404,6 @@ export type DispatchCommit =
       kind: "existing";
       childRunId: string;
       childConversationId: string;
-      requeue: { conversationId: string; seq: number } | null;
       /** The call's logged result (null for a fork dispatch) and its seq, to notify. */
       result: { content: string; seq: number } | null;
     }
@@ -417,7 +420,7 @@ const isActiveStatus = (status: string): boolean =>
  * delivered (agent map spec, rc upgrade: a foreground-era dispatch whose rc finisher wrote
  * `subagent_finished` and resumed the parent): the child's report (`childResult`), with the
  * parent's `subagent_finished` appended in this transaction when it is missing (idempotent by its
- * key), so the undelivered sweep never delivers it a second time. Null when the parent already
+ * key), so the `deliver-to-parent` job never delivers it a second time. Null when the parent already
  * has a delivery for the run (it carries the result) or the run has no terminal event yet.
  */
 async function rcFinishedResult(
@@ -444,7 +447,7 @@ async function rcFinishedResult(
  * Null when `child` refused.
  */
 export async function commitDispatchIn(
-  d: Pick<DispatchDeps, "db" | "eventLog" | "config">,
+  d: Pick<DispatchDeps, "db" | "eventLog" | "config" | "owe">,
   a: DispatchArgs,
   plan: DispatchPlan,
   child: ChildWriter,
@@ -470,7 +473,7 @@ export async function commitDispatchIn(
   const existing = await t
     .selectFrom("subagent_dispatches as sd")
     .leftJoin("runs as cr", "cr.id", "sd.child_run_id")
-    .select(["sd.child_run_id", "sd.child_conversation_id", "cr.status", "cr.trigger_seq"])
+    .select(["sd.child_run_id", "sd.child_conversation_id", "cr.status"])
     .where("sd.parent_run_id", "=", ctx.runId)
     .where("sd.parent_call_id", "=", callId)
     .executeTakeFirst();
@@ -482,10 +485,10 @@ export async function commitDispatchIn(
     let result: { content: string; seq: number } | null = null;
     if (a.forSkill === undefined) {
       // an rc child that already ended under the foreground wait, whose rc finisher wrote
-      // `subagent_finished` and resumed this run (no delivery; the sweep never delivers a run with
-      // `subagent_finished`): its report is this call's result, as the rc gave it, or it is lost.
+      // `subagent_finished` and resumed this run (no delivery; a run with `subagent_finished` is
+      // never delivered): its report is this call's result, as the rc gave it, or it is lost.
       // Only while the call has no result: a call that has one (a background dispatch's second
-      // holder) keeps it, and its child's finish stays to its delivery or the undelivered sweep.
+      // holder) keeps it, and its child's finish stays to its delivery (or its `deliver-to-parent` job).
       const resultKey = resultEvent(ctx, callId, AGENT_TOOL, "").idemKey;
       const finished =
         a.sent === undefined &&
@@ -515,14 +518,6 @@ export async function commitDispatchIn(
       childRunId: existing.child_run_id,
       childConversationId: existing.child_conversation_id,
       result,
-      // still queued: the first holder may have died before its enqueue (review M4)
-      requeue:
-        existing.status === "queued" && existing.trigger_seq !== null
-          ? {
-              conversationId: existing.child_conversation_id,
-              seq: Number(existing.trigger_seq),
-            }
-          : null,
     };
   }
   if (parent?.status !== "running") return { kind: "stopped" as const };
@@ -594,6 +589,14 @@ export async function commitDispatchIn(
       for_skill: a.forSkill !== undefined,
     })
     .execute();
+  // the child run's job is owed with its row (transactional outbox spec §6): a queued child
+  // always has its job, whatever happens after the commit
+  await d.owe(
+    { runId: childRunId, conversationId: plan.childConversationId },
+    runJobId(plan.childConversationId, task.seq),
+    "subagent",
+    ctx.orgId,
+  );
   // an org agent runs on its own model (§5.4): a `model` on the call was ignored
   const ownModel = plan.source === "agent" && input.model !== undefined;
   const content = a.sent?.content ?? agentStartedText(plan.childConversationId, { ownModel });
@@ -680,7 +683,7 @@ const resultEvent = (ctx: ToolStepContext, callId: string, toolKey: string, cont
 });
 
 export async function commit(
-  d: Pick<DispatchDeps, "commitDispatch" | "enqueue" | "log" | "eventLog">,
+  d: Pick<DispatchDeps, "commitDispatch" | "eventLog">,
   a: DispatchArgs,
   plan: DispatchPlan,
   /** Writes the child's events; `checked` is the org agent version the in-lock gates passed. */
@@ -690,25 +693,7 @@ export async function commit(
   const out = await d.commitDispatch(a, plan, child);
   if (out === null) return null;
   if (out.kind === "existing") {
-    // a child still queued is enqueued again under the first dispatch's job id (BullMQ dedupes
-    // it while that job exists), so a holder that died before its enqueue does not leave the
-    // child to the wait sweep
-    if (out.requeue !== null) {
-      const jobId = runJobId(out.requeue.conversationId, out.requeue.seq);
-      await d
-        .enqueue(
-          { runId: out.childRunId, conversationId: out.requeue.conversationId },
-          jobId,
-          "subagent",
-        )
-        .catch((err: unknown) =>
-          d.log.error("cannot enqueue sub-agent run; the sweep retries", {
-            childRunId: out.childRunId,
-            jobId,
-            err,
-          }),
-        );
-    }
+    // the child's job was owed with the first dispatch (a still queued child has it)
     if (out.result !== null) await d.eventLog.notify(ctx.conversationId, out.result.seq);
     return {
       kind: "dispatched",
@@ -725,21 +710,9 @@ export async function commit(
   if (out.kind === "gate") return out.outcome;
   await d.eventLog.notify(plan.childConversationId, out.childSeq);
   await d.eventLog.notify(ctx.conversationId, out.parentSeq);
-  const childRunId = out.childRunId;
-  const jobId = runJobId(plan.childConversationId, out.childSeq);
-  try {
-    await d.enqueue(
-      { runId: childRunId, conversationId: plan.childConversationId },
-      jobId,
-      "subagent",
-    );
-  } catch (err) {
-    // the dispatch is committed: the wait sweep re-enqueues the queued child run
-    d.log.error("cannot enqueue sub-agent run; the sweep retries", { childRunId, jobId, err });
-  }
   return {
     kind: "dispatched",
-    childRunId,
+    childRunId: out.childRunId,
     childConversationId: plan.childConversationId,
     content: out.content,
   };

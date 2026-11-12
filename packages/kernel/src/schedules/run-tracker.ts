@@ -276,24 +276,6 @@ export async function linkStartedRunIn(
 }
 
 /**
- * A queued run row was taken back before it ran (`RunQueue.deleteQueued`: its job could not be
- * enqueued): the task run it had taken waits for the next run of its message again.
- */
-export async function unlinkRunIn(
-  t: KernelSchemaDb,
-  taskRunId: string,
-  runId: string,
-): Promise<void> {
-  await t
-    .updateTable("scheduled_task_runs")
-    .set({ status: "pending", run_id: null })
-    .where("id", "=", taskRunId)
-    .where("run_id", "=", runId)
-    .where("status", "=", "running")
-    .execute();
-}
-
-/**
  * A person removed, edited or sent the queued item that carried `schedule` (the item's stored
  * marker, or null): its task run will never run as the task's, so it becomes `skipped`
  * (`removed`) in the caller's transaction, and the next tick is not held by the overlap check.

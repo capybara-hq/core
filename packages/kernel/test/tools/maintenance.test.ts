@@ -172,7 +172,25 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
-      { processTimeout: async (job, token) => void calls.push(["wait", job.data, token]) },
+      {
+        processTimeout: async (job, token) => void calls.push(["wait", job.data, token]),
+        childFinished: async (id) => {
+          calls.push(["deliver", id]);
+          return false;
+        },
+        stopChildren: async (id, by) => {
+          calls.push(["stop-children", id, by]);
+          return 0;
+        },
+        stopDescendantsOfStopped: async (id) => {
+          calls.push(["stop-descendants", id]);
+          return 0;
+        },
+        stopTree: async (id, by, opts) => {
+          calls.push(["stop-tree", id, by, opts]);
+          return 0;
+        },
+      },
       {
         destroyDevice: async (id) => void calls.push(["sandbox", id]),
         resetFileSystem: async (id) => void calls.push(["reset", id]),
@@ -211,6 +229,9 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
     await processor.process(job("bg-wake", { conversationId: "c2" }));
+    await processor.process(job("stop-tree", { runId: "r1" }));
+    await processor.process(job("stop-tree", { conversationId: "c3", byAccountId: "a1" }));
+    await processor.process(job("deliver-to-parent", { childRunId: "r2" }));
     await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
     await processor.process(job("sched-fire", { taskRunId: "tr1" }));
     await processor.process(job("sandbox-suspend-idle", {}));
@@ -222,6 +243,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
       ["wake", "c2"],
+      ["stop-children", "r1", null],
+      ["stop-descendants", "r1"],
+      ["stop-tree", "c3", "a1", { includeSelf: false }],
+      ["deliver", "r2"],
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],
       ["periodic", "sandbox-suspend-idle"],

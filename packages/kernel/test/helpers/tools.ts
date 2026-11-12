@@ -71,6 +71,9 @@ export function credentialsFor(
   );
 }
 
+/** No run resumes here: a hand-built decision leaves its run as it is (no kernel, no outbox). */
+const noResume = { resumeIn: async () => "not-waiting" as const };
+
 /**
  * The approvals over a test's Kysely and an event log; `events` gets `approval.decided`.
  * `registry`: the agent's tools a trial run's kept approval is checked against (default: none, so
@@ -114,6 +117,7 @@ export function approvalsFor(
         devHosts: [],
       }),
     },
+    noResume,
   );
 }
 
@@ -125,7 +129,7 @@ export function questionsFor(
   events: KernelEvents = new KernelEvents(quiet),
 ): QuestionsService {
   const h = handlesFor(db);
-  return new QuestionsService(h.db, configFrom(config), eventLog, events, h.txHost);
+  return new QuestionsService(h.db, configFrom(config), eventLog, events, h.txHost, noResume);
 }
 
 /** What a hand-built pipeline runs on (the shape of the old `ToolPipelineDeps`). */

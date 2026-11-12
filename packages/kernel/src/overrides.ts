@@ -7,10 +7,12 @@ import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
 import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
 import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
+import { ENSURE_RUN_FAILS } from "./runtime/run-queue.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "./runtime/run-steps.js";
 import { RUN_HOOKS, type RunHooks } from "./runtime/run-worker.js";
 import {
@@ -43,6 +45,9 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   of logging an error;
  * - `OUTBOX_DISPATCH_FAILS`: returns true to make the outbox dispatcher's queue adds fail (a Redis
  *   outage);
+ * - `OUTBOX_FAST_PATH_SETTLED`: receives each detached outbox fast-path pass (a test awaits them);
+ * - `ENSURE_RUN_FAILS`: returns true to make `RunQueue.ensureRun` throw (Redis unreachable, or the
+ *   direct call after a commit skipped by a crash);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -64,6 +69,8 @@ interface KernelSeams {
   [RUN_CONTEXT_CLOCK]: () => number;
   [OUTBOX_STRICT_CONFLICTS]: boolean;
   [OUTBOX_DISPATCH_FAILS]: () => boolean;
+  [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
+  [ENSURE_RUN_FAILS]: () => boolean;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
 
@@ -96,6 +103,8 @@ const SEAM_TOKENS = [
   RUN_CONTEXT_CLOCK,
   OUTBOX_STRICT_CONFLICTS,
   OUTBOX_DISPATCH_FAILS,
+  OUTBOX_FAST_PATH_SETTLED,
+  ENSURE_RUN_FAILS,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];
 

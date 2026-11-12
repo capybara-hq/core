@@ -32,7 +32,7 @@ import { waitFor } from "../helpers/runs.js";
  * The fast path runs detached after the commit (R9), so tests wait for the job to appear.
  */
 
-const TEST_JOB = "outbox-test-job" as OutboxJobName;
+const TEST_JOB = "outbox-test-job" as string as OutboxJobName;
 const QUEUE = "cap-kernel-maintenance" as const;
 
 let pgc: TestContainer;

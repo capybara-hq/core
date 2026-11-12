@@ -77,8 +77,12 @@ export interface DbHandles {
 
 /** A run control that starts and stops nothing (the old optional `runs` left out). */
 const noRuns: RunControl = {
-  ensureRun: async () => null,
+  ensureRunAfterCommit: async () => {},
+  oweEnsureRun: async () => true,
   wakeHeldTree: async () => {},
+  oweHeldTreeIn: async () => {},
+  resumeIn: async () => "not-waiting",
+  oweStopDeletedTree: async () => true,
   abortIfOrphaned: async () => false,
   abortWaiting: async () => false,
   requestAbort: async () => {},
@@ -121,7 +125,6 @@ export function conversationsFor(
     { isAccessible: async () => true },
     d.runs ?? noRuns,
     { resolve: refuse("providers") },
-    quiet,
     { resolveAttachments: d.resolveAttachments ?? refuse("resolveAttachments") },
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },
