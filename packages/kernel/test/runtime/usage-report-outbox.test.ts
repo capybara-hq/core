@@ -53,7 +53,9 @@ import {
  * subscriber (`UsageSubscribers`, read from PG, cached per replica for 30 s, cleared on
  * `PLUGINS_CHANGED`). Every kernel's queue adds to `cap-kernel-usage-report` fail while
  * `failUsage` is set (the `OUTBOX_DISPATCH_FAILS` seam): the fast path delivers nothing, and the
- * owed row is delivered only by an explicit relay pass (`OutboxDispatcher.dispatchDue`).
+ * owed row is delivered by a relay pass (`OutboxDispatcher.dispatchDue`) once it is cleared. The
+ * background relay (`OutboxRelay`, every 2 s on each worker kernel) runs alongside the explicit
+ * passes, so a test that expects a row delivered waits for it ({@link relayUntilSent}).
  */
 
 const fx = (n: string) =>
@@ -124,6 +126,24 @@ async function relay(k: TestKernel): Promise<void> {
     .where("job_name", "=", "usage-report")
     .execute();
   await k.app.get(OutboxDispatcher).dispatchDue(500);
+}
+
+/**
+ * Relay passes of `k` until the row of `jobId` is no longer owed (bounded). One pass does not
+ * settle the table: the background relay may hold the row (the explicit pass skips locked rows,
+ * and the row stays until that pass commits), or record the failure of a pass it began while
+ * `failUsage` was set after {@link relay} reset the backoff, leaving the row not yet due.
+ */
+async function relayUntilSent(k: TestKernel, jobId: string): Promise<void> {
+  await waitFor(
+    async () => {
+      await relay(k);
+      return !(await owed()).some((r) => r.job_id === jobId);
+    },
+    15_000,
+    `outbox row ${jobId} relayed`,
+    100,
+  );
 }
 
 /** A usage event written through the step writes of `k` (the site the model call uses). */
@@ -291,8 +311,7 @@ describe("a subscriber is enabled", { timeout: 60_000 }, () => {
     });
     expect(await usageQueue.getJob(jobId)).toBeUndefined();
     failUsage = false;
-    await relay(sub);
-    expect((await owed()).map((r) => r.job_id)).not.toContain(jobId);
+    await relayUntilSent(sub, jobId);
     const id = `${conv}/${step.seq}`;
     await waitFor(async () => (await seenB(id)) === 1, 15_000, "usage-b delivery");
   });
@@ -322,7 +341,7 @@ describe("a subscriber is enabled", { timeout: 60_000 }, () => {
       org_id: orgId,
     });
     failUsage = false;
-    await relay(sub);
+    await relayUntilSent(sub, jobId);
     await waitFor(async () => (await seenB(row.id)) === 1, 15_000, "usage-b delivery");
     await waitFor(
       async () =>
@@ -362,7 +381,7 @@ describe("a subscriber is enabled", { timeout: 60_000 }, () => {
       const jobId = usageReportJobId(conv, e.seq);
       expect((await owedOf(conv)).map((r) => r.job_id)).toEqual([jobId]);
       failUsage = false;
-      await relay(bare);
+      await relayUntilSent(bare, jobId);
       expect(await owedOf(conv)).toEqual([]);
       await waitFor(async () => (await seenB(`${conv}/${e.seq}`)) === 1, 30_000, "delivered");
     } finally {
