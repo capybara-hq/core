@@ -1,16 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { visibleTo } from "../agents/agent-lookup.js";
-import {
-  BG_WAKE_JOB,
-  type BgWakeJobData,
-  bgWakeJobId,
-  wakeDecisionIn,
-} from "../background/wake-rules.js";
+import { wakeDecisionIn } from "../background/wake-rules.js";
 import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import { conversationTree } from "../conversations/tree.js";
@@ -25,7 +18,6 @@ import { scheduledTaskRunAt } from "../schedules/unattended.js";
 import type { RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
 import { ACTIVE_RUN_STATUSES, RunJobs, runJobId, runQueueNameFor } from "./run-jobs.js";
 import { rootConversationOf } from "./subagents/child.js";
@@ -51,23 +43,19 @@ export {
  */
 export const ENSURE_RUN_FAILS = Symbol("ENSURE_RUN_FAILS");
 
-/** What {@link RunQueue.ensureRun}'s transaction decided, for the steps after its commit. */
+/**
+ * What {@link RunQueue.ensureRun}'s transaction decided, for the steps after its commit, and the
+ * `bg-wake` retry it runs for.
+ */
 interface EnsureState {
   dispatchedSeq: number | null;
   dispatchedSwitch: boolean;
   dispatchedUnarchived: boolean;
   /** The queue paused in this transaction: the open pages hear it after the commit. */
   pausedNow: boolean;
-  /** A finish would wake the conversation once its wake window ends (background Bash §3). */
-  wakeLater: { windowEnd: number; delayMs: number } | null;
+  /** From the `bg-wake` job: how many times this window's wake fired early (0: none). */
+  wakeRetry: number;
 }
-
-/**
- * Margin added to the delayed wake job: its window is read on the database's clock, the delay runs
- * on this process's and Redis's, so the job does not usually fire just before the window ends (one
- * that does reschedules itself under its next retry id, `bgWakeJobId`).
- */
-const WAKE_JOB_MARGIN_MS = 1000;
 
 /** The fields of a conversation's active run that the orphan abort reads. */
 interface ActiveRunRow {
@@ -97,9 +85,6 @@ export class RunQueue {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
-    /** The producer side of the delayed `bg-wake` job (`MaintenanceProcessor` consumes it). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
-    private readonly maintenance: Pick<Queue, "add">,
     @Optional()
     @Inject(ENSURE_RUN_FAILS)
     private readonly ensureFails: () => boolean = () => false,
@@ -119,7 +104,7 @@ export class RunQueue {
    * once it is sent; with no head either, a wake-eligible finished background task or sub-agent
    * delivery (background Bash spec §3, agent map spec §5.3, {@link wakeDecisionIn}): the run is
    * then attributed to the event's trigger account and joins the tree's budget window, and an
-   * event inside the wake window schedules the delayed `bg-wake` job instead. A sub-agent's
+   * event inside the wake window owes the delayed `bg-wake` job instead. A sub-agent's
    * conversation is only woken this way ({@link childWakeIn}).
    *
    * An active run (queued, running or waiting) is left alone: a run nobody runs any more is the
@@ -140,12 +125,9 @@ export class RunQueue {
       dispatchedSwitch: false,
       dispatchedUnarchived: false,
       pausedNow: false,
-      wakeLater: null,
+      wakeRetry: opts.wakeRetry ?? 0,
     };
     const created = await this.ensureRunIn(conversationId, st);
-    if (st.wakeLater !== null) {
-      await this.scheduleWake(conversationId, st.wakeLater, opts.wakeRetry ?? 0);
-    }
     const { dispatchedSeq, dispatchedSwitch, dispatchedUnarchived, pausedNow } = st;
     // a pause is published too (batch 5 review I1): the page shows the reason without a reload
     if (pausedNow) await this.eventLog.publishChanged(conversationId, "queue");
@@ -253,7 +235,11 @@ export class RunQueue {
           this.config.get().runtime.wakeOnBackgroundTask,
           (accountId) => authorCanSend(t, conversationId, accountId),
         );
-        if (wake?.kind === "later") st.wakeLater = wake;
+        // inside the wake window: the delayed `bg-wake` job is owed here, so the wake survives a
+        // process that dies after the commit (transactional outbox spec §3.1)
+        if (wake?.kind === "later") {
+          await this.jobs.oweBgWake(conversationId, wake, st.wakeRetry, conv.org_id);
+        }
         if (wake?.kind !== "wake") return null;
         last = { seq: String(wake.seq), accountId: wake.triggerAccountId };
         isWake = true;
@@ -395,7 +381,9 @@ export class RunQueue {
         this.config.get().runtime.wakeOnBackgroundTask,
         (accountId) => authorCanSend(t, rootId, accountId),
       ));
-    if (wake?.kind === "later") st.wakeLater = wake;
+    if (wake?.kind === "later") {
+      await this.jobs.oweBgWake(conversationId, wake, st.wakeRetry, conv.org_id);
+    }
     if (wake?.kind !== "wake") return null;
     const jobId = await this.jobIdFor(conversationId, wake.seq);
     const agent = await t
@@ -545,31 +533,6 @@ export class RunQueue {
         ),
       )
       .execute();
-  }
-
-  /**
-   * Schedules the delayed `bg-wake` job at the end of the conversation's wake window (after the
-   * commit): one job per conversation and window end, so finishes inside one window share it. It
-   * calls {@link ensureRun}, which wakes the conversation if a finish is still unconsumed. A failed
-   * enqueue is logged: the next message, run end or page opening re-derives the wake.
-   */
-  private async scheduleWake(
-    conversationId: string,
-    w: { windowEnd: number; delayMs: number },
-    retry: number,
-  ): Promise<void> {
-    const data: BgWakeJobData = { conversationId, ...(retry > 0 && { retry }) };
-    try {
-      await this.maintenance.add(BG_WAKE_JOB, data, {
-        // a job that fired early reschedules under a new id (its own is still taken)
-        jobId: bgWakeJobId(conversationId, w.windowEnd, retry),
-        delay: w.delayMs + WAKE_JOB_MARGIN_MS,
-        removeOnComplete: true,
-        removeOnFail: true,
-      });
-    } catch (err) {
-      this.log.error("cannot schedule the background task wake", { conversationId, err });
-    }
   }
 
   /**

@@ -258,6 +258,34 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `background/wake-rules.ts` BG_WAKE_JOB: owed by the `ensureRun` transaction that finds a
+  // conversation's wake inside its wake window, under `bgWakeJobId`, with `runAt` = the window's
+  // end (background Bash spec §3)
+  "bg-wake": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "the wake only calls ensureRun, which decides from the conversation's state under its row lock, so a wake with nothing unconsumed or an active run starts nothing",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // the options the direct enqueue had (the queue's default retries): removed once done, so a
+    // later window's wake is never deduped away (a job that fired early owes its next retry id)
+    opts: { removeOnComplete: true, removeOnFail: true },
+  },
+  // `evals/jobs.ts` EVAL_CASE_JOB: owed by an eval run's start transaction (the run row and its
+  // pending results), one per case, under `evalJobId`
+  "eval-case": {
+    queue: "cap-kernel-evals",
+    idempotent:
+      "a case job replays only the case's unfinished results (and pending judgements) of a still-active run, each under a fresh claim, so a second job writes no result twice",
+    processedIn: "packages/kernel/src/evals/evals.module.ts",
+    // the options the direct enqueue had: transient failures outside the handler (PG, Redis)
+    // retried with backoff; removed once done, failed ones kept (by count)
+    opts: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 1000 },
+      removeOnComplete: true,
+      removeOnFail: 1000,
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

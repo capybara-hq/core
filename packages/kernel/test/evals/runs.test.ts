@@ -6,9 +6,14 @@ import type { EventLog } from "../../src/conversations/event-log.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { runActive } from "../../src/evals/budget.js";
+import { EVAL_QUEUE_NAME, evalJobId } from "../../src/evals/jobs.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
+import {
+  OUTBOX_DISPATCH_FAILS,
+  OutboxDispatcher,
+} from "../../src/infra/outbox/outbox.dispatcher.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
@@ -48,6 +53,8 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
 let eventLog: EventLog;
+/** While true, the kernel's outbox adds to the eval queue fail (`OUTBOX_DISPATCH_FAILS`). */
+let failEvals = false;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -67,6 +74,14 @@ beforeAll(async () => {
         },
       },
     ),
+    {
+      overrides: [
+        {
+          provide: OUTBOX_DISPATCH_FAILS,
+          useValue: (queue: string) => failEvals && queue === EVAL_QUEUE_NAME,
+        },
+      ],
+    },
   );
 }, 120_000);
 afterAll(async () => {
@@ -595,6 +610,40 @@ describe("组织或 agent 删除后运行停下", () => {
 });
 
 describe("运行", () => {
+  it("the case jobs are owed by the start: with the eval queue failing, the relay runs them later", async () => {
+    const setId = await seededSet(2);
+    failEvals = true;
+    try {
+      const run = await startRun(setId, { mode: "step", candidate: {} });
+      // the start committed its case jobs as outbox rows; none reached the queue
+      const owed = await db
+        .selectFrom("outbox")
+        .select(["job_name", "job_id", "data", "org_id"])
+        .where("queue", "=", EVAL_QUEUE_NAME)
+        .orderBy("job_id")
+        .execute();
+      const cases = await db
+        .selectFrom("eval_cases")
+        .select("id")
+        .where("set_id", "=", setId)
+        .execute();
+      expect(owed.map((r) => r.job_id).sort()).toEqual(
+        cases.map((c) => evalJobId(run.id, c.id)).sort(),
+      );
+      for (const r of owed) {
+        expect(r).toMatchObject({ job_name: "eval-case", org_id: orgId, data: { runId: run.id } });
+      }
+      expect((await getRun(run.id)).status).toBe("queued");
+      failEvals = false;
+      await db.updateTable("outbox").set({ next_attempt_at: new Date() }).execute();
+      await k.app.get(OutboxDispatcher).dispatchDue(500);
+      const rs = await settled(run.id);
+      expect(rs.map((r) => r.status)).toEqual(["done", "done", "done", "done"]);
+    } finally {
+      failEvals = false;
+    }
+  });
+
   it("候选等于基线：结果内容相等，用量计入 tokensUsed，运行 completed", async () => {
     const setId = await createSet();
     const conv = await createConv(alice, orgId, agentId);

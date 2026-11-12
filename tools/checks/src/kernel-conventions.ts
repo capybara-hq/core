@@ -136,7 +136,7 @@ export interface KcException {
 export interface KcPendingEntry {
   path: string;
   max: number;
-  /** Why it is not converted yet, and where it moves (an outbox entry names its PR). */
+  /** Why it is not converted yet, and where it moves. */
   reason?: string;
 }
 
@@ -278,6 +278,97 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "request): the request fails when the add fails, so it is not owed work (ruling R28)",
   },
   {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/actions.ts",
+    within: "handle",
+    reason:
+      "a hint: the delivery of a card's thread after a click, inside the inbound job; the " +
+      "decision's own appends owe their conversation's delivery, and a sub-agent card's thread " +
+      "is redrawn by the next delivery the child's report to its parent owes",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/inbound.ts",
+    within: "handle",
+    reason:
+      "a job's own follow-up: the directory sync of a `directory_changed` event, added inside " +
+      "the inbound job, which fails and is retried by BullMQ when the add fails; no write owes it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/jobs.ts",
+    within: "enqueue",
+    reason:
+      "the delivery hint: run.started, a delivery job's own re-checks and a re-enabled " +
+      "connection's catch-up; every append to a conversation with a target owes its delivery " +
+      "through the outbox (oweDelivery), so a lost hint is re-derived by the next append",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/jobs.ts",
+    within: "enqueueInbound",
+    reason:
+      "the inbound add of a platform event: no kernel write owes it, and the plugin acks the " +
+      "event only after the add, so a failed add makes the platform redeliver it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/outbound.ts",
+    within: "deliver",
+    reason:
+      "a delivery job's own follow-up (a changed connection resumes in a new job): a failed add " +
+      "fails the job, which BullMQ retries; no write owes it",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/channels/outbound.ts",
+    within: "followUp",
+    reason:
+      "a delivery job's own re-check of events that arrived while it held the lock: a failed " +
+      "add fails the job, which BullMQ retries; those events' appends owe their own deliveries",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/conversations/titles.ts",
+    within: "maybeEnqueue",
+    reason:
+      "a hint: a title is cosmetic, and a lost title job is re-derived from the conversation's " +
+      "state (titleAttemptDue) after its next completed run; nothing is wrong meanwhile",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/orgs/directory-sync.ts",
+    within: "addJob",
+    reason:
+      "no write owes a directory sync: an inbound event's add fails its job (BullMQ retries), a " +
+      "person's request fails when the add fails, and the hourly scan re-derives a lost scan " +
+      "add or a sync's follow-up rerun",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/schedules/fire.ts",
+    within: "start",
+    reason:
+      "not a BullMQ job: ConversationQueue.add writes a queued message to PG, and that write " +
+      "owes its own ensure-run through the outbox",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/tools/drift.ts",
+    within: "onToolsChanged",
+    reason:
+      "a hint: a connector's tools-changed notice during a call writes nothing, and the " +
+      "periodic drift scan re-derives a lost check",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/tools/drift.ts",
+    within: "scan",
+    reason:
+      "the periodic drift scan's own adds: no write owes them, and the next scan period " +
+      "re-derives every connector not checked",
+  },
+  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -339,67 +430,12 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 
 /**
  * Not converted yet: a directory (ending with `/`) or file with the number of violations it may
- * still hide. The Nest refactor converted everything; the only entries are the direct enqueue
- * sites the transactional outbox moves, one PR at a time (`reason` names the PR; the plan is
- * `docs/superpowers/plans/`). Never add an entry for new code: more violations than `max` fail,
- * and so do fewer (`kc-stale-pending`), so each conversion deletes its entry.
+ * still hide. Empty: the Nest refactor converted everything, and the transactional outbox moved or
+ * excepted every direct enqueue. The mechanism stays for a future migration; never add an entry
+ * for new code: more violations than `max` fail, and so do fewer (`kc-stale-pending`), so each
+ * conversion deletes its entry.
  */
-export const KC_PENDING: KcPending = {
-  "kc-enqueue-via-outbox": [
-    {
-      path: "packages/kernel/src/channels/actions.ts",
-      max: 1,
-      reason:
-        "a card click's thread delivery hint (the decision's appends owe their own): settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/channels/inbound.ts",
-      max: 1,
-      reason: "the directory sync enqueue: moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/channels/jobs.ts",
-      max: 2,
-      reason:
-        "the deliver hint (run.started, follow-ups, a connection's catch-up; appends owe the " +
-        "delivery) and the inbound add an un-acked platform event owes: settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/channels/outbound.ts",
-      max: 2,
-      reason:
-        "a delivery job's own follow-ups (a failure fails the job, which BullMQ retries): " +
-        "settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/conversations/titles.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 3",
-    },
-    { path: "packages/kernel/src/evals/jobs.ts", max: 1, reason: "moves to the outbox in PR 7" },
-    {
-      path: "packages/kernel/src/evals/runs.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 7",
-    },
-    {
-      path: "packages/kernel/src/orgs/directory-sync.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/runtime/run-queue.ts",
-      max: 1,
-      reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
-    },
-    {
-      path: "packages/kernel/src/schedules/fire.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 2",
-    },
-    { path: "packages/kernel/src/tools/drift.ts", max: 2, reason: "moves to the outbox in PR 7" },
-  ],
-};
+export const KC_PENDING: KcPending = {};
 
 // ---------------------------------------------------------------------------------------------
 // Implementation
