@@ -7,7 +7,7 @@ export class AgentsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(LockService) private readonly lockService: LockService,
-    @Inject(AgentQueue) private readonly queue: AgentQueue,
+    @Inject(OutboxService) private readonly outbox: OutboxService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
@@ -15,6 +15,7 @@ export class AgentsService {
   @Transactional()
   async create(): Promise<void> {
     await this.db.insertInto("agents").values({}).execute();
-    afterCommit(() => this.queue.add("created", {}));
+    await this.outbox.add({ queue: "q", name: "created", jobId: "j", data: {} });
+    afterCommit(() => this.config.get());
   }
 }

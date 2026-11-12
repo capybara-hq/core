@@ -114,6 +114,8 @@ export const KC_RULES = [
   "kc-lock-in-tx",
   "kc-side-effect-in-tx",
   "kc-worker-only",
+  "kc-enqueue-via-outbox",
+  "kc-after-commit-hint",
 ] as const;
 export type KcRule = (typeof KC_RULES)[number];
 
@@ -134,6 +136,8 @@ export interface KcException {
 export interface KcPendingEntry {
   path: string;
   max: number;
+  /** Why it is not converted yet, and where it moves (an outbox entry names its PR). */
+  reason?: string;
 }
 
 /** Rule → the directories and files not converted yet. */
@@ -252,6 +256,27 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "created and closed with the extension's lifecycle (spec §2.4)",
   },
   {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/infra/outbox/",
+    reason:
+      "the outbox dispatcher is the one place that adds BullMQ jobs: it delivers the rows " +
+      "OutboxService.add wrote (spec 2026-11-12-transactional-outbox §3.3)",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/ctx/queue.ts",
+    reason:
+      "ctx.queue is the extension contract: an extension's own queues, outside the kernel's " +
+      "transactions, so there is no kernel row for the job to be owed by",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/infra/queue/add-job-once.ts",
+    reason:
+      "the CLI adds one job from a process that has no kernel database transaction and hosts " +
+      "no queue of its own",
+  },
+  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -313,11 +338,137 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 
 /**
  * Not converted yet: a directory (ending with `/`) or file with the number of violations it may
- * still hide. The Nest refactor converted everything, so the map is empty and must stay empty:
- * the map and its stale check remain so a regression cannot be parked here quietly. Never add an
- * entry: more violations than `max` fail, and so do fewer (`kc-stale-pending`).
+ * still hide. The Nest refactor converted everything; the only entries are the direct enqueue
+ * sites the transactional outbox moves, one PR at a time (`reason` names the PR; the plan is
+ * `docs/superpowers/plans/`). Never add an entry for new code: more violations than `max` fail,
+ * and so do fewer (`kc-stale-pending`), so each conversion deletes its entry.
  */
-export const KC_PENDING: KcPending = {};
+export const KC_PENDING: KcPending = {
+  "kc-enqueue-via-outbox": [
+    {
+      path: "packages/kernel/src/catalog/catalog-scope.service.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 4",
+    },
+    {
+      path: "packages/kernel/src/catalog/owned-items.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 4",
+    },
+    {
+      path: "packages/kernel/src/catalog/plugin-import.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 4",
+    },
+    {
+      path: "packages/kernel/src/catalog/scope-sync.ts",
+      max: 3,
+      reason: "moves to the outbox in PR 4",
+    },
+    {
+      path: "packages/kernel/src/channels/actions.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 3",
+    },
+    {
+      path: "packages/kernel/src/channels/inbound.ts",
+      max: 2,
+      reason: "moves to the outbox in PR 3",
+    },
+    { path: "packages/kernel/src/channels/jobs.ts", max: 2, reason: "moves to the outbox in PR 3" },
+    {
+      path: "packages/kernel/src/channels/outbound.ts",
+      max: 2,
+      reason: "moves to the outbox in PR 3",
+    },
+    {
+      path: "packages/kernel/src/conversations/titles.ts",
+      max: 3,
+      reason: "moves to the outbox in PR 3",
+    },
+    { path: "packages/kernel/src/evals/jobs.ts", max: 1, reason: "moves to the outbox in PR 7" },
+    {
+      path: "packages/kernel/src/evals/runs.service.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 7",
+    },
+    {
+      path: "packages/kernel/src/orgs/directory-sync.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 5",
+    },
+    {
+      path: "packages/kernel/src/runtime/model-call.ts",
+      max: 3,
+      reason: "moves to the outbox in PR 3",
+    },
+    {
+      path: "packages/kernel/src/runtime/run-jobs.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 2",
+    },
+    {
+      path: "packages/kernel/src/runtime/run-queue.ts",
+      max: 3,
+      reason: "moves to the outbox in PR 2",
+    },
+    {
+      path: "packages/kernel/src/runtime/subagents/dispatch.ts",
+      max: 2,
+      reason: "moves to the outbox in PR 2",
+    },
+    {
+      path: "packages/kernel/src/runtime/subagents/messages.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 2",
+    },
+    {
+      path: "packages/kernel/src/runtime/subagents/subagents.service.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 2",
+    },
+    {
+      path: "packages/kernel/src/runtime/usage-report-jobs.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 3",
+    },
+    {
+      path: "packages/kernel/src/runtime/usage-report.ts",
+      max: 3,
+      reason: "moves to the outbox in PR 3",
+    },
+    { path: "packages/kernel/src/runtime/waits.ts", max: 2, reason: "moves to the outbox in PR 2" },
+    { path: "packages/kernel/src/sandbox/jobs.ts", max: 2, reason: "moves to the outbox in PR 5" },
+    {
+      path: "packages/kernel/src/schedules/fire.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 2",
+    },
+    {
+      path: "packages/kernel/src/schedules/scan.job.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 5",
+    },
+    {
+      path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 5",
+    },
+    {
+      path: "packages/kernel/src/tools/builtins/web/extract.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 3",
+    },
+    { path: "packages/kernel/src/tools/drift.ts", max: 2, reason: "moves to the outbox in PR 7" },
+  ],
+  "kc-after-commit-hint": [
+    {
+      path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
+      max: 1,
+      reason: "moves to the outbox in PR 5",
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------------------------
 // Implementation
@@ -373,6 +524,9 @@ const MESSAGES: Record<KcRule, string> = {
     "a file ported from octok-platform starts with `// Ported from octok-platform <path> (owner-approved, 2026-10-28).`",
   "kc-lock-in-tx": "",
   "kc-side-effect-in-tx": "",
+  "kc-enqueue-via-outbox":
+    "an owed job is added through OutboxService.add in the transaction that owes it (spec 2026-11-12-transactional-outbox §3)",
+  "kc-after-commit-hint": "afterCommit is for hints; owed work goes to the outbox",
   "kc-worker-only":
     "a cron, interval or queue-consumer provider must be provided only by modules that only WorkerModule imports (transitively)",
 };
@@ -448,6 +602,33 @@ function xactLockAllowed(value: string, anc: readonly Node[]): boolean {
   });
 }
 /** A constant cache value (`"1"`, `DONE`): a marker or a dedupe key, not cached data. */
+const isAfterCommitCall = (a: Node) =>
+  a.type === "CallExpression" &&
+  (nameOf(a.callee) === "afterCommit" || memberCall(a)?.prop === "afterCommit");
+
+/**
+ * A job added to a BullMQ queue by hand: `.add(` / `.addBulk(` on a value named like a queue or
+ * declared as a BullMQ `Queue`, or `.enqueue(` on a jobs / queue facade (`this.enqueue(` helpers
+ * and stream controllers are not: the helper's own add is reported where it is).
+ */
+function isEnqueue(mc: { object: Node; prop: string }, queueTyped: ReadonlySet<string>): boolean {
+  const obj = unwrap(mc.object);
+  const last = obj.type === "MemberExpression" ? nameOf(obj.property) : nameOf(obj);
+  if (mc.prop === "add" || mc.prop === "addBulk") {
+    const callee = obj.type === "CallExpression" ? unwrap(obj.callee as Node) : undefined;
+    const named = callee
+      ? callee.type === "MemberExpression"
+        ? nameOf(callee.property)
+        : nameOf(callee)
+      : last;
+    return named !== undefined && (/queue/i.test(named) || queueTyped.has(named));
+  }
+  if (mc.prop === "enqueue") {
+    return obj.type !== "ThisExpression" && last !== undefined && last !== "controller";
+  }
+  return false;
+}
+
 const isConstant = (n: Node | undefined) =>
   n === undefined ||
   n.type === "Literal" ||
@@ -777,6 +958,7 @@ function scanFile(
 
   const inInfra = within(k, "infra");
   const bullmq = new Set<string>();
+  const queueTyped = new Set<string>();
   let importsIoredis = false;
   for (const s of parsed.program.body as Node[]) {
     if (s.type !== "ImportDeclaration") continue;
@@ -789,6 +971,35 @@ function scanFile(
         }
       }
     }
+  }
+  // Names declared with a BullMQ `Queue` type (parameters, properties, variables).
+  const bullQueueTypes = new Set<string>();
+  for (const s of parsed.program.body as Node[]) {
+    if (s.type !== "ImportDeclaration" || (s.source as Node).value !== "bullmq") continue;
+    for (const sp of (s.specifiers as Node[]) ?? []) {
+      if (sp.type === "ImportSpecifier" && nameOf(sp.imported) === "Queue") {
+        bullQueueTypes.add(nameOf(sp.local) as string);
+      }
+    }
+  }
+  if (bullQueueTypes.size > 0) {
+    visit(parsed.program, (n) => {
+      // `const q = new Queue(…)`
+      if (n.type === "VariableDeclarator" && (n.init as Node | null)?.type === "NewExpression") {
+        const made = nameOf((n.init as Node).callee);
+        const id = nameOf(n.id);
+        if (made && id && bullQueueTypes.has(made)) queueTyped.add(id);
+      }
+      const key = n.type === "PropertyDefinition" ? nameOf(n.key) : nameOf(n);
+      let t = typeName(n.typeAnnotation);
+      // `Pick<Queue, "add">`
+      if (t === "Pick" || t === "Omit") {
+        const ref = (n.typeAnnotation as Node).typeAnnotation as Node;
+        const first = (((ref.typeArguments as Node | undefined)?.params as Node[]) ?? [])[0];
+        t = first?.type === "TSTypeReference" ? nameOf(first.typeName) : undefined;
+      }
+      if (key && t && bullQueueTypes.has(t)) queueTyped.add(key);
+    });
   }
   const isModuleFile = k === "kernel.module.ts" || (k.endsWith(".module.ts") && !inInfra);
   const moduleRefs = new Set<string>();
@@ -879,6 +1090,10 @@ function scanFile(
           if (mc && !within(k, "infra/database")) hit("kc-transaction", n, anc);
         }
         if (mc?.prop === "upsertJobScheduler" && !within(k, "infra/queue")) hit("kc-queue", n, anc);
+        if (mc && isEnqueue(mc, queueTyped)) {
+          hit("kc-enqueue-via-outbox", n, anc);
+          if (anc.some(isAfterCommitCall)) hit("kc-after-commit-hint", n, anc);
+        }
         if (callee === "forwardRef" && !forwardRefAllowed) hit("kc-late-binding", n, anc);
         if (mc && (mc.prop === "get" || mc.prop === "resolve") && !inInfra) {
           const holder =
