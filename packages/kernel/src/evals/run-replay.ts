@@ -26,6 +26,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { LoopDeps } from "../runtime/langgraph-loop.js";
+import { runDeadline, tightestLimit } from "../runtime/limits.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
 import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
 import type { BoundProvider, ProviderRegistry } from "../runtime/providers.js";
@@ -680,16 +681,22 @@ export async function replayRun(
   };
 
   const runtime = d.config.get().runtime;
-  const deadline = Date.now() + runtime.maxRunSeconds * 1000;
+  // 0 in the config or the logged child limit = no limit there
+  const maxSteps = tightestLimit(subagent?.maxSteps, runtime.maxSteps);
+  // `runtime.maxRunSeconds` 0: no deadline and no timer
+  const deadline = runDeadline(Date.now(), runtime.maxRunSeconds);
   let deadlineHit = false;
-  const timer = setTimeout(
-    () => {
-      deadlineHit = true;
-      stopper.abort();
-    },
-    Math.max(0, deadline - Date.now()),
-  );
-  timer.unref();
+  const timer =
+    deadline === undefined
+      ? undefined
+      : setTimeout(
+          () => {
+            deadlineHit = true;
+            stopper.abort();
+          },
+          Math.max(0, deadline - Date.now()),
+        );
+  timer?.unref();
   // a fork invocation's report is the recorded one: a replay never dispatches a sub-agent (A5)
   const skillForks = recordedSkillForks(
     eventLog,
@@ -711,9 +718,8 @@ export async function replayRun(
       sink: () => {},
       pendingAbsorbable,
       limits: {
-        maxSteps:
-          subagent === undefined ? runtime.maxSteps : Math.min(subagent.maxSteps, runtime.maxSteps),
-        deadline,
+        ...(maxSteps !== undefined && { maxSteps }),
+        ...(deadline !== undefined && { deadline }),
       },
       // replays never fire plugin hooks (the loop deps omit them too, P-18)
       conversationKind: "eval",

@@ -217,7 +217,8 @@ export interface ModelStepInput {
   parentRunId?: string;
   /**
    * The run's step limit (`LoopContext.limits.maxSteps`) for the turn-limit reminder; a child's
-   * may be below `runtime.maxSteps` (final review m4). Defaults to `runtime.maxSteps`.
+   * may be below `runtime.maxSteps` (final review m4). Absent: the run has no step limit, and no
+   * reminder is sent.
    */
   maxSteps?: number;
 }
@@ -1102,7 +1103,9 @@ async function ladder(
       ? BUDGET_WRAP_UP_REMINDER
       : wrapUp
         ? WRAP_UP_REMINDER
-        : turnLimitReminder(step, input.maxSteps ?? runtime.maxSteps);
+        : input.maxSteps === undefined
+          ? null
+          : turnLimitReminder(step, input.maxSteps);
   let evs = events;
   const rungs: { ref: ModelRef; fallback: boolean }[] = [
     { ref: agent.model, fallback: false },

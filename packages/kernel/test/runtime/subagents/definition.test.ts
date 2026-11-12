@@ -502,6 +502,20 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.maxSteps).toBe(5);
   });
 
+  it("runtime.maxSteps 0 (no limit): a template's own limit holds, a template without one logs 0 (no limit)", async () => {
+    const saved = cfg;
+    cfg = { ...cfg, runtime: { ...cfg.runtime, maxSteps: 0 } };
+    try {
+      const parent = def({
+        subagents: { inline: [inline("scout", { maxSteps: 5 }), inline("free")] },
+      });
+      expect((await eff(parent, "scout")).maxSteps).toBe(5);
+      expect((await eff(parent, "free")).maxSteps).toBe(0);
+    } finally {
+      cfg = saved;
+    }
+  });
+
   it("a template allowlist or deny key under a connector stays a key: a later tool never slips past", async () => {
     const parent = def({
       subagents: {

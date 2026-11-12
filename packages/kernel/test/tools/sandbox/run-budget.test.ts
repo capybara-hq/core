@@ -61,17 +61,16 @@ describe("运行时限与命令超时（纯函数）", () => {
     expect(searchTimeoutMs(cfg, t0, t0, t0 + 1000)).toBe(1000);
   });
 
-  it("maxRunSeconds < maxCommandSeconds：都是默认值时 info，运维改过一个仍不一致时 warn；指向两个配置键", () => {
-    const [w] = sandboxConfigWarnings(cfg);
-    expect(w?.level).toBe("info");
-    expect(w?.message).toContain("runtime.maxRunSeconds (900)");
-    expect(w?.message).toContain("sandbox.limits.maxCommandSeconds (7200)");
+  it("no run duration limit by default: no warning; an explicit maxRunSeconds below maxCommandSeconds warns, naming both keys", () => {
+    expect(cfg.runtime.maxRunSeconds).toBe(0);
+    expect(sandboxConfigWarnings(cfg)).toEqual([]);
     const [changed] = sandboxConfigWarnings({
       ...cfg,
       runtime: { ...cfg.runtime, maxRunSeconds: 1800 },
     });
     expect(changed?.level).toBe("warn");
     expect(changed?.message).toContain("runtime.maxRunSeconds (1800)");
+    expect(changed?.message).toContain("sandbox.limits.maxCommandSeconds (7200)");
     expect(
       sandboxConfigWarnings({ ...cfg, runtime: { ...cfg.runtime, maxRunSeconds: 7200 } }),
     ).toEqual([]);

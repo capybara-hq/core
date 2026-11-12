@@ -35,6 +35,7 @@ import { ToolPipeline } from "../tools/pipeline.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock, type Lease } from "./conversation-lock.js";
+import { runDeadline, tightestLimit } from "./limits.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
 import { ProviderListError, ProviderRegistry } from "./providers.js";
@@ -589,7 +590,8 @@ export class RunWorker {
     // a chat run's saved agent version, under the conversation's model switch (UI refresh B); a
     // sub-agent has none: it never takes a selection
     let saved: AgentDefinition | undefined;
-    let maxSteps = runtime.maxSteps;
+    /** The run's step limit; `undefined` = no limit (`runtime.maxSteps` 0). */
+    let maxSteps = tightestLimit(runtime.maxSteps);
     let parent: SubagentParent | undefined;
     /** A sub-agent's name in its run context: the roster name, or the forked skill's. */
     let childName: string | undefined;
@@ -611,7 +613,8 @@ export class RunWorker {
           ? trigger.payload.dispatch?.narrowed
           : undefined,
       );
-      maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
+      // the tighter of the logged limit and the deployment's (0 in either = no limit there)
+      maxSteps = tightestLimit(started.payload.maxSteps, runtime.maxSteps);
       childName = started.payload.template.invokedSkill?.name ?? started.payload.agentType;
       const row = await dispatchOfChildRun(this.db, runId);
       const otherAgent = started.payload.template.source === "agent";
@@ -716,21 +719,28 @@ export class RunWorker {
       startedAt = updated.started_at as Date;
     }
     // 截止时间以首次开始为准：停机后在其他 worker 续跑也不重新计时；等人处理的时长（waited_ms）不计入。
-    const deadline = startedAt.getTime() + Number(run.waited_ms) + runtime.maxRunSeconds * 1000;
+    // `runtime.maxRunSeconds` 0: no deadline, no timer (the run ends when the model stops or is stopped)
+    const deadline = runDeadline(
+      startedAt.getTime() + Number(run.waited_ms),
+      runtime.maxRunSeconds,
+    );
 
     const ac = new AbortController();
     let abortedBy: string | null | undefined;
     let abortDetail: RunAbortDetail | undefined;
     let deadlineHit = false;
-    const deadlineTimer = setTimeout(
-      () => {
-        deadlineHit = true;
-        ac.abort();
-      },
-      Math.max(0, deadline - Date.now()),
-    );
+    const deadlineTimer =
+      deadline === undefined
+        ? undefined
+        : setTimeout(
+            () => {
+              deadlineHit = true;
+              ac.abort();
+            },
+            Math.max(0, deadline - Date.now()),
+          );
     state.stopTimers = () => {
-      clearTimeout(deadlineTimer);
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
     };
 
     let unwatch: (() => Promise<void>) | undefined;
@@ -783,7 +793,10 @@ export class RunWorker {
           shutdown: state.shutdown.signal,
           sink: this.sinkFor(conversationId),
           pendingAbsorbable,
-          limits: { maxSteps, deadline },
+          limits: {
+            ...(maxSteps !== undefined && { maxSteps }),
+            ...(deadline !== undefined && { deadline }),
+          },
           // a sub-agent's conversation fires hooks like a chat, with `parent` set (spec §11)
           conversationKind:
             conv.kind === "eval" ? "eval" : conv.kind === "subagent" ? "subagent" : "chat",
