@@ -74,6 +74,18 @@ export interface DeviceLocalPolicySummary {
   remoteGrants: DeviceRemoteGrants;
 }
 
+/**
+ * The first line of the kernel's background task launch command (`Bash` `run_in_background`), a
+ * shell comment. A device kills what a foreground exec leaves running once the exec ends; an exec
+ * whose command starts with this line detaches a task on purpose, and its processes are left alone.
+ */
+export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
+
+/** Whether an exec's command is a background task launch ({@link BACKGROUND_LAUNCH_LINE}). */
+export function isBackgroundLaunch(command: string): boolean {
+  return command === BACKGROUND_LAUNCH_LINE || command.startsWith(`${BACKGROUND_LAUNCH_LINE}\n`);
+}
+
 /** The most blocked hosts an exec result reports; the parser cuts longer lists. */
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
 

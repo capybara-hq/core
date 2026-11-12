@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import { BACKGROUND_LAUNCH_LINE, DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 
 /**
@@ -128,7 +128,8 @@ export const GROUP_LAUNCHER = [
  * `setsid nohup sh -c 'timeout -s KILL <seconds> …'` and the sid is `$!`, the pid `setsid` started;
  * elsewhere (macOS: no `setsid`, no `timeout`, no `pgrep -s`) {@link GROUP_LAUNCHER} runs it in a
  * process group of its own, watched by the launcher, and writes the sid (the group id) itself,
- * which the launch waits for (up to 10 s). An
+ * which the launch waits for (up to 10 s). The script starts with `BACKGROUND_LAUNCH_LINE`, so a
+ * local device, which kills what any other exec leaves running, leaves the task alone. An
  * environment without one of the needed programs fails with a readable error on stderr and exit
  * code 127, before anything starts. `id` must be a task id and `seconds` a positive integer (both
  * go into the script unquoted).
@@ -143,6 +144,8 @@ export function launchScript(id: string, command: string, seconds: number): stri
   const need = (list: string[]) =>
     `for c in ${list.join(" ")}; do command -v "$c" >/dev/null 2>&1 || { echo "Background tasks need ${list.join(", ")} in this environment; $c is missing." >&2; exit 127; }; done`;
   return [
+    // first: a local device kills what an exec leaves running, except a launch's detached task
+    BACKGROUND_LAUNCH_LINE,
     "set -e",
     SESSION_MODE_SCRIPT,
     `if [ "$pg" = -s ]; then ${need(REQUIRED_SESSION)}; else ${need(REQUIRED_GROUP)}; fi`,

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connection } from "../src/client.js";
-import { drain } from "../src/commands/drain.js";
+import { drain, drainAndWait } from "../src/commands/drain.js";
 import { LEGACY_NETWORK_NOTICE, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { pidPath, writePid } from "../src/pid.js";
@@ -228,5 +228,49 @@ describe("start, stop, drain", () => {
       [777, "SIGTERM"],
       [777, "SIGUSR2"],
     ]);
+  });
+
+  it("drain --wait waits until the program has exited, within the time limit", async () => {
+    writePid(dir, 778);
+    let checks = 0;
+    // the program answers signal 0 three times, then is gone
+    const kill = ((_pid: number, sig?: string | number) => {
+      if (sig === 0 && ++checks > 3) {
+        throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      }
+      return true;
+    }) as typeof process.kill;
+    const out: string[] = [];
+    const slept: number[] = [];
+    const sleep = async (ms: number) => void slept.push(ms);
+    expect(
+      await drainAndWait(
+        dir,
+        (l) => out.push(l),
+        () => {},
+        { kill, sleep, timeoutMs: 60_000 },
+      ),
+    ).toBe(0);
+    expect(out).toEqual(["Draining capybara-device.", "capybara-device has stopped."]);
+    expect(slept.length).toBeGreaterThan(0);
+
+    // still running at the time limit: exit 1 with a reason
+    const forever = (() => true) as typeof process.kill;
+    const err: string[] = [];
+    slept.length = 0;
+    expect(
+      await drainAndWait(
+        dir,
+        () => {},
+        (l) => err.push(l),
+        {
+          kill: forever,
+          sleep,
+          timeoutMs: 2000,
+        },
+      ),
+    ).toBe(1);
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(2000);
+    expect(err.join("\n")).toContain("still draining after 2 s");
   });
 });
