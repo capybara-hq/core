@@ -101,6 +101,23 @@ export const ScheduleListQuery = z
     conversationId: Id.optional(),
   })
   .strict();
+/** An instant with an offset (`2026-11-09T00:00:00+08:00`). */
+const Instant = z.string().datetime({ offset: true });
+
+/**
+ * The calendar's range (`from < to`, at most 43 days, 2 with `taskId`: checked by the service),
+ * the viewer's zone (local days for the collapse and the cut), `all` (org admins) and `taskId`
+ * (one task, never collapsed).
+ */
+export const ScheduleCalendarQuery = z
+  .object({
+    from: Instant,
+    to: Instant,
+    timeZone: IanaTimeZone,
+    all: z.enum(["true", "false"]).optional(),
+    taskId: Id.optional(),
+  })
+  .strict();
 export const ScheduleChatTargetsQuery = z.object({}).strict();
 export const ScheduleGrantableQuery = z.object({ agentId: Id }).strict();
 export const ScheduleParams = z.object({ id: Id });
@@ -116,6 +133,10 @@ export const ScheduleGrantParams = z.object({ id: Id, toolKey: z.string().min(1)
 export class ScheduleCreateBodyDto extends createZodDto(ScheduleCreateBody, "ScheduleCreateBody") {}
 export class ScheduleUpdateBodyDto extends createZodDto(ScheduleUpdateBody, "ScheduleUpdateBody") {}
 export class ScheduleListQueryDto extends createZodDto(ScheduleListQuery, "ScheduleListQuery") {}
+export class ScheduleCalendarQueryDto extends createZodDto(
+  ScheduleCalendarQuery,
+  "ScheduleCalendarQuery",
+) {}
 export class ScheduleChatTargetsQueryDto extends createZodDto(
   ScheduleChatTargetsQuery,
   "ScheduleChatTargetsQuery",
@@ -136,6 +157,7 @@ export class ScheduleGrantParamsDto extends createZodDto(
 /** The schedule routes the Platform operations mirror (`check:platform-ops` keys). */
 export const SCHEDULE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/schedules", query: ScheduleListQuery },
+  { route: "GET /api/v1/orgs/:orgId/schedules/calendar", query: ScheduleCalendarQuery },
   { route: "GET /api/v1/orgs/:orgId/schedules/chat-targets", query: ScheduleChatTargetsQuery },
   { route: "GET /api/v1/orgs/:orgId/schedules/grantable-tools", query: ScheduleGrantableQuery },
   { route: "POST /api/v1/orgs/:orgId/schedules", body: ScheduleCreateBody },
@@ -210,3 +232,12 @@ export function updateInputOf(body: z.infer<typeof ScheduleUpdateBody>): UpdateT
     ...(expiresAt !== undefined && { expiresAt: expiresAt === null ? null : new Date(expiresAt) }),
   } as UpdateTaskInput;
 }
+
+/** A calendar query as the service's input. */
+export const calendarInputOf = (q: z.infer<typeof ScheduleCalendarQuery>) => ({
+  from: new Date(q.from),
+  to: new Date(q.to),
+  timeZone: q.timeZone,
+  all: q.all === "true",
+  ...(q.taskId !== undefined && { taskId: q.taskId }),
+});

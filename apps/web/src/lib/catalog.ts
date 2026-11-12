@@ -867,6 +867,8 @@ export interface OrgCatalogTemplate {
   editableEndpoint: string[];
   auth: Record<string, unknown>;
   ownership: "org" | "personal" | null;
+  /** The template starts switched off in every org: the install wizard does not ask for it. */
+  defaultOff: boolean;
   /**
    * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
    * wizard shows it above the template's input. Null without one (older kernels: absent).

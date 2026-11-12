@@ -285,7 +285,6 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
-      [zh.nav.devices, "/devices"],
       [zh.nav.schedules, "/schedules"],
     ]);
     // the inbox is the brand row's icon button
@@ -293,7 +292,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const menu = await openMore(nav);
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      // 更多: plugins (members and up), extensions (org admins)
+      // 更多: devices, plugins (members and up), extensions (org admins)
+      [zh.nav.devices, "/devices"],
       [zh.nav.plugins, "/plugins"],
       [zh.nav.extensions, "/extensions"],
       // org admins (owner) see channels, evals and organization settings
@@ -449,8 +449,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(nav).queryByRole("link", { name: zh.nav.skills })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
-    // nothing of the 更多 flyout is a guest's (no extension pages here): no 更多 row
-    expect(within(nav).queryByRole("button", { name: "更多" })).toBeNull();
+    // a guest's 更多 holds only 设备 (acceptance 2026-11-12)
+    expect(within(nav).getByRole("button", { name: "更多" })).toBeTruthy();
   });
 
   it.each(["zh", "en"] as const)(

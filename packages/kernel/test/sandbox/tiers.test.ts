@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { invalidStoredSandboxTier } from "../../src/orgs/settings.service.js";
 import {
+  parseStoredPlatformTiers,
+  platformTiersWiden,
+  resolvePlatformTiers,
+} from "../../src/sandbox/platform-tiers.js";
+import {
   baseSandboxEgress,
   type DeploymentSandboxPolicy,
   effectiveSandboxPolicy,
@@ -33,7 +38,13 @@ describe("config: sandbox.tiers and sandbox.limits", () => {
 
   it("defaults: max dev, default dev, unsandboxed allowed, devHosts the SDK preset, egress allowlist", () => {
     const c = KernelConfigSchema.parse(base);
-    expect(c.sandbox.tiers).toEqual({ max: "dev", default: "dev", allowUnsandboxed: true });
+    // unset in the config: the admin console's choice decides, else the defaults
+    expect(c.sandbox.tiers).toEqual({});
+    expect(resolvePlatformTiers(c.sandbox.tiers, {})).toEqual({
+      max: "dev",
+      default: "dev",
+      allowUnsandboxed: true,
+    });
     expect(c.sandbox.limits.egress).toBe("allowlist");
     expect(c.sandbox.limits.devHosts).toContain("registry.npmjs.org");
   });
@@ -289,5 +300,39 @@ describe("invalidStoredSandboxTier (the lenient read warns)", () => {
     expect(invalidStoredSandboxTier({ sandboxTier: { max: "dev" } })).toBe(false);
     expect(invalidStoredSandboxTier({ sandboxTier: { max: "everything" } })).toBe(true);
     expect(invalidStoredSandboxTier({ sandboxTier: "open" })).toBe(true);
+  });
+});
+
+describe("platform tiers: config > admin console > default", () => {
+  it("a field set in the config wins over the stored choice; the default is cut to the max", () => {
+    expect(resolvePlatformTiers({}, { max: "open", default: "open" })).toEqual({
+      max: "open",
+      default: "open",
+      allowUnsandboxed: true,
+    });
+    expect(
+      resolvePlatformTiers(
+        { max: "strict" },
+        { max: "open", default: "open", allowUnsandboxed: false },
+      ),
+    ).toEqual({ max: "strict", default: "strict", allowUnsandboxed: false });
+    expect(
+      resolvePlatformTiers({ allowUnsandboxed: true }, { allowUnsandboxed: false }),
+    ).toMatchObject({ allowUnsandboxed: true });
+  });
+
+  it("an invalid stored choice reads as max strict, never wider", () => {
+    expect(parseStoredPlatformTiers(undefined)).toEqual({});
+    expect(parseStoredPlatformTiers({ max: "everything" })).toEqual({ max: "strict" });
+    expect(parseStoredPlatformTiers("open")).toEqual({ max: "strict" });
+  });
+
+  it("widening: a higher max or default, or unsandboxed newly allowed", () => {
+    const base = { max: "dev", default: "dev", allowUnsandboxed: false } as const;
+    expect(platformTiersWiden(base, { ...base, max: "open" })).toBe(true);
+    expect(platformTiersWiden(base, { ...base, max: "strict", default: "strict" })).toBe(false);
+    expect(platformTiersWiden({ ...base, default: "strict" }, base)).toBe(true);
+    expect(platformTiersWiden(base, { ...base, allowUnsandboxed: true })).toBe(true);
+    expect(platformTiersWiden({ ...base, allowUnsandboxed: true }, base)).toBe(false);
   });
 });

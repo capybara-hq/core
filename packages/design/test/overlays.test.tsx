@@ -12,6 +12,7 @@ import {
   Dialog,
   LinkButton,
   Menu,
+  Popover,
   Sheet,
   ToastProvider,
   useToast,
@@ -659,5 +660,39 @@ describe("清理：Menu 禁用的导航项", () => {
     expect(css).toMatch(
       /\[data-cb-trigger\]\[data-state="open"\]:not\(\[data-variant="primary"\], \[data-variant="danger-solid"\]\)/,
     );
+  });
+});
+
+describe("Popover (controlled)", () => {
+  it("opens and closes through open / onOpenChange, so a choice inside can close it", async () => {
+    function Choice() {
+      const [open, setOpen] = useState(false);
+      const [picked, setPicked] = useState("");
+      return (
+        <>
+          <Popover open={open} onOpenChange={setOpen} trigger={<button type="button">更多</button>}>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setPicked("a");
+              }}
+            >
+              选项 A
+            </button>
+          </Popover>
+          <output>{picked}</output>
+        </>
+      );
+    }
+    render(
+      <DesignProvider locale="zh">
+        <Choice />
+      </DesignProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await userEvent.click(await screen.findByRole("button", { name: "选项 A" }));
+    expect(screen.queryByRole("button", { name: "选项 A" })).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("a");
   });
 });

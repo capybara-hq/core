@@ -1408,6 +1408,55 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
     }
   });
 
+  it("a default-off template has no step, is not counted in the summary and is not submitted", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const tpl = (id: string, extra: Record<string, unknown>) => ({
+      id,
+      displayName: { zh: id, en: id },
+      description: "",
+      plugin: "connector-mcp",
+      connector: "mcp",
+      endpoint: { url: "https://mcp.example.com" },
+      editableEndpoint: [],
+      ...extra,
+    });
+    const calls = stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          item: orgItem({ name: "github" }),
+          hasIcon: false,
+          extension: null,
+          templates: [
+            tpl("gh", { auth: { type: "none" }, ownership: "org", defaultOff: false }),
+            tpl("github-pat", {
+              auth: { type: "bearer", ownership: "personal" },
+              ownership: "personal",
+              defaultOff: true,
+            }),
+          ],
+          dependencies: [],
+          skills: [],
+        }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, { item: orgItem({ name: "github", state: "on" }) }),
+    });
+    await renderInstall();
+    // Only the on template has a step; the personal token is not asked for
+    expect(await screen.findByText(fill(t.connectorStep, { name: "gh" }))).toBeTruthy();
+    expect(screen.queryByText(fill(t.connectorStep, { name: "github-pat" }))).toBeNull();
+    expect(screen.queryByText(t.personalHint)).toBeNull();
+    const user = userEvent.setup();
+    const next = screen.getByRole("button", { name: t.next }) as HTMLButtonElement;
+    expect(next.disabled).toBe(false);
+    await user.click(next);
+    expect(screen.getByText(fill(t.summaryTemplates, { n: 1 }))).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+    expect(switchInputs(calls)).toEqual({ connectors: { gh: { name: "gh", slug: "gh" } } });
+  });
+
   it("a 409 catalog.dependency_unresolved names the dependency and its range", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;

@@ -571,12 +571,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/settings: the loading sections are the page's own (four card radios, the currency)", async () => {
+  it("/admin/settings: the loading sections are the page's own (five card radios, the currency)", async () => {
     const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
-    // three policies and 外观's theme cards, then 插件界面代码's switch row
-    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(4);
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(6);
+    // three policies, 沙箱级别's level cards and 外观's theme cards, then 插件界面代码's switch row
+    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(5);
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(7);
     await release();
   });
 

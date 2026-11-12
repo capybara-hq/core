@@ -608,7 +608,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect(await none.update(orgId, { sandboxEgress: { mode: "none" } }, ownerId)).toMatchObject({
       sandboxEgress: { mode: "none" },
     });
-    expect(none.deployment().sandboxEgress).toEqual({
+    expect((await none.deployment()).sandboxEgress).toEqual({
       mode: "none",
       allowHosts: baseCfg.sandbox.limits.allowHosts,
     });
@@ -656,12 +656,12 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         .update(orgId, { sandboxTier: { max: "open", allowUnsandboxed: true } }, ownerId)
         .catch((e: unknown) => e),
     ).toMatchObject({ code: "org.sandbox_tier_not_allowed" });
-    expect(open.deployment().sandboxTiers).toMatchObject({
+    expect((await open.deployment()).sandboxTiers).toMatchObject({
       max: "open",
       default: "dev",
       allowUnsandboxed: false,
     });
-    expect(open.sandboxPolicy(await open.get(orgId), null)).toMatchObject({
+    expect(await open.sandboxPolicy(await open.get(orgId), null)).toMatchObject({
       tier: "dev",
       ceiling: "open",
       allowUnsandboxed: false,

@@ -23,6 +23,7 @@ import {
   sql,
   type UpdateObject,
 } from "kysely";
+import { SESSION_MODE_SCRIPT } from "../background/launch.js";
 import { BackgroundTaskStore } from "../background/store.js";
 import {
   DEFAULT_MAX_COMMAND_SECONDS,
@@ -64,6 +65,7 @@ import {
   effectiveSandboxPolicy,
   instanceLimitsJson,
   limitsForTier,
+  readDeploymentSandboxPolicy,
   readInstanceLimits,
   sameApplied,
 } from "./tiers.js";
@@ -481,12 +483,12 @@ export class SandboxService {
     orgId: string;
     deviceId?: string;
   }): Promise<EffectiveSandboxPolicy> {
-    const cfg = this.config.get().sandbox;
-    const [settings, tier] = await Promise.all([
+    const [deployment, settings, tier] = await Promise.all([
+      readDeploymentSandboxPolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, device.orgId),
       device.deviceId === undefined ? null : this.deviceTier(device.orgId, device.deviceId),
     ]);
-    return effectiveSandboxPolicy(cfg, settings, tier);
+    return effectiveSandboxPolicy(deployment, settings, tier);
   }
 
   /** The device's own tier (`devices.tier`); null when it follows the org or is not there. */
@@ -971,6 +973,16 @@ export class SandboxService {
           if (lease) {
             if (intent) await this.clearIntent(env, token);
             intent = false;
+            // after a wait, the limits again under the lease: a tier narrowed just before the
+            // holder we waited for let go is applied now (asShared checks `ready` with them)
+            if (waited) {
+              try {
+                want = await wantNow();
+              } catch (err) {
+                await lease.release();
+                throw err;
+              }
+            }
             const e = await this.asShared(ctx, p, lease, ready, signal);
             if (e) return e;
           }
@@ -1419,7 +1431,7 @@ export class SandboxService {
   /**
    * Under the exclusive lease, right after a resume or a (re)build: kills the sessions of the
    * background tasks marked lost while their process may live on (`kill_pending`), in one exec of
-   * `pkill -KILL -s <sid>`, then clears their flags. Tasks of another instance have no process
+   * `pkill -KILL -s <sid>` (`-g` on macOS), then clears their flags. Tasks of another instance have no process
    * here and are only cleared. A gone instance and an abort are thrown; another failure is warned
    * and leaves the flags of this instance's tasks for the next resume.
    */
@@ -1441,10 +1453,12 @@ export class SandboxService {
     let cleared = rows;
     if (mine.length > 0) {
       // pkill exits 1 when the session has no process left: only a higher status is a failure
-      const command = `rc=0; for sid in ${mine.map((r) => r.sid).join(" ")}; do pkill -KILL -s "$sid"; c=$?; [ "$c" -le 1 ] || rc=$c; done; exit $rc`;
+      const command = `${SESSION_MODE_SCRIPT}\nrc=0; for sid in ${mine.map((r) => r.sid).join(" ")}; do tk_kill KILL "$sid"; c=$?; [ "$c" -le 1 ] || rc=$c; done; exit $rc`;
       try {
         const r = await p.impl.exec(handle, {
           command,
+          // tk_kill's control files are relative to the workspace root (macOS devices)
+          cwd: rootsOf(handle).workspace,
           timeoutMs: PENDING_KILL_TIMEOUT_MS,
           maxOutputBytes: 4096,
           signal,

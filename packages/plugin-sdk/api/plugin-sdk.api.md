@@ -800,7 +800,7 @@ export type DeviceExecResult = ExecResult;
 export type DeviceFeature = "networkReport" | "policyOp" | "tiers";
 
 // @public
-export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
 export interface DeviceHello {
@@ -863,6 +863,12 @@ export interface DevicePolicyArgs {
         via: "web" | "im";
     };
     tier?: SandboxTier | null;
+}
+
+// @public
+export interface DevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
 }
 
 // @public
@@ -2700,7 +2706,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.15";
+export const SDK_VERSION = "0.1.0-rc.17";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

@@ -36,6 +36,10 @@ export const ERROR_CODES = {
   "org.owner_required": 403,
   "org.sandbox_egress_not_allowed": 400,
   "org.sandbox_tier_not_allowed": 400,
+  /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
+  "deployment.setting_readonly": 409,
+  /** Raising the platform's sandbox tiers through an API token or the Platform tool (only narrowing). */
+  "deployment.sandbox_tier_not_allowed": 400,
   "member.not_found": 404,
   "member.already_exists": 409,
   "member.anonymous_guest": 409,

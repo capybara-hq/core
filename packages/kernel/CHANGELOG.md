@@ -1,5 +1,96 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.23
+
+### Patch Changes
+
+- 8471657: A local policy change made on the machine (`capybara-device policy ...` while the service runs, a
+  flipped localhost proxy guard, a new tier ceiling) reaches the deployment at once: the device
+  pushes its new summary in a `policy` frame (new in the device protocol), and the kernel stores it
+  as it stores the hello's, so the device page and the next `device_paths` line show it.
+- 8ef7ec6: The plugin enable wizard no longer asks for connector templates that start switched off
+  (`defaultEnabled: false`); the org catalog detail marks them with `defaultOff`.
+- f156a46: Background Bash tasks (`run_in_background`) work on macOS devices: where `pgrep` has no `-s`, the
+  launch runs the command in a process group of its own, watched by a small perl launcher that
+  enforces the time limit and signals the group on a stop (macOS has no `setsid` or GNU `timeout`,
+  and its OS sandbox lets no command list or signal another command's processes).
+- a3ca5ef: The super admin sets the platform's sandbox levels (`sandbox.tiers.max`, `default`,
+  `allowUnsandboxed`) on the admin settings page (`PUT /api/v1/admin/settings` `sandboxTiers`). A field
+  set in the startup config (env, file or Nacos) wins and is read-only there; an API token or the
+  Platform tool may only lower them. The dev hosts preset (`DEV_HOSTS`) adds `storage.googleapis.com`,
+  where Playwright's Chromium download (Chrome for Testing) is served from.
+- Updated dependencies [8471657]
+- Updated dependencies [a3ca5ef]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.17
+
+## 0.1.0-rc.22
+
+### Minor Changes
+
+- 67b39b3: The device owner edits a connected device's network policy from the web:
+  `POST /api/v1/orgs/:orgId/devices/:id/policy` (`add`, wildcards allowed; `remove`; `network`
+  `allowlist` or `open`), web session only, delivered with the `policy` device operation. Widening
+  needs the device's local `remoteGrants: "owner"` (else 409 `device.policy_refused` with the command
+  to run on the machine). The device view lists the last ten policy changes (`network.recent`).
+- e964b57: Network asks: when a command on a connected device is refused a domain by the device's local
+  policy, the device owner is asked in the conversation or on the IM card (「这次允许 / 这台设备一直允许 /
+  拒绝」). "This time" allows the domain for the rest of the run tree; "always" adds it to the device's
+  local policy through the new `policy` device operation. Org-layer and address-layer refusals are
+  explained to the model and shown under the command. Migration 0114 adds approval kinds and device
+  policy summaries.
+- 9725087: A character budget for the skills catalog: `skills.catalogBudgetChars` (hot, default 16000). At run
+  start the catalog's entries are ranked (the agent's own and the ones it shared, builtin, the organization's own, then
+  plugin skills) and those past the budget are recorded in the snapshot as name-only and listed
+  after the others under "More skills (names only; …)". Old snapshots render as before.
+- 95fc4b0: Skills are on by default and pinning is gone. Every skill on in an org is on for every agent unless
+  the agent's new `disabledSkills` turns it off (a plugin's skills by name, a whole plugin as `"all"`
+  including skills it gains later, or a skill without a plugin by id); builtin skills, the agent's
+  own and its shared skills cannot be turned off. `skills.orgSkills` and `skills.pinned` are removed
+  from the agent definition (refused on save; migration 0116 rewrites every agent version), run start
+  no longer injects pinned skill bodies (an old conversation gets a "Pinned skills removed" notice),
+  and `agent.pinned_invalid` is gone. A sub-agent template's `skills` become one logged line telling
+  the child to load them with `Skill` first. `plugin.json` `skills[].pinned` and the import confirm's
+  `pinnedSuggestions` are removed; the skill APIs drop `suggestPinned`, `entryBytes` and
+  `tokenEstimate` and the library list gains `builtin`; the Claude Code import reports a
+  `session_start_hook` warning instead of a pin hint. The Platform tool's `agents.create` /
+  `agents.update` take `disabledSkills`, and `platform.me` lists the agent's skills.
+
+### Patch Changes
+
+- 2682d5f: Agent templates turn skills off with `disallowedSkills` (`<plugin>:<name>`, `<plugin>:*` or a bare
+  `<name>`, at most 64; `isDisallowedSkillRef`) instead of selecting them: `selectedSkills` is
+  removed. Creating an agent from a template turns those skills off and lists every name in `skills`
+  as carried or unavailable; saving an agent as an org template writes its off-list.
+- 89a0a5c: The `Bash` tool description tells the model that network access goes through a proxy and that a
+  blocked domain is reported after the command output.
+- 105a59e: The skills of builtin plugins on in the org (`skills-core`'s `skill-guide`) are in every agent's
+  skills catalog without being selected (listed, not pinned; an agent's own skill of the same name
+  wins); the skill library marks them `builtin`, and the agent page shows them ticked and disabled
+  with a "Built-in" tag
+- f6d6f16: The `capybara:oauth-token-endpoint` setup check reads GitHub's token endpoint answers
+  (`bad_verification_code` accepted, `incorrect_client_credentials` refused), and its fix text no
+  longer names Slack's "Basic Information" page.
+- bb3d177: Sandbox tiers in the kernel: cloud devices get their effective tier (applied on use through the provider's `update`, or by recreating the instance on the kept files), local devices get the org's ceiling with every command, scheduled runs need the `tier:open` task grant for the open tier, and a device running without a sandbox is refused where the org does not allow it
+- c36ce32: Scheduled tasks: cron-triggered agent runs into a new conversation, a chosen one or an IM chat, with task grants, trial runs and pause on lasting failures
+- e808481: Skills are on by default in the web app: the agent page's 技能 section lists every skill on in the
+  org checked, and unticking one turns it off (`disabledSkills`); a plugin's group head turns the
+  whole plugin off, its later skills too. Pinning is gone (the 置顶 section, the pinned suggestions
+  of plugin import, the token estimates). The agent template editor edits `disallowedSkills` with the
+  same list and the skills a sub-agent loads first. The org 技能 page filters by plugin and its
+  detail says how many agents turned a skill off (`agentsOff` on the skill detail); switching off a
+  plugin with skills says every agent loses them; the admin agent pages show the off count.
+- f1331fe: `subagents.maxTokensPerRun` now defaults to 0 (no limit); set it, or an org override, to cap sub-agent tokens.
+- bfb35e3: Tool rows no longer read a Bash command's non-zero exit as a failure (only a timeout or a stopped
+  command fails; the summary names the exit code), and an `Edit` / `Write` refused by the
+  read-before-write check carries the display-only `tool_result.view.kind: "guard"`, shown as
+  "Blocked: read the file (again) first" and counted apart from failures; the model still gets the
+  same error result
+- Updated dependencies [2682d5f]
+- Updated dependencies [2e52ca1]
+- Updated dependencies [8fa0e32]
+- Updated dependencies [95fc4b0]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.16
+
 ## 0.1.0-rc.21
 
 ### Minor Changes

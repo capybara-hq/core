@@ -1,6 +1,8 @@
 import { isSandboxTier, minTier, type SandboxTier, tierAtMost } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { OrgSettings } from "../orgs/settings.service.js";
+import { type PlatformTiers, readPlatformTiers } from "./platform-tiers.js";
 
 /**
  * Sandbox tiers (sandbox dev tiers spec §4): who may reach which tier, and the network each tier
@@ -8,10 +10,24 @@ import type { OrgSettings } from "../orgs/settings.service.js";
  * (`sandbox.tiers`), the org's (`sandboxTier`) and the device's own choice.
  */
 
-/** The deployment config the policy reads (`sandbox.limits` network fields and `sandbox.tiers`). */
+/**
+ * What the policy reads of the platform: the `sandbox.limits` network fields and the effective
+ * platform tiers (`readPlatformTiers`: the startup config over the admin console's choice).
+ */
 export interface DeploymentSandboxPolicy {
   limits: Pick<KernelConfig["sandbox"]["limits"], "egress" | "allowHosts" | "devHosts">;
-  tiers: KernelConfig["sandbox"]["tiers"];
+  tiers: PlatformTiers;
+}
+
+/**
+ * The platform side of the policy, read live: the `sandbox.limits` network fields of the config
+ * and the effective platform tiers (in the caller's transaction when there is one).
+ */
+export async function readDeploymentSandboxPolicy(
+  db: KernelSchemaDb,
+  config: { get(): Pick<KernelConfig, "sandbox"> },
+): Promise<DeploymentSandboxPolicy> {
+  return { limits: config.get().sandbox.limits, tiers: await readPlatformTiers(db, config) };
 }
 
 /** The org settings the policy reads. */

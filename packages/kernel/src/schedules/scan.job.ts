@@ -18,7 +18,7 @@ import { type EffectiveScheduleSettings, readScheduleSettings } from "./effectiv
 import { SCHED_SCAN_JOB, schedFireJob } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { lockTaskRow, ScheduledTaskRunTracker } from "./run-tracker.js";
-import { dueTicks, nextTick } from "./schedule-math.js";
+import { type ScanStep, scanStep } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
 import type { ScheduledTask } from "./types.js";
 
@@ -150,51 +150,50 @@ export class ScheduledTaskScanJob {
     now: Date,
     catchUpWindowMinutes: number,
   ): Promise<string | null> {
-    const jitterMs = task.jitterSeconds * 1000;
-    // ticks are before jitter: the due tick is next_run_at - jitter, and a tick is due once
-    // tick + jitter <= now
-    const dueTick = new Date((task.nextRunAt as Date).getTime() - jitterMs);
-    const until = new Date(now.getTime() - jitterMs);
     // the schedule math alone may mark the task broken; database errors fail this pass only
-    let ticks: ReturnType<typeof dueTicks>;
-    let next: Date | null;
+    let step: ScanStep;
     try {
-      ticks = dueTicks(task.trigger, new Date(dueTick.getTime() - 1), until, catchUpWindowMinutes);
-      next = nextTick(task.trigger, until);
+      step = scanStep(
+        {
+          trigger: task.trigger,
+          nextRunAt: task.nextRunAt as Date,
+          jitterSeconds: task.jitterSeconds,
+          expiresAt: task.expiresAt,
+        },
+        now,
+        catchUpWindowMinutes,
+      );
     } catch (err) {
       throw new TaskScanFailed(task.id, err);
     }
-    const expires = task.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
-    const fireAt = ticks.fire !== null && ticks.fire.getTime() <= expires ? ticks.fire : null;
-    const first = ticks.firstMissed;
-    if (first !== null && first.getTime() <= expires) {
+    if (step.missed !== null) {
       await this.store.insertRun(t, {
         id: randomUUID(),
         taskId: task.id,
         orgId: task.orgId,
-        scheduledFor: first,
+        scheduledFor: step.missed,
         trial: false,
         status: "skipped",
         skipReason: "missed",
       });
     }
     let fired: string | null = null;
-    if (fireAt !== null) {
+    if (step.fire !== null) {
       const run = await this.store.insertRun(t, {
         id: randomUUID(),
         taskId: task.id,
         orgId: task.orgId,
-        scheduledFor: fireAt,
+        scheduledFor: step.fire,
         trial: false,
       });
       fired = run?.id ?? null;
     }
     const patch: ScheduledTaskPatch =
-      next === null
+      step.end === "done"
         ? { status: "ended", nextRunAt: null }
-        : next.getTime() > expires
+        : step.end === "expired"
           ? { status: "ended", pauseReason: "expired", nextRunAt: null }
-          : { nextRunAt: new Date(next.getTime() + jitterMs) };
+          : { nextRunAt: step.nextRunAt };
     await this.store.updateTask(t, task.id, patch);
     return fired;
   }

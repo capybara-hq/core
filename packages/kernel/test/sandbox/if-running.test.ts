@@ -330,7 +330,7 @@ describe("kills of lost tasks after a resume", () => {
     execs = [];
     await use(s);
     expect(calls).toContain("resume");
-    const kills = execs.filter((c) => c.includes("pkill -KILL -s"));
+    const kills = execs.filter((c) => c.includes("tk_kill KILL"));
     expect(kills).toHaveLength(1);
     expect(kills[0]).toMatch(/\b4242\b/);
     expect(kills[0]).not.toMatch(/\b777\b/);

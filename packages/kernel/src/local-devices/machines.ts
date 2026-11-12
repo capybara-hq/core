@@ -250,19 +250,7 @@ export class MachinesService {
           .execute();
       }
     }
-    const summary = localPolicyOf(hello.policy);
-    const isolation = summary?.isolation ?? isolationOf(rawPolicy);
-    const policy = summary ?? (isolation === null ? null : { isolation });
-    const before = isolationOf(self.local_policy) ?? "sandbox";
-    if (isolation !== null && isolation !== before) {
-      await audit(this.db.db, {
-        actorAccountId: self.account_id,
-        orgId: self.org_id,
-        action: "device.isolation_reported",
-        target: self.device_id,
-        detail: { machineId, isolation, previous: before },
-      });
-    }
+    const policy = await this.reportedPolicy(machineId, self, hello.policy, rawPolicy);
     await this.db
       .updateTable("device_machines")
       .set({
@@ -279,6 +267,64 @@ export class MachinesService {
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .execute();
+  }
+
+  /**
+   * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
+   * its policy file changed on the machine, its localhost proxy guard flipped, a new tier
+   * ceiling), read and audited as the hello's ({@link recordHello}): an unreadable summary keeps
+   * its isolation alone (`rawPolicy`), a changed isolation is audited `device.isolation_reported`.
+   * The next sandbox call then records a new `device_paths` event when the facts the model is told
+   * changed. A revoked machine is left alone.
+   */
+  @Transactional()
+  async recordPolicy(
+    machineId: string,
+    summary: DeviceLocalPolicySummary | undefined,
+    rawPolicy: unknown = summary,
+  ): Promise<void> {
+    const self = await this.db
+      .selectFrom("device_machines")
+      .select(["device_id", "org_id", "account_id", "local_policy"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (self === undefined) return;
+    const policy = await this.reportedPolicy(machineId, self, summary, rawPolicy);
+    await this.db
+      .updateTable("device_machines")
+      .set({ local_policy: jsonOrNull(policy), last_seen_at: sql<Date>`now()` })
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .execute();
+  }
+
+  /**
+   * The summary to store for one a program reported (hello or `policy` frame): the parsed one,
+   * else its raw isolation alone, else null. Audits `device.isolation_reported` when the isolation
+   * differs from the stored one (none stored counts as `sandbox`). Runs in the caller's
+   * transaction, with the machine's row locked.
+   */
+  private async reportedPolicy(
+    machineId: string,
+    self: { device_id: string; org_id: string; account_id: string; local_policy: unknown },
+    reported: DeviceLocalPolicySummary | undefined,
+    rawPolicy: unknown,
+  ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
+    const summary = localPolicyOf(reported);
+    const isolation = summary?.isolation ?? isolationOf(rawPolicy);
+    const before = isolationOf(self.local_policy) ?? "sandbox";
+    if (isolation !== null && isolation !== before) {
+      await audit(this.db.db, {
+        actorAccountId: self.account_id,
+        orgId: self.org_id,
+        action: "device.isolation_reported",
+        target: self.device_id,
+        detail: { machineId, isolation, previous: before },
+      });
+    }
+    return summary ?? (isolation === null ? null : { isolation });
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */

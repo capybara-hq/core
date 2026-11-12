@@ -62,13 +62,18 @@ export function Popover({
   trigger,
   active,
   children,
+  open,
+  onOpenChange,
 }: {
   trigger: ReactElement<Record<string, unknown>>;
   active?: boolean;
   children: ReactNode;
+  /** Controlled open state: a choice inside closes the popover (the calendar's 「+N」 list). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <RP.Root>
+    <RP.Root {...(open !== undefined ? { open } : {})} {...(onOpenChange ? { onOpenChange } : {})}>
       <RP.Trigger asChild>
         {cloneElement(trigger, {
           "data-active": active ? "true" : undefined,

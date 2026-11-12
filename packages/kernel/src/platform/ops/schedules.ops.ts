@@ -6,8 +6,10 @@ import {
   ScheduledTasksService,
 } from "../../schedules/scheduled-tasks.service.js";
 import {
+  calendarInputOf,
   createInputOf,
   grantsOf,
+  ScheduleCalendarQuery,
   ScheduleChatTargetsQuery,
   ScheduleCreateBody,
   ScheduleGrantableQuery,
@@ -117,6 +119,50 @@ export class SchedulesOperations implements OnModuleInit {
             ...(input.conversationId !== undefined && { conversationId: input.conversationId }),
           });
           return { items: items.map(row) };
+        },
+      }),
+      defineOperation({
+        id: "schedules.calendar",
+        description:
+          "Your scheduled task runs and planned occurrences between two instants (at most 43 days): recorded runs with their status, planned runs computed from each active task's schedule up to 42 days ahead, and dense tasks summarized per day. Org admins see every task with all=true. from and to are ISO instants with an offset; timeZone (IANA) sets the local days used to summarize dense tasks; taskId lists one task's items, never summarized (then at most 2 days). truncated means a limit cut the range at horizon.",
+        input: ScheduleCalendarQuery,
+        example: {
+          from: "2026-11-09T00:00:00+08:00",
+          to: "2026-11-16T00:00:00+08:00",
+          timeZone: "Asia/Shanghai",
+        },
+        authz: { orgAction: "org.read" },
+        mirrors: ["GET /api/v1/orgs/:orgId/schedules/calendar"],
+        confirm: "read",
+        errors: [
+          {
+            code: "validation_failed",
+            next: "Narrow the range to 43 days or less (2 days with taskId), with from before to.",
+          },
+          {
+            code: "forbidden",
+            next: "Reading every task needs the org admin role: call without all, or ask an org admin.",
+          },
+          {
+            code: "schedule.not_found",
+            next: "Check taskId with schedules.list: members see only their own tasks; an org admin finds another member's task id with schedules.list all=true, then reads it here by taskId (all is not needed).",
+          },
+        ],
+        run: async (input, ctx) => {
+          const answer = await this.tasks.calendar(
+            ctx.orgId,
+            this.actor(ctx),
+            calendarInputOf(input),
+          );
+          return {
+            ...answer,
+            tasks: answer.tasks.map((t) => ({
+              id: t.id,
+              name: t.name,
+              agentId: t.agentId,
+              status: t.status,
+            })),
+          };
         },
       }),
       defineOperation({

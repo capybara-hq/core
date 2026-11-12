@@ -1,5 +1,69 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- f4aab95: The sidebar's 设备 item moves under 更多: devices are set up once and rarely visited.
+
+## 0.1.0-rc.23
+
+### Minor Changes
+
+- e964b57: Network asks: when a command on a connected device is refused a domain by the device's local
+  policy, the device owner is asked in the conversation or on the IM card (「这次允许 / 这台设备一直允许 /
+  拒绝」). "This time" allows the domain for the rest of the run tree; "always" adds it to the device's
+  local policy through the new `policy` device operation. Org-layer and address-layer refusals are
+  explained to the model and shown under the command. Migration 0114 adds approval kinds and device
+  policy summaries.
+- e808481: Skills are on by default in the web app: the agent page's 技能 section lists every skill on in the
+  org checked, and unticking one turns it off (`disabledSkills`); a plugin's group head turns the
+  whole plugin off, its later skills too. Pinning is gone (the 置顶 section, the pinned suggestions
+  of plugin import, the token estimates). The agent template editor edits `disallowedSkills` with the
+  same list and the skills a sub-agent loads first. The org 技能 page filters by plugin and its
+  detail says how many agents turned a skill off (`agentsOff` on the skill detail); switching off a
+  plugin with skills says every agent loses them; the admin agent pages show the off count.
+- 239555e: The device page gains a network section for the owner of a local device: the machine's allowed
+  domains with remove, an add field that takes `*.` wildcards and whether the machine accepts changes
+  from the platform (`remoteGrants`, set only on the machine). Opening the network is the sandbox
+  level's 开放 (see the sandbox levels changeset). The device picker and the properties panel can mark
+  a device (`PickerItem.badge`, `ContextSection.sandboxBadge`).
+- c73e7b9: A command refused by the organization's network offers a member 「请管理员添加」 (a request with an
+  optional note that reaches the org admins' inbox) and an org admin 「去组织设置添加」 (the sandbox
+  settings with the host prefilled, `?allowHost=`); with the platform's sandbox network off it says
+  only a super admin can turn it on. The inbox shows network requests with approve and reject and
+  the requester's decided notice. Scheduled tasks gain a Network access list (`network:<host>`
+  grants), and the task attention item says which domains need an admin or what the device refuses.
+
+### Patch Changes
+
+- 0f8f5bb: The agent page's 组织技能 and the agent template's 技能 group the skills by where they come from
+  (each plugin, the org's own, the built-in ones), each group with a select-all box (checked/total,
+  mixed) and a filter for long lists; each row is the name and its badges on one line and the
+  description cut to one muted line with the full text on hover (new design `CheckList`). A badge
+  never shrinks or wraps, and a checked disabled checkbox keeps its check visible.
+- 105a59e: The skills of builtin plugins on in the org (`skills-core`'s `skill-guide`) are in every agent's
+  skills catalog without being selected (listed, not pinned; an agent's own skill of the same name
+  wins); the skill library marks them `builtin`, and the agent page shows them ticked and disabled
+  with a "Built-in" tag
+- c36ce32: Scheduled tasks: cron-triggered agent runs into a new conversation, a chosen one or an IM chat, with task grants, trial runs and pause on lasting failures
+- bfb35e3: Tool rows no longer read a Bash command's non-zero exit as a failure (only a timeout or a stopped
+  command fails; the summary names the exit code), and an `Edit` / `Write` refused by the
+  read-before-write check carries the display-only `tool_result.view.kind: "guard"`, shown as
+  "Blocked: read the file (again) first" and counted apart from failures; the model still gets the
+  same error result
+- f274ba6: Sandbox levels in the web app: the device page has a 沙箱级别 section (strict / development / open
+  cards, follow the org default, capped cards, the effective level, the machine's development facts,
+  the local commands for running without a sandbox and 恢复沙箱), device cards and the composer's
+  device picker mark 开放 and 不使用沙箱 devices, and the org sandbox settings choose the highest
+  level, the default for new devices and whether members' devices may run without a sandbox, with
+  the development hosts listed under the allowlist.
+- Updated dependencies [0f8f5bb]
+- Updated dependencies [e964b57]
+- Updated dependencies [bfb35e3]
+- Updated dependencies [239555e]
+  - @capybara-hq/design@0.2.0-rc.7
+
 ## 0.1.0-rc.22
 
 No changes in this release.

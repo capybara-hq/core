@@ -3,6 +3,7 @@ import type { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import type { CalendarAnswer } from "./calendar.js";
 import {
   type ChatTarget,
   type GrantableTool,
@@ -11,8 +12,11 @@ import {
   ScheduledTasksService,
 } from "./scheduled-tasks.service.js";
 import {
+  calendarInputOf,
   createInputOf,
   grantsOf,
+  type ScheduleCalendarQuery,
+  ScheduleCalendarQueryDto,
   type ScheduleChatTargetsQuery,
   ScheduleChatTargetsQueryDto,
   type ScheduleCreateBody,
@@ -43,6 +47,8 @@ import type { ScheduledTask, ScheduledTaskGrant, TaskRun } from "./types.js";
  * - `GET /` → `{ items }`: the caller's own tasks, each with its `lastRun`; `?all=true` every task
  *   of the org (org admins, `schedules.manage`, enforced by the service: 403 `forbidden`
  *   otherwise); `?conversationId=` only those posting into that conversation;
+ * - `GET /calendar?from&to&timeZone[&all][&taskId]` → the calendar (runs, planned occurrences,
+ *   collapsed task-days; calendar spec §5.1), `org.read` like the list, `all` as the list's;
  * - `GET /chat-targets` → `{ items }`: the chats the caller can point a `chat` task at;
  * - `GET /grantable-tools?agentId=` → `{ items }`: the agent's tools, each grantable or why not;
  * - `POST /` → 201 `{ task }` (`timeZone` is the browser zone, a fallback only);
@@ -80,6 +86,18 @@ export class SchedulesController {
       },
     );
     return { items };
+  }
+
+  // declared before `:id`; org.read like the list (a creator demoted to guest still reads their own)
+  @Get("calendar")
+  @OrgAction("org.read")
+  async calendar(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZQuery(ScheduleCalendarQueryDto) q: z.infer<typeof ScheduleCalendarQuery>,
+  ): Promise<CalendarAnswer> {
+    const p = requireUser(principal);
+    return this.tasks.calendar(org.orgId, { accountId: p.account.id }, calendarInputOf(q));
   }
 
   @Get("chat-targets")

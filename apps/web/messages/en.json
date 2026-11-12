@@ -500,6 +500,10 @@
       "invalid_time_zone": "The time zone isn't valid.",
       "limit_reached": "The limit of scheduled tasks is reached.",
       "once_in_past": "That time has already passed."
+    },
+    "deployment": {
+      "setting_readonly": "This sandbox level is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
+      "sandbox_tier_not_allowed": "An API token or the Platform tool can only lower the platform's sandbox levels; a super admin raises them on the admin settings page."
     }
   },
   "agents": {
@@ -3977,6 +3981,23 @@
         "description": "Whether organizations may create or import skills themselves, outside the catalog.",
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
+      },
+      "sandboxTiers": {
+        "title": "Sandbox levels",
+        "description": "The highest level devices on the platform may use, and the level new devices start with. Organizations may narrow it further; after lowering it, organizations and devices above the new highest run at it automatically.",
+        "max": "Highest level",
+        "strictHint": "Only the hosts the network settings allow; no local ports or Unix sockets.",
+        "devHint": "Also common developer hosts (package managers, code hosting, browser downloads), local ports and Unix sockets; suited to everyday development.",
+        "openHint": "Any public address and port. Agents' commands can send files and data to any outside site, and prompt injection can make them do so.",
+        "belowDefault": "Below the default fixed in the startup config",
+        "default": "Default level",
+        "defaultHelp": "Used when neither the organization nor the device chooses a level; at most the highest level.",
+        "allowUnsandboxed": "Allow devices without a sandbox",
+        "allowUnsandboxedHint": "Applies only where an organization's highest level is Open, and an organization may forbid it. Members still have to run a command on their own computer to turn the sandbox off; then commands can read and write every file and sign-in credential on that computer.",
+        "openConfirmTitle": "Set the platform's highest level to Open?",
+        "openConfirmBody": "Organization admins can then let devices reach any public address and port. Agents' commands can upload files and data to any outside site, and prompt injection can make them do so. Open it only if you trust the organizations, agents and material on the platform.",
+        "openConfirmSubmit": "Set to Open",
+        "cancel": "Cancel"
       },
       "clientCode": {
         "title": "Plugin interface code",

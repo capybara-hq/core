@@ -1,7 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { envOverrides } from "../../config/env.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "../../config/fields.js";
 import { resolveConfig } from "../../config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "../../config/schema.js";
+import { configSourceKind } from "../../config/sources.js";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_CONFIG_INPUT, KERNEL_LOGGER } from "../tokens.js";
 
@@ -109,6 +111,23 @@ export class KernelConfigService {
 
   get(): KernelConfig {
     return this.current;
+  }
+
+  /**
+   * Where the current value of a field without a schema default comes from: `env` when an
+   * environment variable sets it, else the config source (`file` / `nacos`) when it is set at all;
+   * undefined when nothing sets it (a layer below the startup config decides, e.g. the deployment
+   * settings for `sandbox.tiers.*`). Such fields are read-only in the admin console.
+   */
+  fieldSource(path: string): "env" | "file" | "nacos" | undefined {
+    if (getPath(this.current, path) === undefined) return undefined;
+    let fromEnv = false;
+    try {
+      fromEnv = getPath(envOverrides(this.env), path) !== undefined;
+    } catch {
+      // conflicting variables fail the start; a later change here only loses the label
+    }
+    return fromEnv ? "env" : configSourceKind(this.env);
   }
 
   /** Subscribes to applied changes (hot fields only); returns the unsubscribe function. */

@@ -8,6 +8,7 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Kysely } from "kysely";
 import { SetupService } from "../../src/admin/setup.service.js";
+import type { KernelConfig } from "../../src/config/schema.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { EvalBudget } from "../../src/evals/budget.js";
@@ -98,7 +99,12 @@ export function settingsFor(
   log: Pick<KernelLogger, "warn"> = quiet,
 ): SettingsService {
   const h = handlesFor(db);
-  return new SettingsService(h.db, h.txHost, adminLockFor(db), log);
+  // no startup config sets the sandbox tiers: the stored choice decides
+  const config = {
+    get: () => ({ sandbox: { tiers: {} } }) as unknown as KernelConfig,
+    fieldSource: () => undefined,
+  };
+  return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config);
 }
 
 export function orgsFor(

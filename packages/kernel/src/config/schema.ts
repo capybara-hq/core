@@ -1197,12 +1197,12 @@ export const KernelConfigSchema = z.object({
         .int()
         .min(0)
         .refine((n) => n === 0 || n >= 10_000, "0 (no limit) or at least 10,000")
-        .default(5_000_000)
+        .default(0)
         .meta(
           meta({
             hot: true,
             description:
-              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
+              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 (the default) means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
     })
@@ -1563,39 +1563,44 @@ export const KernelConfigSchema = z.object({
         .object({
           max: z
             .enum(["strict", "dev", "open"])
-            .default("dev")
+            .optional()
             .meta(
               meta({
                 hot: true,
                 description:
-                  "Highest sandbox tier any organization may reach: strict (the allowlist only), dev (adds devHosts and local development affordances) or open (any public host); organizations and devices choose at most this",
+                  "Highest sandbox tier any organization may reach: strict (the allowlist only), dev (adds devHosts and local development affordances) or open (any public host); organizations and devices choose at most this. Unset: the super admin's choice in the admin console, else dev; set here, it is read-only there",
               }),
             ),
           default: z
             .enum(["strict", "dev", "open"])
-            .default("dev")
+            .optional()
             .meta(
               meta({
                 hot: true,
                 description:
-                  "Sandbox tier of a device whose owner chose none, unless its organization sets its own default; at most sandbox.tiers.max",
+                  "Sandbox tier of a device whose owner chose none, unless its organization sets its own default; at most sandbox.tiers.max. Unset: the super admin's choice in the admin console, else dev; set here, it is read-only there",
               }),
             ),
           allowUnsandboxed: z
             .boolean()
-            .default(true)
+            .optional()
             .meta(
               meta({
                 hot: true,
                 description:
-                  "Whether a local device may run commands without a sandbox (its owner's local choice); it only applies where the organization's ceiling is open, and an organization may forbid it",
+                  "Whether a local device may run commands without a sandbox (its owner's local choice); it only applies where the organization's ceiling is open, and an organization may forbid it. Unset: the super admin's choice in the admin console, else true; set here, it is read-only there",
               }),
             ),
         })
-        .refine((t) => tierAtMost(t.default, t.max), {
-          message: "sandbox.tiers.default must not be above sandbox.tiers.max",
-          path: ["default"],
-        })
+        // both set here: the default may not be above the max (a max from the admin console
+        // caps a default set here instead, see sandbox/platform-tiers.ts)
+        .refine(
+          (t) => t.default === undefined || t.max === undefined || tierAtMost(t.default, t.max),
+          {
+            message: "sandbox.tiers.default must not be above sandbox.tiers.max",
+            path: ["default"],
+          },
+        )
         .prefault({} as never),
     })
     .prefault({} as never),

@@ -98,6 +98,13 @@ export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
 export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";
 export { PENDING_DELAY_MS, PendingState } from "./pending-state";
+export {
+  ScheduleCalendar,
+  type ScheduleCalendarCollapsed,
+  type ScheduleCalendarItem,
+  type ScheduleCalendarProps,
+  type ScheduleCalendarState,
+} from "./schedule-calendar";
 export { SecretReveal, type SecretRevealProps } from "./secret-reveal";
 export {
   SkeletonBox,

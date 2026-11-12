@@ -27,6 +27,15 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { isTimeZone } from "../time-zone.js";
 import { ToolRegistry } from "../tools/registry.js";
+import {
+  assembleCalendar,
+  CALENDAR_LIMITS,
+  CALENDAR_RANGE_DAYS,
+  CALENDAR_TASK_RANGE_DAYS,
+  type CalendarAnswer,
+  type CalendarLimits,
+  calendarRunReadLimit,
+} from "./calendar.js";
 import { type EffectiveScheduleSettings, readScheduleSettings } from "./effective-settings.js";
 import {
   grantNotAllowed,
@@ -601,6 +610,74 @@ export class ScheduledTasksService {
       tasks = await this.postingInto(orgId, tasks, opts.conversationId);
     }
     return this.withLastRuns(tasks);
+  }
+
+  /**
+   * The calendar between two instants (calendar spec §5): the runs and planned occurrences of the
+   * actor's own tasks, or with `all` (org admins only, else `forbidden`) every task of the org; with
+   * `taskId` only that task (one the actor may see, else `schedule.not_found`), never collapsed.
+   * Another creator's runs come without `conversationId`, `error` and `missingGrants` (§15 Q3).
+   * A range longer than 43 days (2 with `taskId`), or not forward, is `validation_failed`. `now`
+   * is for tests.
+   */
+  async calendar(
+    orgId: string,
+    actor: ScheduleActor,
+    q: { from: Date; to: Date; timeZone: string; all?: boolean; taskId?: string },
+    now: Date = new Date(),
+    limits: CalendarLimits = CALENDAR_LIMITS,
+  ): Promise<CalendarAnswer> {
+    const role = await this.liveRole(orgId, actor.accountId);
+    const manage = can(role, "schedules.manage");
+    if (q.all === true && !manage) {
+      throw new ApiError("forbidden", "Only org admins can read every scheduled task");
+    }
+    const span = q.to.getTime() - q.from.getTime();
+    const maxDays = q.taskId === undefined ? CALENDAR_RANGE_DAYS : CALENDAR_TASK_RANGE_DAYS;
+    if (!(span > 0)) throw new ApiError("validation_failed", "from must be before to");
+    if (span > maxDays * DAY_MS) {
+      throw new ApiError(
+        "validation_failed",
+        `The range is at most ${maxDays} days${q.taskId === undefined ? "" : " with taskId"}`,
+      );
+    }
+    const t = this.db.db;
+    let tasks: ScheduledTask[];
+    if (q.taskId !== undefined) {
+      const task = await this.store.getTask(t, orgId, q.taskId);
+      if (!task || (task.accountId !== actor.accountId && !manage)) throw scheduleNotFound();
+      tasks = [task];
+    } else {
+      tasks =
+        q.all === true
+          ? await this.store.listForOrg(t, orgId)
+          : await this.store.listForAccount(t, orgId, actor.accountId);
+    }
+    const runs = await this.store.listRunsBetween(
+      t,
+      orgId,
+      tasks.map((x) => x.id),
+      q.from,
+      q.to,
+      // one row past the caps tells the assembly where to cut
+      calendarRunReadLimit(limits),
+    );
+    const settings = await readScheduleSettings(t, this.config, orgId);
+    return assembleCalendar(
+      {
+        tasks,
+        runs,
+        viewerAccountId: actor.accountId,
+        from: q.from,
+        to: q.to,
+        timeZone: q.timeZone,
+        now,
+        plan: settings.enabled,
+        catchUpWindowMinutes: settings.catchUpWindowMinutes,
+        collapse: q.taskId === undefined,
+      },
+      limits,
+    );
   }
 
   /**

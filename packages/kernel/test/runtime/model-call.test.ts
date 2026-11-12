@@ -127,6 +127,8 @@ beforeAll(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     marketplaces: { official: { enabled: false } },
     http: { port: 0 },
+    // the budget tests below need a cap (the default is none)
+    subagents: { maxTokensPerRun: 5_000_000 },
     extensions: [MODEL_FAKE],
     extensionPermissions: { autoApprove: true },
     extensionConfig: {
@@ -857,7 +859,7 @@ describe("runModelStep", () => {
 
     it("a sub-agent whose compaction call uses up the budget makes no step request (review M5)", async () => {
       const parentRunId = randomUUID();
-      // one token below the default cap: the compaction call's usage crosses it
+      // one token below the configured cap: the compaction call's usage crosses it
       await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq, subagent_tokens_used)
         VALUES (${parentRunId}, ${conversationId}, 'waiting', 1, ${accountId}, 1, 4999999)`.execute(
         raw,
