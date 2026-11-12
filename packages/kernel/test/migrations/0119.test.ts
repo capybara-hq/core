@@ -11,7 +11,7 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 /**
  * 0119_conversation_source.sql (memory plugin spec §6.2): conversations gain `source`, backfilled
  * from the rows that existed: `kind = 'subagent'` → subagent, a conversation with a channel thread
- * row of any archive state → channel_dm (`dm:` key) or channel_group, a group conversation whose
+ * row of any archive state → channel_dm (only `dm:` keys) or channel_group, a group conversation whose
  * thread is still to bind → channel_group (its delivery's target), the rest → web. Migrates to the
  * migration before it, seeds, then runs 0119 (twice: idempotent).
  */
@@ -61,6 +61,10 @@ beforeAll(async () => {
   await thread("t3", "c-group", "om_123", false);
   await conversation("c-group-archived");
   await thread("t4", "c-group-archived", "om_456", true);
+  // a DM row and a group row on one conversation: a group's (the safer source)
+  await conversation("c-mixed");
+  await thread("t5", "c-mixed", "dm:u2", true);
+  await thread("t6", "c-mixed", "om_789", false);
   // a scheduled group run whose thread binds at its first post, which has not happened yet
   await conversation("c-group-pending");
   await sql`insert into capybara.channel_deliveries (conversation_id, connection_id, target,
@@ -90,6 +94,7 @@ const EXPECTED = {
   "c-group": "channel_group",
   "c-group-archived": "channel_group",
   "c-group-pending": "channel_group",
+  "c-mixed": "channel_group",
   "c-sub": "subagent",
   "c-web": "web",
 };

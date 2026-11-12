@@ -309,8 +309,11 @@ export interface InternalMessageOptions {
 
 /** Options of a conversation created by a kernel caller (never an HTTP body). */
 export interface NewConversationOptions {
-  /** Where it comes from (memory plugin spec §6.2), fixed at creation; default `web`. */
-  source?: ConversationSource;
+  /**
+   * Where it comes from (memory plugin spec §6.2), fixed at creation. Required: a channel or group
+   * conversation that fell back to `web` would be offered what only the web and DMs may see.
+   */
+  source: ConversationSource;
 }
 
 interface UsageRow {
@@ -394,15 +397,15 @@ export class ConversationsService {
    * Creates an empty conversation bound to its device (`pick`, see
    * {@link ConversationDevices.forNew}); an agent the account cannot use →
    * `agent.not_found`, a device it may not use → `device.not_found` /
-   * `device.unavailable`, and nothing is created. `opts.source` (kernel callers) records where the
-   * conversation comes from.
+   * `device.unavailable`, and nothing is created. `opts.source` records where the conversation
+   * comes from.
    */
   async create(
     orgId: string,
     accountId: string,
     agentId: string,
     pick: NewConversationDevice = {},
-    opts: NewConversationOptions = {},
+    opts: NewConversationOptions,
   ): Promise<ConversationView> {
     await this.agents.get(orgId, agentId, accountId);
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
@@ -414,7 +417,7 @@ export class ConversationsService {
         agent_id: agentId,
         account_id: accountId,
         device_id: deviceId,
-        source: opts.source ?? "web",
+        source: opts.source,
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -429,8 +432,8 @@ export class ConversationsService {
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
-   * `internal` (kernel callers only): a scheduled task's marker, which also sets
-   * `conversations.scheduled_task_id`, its zone override, and the conversation's source.
+   * `internal`: the conversation's source and, for kernel callers only, a scheduled task's marker,
+   * which also sets `conversations.scheduled_task_id`, and its zone override.
    */
   async createWithMessage(
     orgId: string,
@@ -438,7 +441,7 @@ export class ConversationsService {
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
     pick: NewConversationDevice = {},
-    internal: InternalMessageOptions & NewConversationOptions = {},
+    internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -500,7 +503,7 @@ export class ConversationsService {
         device_id: conv.deviceId,
         create_request_id: input.clientMessageId,
         scheduled_task_id: internal.schedule?.taskId ?? null,
-        source: internal.source ?? "web",
+        source: internal.source,
       })
       .onConflict((oc) =>
         oc

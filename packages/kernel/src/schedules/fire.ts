@@ -294,7 +294,7 @@ export class ScheduledTaskFirer {
           task.agentId,
           { text: task.prompt, clientMessageId: run.id, ...pick },
           task.deviceId === null ? {} : { deviceId: task.deviceId },
-          internal,
+          { ...internal, source: "web" },
         );
         await this.setConversation(run.id, out.conversation.id);
         // a retried start found the conversation made before: its run may be still to start

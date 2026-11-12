@@ -305,8 +305,11 @@ export interface ConversationsTable {
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
   scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0119: where the conversation comes from, set at creation and never changed. */
-  source: ColumnType<ConversationSource, ConversationSource | undefined, never>;
+  /**
+   * 0119: where the conversation comes from, set at creation and never changed. Required on insert
+   * (the column's `web` default is not relied on: a forgotten source must not read as web).
+   */
+  source: ColumnType<ConversationSource, ConversationSource, never>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */

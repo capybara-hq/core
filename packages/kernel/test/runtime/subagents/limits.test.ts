@@ -323,6 +323,7 @@ async function seedChild(
       agent_id: agentId,
       account_id: await accountOf(parentConv),
       kind: "subagent",
+      source: "subagent",
       parent_conversation_id: parentConv,
       subagent_type: "general-purpose",
     })
@@ -381,6 +382,7 @@ async function dispatchFrom(
           agent_id: agentId,
           account_id: account,
           kind: "subagent",
+          source: "subagent",
           parent_conversation_id: conv,
           subagent_type: "general-purpose",
         })

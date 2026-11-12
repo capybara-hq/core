@@ -696,6 +696,7 @@ describe("dispatch idempotency under the parent run lock", () => {
         agent_id: agentId,
         account_id: ownerId,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: conv,
         subagent_type: "general-purpose",
         subagent_depth: 1,
@@ -762,6 +763,7 @@ describe("dispatch idempotency under the parent run lock", () => {
         agent_id: agentId,
         account_id: ownerId,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: conv,
         subagent_type: "general-purpose",
         subagent_depth: 1,
@@ -856,6 +858,7 @@ describe("dispatch idempotency under the parent run lock", () => {
         agent_id: agentId,
         account_id: ownerId,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: conv,
         subagent_type: "general-purpose",
         subagent_depth: 1,
@@ -1190,13 +1193,14 @@ describe("dispatch idempotency under the parent run lock", () => {
     await db
       .insertInto("conversations")
       .values([
-        { id: otherConv, org_id: orgId, agent_id: agentId, account_id: otherId },
+        { id: otherConv, org_id: orgId, agent_id: agentId, account_id: otherId, source: "web" },
         {
           id: c3,
           org_id: orgId,
           agent_id: agentId,
           account_id: otherId,
           kind: "subagent",
+          source: "subagent",
           parent_conversation_id: otherConv,
           subagent_type: "general-purpose",
         },

@@ -211,6 +211,7 @@ export class EvalReplaySeeder {
         consumed_seq: p.consumed,
         kind: "eval",
         eval_run_id: evalRunId,
+        source: "web",
       })
       .execute();
     for (let i = 0; i < p.seeds.length; i += SEED_BATCH) {

@@ -6,7 +6,8 @@
 -- re-run updates nothing; later UPDATEs skip rows an earlier one set:
 -- 1. kind 'subagent' -> subagent;
 -- 2. a channel thread row of any archive state (DM /new archives the row, the conversation stays
---    a DM's): key 'dm:' -> channel_dm, any other key -> channel_group;
+--    a DM's): only 'dm:' keys -> channel_dm, any other key -> channel_group (a conversation with
+--    both is a group's: the safer of the two);
 -- 3. a scheduled group run whose thread is still to bind at its first post (no thread row yet):
 --    its delivery's target chat type.
 -- The rest stays web. The CHECK is added last (dropped first, so a re-run re-adds it).
@@ -18,7 +19,7 @@ WHERE kind = 'subagent' AND source = 'web';
 UPDATE conversations c
 SET source = CASE WHEN t.dm THEN 'channel_dm' ELSE 'channel_group' END
 FROM (
-  SELECT conversation_id, bool_or(thread_key LIKE 'dm:%') AS dm
+  SELECT conversation_id, bool_and(thread_key LIKE 'dm:%') AS dm
   FROM channel_threads
   GROUP BY conversation_id
 ) t
