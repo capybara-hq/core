@@ -59,6 +59,9 @@ const SPEC: ToolSpec = {
     "Deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
     "the same time. Always pass description: a few words saying what the command is for; the " +
     "user sees it instead of the command.\n\n" +
+    "Processes a normal call leaves running (started with '&' or nohup) may be stopped when the " +
+    "call ends, depending on the device, so use run_in_background for a dev server, a watcher or " +
+    "anything that must keep running after the call.\n\n" +
     "You can use the run_in_background parameter to run the command in the background, which " +
     "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
     "test suite. The call returns at once with a task id and the command's output goes to a file " +

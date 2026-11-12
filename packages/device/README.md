@@ -78,6 +78,15 @@ Changes apply at the next command; a running program does not need a restart. `a
 work on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name
 (optionally `*.` for subdomains, never the apex), never an IP address or an internal name.
 
+A command ends with everything it started: once it returns (or times out, or is stopped), the
+program kills what it left running, such as `server &` or `nohup …`, because inside the sandbox no
+later command may signal another command's processes. Its process group goes at once, and a process
+that left the group (`setsid`) is found by the marker every process of the command carries. On
+macOS only a background task launch (`Bash` with `run_in_background`, whose command starts with the
+line `# capybara: background task launch`) keeps what it starts. On Linux the sandbox's pid
+namespace already ends every process with its command. In Docker mode and without a sandbox, a
+later command can stop what an earlier one left, so nothing is killed.
+
 When a command is refused a domain, the program says why. Clients that print the proxy's answer
 show a reason such as `capybara: files.slack.com is not in this device's allowed domains`, and
 after the command its stderr ends with a trailer naming each refused host (at most 20) and who can
@@ -254,10 +263,10 @@ Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD gr
 Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.
 
 Not enforced yet in OS mode: the `cpu` and `memoryMb` ceilings, and `allowCredentials` (commands
-get no local credentials at all). Processes a command leaves running are killed with it by tag;
+get no local credentials at all). Processes a command leaves running are killed when it ends;
 on macOS a child that leaves the command's process group and runs only Apple system binaries
-cannot be found again (Linux runs each command in its own pid namespace, which takes every child
-down with it).
+cannot be found by its marker (`ps -E` hides their environment), so it survives (Linux runs each
+command in its own pid namespace, which takes every child down with it).
 
 ## Docker mode
 
