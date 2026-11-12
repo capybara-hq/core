@@ -119,8 +119,12 @@ export interface PolicyOpSource {
 
 /** What the machine reported of an op after its answer was lost (its hello's `recentOps`). */
 export interface ReportedPolicyOp {
-  /** `absent`: not in the hello's outcomes although the op can no longer reach the machine. */
-  outcome: "applied" | "refused" | "absent";
+  /**
+   * `absent`: not in the hello's outcomes although the op can no longer reach the machine;
+   * `interrupted`: logged `started` only, and its change is not in the policy the hello reports
+   * (one whose change is there is `applied`).
+   */
+  outcome: "applied" | "refused" | "absent" | "interrupted";
 }
 
 /**
@@ -168,7 +172,10 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
     const rep = o.reported as Record<string, unknown> | null | undefined;
     const outcome = typeof rep === "object" && rep !== null ? rep.outcome : undefined;
     const reported: ReportedPolicyOp | undefined =
-      outcome === "applied" || outcome === "refused" || outcome === "absent"
+      outcome === "applied" ||
+      outcome === "refused" ||
+      outcome === "absent" ||
+      outcome === "interrupted"
         ? { outcome }
         : undefined;
     out.push({
@@ -191,6 +198,18 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
     });
   }
   return out;
+}
+
+/**
+ * Whether the change of `op` is in `policy`: its hosts added and removed, its tier and isolation
+ * set. Tells an op the machine logged only as `started` (it stopped between the log and the
+ * answer) that was written from one that was not.
+ */
+export function opVisibleIn(op: PendingPolicyOp, policy: DeviceLocalPolicySummary): boolean {
+  if (!op.add.every((h) => policy.allowedDomains.includes(h))) return false;
+  if (op.remove.some((h) => policy.allowedDomains.includes(h))) return false;
+  if (op.tier !== undefined && (policy.tier ?? null) !== op.tier) return false;
+  return op.isolation === undefined || policy.isolation === op.isolation;
 }
 
 /**

@@ -168,13 +168,23 @@ class Sim {
   /** When set, `policy` ops are left unanswered (the test answers or drops the connection). */
   hold = false;
   refuse: string | undefined;
+  /**
+   * After applying: `bad-result` answers ok with a result the kernel cannot read; `error` answers
+   * the machine's own error; `stopped` logs only `started` and answers nothing (it stopped between
+   * the write and its log).
+   */
+  after: "bad-result" | "error" | "stopped" | undefined;
 
   answer = (req: KernelReq): Answer => {
     if (req.op === "policyStatus") {
       const { opId } = req.args as { opId: string };
       return {
         ok: true,
-        result: { outcome: this.log.get(opId) ?? "unknown", policy: this.policy },
+        result: {
+          outcome: this.log.get(opId) ?? "unknown",
+          policy: this.policy,
+          ...(this.log.get(opId) === "refused" && { message: this.refuse }),
+        },
       };
     }
     if (req.op !== "policy") return { ok: true, result: null };
@@ -192,7 +202,13 @@ class Sim {
     for (const h of a.add ?? []) domains.add(h);
     for (const h of a.remove ?? []) domains.delete(h);
     this.policy = { ...this.policy, allowedDomains: [...domains] };
+    if (this.after === "stopped") {
+      this.log.set(a.opId, "started");
+      return undefined;
+    }
     this.log.set(a.opId, "applied");
+    if (this.after === "bad-result") return { ok: true, result: { policy: "garbled" } };
+    if (this.after === "error") return { ok: false, error: { kind: "error", message: "EIO" } };
     return { ok: true, result: { policy: this.policy } };
   }
 
@@ -304,9 +320,14 @@ async function crashedApply(d: Dev): Promise<string> {
 
 /** Moves the op's window into the past (as if `T` had elapsed). */
 async function windowPassed(machineId: string, opId: string) {
+  await patchEntry(machineId, opId, { resolveAt: Date.now() - 1 });
+}
+
+/** Merges `patch` into the op's entry. */
+async function patchEntry(machineId: string, opId: string, patch: Record<string, unknown>) {
   await sql`UPDATE capybara.device_machines SET pending_policy_ops = (
       SELECT jsonb_agg(CASE WHEN e->>'id' = ${opId}
-        THEN jsonb_set(e, '{resolveAt}', to_jsonb(${Date.now() - 1}::bigint)) ELSE e END)
+        THEN e || ${JSON.stringify(patch)}::jsonb ELSE e END)
       FROM jsonb_array_elements(pending_policy_ops) e)
     WHERE id = ${machineId}`.execute(raw);
 }
@@ -551,5 +572,135 @@ describe("device policy intents", () => {
     ]);
     expect(audits[1]?.detail).toMatchObject({ reason: "refused", message: sim.refuse });
     expect((await policies.summary(d.deviceId))?.policy?.remoteGrants).toBe("off");
+  });
+
+  it("an answer the kernel cannot read, or the machine's own error, is resolved, not refused", async () => {
+    for (const after of ["bad-result", "error"] as const) {
+      const d = await device();
+      const sim = new Sim();
+      sim.after = after;
+      const machine = await connect(d, sim);
+      expect(await apply(d)).toMatchObject({ applied: false, reason: "offline" });
+      const [sent] = policyReqs(machine);
+      const opId = (sent?.args as { opId: string } | undefined)?.opId ?? "";
+      expect(await entries(d.machineId)).toEqual([
+        expect.objectContaining({ id: opId, status: "unknown" }),
+      ]);
+      await resolver.resolve(jobData(await owed(`device-op-resolve-${opId}`)));
+      expect(await entries(d.machineId)).toEqual([]);
+      const audits = await auditsOf(d.deviceId);
+      expect(audits.map((a) => a.action)).toEqual([
+        "device.policy_requested",
+        "device.policy_unknown",
+        "device.policy_changed",
+      ]);
+      expect(audits[2]?.detail).toMatchObject({ opId, late: true });
+      expect((await policies.summary(d.deviceId))?.policy?.allowedDomains).toEqual([
+        "pypi.org",
+        "files.slack.com",
+      ]);
+      expect(policyReqs(machine)).toHaveLength(1);
+    }
+  }, 60_000);
+
+  it("an op the machine logged only as started is judged by the policy it reports, past the window", async () => {
+    // written before it stopped: applied (by the resolver's policyStatus, then by a hello)
+    const d = await device();
+    const sim = new Sim();
+    sim.after = "stopped";
+    let machine = await connect(d, sim);
+    void machine.next((f) => f.type === "req" && f.op === "policy").then(() => machine.close());
+    expect(await apply(d)).toMatchObject({ applied: false, reason: "offline" });
+    const opId = (policyReqs(machine)[0]?.args as { opId: string } | undefined)?.opId ?? "";
+    await waitFor(
+      async () => (await redis.get(deviceLeaseKey(d.deviceId))) === null,
+      15_000,
+      "lease released",
+    );
+    await db
+      .updateTable("device_machines")
+      .set({ roots: null })
+      .where("id", "=", d.machineId)
+      .execute();
+    // within the window the resolver cannot tell yet
+    machine = await connect(d, sim, { recentOps: sim.recentOps() });
+    await resolver.resolve({ machineId: d.machineId, opId });
+    expect((await entries(d.machineId))[0]).toMatchObject({ status: "unknown" });
+    expect((await entries(d.machineId))[0]?.reported).toBeUndefined();
+    await windowPassed(d.machineId, opId);
+    await resolver.resolve({ machineId: d.machineId, opId });
+    expect(await entries(d.machineId)).toEqual([]);
+    expect((await auditsOf(d.deviceId)).map((a) => a.action)).toEqual([
+      "device.policy_requested",
+      "device.policy_unknown",
+      "device.policy_changed",
+    ]);
+
+    // not written before it stopped: a hello past the window reports it interrupted
+    const d2 = await device();
+    const sim2 = new Sim();
+    sim2.hold = true;
+    const m2 = await connect(d2, sim2);
+    void m2.next((f) => f.type === "req" && f.op === "policy").then(() => m2.close());
+    await apply(d2);
+    const op2 = (policyReqs(m2)[0]?.args as { opId: string } | undefined)?.opId ?? "";
+    await disconnect(d2, m2);
+    await windowPassed(d2.machineId, op2);
+    await connect(d2, sim2, { recentOps: [{ opId: op2, outcome: "started" }] });
+    expect((await entries(d2.machineId))[0]).toMatchObject({
+      reported: { outcome: "interrupted" },
+    });
+    await resolver.resolve(jobData(await owed(`device-op-reported-${op2}`)));
+    expect(await entries(d2.machineId)).toEqual([]);
+    const audits = await auditsOf(d2.deviceId);
+    expect(audits.at(-1)).toMatchObject({
+      action: "device.policy_failed",
+      detail: expect.objectContaining({ opId: op2, reason: "interrupted" }),
+    });
+  }, 90_000);
+
+  it("a hello's refusal keeps the machine's message; an op reported meanwhile is not turned unknown", async () => {
+    const d = await device();
+    const sim = new Sim();
+    sim.refuse = "remote grants are off on this machine";
+    const machine = await connect(d, sim);
+    const opId = await crashedApply(d);
+    await disconnect(d, machine);
+    await connect(d, sim, { recentOps: sim.recentOps() });
+    expect((await entries(d.machineId))[0]).toMatchObject({ reported: { outcome: "refused" } });
+    // a resolver that read the entry before the hello and found the machine offline
+    expect(
+      await txHost.run(() =>
+        policies.settleIn({ machineId: d.machineId, opId }, { outcome: "unknown" }),
+      ),
+    ).toMatchObject({ applied: false });
+    expect((await entries(d.machineId))[0]).toMatchObject({ status: "sent" });
+    expect((await auditsOf(d.deviceId)).map((a) => a.action)).toEqual(["device.policy_requested"]);
+    await resolver.resolve(jobData(await owed(`device-op-reported-${opId}`)));
+    const audits = await auditsOf(d.deviceId);
+    expect(audits.map((a) => a.action)).toEqual([
+      "device.policy_requested",
+      "device.policy_failed",
+    ]);
+    expect(audits[1]?.detail).toMatchObject({ reason: "refused", message: sim.refuse });
+  });
+
+  it("an expired entry no longer takes a hello's report: the change is the owner's", async () => {
+    const d = await device();
+    const sim = new Sim();
+    const machine = await connect(d, sim);
+    const opId = await crashedApply(d);
+    await disconnect(d, machine);
+    await patchEntry(d.machineId, opId, { until: Date.now() - 1, resolveAt: Date.now() - 1 });
+    await connect(d, sim, { recentOps: sim.recentOps() });
+    expect((await entries(d.machineId))[0]?.reported).toBeUndefined();
+    expect(await owed(`device-op-reported-${opId}`)).toBeUndefined();
+    // the resolve job finds no live entry either
+    await resolver.resolve({ machineId: d.machineId, opId });
+    const audits = await auditsOf(d.deviceId);
+    expect(audits.map((a) => [a.action, (a.detail as { via?: string }).via])).toEqual([
+      ["device.policy_requested", "web"],
+      ["device.policy_changed", "device"],
+    ]);
   });
 });

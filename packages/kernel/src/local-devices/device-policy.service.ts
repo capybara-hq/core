@@ -73,6 +73,7 @@ export type PolicyOpResult =
   | { outcome: "applied"; policy?: DeviceLocalPolicySummary }
   | { outcome: "refused"; message: string }
   | { outcome: "not_received" }
+  | { outcome: "interrupted" }
   | { outcome: "unknown" };
 
 /** What a machine says of an op id ({@link DevicePolicyService.outcomeOf}). */
@@ -82,6 +83,10 @@ const OFFLINE_MESSAGE =
   "The device's machine is offline, so its policy was not changed. Start capybara-device on it.";
 const UNSUPPORTED_MESSAGE =
   "The device's capybara-device program cannot change its policy from the platform. Update capybara-device on the machine.";
+const UNCONFIRMED_MESSAGE =
+  "The device's machine did not confirm the policy change; the platform checks it again shortly.";
+const INTERRUPTED_MESSAGE =
+  "capybara-device stopped while applying the policy change, before it was written.";
 const NOT_RECEIVED_MESSAGE = "The device's machine never received the policy change.";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -189,15 +194,23 @@ export class DevicePolicyService {
   }
 
   /**
-   * Sends the intent's `policy` op (no transaction open) and classifies the answer: applied,
-   * refused (the machine's message), or no answer (`unknown`). `notFound`: the device was deleted
-   * meanwhile (recorded as no answer; the caller throws `device.not_found`).
+   * Sends the intent's `policy` op (no transaction may be open) and classifies the answer:
+   * applied; refused (the machine's local policy refused it: its message); anything else is
+   * `unknown`, left to the resolver's `policyStatus`: no answer, and an answer the kernel cannot
+   * trust to mean "not applied" (a result it cannot read, the machine's own error). `notFound`:
+   * the device was deleted meanwhile (recorded as unknown; the caller throws `device.not_found`).
    */
   async send(intent: PolicyIntent): Promise<{
     result: PolicyOpResult;
     outcome: PolicyChangeOutcome;
     notFound?: true;
   }> {
+    if (currentStore()) {
+      throw new Error(
+        "DevicePolicyService.send() must not run inside a transaction: the outcome is recorded " +
+          "afterwards, in its own transaction.",
+      );
+    }
     try {
       const { policy } = await this.relay.call(intent.deviceId, "policy", intent.args, {
         deadlineMs: POLICY_DEADLINE_MS,
@@ -215,10 +228,32 @@ export class DevicePolicyService {
           ...(e.code === "device.not_found" && { notFound: true as const }),
         };
       }
-      const message = this.refusalOf(intent.deviceId, e);
+      if (e instanceof ToolError && e.message.startsWith(REFUSED_PREFIX)) {
+        const message = e.message.slice(REFUSED_PREFIX.length);
+        return {
+          result: { outcome: "refused", message },
+          outcome: { applied: false, reason: "refused", message },
+        };
+      }
+      // an unreadable result (the machine may have applied it) or the machine's own error (it may
+      // have failed after the write): what the machine logged under the op id tells
+      this.log.warn("a device policy change was not confirmed by the machine", {
+        deviceId: intent.deviceId,
+        opId: intent.opId,
+        error: errMsg(e),
+      });
+      const message = errMsg(e);
       return {
-        result: { outcome: "refused", message },
-        outcome: { applied: false, reason: "refused", message },
+        result: { outcome: "unknown" },
+        outcome: {
+          applied: false,
+          reason: "offline",
+          message: `${UNCONFIRMED_MESSAGE} ${
+            message.startsWith(ON_MACHINE_PREFIX)
+              ? message.slice(ON_MACHINE_PREFIX.length)
+              : message
+          }`,
+        },
       };
     }
   }
@@ -249,10 +284,11 @@ export class DevicePolicyService {
   /**
    * Records what became of the op `opId` of machine `machineId`, in the caller's transaction (the
    * machine's row locked): `applied` → the policy the machine wrote (when given) kept on the row,
-   * the entry removed, `device.policy_changed` (`late` when the op was left `unknown`); `refused`
-   * or `not_received` → the entry removed, `device.policy_failed`; `unknown` → the entry kept,
-   * `unknown` until a day after its intent, `device.policy_unknown` (once). Returns the outcome
-   * for the caller, or null when the op has no entry any more (already resolved: a no-op).
+   * the entry removed, `device.policy_changed` (`late` when the op was left `unknown`); `refused`,
+   * `not_received` or `interrupted` → the entry removed, `device.policy_failed` (`reason` the
+   * outcome); `unknown` → the entry kept, `unknown` until a day after its intent,
+   * `device.policy_unknown` (once; ignored once a hello reported the op). Returns the outcome for
+   * the caller, or null when the op has no live entry (resolved already, or expired: a no-op).
    */
   @Transactional({ propagation: "mandatory" })
   async settleIn(
@@ -266,7 +302,9 @@ export class DevicePolicyService {
       .forUpdate()
       .executeTakeFirst();
     const op = pendingPolicyOpsOf(row?.pending_policy_ops).find((o) => o.id === ref.opId);
-    if (row === undefined || op === undefined) return null;
+    // an expired entry no longer explains the machine's own reports (they are audited as the
+    // owner's): recording the op too would list the change twice
+    if (row === undefined || op === undefined || op.until <= Date.now()) return null;
     const auditOp = (action: string, extra: Record<string, unknown>) =>
       audit(this.db.db, {
         actorAccountId: op.source.accountId,
@@ -278,7 +316,8 @@ export class DevicePolicyService {
       });
 
     if (result.outcome === "unknown") {
-      if (op.status === "unknown")
+      // a hello reported the op meanwhile (its job records it), or it is unknown already
+      if (op.reported !== undefined || op.status === "unknown")
         return { applied: false, reason: "offline", message: OFFLINE_MESSAGE };
       await this.db
         .updateTable("device_machines")
@@ -322,11 +361,13 @@ export class DevicePolicyService {
         ? { applied: true, policy: stored }
         : { applied: false, reason: "offline", message: OFFLINE_MESSAGE };
     }
-    const message = result.outcome === "refused" ? result.message : NOT_RECEIVED_MESSAGE;
-    await auditOp("device.policy_failed", {
-      reason: result.outcome === "refused" ? "refused" : "not_received",
-      message,
-    });
+    const message =
+      result.outcome === "refused"
+        ? result.message
+        : result.outcome === "interrupted"
+          ? INTERRUPTED_MESSAGE
+          : NOT_RECEIVED_MESSAGE;
+    await auditOp("device.policy_failed", { reason: result.outcome, message });
     return result.outcome === "refused"
       ? { applied: false, reason: "refused", message }
       : offline();
@@ -430,19 +471,6 @@ export class DevicePolicyService {
       orgId: input.orgId,
     });
     return true;
-  }
-
-  /** The message of a failed op the machine answered: its refusal, or its own error. */
-  private refusalOf(deviceId: string, e: unknown): string {
-    if (e instanceof ToolError && e.message.startsWith(REFUSED_PREFIX)) {
-      return e.message.slice(REFUSED_PREFIX.length);
-    }
-    // anything else the machine answered (its own error, an invalid result): not applied
-    this.log.warn("a device policy change failed on the machine", { deviceId, error: errMsg(e) });
-    const message = errMsg(e);
-    return message.startsWith(ON_MACHINE_PREFIX)
-      ? message.slice(ON_MACHINE_PREFIX.length)
-      : message;
   }
 }
 

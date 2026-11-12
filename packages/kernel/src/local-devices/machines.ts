@@ -28,6 +28,7 @@ import {
   localPolicyDiff,
   localPolicyOf,
   opExplains,
+  opVisibleIn,
   pendingPolicyOpsOf,
   type ReportedPolicyOp,
 } from "./policy-summary.js";
@@ -284,7 +285,7 @@ export class MachinesService {
       .where("revoked_at", "is", null)
       .execute();
     if (hello.recentOps !== undefined) {
-      await this.backfillOps(machineId, self, hello.recentOps);
+      await this.backfillOps(machineId, self, hello.recentOps, localPolicyOf(hello.policy));
     }
   }
 
@@ -293,23 +294,29 @@ export class MachinesService {
    * the hello reports (`applied`, `refused`), or that it does not list although the op can no
    * longer reach the machine (`absent`: past its `resolveAt`), is marked `reported` and owes a
    * `device-op-resolve` job (`device-op-reported-<opId>`) that records the outcome. An op the
-   * machine logged only as `started` (interrupted) is left as it is. Runs in the caller's
+   * machine logged only as `started` (it stopped between the log and the answer) is judged once
+   * past its `resolveAt` by the policy the hello reports: its change there → `applied`, else
+   * `interrupted` (within the window, or with no readable policy, it is left). An expired entry
+   * (past `until`) is skipped: the machine's reports are no longer the op's. Runs in the caller's
    * transaction, with the machine's row locked; an op already reported is not owed again.
    */
   private async backfillOps(
     machineId: string,
     self: { org_id: string; pending_policy_ops: unknown },
     recentOps: NonNullable<DeviceHello["recentOps"]>,
+    policy: DeviceLocalPolicySummary | null,
   ): Promise<void> {
     const outcomes = new Map(recentOps.map((r) => [r.opId, r.outcome]));
     const now = Date.now();
     const reported = new Map<string, ReportedPolicyOp>();
     for (const op of pendingPolicyOpsOf(self.pending_policy_ops)) {
-      if (op.reported !== undefined) continue;
+      if (op.reported !== undefined || op.until <= now) continue;
       const outcome = outcomes.get(op.id);
       if (outcome === "applied" || outcome === "refused") reported.set(op.id, { outcome });
-      else if (outcome === undefined && now >= op.resolveAt) {
-        reported.set(op.id, { outcome: "absent" });
+      else if (now < op.resolveAt) continue;
+      else if (outcome === undefined) reported.set(op.id, { outcome: "absent" });
+      else if (policy !== null) {
+        reported.set(op.id, { outcome: opVisibleIn(op, policy) ? "applied" : "interrupted" });
       }
     }
     if (reported.size === 0) return;
