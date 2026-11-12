@@ -491,12 +491,17 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/admin/plugins/import",
     // `?staging=<id>`: the staged import's review, the pending requests (a staging prepared for
-    // an org's request defaults to that org) and the orgs (the scope); no staging: the source
-    // step reads nothing.
+    // an org's request defaults to that org), the orgs (the scope) and the catalog (an installed
+    // plugin is updated, not installed); no staging: the source step reads nothing.
     queries: ({ me, search }) => {
       const staging = search.get("staging") ?? "";
       return superAdmin(me) && staging !== ""
-        ? [q(stagedImportQuery(staging)), q(deploymentRequestsQuery()), q(adminOrgsQuery())]
+        ? [
+            q(stagedImportQuery(staging)),
+            q(deploymentRequestsQuery()),
+            q(adminOrgsQuery()),
+            q(catalogItemsQuery()),
+          ]
         : [];
     },
   },

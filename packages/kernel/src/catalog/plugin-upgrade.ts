@@ -399,6 +399,25 @@ export class PlatformPluginUpdater {
     return this.withGuideChanges(await this.diff(itemId, version));
   }
 
+  /**
+   * The update preview of a version staged for import, not imported yet (the platform's import and
+   * update, `PlatformImportUpdate`): the same diff as {@link preview}, with the target read from the
+   * staging (`target`, whose files are where the import's version row will point), so the
+   * `diffHash` is the one {@link updateHeld} recomputes after the import. Writes nothing.
+   */
+  async previewStaged(
+    itemId: string,
+    version: string,
+    target: UpdateTarget,
+  ): Promise<PlatformUpdatePreview> {
+    if (target.version !== version) {
+      throw new Error(
+        `internal: previewStaged got the staged target of version ${target.version} for version ${version}`,
+      );
+    }
+    return this.withGuideChanges(await this.diff(itemId, version, { target }));
+  }
+
   /** The preview of a diff with the template guides it changes. */
   private async withGuideChanges(d: UpdateDiff): Promise<PlatformUpdatePreview> {
     return {
@@ -603,6 +622,19 @@ export class PlatformPluginUpdater {
   withItemLock<T>(itemId: string, f: () => Promise<T>): Promise<T> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     return this.locked(itemId, f);
+  }
+
+  /**
+   * {@link update} for a caller already holding the item's update lock ({@link withItemLock}):
+   * the platform's import and update runs its import and this update under one hold.
+   */
+  async updateHeld(
+    actor: string,
+    itemId: string,
+    input: { version: string; diffHash: string },
+    opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> } = {},
+  ): Promise<PlatformUpdateResult> {
+    return this.updateLocked(actor, itemId, input, opts);
   }
 
   /**
