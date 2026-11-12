@@ -28,7 +28,13 @@ async function open(
   await page.goto(`/dev/ui/pages/${route}${opts.hash ?? ""}`);
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
-  const part = (opts.width ?? 1440) < 640 ? "schedule-calendar-row" : "schedule-calendar-block";
+  // a phone's agenda rows, a month's lines, a week's blocks
+  const part =
+    (opts.width ?? 1440) < 640
+      ? "schedule-calendar-row"
+      : route.endsWith("-month")
+        ? "schedule-calendar-line"
+        : "schedule-calendar-block";
   await expect(page.locator(`[data-part="${part}"]:visible`).first()).toBeVisible();
 }
 
