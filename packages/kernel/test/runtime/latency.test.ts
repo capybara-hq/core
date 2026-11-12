@@ -32,11 +32,13 @@ import {
  * outside that context and is not counted.
  *
  * Before the outbox (main at 7cb12115f, measured once with this counter): 27 PG statements and 6
- * Redis commands. Now 34 and 4. PG: the ensure-run backstop's insert in the message transaction,
+ * Redis commands. Now 33 and 4. PG: the ensure-run backstop's insert in the message transaction,
  * the run job's insert and the duplicate-trigger count (R21, a PG read instead of a Redis one) in
  * `ensureRun`'s transaction, and one claim transaction of the fast path for the run job (BEGIN;
  * SELECT … FOR UPDATE SKIP LOCKED; DELETE; COMMIT). The backstop is delayed, so the relay delivers
- * it, not this path (R20). Redis: the run job's add stays one command; its read-back after the add
+ * it, not this path (R20). One read fewer: the channel delivery hint after each append (a
+ * `channel_deliveries` read) is gone, since an append reads the channel target in its row-lock
+ * statement and owes the IM delivery only for a conversation that has one (spec §8.1). Redis: the run job's add stays one command; its read-back after the add
  * and the read of a job for the same trigger before it are gone. The p50 of the same path (100
  * sends, before and after) is reported with the PR, not asserted (a timing is not deterministic).
  */
@@ -129,7 +131,7 @@ describe("message → run job added", () => {
     const [a, b] = [await measure(orgId, agentId), await measure(orgId, agentId)];
     expect([b.pg.length, b.redis.length]).toEqual([a.pg.length, a.redis.length]);
     expect({ pg: a.pg.length, redis: a.redis.length }, JSON.stringify(a, null, 1)).toEqual({
-      pg: 27 + 7,
+      pg: 27 + 6,
       redis: 4,
     });
     // the outbox's share: two inserts and one claim transaction (the run job's)

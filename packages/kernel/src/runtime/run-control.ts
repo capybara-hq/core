@@ -1,5 +1,4 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { KernelEvents } from "../infra/events/kernel-events.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -31,7 +30,6 @@ export class RunControl {
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
     /** Owes a deleted root's tree stop in the delete's transaction. */
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
-    @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error">,
   ) {}
 
@@ -126,17 +124,15 @@ export class RunControl {
 
   /**
    * 运行在等人处理（waiting）时直接中止：取消等待、写 `run_aborted`、删除 checkpoint，返回 true；
-   * 运行已不是 waiting（例如刚被续跑）→ false. Either way its approval / question cards may have
-   * changed: `run.wait-stopped` lets the channel outbound update them.
+   * 运行已不是 waiting（例如刚被续跑）→ false. The stop's transaction owes the IM delivery that
+   * updates its approval / question cards (its appends, transactional outbox spec §8.1).
    */
-  async abortWaiting(
+  abortWaiting(
     conversationId: string,
     runId: string,
     byAccountId: string | null,
   ): Promise<boolean> {
-    const r = await this.waits.abortWaiting(conversationId, runId, byAccountId);
-    await this.events.emit("run.wait-stopped", { conversationId, runId });
-    return r;
+    return this.waits.abortWaiting(conversationId, runId, byAccountId);
   }
 
   /**

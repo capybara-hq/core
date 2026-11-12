@@ -1,6 +1,6 @@
 import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { type DynamicModule, Inject, Injectable, Module } from "@nestjs/common";
-import type { Job, Worker } from "bullmq";
+import { type Job, UnrecoverableError, type Worker } from "bullmq";
 import type { KernelConfig } from "../config/schema.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
@@ -20,7 +20,13 @@ import { SchedulesModule } from "../schedules/schedules.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { ChannelConnections } from "./connections.service.js";
 import { ChannelInbound } from "./inbound.js";
-import { CHANNEL_QUEUE_NAME, type ChannelJobData, ChannelJobs } from "./jobs.js";
+import {
+  CHANNEL_QUEUE_NAME,
+  type ChannelJobData,
+  ChannelJobs,
+  DELIVER_JOB,
+  INBOUND_JOB,
+} from "./jobs.js";
 import { ChannelOutbound, deliverBackoff } from "./outbound.js";
 import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
 
@@ -68,7 +74,10 @@ const CHANNEL_QUEUE_MODULE = QueueModule.registerQueue(CHANNEL_QUEUE_NAME);
 })
 export class ChannelsModule {}
 
-/** The consumer of `cap-kernel-channels` (deliveries and inbound jobs): {@link ChannelOutbound}. */
+/**
+ * The consumer of `cap-kernel-channels`: deliveries (`DELIVER_JOB`, owed through the outbox or
+ * hinted) and inbound jobs (`INBOUND_JOB`), both handled by {@link ChannelOutbound}.
+ */
 @Injectable()
 export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
   constructor(@Inject(ChannelOutbound) private readonly outbound: ChannelOutbound) {
@@ -76,6 +85,9 @@ export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
   }
 
   process(job: Job<ChannelJobData>, token?: string): Promise<void> {
+    if (job.name !== DELIVER_JOB && job.name !== INBOUND_JOB) {
+      return Promise.reject(new UnrecoverableError(`unknown channel job "${job.name}"`));
+    }
     return runJob(CHANNEL_QUEUE_NAME, job, () => this.outbound.process(job, token));
   }
 

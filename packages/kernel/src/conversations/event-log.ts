@@ -1,10 +1,11 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
+import { oweDelivery } from "../channels/jobs.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
@@ -139,9 +140,9 @@ const EVENT_COLUMNS = [
  * seq 由 `conversations.last_seq` 在会话行锁内连续分配（多副本并发写同一会话时串行化）；
  * 幂等键的「先查后写」也在同一把行锁内完成。
  *
- * Every published advance (`notify`) is also announced in-process as `conversation.event-appended`
- * on {@link KernelEvents} (the channel outbound delivery enqueues from it), on this replica, right
- * after the bus publish, in append order.
+ * An append to a conversation with a channel target (`channel_deliveries`, read with the row lock)
+ * owes the conversation's IM delivery in the append's transaction (transactional outbox spec
+ * §8.1); a conversation without one writes nothing more.
  */
 @Injectable()
 export class EventLog {
@@ -149,7 +150,7 @@ export class EventLog {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KERNEL_BUS) private readonly bus: EventBus,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -200,10 +201,7 @@ export class EventLog {
     return { events: out, toSeq };
   }
 
-  /**
-   * 发布「日志已推进到 toSeq」；发布失败只记日志（事件已提交，订阅方可按 seq 补读）。Then announces
-   * it in-process (`conversation.event-appended`); a failing subscriber is logged by KernelEvents.
-   */
+  /** 发布「日志已推进到 toSeq」；发布失败只记日志（事件已提交，订阅方可按 seq 补读）。 */
   async notify(conversationId: string, toSeq: number): Promise<void> {
     const msg: ConversationBusMessage = { kind: "events", toSeq };
     try {
@@ -211,7 +209,6 @@ export class EventLog {
     } catch (err) {
       this.log.warn("conversation event notify failed", { conversationId, toSeq, err });
     }
-    await this.events.emit("conversation.event-appended", { conversationId, toSeq });
   }
 
   /**
@@ -407,10 +404,22 @@ export class EventLog {
     bodies: ConversationEventBody[],
   ): Promise<{ events: ConversationEvent[]; toSeq: number | null; fresh: boolean[] }> {
     const t = this.db;
-    // 先锁会话行：之后的幂等查询与 seq 分配都在这把锁内，并发 append 依次执行。
+    // 先锁会话行：之后的幂等查询与 seq 分配都在这把锁内，并发 append 依次执行。The same statement
+    // reads whether the conversation has a channel target (its primary key), under the lock that
+    // `ChannelJobs.bind` takes too
     const conv = await t
       .selectFrom("conversations")
-      .select("id")
+      .select((eb) => [
+        "org_id",
+        eb
+          .exists(
+            eb
+              .selectFrom("channel_deliveries")
+              .select("channel_deliveries.conversation_id")
+              .whereRef("channel_deliveries.conversation_id", "=", "conversations.id"),
+          )
+          .as("im"),
+      ])
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
@@ -484,6 +493,7 @@ export class EventLog {
       )
       .returning(EVENT_COLUMNS)
       .execute();
+    if (conv.im) await oweDelivery(this.outbox, { conversationId, orgId: conv.org_id, seq: toSeq });
     const bySeq = new Map(inserted.map((r) => [Number(r.seq), toEvent(r)]));
     return {
       events: plan.map((p) =>
