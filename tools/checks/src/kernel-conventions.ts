@@ -260,6 +260,22 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   },
   {
     rule: "kc-rate-limit",
+    path: "packages/kernel/src/git/gateway.ts",
+    within: "acquireOrgSlot",
+    reason:
+      "the git gateway's per-org count of open transfers (a concurrency cap released when each " +
+      "transfer ends, sandbox git credentials spec §10), not a request rate",
+  },
+  {
+    rule: "kc-rate-limit",
+    path: "packages/kernel/src/git/gateway.ts",
+    within: "ByteMeter",
+    reason:
+      "the git gateway's per-run byte total (tools.git.maxBytesPerRun, sandbox git credentials " +
+      "spec §5.3), a volume cap, not a request rate",
+  },
+  {
+    rule: "kc-rate-limit",
     path: "packages/kernel/src/channels/supervisor.ts",
     within: "failed",
     reason:
