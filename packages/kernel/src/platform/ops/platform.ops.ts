@@ -149,7 +149,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
           );
           const org = await this.settings.get(ctx.orgId);
           // a new device's level: the org's default tier and its network
-          const policy = this.settings.sandboxPolicy(org, null);
+          const policy = await this.settings.sandboxPolicy(org, null);
           return {
             id: agent.id,
             name: d.name,

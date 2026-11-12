@@ -17,6 +17,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { type PlatformTiers, readPlatformTiers } from "../sandbox/platform-tiers.js";
 import { type EffectiveSandboxPolicy, effectiveSandboxPolicy } from "../sandbox/tiers.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
@@ -326,9 +327,15 @@ export class OrgSettingsService {
     return parseOrgSettings(raw);
   }
 
+  /** The platform's effective sandbox tiers (the startup config over the admin console's choice). */
+  platformTiers(): Promise<PlatformTiers> {
+    return readPlatformTiers(this.db.db, this.config, this.log);
+  }
+
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
-  deployment(): OrgSettingsDeployment {
-    const { limits: lim, tiers } = this.config.get().sandbox;
+  async deployment(): Promise<OrgSettingsDeployment> {
+    const lim = this.config.get().sandbox.limits;
+    const tiers = await this.platformTiers();
     return {
       sandboxEgress: { mode: lim.egress, allowHosts: [...lim.allowHosts] },
       sandboxTiers: {
@@ -366,10 +373,10 @@ export class OrgSettingsService {
   }
 
   /** The refusals of {@link update} that need no read of the org (the Platform tool's precheck). */
-  check(patch: OrgSettingsPatch): void {
+  async check(patch: OrgSettingsPatch): Promise<void> {
     if (
       patch.sandboxEgress?.mode === "allowlist" &&
-      this.deployment().sandboxEgress.mode === "none"
+      this.config.get().sandbox.limits.egress === "none"
     ) {
       throw new ApiError(
         "org.sandbox_egress_not_allowed",
@@ -378,7 +385,7 @@ export class OrgSettingsService {
     }
     const t = patch.sandboxTier;
     if (t != null) {
-      const platform = this.config.get().sandbox.tiers;
+      const platform = await this.platformTiers();
       if (t.max !== undefined && !tierAtMost(t.max, platform.max)) {
         throw sandboxTierNotAllowed(
           `The platform allows sandbox tiers up to ${platform.max}; sandboxTier.max cannot be ${t.max}`,
@@ -411,13 +418,24 @@ export class OrgSettingsService {
      */
     opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettings> {
-    this.check(patch);
+    await this.check(patch);
     return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
   }
 
-  /** The effective sandbox policy for the org's settings and a device's own tier (null = none). */
-  sandboxPolicy(settings: OrgSettings, deviceTier: SandboxTier | null): EffectiveSandboxPolicy {
-    return effectiveSandboxPolicy(this.config.get().sandbox, settings, deviceTier);
+  /**
+   * The effective sandbox policy for the org's settings and a device's own tier (null = none);
+   * `tiers`: the platform's tiers when the caller already read them.
+   */
+  async sandboxPolicy(
+    settings: OrgSettings,
+    deviceTier: SandboxTier | null,
+    tiers?: PlatformTiers,
+  ): Promise<EffectiveSandboxPolicy> {
+    const deployment = {
+      limits: this.config.get().sandbox.limits,
+      tiers: tiers ?? (await this.platformTiers()),
+    };
+    return effectiveSandboxPolicy(deployment, settings, deviceTier);
   }
 
   /**
@@ -432,12 +450,13 @@ export class OrgSettingsService {
    * - `sandboxEgress`: the base list grows: from none to anything else, or to hosts (the
    *   deployment's when the org gives none) not all in the current list.
    */
-  assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): void {
+  async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.sandboxTier !== undefined) {
       const next = patch.sandboxTier ?? undefined;
       const prev = before.sandboxTier;
-      const b = this.sandboxPolicy(before, null);
-      const a = this.sandboxPolicy({ ...before, sandboxTier: next }, null);
+      const tiers = await this.platformTiers();
+      const b = await this.sandboxPolicy(before, null, tiers);
+      const a = await this.sandboxPolicy({ ...before, sandboxTier: next }, null, tiers);
       // a cleared default follows the platform, capped by the ceiling: `max` bounds it then
       const nextDefault =
         next?.default === undefined && next?.max !== undefined ? next.max : next?.default;
@@ -496,9 +515,9 @@ export class OrgSettingsService {
     const stored = asObject(row.settings);
     const before = this.parseStored(orgId, stored);
     // again under the org lock: a hot config reload may have lowered the platform since
-    this.check(patch);
+    await this.check(patch);
     // under the org lock, so the comparison is with the value the write replaces
-    if (opts?.onlyNarrows) this.assertOnlyNarrows(before, patch);
+    if (opts?.onlyNarrows) await this.assertOnlyNarrows(before, patch);
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)

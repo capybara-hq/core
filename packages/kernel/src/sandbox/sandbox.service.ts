@@ -64,6 +64,7 @@ import {
   effectiveSandboxPolicy,
   instanceLimitsJson,
   limitsForTier,
+  readDeploymentSandboxPolicy,
   readInstanceLimits,
   sameApplied,
 } from "./tiers.js";
@@ -481,12 +482,12 @@ export class SandboxService {
     orgId: string;
     deviceId?: string;
   }): Promise<EffectiveSandboxPolicy> {
-    const cfg = this.config.get().sandbox;
-    const [settings, tier] = await Promise.all([
+    const [deployment, settings, tier] = await Promise.all([
+      readDeploymentSandboxPolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, device.orgId),
       device.deviceId === undefined ? null : this.deviceTier(device.orgId, device.deviceId),
     ]);
-    return effectiveSandboxPolicy(cfg, settings, tier);
+    return effectiveSandboxPolicy(deployment, settings, tier);
   }
 
   /** The device's own tier (`devices.tier`); null when it follows the org or is not there. */
@@ -971,6 +972,16 @@ export class SandboxService {
           if (lease) {
             if (intent) await this.clearIntent(env, token);
             intent = false;
+            // after a wait, the limits again under the lease: a tier narrowed just before the
+            // holder we waited for let go is applied now (asShared checks `ready` with them)
+            if (waited) {
+              try {
+                want = await wantNow();
+              } catch (err) {
+                await lease.release();
+                throw err;
+              }
+            }
             const e = await this.asShared(ctx, p, lease, ready, signal);
             if (e) return e;
           }
