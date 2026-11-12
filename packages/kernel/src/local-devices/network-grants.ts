@@ -9,6 +9,7 @@ import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
 import { appendMissingGrant, taskGrantsRunOf, unattendedTierOf } from "../schedules/unattended.js";
+import { deviceFeaturesOf, isolationOf } from "./policy-summary.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -234,26 +235,24 @@ export class NetworkGrants {
   }
 
   /**
-   * Whether the device's active machine last reported running commands without a sandbox
+   * Whether the device's active machine runs commands without a sandbox
    * (`device_machines.local_policy.isolation`, read fresh at each exec, spec §4.3), read from the
-   * stored JSON on its own. False without a machine or a summary: the device enforces its policy
-   * itself.
+   * stored JSON's isolation field alone ({@link isolationOf}). Fails closed for a program that
+   * applies tiers (feature `tiers`, which always sends a summary): no summary or any isolation but
+   * `sandbox` counts as unsandboxed. False without a machine, or for an older program without
+   * tiers (it has no unsandboxed mode).
    */
   async unsandboxed(deviceId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("device_machines")
-      .select("local_policy")
+      .select(["local_policy", "features"])
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
       .executeTakeFirst();
-    // the isolation field alone, whatever else the summary holds: an unparsable summary (a newer
-    // or broken program) must not hide that the machine runs without a sandbox
-    const raw = row?.local_policy;
-    return (
-      typeof raw === "object" &&
-      raw !== null &&
-      (raw as { isolation?: unknown }).isolation === "none"
-    );
+    if (row === undefined) return false;
+    const isolation = isolationOf(row.local_policy);
+    if (isolation !== null) return isolation === "none";
+    return deviceFeaturesOf(row.features).includes("tiers");
   }
 
   /** The runs of the tree whose budget run is `root`. */

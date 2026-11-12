@@ -45,3 +45,18 @@ export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
     remoteGrants: o.remoteGrants,
   };
 }
+
+/**
+ * The isolation a policy summary states, read from its `isolation` field alone (a hello's raw
+ * `policy` or the stored column), so a summary the kernel cannot otherwise read (a newer program's
+ * new value elsewhere, a broken one) still tells whether commands run without a sandbox: `sandbox`
+ * only when it says exactly that, `none` for any other present summary (fail closed), null when
+ * there is none.
+ */
+export function isolationOf(v: unknown): "sandbox" | "none" | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "object" && !Array.isArray(v)) {
+    return (v as { isolation?: unknown }).isolation === "sandbox" ? "sandbox" : "none";
+  }
+  return "none";
+}

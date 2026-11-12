@@ -19,7 +19,7 @@ import type { KernelLogger } from "../log.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
-import { deviceFeaturesOf, localPolicyOf } from "./policy-summary.js";
+import { deviceFeaturesOf, isolationOf, localPolicyOf } from "./policy-summary.js";
 import { LocalDeviceRelay } from "./relay.js";
 
 /** The machine credential's prefix (`cap_dev_` plus 32 random bytes, base64url). */
@@ -194,12 +194,19 @@ export class MachinesService {
    * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
    * never said hello has no known roots: nothing to compare. The reported features (known ones
    * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
-   * program downgraded to one without them is no longer sent what it cannot do. A reported
+   * program downgraded to one without them is no longer sent what it cannot do. A summary the
+   * kernel cannot read (`hello.policy` dropped by the frame parser) is kept as its isolation
+   * alone, read from `rawPolicy` (the frame's raw `policy`; {@link isolationOf}: anything but
+   * `sandbox` is `none`), so it never hides that commands run without a sandbox. A reported
    * isolation that differs from the stored one (none stored counts as `sandbox`) is audited
    * `device.isolation_reported` (sandbox dev tiers spec §10.4), once per change.
    */
   @Transactional()
-  async recordHello(machineId: string, hello: DeviceHello): Promise<void> {
+  async recordHello(
+    machineId: string,
+    hello: DeviceHello,
+    rawPolicy: unknown = hello.policy,
+  ): Promise<void> {
     const self = await this.db
       .selectFrom("device_machines")
       .select([
@@ -243,15 +250,17 @@ export class MachinesService {
           .execute();
       }
     }
-    const policy = localPolicyOf(hello.policy);
-    const before = localPolicyOf(self.local_policy)?.isolation ?? "sandbox";
-    if (policy !== null && policy.isolation !== before) {
+    const summary = localPolicyOf(hello.policy);
+    const isolation = summary?.isolation ?? isolationOf(rawPolicy);
+    const policy = summary ?? (isolation === null ? null : { isolation });
+    const before = isolationOf(self.local_policy) ?? "sandbox";
+    if (isolation !== null && isolation !== before) {
       await audit(this.db.db, {
         actorAccountId: self.account_id,
         orgId: self.org_id,
         action: "device.isolation_reported",
         target: self.device_id,
-        detail: { machineId, isolation: policy.isolation, previous: before },
+        detail: { machineId, isolation, previous: before },
       });
     }
     await this.db

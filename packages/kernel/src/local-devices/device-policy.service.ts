@@ -15,7 +15,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { MachinesService } from "./machines.js";
-import { localPolicyOf } from "./policy-summary.js";
+import { isolationOf } from "./policy-summary.js";
 import { LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
@@ -156,7 +156,7 @@ export class DevicePolicyService {
         .where("revoked_at", "is", null)
         .forUpdate()
         .executeTakeFirst();
-      const before = localPolicyOf(prev?.local_policy)?.isolation ?? "sandbox";
+      const before = isolationOf(prev?.local_policy) ?? "sandbox";
       if (input.policy.isolation !== before) isolationNow = input.policy.isolation;
       await this.db
         .updateTable("device_machines")

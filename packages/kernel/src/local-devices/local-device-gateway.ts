@@ -197,7 +197,10 @@ class DeviceConnection {
       this.state = "claiming";
       if (!(await this.claim())) return;
       try {
-        await this.gw.machines.recordHello(this.identity.machineId, frame);
+        // the raw summary too: the frame parser drops one it cannot read whole, and its
+        // isolation must still reach the kernel
+        const rawPolicy = (JSON.parse(text) as { policy?: unknown }).policy;
+        await this.gw.machines.recordHello(this.identity.machineId, frame, rawPolicy);
       } catch (e) {
         this.gw.log.warn("could not record a device hello", {
           deviceId: this.deviceId,
