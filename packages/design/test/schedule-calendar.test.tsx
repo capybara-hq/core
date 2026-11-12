@@ -139,8 +139,74 @@ describe("ScheduleCalendar week", () => {
       F.week.items.find((i) => i.id === "r11")?.label,
       F.week.items.find((i) => i.id === "r12")?.label,
     ]);
+    // the items carry their states
+    expect(buttons.map((b) => b.dataset.state)).toEqual(["completed", "skipped"]);
     await userEvent.click(buttons[0] as HTMLElement);
     expect(p.onSelect).toHaveBeenCalledWith("r11");
+    // choosing closes the list
+    expect(document.querySelector('[data-part="schedule-calendar-popover"]')).toBeNull();
+  });
+
+  it("splits a chain of overlaps into lanes, two blocks and 「+N」 past three", () => {
+    const at = (id: string, time: string) => {
+      const [h, m] = time.split(":").map(Number) as [number, number];
+      return {
+        id,
+        day: "2026-11-10",
+        minute: h * 60 + m,
+        time,
+        title: id,
+        state: "completed" as const,
+        label: id,
+      };
+    };
+    const { container } = cal({
+      items: [
+        at("a", "09:00"),
+        at("b", "09:00"),
+        at("c", "09:10"),
+        at("d", "09:20"),
+        at("e", "09:30"),
+        at("f", "10:00"),
+      ],
+    });
+    const g = grid(container);
+    const shown = parts(g, "schedule-calendar-block").map((b) => [b.dataset.key, b.style.left]);
+    expect(shown).toEqual([
+      ["i:a", "0%"],
+      ["i:b", `${100 / 3}%`],
+      ["i:e", "0%"],
+      ["i:f", "0%"],
+    ]);
+    const more = parts(g, "schedule-calendar-more")[0] as HTMLElement;
+    expect(more.textContent).toBe("+2");
+    expect(more.style.top).toBe(`calc(var(--cb-layout-calendar-hour) * ${550 / 60})`);
+    expect(more.style.left).toBe(`${200 / 3}%`);
+  });
+
+  it("opens at 07:00, again when early items arrive, never after the person scrolled", () => {
+    const early = {
+      ...F.week.items[0],
+      id: "early",
+      minute: 5 * 60 + 30,
+      time: "05:30",
+    } as (typeof F.week.items)[number];
+    const p = props({ loading: true, items: [] });
+    const view = (q: ScheduleCalendarProps) => (
+      <DesignProvider locale="zh">
+        <ScheduleCalendar {...q} />
+      </DesignProvider>
+    );
+    const { container, rerender } = render(view(p));
+    const scroll = container.querySelector('[data-part="schedule-calendar-scroll"]') as HTMLElement;
+    expect(scroll.scrollTop).toBe(7 * 48);
+    rerender(view({ ...p, loading: false, items: [early, ...F.week.items] }));
+    // an hour before 05:30
+    expect(scroll.scrollTop).toBe(4 * 48);
+    scroll.scrollTop = 600;
+    fireEvent.scroll(scroll);
+    rerender(view({ ...p, loading: false, items: [{ ...early, minute: 120, time: "02:00" }] }));
+    expect(scroll.scrollTop).toBe(600);
   });
 
   it("draws the now line in today's column only, decorative", () => {
@@ -261,9 +327,30 @@ describe("ScheduleCalendar keyboard", () => {
       id: `n${it.id}`,
       day: it.day.replace(/-(\d\d)$/, (_, n) => `-${Number(n) + 7}`),
     }));
+    // the days change first (the previous answer still drawn), the items later
+    rerender(view({ ...p, days: next, rangeLabel: "2026-11-16 – 11-22" }));
+    expect(document.activeElement).toBe(grid(container));
     rerender(view({ ...p, days: next, items: moved, rangeLabel: "2026-11-16 – 11-22" }));
     // Wednesday again
     expect((document.activeElement as HTMLElement).dataset.key).toBe("i:nr8");
+  });
+
+  it("moves the tab stop on when the focused item leaves the data", () => {
+    const p = props();
+    const view = (q: ScheduleCalendarProps) => (
+      <DesignProvider locale="zh">
+        <ScheduleCalendar {...q} />
+      </DesignProvider>
+    );
+    const { container, rerender } = render(view(p));
+    const g = grid(container);
+    act(() => (g.querySelector('[data-key="i:o5"]') as HTMLElement).focus());
+    expect((g.querySelector('[data-key="i:o5"]') as HTMLElement).tabIndex).toBe(0);
+    rerender(view({ ...p, items: F.week.items.filter((i) => i.id !== "o5") }));
+    const tabbable = [...g.querySelectorAll<HTMLElement>("[data-key]")].filter(
+      (b) => b.tabIndex === 0,
+    );
+    expect(tabbable.map((b) => b.dataset.key)).toEqual(["i:r14"]);
   });
 
   it("announces a new range label in the polite live region", () => {
@@ -279,6 +366,9 @@ describe("ScheduleCalendar keyboard", () => {
     expect(live(container)).toBe("");
     act(() => rerender(view({ ...p, rangeLabel: "2026-11-16 – 11-22" })));
     expect(live(container)).toBe("2026-11-16 – 11-22");
+    // and back: the first label is announced again
+    act(() => rerender(view({ ...p, rangeLabel: F.week.rangeLabel })));
+    expect(live(container)).toBe(F.week.rangeLabel);
   });
 
   it("calls the toolbar's navigation and range callbacks", async () => {
@@ -332,7 +422,8 @@ describe("ScheduleCalendar month", () => {
     expect(more.textContent).toBe("+3 项");
     await userEvent.click(more);
     const pop = await popover("11月5日 周四");
-    expect(within(pop).getAllByRole("button")).toHaveLength(3);
+    // the whole day, not only the hidden three (design §4.4)
+    expect(within(pop).getAllByRole("button")).toHaveLength(5);
     // a collapsed task counts toward the three
     const nov10 = cellOf(g, "11月10日 周二");
     expect(parts(nov10, "schedule-calendar-line")).toHaveLength(3);
@@ -340,6 +431,14 @@ describe("ScheduleCalendar month", () => {
     // the day number goes to that day's week
     await userEvent.click(within(nov10).getByRole("button", { name: "11月10日 周二，查看这一周" }));
     expect(p.onDay).toHaveBeenCalledWith("2026-11-10");
+  });
+
+  it("draws the days after a cut as not loaded", () => {
+    const { container } = month({ notLoadedFrom: "2026-11-20" });
+    const g = grid(container);
+    expect(cellOf(g, "11月20日 周五").textContent).toContain("未加载");
+    expect(g.querySelector('[data-key="i:m15"]')).toBeNull();
+    expect(g.querySelector('[data-key="i:m14"]')).not.toBeNull();
   });
 
   it("moves a week with ↑ / ↓ and through the lines with ← / →", () => {
@@ -425,6 +524,32 @@ describe("ScheduleCalendar agenda", () => {
       "六7",
       "日8",
     ]);
+  });
+
+  it("says when the chosen day is not loaded, and draws no dot there", () => {
+    const { container } = cal({ range: "agenda", day: "2026-11-11", notLoadedFrom: "2026-11-11" });
+    const a = agenda(container);
+    expect(a.textContent).toContain("未加载");
+    expect(parts(a, "schedule-calendar-row")).toHaveLength(0);
+    const days = parts(a, "schedule-calendar-agenda-day");
+    expect(days[2]?.querySelector('[data-part="schedule-calendar-dot"]')).toBeNull();
+  });
+
+  it("groups the options menu: the range, a separator, the scope", async () => {
+    const onChange = vi.fn();
+    const { container, p } = cal({
+      range: "agenda",
+      scope: { value: "mine", onChange, labels: F.scope },
+    });
+    await userEvent.click(within(container).getByRole("button", { name: "视图选项" }));
+    const menu = await screen.findByRole("menu");
+    const kids = [...menu.querySelectorAll('[role="menuitemradio"], [role="separator"]')].map(
+      (el) => (el.getAttribute("role") === "separator" ? "|" : el.textContent),
+    );
+    expect(kids).toEqual(["周", "月", "|", "只看我的", "全组织"]);
+    await userEvent.click(within(menu).getByRole("menuitemradio", { name: "全组织" }));
+    expect(onChange).toHaveBeenCalledWith("all");
+    expect(p.onRange).not.toHaveBeenCalled();
   });
 
   it("says when the chosen day has no runs", () => {

@@ -226,9 +226,10 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
   const view: "week" | "month" =
     month || (range === "agenda" && days.length > 7) ? "month" : "week";
   const [announce, setAnnounce] = useState("");
-  const firstLabel = useRef(rangeLabel);
+  const prevLabel = useRef(rangeLabel);
   useEffect(() => {
-    if (rangeLabel !== firstLabel.current) setAnnounce(rangeLabel);
+    if (rangeLabel !== prevLabel.current) setAnnounce(rangeLabel);
+    prevLabel.current = rangeLabel;
   }, [rangeLabel]);
 
   const viewOptions = [
@@ -242,11 +243,14 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
       onSelect: () => onRange(o.value as "week" | "month"),
     })),
     ...(scope
-      ? (["mine", "all"] as const).map((v) => ({
-          label: scope.labels[v],
-          checked: scope.value === v,
-          onSelect: () => scope.onChange(v),
-        }))
+      ? [
+          "separator" as const,
+          ...(["mine", "all"] as const).map((v) => ({
+            label: scope.labels[v],
+            checked: scope.value === v,
+            onSelect: () => scope.onChange(v),
+          })),
+        ]
       : []),
   ];
 
@@ -370,7 +374,8 @@ function useRoving(
   const { days, today, selectedId, onNavigate } = props;
   const ref = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState<string | null>(null);
-  const pending = useRef<number | "today" | null>(null);
+  // the weekday (or today) PageUp / PageDown / t asked for, and the range it was asked from
+  const pending = useRef<{ want: number | "today"; from: string } | null>(null);
   const todayIndex = days.indexOf(today);
   const fallback =
     stops.find((s) => s.key === `i:${selectedId}` || s.key === `c:${selectedId}`)?.key ??
@@ -383,20 +388,34 @@ function useRoving(
     ref.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus();
   };
 
-  // after PageUp / PageDown / t, focus lands on the same weekday (or today) of the new range
+  // After PageUp / PageDown / t, focus lands on the same weekday (or today) of the new range. The
+  // days change first and the items later (the page keeps the previous answer while it reads), so
+  // the request waits until the new range has stops; meanwhile focus rests on the grid itself.
   const daysKey = days.join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the range (its days) changes
+  const stopsKey = stops.map((s) => s.key).join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the range or its stops change
   useEffect(() => {
-    const want = pending.current;
-    if (want === null) return;
+    const p = pending.current;
+    if (p === null || p.from === daysKey) return;
+    const grid = ref.current;
+    const at = document.activeElement;
+    const ours = at === null || at === document.body || (grid?.contains(at) ?? false);
+    if (!ours) {
+      pending.current = null;
+      return;
+    }
+    if (stops.length === 0) {
+      if (at !== grid) grid?.focus();
+      return;
+    }
     pending.current = null;
     const target =
-      want === "today"
+      p.want === "today"
         ? stops.find((s) => s.dayIndex === days.indexOf(today))
-        : stops.find((s) => s.dayIndex % 7 === want);
+        : stops.find((s) => s.dayIndex % 7 === p.want);
     const key = target?.key ?? stops[0]?.key;
     if (key) focusKey(key);
-  }, [daysKey]);
+  }, [daysKey, stopsKey]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const el = (e.target as HTMLElement).closest<HTMLElement>("[data-key]");
@@ -413,13 +432,13 @@ function useRoving(
       case "PageUp":
       case "PageDown":
         e.preventDefault();
-        pending.current = from.dayIndex % 7;
+        pending.current = { want: from.dayIndex % 7, from: daysKey };
         onNavigate(e.key === "PageUp" ? "prev" : "next");
         return;
       case "t":
         if (e.altKey || e.ctrlKey || e.metaKey) return;
         e.preventDefault();
-        pending.current = "today";
+        pending.current = { want: "today", from: daysKey };
         onNavigate("today");
         return;
       case "ArrowUp":
@@ -488,10 +507,31 @@ function WeekGrid(props: ScheduleCalendarProps) {
   const earliest = Math.min(...perDay.flat().map(minuteOf), SCROLL_HOUR * 60 + 60);
   const scrollTo = Math.max(0, Math.min(SCROLL_HOUR * 60, Math.floor(earliest / 60) * 60 - 60));
   const daysKey = days.join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scrolls when a new range opens
+  // the person scrolled this range: later answers (loading ending, items arriving) keep their place
+  const scrolled = useRef<{ days: string; byUser: boolean; set: number | null }>({
+    days: daysKey,
+    byUser: false,
+    set: null,
+  });
   useLayoutEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = (scrollTo / 60) * HOUR_PX;
-  }, [daysKey]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const s = scrolled.current;
+    if (s.days !== daysKey) {
+      s.days = daysKey;
+      s.byUser = false;
+    }
+    if (s.byUser) return;
+    const want = (scrollTo / 60) * HOUR_PX;
+    s.set = want;
+    if (el.scrollTop !== want) el.scrollTop = want;
+  }, [daysKey, scrollTo]);
+  // a scroll event at the position we set is ours; anywhere else the person moved the grid
+  const onScroll = () => {
+    const s = scrolled.current;
+    const el = scrollRef.current;
+    if (el && (s.set === null || Math.abs(el.scrollTop - s.set) > 1)) s.byUser = true;
+  };
 
   const nowMinute = days.includes(today) ? minuteIn(now, timeZone) : null;
   const hours = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
@@ -560,9 +600,15 @@ function WeekGrid(props: ScheduleCalendarProps) {
       aria-label={rangeLabel}
       aria-busy={loading ? true : undefined}
       ref={roving.ref}
+      tabIndex={-1}
       onKeyDown={roving.onKeyDown}
     >
-      <div className="cb-scal-scroll" data-part="schedule-calendar-scroll" ref={scrollRef}>
+      <div
+        className="cb-scal-scroll"
+        data-part="schedule-calendar-scroll"
+        ref={scrollRef}
+        onScroll={onScroll}
+      >
         <div className="cb-scal-pin">
           <div className="cb-scal-band" aria-hidden="true">
             <span className="cb-scal-corner" />
@@ -769,8 +815,14 @@ function MorePopover({
   onSelect(id: string): void;
   selectedId?: string | undefined;
 }) {
+  const [open, setOpen] = useState(false);
+  // a choice closes the list first, then opens the run (focus returns to the trigger)
+  const choose = (id: string) => {
+    setOpen(false);
+    onSelect(id);
+  };
   return (
-    <Popover trigger={trigger}>
+    <Popover trigger={trigger} open={open} onOpenChange={setOpen}>
       {/* biome-ignore lint/a11y/useSemanticElements: a list of buttons named by the day */}
       <div
         className="cb-scal-pop"
@@ -787,8 +839,9 @@ function MorePopover({
             data-part="schedule-calendar-pop-item"
             data-state={c.state}
             data-selected={c.id === selectedId ? "true" : undefined}
+            aria-current={c.id === selectedId ? "true" : undefined}
             aria-label={c.label}
-            onClick={() => onSelect(c.id)}
+            onClick={() => choose(c.id)}
           >
             <ChipLine chip={c} />
           </button>
@@ -801,8 +854,9 @@ function MorePopover({
             data-part="schedule-calendar-pop-item"
             data-state={it.state}
             data-selected={it.id === selectedId ? "true" : undefined}
+            aria-current={it.id === selectedId ? "true" : undefined}
             aria-label={it.label}
-            onClick={() => onSelect(it.id)}
+            onClick={() => choose(it.id)}
           >
             <ItemLine item={it} />
           </button>
@@ -876,6 +930,7 @@ function MonthGrid(props: ScheduleCalendarProps) {
       aria-label={rangeLabel}
       aria-busy={loading ? true : undefined}
       ref={roving.ref}
+      tabIndex={-1}
       onKeyDown={roving.onKeyDown}
     >
       <div className="cb-scal-month-head" aria-hidden="true">
@@ -969,8 +1024,8 @@ function MonthGrid(props: ScheduleCalendarProps) {
                 {over ? (
                   <MorePopover
                     head={label}
-                    items={rest.flatMap((l) => (l.kind === "item" ? [l.item] : []))}
-                    collapsed={rest.flatMap((l) => (l.kind === "chip" ? [l.chip] : []))}
+                    items={all.flatMap((l) => (l.kind === "item" ? [l.item] : []))}
+                    collapsed={all.flatMap((l) => (l.kind === "chip" ? [l.chip] : []))}
                     onSelect={onSelect}
                     selectedId={selectedId}
                     trigger={
@@ -1043,7 +1098,7 @@ function Agenda(props: ScheduleCalendarProps) {
   } else if (chips.length === 0 && rows.length === 0) {
     body = (
       <p className="cb-scal-day-empty" data-part="schedule-calendar-day-empty">
-        {t("scheduleCalendar.dayEmpty")}
+        {t(loaded(chosen) ? "scheduleCalendar.dayEmpty" : "scheduleCalendar.notLoaded")}
       </p>
     );
   } else {

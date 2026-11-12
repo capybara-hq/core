@@ -5932,26 +5932,65 @@ textarea {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
 }
-[data-state="upcoming"]:is(.r-scal-block, .r-scal-chip, .r-scal-line, .r-scal-row) {
+[data-state="upcoming"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
   border: 1px dashed var(--cb-line);
   color: var(--cb-muted);
 }
-[data-state="running"]:is(.r-scal-block, .r-scal-chip, .r-scal-line, .r-scal-row),
-[data-state="completed"]:is(.r-scal-block, .r-scal-chip, .r-scal-line, .r-scal-row) {
+[data-state="running"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+),
+[data-state="completed"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
   background: var(--cb-selected);
 }
-[data-state="failed"]:is(.r-scal-block, .r-scal-chip, .r-scal-line, .r-scal-row) {
+[data-state="failed"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
   background: var(--cb-selected);
   box-shadow: inset 2px 0 0 var(--cb-fail);
 }
-[data-state="skipped"]:is(.r-scal-block, .r-scal-chip, .r-scal-line, .r-scal-row) {
+[data-state="skipped"]:is(
+  .r-scal-block,
+  .r-scal-chip,
+  .r-scal-line,
+  .r-scal-row,
+  .r-scal-pop-item
+) {
   background: var(--cb-hover);
   color: var(--cb-muted);
+}
+/* Hover: a `line` border, no new ground (the state's ground stays). */
+.r-scal-block:hover,
+.r-scal-chip:hover,
+.r-scal-line:hover,
+.r-scal-row:hover,
+.r-scal-pop-item:hover {
+  border-color: var(--cb-line);
 }
 .r-scal-block[data-selected="true"],
 .r-scal-chip[data-selected="true"],
 .r-scal-line[data-selected="true"],
-.r-scal-row[data-selected="true"] {
+.r-scal-row[data-selected="true"],
+.r-scal-pop-item[data-selected="true"] {
   border: 1px solid var(--cb-line-strong);
 }
 .r-scal-icon {
@@ -6128,13 +6167,7 @@ span.r-scal-daynum {
 }
 .r-scal-pop-item {
   flex: none;
-  height: var(--cb-row-dense);
-}
-.r-scal-pop-item:hover {
-  background: var(--cb-hover);
-}
-[data-state="failed"].r-scal-pop-item > .r-scal-time {
-  color: var(--cb-fail);
+  height: calc(var(--cb-layout-calendar-hour) / 2);
 }
 
 /* ── Agenda (phones, design §7): seven day buttons, then the chosen day's 40 px rows ── */
@@ -6218,7 +6251,13 @@ span.r-scal-daynum {
   .r-scal-row {
     border-color: CanvasText;
   }
-  [data-state="failed"]:is(.r-scal-block, .r-scal-chip, .r-scal-line, .r-scal-row) {
+  [data-state="failed"]:is(
+    .r-scal-block,
+    .r-scal-chip,
+    .r-scal-line,
+    .r-scal-row,
+    .r-scal-pop-item
+  ) {
     border-left: 2px solid Highlight;
   }
   .r-scal-now,

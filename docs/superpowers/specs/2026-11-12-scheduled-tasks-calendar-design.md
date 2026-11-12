@@ -135,8 +135,9 @@ Guests get the existing no-access state (members up, as the list). The page's ot
   the task name (one line, ellipsis) and, when the height allows, the agent's name (`small`
   `muted`). In 全组织 the creator's name joins the agent (「研究助手 · 张三」).
 - **Overlap**: blocks whose half-hour slots overlap share the column side by side, up to three; a
-  fourth and later collapse into one 「+N」 block at the same slot that opens a Popover listing them
-  as buttons (designer's call).
+  cluster that needs more keeps two blocks and draws one 「+N」 in the third place, at the first
+  hidden item's slot, opening a Popover listing the hidden ones as buttons (designer's call;
+  implementation review 2026-11-12: two blocks and 「+N」 match the month's third line).
 - **Dense lane**: under the day headers, one lane per day for collapsed tasks (§5.4). Each collapsed
   task-day is a one-line chip 「每小时 · 24 次」 / 「每 15 分钟 · 96 次」 with a state summary
   (「· 2 次失败」 in `fail` with `circle-x` when any failed). The lane is drawn only when the week
@@ -353,8 +354,16 @@ ScheduleCalendar({
   loading?: boolean;
   empty?: { text; hint?; action? };           // drawn over the grid (§8)
   error?: { retry(): void; code?: string };
+  // added in implementation (2026-11-12):
+  refreshing?: boolean;                       // a range change in flight: a spinner by the label (§8)
+  notLoadedFrom?: string;                     // days at or after it drawn as not loaded (§5.5)
+  onDay?(day: string): void;                  // a month day number, an agenda day button
+  day?: string;                               // the agenda's chosen day (the page's date=)
 })
 ```
+
+`collapsed` entries also take `failed?` (「2 次失败」), drawn in `fail` with `circle-x` after the
+summary.
 
 The page builds `day` / `minute` from instants in the viewer's zone (`lib/schedule-calendar.ts`,
 pure, unit-tested); the component never reads a clock or a zone itself (design spec §2.2 rule).
@@ -379,9 +388,13 @@ is told by color alone.
 - **Tokens**: all colors above are existing tokens; no new color token (designer's call). New
   `contrast` pairs in `docs/design/tokens.json`: `fail` on `selected` (4.5) and `ink` / `muted` on `hover`
   where missing, checked by `check:tokens`. New size tokens: `layout.calendar-axis` (48),
-  `layout.calendar-hour` (40, one hour row; a block is half of it), `layout.calendar-day-min`
-  (76, the narrowest day column: 7 × 76 + 48 fits the 640 content width), `layout.calendar-cell`
-  (96, a month cell's minimum height: the date row and three `row.dense` lines).
+  `layout.calendar-hour` (48, one hour row; a block is half of it, 24 px, the tap-target floor of
+  §6.3), `layout.calendar-day-min` (76, the narrowest day column: 7 × 76 + 48 fits the 640 content
+  width), `layout.calendar-cell` (112, a month cell's minimum height: the date row and three 24 px
+  lines). Contrast pairs over the `panel` ground the grid sits on (the translucent light grounds
+  composited over `panel`): `ink`, `muted` on `hover`; `ink`, `fail` (4.5) and `accent` (3) on
+  `selected`; `fail` on `selected` composited over `bg` would be 4.42:1 in light, so the pair names
+  the real surface.
 - Hour labels: `small` in `muted` (not `faint`: they carry information, §2.1).
 
 ### 6.3 Keyboard and accessibility
@@ -408,7 +421,8 @@ is told by color alone.
   the block shows the time and name only.
 - **< 640** (design spec §4.3, checked at 390 × 844): the page passes `range="agenda"` (designer's
   call, decided direction "a day or agenda list"): the toolbar keeps 今天 and prev / next (stepping a
-  week) and folds 周 / 月 and the scope into one options button with a bottom Sheet; a row of seven
+  week) and folds 周 / 月 and the scope into one options button opening a Menu (the range choices,
+  a separator, the scope choices; implementation review 2026-11-12: a Menu, not a bottom Sheet); a row of seven
   day buttons (「一 9」 … 「日 15」, today marked, the selected day `selected`, a dot under a day with
   a failed run, 40 px high); under it the selected day's items as a list, one 40 px row each (state
   icon, time, name, agent), collapsed tasks as one row. A month on a phone is the same agenda; the

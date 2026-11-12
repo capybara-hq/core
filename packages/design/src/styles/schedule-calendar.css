@@ -222,26 +222,65 @@
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
 }
-[data-state="upcoming"]:is(.cb-scal-block, .cb-scal-chip, .cb-scal-line, .cb-scal-row) {
+[data-state="upcoming"]:is(
+  .cb-scal-block,
+  .cb-scal-chip,
+  .cb-scal-line,
+  .cb-scal-row,
+  .cb-scal-pop-item
+) {
   border: 1px dashed var(--cb-line);
   color: var(--cb-muted);
 }
-[data-state="running"]:is(.cb-scal-block, .cb-scal-chip, .cb-scal-line, .cb-scal-row),
-[data-state="completed"]:is(.cb-scal-block, .cb-scal-chip, .cb-scal-line, .cb-scal-row) {
+[data-state="running"]:is(
+  .cb-scal-block,
+  .cb-scal-chip,
+  .cb-scal-line,
+  .cb-scal-row,
+  .cb-scal-pop-item
+),
+[data-state="completed"]:is(
+  .cb-scal-block,
+  .cb-scal-chip,
+  .cb-scal-line,
+  .cb-scal-row,
+  .cb-scal-pop-item
+) {
   background: var(--cb-selected);
 }
-[data-state="failed"]:is(.cb-scal-block, .cb-scal-chip, .cb-scal-line, .cb-scal-row) {
+[data-state="failed"]:is(
+  .cb-scal-block,
+  .cb-scal-chip,
+  .cb-scal-line,
+  .cb-scal-row,
+  .cb-scal-pop-item
+) {
   background: var(--cb-selected);
   box-shadow: inset 2px 0 0 var(--cb-fail);
 }
-[data-state="skipped"]:is(.cb-scal-block, .cb-scal-chip, .cb-scal-line, .cb-scal-row) {
+[data-state="skipped"]:is(
+  .cb-scal-block,
+  .cb-scal-chip,
+  .cb-scal-line,
+  .cb-scal-row,
+  .cb-scal-pop-item
+) {
   background: var(--cb-hover);
   color: var(--cb-muted);
+}
+/* Hover: a `line` border, no new ground (the state's ground stays). */
+.cb-scal-block:hover,
+.cb-scal-chip:hover,
+.cb-scal-line:hover,
+.cb-scal-row:hover,
+.cb-scal-pop-item:hover {
+  border-color: var(--cb-line);
 }
 .cb-scal-block[data-selected="true"],
 .cb-scal-chip[data-selected="true"],
 .cb-scal-line[data-selected="true"],
-.cb-scal-row[data-selected="true"] {
+.cb-scal-row[data-selected="true"],
+.cb-scal-pop-item[data-selected="true"] {
   border: 1px solid var(--cb-line-strong);
 }
 .cb-scal-icon {
@@ -417,13 +456,7 @@ span.cb-scal-daynum {
 }
 .cb-scal-pop-item {
   flex: none;
-  height: var(--cb-row-dense);
-}
-.cb-scal-pop-item:hover {
-  background: var(--cb-hover);
-}
-[data-state="failed"].cb-scal-pop-item > .cb-scal-time {
-  color: var(--cb-fail);
+  height: calc(var(--cb-layout-calendar-hour) / 2);
 }
 
 /* ── Agenda (phones, design §7): seven day buttons, then the chosen day's 40 px rows ── */
@@ -532,7 +565,13 @@ span.cb-scal-daynum {
   .cb-scal-row {
     border-color: CanvasText;
   }
-  [data-state="failed"]:is(.cb-scal-block, .cb-scal-chip, .cb-scal-line, .cb-scal-row) {
+  [data-state="failed"]:is(
+    .cb-scal-block,
+    .cb-scal-chip,
+    .cb-scal-line,
+    .cb-scal-row,
+    .cb-scal-pop-item
+  ) {
     border-left: 2px solid Highlight;
   }
   .cb-scal-now,

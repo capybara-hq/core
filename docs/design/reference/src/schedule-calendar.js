@@ -168,7 +168,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
         return `<div class="r-scal-day" data-part="schedule-calendar-day"${today} role="group" aria-label="${dayLabel(day)}">${skel}${blocks}${now}</div>`;
       })
       .join("");
-    return `<div class="r-scal-grid" data-part="schedule-calendar-grid"><div class="r-scal-scroll" data-part="schedule-calendar-scroll" data-scroll="${(scrollTo / 60) * 40}"><div class="r-scal-pin"><div class="r-scal-band"><span class="r-scal-corner"></span>${heads}</div>${lane}</div><div class="r-scal-band r-scal-body" data-part="schedule-calendar-body"><div class="r-scal-axis" data-part="schedule-calendar-axis">${hours}</div>${cols}</div></div>${emptyOver(o)}</div>`;
+    return `<div class="r-scal-grid" data-part="schedule-calendar-grid"><div class="r-scal-scroll" data-part="schedule-calendar-scroll" data-scroll="${(scrollTo / 60) * 48}"><div class="r-scal-pin"><div class="r-scal-band"><span class="r-scal-corner"></span>${heads}</div>${lane}</div><div class="r-scal-band r-scal-body" data-part="schedule-calendar-body"><div class="r-scal-axis" data-part="schedule-calendar-axis">${hours}</div>${cols}</div></div>${emptyOver(o)}</div>`;
   }
 
   function month(o) {

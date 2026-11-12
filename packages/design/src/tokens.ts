@@ -117,8 +117,8 @@ export const SIZES = {
     "policy-select": 160,
     "swatch-min": 160,
     "calendar-axis": 48,
-    "calendar-hour": 40,
+    "calendar-hour": 48,
     "calendar-day-min": 76,
-    "calendar-cell": 96,
+    "calendar-cell": 112,
   },
 } as const;
