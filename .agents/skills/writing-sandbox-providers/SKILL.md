@@ -1,6 +1,6 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags and actor, optional image, same-name replacement), effective org limits and egress (sandboxLimitOverrides, sandboxEgress), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags and actor, optional image, same-name replacement), effective org limits, egress and tiers (sandboxLimitOverrides, sandboxEgress, update, limitsApplyAt), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
 # Sandboxes: the kernel side of `sandbox@2`
@@ -125,20 +125,36 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 
 ### Limits and egress (`SandboxLimits`)
 
+- `tier` (`strict` < `dev` < `open`, spec `docs/superpowers/specs/2026-11-12-sandbox-dev-tiers-design.md`) is the device's **effective** tier: the lowest of the
+  device's own tier (`devices.tier`, null = the org default), the org ceiling (`sandboxTier.max`) and the platform ceiling (`sandbox.tiers.max`); unattended runs are
+  capped at `dev` without a `tier:open` task grant. One function computes it: kernel `sandbox/tiers.ts` `effectiveSandboxPolicy`. Only a person widens a tier
+  (org settings over the session, the device owner on the device page); the Platform op and PATs only narrow. `devHosts` is for local exec args only; cloud
+  providers treat `allowHosts` as final.
 - `egress` / `allowHosts` are the values **in effect for the org**: the org setting `sandboxEgress` can replace the allowlist with its own or cut the network,
-  and cannot be more open than the deployment (Ruling M19, kernel `effectiveSandboxEgress`). The provider just enforces what `create` receives and does not read org settings.
+  and cannot be more open than the deployment (Ruling M19). `egress: "none"` cuts the network in every tier. There is no deployment `egress: "open"` any more:
+  open egress is the `open` tier. The provider just enforces the `limits` it receives and does not read org settings.
 - `cpu` / `memoryMb` are likewise the values **in effect for the org**: a super admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
   orgId → `{ cpu?, memoryMb? }`, cpu 0.25–64, memoryMb an integer in 256–262144, C19); the items given replace the deployment defaults of `sandbox.limits`, and items not given and `diskMb` keep the deployment defaults (kernel `effectiveSandboxLimits`); org admins see the effective values and their source read-only in org settings.
   The provider just enforces the `limits` it receives from `create`; a provider that cannot size each sandbox (such as E2B, where the template decides the size) must state in its README
   "org-level cpu / memory overrides do not take effect for this plugin"; a deployer who needs different sizes uses different templates.
-- `cpu` / `memoryMb` / `egress` / `allowHosts` **take effect only at `create`** (instance), and `diskMb` at `createFileSystem`: changing config affects only instances created afterwards,
-  and existing ones (including those recovered from suspension) keep the settings from creation until the instance is destroyed and recreated. When an item cannot be done, say so in the README (Docker's default local volume driver
-  does not limit `diskMb`; E2B's cpu / memory / disk are decided by the template).
-- `egress`:
-  - `none`: loopback only.
+- **Tier and egress mode follow running instances; the rest applies at create.** The kernel records the `{ tier, egress }` an instance was created with
+  (`device_instances.instance_limits`; NULL reads as `strict` with an unknown egress, so it differs once after the upgrade). On use, when the effective tier or
+  egress mode differs, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"` records the new limits; `"recreate"`, a gone
+  instance, or a provider without `update` destroys and recreates the instance on the same files (the existing "recreated" notice). A non-gone `update` failure
+  recreates on instance-bound providers; after an abort, or on a provider with `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance
+  is quarantined (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful `update` keeps the old record, and the device view
+  says `pendingFilesReset` (「重置文件后生效」): the record never claims more than is in force. Changes of `allowHosts`, `cpu`, `memoryMb` still reach only
+  instances created afterwards, and `diskMb` only file systems created afterwards. When an item cannot be done, say so in the README (Docker's default local
+  volume driver does not limit `diskMb`; E2B's cpu / memory / disk are decided by the template).
+- `egress` and `tier` together:
+  - `none`: loopback only, whatever the tier.
   - `allowlist` (default): allow only `allowHosts` (`validateAllowHost` already rejects IP literals, single-label names and `.local` / `.internal`;
-    `*.example.com` matches subdomains and not the domain itself).
-  - `open`: the provider's deployment config `allowOpenEgress` defaults to false; when false, `create` receiving open fails with an English error. New extensions implement it this way.
+    `*.example.com` matches subdomains and not the domain itself). `strict` keeps HTTP(S) on 443 / 80; `dev` allows any port to those hosts (sandbox-docker adds
+    SOCKS5 on the egress proxy and a larger `/dev/shm`).
+  - `open` tier: any public host. The provider's deployment config `openEgress: "off" | "proxy" | "direct"` (default `"proxy"`; it replaced `allowOpenEgress`)
+    decides how: `off` refuses a `create` or `update` that asks for open with an English error; `proxy` goes through the provider's egress proxy, which still
+    refuses private, loopback, link-local and metadata addresses; `direct` attaches the shared bridge and reaches the host and the intranet (trusted deployments
+    only). The kernel warns at start when `sandbox.tiers.max` is `open` while the provider is `off`.
 - **The allowlist does not prevent data exfiltration**: it blocks the internal network and hosts outside the allowlist, but not data sent to allowlisted hosts (`git push` to github.com, publishing packages).
   The README must say so and recommend `sandboxToolPolicy: ask` and / or `sandboxEgress: none` for sensitive orgs.
 - A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
@@ -257,8 +273,8 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   kept equal line for line by `pnpm check:compose-haproxy`): allows only the endpoints `sandbox-docker` uses, containers / volumes are recognized only by names starting with `cap-`,
   and request bodies are rejected by regex for privileged mode, `Binds`, `CapAdd`, non-ASCII keys (Go folds key names by Unicode, `Bindſ` = `Binds`) and so on. **This is only a backstop;
   the main defense is network position**: anything that can reach the proxy can nearly control Docker. **Never publish the proxy on any host address (127.0.0.1 included)**;
-  in production, put it only on the internal network where the kernel runs, and do not attach sandboxes to that network. The dev compose publishes it on `127.0.0.1:2375` for the local machine only (Ruling M13); in that case do not enable
-  `allowOpenEgress` (an open sandbox can reach the host loopback through `host.docker.internal`).
+  in production, put it only on the internal network where the kernel runs, and do not attach sandboxes to that network. The dev compose publishes it on `127.0.0.1:2375` for the local machine only (Ruling M13); in that case never set the plugin's
+  `openEgress: "direct"` (a direct open sandbox can reach the host loopback through `host.docker.internal`); the default `"proxy"` refuses private addresses.
 - **The proxy config has a copy in capybara-hq/plugins**: the `sandbox-docker` tests start a real HAProxy from `plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg` in that repository.
   `pnpm check:bootstrap --network` (rule `bootstrap-haproxy`) requires that copy, at the bootstrap manifest's `marketplace.commit`, to equal core's `docker/sandbox-proxy/haproxy.cfg` byte for byte.
   A change to the proxy rules therefore lands in both repositories: in capybara-hq/plugins with a violating case against the real proxy (proving it is rejected), then here with the
