@@ -117,6 +117,10 @@ The row commits or rolls back with the business write.
   The adds of one pass share one 2000 ms deadline, so a claim transaction holds its locks and its
   pool connection for about 2 s at most; after the first queue fails or times out, the pass fails
   the queues left without trying them.
+- **Queue handles.** The dispatcher adds through the queue instances their owner modules
+  registered (one instance and connection per queue), resolved by token at use time; the outbox
+  registers no queue of its own. A pass claims only rows of queues this process can reach, so a role
+  without a queue's owner leaves those rows to one that has it (today every role loads all 8).
 - **Delayed jobs.** `runAt` in the future becomes a BullMQ `delay` computed at dispatch
   (`max(0, runAt - now)`). Rows are dispatched as soon as they are written, not at `runAt`, so BullMQ
   stays the timer (**designer's call**: the relay never becomes a scheduler).

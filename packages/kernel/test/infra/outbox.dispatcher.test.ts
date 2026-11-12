@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { ModuleRef } from "@nestjs/core";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import type { Kysely } from "kysely";
@@ -74,32 +76,24 @@ const insertRow = async (jobId: string, extra: { runAt?: Date; queue?: KernelQue
 
 const jobsIn = async (q: Queue) => q.getJobs(["waiting", "delayed", "active", "completed"]);
 
-/** A dispatcher over the given queue handles, in `KERNEL_QUEUES` order. */
-const dispatcherOver = (qs: readonly Queue[], dispatchFails: () => boolean) => {
-  const [runs, subRuns, channels, maint, scope, titles, usage, evals] = qs as [
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-    Queue,
-  ];
-  return new OutboxDispatcher(
-    host,
-    kdb,
-    silent(),
-    runs,
-    subRuns,
-    channels,
-    maint,
-    scope,
-    titles,
-    usage,
-    evals,
-    dispatchFails,
-  );
+/**
+ * A dispatcher over the given queue handles, in `KERNEL_QUEUES` order (an absent one: no module of
+ * this process registered that queue), resolved through a stand-in for Nest's `ModuleRef`.
+ */
+const dispatcherOver = (qs: readonly (Queue | undefined)[], dispatchFails: () => boolean) => {
+  const byToken = new Map<string, Queue>();
+  KERNEL_QUEUES.forEach((name, i) => {
+    const q = qs[i];
+    if (q) byToken.set(getQueueToken(name), q);
+  });
+  const moduleRef = {
+    get: (token: string) => {
+      const q = byToken.get(token);
+      if (!q) throw new Error(`Nest could not find ${token} element`);
+      return q;
+    },
+  } as unknown as Pick<ModuleRef, "get">;
+  return new OutboxDispatcher(host, kdb, silent(), moduleRef, dispatchFails);
 };
 
 /** A queue handle without Redis: `client` is what its backend's client promise gives. */
@@ -111,10 +105,16 @@ const fakeQueue = (
   return { queue: { addBulk: add, getBackend: () => ({ client }) } as unknown as Queue, add };
 };
 
-/** A dispatcher whose queues are all fakes, with `over` in place of the named ones. */
-const fakeDispatcher = (over: Partial<Record<KernelQueueName, Queue>>) =>
+/**
+ * A dispatcher whose queues are all fakes, with `over` in place of the named ones (`null`: the
+ * queue's owner is not loaded in this process).
+ */
+const fakeDispatcher = (over: Partial<Record<KernelQueueName, Queue | null>>) =>
   dispatcherOver(
-    KERNEL_QUEUES.map((name) => over[name] ?? fakeQueue().queue),
+    KERNEL_QUEUES.map((name) => {
+      const q = over[name];
+      return q === null ? undefined : (q ?? fakeQueue().queue);
+    }),
     () => false,
   );
 
@@ -288,5 +288,19 @@ describe("OutboxDispatcher", () => {
     release();
     await Promise.all(running);
     expect(await rows()).toMatchObject([{ job_id: "busy-4", attempts: 0, last_error: null }]);
+  });
+
+  it("a process without a queue's owner leaves that queue's rows untouched", async () => {
+    const maint = fakeQueue();
+    const d = fakeDispatcher({ "cap-kernel-runs": null, [QUEUE]: maint.queue });
+    const elsewhere = await insertRow("elsewhere-1", { queue: "cap-kernel-runs" });
+    const here = await insertRow("here-1");
+    await d.dispatchOwn([elsewhere, here]);
+    expect(maint.add).toHaveBeenCalledTimes(1);
+    expect(await rows()).toMatchObject([
+      { job_id: "elsewhere-1", attempts: 0, last_error: null, dead_at: null },
+    ]);
+    expect(await d.dispatchDue(500)).toEqual({ sent: 0, failed: 0, dead: 0 });
+    expect(await rows()).toMatchObject([{ job_id: "elsewhere-1", attempts: 0, last_error: null }]);
   });
 });

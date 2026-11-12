@@ -1,6 +1,4 @@
 import { Global, Module } from "@nestjs/common";
-import { QueueModule } from "../queue/queue.module.js";
-import { KERNEL_QUEUES } from "../queue/queue-names.js";
 import { OutboxDispatcher } from "./outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH, type OutboxFastPath, OutboxService } from "./outbox.service.js";
 
@@ -20,14 +18,12 @@ export const outboxFastPath =
  * spec §3.2), the `OutboxDispatcher` that delivers the rows (the relay drives it too) and the fast
  * path `add` hands each committed transaction's rows to.
  *
- * Every kernel queue is registered here, so OutboxModule has its own Queue instance per kernel
- * queue (one more Redis connection per queue per process, closed by `QueueShutdown` like the
- * others): a row may name any of them, the dispatcher is a producer on every role, and the feature
- * modules that register the same queues are not all present on every role.
+ * It registers no queue: the dispatcher adds through the instances the queues' owner modules
+ * registered (one instance and connection per queue, as everywhere in the kernel), resolved at use
+ * time, and leaves the rows of a queue whose owner this process does not load to one that does.
  */
 @Global()
 @Module({
-  imports: [QueueModule.registerQueue(...KERNEL_QUEUES)],
   providers: [
     OutboxService,
     OutboxDispatcher,

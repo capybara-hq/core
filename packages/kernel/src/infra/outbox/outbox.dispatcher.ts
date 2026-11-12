@@ -1,5 +1,6 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
 import type { JobsOptions, Queue } from "bullmq";
 import { sql } from "kysely";
 import type { KernelLogger } from "../../log.js";
@@ -7,7 +8,7 @@ import { KernelDb } from "../database/kernel-db.js";
 import { TransactionHost } from "../database/transaction-host.js";
 import { Transactional } from "../database/transactional.decorator.js";
 import { QUEUE_JOB_DEFAULTS } from "../queue/queue.module.js";
-import type { KernelQueueName } from "../queue/queue-names.js";
+import { KERNEL_QUEUES, type KernelQueueName } from "../queue/queue-names.js";
 import { KERNEL_LOGGER } from "../tokens.js";
 
 /**
@@ -99,10 +100,16 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
  * The fast path never queues behind an outage: it skips the pass (the relay delivers the rows) when
  * a queue's Redis connection is not ready or {@link OUTBOX_FAST_PATH_CONCURRENCY} passes already
  * run. Within a pass, the first failed queue fails the queues after it without trying them.
+ *
+ * The queue handles are the instances the queues' owner modules registered (one per queue, no
+ * connection of the outbox's own), resolved by token at use time. A queue whose owner this
+ * process's roles do not load is not reachable here: no pass claims its rows, which stay for a
+ * process that has it.
  */
 @Injectable()
 export class OutboxDispatcher {
-  private readonly queues: Record<KernelQueueName, OutboxQueue>;
+  /** The owners' queue instances resolved so far (a per-process handle cache). */
+  private readonly queues = new Map<KernelQueueName, OutboxQueue>();
   /** Fast-path passes running in this process (bounded by OUTBOX_FAST_PATH_CONCURRENCY). */
   private fastPaths = 0;
 
@@ -110,28 +117,34 @@ export class OutboxDispatcher {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
-    @Inject(getQueueToken("cap-kernel-runs")) runs: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-subagent-runs")) subagentRuns: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-channels")) channels: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-maintenance")) maintenance: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-plugin-scope")) pluginScope: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-titles")) titles: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-usage-report")) usageReport: OutboxQueue,
-    @Inject(getQueueToken("cap-kernel-evals")) evals: OutboxQueue,
+    @Inject(ModuleRef) private readonly moduleRef: Pick<ModuleRef, "get">,
     @Optional()
     @Inject(OUTBOX_DISPATCH_FAILS)
     private readonly dispatchFails: () => boolean = () => false,
-  ) {
-    this.queues = {
-      "cap-kernel-runs": runs,
-      "cap-kernel-subagent-runs": subagentRuns,
-      "cap-kernel-channels": channels,
-      "cap-kernel-maintenance": maintenance,
-      "cap-kernel-plugin-scope": pluginScope,
-      "cap-kernel-titles": titles,
-      "cap-kernel-usage-report": usageReport,
-      "cap-kernel-evals": evals,
-    };
+  ) {}
+
+  /** The queue instance its owner module registered, or undefined when no loaded module has it. */
+  private queue(name: KernelQueueName): OutboxQueue | undefined {
+    const known = this.queues.get(name);
+    if (known) return known;
+    let queue: OutboxQueue | undefined;
+    try {
+      queue = this.moduleRef.get<OutboxQueue>(getQueueToken(name), { strict: false });
+    } catch {
+      return undefined;
+    }
+    if (queue) this.queues.set(name, queue);
+    return queue;
+  }
+
+  /** The kernel queues this process can add to, with their handles. */
+  private reachable(): [KernelQueueName, OutboxQueue][] {
+    const found: [KernelQueueName, OutboxQueue][] = [];
+    for (const name of KERNEL_QUEUES) {
+      const queue = this.queue(name);
+      if (queue) found.push([name, queue]);
+    }
+    return found;
   }
 
   /**
@@ -164,11 +177,11 @@ export class OutboxDispatcher {
   }
 
   /**
-   * Every kernel queue's connection is ready (they reach the same Redis; the fast path does not
+   * Every reachable queue's connection is ready (they reach the same Redis; the fast path does not
    * read its rows' queues before claiming them).
    */
   private async redisReady(): Promise<boolean> {
-    const ready = await Promise.all(Object.values(this.queues).map(connectionReady));
+    const ready = await Promise.all(this.reachable().map(([, q]) => connectionReady(q)));
     return ready.every(Boolean);
   }
 
@@ -195,10 +208,14 @@ export class OutboxDispatcher {
    */
   @Transactional({ propagation: "requires_new" })
   private async claimAndSend(claim: Claim): Promise<{ sent: number; failed: FailedGroup[] }> {
+    const queues = new Map(this.reachable());
+    if (queues.size === 0) return { sent: 0, failed: [] };
+    // rows of a queue this process cannot reach are left for a process that can
     let query = this.db
       .selectFrom("outbox")
       .select(["id", "queue", "job_name", "job_id", "data", "run_at"])
-      .where("dead_at", "is", null);
+      .where("dead_at", "is", null)
+      .where("queue", "in", [...queues.keys()]);
     query =
       "ids" in claim
         ? query.where("id", "in", [...claim.ids])
@@ -233,7 +250,7 @@ export class OutboxDispatcher {
       }
       try {
         if (this.dispatchFails()) throw new Error("outbox dispatch failure (test seam)");
-        const queue = this.queues[name as KernelQueueName];
+        const queue = queues.get(name as KernelQueueName);
         if (!queue) throw new Error(`"${name}" is not a kernel queue`);
         const left = deadline - Date.now();
         if (left <= 0) throw new Error(`no time left of the pass's ${OUTBOX_REDIS_TIMEOUT_MS} ms`);
