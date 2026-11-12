@@ -28,6 +28,7 @@ import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { Credentials } from "./credentials.js";
+import { DeviceOpResolver } from "./device-op-resolver.js";
 import { ToolDrift } from "./drift.js";
 import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
 import { OAuthFlow } from "./oauth/flow.js";
@@ -98,6 +99,8 @@ import { ToolRegistry } from "./registry.js";
     ConversationToolInfo,
     OrgExtensionTools,
     OrgToolSwitches,
+    // the `device-op-resolve` job's body (it may decide the network ask the op answers)
+    DeviceOpResolver,
   ],
   exports: [
     ScheduleToolsPort,
@@ -118,6 +121,7 @@ import { ToolRegistry } from "./registry.js";
     ConversationToolInfo,
     OrgExtensionTools,
     OrgToolSwitches,
+    DeviceOpResolver,
   ],
 })
 export class ToolsModule {}

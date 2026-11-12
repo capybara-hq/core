@@ -43,7 +43,7 @@ const POLICY: DeviceLocalPolicySummary = {
   remoteGrants: "owner",
 };
 const FEATURES: Partial<DeviceHello> = {
-  features: ["networkReport", "policyOp", "tiers"],
+  features: ["networkReport", "policyOp", "policyOpId", "tiers"],
   policy: POLICY,
 };
 
@@ -262,12 +262,11 @@ describe("POST /devices/:id/policy", () => {
         add: ["files.slack.com", "*.npmjs.org"],
         via: "web",
         approvalId: null,
-        confirmed: true,
       }),
-      expect.objectContaining({ remove: ["pypi.org"], confirmed: true }),
-      expect.objectContaining({ tier: "dev", confirmed: true }),
-      expect.objectContaining({ tier: "strict", isolation: "sandbox", confirmed: true }),
-      expect.objectContaining({ tier: null, confirmed: true }),
+      expect.objectContaining({ remove: ["pypi.org"] }),
+      expect.objectContaining({ tier: "dev" }),
+      expect.objectContaining({ tier: "strict", isolation: "sandbox" }),
+      expect.objectContaining({ tier: null }),
     ]);
     expect(audits[0]?.detail).not.toHaveProperty("tier");
 
@@ -317,7 +316,7 @@ describe("POST /devices/:id/policy", () => {
     const res = await post(d.req, d.deviceId, { tier: "strict" });
     expect(res.statusCode, res.body).toBe(200);
     expect((await auditsOf(d.deviceId)).map((a) => a.detail)).toEqual([
-      expect.objectContaining({ tier: "strict", isolation: "sandbox", confirmed: true }),
+      expect.objectContaining({ tier: "strict", isolation: "sandbox" }),
     ]);
     // a change that leaves the isolation as it was records none
     const again = await post(d.req, d.deviceId, { remove: ["pypi.org"] });
@@ -442,15 +441,17 @@ describe("POST /devices/:id/policy", () => {
 
   it("an unknown policy summary lets the machine decide a widening", async () => {
     const d = await owned();
-    const machine = await connect(d, applying(POLICY), { features: ["networkReport", "policyOp"] });
+    const machine = await connect(d, applying(POLICY), {
+      features: ["networkReport", "policyOp", "policyOpId"],
+    });
     const res = await post(d.req, d.deviceId, { add: ["files.slack.com"] });
     expect(res.statusCode, res.body).toBe(200);
     expect(policyReqs(machine)).toHaveLength(1);
   });
 
-  it("a program without the policyOp feature → device.policy_unsupported", async () => {
+  it("a program without the policyOpId feature → device.policy_unsupported", async () => {
     const d = await owned();
-    const machine = await connect(d, applying(POLICY), { features: ["networkReport"] });
+    const machine = await connect(d, applying(POLICY), { features: ["networkReport", "policyOp"] });
     const res = await post(d.req, d.deviceId, { remove: ["pypi.org"] });
     expect(res.statusCode, res.body).toBe(409);
     expect(errCode(res)).toBe("device.policy_unsupported");

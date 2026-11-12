@@ -256,30 +256,45 @@ The run path is the largest user of recovery today, so it is spelled out.
 For an external call whose effect must match a record (today: device policy ops; later anything of
 the same shape), the order becomes:
 
-1. **Intent transaction.** Write the intent (`device_policy_ops` row: op id, device, change, source,
-   actor, `status = pending`), an audit row `device.policy_requested`, the dependent state (a network
-   ask goes to `deciding`), and an outbox job `device-op-resolve-<opId>` with `runAt = now + deadline
-   + grace`.
-2. **Call.** Send the op with its op id. The device applies an op id at most once and answers a
-   repeat with the stored result (device protocol change: `policy` frames carry `opId`; the device
-   keeps the last 100 op ids, **designer's call**).
-3. **Resolve transaction.** Record the outcome (`applied` / `refused` / `offline`), the audit row
-   `device.policy_applied` or `…_failed`, the new summary, and the dependent state (the ask
-   `approved`, or back to `pending` with the reason).
-4. **Resolver job.** When step 3 did not happen (crash), the resolver never re-sends the change (a
-   late widening after the ask may have been withdrawn is not allowed, **designer's call**). It asks
-   a connected device for the op id's outcome with a read-only `policy-status` frame: applied →
-   finalize as step 3; not applied → `failed`, the ask back to `pending` with the reason, audit
-   `device.policy_failed`. A device that is not connected → `unknown`, the ask back to `pending`,
-   audit `device.policy_unknown`.
-5. **Backfill on hello.** The device's hello carries the outcomes of its last op ids. An intent left
-   `unknown` that the device reports applied is finalized then: status `applied`, audit
-   `device.policy_applied` (with "confirmed late"), and the ask, if it is still `pending`, is
-   approved; if it was withdrawn or expired meanwhile, the kernel sends the inverse change as a new
-   intent (**designer's call**).
-6. **Old devices.** Pre-0.1.0, no compatibility: policy ops require a new device feature flag
+1. **Intent transaction.** Lock the machine's row and write the intent: an entry in
+   `device_machines.pending_policy_ops` (op id, change, source: account, `via`, the network ask it
+   answers; actor token; `status = sent`; `sentAt`; `resolveAt`), an audit row
+   `device.policy_requested`, and an outbox job `device-op-resolve-<opId>` with
+   `runAt = resolveAt = sentAt + T`, where
+   `T = POLICY_DEADLINE_MS + reconnectGraceSeconds·1000 + LIST_TTL_MARGIN_MS + 5 s`: by then the
+   request can no longer sit on the relay's request list (its TTL is grace + deadline + margin), so
+   a device that does not know the op id never will. A network ask stays `pending` during the call
+   (no `deciding` status: the ask's per-decision lock and the existing late path cover the races).
+2. **Call.** Send the op with its op id (no transaction open). The device logs `started` under the
+   op id before it applies anything, then `applied` or `refused`, so a hello can tell "never
+   received" from "interrupted"; it keeps the last 100 outcomes. The kernel never sends an op id
+   twice, so nothing depends on the device answering a repeat from its log.
+3. **Resolve transaction.** Lock the machine's row (a network ask's decision locks conversation →
+   approval → run first, then the row) and record the outcome: `applied` → the new summary, the
+   entry removed, audit `device.policy_changed` (`late: true` when the entry was `unknown`; the
+   device page lists it), the ask approved; `refused` → the entry removed, audit
+   `device.policy_failed` (`reason: "refused"`, the device's message); no answer → the entry
+   `unknown` (kept a day after its intent), audit `device.policy_unknown`. An interactive decision
+   whose device does not answer keeps the network ask's `once_fallback` (the owner is present and
+   approved the hosts; the run grant is within that decision).
+4. **Resolver job.** When step 3 did not happen (crash), or left the op `unknown`, the resolver
+   never re-sends the change. An op with no entry any more is resolved: a no-op. Otherwise it takes
+   the outcome a hello reported, else asks a connected device with a read-only `policyStatus`:
+   applied → finalize as step 3; refused, or unknown to the device once the op can no longer reach
+   it → `device.policy_failed`, the entry removed, the ask still `pending` with the reason in its
+   detail; `started` (interrupted) or not connected → `device.policy_unknown`, the entry `unknown`,
+   the ask still `pending` with the reason.
+5. **Backfill on hello.** The device's hello carries the outcomes of its last op ids (`recentOps`).
+   An entry the hello reports `applied` or `refused`, or does not list although its `resolveAt` has
+   passed (`absent`: never received), is marked `reported` in the hello's transaction, which owes a
+   `device-op-resolve` job under `device-op-reported-<opId>`; the job records it as in step 4. A
+   change that reaches the device after its ask was withdrawn or expired stands (the owner chose
+   it): it is audited late and the device page lists it, where the owner can remove it; no inverse
+   change is sent. While the entry exists, the hello's own summary change is the op's and is not
+   audited a second time.
+6. **Old devices.** Pre-0.1.0, no compatibility: policy ops require the device feature flag
    `policyOpId`; a device without it gets the existing "update capybara-device" refusal for policy
-   changes (the same path as devices without `policyOp` today).
+   changes (nothing is sent).
 
 This replaces `auditLateAllow` and the "op first, record after" order in `decideNetwork` and
 `DevicePolicyService.apply`.
@@ -382,7 +397,8 @@ it removes the last user of the platform-migration retry.
   path disabled; a child's delivery and the parent's wake with the fast path disabled; GET event
   reads never change run state.
 - Device intents: crash after the call and before the resolve transaction → the resolver finalizes,
-  the audit exists, the ask is not left `deciding`; a repeated op id is applied once (device test).
+  the audit exists, the ask never stays undecided without a reason; the resolver never re-sends the
+  change; a disconnected device leaves the op `unknown` until its hello reports it.
 - Zero-drift fixtures (`reconstruct.test.ts`) run before and after: nothing model-visible changes.
 - `run-orphan-check` finds zero `queued` orphans across the whole kernel test suite (an assertion in
   the dual-replica harness teardown); a test kills a worker inside `onFailed` and sees the running
@@ -432,8 +448,11 @@ Each PR removes its rows from the check's allowlist; the allowlist is empty at t
    decides what to send; `run.started` stays a hint.
 6. Usage jobs owed only while the deployment has a `usage.report` subscriber (PG, cached 30 s).
 7. Decisions do the `waiting → queued` transition in their own transaction.
-8. Device keeps the last 100 op ids; the resolver never re-sends; hello backfills `unknown` intents,
-   and a late-confirmed change whose ask was withdrawn is reverted by a new intent.
+8. Device keeps the last 100 op outcomes (`started` logged before applying); the resolver never
+   re-sends; hello backfills `unknown` intents; a late-confirmed change whose ask was withdrawn
+   stands and is audited late (no inverse change); no `deciding` ask status; an interactive no-answer
+   keeps `once_fallback`; the intent is an entry in `device_machines.pending_policy_ops`, not a
+   table; the applied audit stays `device.policy_changed`.
 9. Policy ops require a new device feature flag `policyOpId` (no compatibility for older devices).
 10. `run-orphan-check` every minute: repairs running orphans, reports and re-adds queued ones.
 11. Org deletion deletes its pending rows, except its own cleanup work.

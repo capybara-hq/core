@@ -193,17 +193,17 @@ describe("MachinesService", () => {
     };
     await machines.recordHello(m.machineId, {
       ...hello,
-      features: ["policyOp", "teleport", "networkReport"] as unknown as NonNullable<
+      features: ["policyOpId", "policyOp", "teleport", "networkReport"] as unknown as NonNullable<
         DeviceHello["features"]
       >,
       policy,
     });
     expect(await machines.activeFor(m.deviceId)).toMatchObject({
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       localPolicy: policy,
     });
     expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       policy,
     });
 
@@ -345,7 +345,6 @@ describe("MachinesService", () => {
       via: "device",
       machineId: m.machineId,
       approvalId: null,
-      confirmed: true,
     };
     expect(await changes()).toEqual([
       {

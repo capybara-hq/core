@@ -5,7 +5,12 @@ import {
   type SandboxTier,
 } from "@capybara-hq/plugin-sdk";
 
-const KNOWN_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp", "tiers"];
+const KNOWN_FEATURES: readonly DeviceFeature[] = [
+  "networkReport",
+  "policyOp",
+  "policyOpId",
+  "tiers",
+];
 
 /**
  * The known features in `v` (a hello's `features` or the stored column), in a fixed order and
@@ -105,10 +110,26 @@ export function localPolicyDiff(
   return changed ? d : null;
 }
 
+/** Who asked for a `policy` op: the deciding account, where, and the network ask it answers. */
+export interface PolicyOpSource {
+  accountId: string;
+  via: "web" | "im";
+  approvalId: string | null;
+}
+
+/** What the machine reported of an op after its answer was lost (its hello's `recentOps`). */
+export interface ReportedPolicyOp {
+  /** `absent`: not in the hello's outcomes although the op can no longer reach the machine. */
+  outcome: "applied" | "refused" | "absent";
+}
+
 /**
- * A `policy` op the platform sent to a machine whose answer may not be recorded yet (kept on the
- * machine's row, `pending_policy_ops`): the change asked for, and until when (epoch ms) a summary
- * the machine reports by itself may still be that op's.
+ * The intent of a `policy` op the platform sends to a machine (transactional outbox spec §7), kept
+ * on the machine's row (`pending_policy_ops`) from before the op is sent until its outcome is
+ * recorded: the change asked for, who asked, and until when (epoch ms) a summary the machine
+ * reports by itself may still be that op's. `sent`: on its way or in flight, the
+ * `device-op-resolve` job owed for `resolveAt`; `unknown`: no answer came, and only the machine's
+ * next hello (`recentOps`) or a later `policyStatus` can tell what became of it.
  */
 export interface PendingPolicyOp {
   id: string;
@@ -117,7 +138,16 @@ export interface PendingPolicyOp {
   /** Present when the op set the tier (null: follow the org's default). */
   tier?: SandboxTier | null;
   isolation?: "sandbox";
+  source: PolicyOpSource;
+  actorTokenId?: string;
+  status: "sent" | "unknown";
+  /** When the intent was written (epoch ms). */
+  sentAt: number;
+  /** From when the op can no longer reach the machine (epoch ms): the resolve job's `runAt`. */
+  resolveAt: number;
   until: number;
+  /** Set by a hello that reported the op's outcome (or its absence) before the op was resolved. */
+  reported?: ReportedPolicyOp;
 }
 
 /** The pending ops stored on a machine row (malformed entries dropped). */
@@ -130,13 +160,34 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
     if (typeof e !== "object" || e === null) continue;
     const o = e as Record<string, unknown>;
     if (typeof o.id !== "string" || typeof o.until !== "number") continue;
+    if (typeof o.sentAt !== "number" || typeof o.resolveAt !== "number") continue;
+    if (o.status !== "sent" && o.status !== "unknown") continue;
+    const src = o.source as Record<string, unknown> | null | undefined;
+    if (typeof src !== "object" || src === null || typeof src.accountId !== "string") continue;
+    if (src.via !== "web" && src.via !== "im") continue;
+    const rep = o.reported as Record<string, unknown> | null | undefined;
+    const outcome = typeof rep === "object" && rep !== null ? rep.outcome : undefined;
+    const reported: ReportedPolicyOp | undefined =
+      outcome === "applied" || outcome === "refused" || outcome === "absent"
+        ? { outcome }
+        : undefined;
     out.push({
       id: o.id,
       add: hosts(o.add),
       remove: hosts(o.remove),
       ...("tier" in o && { tier: isSandboxTier(o.tier) ? o.tier : null }),
       ...(o.isolation === "sandbox" && { isolation: "sandbox" as const }),
+      source: {
+        accountId: src.accountId,
+        via: src.via,
+        approvalId: typeof src.approvalId === "string" ? src.approvalId : null,
+      },
+      ...(typeof o.actorTokenId === "string" && { actorTokenId: o.actorTokenId }),
+      status: o.status,
+      sentAt: o.sentAt,
+      resolveAt: o.resolveAt,
       until: o.until,
+      ...(reported !== undefined && { reported }),
     });
   }
   return out;

@@ -14,11 +14,14 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
+import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
 import {
   deviceFeaturesOf,
   isolationOf,
@@ -26,6 +29,7 @@ import {
   localPolicyOf,
   opExplains,
   pendingPolicyOpsOf,
+  type ReportedPolicyOp,
 } from "./policy-summary.js";
 import { LocalDeviceRelay } from "./relay.js";
 
@@ -78,6 +82,7 @@ export class MachinesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(LocalDeviceRelay) private readonly relay: Pick<LocalDeviceRelay, "holderLive" | "send">,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
@@ -208,7 +213,8 @@ export class MachinesService {
    * isolation that differs from the stored one (none stored counts as `sandbox`) is audited
    * `device.isolation_reported` (sandbox dev tiers spec §10.4), once per change; a change of what
    * the owner sets, made on the machine while it was away, is audited `device.policy_changed`
-   * ({@link reportedPolicy}).
+   * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
+   * platform's ops still pending on the row ({@link backfillOps}).
    */
   @Transactional()
   async recordHello(
@@ -277,6 +283,56 @@ export class MachinesService {
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .execute();
+    if (hello.recentOps !== undefined) {
+      await this.backfillOps(machineId, self, hello.recentOps);
+    }
+  }
+
+  /**
+   * Hello backfill (transactional outbox spec §7): a pending op of the platform's whose outcome
+   * the hello reports (`applied`, `refused`), or that it does not list although the op can no
+   * longer reach the machine (`absent`: past its `resolveAt`), is marked `reported` and owes a
+   * `device-op-resolve` job (`device-op-reported-<opId>`) that records the outcome. An op the
+   * machine logged only as `started` (interrupted) is left as it is. Runs in the caller's
+   * transaction, with the machine's row locked; an op already reported is not owed again.
+   */
+  private async backfillOps(
+    machineId: string,
+    self: { org_id: string; pending_policy_ops: unknown },
+    recentOps: NonNullable<DeviceHello["recentOps"]>,
+  ): Promise<void> {
+    const outcomes = new Map(recentOps.map((r) => [r.opId, r.outcome]));
+    const now = Date.now();
+    const reported = new Map<string, ReportedPolicyOp>();
+    for (const op of pendingPolicyOpsOf(self.pending_policy_ops)) {
+      if (op.reported !== undefined) continue;
+      const outcome = outcomes.get(op.id);
+      if (outcome === "applied" || outcome === "refused") reported.set(op.id, { outcome });
+      else if (outcome === undefined && now >= op.resolveAt) {
+        reported.set(op.id, { outcome: "absent" });
+      }
+    }
+    if (reported.size === 0) return;
+    const ops = Array.isArray(self.pending_policy_ops) ? self.pending_policy_ops : [];
+    const next = ops.map((e: unknown) => {
+      const id = (e as { id?: unknown } | null)?.id;
+      const r = typeof id === "string" ? reported.get(id) : undefined;
+      return r === undefined ? e : { ...(e as object), reported: r };
+    });
+    await this.db
+      .updateTable("device_machines")
+      .set({ pending_policy_ops: JSON.stringify(next) })
+      .where("id", "=", machineId)
+      .execute();
+    for (const opId of reported.keys()) {
+      await this.outbox.add({
+        queue: MAINTENANCE_QUEUE_NAME,
+        name: DEVICE_OP_RESOLVE_JOB,
+        jobId: deviceOpReportedJobId(opId),
+        data: { machineId, opId },
+        orgId: self.org_id,
+      });
+    }
   }
 
   /**
@@ -360,7 +416,6 @@ export class MachinesService {
           via: "device",
           machineId,
           approvalId: null,
-          confirmed: true,
         },
       });
       return summary;

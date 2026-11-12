@@ -143,7 +143,10 @@ async function connect(
   return machine;
 }
 
-const FEATURES: Partial<DeviceHello> = { features: ["networkReport", "policyOp"], policy: POLICY };
+const FEATURES: Partial<DeviceHello> = {
+  features: ["networkReport", "policyOp", "policyOpId"],
+  policy: POLICY,
+};
 
 /** A machine that applies `policy` ops to `policy` and answers the new summary. */
 function applying(policy: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
@@ -193,7 +196,7 @@ describe("DevicePolicyService.apply", () => {
       source: source(d.accountId),
     });
     expect(await policies.summary(d.deviceId)).toEqual({
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       policy: want,
     });
     expect(await auditsOf(d.deviceId)).toEqual([
@@ -202,19 +205,19 @@ describe("DevicePolicyService.apply", () => {
         actor_account_id: d.accountId,
         org_id: orgId,
         detail: {
+          opId: (req.args as { opId: string }).opId,
           add: ["files.slack.com"],
           remove: [],
           by: d.accountId,
           via: "web",
           approvalId: "ap-1",
-          confirmed: true,
         },
       },
     ]);
     // the owner's device page shows it
     const view = await devices.get(orgId, d.accountId, d.deviceId);
     expect(view.network).toEqual({
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       policy: want,
     });
     expect(view.sandbox.recent).toEqual([
@@ -271,12 +274,12 @@ describe("DevicePolicyService.apply", () => {
     const audits = await auditsOf(d.deviceId);
     expect(audits.map((a) => a.detail)).toEqual([
       {
+        opId: expect.any(String),
         add: ["files.slack.com"],
         remove: [],
         by: d.accountId,
         via: "web",
         approvalId: "ap-1",
-        confirmed: true,
       },
       {
         add: ["github.com"],
@@ -289,7 +292,6 @@ describe("DevicePolicyService.apply", () => {
         via: "device",
         machineId: d.machineId,
         approvalId: null,
-        confirmed: true,
       },
     ]);
     expect(audits[1]?.actor_account_id).toBe(d.accountId);
@@ -328,9 +330,9 @@ describe("DevicePolicyService.apply", () => {
     ).toEqual([]);
   });
 
-  it("a program without policyOp is unsupported and is sent nothing", async () => {
+  it("a program without policyOpId is unsupported and is sent nothing", async () => {
     const d = await device();
-    const machine = await connect(d, applying(POLICY), { features: ["networkReport"] });
+    const machine = await connect(d, applying(POLICY), { features: ["networkReport", "policyOp"] });
     const out = await policies.apply({
       orgId,
       deviceId: d.deviceId,
@@ -374,7 +376,7 @@ describe("DevicePolicyService.apply", () => {
     expect(await auditsOf(d.deviceId)).toEqual([]);
   });
 
-  it("an answer that never comes is offline, and the attempt is audited unconfirmed", async () => {
+  it("an answer that never comes is offline, and the op is audited unknown", async () => {
     const d = await device();
     // the machine takes the op, then drops without answering
     const machine = await connect(
@@ -390,11 +392,19 @@ describe("DevicePolicyService.apply", () => {
       source: source(d.accountId),
     });
     expect(out).toMatchObject({ applied: false, reason: "offline" });
-    expect(await auditsOf(d.deviceId)).toEqual([
-      expect.objectContaining({
-        actor_account_id: d.accountId,
-        detail: expect.objectContaining({ add: ["files.slack.com"], confirmed: false }),
-      }),
+    // not applied as far as the platform knows: no change listed, the op left unknown
+    expect(await auditsOf(d.deviceId)).toEqual([]);
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select(["action", "actor_account_id"])
+        .where("target", "=", d.deviceId)
+        .where("action", "like", "device.policy_%")
+        .orderBy("id")
+        .execute(),
+    ).toEqual([
+      { action: "device.policy_requested", actor_account_id: d.accountId },
+      { action: "device.policy_unknown", actor_account_id: d.accountId },
     ]);
     // the summary stays what the machine last reported
     expect((await policies.summary(d.deviceId))?.policy).toEqual(POLICY);

@@ -13,6 +13,7 @@ import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
 import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import type { KernelQueueName } from "./infra/queue/queue-names.js";
+import { DEVICE_POLICY_AFTER_CALL } from "./local-devices/device-policy.service.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
 import { ENSURE_RUN_FAILS } from "./runtime/run-queue.js";
@@ -51,6 +52,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `OUTBOX_FAST_PATH_SETTLED`: receives each detached outbox fast-path pass (a test awaits them);
  * - `ENSURE_RUN_FAILS`: returns true to make `RunQueue.ensureRun` throw (Redis unreachable, or the
  *   direct call after a commit skipped by a crash);
+ * - `DEVICE_POLICY_AFTER_CALL`: called after a device policy op's call, before its outcome is
+ *   recorded (throwing stands for a crash between the call and the resolve transaction);
  * - `SCOPE_BACKSTOP_DELAY`: the delay of a confirmation's scope sync backstop (ruling R24);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
@@ -76,6 +79,7 @@ interface KernelSeams {
   [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
   [ENSURE_RUN_FAILS]: () => boolean;
   [SCOPE_BACKSTOP_DELAY]: number;
+  [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
 
@@ -111,6 +115,7 @@ const SEAM_TOKENS = [
   OUTBOX_FAST_PATH_SETTLED,
   ENSURE_RUN_FAILS,
   SCOPE_BACKSTOP_DELAY,
+  DEVICE_POLICY_AFTER_CALL,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];
 

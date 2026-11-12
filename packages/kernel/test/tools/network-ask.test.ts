@@ -240,7 +240,7 @@ async function setup(over: Partial<Device> = {}, tools = ["Bash"]): Promise<Setu
     blocking: new Map(),
     allowed: new Set(),
     refusePolicy: false,
-    features: ["networkReport", "policyOp"],
+    features: ["networkReport", "policyOp", "policyOpId"],
     policy: POLICY,
     ...over,
   };

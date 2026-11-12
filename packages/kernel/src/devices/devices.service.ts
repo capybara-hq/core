@@ -165,7 +165,10 @@ export interface DeviceSandboxChangeView {
   by: string | null;
   /** `device`: made or reported on the machine itself (a `policy` change, an `isolation`). */
   via: "web" | "im" | "device";
-  /** The machine answered with the policy as written (false: the answer never came). */
+  /**
+   * The change is known to be on the machine: always true (an op whose answer never came is
+   * audited `device.policy_unknown`, which the list leaves out until the machine reports it).
+   */
   confirmed: boolean;
 }
 
@@ -715,7 +718,7 @@ export class DevicesService {
    * refused up front with `device.policy_refused` when the machine last reported
    * `remoteGrants: "off"` (otherwise the machine decides); narrowing is always sent, and
    * `isolation` is only ever `sandbox`. The machine offline → `device.offline`; a cloud device or a
-   * program without the `policyOp` feature → `device.policy_unsupported`; the machine's refusal →
+   * program without the `policyOpId` feature → `device.policy_unsupported`; the machine's refusal →
    * `device.policy_refused` with its message. Callers are human sessions only (no personal access
    * token, no service token, no Platform op).
    */
@@ -736,7 +739,7 @@ export class DevicesService {
       (change.add?.length ?? 0) > 0 || (known !== null && tierWidens(known.tier, change.tier));
     // only a known "off" is refused here; an unknown summary, a machine that cannot take the op
     // or none at all are left to apply (the machine decides, or unsupported / offline)
-    const canApply = summary?.features.includes("policyOp") === true;
+    const canApply = summary?.features.includes("policyOpId") === true;
     if (widens && canApply && known?.remoteGrants === "off") {
       throw new ApiError("device.policy_refused", remoteGrantsOffMessage(change));
     }
@@ -1429,7 +1432,9 @@ function sandboxChangeOf(
         : null,
     remoteGrants: d.remoteGrants === "owner" || d.remoteGrants === "off" ? d.remoteGrants : null,
     via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
-    confirmed: d.confirmed === true,
+    // only an applied op is audited `device.policy_changed` (an unanswered one is
+    // `device.policy_unknown`, not listed); a late one is confirmed too
+    confirmed: true,
   };
 }
 

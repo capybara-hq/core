@@ -208,7 +208,7 @@ async function connect(answer: (req: KernelReq) => Answer) {
   const machine = new FakeMachine(wsUrl, s.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, features: ["networkReport", "policyOp"], policy: POLICY });
+  machine.send({ ...HELLO, features: ["networkReport", "policyOp", "policyOpId"], policy: POLICY });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(s.deviceId))) !== null,
     10_000,

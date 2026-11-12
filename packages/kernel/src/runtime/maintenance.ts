@@ -11,6 +11,10 @@ import { runJob } from "../infra/queue/run-job.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import {
+  DEVICE_OP_RESOLVE_JOB,
+  type DeviceOpResolveData,
+} from "../local-devices/policy-op-jobs.js";
 import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
 import { Offboarding, RUN_STOP_JOB, type RunStopJobData } from "../orgs/offboarding.js";
@@ -30,6 +34,7 @@ import {
   type SchedFireJobData,
   type SchedSettleJobData,
 } from "../schedules/job-ids.js";
+import { DeviceOpResolver } from "../tools/device-op-resolver.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -59,7 +64,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `device-op-resolve` →
+ * {@link DeviceOpResolver}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -82,6 +88,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
     @Inject(ScheduledTaskFirer)
     private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire" | "settle">,
+    @Inject(DeviceOpResolver) private readonly deviceOps: Pick<DeviceOpResolver, "resolve">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
@@ -173,6 +180,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       // a task run's settle check, claimed or unfired (ruling R26)
       case SCHED_SETTLE_JOB:
         await this.scheduledTasks.settle(job.data as SchedSettleJobData);
+        return;
+      // a device policy op whose outcome was not recorded (transactional outbox spec §7)
+      case DEVICE_OP_RESOLVE_JOB:
+        await this.deviceOps.resolve(job.data as DeviceOpResolveData);
         return;
       default:
         if (await this.scheduled.runNow(job.name)) return;

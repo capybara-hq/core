@@ -119,7 +119,7 @@ describe("network ask (dual replica)", () => {
     await machine.opened;
     machine.send({
       ...HELLO,
-      features: ["networkReport", "policyOp"],
+      features: ["networkReport", "policyOp", "policyOpId"],
       policy: {
         effectiveTier: "strict",
         isolation: "sandbox",
