@@ -894,6 +894,18 @@ describe("run end, audit and revocation", { timeout: 30_000 }, () => {
     for (const t of tickets) expect(everything).not.toContain(t);
   });
 
+  it("audits a flush-only push with result empty", async () => {
+    await db.updateTable("connectors").set({ git_push_policy: "allow" }).execute();
+    const { ticket, runId } = await ticketFor();
+    // a flush packet alone: no ref update commands
+    const r = await rawPost(RECEIVE, ticket, [Buffer.from("0000")]);
+    expect(r.status).toBeLessThan(500);
+    await expect.poll(async () => (await auditRows("git.push", runId)).length).toBe(1);
+    const d = await auditDetail("git.push", runId);
+    expect(d.result).toBe("empty");
+    expect(d.refs).toEqual([]);
+  });
+
   it("counts a run's fetches per repository and writes one summary row at run end", async () => {
     const { ticket, runId, conversationId } = await ticketFor();
     const env = await gitEnv(ticket);

@@ -473,7 +473,12 @@ describe("unattended runs", { timeout: 60_000 }, () => {
   it("a forbidden git:push denies before every allow in an unattended run, never in an attended one", async () => {
     const run = await taskRun(false);
     // entries compare normalized: `git:push:Acme/App` forbids acme/app
-    for (const forbiddenTools of [["git:push"], ["git:push:Acme/App.git"]]) {
+    for (const forbiddenTools of [
+      ["git:push"],
+      ["git:push:Acme/App.git"],
+      ["Git:Push"],
+      ["GIT:PUSH:Acme/App"],
+    ]) {
       const ban = u({ forbiddenTools });
       // the org's allow
       await setOrgDefault(personal, "allow");

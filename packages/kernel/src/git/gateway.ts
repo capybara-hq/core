@@ -779,7 +779,7 @@ export class GitGateway {
     reply.send(down);
     await done;
     // `ok`: the host took the pack (its per-ref report is not parsed); a cut stream is an error
-    if (fields.broken === undefined) pushResult("ok");
+    if (fields.broken === undefined && push.result !== "empty") pushResult("ok");
   }
 
   /** The push decision for this target (spec §7). */

@@ -134,7 +134,10 @@ The token exists only in the kernel process for the duration of the upstream req
   the org's git sources, §6). The kernel's outbound goes through `packages/kernel/src/net`
   (no private addresses unless the deployment allows the host, as for every admin-supplied URL).
 - Request headers forwarded: `Content-Type`, `Content-Encoding`, `Accept`, `Git-Protocol`,
-  `User-Agent` (suffixed `capybara-git-gateway`). Response headers: the same set back. Never the
+  `User-Agent` (suffixed `capybara-git-gateway`). Response headers back: `Content-Type` and the
+  cache headers (`Cache-Control`, `Expires`, `Pragma`); `Content-Encoding` is not passed back
+  because the kernel's HTTP client decodes the body. Invalid or expired tickets answer 403
+  `text/plain` (git hides 401 bodies). Never the
   ticket upstream, never upstream `Set-Cookie` / `WWW-Authenticate` downstream (a 401 upstream
   becomes a 403 with an actionable git error text, §5.6).
 - Streaming with backpressure, no buffering; per-request idle timeout and a byte cap per run
@@ -244,7 +247,9 @@ usable credential for:
   (`owner/repo` patterns); the ticket carries it and the gateway refuses others. This is how
   "scoped to named repos" is enforced, since the token cannot be (§3).
 - Unattended runs: no asking; `git:push` task grants as in network grants (scheduled tasks §7,
-  network ask-to-allow §8.1), collected on the task page by the creator.
+  network ask-to-allow §8.1), collected on the task page by the creator. Task grants
+  `git:push:<owner>/<repo>` carry no host: they cover that repository on every git host declared
+  in the org, while member standing allows and run grants are per host.
 - Branch protections, required reviews and push rulesets stay GitHub's: the person's own rights
   apply.
 
@@ -290,10 +295,12 @@ E2B; the device page says so.
 
 Revocation, each effective on the next request (the gateway looks everything up per request):
 
-- The person disconnects GitHub, or the token is refused upstream (401 → the credential is
-  refreshed once, then deleted as for tools) → `connect GitHub` error.
+- The person disconnects GitHub, or the token is refused upstream: a repeated upstream 401
+  deletes a credential only when an OAuth refresh is refused (a static token stays, as for tool
+  calls), and git gets a reconnect message.
 - The run ends, is aborted, or the actor leaves the org / is deactivated → tickets of the run are
-  deleted (run-end hook) and also expire (TTL = the run's lease, renewed while it runs).
+  deleted (run-end hook) and also expire: a ticket lives a fixed `tools.git.ticketTtlSeconds` per
+  exec (no renewal yet; renewal for long background work is decided with the exec env task).
 - An org admin switches the gateway off for the org (`gitGateway: false` org setting), or a
   connector's "use for git" off; the super admin via `tools.git.enabled`.
 
@@ -343,6 +350,8 @@ ours to change into a MITM.
   derived git host. GitHub Enterprise Server has no remote MCP server: a custom connector (a credential-only
   connector, §13 Q6) declares the GHES
   host as a git source.
+- **Git hosts** are bare host names without a port; hosts under `.internal` / `.local` are refused
+  by the SDK host rule, so a GHES on such a name or on a non-default port is not supported yet.
 - **GitLab / Bitbucket / Gitea**: the gateway is host-agnostic; each needs only a git source with
   its host and Basic username. GitLab's MCP server or an OpenAPI connector can be that source.
 - Later: Git LFS (batch API through the gateway, object downloads go to presigned URLs without
@@ -378,6 +387,9 @@ ours to change into a MITM.
 3. Approvals of kind `git`, task grants `git:push`, UI (connector page "use for git", device page
    line, task page grants).
 4. Later: LFS, GHES / GitLab sources, signing.
+
+Migrations: the kernel migrations are 0118 and 0119 and must be applied after sandbox dev tiers'
+0117 (the migrator refuses out-of-order files).
 
 ## 15. Tests (outline)
 

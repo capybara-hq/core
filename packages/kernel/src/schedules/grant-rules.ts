@@ -232,8 +232,9 @@ export function gitGrantRefusal(
  */
 export function gitPushForbidden(forbiddenTools: readonly string[], key: string): boolean {
   return forbiddenTools.some((entry) => {
-    if (!isGitGrantKey(entry.trim())) return false;
-    const e = normalizeGitGrantKey(entry.trim());
+    const lowered = entry.trim().toLowerCase();
+    if (!isGitGrantKey(lowered)) return false;
+    const e = normalizeGitGrantKey(lowered);
     return e === GIT_PUSH_GRANT || e === key;
   });
 }

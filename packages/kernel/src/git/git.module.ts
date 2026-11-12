@@ -11,8 +11,8 @@ import { GitTickets } from "./tickets.js";
  * connector serves a git host for an actor ({@link GitSources}) and the commit identity
  * ({@link GitIdentities}), the gateway's relay ({@link GitGateway}, served by the api role's raw
  * route `/git/v1/*`) and the run-end cleanup ({@link GitRunEnd}). It needs only the global infra
- * and the connector credentials (`CredentialsModule`, not `ToolsModule`), so the api role (the gateway route) and the runtime
- * and tool code (which issue tickets) can import it without a cycle.
+ * and the connector credentials (`CredentialsModule`, not `ToolsModule`), so the api role (the
+ * gateway route) and the runtime and tool code (which issue tickets) can import it without a cycle.
  */
 @Module({
   imports: [CredentialsModule],

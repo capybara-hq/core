@@ -1038,7 +1038,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Lifetime in seconds of a run ticket for the git gateway; renewed while the run lives, between 60 and 86400",
+                  "Lifetime in seconds of the ticket issued for one exec to the git gateway (a ticket also dies when its run ends), between 60 and 86400",
               }),
             ),
         })
