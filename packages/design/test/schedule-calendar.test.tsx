@@ -123,26 +123,26 @@ describe("ScheduleCalendar week", () => {
   });
 
   it("puts up to two overlapping blocks side by side and the rest in 「+N」", async () => {
-    const { container, p } = cal({
-      items: [
-        ...F.week.items,
-        // Monday 18:00: two overlapping half hours, two lanes
-        { ...(F.week.items[0] as ScheduleCalendarItem), id: "x1", minute: 18 * 60, time: "18:00" },
-        { ...(F.week.items[0] as ScheduleCalendarItem), id: "x2", minute: 18 * 60, time: "18:00" },
-      ],
-    });
+    const { container, p } = cal();
     const g = grid(container);
-    const mon = ["x1", "x2"].map((id) => g.querySelector<HTMLElement>(`[data-key="i:${id}"]`));
-    expect(mon.map((b) => b?.style.left)).toEqual(["0%", "50%"]);
-    // Tuesday 09:00: three overlap: one block and 「+2」 in the second place
-    expect(g.querySelector<HTMLElement>('[data-key="i:r4"]')?.style.left).toBe("0%");
-    expect(g.querySelector('[data-key="i:r5"]')).toBeNull();
+    // Tuesday 09:00: two overlapping half hours, two lanes side by side
+    const tue = ["r4", "r5"].map((id) => g.querySelector<HTMLElement>(`[data-key="i:${id}"]`));
+    expect(tue.map((b) => b?.style.left)).toEqual(["0%", "50%"]);
+    expect(tue.map((b) => b?.style.width)).toEqual(["calc(50% - 2px)", "calc(50% - 2px)"]);
+    // a third at the same time would not fit: one block and 「+2」 in the second place
+    const three = cal({
+      items: [{ ...(F.week.items[3] as ScheduleCalendarItem), id: "x1" }, ...F.week.items],
+    });
+    const g3 = grid(three.container);
+    expect(g3.querySelector('[data-key="i:x1"]')).toBeNull();
+    expect(parts(g3, "schedule-calendar-more")[0]?.textContent).toBe("+2");
+    three.unmount();
     // Wednesday 14:00: four overlap: one block (r10 sorts before r9 by id) and 「+3」
     expect(g.querySelector('[data-key="i:r10"]')).not.toBeNull();
     expect(g.querySelector('[data-key="i:r9"]')).toBeNull();
     const more = parts(g, "schedule-calendar-more");
-    expect(more.map((m) => m.textContent)).toEqual(["+2", "+3"]);
-    const wed = more[1] as HTMLElement;
+    expect(more.map((m) => m.textContent)).toEqual(["+3"]);
+    const wed = more[0] as HTMLElement;
     expect(wed.style.left).toBe("50%");
     expect(wed.getAttribute("aria-label")).toBe("另外 3 项，11月11日 周三");
     await userEvent.click(wed);

@@ -802,8 +802,8 @@ function scheduleCollapsed(
 /**
  * The schedule calendar's reference blocks (spec §6.40 "ScheduleCalendar"; scheduled tasks
  * calendar design §11): the week of 2026-11-09 with today Thursday 11-12 at 10:24 in
- * Asia/Shanghai; every item state, an overlap of three on Tuesday 09:00 (one block and 「+2」) and
- * four on Wednesday 14:00 (one block and 「+3」), a collapsed hourly task for the dense lane, the
+ * Asia/Shanghai; every item state, two overlapping blocks side by side on Tuesday 09:00 and four
+ * on Wednesday 14:00 (one block and 「+3」), a collapsed hourly task for the dense lane, the
  * month of 2026-11 (6 × 7 days from 10-26) with a day of five items, and the empty and
  * load-failed copy.
  */
@@ -829,7 +829,7 @@ export const SCHEDULE_CALENDAR_FIXTURE = {
       scheduleItem("r3", "2026-11-09", "14:00", "对账检查", "财务对账", "failed"),
       scheduleItem("r4", "2026-11-10", "09:00", "每日简报", "研究助手", "completed"),
       scheduleItem("r5", "2026-11-10", "09:00", "工单回顾", "客服助手", "completed"),
-      scheduleItem("r6", "2026-11-10", "09:15", "合同到期提醒", "合同审阅", "skipped"),
+      scheduleItem("r6", "2026-11-10", "11:00", "合同到期提醒", "合同审阅", "skipped"),
       scheduleItem("r7", "2026-11-10", "14:00", "对账检查", "财务对账", "completed"),
       scheduleItem("r8", "2026-11-11", "09:00", "每日简报", "研究助手", "completed"),
       scheduleItem("r9", "2026-11-11", "14:00", "对账检查", "财务对账", "completed"),
