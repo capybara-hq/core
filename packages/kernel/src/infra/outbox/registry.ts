@@ -32,6 +32,18 @@ export const OUTBOX_JOBS = {
     // same trigger can take the id again (the post-run ensureRun, R34)
     opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
   },
+  // `runtime/run-jobs.ts` ENSURE_RUN_JOB: the ensure-run backstop owed with every message, queue
+  // change, background task finish, sub-agent delivery and run end (spec §6), under the job ids
+  // `ensureRunJobId` builds
+  "ensure-run": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "ensureRun decides from the conversation's state; with nothing unconsumed it is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // removed once done (the queue defaults keep finished jobs), so a later write under the same
+    // seq (a queue change writes no event of its own) owes a job that is not deduped away
+    opts: { removeOnComplete: true, removeOnFail: true },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

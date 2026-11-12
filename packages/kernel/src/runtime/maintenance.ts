@@ -29,7 +29,7 @@ import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
-import { RunQueue } from "./run-queue.js";
+import { ENSURE_RUN_JOB, type EnsureRunJobData, RunQueue } from "./run-queue.js";
 import { RuntimeModule } from "./runtime.module.js";
 import { WAIT_TIMEOUT_JOB, Waits, type WaitTimeoutData } from "./waits.js";
 
@@ -42,7 +42,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` and
  * `sandbox-reset-files` → {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
- * {@link DirectorySync}, `bg-wake` → {@link RunQueue.ensureRun}, `owned-plugin-cleanup` →
+ * {@link DirectorySync}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}, `sched-fire` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
@@ -112,6 +112,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await this.runs.ensureRun(conversationId, { wakeRetry: (retry ?? 0) + 1 });
         return;
       }
+      // the ensure-run backstop of a message, wake or run end (transactional outbox spec §6)
+      case ENSURE_RUN_JOB:
+        await this.runs.ensureRun((job.data as EnsureRunJobData).conversationId);
+        return;
       // a removed org-owned plugin's extension (plugin scope phase 3, P3-20)
       case OWNED_PLUGIN_CLEANUP_JOB:
         await this.ownedCleanup.run((job.data as OwnedPluginCleanupData).itemId);

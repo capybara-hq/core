@@ -18,7 +18,14 @@ export function finishRun(
 ): Promise<number | null> {
   const h = handlesFor(db as never);
   // no scheduled task follows these runs: the tracker is a no-op here
-  return new RunFinish(h.db, eventLog, h.txHost, { onRunFinished: async () => {} }).finish(a);
+  return new RunFinish(
+    h.db,
+    eventLog,
+    h.txHost,
+    { onRunFinished: async () => {} },
+    // no outbox here: the ensure-run backstop is not under test
+    { add: async () => true },
+  ).finish(a);
 }
 
 /** A dispatched child run of a parent conversation, oldest first. */

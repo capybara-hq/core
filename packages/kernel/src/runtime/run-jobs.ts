@@ -8,6 +8,7 @@ import { OUTBOX_JOBS } from "../infra/outbox/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 
 /** 内核运行队列的 BullMQ 队列名（不含 `:`；与插件队列 `cap.<插件>.<名>` 不会重名）。 */
 export const RUN_QUEUE_NAME = "cap-kernel-runs";
@@ -19,7 +20,9 @@ export const RUN_QUEUE_NAME = "cap-kernel-runs";
 export const SUBAGENT_RUN_QUEUE_NAME = "cap-kernel-subagent-runs";
 
 /** The run queue of a conversation kind: sub-agent conversations have their own. */
-export const runQueueNameFor = (kind: ConversationKind): string =>
+export const runQueueNameFor = (
+  kind: ConversationKind,
+): typeof RUN_QUEUE_NAME | typeof SUBAGENT_RUN_QUEUE_NAME =>
   kind === "subagent" ? SUBAGENT_RUN_QUEUE_NAME : RUN_QUEUE_NAME;
 
 /** 未结束的运行状态（waiting：等人处理审批 / 输入请求，没有任务、不占会话锁与配额）。 */
@@ -37,6 +40,51 @@ export const runJobId = (conversationId: string, maxUserSeq: number): string =>
 
 /** The BullMQ job name of every run job, on both run queues (an outbox registry name). */
 export const RUN_JOB = "run";
+
+/**
+ * The ensure-run backstop (transactional outbox spec §6 "Sending a message"): a maintenance job
+ * that calls `RunQueue.ensureRun` for a conversation. Every transaction that may start a run
+ * after its commit (a message, a queue change, a background task's finish, a sub-agent's delivery,
+ * a run's end) owes one, {@link ENSURE_RUN_BACKSTOP_MS} later, and its caller still calls
+ * `ensureRun` right after the commit: the job only matters when that call never happened (the
+ * process died) or failed (Redis was down).
+ */
+export const ENSURE_RUN_JOB = "ensure-run";
+
+/** How long after its transaction the ensure-run backstop fires (a backstop, not a second call). */
+export const ENSURE_RUN_BACKSTOP_MS = 30_000;
+
+/** The ensure-run job's data. */
+export interface EnsureRunJobData {
+  conversationId: string;
+}
+
+/**
+ * The ensure-run job id: one per conversation and the seq of the event the transaction wrote (a
+ * write without an event of its own uses the conversation's newest seq; no `:`).
+ */
+export const ensureRunJobId = (conversationId: string, seq: number | string): string =>
+  `ensure-run-${conversationId}-${seq}`;
+
+/**
+ * Owes the ensure-run backstop of `conversationId` in the caller's transaction (throws outside
+ * one). False when the same job id is already owed (the owed job does the same).
+ */
+export function oweEnsureRun(
+  outbox: Pick<OutboxService, "add">,
+  conversationId: string,
+  seq: number | string,
+  orgId: string,
+): Promise<boolean> {
+  return outbox.add<EnsureRunJobData>({
+    queue: MAINTENANCE_QUEUE_NAME,
+    name: ENSURE_RUN_JOB,
+    jobId: ensureRunJobId(conversationId, seq),
+    data: { conversationId },
+    runAt: new Date(Date.now() + ENSURE_RUN_BACKSTOP_MS),
+    orgId,
+  });
+}
 
 /**
  * The options of every run job: one attempt (the run's own paths handle failures), not kept. The
@@ -86,12 +134,17 @@ export class RunJobs {
    */
   owe(data: RunJobData, jobId: string, kind: ConversationKind, orgId: string): Promise<boolean> {
     return this.outbox.add({
-      queue: kind === "subagent" ? SUBAGENT_RUN_QUEUE_NAME : RUN_QUEUE_NAME,
+      queue: runQueueNameFor(kind),
       name: RUN_JOB,
       jobId,
       data,
       orgId,
     });
+  }
+
+  /** {@link oweEnsureRun} in the caller's transaction. */
+  oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean> {
+    return oweEnsureRun(this.outbox, conversationId, seq, orgId);
   }
 
   /**

@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BackgroundTaskFinisher } from "../../../src/background/finish.js";
 import { newTaskId, taskOutputPath } from "../../../src/background/launch.js";
 import { BackgroundTaskStore } from "../../../src/background/store.js";
+import { BG_WAKE_JOB } from "../../../src/background/wake-rules.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
@@ -475,9 +476,14 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       devicePathsText({ roots: DEFAULT_SANDBOX_ROOTS, tier: "dev", isolation: "sandbox" }),
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
-    // everything consumed: no delayed wake waits for this conversation
+    // everything consumed: no delayed wake waits for this conversation (its ensure-run backstops
+    // are delayed too, and are no-ops now)
     const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
-    expect((await queue.getDelayed()).filter((j) => j.data?.conversationId === conv)).toEqual([]);
+    expect(
+      (await queue.getDelayed()).filter(
+        (j) => j.name === BG_WAKE_JOB && j.data?.conversationId === conv,
+      ),
+    ).toEqual([]);
     await expectNoWake(conv, 2);
   });
 

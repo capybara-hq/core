@@ -14,7 +14,10 @@ import { Waits } from "./waits.js";
 export class RunControl {
   constructor(
     @Inject(RunQueue)
-    private readonly queue: Pick<RunQueue, "ensureRun" | "abortIfOrphaned" | "wakeHeldTree">,
+    private readonly queue: Pick<
+      RunQueue,
+      "ensureRun" | "oweEnsureRun" | "abortIfOrphaned" | "wakeHeldTree"
+    >,
     @Inject(Waits)
     private readonly waits: Pick<
       Waits,
@@ -28,6 +31,14 @@ export class RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null> {
     return this.queue.ensureRun(conversationId);
+  }
+
+  /**
+   * Owes the ensure-run backstop in the caller's transaction (transactional outbox spec §6): `seq`
+   * is the event it wrote (or the conversation's newest), `orgId` the conversation's.
+   */
+  oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean> {
+    return this.queue.oweEnsureRun(conversationId, seq, orgId);
   }
 
   /** After a root's queue was unpaused: the wakes it held for its tree ({@link RunQueue.wakeHeldTree}). */

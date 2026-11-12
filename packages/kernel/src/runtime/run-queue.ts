@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { visibleTo } from "../agents/agent-lookup.js";
@@ -41,12 +41,23 @@ import { budgetWindowOf } from "./subagents/limits.js";
 
 export {
   ACTIVE_RUN_STATUSES,
+  ENSURE_RUN_BACKSTOP_MS,
+  ENSURE_RUN_JOB,
+  type EnsureRunJobData,
+  ensureRunJobId,
   RUN_QUEUE_NAME,
   type RunJobData,
   runJobId,
   runQueueNameFor,
   SUBAGENT_RUN_QUEUE_NAME,
 } from "./run-jobs.js";
+
+/**
+ * Test seam (`KernelOverride`): returns true to make {@link RunQueue.ensureRun} throw before it
+ * does anything (Redis unreachable, or a direct call after a commit that never happened). The
+ * kernel never provides it.
+ */
+export const ENSURE_RUN_FAILS = Symbol("ENSURE_RUN_FAILS");
 
 /**
  * Grace (seconds) of the queued-orphan test of {@link RunQueue.repairOrphan} and
@@ -116,6 +127,9 @@ export class RunQueue {
     /** The producer side of the delayed `bg-wake` job (`MaintenanceProcessor` consumes it). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
     private readonly maintenance: Pick<Queue, "add">,
+    @Optional()
+    @Inject(ENSURE_RUN_FAILS)
+    private readonly ensureFails: () => boolean = () => false,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -165,6 +179,7 @@ export class RunQueue {
     /** From the `bg-wake` job: it fired `wakeRetry - 1` times before its window ended. */
     opts: { wakeRetry?: number } = {},
   ): Promise<string | null> {
+    if (this.ensureFails()) throw new Error("ensureRun failure (test seam)");
     if ((await this.lock.holder(conversationId)) !== null) return null;
     const st: EnsureState = {
       orphanSeq: null,
@@ -632,6 +647,14 @@ export class RunQueue {
   }
 
   /**
+   * Owes the ensure-run backstop of `conversationId` in the caller's transaction
+   * ({@link oweEnsureRun}): `seq` is the event the transaction wrote, `orgId` the conversation's.
+   */
+  oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean> {
+    return this.jobs.oweEnsureRun(conversationId, seq, orgId);
+  }
+
+  /**
    * Enqueues a run job under the caller's job id (resumes, dispatches, repairs), with the same
    * options as {@link ensureRun} (see {@link RunJobs.enqueue}).
    */
@@ -782,7 +805,8 @@ export class RunQueue {
    * one whose BullMQ job (a resume's under `runs.job_id`) is gone. A `waiting` one never is (no job
    * by design: a decision or its timeout resumes it). A `queued` one is not for {@link ensureRun}:
    * the run it creates has its job owed in its own transaction (transactional outbox spec §6). With
-   * `queued`, one without a job past {@link ORPHAN_QUEUED_GRACE_SECONDS} counts too:
+   * `queued`, one without a job past {@link ORPHAN_QUEUED_GRACE_SECONDS} counts too, unless the
+   * outbox still owes its job (a pending row: the relay delivers it once Redis is back):
    * {@link repairOrphan} and {@link abortIfOrphaned} still cover the dispatches and resumes that add
    * their job after their commit.
    */
@@ -795,8 +819,23 @@ export class RunQueue {
     if (active.status === "waiting") return false;
     if (active.status === "queued" && !(opts.queued && active.past_grace)) return false;
     const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
-    const job = await this.jobs.getJob(jobId, runQueueNameFor(kind));
+    const queue = runQueueNameFor(kind);
+    // a queued run whose job the outbox still owes (Redis was down past the grace) is not lost
+    if (active.status === "queued" && (await this.jobOwed(queue, jobId))) return false;
+    const job = await this.jobs.getJob(jobId, queue);
     return !job;
+  }
+
+  /** Whether the outbox still owes the job `jobId` on `queue` (a pending, not dead, row). */
+  private async jobOwed(queue: string, jobId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("outbox")
+      .select("id")
+      .where("queue", "=", queue)
+      .where("job_id", "=", jobId)
+      .where("dead_at", "is", null)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */

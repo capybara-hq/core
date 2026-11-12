@@ -161,6 +161,11 @@ export const NO_REPLY_SKIPS: ReplySkips = { questions: [], network: [], seqs: ne
 export interface RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null>;
+  /**
+   * Owes the ensure-run backstop in the caller's transaction (transactional outbox spec §6): `seq`
+   * is the event it wrote (or the conversation's newest), `orgId` the conversation's.
+   */
+  oweEnsureRun(conversationId: string, seq: number | string, orgId: string): Promise<boolean>;
   /** After a root's queue was unpaused: the wakes it held for its tree (agent map spec §5.3). */
   wakeHeldTree(rootId: string): Promise<void>;
   /**
@@ -458,7 +463,7 @@ export class ConversationsService {
       return raced;
     }
     await this.eventLog.notify(id, written.seq);
-    await this.runs.ensureRun(id);
+    await this.startRun(id);
     return { conversation: await this.rowView(id), event: written, events: all, created: true };
   }
 
@@ -545,8 +550,24 @@ export class ConversationsService {
     const events = (await this.eventLog.readAfter(row.id, 0, event.seq)).filter(
       (e) => e.seq <= event.seq,
     );
-    await this.runs.ensureRun(row.id);
+    await this.startRun(row.id);
     return { conversation: toView(row), event, events, created: false };
+  }
+
+  /**
+   * The direct `ensureRun` after a message's commit: a failure (Redis unreachable) is logged and
+   * never fails the request, since the message is committed and its transaction owes the
+   * ensure-run backstop (transactional outbox spec §6), which starts the run later.
+   */
+  private async startRun(conversationId: string): Promise<void> {
+    try {
+      await this.runs.ensureRun(conversationId);
+    } catch (err) {
+      this.log.warn("cannot start the conversation's run now; the ensure-run backstop will", {
+        conversationId,
+        err,
+      });
+    }
   }
 
   private async rowView(id: string): Promise<ConversationView> {
@@ -1079,7 +1100,8 @@ export class ConversationsService {
   /**
    * 追加一条用户消息；带 `clientMessageId` 时重复提交返回同一事件。写入后调用 `ensureRun`：
    * 没有进行中的运行时投递一轮；运行中则由当前运行在步骤间隙吸收，或在它结束时再次 `ensureRun`。
-   * 投递失败时抛错（消息已写入；客户端带同一 `clientMessageId` 重试会再次触发投递）。
+   * A failed `ensureRun` is logged, not thrown: the message's transaction owes the ensure-run
+   * backstop, which starts the run once the queue is reachable (transactional outbox spec §6).
    *
    * `attachments`（`@` 资源引用）：内核以发送者的凭据读取资源（打码、限长），作为用户文本之后的额外文本块写入同一条
    * user_message，并在 `payload.attachments` 记录元数据（第 i 个附件对应 `content[i + 1]`）。读取失败整条不写。
@@ -1108,7 +1130,7 @@ export class ConversationsService {
         userMessageIdemKey(input.clientMessageId),
       );
       if (existing) {
-        await this.runs.ensureRun(conversationId);
+        await this.startRun(conversationId);
         return existing;
       }
     }
@@ -1149,7 +1171,7 @@ export class ConversationsService {
         .execute();
       await this.eventLog.publishChanged(conversationId, "archived");
     }
-    await this.runs.ensureRun(conversationId);
+    await this.startRun(conversationId);
     return event;
   }
 
@@ -1330,6 +1352,9 @@ export class ConversationsService {
     );
     const { events: written, fresh } = await this.eventLog.appendInReport(conversationId, events);
     const message = written.at(-1) as ConversationEvent;
+    // the run this message starts is owed with it: the direct ensureRun after the commit may never
+    // happen (the process died) or fail (transactional outbox spec §6)
+    if (fresh.at(-1) === true) await this.runs.oweEnsureRun(conversationId, message.seq, orgId);
     const skips =
       fresh.at(-1) === true
         ? await this.skipWaitsIn(conversationId, accountId, message.seq)

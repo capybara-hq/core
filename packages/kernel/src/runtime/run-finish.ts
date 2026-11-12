@@ -6,7 +6,9 @@ import { pauseQueueIn } from "../conversations/queue.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { ScheduledTaskRunTracker } from "../schedules/run-tracker.js";
+import { oweEnsureRun } from "./run-jobs.js";
 
 /** 运行的终态。 */
 export type TerminalStatus = "completed" | "failed" | "aborted";
@@ -50,10 +52,13 @@ export class RunFinish {
     /** A scheduled task's run follows its kernel run's end in the same transaction (spec §6). */
     @Inject(ScheduledTaskRunTracker)
     private readonly taskRuns: Pick<ScheduledTaskRunTracker, "onRunFinished">,
+    /** The run's end owes the conversation's ensure-run backstop (transactional outbox spec §6). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   /**
    * 在调用方的事务内写运行的终态：会话行锁 → 运行仍未结束才写终态事件、推进 `consumed_seq`、更新 `runs.status`。
+   * It also owes the conversation's ensure-run backstop under the terminal event's seq.
    * 返回终态事件的 seq；运行已是终态（例如已被其他副本标记失败）→ 返回 null，什么都不写。
    *
    * `consumed_seq = GREATEST(consumed_seq, consumed, runs.trigger_seq)`：不回退，且失败 / 中止 / 完成都至少
@@ -65,9 +70,9 @@ export class RunFinish {
   @Transactional({ propagation: "mandatory" })
   async finishIn(a: FinishRunArgs): Promise<number | null> {
     const t = this.kdb.db;
-    await t
+    const conv = await t
       .selectFrom("conversations")
-      .select("id")
+      .select(["kind", "org_id"])
       .where("id", "=", a.conversationId)
       .forUpdate()
       .executeTakeFirst();
@@ -100,7 +105,14 @@ export class RunFinish {
     await this.taskRuns.onRunFinished(a.runId, a.status, failureMessage(a.event));
     // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
     if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
-    return (ev as ConversationEvent).seq;
+    const seq = (ev as ConversationEvent).seq;
+    // what arrived during the run starts the next one after the commit (the run worker's post-job
+    // ensureRun); owed here too, for when that never happens (an eval's hidden conversation never
+    // starts runs)
+    if (conv && (conv.kind === "chat" || conv.kind === "subagent")) {
+      await oweEnsureRun(this.outbox, a.conversationId, seq, conv.org_id);
+    }
+    return seq;
   }
 
   /** 自开事务写终态并在提交后发布会话通知；返回值同 {@link finishIn}。 */

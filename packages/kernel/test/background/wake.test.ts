@@ -475,9 +475,12 @@ describe("waking an idle conversation", { timeout: 60_000 }, () => {
     expect(await job?.getState()).toBe("delayed");
     // a second ensureRun in the window keeps the one job
     expect(await runs.ensureRun(conv)).toBeNull();
-    expect((await queue.getDelayed()).filter((j) => j.data?.conversationId === conv)).toHaveLength(
-      1,
-    );
+    // (the delayed bg-wake jobs only: the conversation's ensure-run backstops are delayed too)
+    expect(
+      (await queue.getDelayed()).filter(
+        (j) => j.name === "bg-wake" && j.data?.conversationId === conv,
+      ),
+    ).toHaveLength(1);
     // the window ends (moved back instead of waiting a minute): the job wakes the conversation
     await sql`UPDATE capybara.runs SET created_at = created_at - interval '61 seconds'
       WHERE id = ${wake.id}`.execute(raw);

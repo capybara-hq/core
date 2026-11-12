@@ -67,7 +67,7 @@ export class ConversationQueue {
     >,
     /** Starts the conversation's next run (`ensureRun`). */
     @Inject(RunControlService)
-    private readonly runs: Pick<RunControl, "ensureRun" | "wakeHeldTree">,
+    private readonly runs: Pick<RunControl, "ensureRun" | "oweEnsureRun" | "wakeHeldTree">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -176,9 +176,9 @@ export class ConversationQueue {
     internal: InternalMessageOptions,
   ): Promise<{ row: QueueRow; created: boolean } | null> {
     const t = this.db.db;
-    await t
+    const conv = await t
       .selectFrom("conversations")
-      .select("id")
+      .select("last_seq")
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirstOrThrow();
@@ -236,6 +236,9 @@ export class ConversationQueue {
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
+    // on an idle conversation the item goes out at once: owed with it (no event of its own, so
+    // under the conversation's newest seq; transactional outbox spec §6)
+    await this.runs.oweEnsureRun(conversationId, conv.last_seq, orgId);
     return { row, created: true };
   }
 
@@ -364,6 +367,7 @@ export class ConversationQueue {
   ): Promise<ConversationEvent> {
     await this.conversations.writable(orgId, conversationId, accountId);
     const { event, fresh, switched, unarchived, skipped, toSeq } = await this.sendNowIn(
+      orgId,
       conversationId,
       itemId,
     );
@@ -380,6 +384,7 @@ export class ConversationQueue {
   // its own transaction: the caller notifies and publishes after the commit
   @Transactional({ propagation: "requires_new" })
   private async sendNowIn(
+    orgId: string,
     conversationId: string,
     itemId: string,
   ): Promise<{
@@ -423,6 +428,8 @@ export class ConversationQueue {
     const skips = sent
       ? { skipped: NO_REPLY_SKIPS, toSeq: null }
       : await this.conversations.skipWaitsIn(conversationId, row.account_id, out.event.seq);
+    // the run the sent message starts is owed with it (transactional outbox spec §6)
+    await this.runs.oweEnsureRun(conversationId, out.event.seq, orgId);
     return {
       ...out,
       fresh: !sent,
@@ -434,15 +441,27 @@ export class ConversationQueue {
   /** "Continue sending": clears the pause and lets `ensureRun` send the head item. */
   async resume(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.conversations.writable(orgId, conversationId, accountId);
-    await this.db
-      .updateTable("conversations")
-      .set({ queue_paused: false, queue_pause_reason: null })
-      .where("id", "=", conversationId)
-      .execute();
+    await this.resumeIn(orgId, conversationId);
     await this.eventLog.publishChanged(conversationId, "queue");
     await this.runs.ensureRun(conversationId);
     // a paused root holds the wakes of its whole tree (agent map spec §5.3)
     await this.runs.wakeHeldTree(conversationId);
+  }
+
+  /**
+   * Clears the pause and owes the ensure-run backstop that sends the head item (no event of its
+   * own, so under the conversation's newest seq; transactional outbox spec §6).
+   */
+  // its own transaction: the caller publishes and starts the run after the commit
+  @Transactional({ propagation: "requires_new" })
+  private async resumeIn(orgId: string, conversationId: string): Promise<void> {
+    const conv = await this.db.db
+      .updateTable("conversations")
+      .set({ queue_paused: false, queue_pause_reason: null })
+      .where("id", "=", conversationId)
+      .returning("last_seq")
+      .executeTakeFirstOrThrow();
+    await this.runs.oweEnsureRun(conversationId, conv.last_seq, orgId);
   }
 
   /** A queued item or a sent message for this client id (outside any transaction). */
