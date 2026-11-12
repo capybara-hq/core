@@ -75,8 +75,31 @@ const owed = () =>
     .execute();
 
 /**
- * Lets the scope queue's adds succeed and runs one relay pass over the owed rows, each due now (a
- * backstop's `runAt` brought forward).
+ * Waits until the scope queue's rows matching `which` are gone. A pass (a fast path, the worker's
+ * relay tick) deletes the rows it delivered only when its claim transaction commits, after
+ * `addBulk`: the job may run (and the test see its effect) while its row is still there, and a
+ * pass of ours skips the rows such a pass holds (`SKIP LOCKED`).
+ */
+async function delivered(which: "all" | "item-jobs"): Promise<void> {
+  await waitFor(
+    async () => {
+      let q = env.db
+        .selectFrom("outbox")
+        .select("id")
+        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+        .where("dead_at", "is", null);
+      if (which === "item-jobs") q = q.where("job_name", "=", SCOPE_ITEM_JOB);
+      return (await q.execute()).length === 0;
+    },
+    30_000,
+    `the scope queue's ${which === "all" ? "" : "item "}rows delivered`,
+  );
+}
+
+/**
+ * Lets the scope queue's adds succeed, runs one relay pass over the owed rows, each due now (a
+ * backstop's `runAt` brought forward), and waits until every row is delivered (a concurrent pass
+ * may hold some: {@link delivered}).
  */
 async function relay(): Promise<void> {
   failing = false;
@@ -86,6 +109,7 @@ async function relay(): Promise<void> {
     .where("queue", "=", PLUGIN_SCOPE_QUEUE)
     .execute();
   await env.k.app.get(OutboxDispatcher).dispatchDue(500);
+  await delivered("all");
 }
 
 /** The live installs of an item, as the orgs they are in. */
@@ -228,6 +252,8 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", { timeout: 
       30_000,
       "installed in B",
     );
+    // the syncs owed so far are delivered (their passes committed) before adds start failing
+    await delivered("item-jobs");
     // the owner deletes it: B uses it, so it is transferred and A leaves its list
     failing = true;
     const owned = `/api/v1/orgs/${orgA}/owned-plugins/${itemId}/delete`;
