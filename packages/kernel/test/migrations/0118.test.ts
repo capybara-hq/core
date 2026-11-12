@@ -61,7 +61,9 @@ const vectorSchema = (url: string) =>
   });
 
 afterAll(async () => {
-  await Promise.allSettled(stops.map((s) => s()));
+  // Every client is ended by withClient / migrate before this runs; only the databases and
+  // containers themselves are left. Stopped one at a time, newest first.
+  for (const stop of stops.reverse()) await stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
@@ -95,22 +97,24 @@ describe("0118_pgvector on a server with pgvector", () => {
     const db = track(await startTestPostgres());
     const role = `cap_noext_${Math.random().toString(36).slice(2, 10)}`;
     await withClient(db.url, (c) => c.query(`create role ${role} login password 'p'`));
-    stops.push(() =>
-      withClient(db.url, async (c) => {
-        await c.query(`drop role if exists ${role}`);
-      }),
-    );
     const url = new URL(db.url);
     url.username = role;
     url.password = "p";
-    const notices = await withClient(url.toString(), async (c, n) => {
-      const r = await c.query<{ create: boolean }>(
-        "select has_database_privilege(current_database(), 'CREATE') as create",
-      );
-      expect(r.rows[0]?.create).toBe(false);
-      await c.query(TEXT);
-      return n;
-    });
+    let notices: string[];
+    try {
+      notices = await withClient(url.toString(), async (c, n) => {
+        const r = await c.query<{ create: boolean }>(
+          "select has_database_privilege(current_database(), 'CREATE') as create",
+        );
+        expect(r.rows[0]?.create).toBe(false);
+        await c.query(TEXT);
+        return n;
+      });
+    } finally {
+      // Roles are cluster-wide (the shared server outlives this file): drop it here, while the
+      // database is still there, not in afterAll, where it would race the database's drop.
+      await withClient(db.url, (c) => c.query(`drop role if exists ${role}`));
+    }
     expect(notices.some((m) => /pgvector not installed.*SQLSTATE 42501/.test(m))).toBe(true);
     expect(await vectorSchema(db.url)).toBeNull();
   }, 180_000);
