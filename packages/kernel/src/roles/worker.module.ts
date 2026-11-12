@@ -3,7 +3,6 @@ import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
-import { PlatformMigration } from "../catalog/platform-migration.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
@@ -97,7 +96,6 @@ export class WorkerModule {
         InitialPasswordCleanupJob,
         ClientReportsCron,
         CatalogJobs,
-        PlatformMigration,
         DirectoryScanJob,
         OffboardSweepJob,
         PluginsReconcileJob,

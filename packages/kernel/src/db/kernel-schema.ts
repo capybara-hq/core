@@ -1544,7 +1544,10 @@ export interface ExtensionClientReportsTable {
   last_message: string;
 }
 
-/** 0082: one run of the platform components migration job (`catalog/platform-migration.ts`). */
+/**
+ * 0082: one run of the platform components migration job (removed: platform components are
+ * written in the import's transaction); the platform inbox still shows the last one.
+ */
 export interface PlatformMigrationRunsTable {
   id: string;
   started_at: Ts;

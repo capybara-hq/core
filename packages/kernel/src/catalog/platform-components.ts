@@ -1,7 +1,9 @@
 // Platform components (plugin scope phase 2, rulings A2 and C2): the skills, agent templates,
 // connector templates and themes of a catalog item, stored once for the deployment. Files live
-// under `deployment/platform/{skills,agent-templates,themes}/<id>/<version>…/`, never under an org
-// prefix (orgs are purged by prefix).
+// under `deployment/platform/{skills,agent-templates,themes}/…/`, never under an org prefix (orgs
+// are purged by prefix): a plugin sync's under the digest of their content
+// (`sha256-<digest>/`, {@link contentPrefix}), an upload's or a promotion's under
+// `<id>/<version>-<uuid>/`.
 import { createHash, randomUUID } from "node:crypto";
 import {
   type AgentTemplate,
@@ -76,12 +78,6 @@ export const platformAgentTemplatePrefix = (id: string, version: number): string
   `platform/agent-templates/${id}/${version}/`;
 
 /**
- * The prefix (in `deployment/`) of a platform theme's files (themes spec §6); a version's fonts
- * and logo are under `<prefix><version>-<catalog version>/` ({@link syncVersionPrefix}).
- */
-export const platformThemePrefix = (id: string): string => `platform/themes/${id}/`;
-
-/**
  * A fresh prefix (in `deployment/`) for a version written before its transaction (ruling P3-45):
  * `<id>/<version>-<uuid>/`, so two writers racing for one version number never overwrite each
  * other's objects, and the loser's are deleted after its transaction failed.
@@ -90,13 +86,20 @@ export const uniqueVersionPrefix = (base: string): string =>
   `${base.slice(0, -1)}-${randomUUID()}/`;
 
 /**
- * The prefix of a version a plugin sync writes: `<id>/<version>-<catalog version>/` (the catalog
- * version made key-safe), so syncs of two catalog versions racing for one number never overwrite
- * each other. Stored on the version row; readers use the stored prefix, so rows written before keep
+ * The prefix (in `deployment/`) of the files a plugin sync writes for a component version:
+ * `platform/<kind>/sha256-<digest>/`, the digest of the files' paths and contents
+ * ({@link skillFilesDigest}). The files are copied before the transaction that writes the rows (no
+ * storage call holds a row lock), so the same content always lands on the same keys: a sync or an
+ * import that is retried after its transaction rolled back writes nothing new, and versions with
+ * the same content share their objects. Objects are immutable and nothing deletes them (versions
+ * are kept), so an import that rolled back leaves at most objects a later import of that content
+ * reuses. Stored on the version row; readers use the stored prefix, so rows written before keep
  * theirs.
  */
-export const syncVersionPrefix = (base: string, catalogVersion: string): string =>
-  `${base.slice(0, -1)}-${catalogVersion.replace(/[^0-9A-Za-z.-]/g, "_")}/`;
+export const contentPrefix = (
+  kind: "skills" | "agent-templates" | "themes",
+  files: { path: string; sha256: string }[],
+): string => `platform/${kind}/sha256-${skillFilesDigest(files)}/`;
 
 /** 409 `catalog.not_owned`: an org's own promoted item is versioned by its owner only (P3-48). */
 const ownedByOrg = (what: string, name: string): ApiError =>
@@ -168,11 +171,28 @@ export interface SyncPlan {
 export class PlanStale extends Error {}
 
 /**
- * A sync planned and its files copied ({@link PlatformComponents.prepareSync}), waiting for its rows
- * ({@link PlatformComponents.applySyncIn}). Opaque outside this module.
+ * A sync planned and its files copied ({@link PlatformComponents.prepareSync},
+ * {@link PlatformComponents.prepareImport}), waiting for its rows
+ * ({@link PlatformComponents.applySyncIn}). Opaque outside this module but for the item and the
+ * catalog version it was planned for.
  */
 export interface PreparedSync {
   readonly plan: SyncPlan;
+}
+
+/**
+ * The catalog version a sync plans from: its row, or a staged import whose row its transaction
+ * is about to write (the files are in object storage under `objectPrefix` already).
+ */
+export interface SyncSource {
+  itemId: string;
+  /** The plugin (the catalog item's name). */
+  plugin: string;
+  version: string;
+  manifest: PluginManifest;
+  objectPrefix: string | null;
+  files: { path: string; size: number; sha256: string }[];
+  sourceFormat: SourceFormat;
 }
 
 /** A component version written by an upload ({@link PlatformComponents.uploadSkillVersion}). */
@@ -240,12 +260,13 @@ export class PlatformComponents {
    * `itemId`: a component is matched by plugin and name (connector templates by item and template
    * id) and gets a new version only when its content changed (skills by their files' digest,
    * templates by canonical JSON); new rows follow the plugin's scope (`scope_mode: follow`).
-   * Files are copied from the catalog prefix to `deployment/platform/…` before the rows are
-   * written (outside the transaction), so a sync that stops midway leaves at most unreferenced
-   * files, and running it again is a no-op once it succeeded. `initial` is the confirm that
-   * created the item. Components missing from the version are left alone (the platform update
-   * decides what a removal means). On success the item records `version` as
-   * `platform_synced_version`.
+   * Files are copied from the catalog prefix to `deployment/platform/…` (keyed by content,
+   * {@link contentPrefix}) before the rows are written in a transaction of their own, so a sync
+   * that stops midway leaves at most files a retry reuses, and running it again is a no-op once it
+   * succeeded. `initial` is logged. Components missing from the version are left alone (the
+   * platform update decides what a removal means). On success the item records `version` as
+   * `platform_synced_version`. The import and the platform update write the rows in their own
+   * transaction instead ({@link prepareImport} / {@link prepareSync}, then {@link applySyncIn}).
    */
   async syncFromVersion(
     itemId: string,
@@ -253,7 +274,7 @@ export class PlatformComponents {
     opts: { initial: boolean },
   ): Promise<PlatformSyncResult> {
     for (let attempt = 1; ; attempt++) {
-      const plan = await this.plan(itemId, version);
+      const plan = await this.planFrom(await this.source(itemId, version, false));
       if (
         plan.skills.length === 0 &&
         plan.agentTemplates.length === 0 &&
@@ -284,12 +305,27 @@ export class PlatformComponents {
   }
 
   /**
-   * The first phase of a sync inside a caller's transaction (the platform plugin update): plans the
-   * version's components and copies their files, outside any transaction (no storage call holds a
-   * row lock). {@link applySyncIn} writes the rows.
+   * The first phase of a sync inside a caller's transaction (the platform plugin update, the super
+   * admin's confirmation of an org upload's first version: `confirming`, the item still awaiting
+   * it): plans the version's components and copies their files, outside any transaction (no
+   * storage call holds a row lock). {@link applySyncIn} writes the rows.
    */
-  async prepareSync(itemId: string, version: string): Promise<PreparedSync> {
-    const plan = await this.plan(itemId, version);
+  async prepareSync(
+    itemId: string,
+    version: string,
+    opts: { confirming?: boolean } = {},
+  ): Promise<PreparedSync> {
+    const plan = await this.planFrom(await this.source(itemId, version, opts.confirming === true));
+    await this.writeFiles(plan);
+    return { plan };
+  }
+
+  /**
+   * {@link prepareSync} for an import whose transaction writes the catalog version (the item may
+   * not exist yet): plans from the staged content and copies the files, before that transaction.
+   */
+  async prepareImport(source: SyncSource): Promise<PreparedSync> {
+    const plan = await this.planFrom(source);
     await this.writeFiles(plan);
     return { plan };
   }
@@ -597,7 +633,7 @@ export class PlatformComponents {
 
   /**
    * Records that the item's platform components are written from `version`
-   * (`catalog_items.platform_synced_version`): the migration job syncs only items without it.
+   * (`catalog_items.platform_synced_version`, the version orgs install).
    */
   private async markSynced(itemId: string, version: string): Promise<void> {
     await this.db
@@ -607,16 +643,18 @@ export class PlatformComponents {
       .execute();
   }
 
-  /** Reads the version's components and the live platform rows; keeps only what changed. */
-  private async plan(itemId: string, version: string): Promise<SyncPlan> {
+  /**
+   * The stored catalog version `version` of live item `itemId`. An org upload still waiting for the
+   * super admin has no platform components (P3-9) unless this is its `confirming`.
+   */
+  private async source(itemId: string, version: string, confirming: boolean): Promise<SyncSource> {
     const item = await this.db
       .selectFrom("catalog_items")
       .select(["name", "awaiting_confirmation"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    // An org upload still waiting for the super admin has no platform components (P3-9)
-    if (item !== undefined) assertNotAwaiting(item);
+    if (item !== undefined && !confirming) assertNotAwaiting(item);
     const row = item
       ? await this.db
           .selectFrom("catalog_item_versions")
@@ -628,14 +666,30 @@ export class PlatformComponents {
     if (!item || !row) {
       throw new ApiError("catalog.item_not_found", `Catalog item ${itemId}@${version} not found`);
     }
-    const plugin = item.name;
-    const manifest = row.manifest as PluginManifest;
-    const v: CatalogVersionFiles = row;
+    return {
+      itemId,
+      plugin: item.name,
+      version,
+      manifest: row.manifest as PluginManifest,
+      objectPrefix: row.object_prefix,
+      files: row.files,
+      sourceFormat: row.source_format,
+    };
+  }
+
+  /** Reads the version's components and the live platform rows; keeps only what changed. */
+  private async planFrom(src: SyncSource): Promise<SyncPlan> {
+    const { itemId, plugin, version, manifest } = src;
+    const v: CatalogVersionFiles = {
+      manifest,
+      object_prefix: src.objectPrefix,
+      files: src.files,
+    };
     const plan: SyncPlan = {
       itemId,
       plugin,
       version,
-      sourceFormat: row.source_format,
+      sourceFormat: src.sourceFormat,
       skills: [],
       agentTemplates: [],
       connectorTemplates: [],
@@ -645,8 +699,8 @@ export class PlatformComponents {
     for (const s of manifest.skills ?? []) {
       const files = await readCatalogFiles(
         this.files,
-        row.object_prefix,
-        row.files,
+        v.object_prefix,
+        v.files,
         packagePath(s.path),
       );
       const pkg = { ...skillOf(files), files };
@@ -668,8 +722,7 @@ export class PlatformComponents {
         base: live && { id: live.id, version: live.current_version },
         id,
         to,
-        // the catalog version in the prefix: two syncs of different versions never write one key
-        prefix: syncVersionPrefix(platformSkillPrefix(id, to), version),
+        prefix: contentPrefix("skills", files),
         files,
         manifest: skillManifest(pkg),
       });
@@ -694,19 +747,20 @@ export class PlatformComponents {
       if (live && canonicalJson(live.definition) === canonicalJson(a.template)) continue;
       const [file] = await readCatalogFiles(
         this.files,
-        row.object_prefix,
-        row.files.filter((f) => f.path === a.path),
+        v.object_prefix,
+        v.files.filter((f) => f.path === a.path),
       );
       if (!file) throw new ApiError("internal", `Stored agent template ${a.path} is missing`);
       const id = live?.id ?? randomUUID();
       const to = (live?.current_version ?? 0) + 1;
+      const name = file.path.split("/").pop() as string;
       plan.agentTemplates.push({
         name: a.template.name,
         base: live && { id: live.id, version: live.current_version },
         id,
         to,
-        prefix: syncVersionPrefix(platformAgentTemplatePrefix(id, to), version),
-        file: { ...file, path: file.path.split("/").pop() as string },
+        prefix: contentPrefix("agent-templates", [{ path: name, sha256: file.sha256 }]),
+        file: { ...file, path: name },
         template: a.template,
       });
     }
@@ -761,10 +815,7 @@ export class PlatformComponents {
         base: live && { id: live.id, version: live.current_version },
         id,
         to,
-        prefix:
-          t.assets.length > 0
-            ? syncVersionPrefix(`${platformThemePrefix(id)}${to}/`, version)
-            : null,
+        prefix: t.assets.length > 0 ? contentPrefix("themes", t.assets) : null,
         files: t.assets,
         theme: t.theme,
       });

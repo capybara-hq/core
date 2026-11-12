@@ -6,7 +6,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { OwnedPluginCleanup } from "../../src/catalog/owned-plugin-cleanup.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
-import { PlatformMigration } from "../../src/catalog/platform-migration.js";
 import {
   PLUGIN_SCOPE_QUEUE,
   PluginScopeSync,
@@ -268,7 +267,7 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     ).toBeUndefined();
     expect(loaded("ext-a")).toBe(false);
     expect(imported("ext-a", "1.0.0")).toBe(false);
-    // no platform components, nothing usable; the scope sync and the migration job change nothing
+    // no platform components, nothing usable; the scope sync changes nothing
     const comps = () =>
       env.db
         .selectFrom("platform_skills")
@@ -278,7 +277,6 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     expect(await comps()).toEqual([]);
     await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
     await env.k.app.get(PluginScopeSync).process({ kind: "org", orgId: orgA });
-    await env.k.app.get(PlatformMigration).runOnce();
     expect(await comps()).toEqual([]);
     expect(await usable(orgA)).not.toContain("ext-a-notes");
     expect(
@@ -628,20 +626,37 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
       .where("name", "=", name)
       .executeTakeFirst();
 
-  it("a pending version never becomes the effective one, even before the first sync", async () => {
+  it("a failed component write rolls the confirmation back; a pending version never becomes the effective one", async () => {
     const itemId = await uploaded(
       env.boss,
       orgA,
       await lifePkg({ name: "ext-ns", version: "1.0.0", skills: ["ext-ns-notes"] }),
       "pending",
     );
-    // the confirm's component write fails (logged): platform_synced_version stays null
-    vi.spyOn(PlatformComponents.prototype, "syncFromVersion").mockRejectedValueOnce(
-      new Error("injected sync failure"),
+    // the confirming commit's component write fails: nothing of it commits, the extension the
+    // confirmation installed is taken out again, the upload still waits
+    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockRejectedValueOnce(
+      new Error("injected component write failure"),
     );
+    const failed = await superConfirm(itemId, await digestOf(itemId));
+    expect(failed.statusCode, failed.body).toBe(500);
+    expect(await itemRow("ext-ns")).toMatchObject({
+      awaiting_confirmation: true,
+      pending_version: "1.0.0",
+      platform_synced_version: null,
+    });
+    expect(
+      await env.db
+        .selectFrom("platform_skills")
+        .select("id")
+        .where("catalog_item_id", "=", itemId)
+        .execute(),
+    ).toEqual([]);
+    expect(await installRow("ext-ns")).toBeUndefined();
+    // confirmed again: the components are there when it returns
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
-    expect((await itemRow("ext-ns"))?.platform_synced_version).toBeNull();
+    expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
     await uploaded(
       env.boss,
       orgA,
@@ -652,7 +667,6 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
       latest_version: "1.0.0",
       pending_version: "2.0.0",
     });
-    await env.k.app.get(PlatformMigration).runOnce();
     await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
     expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
     const installs = await env.db

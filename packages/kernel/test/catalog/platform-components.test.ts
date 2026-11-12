@@ -81,7 +81,8 @@ describe("platform components from a plugin version", () => {
         current_version: 1,
         scope_mode: "follow",
         catalog_version: "1.0.0",
-        object_prefix: `platform/skills/${s.id}/1-1.0.0/`,
+        // keyed by content: a retried import copies nothing again
+        object_prefix: expect.stringMatching(/^platform\/skills\/sha256-[0-9a-f]{64}\/$/),
       });
       expect(await readText(`${s.object_prefix}SKILL.md`)).toContain(`name: ${s.name}`);
       expect(await readText(`${s.object_prefix}scripts/run.py`)).toBe("print(1)\n");
@@ -121,7 +122,7 @@ describe("platform components from a plugin version", () => {
       current_version: 1,
       scope_mode: "follow",
       catalog_version: "1.0.0",
-      object_prefix: `platform/agent-templates/${tpl?.id}/1-1.0.0/`,
+      object_prefix: expect.stringMatching(/^platform\/agent-templates\/sha256-[0-9a-f]{64}\/$/),
       definition: expect.objectContaining({
         name: "reviewer",
         instructions: "Review the change.\n",
@@ -163,6 +164,7 @@ describe("platform components from a plugin version", () => {
 
   it("syncFromVersion adds a version only for changed content", async () => {
     const itemId = await importPlugin(env, await kit("1.0.0"));
+    const first = (await skillRows()).find((s) => s.name === "alpha");
     await importPlugin(
       env,
       await kit("1.1.0", {
@@ -182,13 +184,12 @@ describe("platform components from a plugin version", () => {
       current_version: 2,
       description: "Alpha, changed.",
       catalog_version: "1.1.0",
-      object_prefix: `platform/skills/${alpha?.id}/2-1.1.0/`,
+      object_prefix: expect.stringMatching(/^platform\/skills\/sha256-[0-9a-f]{64}\/$/),
     });
+    expect(alpha?.object_prefix).not.toBe(first?.object_prefix);
     expect(await readText(`${alpha?.object_prefix}SKILL.md`)).toContain("Alpha, changed.");
     // the first version's files stay
-    expect(await readText(`platform/skills/${alpha?.id}/1-1.0.0/SKILL.md`)).toContain(
-      "Alpha things.",
-    );
+    expect(await readText(`${first?.object_prefix}SKILL.md`)).toContain("Alpha things.");
     const beta = (await skillRows()).find((s) => s.name === "beta");
     expect(beta?.current_version).toBe(1);
 

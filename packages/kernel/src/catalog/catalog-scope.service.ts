@@ -41,6 +41,7 @@ import {
   themeIdClashes,
 } from "./component-state.js";
 import { oweOwnedPluginCleanup } from "./job-ids.js";
+import { CatalogItemLock } from "./locks.js";
 import {
   assertNotAwaiting,
   assertOwnerListed,
@@ -55,6 +56,7 @@ import {
   pendingDigest,
   releaseExtensionClaim,
 } from "./ownership.js";
+import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-components.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { PlatformPluginUpdater } from "./plugin-upgrade.js";
@@ -215,6 +217,10 @@ export class CatalogScopeService {
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
+    /** A confirmed first version's platform components (written in the confirming commit). */
+    @Inject(PlatformComponents) private readonly platform: PlatformComponents,
+    /** The import's item name lock, taken by the confirming commit before the item row. */
+    @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ExtensionAdmin) private readonly extensions: ExtensionAdmin,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
@@ -351,9 +357,10 @@ export class CatalogScopeService {
    * pending version (withdrawn, rejected, replaced by one without an extension) -> 409
    * `extension.not_pending`.
    *
-   * A first version: its extension installed, its permissions approved, enabled, then (one
-   * transaction) the item stops waiting and the owner is told (`upload_confirmed`); after the
-   * commit its platform components are written and the scope sync owed. Each step re-reads
+   * A first version: its platform components planned and their files copied (keyed by content),
+   * its extension installed, its permissions approved, enabled, then (one transaction) the item
+   * stops waiting, its platform component rows are written and the owner is told
+   * (`upload_confirmed`); after the commit the scope sync is owed. Each step re-reads
    * the item under its row lock: removed meanwhile -> 409 `catalog.item_removed`, the pending
    * version replaced -> `extension.approval_stale`; the extension this confirmation installed is
    * then taken out again. A new version: the platform update to it
@@ -382,15 +389,14 @@ export class CatalogScopeService {
         CONFIRM_RECONCILE_WAIT_MS,
         this.log,
       );
-      await this.pluginImport.writePlatformComponents(item.id, first);
       await this.oweSync(item.id);
     }
     return (await this.catalog.get(item.id)).item;
   }
 
   /**
-   * {@link confirmOrgUpload} under the item lock; returns the confirmed first version (its
-   * platform components and scope sync follow after), null for a new version.
+   * {@link confirmOrgUpload} under the item lock; returns the confirmed first version (its scope
+   * sync follows after), null for a new version.
    */
   private async confirmLocked(
     actor: string,
@@ -493,6 +499,8 @@ export class CatalogScopeService {
     await this.stillPending(itemId, name, version);
     let installedHere = false;
     try {
+      // Planned and copied before any transaction; the rows are written by the confirming commit
+      const components = await this.platform.prepareSync(itemId, version, { confirming: true });
       if (install?.sha256 !== sha) {
         await this.ops.install(name, sha, actor, opts.actorTokenId, {
           catalogItemId: itemId,
@@ -505,7 +513,7 @@ export class CatalogScopeService {
       await this.stillPending(itemId, name, version);
       // An occupied single-provider point leaves it installed disabled (the admin view says why)
       await this.ops.enableUnlessOccupied(name, actor, opts.actorTokenId);
-      await this.finishFirstVersion(actor, itemId, version, opts);
+      await this.finishFirstVersion(actor, itemId, version, components, opts);
     } catch (e) {
       // Taken out only when this confirmation did not win: the item gone or still waiting
       if (installedHere && !(await this.confirmed(itemId))) {
@@ -700,12 +708,18 @@ export class CatalogScopeService {
     return row.owner_org_id;
   }
 
-  /** A confirmed first version: the item stops waiting, the owner is told (`upload_confirmed`). */
+  /**
+   * A confirmed first version: the item stops waiting, its platform component rows are written
+   * from `components` (a component changed since they were planned -> 409
+   * `extension.approval_stale`: confirm again), the owner is told (`upload_confirmed`). The
+   * import's item name lock before the item row, as an import's commit takes them (ruling P3-50).
+   */
   @Transactional()
   private async finishFirstVersion(
     actor: string,
     itemId: string,
     version: string,
+    components: PreparedSync,
     opts: ActorOpts,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
@@ -714,6 +728,7 @@ export class CatalogScopeService {
       .select("name")
       .where("id", "=", itemId)
       .executeTakeFirstOrThrow();
+    await this.itemLock.lock(named.name);
     const owner = await this.pendingRow(itemId, named.name, version);
     await this.db
       .updateTable("catalog_items")
@@ -729,6 +744,12 @@ export class CatalogScopeService {
       .where("id", "=", itemId)
       .execute();
     await markVersionApplied(this.db, itemId, version);
+    try {
+      await this.platform.applySyncIn(components);
+    } catch (e) {
+      if (e instanceof PlanStale) throw pendingStale(named.name);
+      throw e;
+    }
     await addOrgNotice(this.db, owner, "upload_confirmed", {
       itemId,
       name: named.name,
@@ -743,7 +764,7 @@ export class CatalogScopeService {
       detail: { name: named.name, version, ownerOrgId: owner },
     });
     // The confirmation's commit owes the sync's backstop (ruling R24); the immediate sync follows
-    // the platform components
+    // the commit
     await this.sync.enqueueBackstop(itemId);
   }
 

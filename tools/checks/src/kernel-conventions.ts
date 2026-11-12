@@ -339,11 +339,6 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 export const KC_PENDING: KcPending = {
   "kc-enqueue-via-outbox": [
     {
-      path: "packages/kernel/src/catalog/plugin-import.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 4",
-    },
-    {
       path: "packages/kernel/src/channels/actions.ts",
       max: 1,
       reason:

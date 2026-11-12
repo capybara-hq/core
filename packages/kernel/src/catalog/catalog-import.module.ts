@@ -2,9 +2,7 @@ import { Module } from "@nestjs/common";
 import { ClientModule } from "../client/client.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
-import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { ComponentPromotion } from "./component-promotion.js";
@@ -29,8 +27,6 @@ import { PluginImport } from "./plugin-import.js";
     StorageModule,
     // the client build prefix goes with an expired org upload's package (`PluginImport`)
     ClientModule,
-    // a failed post-import platform sync enqueues the migration job (`PluginImport.syncPlatform`)
-    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
     CatalogSourceLock,

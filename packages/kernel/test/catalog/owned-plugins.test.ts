@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { OwnedItems } from "../../src/catalog/owned-items.js";
 import { OwnedPluginCleanup } from "../../src/catalog/owned-plugin-cleanup.js";
+import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -340,6 +341,41 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
       30_000,
       "own-sa-rm name claim released",
     );
+  });
+
+  it("removing an upload still awaiting confirmation owes its cleanup: an extension a confirmation installed goes", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "own-aw", version: "1.0.0", skills: ["own-aw-notes"] }),
+      "pending",
+    );
+    // a confirmation committed its install and stopped before its take-out (the crash window)
+    const { extension_sha256: sha } = await env.db
+      .selectFrom("catalog_item_versions")
+      .select("extension_sha256")
+      .where("item_id", "=", itemId)
+      .where("version", "=", "1.0.0")
+      .executeTakeFirstOrThrow();
+    await env.k.app.get(ExtensionAdminOps).install("own-aw", sha as string, env.rootId, undefined, {
+      catalogItemId: itemId,
+      liveItem: true,
+    });
+    expect(await installRow("own-aw")).toBeDefined();
+    const d = await env.root({ method: "DELETE", url: `/api/v1/admin/catalog/items/${itemId}` });
+    expect(d.statusCode, d.body).toBe(204);
+    await waitFor(
+      async () => (await installRow("own-aw")) === undefined,
+      30_000,
+      "own-aw uninstalled by the cleanup job",
+    );
+    expect(
+      await env.db
+        .selectFrom("extension_name_owners")
+        .select("name")
+        .where("name", "=", "own-aw")
+        .executeTakeFirst(),
+    ).toBeUndefined();
   });
 
   it("a cleanup that uninstalled but did not release the claim releases it when run again", async () => {
