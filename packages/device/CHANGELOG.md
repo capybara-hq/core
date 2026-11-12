@@ -1,5 +1,63 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.4
+
+### Minor Changes
+
+- 99d2fe8: Sandbox tiers in OS and Docker mode. A command runs at the device's tier (`policy set tier
+  strict|dev|open|default`) cut to the organization's ceiling: `dev` adds the dev hosts preset to
+  the network, package caches under `<dir>/cache/`, and on macOS local servers (unless a local
+  forwarding proxy is detected; `policy set localhost allow` overrides) and unix sockets under the
+  device's directories and a short socket directory that `TMPDIR` and `MAC_CHROMIUM_TMPDIR` point
+  at; `open` reaches anything the organization allows and needs `--yes`. A tier change reaches the
+  sandbox at the next command. Docker mode sizes `/dev/shm` per tier and opens the bridge only for
+  explicit local domains or tier `open`. The proxy guard runs again every 30 seconds (before the next
+  command) and, on macOS, counts a check that fails as a proxy found. A local tier change turns the
+  sandbox back on for a device set to run without one. `policy show` says what the tier gives on this machine, and
+  `start` prints a notice for a legacy `network: "open"`.
+- 579b956: Accept owner-approved network changes from the deployment. `policy.json` gains `network`
+  (`allowlist` default, or `open`: commands reach what the organization allows) and `remoteGrants`
+  (`owner` default, or `off`: the device refuses every widening from the deployment). The new `policy`
+  operation adds or removes allowed domains and switches `network` (narrowing always accepted, every
+  host validated, written under the lock); a run's or task's granted hosts join a command's list
+  within the organization's egress. In OS mode exec results report the refused hosts; the hello
+  announces `networkReport` / `policyOp` and a summary of the local policy. The local command log
+  records each change from the deployment, refused attempts and each command's grants. A
+  Docker-mode device refuses widening from the deployment (it cannot limit single domains).
+- 6cd651b: `capybara-device policy set network open` turns off the device's own network limit (commands
+  reach what the organization allows) after printing the risk: it needs `--yes`, or an answer of `y`
+  on a terminal; without a terminal and without `--yes` it exits with status 2 and a hint.
+  `set network allowlist` is always accepted. `policy set remoteGrants owner|off` decides whether
+  the device owner may widen the network from the deployment.
+- 8fa0e32: `policy.json` replaces `network` with `tier` (absent = the organization's default), `isolation`
+  (`sandbox` by default) and `localhost` (`auto` by default). The old keys `network`,
+  `allowLocalBinding` and `allowUnixSockets` are ignored and dropped on the next write; a policy with
+  tier `open` behaves as the old `network: "open"`, every other tier as before.
+- 5d6f865: A device in OS mode runs commands without a sandbox when its owner sets it on the machine
+  (`capybara-device policy set isolation none`, with tier `open`; the risk text is shown and needs
+  `--yes` or a `y` at the prompt). Below tier `open`, or when the deployment does not allow the
+  command to run unsandboxed (`limits.allowUnsandboxed` not `true`), such a device refuses commands,
+  naming why; a command whose sandbox is turned back on while it starts is refused too, and an
+  invalid `policy.json` turns the sandbox back on. The
+  deployment can never turn the sandbox off: the `policy` op accepts only `isolation: "sandbox"`, and
+  a higher tier only under `remoteGrants: "owner"`. The hello announces the `tiers` feature, the
+  policy summary reports the tier the device runs at, and the local command log records each
+  command's tier and isolation.
+
+### Patch Changes
+
+- 4ce2efa: Explain blocked network access: in OS mode a refused domain gets a reason from the proxy, and each
+  command's stderr ends with a trailer naming every refused host and the layer that refused it (this
+  device's allowed domains, the organization's allowlist, or a private address). Local policy changes
+  apply at the next command without a restart (an invalid `policy.json` keeps the last valid policy),
+  writes take `policy.json.lock`, and `capybara-device policy add|remove allowedDomains <host>` edits
+  the list one host at a time.
+- Updated dependencies [2682d5f]
+- Updated dependencies [2e52ca1]
+- Updated dependencies [8fa0e32]
+- Updated dependencies [95fc4b0]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.16
+
 ## 0.1.0-rc.3
 
 ### Patch Changes
