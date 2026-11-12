@@ -35,8 +35,9 @@ export interface CatalogCli extends ExtensionCli {
   imports: PluginImport;
   /**
    * After an import's confirm: enqueues the item's plugin scope sync, as the admin console's
-   * confirm does, when its scope turns it on by itself (`all` or `named`). A failure only warns
-   * (the next worker start enqueues every item); returns whether it was enqueued.
+   * confirm owes it, when its scope turns it on by itself (`all` or `named`). The CLI has no
+   * outbox: a failure only warns (a later change of the item's scope converges the orgs); returns
+   * whether it was enqueued.
    */
   enqueueScopeSync(item: { id: string; scope: PluginScope }): Promise<boolean>;
 }
@@ -269,7 +270,7 @@ export async function openCatalogCli(
           return true;
         } catch (err) {
           log.warn(
-            "cannot enqueue the plugin scope sync; the next worker start converges the orgs",
+            "cannot enqueue the plugin scope sync; a later scope change converges the orgs",
             { itemId: item.id, err },
           );
           return false;

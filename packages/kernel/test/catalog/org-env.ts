@@ -32,6 +32,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import type { KernelLogger } from "../../src/log.js";
+import type { KernelOverride } from "../../src/overrides.js";
 import { packagePath } from "../../src/packages/tgz.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -97,6 +98,8 @@ export async function startOrgEnv(
     tools?: Record<string, unknown>;
     /** The kernel's logger (default: logs discarded). */
     logger?: KernelLogger;
+    /** Kernel provider overrides (test seams such as `OUTBOX_DISPATCH_FAILS`). */
+    kernelOverrides?: KernelOverride[];
   } = {},
 ): Promise<OrgEnv> {
   let pgc: TestContainer | undefined;
@@ -161,6 +164,7 @@ export async function startOrgEnv(
   const k = await startKernel(config, {
     env: {},
     ...(overrides.logger !== undefined && { logger: overrides.logger }),
+    ...(overrides.kernelOverrides !== undefined && { overrides: overrides.kernelOverrides }),
   });
   const accounts = accountsFor(db);
   const rootId = (
@@ -209,10 +213,12 @@ export async function startOrgEnv(
 
 /** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
-  // A scope change of the previous test (a share switch, an update) enqueued a scope sync after
-  // its commit. Left running, it holds catalog_items FOR SHARE and then reads the switches while
+  // A scope change of the previous test (a share switch, an update) owed a scope sync with its
+  // commit. Left running, it holds catalog_items FOR SHARE and then reads the switches while
   // the TRUNCATE below holds the switches and waits for catalog_items: a deadlock PostgreSQL only
   // breaks after deadlock_timeout (1 s), and a sync still queued would run into the next test.
+  // A sync still owed (an outbox row not delivered yet) would run into the next test too
+  await env.db.deleteFrom("outbox").where("queue", "=", PLUGIN_SCOPE_QUEUE).execute();
   const scope = env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
   await scope.drain(true);
   await waitFor(async () => (await scope.getActiveCount()) === 0, 30_000, "idle scope syncs");

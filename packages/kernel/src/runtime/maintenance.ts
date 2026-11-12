@@ -177,7 +177,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     SandboxModule,
     ToolsModule,
     OrgsModule,
-    // the removed org plugins' cleanup and its daily sweep (worker-only through this module)
+    // the removed org plugins' cleanup job (worker-only through this module)
     OwnedPluginCleanupModule,
     // the scheduled task fire job and the scanner (worker-only through this module)
     ScheduledTaskFireModule,

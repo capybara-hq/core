@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { OwnedItems } from "../../src/catalog/owned-items.js";
 import { OwnedPluginCleanup } from "../../src/catalog/owned-plugin-cleanup.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { accountsFor } from "../helpers/identity.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
@@ -140,7 +141,9 @@ async function sharedWithB(itemId: string, skill: string): Promise<void> {
     .set({ scope_version: sql<number>`scope_version + 1` })
     .where("id", "=", itemId)
     .execute();
-  await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+  await env.k.app
+    .get(TransactionHost)
+    .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
 }
 
@@ -391,7 +394,9 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
       .set({ scope_mode: "own", scope: "all" })
       .where("catalog_item_id", "=", itemId)
       .execute();
-    await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+    await env.k.app
+      .get(TransactionHost)
+      .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
     for (const org of [orgB, orgC]) {
       await waitFor(
         async () => (await usable(org)).includes("own-all"),

@@ -4,11 +4,8 @@ import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "../../src/catalog/scope-state.js";
-import {
-  PLUGIN_SCOPE_QUEUE,
-  PluginScopeSync,
-  PluginScopeSyncProcessor,
-} from "../../src/catalog/scope-sync.js";
+import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
@@ -35,12 +32,25 @@ beforeEach(async () => {
 });
 
 const sync = () => env.k.app.get(PluginScopeSync);
+/** Owes an item's sync in a transaction of its own (what a scope change does in its own). */
+const enqueueItem = (itemId: string) =>
+  env.k.app.get(TransactionHost).run(() => sync().enqueueItem(itemId));
 const queue = () => env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
 
-/** Waits until the scope queue has nothing waiting, delayed or running. */
+/**
+ * Waits until the scope queue has nothing owed (an outbox row the fast path has not delivered
+ * yet), waiting, delayed or running.
+ */
 async function idle(): Promise<void> {
   await waitFor(
     async () => {
+      const owed = await env.db
+        .selectFrom("outbox")
+        .select("id")
+        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+        .where("dead_at", "is", null)
+        .execute();
+      if (owed.length > 0) return false;
       const c = await queue().getJobCounts("waiting", "active", "delayed", "prioritized");
       return Object.values(c).every((n) => n === 0);
     },
@@ -115,7 +125,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     const orgB = await createOrg(env.root, "Scope B");
     await setScope(env, itemId, "all");
     await bump(itemId);
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     const orgs = await env.db
       .selectFrom("orgs")
@@ -146,7 +156,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     const itemId = await skillsOnly("all-off");
     const orgB = await createOrg(env.root, "All B");
     await setScope(env, itemId, "all");
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual(expect.arrayContaining([env.orgId, orgB]));
     // org A's admin switches it off (preview, then the confirmed uninstall)
@@ -161,15 +171,15 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     expect(off.statusCode, off.body).toBe(200);
     expect(await liveOrgs(itemId)).not.toContain(env.orgId);
     // a resync of the same scope leaves it off
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).not.toContain(env.orgId);
     await setScope(env, itemId, "optional");
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([]);
     await setScope(env, itemId, "all");
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     const live = await liveOrgs(itemId);
     expect(live).not.toContain(env.orgId);
@@ -198,7 +208,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     await setScope(env, itemId, "named", [a, b]);
     await switchRow(itemId, b, false);
     await bump(itemId);
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([a]);
     expect(await sync().syncPair(itemId, b)).toBe("unchanged");
@@ -209,7 +219,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     const itemId = await seedPlugin(env, { name: "tpl", skills: ["tpl-skill"] });
     await setScope(env, itemId, "all");
     await bump(itemId);
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([]);
     expect(await sync().syncPair(itemId, env.orgId)).toBe("needs_config");
@@ -221,12 +231,12 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     const itemId = await skillsOnly("shrinking");
     await setScope(env, itemId, "all");
     await bump(itemId);
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect((await liveOrgs(itemId)).length).toBeGreaterThan(0);
     await setScope(env, itemId, "optional");
     await bump(itemId);
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
     expect(await liveOrgs(itemId)).toEqual([]);
@@ -249,14 +259,14 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     await setScope(env, depId, "named", [y]);
     await bump(appId);
     await bump(depId);
-    await sync().enqueueItem(appId);
-    await sync().enqueueItem(depId);
+    await enqueueItem(appId);
+    await enqueueItem(depId);
     await idle();
     expect(await liveOrgs(appId)).toEqual([x]);
     expect(await liveOrgs(depId)).toEqual([x, y].sort());
     // B in X is A's dependency: wanted on there, the sync leaves it
     expect(await sync().syncPair(depId, x)).toBe("unchanged");
-    await sync().enqueueItem(depId);
+    await enqueueItem(depId);
     await idle();
     expect(await liveOrgs(depId)).toEqual([x, y].sort());
     expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
@@ -368,7 +378,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
   });
 
-  it("a failed scope install leaves the plugin off in the org, and the worker start retries it", async () => {
+  it("a failed scope install leaves the plugin off in the org, and the next sync retries it", async () => {
     // the org's own skill of the same name makes the install fail (plugin.skill_conflict)
     const md = new TextEncoder().encode(SKILL_MD("clash-skill"));
     const own = await env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
@@ -383,7 +393,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     });
     await setScope(env, itemId, "named", [env.orgId]);
     await bump(itemId);
-    await sync().enqueueItem(itemId);
+    await enqueueItem(itemId);
     await idle();
     expect(await liveOrgs(itemId)).toEqual([]);
     const failed = await auditRows("plugin.scope_sync_failed");
@@ -396,17 +406,18 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
       (i) => i.id === itemId,
     );
     expect(item?.state).toBe("off");
-    // the conflict goes away; a worker start enqueues every item again (same scope version)
+    // the conflict goes away; the next sync of the item (a later scope change) installs it
     await env.db
       .updateTable("skills")
       .set({ deleted_at: new Date() })
       .where("id", "=", own.skill.id)
       .execute();
-    env.k.app.get(PluginScopeSyncProcessor).resync();
+    await bump(itemId);
+    await enqueueItem(itemId);
     await waitFor(
       async () => (await liveOrgs(itemId)).includes(env.orgId),
       30_000,
-      "installed by the resync",
+      "installed by the next sync",
     );
     await idle();
   });

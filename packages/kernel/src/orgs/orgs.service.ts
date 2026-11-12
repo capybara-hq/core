@@ -90,7 +90,7 @@ export class OrgsService {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** Cancels the deleted org's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
-    /** A new org gets the plugins its scope offers it (the scope sync, after the commit). */
+    /** A new org gets the plugins its scope offers it (the scope sync, owed with the org). */
     @Inject(PluginScopeSync) private readonly scopeSync: Pick<PluginScopeSync, "enqueueOrg">,
     /** What the deleted org owns is transferred or removed in the delete's transaction (P3-20). */
     @Inject(OwnedItems) private readonly ownedItems: Pick<OwnedItems, "onOrgDeleted">,
@@ -141,7 +141,7 @@ export class OrgsService {
       target: row.id,
       detail: { slug, name },
     });
-    afterCommit(() => this.scopeSync.enqueueOrg(row.id));
+    await this.scopeSync.enqueueOrg(row.id);
     return toOrg(row);
   }
 

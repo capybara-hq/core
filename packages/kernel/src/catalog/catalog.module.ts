@@ -46,10 +46,11 @@ const MAINTENANCE_QUEUE_MODULE = QueueModule.registerQueue(MAINTENANCE_QUEUE_NAM
     StorageModule,
     SkillsModule,
     ToolsModule,
-    // the producer side of the plugin scope sync (`PluginScopeWorkersModule` consumes it)
+    // the plugin scope sync's queue: the outbox dispatcher adds the owed jobs through it
+    // (`PluginScopeWorkersModule` consumes it)
     PLUGIN_SCOPE_QUEUE_MODULE,
-    // a removed org plugin's cleanup job (`OwnedItems`, `CatalogScopeService`; consumed by the
-    // worker role's `MaintenanceProcessor`)
+    // the queue of a removed org plugin's owed cleanup job (`OwnedItems`, `CatalogScopeService`;
+    // consumed by the worker role's `MaintenanceProcessor`)
     MAINTENANCE_QUEUE_MODULE,
   ],
   providers: [

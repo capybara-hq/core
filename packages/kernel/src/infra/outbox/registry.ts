@@ -127,6 +127,43 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `catalog/scope-sync.ts` SCOPE_ITEM_JOB: owed by every transaction that changes an item's
+  // scope, disabled flag, list, owner or platform version, under `scopeItemJobId` (one per scope
+  // version), and by a sync deferred on a replica that had not loaded the extension yet, under
+  // `scopeRetryJobId` with `runAt` (spec §8.1)
+  "scope-item": {
+    queue: "cap-kernel-plugin-scope",
+    idempotent:
+      "the sync converges each (item, org) from the scope, switches and installs it reads under the org's lock, and the installer re-checks under the org row lock, so a second run changes nothing",
+    processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
+    // one attempt (a pair's failure is recorded, not retried); removed once done, so the next
+    // add of the same id is not swallowed
+    opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  },
+  // `catalog/scope-sync.ts` SCOPE_ORG_JOB: owed by an org's creation, under `scopeOrgJobId`
+  "scope-org": {
+    queue: "cap-kernel-plugin-scope",
+    idempotent:
+      "the sync converges each (item, org) of the org from what it reads, so a second run changes nothing",
+    processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
+    opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  },
+  // `catalog/job-ids.ts` OWNED_PLUGIN_CLEANUP_JOB: owed by the removal of an org-owned plugin
+  // (and by a confirmation that took out the extension of an item removed meanwhile), under
+  // `ownedPluginCleanupJobId` (spec §8.1)
+  "owned-plugin-cleanup": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "the cleanup takes the extension out only while no live item uses it, and a missing install or a released claim changes nothing",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // a few retries while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

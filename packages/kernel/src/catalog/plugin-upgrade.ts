@@ -21,7 +21,6 @@ import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { addOrgNotice, itemDisplayName, notifySharedUpdate } from "../inbox/org-notices.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -350,8 +349,8 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   template leaves its connectors as the orgs' own), clears the pins of linked copies, fans
  *   changed templates out to every connector made from them (`applyTemplateIn`, under each org's
  *   row lock, credentials cleared only for a changed credential shape), moves every org install to the version and audits
- *   `plugin.platform_updated`; the scope sync of the item and its dependencies is enqueued after
- *   the commit (orgs get new dependencies by rule 9). A failure rolls the transaction back and
+ *   `plugin.platform_updated`; the scope sync of the item and its dependencies is owed in that
+ *   transaction (orgs get new dependencies by rule 9). A failure rolls the transaction back and
  *   puts the extension back where it was (audit `plugin.platform_update_failed`, 502
  *   `plugin.upgrade_failed`); files copied to `deployment/platform/` stay unreferenced.
  * Storage is never read or written inside the transaction: the target's contents (and the
@@ -963,19 +962,8 @@ export class PlatformPluginUpdater {
         ...opts.auditDetail,
       },
     });
-    const enqueue = [itemId, ...diff.dependencies];
-    afterCommit(async () => {
-      for (const id of enqueue) {
-        try {
-          await this.sync.enqueueItem(id);
-        } catch (err) {
-          this.log.warn("enqueueing the scope sync after a platform update failed", {
-            itemId: id,
-            err,
-          });
-        }
-      }
-    });
+    // The scope sync of the item and its dependencies is owed with the update (outbox spec §8.1)
+    for (const id of [itemId, ...diff.dependencies]) await this.sync.enqueueItem(id);
     return diff;
   }
 
@@ -1685,7 +1673,7 @@ export class PlatformPluginUpdater {
   /**
    * Other platform plugins depending on this one must accept the target (their platform version's
    * dependency range); returns the catalog items of the target's own dependencies (their scope
-   * sync is enqueued after the update: rule 9).
+   * sync is owed with the update: rule 9).
    */
   private async checkDependents(name: string, to: VersionRow): Promise<string[]> {
     const rows = await this.db

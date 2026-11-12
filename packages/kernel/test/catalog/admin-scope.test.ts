@@ -42,10 +42,18 @@ beforeEach(async () => {
 const base = "/api/v1/admin/catalog/items";
 const queue = () => env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE));
 
-/** Waits until the scope queue has nothing waiting, delayed or running. */
+/** Waits until the scope queue has nothing owed, waiting, delayed or running. */
 async function idle(): Promise<void> {
   await waitFor(
     async () => {
+      // an owed row the fast path has not delivered yet is not idle
+      const owed = await env.db
+        .selectFrom("outbox")
+        .select("id")
+        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+        .where("dead_at", "is", null)
+        .execute();
+      if (owed.length > 0) return false;
       const c = await queue().getJobCounts("waiting", "active", "delayed", "prioritized");
       return Object.values(c).every((n) => n === 0);
     },

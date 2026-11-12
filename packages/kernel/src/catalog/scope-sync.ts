@@ -1,7 +1,5 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
-import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Job, Queue, Worker } from "bullmq";
 import type { KernelSchemaDb, ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";
@@ -11,8 +9,8 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import type { OneJob } from "../infra/queue/add-job-once.js";
-import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
@@ -43,12 +41,12 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * super admin's inbox, until a later sync of the pair does not fail) and not retried until the next
  * enqueue. An error outside those steps (a read, the failure write itself) ends the attempt without
  * touching the pair's row, so an older failure stays open.
- * Every worker start enqueues every live item once ({@link PluginScopeSync.enqueueAll}), which
- * also catches a lost enqueue.
  *
  * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}): one per item and scope version
  * (`scope-item-<itemId>-<scope_version>`, every org), one per org (`scope-org-<orgId>`, every item,
- * enqueued after the org is created). Both are removed when done, so the next enqueue with the same
+ * owed by the org's creation). Both are owed in the outbox by the transaction that changes what
+ * they converge to (transactional outbox spec §8.1), so none is lost; a migration that changes a
+ * scope inserts its outbox rows itself. Both are removed when done, so the next add with the same
  * id is not swallowed. Pairs of one org are serialized across replicas by a Redis lock per org; the
  * installer's org row lock and its one-live-install rule are the backstop.
  */
@@ -110,7 +108,10 @@ export async function reconcileWithin(
   }
 }
 
-/** The item job of a scope version (what {@link PluginScopeSync.enqueueItem} adds). */
+/**
+ * The item job of a scope version with its BullMQ options, for the CLI, which adds it directly
+ * (it has no outbox; {@link PluginScopeSync.enqueueItem} owes the same job id).
+ */
 export function scopeItemJob(itemId: string, version: number): OneJob<ScopeJob> {
   return {
     name: SCOPE_ITEM_JOB,
@@ -142,7 +143,7 @@ const LIVE = ["installing", "installed", "upgrading"] as const;
 export class PluginScopeSync {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    @Inject(getQueueToken(PLUGIN_SCOPE_QUEUE)) private readonly queue: Queue<ScopeJob>,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     /** This replica's reconcile, awaited (bounded) before deferring an install (P3-38). */
@@ -156,7 +157,11 @@ export class PluginScopeSync {
     return this.kdb.db;
   }
 
-  /** Enqueues the sync of an item in every org, once per scope version. Call after the commit. */
+  /**
+   * Owes the sync of an item in every org, once per scope version (the version read in the
+   * caller's transaction, so after its own bump), in the transaction that changes the scope.
+   */
+  @Transactional({ propagation: "mandatory" })
   async enqueueItem(itemId: string): Promise<void> {
     const row = await this.db
       .selectFrom("catalog_items")
@@ -164,33 +169,24 @@ export class PluginScopeSync {
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!row) return;
-    const job = scopeItemJob(itemId, row.scope_version);
-    await this.queue.add(job.name, job.data, job.opts);
+    await this.outbox.add<ScopeJob>({
+      queue: PLUGIN_SCOPE_QUEUE,
+      name: SCOPE_ITEM_JOB,
+      jobId: scopeItemJobId(itemId, row.scope_version),
+      data: { kind: "item", itemId },
+    });
   }
 
-  /**
-   * Enqueues the sync of every live, not builtin item (a worker start): retries what failed or was
-   * never enqueued (a lost `afterCommit` enqueue, a migrated scope). The job ids are the items'
-   * scope versions, so replicas starting together add each one once.
-   */
-  async enqueueAll(): Promise<void> {
-    const items = await this.db
-      .selectFrom("catalog_items")
-      .select("id")
-      .where("deleted_at", "is", null)
-      .where("builtin", "=", false)
-      .orderBy("id")
-      .execute();
-    for (const i of items) await this.enqueueItem(i.id);
-  }
-
-  /** Enqueues the sync of every item in an org (a new org). Call after the commit. */
+  /** Owes the sync of every item in an org, in the transaction that creates the org. */
+  @Transactional({ propagation: "mandatory" })
   async enqueueOrg(orgId: string): Promise<void> {
-    await this.queue.add(
-      SCOPE_ORG_JOB,
-      { kind: "org", orgId },
-      { jobId: scopeOrgJobId(orgId), attempts: 1, removeOnComplete: true, removeOnFail: true },
-    );
+    await this.outbox.add<ScopeJob>({
+      queue: PLUGIN_SCOPE_QUEUE,
+      name: SCOPE_ORG_JOB,
+      jobId: scopeOrgJobId(orgId),
+      data: { kind: "org", orgId },
+      orgId,
+    });
   }
 
   /** One job: every org of an item, or every item of an org; `signal` stops between pairs. */
@@ -236,7 +232,11 @@ export class PluginScopeSync {
     }
   }
 
-  /** The delayed retry `n` of an item job (deterministic id, P3-38). */
+  /**
+   * Owes the delayed retry `n` of an item job (deterministic id, P3-38) in a transaction of its
+   * own: the job's own follow-up, delivered by the relay once due.
+   */
+  @Transactional()
   private async enqueueRetry(itemId: string, n: number): Promise<void> {
     const row = await this.db
       .selectFrom("catalog_items")
@@ -244,17 +244,13 @@ export class PluginScopeSync {
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!row) return;
-    await this.queue.add(
-      SCOPE_ITEM_JOB,
-      { kind: "item", itemId, retry: n },
-      {
-        jobId: scopeRetryJobId(itemId, row.scope_version, n),
-        delay: SCOPE_LOAD_RETRY_DELAY_MS,
-        attempts: 1,
-        removeOnComplete: true,
-        removeOnFail: true,
-      },
-    );
+    await this.outbox.add<ScopeJob>({
+      queue: PLUGIN_SCOPE_QUEUE,
+      name: SCOPE_ITEM_JOB,
+      jobId: scopeRetryJobId(itemId, row.scope_version, n),
+      data: { kind: "item", itemId, retry: n },
+      runAt: new Date(Date.now() + SCOPE_LOAD_RETRY_DELAY_MS),
+    });
   }
 
   /**
@@ -569,53 +565,5 @@ export class PluginScopeSync {
       .values({ item_id: itemId, org_id: orgId, ...failure })
       .onConflict((oc) => oc.columns(["item_id", "org_id"]).doUpdateSet(failure))
       .execute();
-  }
-}
-
-/** The consumer of {@link PLUGIN_SCOPE_QUEUE}: {@link PluginScopeSync}. */
-@Injectable()
-export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
-  private readonly stopping = new AbortController();
-
-  constructor(
-    @Inject(PluginScopeSync) private readonly sync: PluginScopeSync,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error">,
-  ) {
-    super();
-  }
-
-  process(job: Job<ScopeJob>): Promise<void> {
-    return runJob(PLUGIN_SCOPE_QUEUE, job, () => this.sync.process(job.data, this.stopping.signal));
-  }
-
-  /** Starts consuming (worker role, after the extensions loaded; built with `autorun: false`). */
-  start(): void {
-    void this.worker.run().catch((err) => this.error(err));
-  }
-
-  /**
-   * Enqueues every live item's sync once (the worker role, after the start gate opened), in the
-   * background; a failure is only logged (the next worker start, or the next change, enqueues).
-   */
-  resync(): void {
-    void this.sync
-      .enqueueAll()
-      .catch((err) => this.log.error("plugin scope resync failed", { err }));
-  }
-
-  /** Stops between pairs and closes the worker. */
-  async close(): Promise<void> {
-    this.stopping.abort();
-    await this.worker.close();
-  }
-
-  @OnWorkerEvent("failed")
-  failed(job: Job<ScopeJob> | undefined, err: Error): void {
-    this.log.error("plugin scope job failed", { name: job?.name, jobId: job?.id, err });
-  }
-
-  @OnWorkerEvent("error")
-  error(err: Error): void {
-    this.log.error("plugin scope worker error", { err });
   }
 }

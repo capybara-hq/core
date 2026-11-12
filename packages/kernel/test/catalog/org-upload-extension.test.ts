@@ -17,6 +17,7 @@ import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { PluginInstallLock } from "../../src/extensions/locks.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
@@ -225,7 +226,9 @@ async function sharedWithB(itemId: string, skill: string): Promise<void> {
     .set({ scope_version: sql<number>`scope_version + 1` })
     .where("id", "=", itemId)
     .execute();
-  await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+  await env.k.app
+    .get(TransactionHost)
+    .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
 }
 
@@ -808,15 +811,22 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
     );
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
-    // the sync defers (no install, no failure) and queues a delayed retry of the item
+    // the sync defers (no install, no failure) and owes a delayed retry of the item (an outbox
+    // row due in a few seconds, then the queued job)
     const row = await itemRow("ext-late");
+    const retryId = scopeRetryJobId(itemId, row?.scope_version ?? 0, 1);
     await waitFor(
       async () =>
-        (await env.k.app
-          .get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE))
-          .getJob(scopeRetryJobId(itemId, row?.scope_version ?? 0, 1))) !== undefined,
+        (await env.db
+          .selectFrom("outbox")
+          .select("id")
+          .where("queue", "=", PLUGIN_SCOPE_QUEUE)
+          .where("job_id", "=", retryId)
+          .executeTakeFirst()) !== undefined ||
+        (await env.k.app.get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE)).getJob(retryId)) !==
+          undefined,
       15_000,
-      "retry job queued",
+      "retry job owed",
     );
     expect(
       await env.db
@@ -909,7 +919,7 @@ describe("final review fixes: package identity and version applicability (P3-51,
       })
       .execute();
     expect(await installRow("pk-a")).toBeDefined();
-    await env.k.app.get(OwnedPluginCleanup).sweep();
+    await env.k.app.get(OwnedPluginCleanup).run(itemA);
     expect(await installRow("pk-a")).toBeUndefined();
     expect(await claimOf("pk-a")).toBeUndefined();
   });

@@ -1,4 +1,6 @@
-/** The catalog's periodic jobs (a leaf module: no imports). */
+import type { OutboxService } from "../infra/outbox/outbox.service.js";
+
+/** The catalog's job names and ids (a leaf module: type imports only). */
 
 /**
  * Periodic marketplace refresh (C26), every `marketplaces.refreshIntervalMinutes` (a
@@ -22,39 +24,28 @@ export const PLUGIN_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
  */
 export const OWNED_PLUGIN_CLEANUP_JOB = "owned-plugin-cleanup";
 
-/** The daily `@LockedCron` repairing lost {@link OWNED_PLUGIN_CLEANUP_JOB} enqueues. */
-export const OWNED_PLUGIN_CLEANUP_SWEEP_JOB = "owned-plugin-cleanup-sweep";
-
 /** The data of an {@link OWNED_PLUGIN_CLEANUP_JOB}. */
 export interface OwnedPluginCleanupData {
   itemId: string;
 }
 
+/** The cleanup job id of one removed item (no `:`: item ids are UUIDs). */
+export const ownedPluginCleanupJobId = (itemId: string): string =>
+  `${OWNED_PLUGIN_CLEANUP_JOB}-${itemId}`;
+
 /**
- * The cleanup job of one removed item: id `owned-plugin-cleanup-<itemId>` (no `:`: item ids are
- * UUIDs), removed when done so a later enqueue of the same item is not swallowed; the job is
- * idempotent, so a few retries are safe.
+ * Owes the cleanup of removed item `itemId` in the transaction in context (transactional outbox
+ * spec §8.1): the removal and its cleanup commit together. Platform work (no org: the owner org
+ * may be the one being deleted). The job's options are its outbox registry entry's.
  */
-export function ownedPluginCleanupJob(itemId: string): {
-  name: string;
-  data: OwnedPluginCleanupData;
-  opts: {
-    jobId: string;
-    attempts: number;
-    backoff: { type: "exponential"; delay: number };
-    removeOnComplete: true;
-    removeOnFail: true;
-  };
-} {
-  return {
+export function oweOwnedPluginCleanup(
+  outbox: Pick<OutboxService, "add">,
+  itemId: string,
+): Promise<boolean> {
+  return outbox.add<OwnedPluginCleanupData>({
+    queue: "cap-kernel-maintenance",
     name: OWNED_PLUGIN_CLEANUP_JOB,
+    jobId: ownedPluginCleanupJobId(itemId),
     data: { itemId },
-    opts: {
-      jobId: `${OWNED_PLUGIN_CLEANUP_JOB}-${itemId}`,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 5_000 },
-      removeOnComplete: true,
-      removeOnFail: true,
-    },
-  };
+  });
 }
