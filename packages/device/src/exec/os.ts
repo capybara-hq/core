@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir, constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   type SandboxAskCallback,
   SandboxManager,
@@ -314,6 +314,20 @@ export class OsExecutor implements Executor {
   }
 
   /**
+   * `<dir>/git-template`, an empty directory commands can read but not write (it is outside the
+   * roots), made on demand; undefined when it cannot be made.
+   */
+  private gitTemplate(): string | undefined {
+    const path = join(this.dir, "git-template");
+    try {
+      mkdirSync(path, { recursive: true, mode: 0o755 });
+      return lstatSync(path).isDirectory() ? path : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * The marker value of a tag's processes. An exec's processes carry `<this>.<exec id>` (see
    * {@link execMarker}); {@link killTagged} matches both.
    */
@@ -351,6 +365,7 @@ export class OsExecutor implements Executor {
     if (dev && process.platform === "darwin") this.prepareSocketDir();
     // dev / open on macOS: the short socket directory, where unix sockets are allowed.
     const tmp = dev && this.socketDir !== undefined ? this.socketDir : this.roots.tmp;
+    const gitTemplate = dev ? this.gitTemplate() : undefined;
     const inner: Record<string, string> = {
       // The user's PATH applies inside the sandbox only (the wrapper runs with OUTER_ENV).
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -364,6 +379,8 @@ export class OsExecutor implements Executor {
       ...toolHomeEnv(this.opts.home ?? homedir()),
       // dev / open: package caches under <dir>/cache; the command's own values win.
       ...(dev && cacheEnv(this.cacheDir, { create: true })),
+      // dev / open may write .git/config but never .git/hooks: init and clone copy no sample hooks.
+      ...(dev && gitTemplate !== undefined && { GIT_TEMPLATE_DIR: gitTemplate }),
       ...o.env,
       // The runtime points TMPDIR at its own /tmp/claude (denied by the config): use ours.
       TMPDIR: tmp,

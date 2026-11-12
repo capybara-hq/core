@@ -230,6 +230,8 @@ export interface SrtConfig {
     denyRead: string[];
     allowWrite: string[];
     denyWrite: string[];
+    /** Whether commands may write `.git/config` (`dev` / `open`); `.git/hooks` never. */
+    allowGitConfig: boolean;
   };
   network: {
     allowedDomains: string[];
@@ -258,6 +260,27 @@ export interface SrtConfigOptions {
   cacheDir?: string;
 }
 
+/** Characters the sandbox runtime reads as a glob in a path entry. */
+const GLOB_CHARS = /[*?[\]{}]/;
+
+/**
+ * Write denies for git under each writable root (spec §5.2.1): `.git/hooks` at every tier (a hook
+ * is code that runs unsandboxed when the owner later runs git there), `.git/config` at `strict`.
+ * The runtime has the same mandatory denies, but anchored at this program's own working directory,
+ * which may not contain the roots. A root whose path reads as a glob gets none (it cannot be
+ * anchored literally); the runtime's own denies still apply when it lies under the working
+ * directory.
+ */
+function gitWriteDenies(writable: string[], gitConfig: boolean): string[] {
+  const out: string[] = [];
+  for (const root of writable) {
+    if (GLOB_CHARS.test(root)) continue;
+    out.push(`${root}/.git/hooks/**`, `${root}/**/.git/hooks/**`);
+    if (!gitConfig) out.push(`${root}/.git/config`, `${root}/**/.git/config`);
+  }
+  return out;
+}
+
 /**
  * The sandbox-runtime configuration (spec §5.1, §5.2.3): writes only under the workspace and tmp
  * roots (the runtime's implicit write paths denied), skills read only, the secret paths (plus
@@ -270,6 +293,8 @@ export interface SrtConfigOptions {
  * and use unix sockets under the tmp root, the workspace and the socket directory. On Linux unix
  * sockets stay blocked (srt can only allow all of them there, the host daemons' included) and the
  * sandbox's own network namespace gives it a loopback anyway. `allowAllUnixSockets` is never set.
+ * `dev` and `open` may write `.git/config` (so git can init, clone, set remotes and config);
+ * `.git/hooks` stays unwritable at every tier ({@link gitWriteDenies}).
  */
 export function srtConfig(
   policy: Policy,
@@ -282,16 +307,18 @@ export function srtConfig(
   const darwin = platform === "darwin";
   const dev = tier !== "strict";
   const socketDir = darwin && dev ? opts.socketDir : undefined;
+  const allowWrite = [
+    roots.workspace,
+    roots.tmp,
+    ...(socketDir !== undefined ? [socketDir] : []),
+    ...(dev && opts.cacheDir !== undefined ? [opts.cacheDir] : []),
+  ];
   return {
     filesystem: {
       denyRead: [...deniedSecretPaths(opts.home), ...(opts.denyRead ?? [])],
-      allowWrite: [
-        roots.workspace,
-        roots.tmp,
-        ...(socketDir !== undefined ? [socketDir] : []),
-        ...(dev && opts.cacheDir !== undefined ? [opts.cacheDir] : []),
-      ],
-      denyWrite: [roots.skills, ...implicitWritePaths()],
+      allowWrite,
+      denyWrite: [roots.skills, ...implicitWritePaths(), ...gitWriteDenies(allowWrite, dev)],
+      allowGitConfig: dev,
     },
     network: {
       allowedDomains: [...egress],

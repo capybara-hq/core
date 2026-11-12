@@ -158,6 +158,16 @@ default) and loses the key at the next change; `start` says so at each start whi
 
 #### Local servers, sockets and caches at `dev` and `open`
 
+- **Git.** Commands may write `.git/config`, so `git init`, `git clone`, `git config`,
+  `git remote add` and branch tracking work. `.git/hooks` stays unwritable at every tier (a hook is
+  code that runs unsandboxed when you later run git in that folder yourself), and `GIT_TEMPLATE_DIR`
+  points at an empty, read-only `<dir>/git-template`, so init and clone copy no sample hooks. At
+  `strict`, `.git/config` stays unwritable too. Remaining risk: a `.git/config` a command wrote can
+  set `core.hooksPath`, `core.fsmonitor`, `core.sshCommand` or similar, which run when you later
+  run git in that repository on your own machine. Treat a repository a command created or
+  configured like any downloaded one (check `git config --local --list` before running git there),
+  or keep the device at `strict`.
+
 - **Local servers (macOS).** Commands may listen on local ports (a dev server, a browser's
   debugging port) and connect to this machine's localhost. That also reaches any local proxy that
   forwards past the network allowlist (Clash and the like) or Docker's TCP API, so the program

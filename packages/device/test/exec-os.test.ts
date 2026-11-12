@@ -713,5 +713,62 @@ describe.skipIf(!availability.ok || process.platform !== "darwin")(
       expect(r.stdout.trim()).toBe("ok");
       expect(readFileSync(join(base, "env", "cache", "npm", "x", "f"), "utf8")).toBe("ok\n");
     }, 30_000);
+
+    it("git works at dev (init, config, commit); .git/hooks stays unwritable", async () => {
+      const r = await ex.exec(
+        execArgs(
+          "rm -rf repo && git init -q repo && cd repo && git config user.name x && " +
+            "git config user.email x@example.com && git commit -q --allow-empty -m t && " +
+            "git remote add origin https://example.com/r.git && git log --format=%s && ls .git/hooks 2>/dev/null | wc -l",
+          { limits: DEV },
+        ),
+        never,
+      );
+      // /usr/bin/git is an xcrun shim whose cache lives outside the sandbox's writable paths
+      const stderr = r.stderr
+        .split("\n")
+        .filter((l) => l !== "" && !l.includes("xcrun_db"))
+        .join("\n");
+      expect(stderr).toBe("");
+      expect(r.exitCode).toBe(0);
+      // the commit's subject, and no sample hooks copied (the device's empty template)
+      expect(r.stdout.split("\n").map((l) => l.trim())).toEqual(["t", "0", ""]);
+      const hook = await ex.exec(
+        execArgs("mkdir -p repo/.git/hooks; echo 'echo pwned' > repo/.git/hooks/pre-commit", {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(hook.exitCode).not.toBe(0);
+      expect(existsSync(join(ex.roots.workspace, "repo/.git/hooks/pre-commit"))).toBe(false);
+      // a clone writes its config (origin, branch tracking) too
+      const clone = await ex.exec(
+        execArgs("rm -rf copy && git clone -q repo copy && git -C copy config remote.origin.url", {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(clone.exitCode).toBe(0);
+      expect(clone.stdout.trim()).toMatch(/\/repo$/);
+      // a hook path through a nested repository is denied too
+      const nested = await ex.exec(
+        execArgs("mkdir -p a/b/.git/hooks 2>/dev/null; echo x > a/b/.git/hooks/post-checkout", {
+          limits: DEV,
+        }),
+        never,
+      );
+      expect(nested.exitCode).not.toBe(0);
+    }, 30_000);
+
+    it("strict keeps .git/config unwritable", async () => {
+      const r = await ex.exec(
+        execArgs("rm -rf srepo && mkdir -p srepo/.git && echo '[core]' > srepo/.git/config"),
+        never,
+      );
+      expect(r.exitCode).not.toBe(0);
+      expect(existsSync(join(ex.roots.workspace, "srepo/.git/config"))).toBe(false);
+      const init = await ex.exec(execArgs("rm -rf srepo2 && git init -q srepo2"), never);
+      expect(init.exitCode).not.toBe(0);
+    }, 30_000);
   },
 );
