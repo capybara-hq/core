@@ -1,4 +1,4 @@
-import { constants, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
@@ -15,6 +15,75 @@ export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** The roots of a device directory: `<dir>/workspace`, `<dir>/skills`, `<dir>/tmp`. */
 export function osRoots(dir: string): SandboxRoots {
   return { workspace: join(dir, "workspace"), skills: join(dir, "skills"), tmp: join(dir, "tmp") };
+}
+
+/** The device's package caches: `<dir>/cache`, outside the workspace (spec §5.2.1). */
+export function cacheRoot(dir: string): string {
+  return join(dir, "cache");
+}
+
+/** Each cache variable of `dev` / `open` and its folder under the cache root. */
+const CACHE_DIRS: readonly (readonly [string, string])[] = [
+  ["XDG_CACHE_HOME", "xdg"],
+  ["npm_config_cache", "npm"],
+  ["npm_config_store_dir", "pnpm-store"],
+  ["PIP_CACHE_DIR", "pip"],
+  ["UV_CACHE_DIR", "uv"],
+  ["CARGO_HOME", "cargo"],
+  ["GOMODCACHE", "go-mod"],
+  ["GOCACHE", "go-build"],
+  ["GRADLE_USER_HOME", "gradle"],
+  ["MAVEN_OPTS", "maven"],
+  ["PLAYWRIGHT_BROWSERS_PATH", "ms-playwright"],
+  ["COREPACK_HOME", "corepack"],
+];
+
+/**
+ * The cache variables of `dev` / `open` (spec §5.2.1), each pointing at a folder of `root`
+ * (`MAVEN_OPTS` as `-Dmaven.repo.local=<folder>`). With `create`, the folders are made on demand.
+ * A command's own value wins: callers apply the request's environment after these.
+ */
+export function cacheEnv(root: string, opts: { create?: boolean } = {}): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, sub] of CACHE_DIRS) {
+    const path = join(root, sub);
+    if (opts.create === true) mkdirSync(path, { recursive: true, mode: 0o700 });
+    out[name] = name === "MAVEN_OPTS" ? `-Dmaven.repo.local=${path}` : path;
+  }
+  return out;
+}
+
+/**
+ * The short socket directory of a device on macOS (spec §5.2.3): `<base>/cap-<first 8 hex of the
+ * device's key>`, short enough for Chromium's singleton socket (unix socket paths stop at 104
+ * bytes). `base` is `/private/tmp` outside tests.
+ */
+export function socketDirPath(dirKey: string, base = "/private/tmp"): string {
+  return join(base, `cap-${dirKey.slice(0, 8)}`);
+}
+
+/**
+ * Creates the socket directory (mode 0700), or checks an existing one is a real directory of this
+ * user and makes it 0700 again. Returns undefined when the path is taken by something else (another
+ * user's directory or a link in the shared /tmp): commands then use the tmp root.
+ */
+export function prepareSocketDir(path: string): string | undefined {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+  }
+  try {
+    const st = lstatSync(path);
+    const uid = process.getuid?.();
+    if (!st.isDirectory() || st.isSymbolicLink() || (uid !== undefined && st.uid !== uid)) {
+      return undefined;
+    }
+    chmodSync(path, 0o700);
+    return path;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
