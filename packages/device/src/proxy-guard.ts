@@ -4,10 +4,14 @@ import { connect } from "node:net";
 /**
  * The macOS localhost proxy guard (spec §5.2.3). `dev` lets sandboxed commands reach any port on
  * this machine's localhost, which includes a local proxy that forwards past the network allowlist
- * (Clash and the like) or Docker's TCP API. The device looks for one at start and whenever the
- * policy is reloaded; when it finds one, `dev` / `open` run without local binding unless the owner
- * set `localhost: allow`.
+ * (Clash and the like) or Docker's TCP API. The device looks for one at start, whenever the
+ * policy is reloaded and again before a command once the last result is older than
+ * {@link PROXY_GUARD_TTL_MS}; when it finds one, `dev` / `open` run without local binding unless the
+ * owner set `localhost: allow`. A check that cannot run on macOS counts as a finding (fail safe).
  */
+
+/** How long a proxy guard result is used before the next command runs the guard again. */
+export const PROXY_GUARD_TTL_MS = 30_000;
 
 /** Common local proxy ports (Clash, V2Ray, Surge, Privoxy, Tor) and Docker's TCP API ports. */
 export const PROXY_PORTS: readonly number[] = Object.freeze([
@@ -68,7 +72,15 @@ export function parseScutilProxy(text: string): string[] {
   return out;
 }
 
-/** The proxy variables of `env` (any case) whose host is loopback, as `NAME=value`. */
+/** `value` with the user and password of a proxy URL (`user:pass@`) replaced by `***@`. */
+export function redactProxyUserinfo(value: string): string {
+  return value.replace(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)?[^@/]*@/, "$1***@");
+}
+
+/**
+ * The proxy variables of `env` (any case) whose host is loopback, as `NAME=value` (credentials in
+ * the value redacted: the result is printed and logged).
+ */
 export function loopbackProxyEnv(env: Record<string, string | undefined>): string[] {
   const out: string[] = [];
   for (const [name, value] of Object.entries(env)) {
@@ -80,7 +92,7 @@ export function loopbackProxyEnv(env: Record<string, string | undefined>): strin
     } catch {
       continue;
     }
-    if (isLoopbackHost(host)) out.push(`${name}=${value}`);
+    if (isLoopbackHost(host)) out.push(`${name}=${redactProxyUserinfo(value)}`);
   }
   return out;
 }
@@ -118,16 +130,16 @@ export function probeLoopbackPort(
  * Looks for a local forwarding proxy: the system proxy (macOS `scutil --proxy`), loopback proxy
  * variables in the program's environment, and a listener on {@link PROXY_PORTS} of 127.0.0.1 or
  * ::1. A proxy configured only through a PAC file (automatic proxy configuration) is not read.
- * Never throws: a check that cannot run finds nothing.
+ * Never throws. On macOS a system proxy setting that cannot be read counts as found (fail safe);
+ * a port probe that cannot run finds nothing.
  */
 export async function detectLocalProxy(deps: ProxyGuardDeps = {}): Promise<ProxyGuardResult> {
   const platform = deps.platform ?? process.platform;
   const reasons: string[] = [];
   if (platform === "darwin") {
     const text = await (deps.scutil ?? runScutil)().catch(() => undefined);
-    if (text !== undefined) {
-      for (const p of parseScutilProxy(text)) reasons.push(`system proxy ${p}`);
-    }
+    if (text === undefined) reasons.push("the system proxy settings could not be read");
+    else for (const p of parseScutilProxy(text)) reasons.push(`system proxy ${p}`);
   }
   for (const v of loopbackProxyEnv(deps.env ?? process.env)) reasons.push(`environment ${v}`);
   const probe = deps.probe ?? ((port: number, host: string) => probeLoopbackPort(port, host));

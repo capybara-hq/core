@@ -114,7 +114,7 @@ describe("proxy guard", () => {
     ]);
   });
 
-  it("asks scutil on macOS only; a failing check finds nothing", async () => {
+  it("asks scutil on macOS only; unreadable system settings count as a proxy", async () => {
     let asked = false;
     const scutil = async () => {
       asked = true;
@@ -134,7 +134,34 @@ describe("proxy guard", () => {
         throw new Error("no socket");
       },
     });
-    expect(broken).toEqual({ detected: false, reasons: [] });
+    expect(broken).toEqual({
+      detected: true,
+      reasons: ["the system proxy settings could not be read"],
+    });
+    const failed = await detectLocalProxy({
+      ...nothing,
+      platform: "darwin",
+      scutil: async () => undefined,
+    });
+    expect(failed.detected).toBe(true);
+  });
+
+  it("redacts a proxy URL's user and password", async () => {
+    const r = await detectLocalProxy({
+      ...nothing,
+      platform: "linux",
+      env: {
+        HTTPS_PROXY: "http://me:s3cret@127.0.0.1:7890",
+        all_proxy: "u:p@localhost:1080",
+        http_proxy: "socks5://127.0.0.1:7891",
+      },
+    });
+    expect(r.reasons).toEqual([
+      "environment HTTPS_PROXY=http://***@127.0.0.1:7890",
+      "environment all_proxy=***@localhost:1080",
+      "environment http_proxy=socks5://127.0.0.1:7891",
+    ]);
+    expect(r.reasons.join(" ")).not.toContain("s3cret");
   });
 
   it("the TCP probe sees a listener and a closed port", async () => {

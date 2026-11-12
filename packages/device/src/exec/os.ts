@@ -32,7 +32,7 @@ import {
   type TierFacts,
   tierFacts,
 } from "../policy.js";
-import { detectLocalProxy, type ProxyGuardResult } from "../proxy-guard.js";
+import { detectLocalProxy, PROXY_GUARD_TTL_MS, type ProxyGuardResult } from "../proxy-guard.js";
 import type { Policy } from "../state.js";
 import { FS_HELPER_SCRIPT } from "./fs-helper.js";
 import { EXEC_MARKER, killMarked } from "./procs.js";
@@ -166,6 +166,7 @@ export class OsExecutor implements Executor {
   /** The latest proxy guard result, and the policy object it was taken for. */
   private proxy: ProxyGuardResult = { detected: false, reasons: [] };
   private guardedPolicy: Policy | undefined;
+  private guardedAt = 0;
   /** The configuration the sandbox runs with now, as JSON (see {@link applyConfig}). */
   private installed: string | undefined;
   /**
@@ -249,16 +250,23 @@ export class OsExecutor implements Executor {
   }
 
   /**
-   * Runs the localhost proxy guard when the policy was reloaded since the last run (the store
-   * returns a new object for each new version of policy.json), and at creation.
+   * Runs the localhost proxy guard at creation, when the policy was reloaded since the last run
+   * (the store returns a new object for each new version of policy.json), and when the last result
+   * is older than {@link PROXY_GUARD_TTL_MS} (a proxy started after this program). A guard that
+   * fails counts as a proxy found (fail safe; `localhost: allow` still overrides).
    */
   async refreshProxyGuard(policy: Policy): Promise<void> {
-    if (policy === this.guardedPolicy) return;
+    const now = Date.now();
+    if (policy === this.guardedPolicy && now - this.guardedAt < PROXY_GUARD_TTL_MS) return;
     this.guardedPolicy = policy;
+    this.guardedAt = now;
     try {
       this.proxy = await (this.opts.detectProxy ?? (() => detectLocalProxy()))();
-    } catch {
-      // A guard that fails finds nothing new; the last result stands.
+    } catch (e) {
+      this.proxy = {
+        detected: true,
+        reasons: [`the localhost proxy guard failed: ${(e as Error).message}`],
+      };
     }
   }
 

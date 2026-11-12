@@ -504,18 +504,47 @@ describe("OsExecutor tiers (mocked runtime)", () => {
     },
   );
 
-  it("runs the proxy guard at creation and again only when the policy is reloaded", async () => {
+  it("runs the proxy guard at creation, when the policy is reloaded and when it is stale", async () => {
     policy = { ...policy, tier: "dev" };
-    const ex = await make();
-    await ex.ensureRoot();
-    expect(proxyChecks).toBe(1);
-    await ex.exec(execArgs("true"), never);
-    await ex.exec(execArgs("true"), never);
-    expect(proxyChecks).toBe(1);
-    // the store hands out a new object for each new version of policy.json
-    policy = { ...policy };
-    await ex.exec(execArgs("true"), never);
-    expect(proxyChecks).toBe(2);
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const ex = await make();
+      await ex.ensureRoot();
+      expect(proxyChecks).toBe(1);
+      await ex.exec(execArgs("true"), never);
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(1);
+      // the store hands out a new object for each new version of policy.json
+      policy = { ...policy };
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(2);
+      // a proxy started later: the guard runs again once its result is 30 s old
+      now += 29_000;
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(2);
+      now += 1_000;
+      await ex.exec(execArgs("true"), never);
+      expect(proxyChecks).toBe(3);
+      await ex.dispose();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a proxy guard that fails counts as a proxy found", async () => {
+    const ex = await createOsExecutor({
+      dir: join(base, "env"),
+      policy: () => policy,
+      socketBase: base,
+      detectProxy: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(ex.proxyGuard()).toEqual({
+      detected: true,
+      reasons: ["the localhost proxy guard failed: boom"],
+    });
     await ex.dispose();
   });
 
