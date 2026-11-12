@@ -238,7 +238,12 @@ describe("conversations.source (memory plugin spec §6.2)", { timeout: 90_000 },
       .where("conversation_id", "=", conv as string)
       .execute();
     expect(bound).toEqual([]);
-    expect(im.sent.slice(sent).filter((s) => s.target.chatId === "grp-1")).toEqual([]);
+    // the run's first post would be a top-level message (the thread root); replies to the earlier
+    // inbound group message go into that message's thread and may still arrive meanwhile
+    const roots = im.sent
+      .slice(sent)
+      .filter((s) => s.target.chatId === "grp-1" && s.target.threadId === undefined);
+    expect(roots).toEqual([]);
     expect(await sourceOf(conv as string)).toBe("channel_group");
     openBarrier(HOLD);
   });
