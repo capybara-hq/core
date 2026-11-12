@@ -160,6 +160,10 @@ org switches it on.
 `memory_links`: `(from_id, to_path)` parsed from `[[…]]` on every write; resolved to a memory by path
 at read time, so a dangling link becomes live when its target is written.
 
+`owners`: `(org_id, agent_id, account_id, agent_name, owner_name, seen_at)`, upserted from each
+context request, so the page can name agents and members without a kernel lookup API
+**(designer's call)**.
+
 `admin_access_log`: one row per admin view of, or delete in, another member's memory (who, whose,
 which agent, what, when). Not shown in v1; kept for audit questions **(designer's call)**.
 
@@ -282,6 +286,8 @@ interface ContextRequest {
   source: ConversationSource; // §6.2
   role: "owner" | "admin" | "member" | "guest";
   ownerAccountId: string;     // the conversation's owner; accountId is the run's trigger account
+  agentName: string;          // display names, so a provider's own pages can label what it stores
+  ownerName: string;
   tools: string[];            // this plugin's tool keys available in this run, after every filter
   config: unknown;            // the effective config for the org
   signal: AbortSignal;
