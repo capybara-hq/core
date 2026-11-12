@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
-import { drain } from "./commands/drain.js";
+import { drain, drainAndWait } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import {
@@ -143,7 +143,12 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
     case "stop":
       return stop(dir, out, err, io.kill);
     case "drain":
-      return drain(dir, out, err, io.kill);
+      if (cmd.wait !== true) return drain(dir, out, err, io.kill);
+      return drainAndWait(dir, out, err, {
+        ...(io.kill && { kill: io.kill }),
+        ...(io.sleep && { sleep: io.sleep }),
+        ...(cmd.timeoutSeconds !== undefined && { timeoutMs: cmd.timeoutSeconds * 1000 }),
+      });
     case "policy": {
       // `set isolation none` that cannot apply (Docker mode, no local tier open): refused before
       // any risk text or question (policyCommand refuses it too, under the lock).
@@ -172,6 +177,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         out,
         err,
         ...(io.runSystem && { run: io.runSystem }),
+        ...(io.sleep && { sleep: io.sleep }),
       });
   }
 }

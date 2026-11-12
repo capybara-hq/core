@@ -21,7 +21,8 @@ the code to enter on any signed-in browser, where you pick the org and the devic
 an existing connected one of yours) after reading what the program can do. Logging in again from
 another machine into the same device replaces the first machine (its credential is revoked).
 `stop` ends the running program, `drain` makes it accept no new commands and exit when the running
-ones finish. `logout` stops a running program, then forgets the credential (the machine stays
+ones finish (`drain --wait [--timeout <seconds>]` returns only once it has exited, at most 600 s by
+default). `logout` stops a running program, then forgets the credential (the machine stays
 connected on the platform until it is revoked there). Deleting the device in the web app
 revokes the machine and stops the program; the files in the working directory stay on your machine.
 
@@ -43,7 +44,7 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]`, `start`, `stop`, `drain`,
+`status [--json]`, `start`, `stop`, `drain [--wait] [--timeout <seconds>]`,
 `policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
 `service install|uninstall`.
 
@@ -300,4 +301,7 @@ program when it exits non-zero (systemd after 5 s) and leave it stopped after a 
 while you have a session, so run `loginctl enable-linger $USER` to start it at boot and keep it
 running after you log out. `service.log` is emptied into `service.log.1` at 10 MiB when the program
 starts. The service runs `node <bin> start` with the `PATH` of the shell that installed it (so
-`docker` is found). `service uninstall` reverses it.
+`docker` is found). `service uninstall` reverses it. On macOS, installing again first boots the old
+agent out and waits (up to 10 s) until launchd has let it go, because `launchctl bootout` returns
+before that; a `bootstrap` that still fails with error 5 (Input/output error) is retried a few
+times. On Linux, installing again restarts the unit so the new file applies.
