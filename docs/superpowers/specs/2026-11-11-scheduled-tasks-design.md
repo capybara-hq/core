@@ -199,9 +199,13 @@ connection_id)` for the chat targets.
 - **No repair** (transactional outbox spec §8.2): the fire job is owed with the task run, so the
   scan no longer re-enqueues lost fire jobs. A tick whose fire job runs more than 10 minutes past
   the org's `catchUpWindowMinutes` (workers down for long) is `skipped` (`missed`) by the fire job
-  itself; a "Run now" still runs. The overlap check (the run tracker) links, settles or releases
-  the task's previous run; a started run that shows no queued item, no message and no run
-  5 minutes after `fired_at` is released (`skipped`, `removed`).
+  itself; a "Run now" still runs. The fire job's claim owes a delayed settle check
+  (`sched-settle-<taskRunId>`, 10 minutes on; ruling R26): a run still claimed and `pending` then
+  goes through the run tracker's check, which links it to its run, settles it, or releases it, so
+  a `once` task's last run never stays pending; one still in flight owes the next check an hour
+  on. The overlap check does the same for the task's previous run. A started run that shows no
+  queued item, no message and no run 5 minutes after `fired_at` is released (`skipped`,
+  `removed`).
 - The fire job (idempotent on the task run's status) re-checks, then starts the run:
   - **Checks**, in order: the task still exists (else `task_deleted`) and, for a tick of the
     schedule, is not paused since the scan (`task_paused`; a person's "Run now" is `manual` and

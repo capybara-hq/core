@@ -209,7 +209,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { run: async (id) => void calls.push(["owned-cleanup", id]) },
-      { fire: async (id) => void calls.push(["sched-fire", id]) },
+      {
+        fire: async (id) => void calls.push(["sched-fire", id]),
+        settle: async (id, check) => void calls.push(["sched-settle", id, check]),
+      },
       {
         runNow: async (name) => {
           if (name !== "sandbox-suspend-idle") return false;
@@ -234,6 +237,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("deliver-to-parent", { childRunId: "r2" }));
     await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
     await processor.process(job("sched-fire", { taskRunId: "tr1" }));
+    await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
     await processor.process(job("sandbox-suspend-idle", {}));
     await processor.process(job("no-such-job", {}));
     expect(calls).toEqual([
@@ -249,6 +253,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["deliver", "r2"],
       ["owned-cleanup", "i1"],
       ["sched-fire", "tr1"],
+      ["sched-settle", "tr1", 2],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([

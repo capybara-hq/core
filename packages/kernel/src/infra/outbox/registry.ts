@@ -196,6 +196,22 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `schedules/job-ids.ts` SCHED_SETTLE_JOB: owed by the fire job's claim (the transaction that
+  // writes `fired_at`) with `runAt` 10 min on, under `schedSettleJobId`; a run still in flight
+  // owes the next check an hour on (ruling R26)
+  "sched-settle": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "the check acts only on a task run still pending and claimed, under the task and run row locks, so a run started, ended or released since is left as it is",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // retried while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

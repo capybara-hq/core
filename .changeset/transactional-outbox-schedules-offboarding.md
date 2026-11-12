@@ -8,4 +8,6 @@ a crash or a Redis outage after the commit no longer loses a tick. The scan's re
 re-enqueue after 10 minutes, no give-up after an hour, no recheck of started runs) and with it the
 `scheduled_task_runs.rechecked_at` column (migration 0122). A tick whose fire job runs more than 10
 minutes past the org's catch-up window (workers down for long) is still skipped as `missed`, now by
-the fire job itself; a "Run now" still runs.
+the fire job itself; a "Run now" still runs. The fire job's claim owes a settle check 10 minutes on
+(`sched-settle`): a run claimed but never started (its start failed for good) is linked, settled or
+released as the scan's recheck did, so a once task's last run never stays pending.

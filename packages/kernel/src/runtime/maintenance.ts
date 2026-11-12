@@ -23,7 +23,12 @@ import {
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
-import { SCHED_FIRE_JOB, type SchedFireJobData } from "../schedules/job-ids.js";
+import {
+  SCHED_FIRE_JOB,
+  SCHED_SETTLE_JOB,
+  type SchedFireJobData,
+  type SchedSettleJobData,
+} from "../schedules/job-ids.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -53,7 +58,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link DirectorySync}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `sched-fire` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -73,7 +78,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
-    @Inject(ScheduledTaskFirer) private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire">,
+    @Inject(ScheduledTaskFirer)
+    private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire" | "settle">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
@@ -146,6 +152,12 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case SCHED_FIRE_JOB:
         await this.scheduledTasks.fire((job.data as SchedFireJobData).taskRunId);
         return;
+      // a claimed task run's settle check (ruling R26)
+      case SCHED_SETTLE_JOB: {
+        const d = job.data as SchedSettleJobData;
+        await this.scheduledTasks.settle(d.taskRunId, d.check);
+        return;
+      }
       default:
         if (await this.scheduled.runNow(job.name)) return;
         this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });

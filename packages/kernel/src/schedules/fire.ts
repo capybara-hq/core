@@ -15,12 +15,14 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
+import { oweSchedSettle, SCHED_SETTLE_AFTER_MS, SCHED_SETTLE_RECHECK_MS } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { lockTaskRow, ScheduledTaskRunTracker, ScheduledTaskTrackerModule } from "./run-tracker.js";
 import { ScheduledTaskScanJob } from "./scan.job.js";
@@ -95,7 +97,8 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  *    window, `missed`, unless a "run now"; org disabled, creator inactive or not a member, agent
  *    gone or not visible, conversation gone, connection inactive,
  *    overlap, rate limit, device offline, queue paused), each a `skipped` run with its reason, the
- *    lasting ones also pausing the task; then `fired_at` is written, after the rate limit count.
+ *    lasting ones also pausing the task; then `fired_at` is written, after the rate limit count,
+ *    with the run's delayed settle check owed (`sched-settle`, {@link settle}).
  *    A run whose claim committed before (a retried job) goes straight to the start.
  * 2. The start, idempotent: `new` creates the conversation with its first message keyed by the
  *    task run id (`create_request_id`); `conversation` queues the prompt in the target
@@ -127,6 +130,8 @@ export class ScheduledTaskFirer {
     /** Reads a local device's connection lease (online or not). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "info">,
+    /** The claim owes the run's settle check (ruling R26). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -150,6 +155,24 @@ export class ScheduledTaskFirer {
     const claimed = await this.claim(taskRunId, pre.org_id, offline);
     if (claimed === null || "skip" in claimed) return;
     await this.start(claimed.plan);
+  }
+
+  /**
+   * The `sched-settle` job (ruling R26): a task run claimed (`fired_at`) and still `pending` goes
+   * through the run tracker's check, which links it to its run, settles it, or releases a run that
+   * left no trace (`skipped`, `removed`), so a `once` task's last run never stays pending. One
+   * still in flight (its item queued, its message posted) owes the next check an hour on. A run
+   * started or ended, or released since, is left as it is.
+   */
+  @Transactional()
+  async settle(taskRunId: string, check: number): Promise<void> {
+    const run = await this.store.updateRun(this.db, taskRunId, {});
+    if (run?.status !== "pending" || run.firedAt === null) return;
+    // inFlightIn takes the task row before the run (the one lock order)
+    if (!(await this.tracker.inFlightIn(run))) return;
+    const now = await this.store.updateRun(this.db, taskRunId, {});
+    if (now?.status !== "pending" || now.firedAt === null) return;
+    await oweSchedSettle(this.outbox, taskRunId, run.orgId, check + 1, SCHED_SETTLE_RECHECK_MS);
   }
 
   /** Step 1 (see the class): a skip, the plan, or null when there is nothing to fire. */
@@ -272,6 +295,8 @@ export class ScheduledTaskFirer {
       firedAt: new Date(),
       ...(plan.mode === "conversation" && { conversationId: plan.conversationId }),
     });
+    // a start that fails for good leaves the run claimed: its settle check releases or ends it
+    await oweSchedSettle(this.outbox, run.id, orgId, 0, SCHED_SETTLE_AFTER_MS);
     return { plan: { ...plan, run: claimed ?? run } };
   }
 
