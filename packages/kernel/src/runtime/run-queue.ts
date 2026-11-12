@@ -21,7 +21,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { linkStartedRunIn, unlinkRunIn } from "../schedules/run-tracker.js";
+import { linkStartedRunIn } from "../schedules/run-tracker.js";
 import { scheduledTaskRunAt } from "../schedules/unattended.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import type { RunAbortDetail } from "./abort.js";
@@ -49,8 +49,11 @@ export {
 } from "./run-jobs.js";
 
 /**
- * queued 运行的宽限期（秒）：`ensureRun` / 续跑先提交 runs 行、再投递任务，两步之间任务暂时不存在；
- * 只有进入 queued 超过这么久（`COALESCE(queued_at, created_at)`）仍没有任务的 queued 行才视为孤儿。
+ * Grace (seconds) of the queued-orphan test of {@link RunQueue.repairOrphan} and
+ * {@link RunQueue.abortIfOrphaned}: the sub-agent dispatch and the waits' resumes still commit the
+ * queued row and add the job after the commit, so the job may not exist yet; only a run queued for
+ * longer than this (`COALESCE(queued_at, created_at)`) without a job counts. `ensureRun` never
+ * treats a queued run as an orphan: the run it creates has its job owed in its own transaction.
  */
 const ORPHAN_QUEUED_GRACE_SECONDS = 30;
 
@@ -68,13 +71,6 @@ interface EnsureState {
   wakeLater: { windowEnd: number; delayMs: number } | null;
   /** A sub-agent's active run to put through the orphan repair after the commit. */
   repairRunId: string | null;
-}
-
-/** What {@link RunQueue.ensureRun}'s transaction created: the run and its job on its kind's queue. */
-interface CreatedRun {
-  runId: string;
-  jobId: string;
-  kind: ConversationKind;
 }
 
 /**
@@ -145,7 +141,9 @@ export class RunQueue {
 
   /**
    * 有未消费的用户消息（最新 user_message 的 seq > `consumed_seq`）、会话锁无人持有、
-   * 且没有 queued / running / waiting 的运行时：插入 `runs`（queued）并投递任务，返回 runId；否则返回 null。
+   * 且没有 queued / running / waiting 的运行时：插入 `runs`（queued），返回 runId；否则返回 null。
+   * The run's job is owed in the same transaction (transactional outbox spec §6): the outbox
+   * delivers it after the commit, so a queued run never lacks its job.
    *
    * The boundary (`trigger_seq`) is that newest message; with none unconsumed, the queue's head
    * once it is sent; with no head either, a wake-eligible finished background task or sub-agent
@@ -154,8 +152,8 @@ export class RunQueue {
    * event inside the wake window schedules the delayed `bg-wake` job instead. A sub-agent's
    * conversation is only woken this way ({@link childWakeIn}).
    *
-   * 孤儿清理（R29，按需进行，没有定时器）：已有的 queued / running 运行若 BullMQ 任务已不存在、
-   * 会话锁也无人持有（queued 的还要超过宽限期），说明没有任何 worker 会再执行它——写
+   * 孤儿清理（R29，按需进行，没有定时器）：已有的 running 运行若 BullMQ 任务已不存在、
+   * 会话锁也无人持有，说明没有任何 worker 会再执行它——写
    * `run_failed { code: "run.orphaned" }` 把它标记为失败（consumed_seq 推进到它的触发消息），
    * 再按常规判断是否起新一轮，并删除它的 checkpoint thread。会话因此不会永远卡在「有运行」。
    * 除了写入消息后，打开 SSE、读事件、运行结束后也会调用它（幂等），孤儿因此在有人查看时就被清理。
@@ -209,34 +207,12 @@ export class RunQueue {
         await this.events.emit("run.orphaned", { runId: orphanRunId });
       }
     }
-    if (!created) return null;
-    const { runId, jobId, kind } = created;
-    try {
-      const queue = this.jobs.queue(runQueueNameFor(kind));
-      await this.jobs.enqueue({ runId, conversationId }, jobId, kind);
-      // 从 Redis 读回核对：检查与 add 之间出现了同 jobId 的任务时 add 被静默忽略，撤销本次插入，
-      // 不留下没有任务的 queued 行。读不到说明任务已被领取并移除（只可能是本次投递的），不撤销。
-      const stored = await queue.getJob(jobId);
-      if (stored && stored.data.runId !== runId) {
-        this.log.warn("run job already queued for this trigger", {
-          conversationId,
-          runId,
-          existingRunId: stored.data.runId,
-        });
-        await this.deleteQueued(runId);
-        return null;
-      }
-    } catch (err) {
-      // 投递失败：撤销 queued 行，避免会话卡在「有运行但没有任务」。
-      await this.deleteQueued(runId).catch(() => {});
-      throw err;
-    }
-    return runId;
+    return created;
   }
 
   /** {@link ensureRun}'s transaction: what it decided goes back through `st`. */
   @Transactional({ propagation: "requires_new" })
-  private async ensureRunIn(conversationId: string, st: EnsureState): Promise<CreatedRun | null> {
+  private async ensureRunIn(conversationId: string, st: EnsureState): Promise<string | null> {
     const t = this.db;
     const conv = await t
       .selectFrom("conversations")
@@ -407,6 +383,7 @@ export class RunQueue {
     // agent 已软删除：会话对任何人都不可见，不再为它起运行。
     if (agent.deleted_at !== null) return null;
     const runId = randomUUID();
+    if (!(await this.oweJob(conversationId, runId, jobId, "chat", conv.org_id))) return null;
     // scheduled tasks spec §4: a task's message makes the run unattended; a wake inherits it
     // from the run that produced its event; a person's message never does
     const taskRunId = await scheduledTaskRunAt(t, conversationId, trigger.seq);
@@ -427,7 +404,27 @@ export class RunQueue {
       .execute();
     // the task run its message started follows this run from now on (spec §6)
     if (taskRunId !== null) await linkStartedRunIn(t, taskRunId, runId, conversationId);
-    return { runId, jobId, kind: "chat" };
+    return runId;
+  }
+
+  /**
+   * Owes the new run's job in {@link ensureRunIn}'s transaction, before its run row is written.
+   * False (logged): the same job id is still owed, so the caller writes no run (a second run of
+   * one trigger; the conversation's unique active run makes this a should-not-happen).
+   */
+  private async oweJob(
+    conversationId: string,
+    runId: string,
+    jobId: string,
+    kind: ConversationKind,
+    orgId: string,
+  ): Promise<boolean> {
+    if (await this.jobs.owe({ runId, conversationId }, jobId, kind, orgId)) return true;
+    this.log.warn("run job for this trigger already owed; not starting a run", {
+      conversationId,
+      jobId,
+    });
+    return false;
   }
 
   /**
@@ -448,7 +445,7 @@ export class RunQueue {
     conversationId: string,
     conv: { consumed_seq: string; org_id: string; agent_id: string },
     st: EnsureState,
-  ): Promise<CreatedRun | null> {
+  ): Promise<string | null> {
     const t = this.db;
     const active = await this.activeRun(t, conversationId);
     if (active) {
@@ -506,6 +503,7 @@ export class RunQueue {
       .limit(1)
       .executeTakeFirst();
     const runId = randomUUID();
+    if (!(await this.oweJob(conversationId, runId, jobId, "subagent", conv.org_id))) return null;
     await t
       .insertInto("runs")
       .values({
@@ -520,7 +518,7 @@ export class RunQueue {
         scheduled_task_run_id: await scheduledTaskRunAt(t, conversationId, wake.seq),
       })
       .execute();
-    return { runId, jobId, kind: "subagent" };
+    return runId;
   }
 
   /**
@@ -643,7 +641,7 @@ export class RunQueue {
 
   /**
    * 中止一个孤儿运行（`POST .../abort` 用）：运行仍是 queued / running、会话锁无人持有、BullMQ 任务已不存在
-   * （queued 的还要超过宽限期，判定同 {@link ensureRun} 的孤儿清理）时，没有任何 worker 会收到中止广播——
+   * （queued 的还要超过宽限期，{@link isOrphan} with `queued`）时，没有任何 worker 会收到中止广播——
    * 直接写 `run_aborted`、status 置为 aborted、consumed_seq 至少推进到触发消息，返回 true。
    * 不是孤儿（有人在执行或即将执行）或运行已结束 → 返回 false，由调用方走广播中止。
    */
@@ -680,7 +678,7 @@ export class RunQueue {
       .executeTakeFirst();
     const active = await this.activeRun(t, conversationId);
     if (!conv || !active || active.id !== runId) return null;
-    if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
+    if (!(await this.isOrphan(conversationId, active, conv.kind, { queued: true }))) return null;
     this.log.warn("aborting orphaned run directly", { conversationId, runId });
     return this.finisher.finishIn({
       conversationId,
@@ -698,8 +696,9 @@ export class RunQueue {
   /**
    * Repairs an orphaned run of a conversation nobody else repairs on demand (a sub-agent's: no
    * `ensureRun` ever runs for it; sub-agents spec §7.5), with the same orphan test as
-   * {@link ensureRun}: the conversation lock is free, the run is still `queued` / `running`, its
-   * job is gone, and a `queued` one is past the grace period.
+   * {@link ensureRun} for a `running` one (the conversation lock is free, its job is gone); a
+   * `queued` one also counts when its job is gone past {@link ORPHAN_QUEUED_GRACE_SECONDS} (a
+   * dispatch or resume adds its job after its commit; {@link isOrphan} with `queued`).
    * - `queued` (the dispatch or resume committed, its enqueue was lost) → enqueued again under its
    *   own job id (`runs.job_id`, else the trigger's), so concurrent repairs on several replicas
    *   still leave one job: `"requeued"`;
@@ -738,7 +737,7 @@ export class RunQueue {
       .executeTakeFirst();
     const active = await this.activeRun(t, conversationId);
     if (!conv || !active || active.id !== runId) return null;
-    if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
+    if (!(await this.isOrphan(conversationId, active, conv.kind, { queued: true }))) return null;
     if (active.status === "queued") {
       const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
       return { kind: "requeued", jobId, convKind: conv.kind };
@@ -779,17 +778,22 @@ export class RunQueue {
   }
 
   /**
-   * 未结束的运行是否已是孤儿（调用方已确认会话锁无人持有）：waiting → 否（等人处理，本来就没有任务，
-   * 由人工决定或超时任务续跑）；queued 且仍在宽限期内 → 否（任务可能还没投递）；BullMQ 任务（续跑任务按
-   * `runs.job_id`）仍存在 → 否；否则是。
+   * Whether an active run is an orphan (the caller saw the conversation lock free): a `running`
+   * one whose BullMQ job (a resume's under `runs.job_id`) is gone. A `waiting` one never is (no job
+   * by design: a decision or its timeout resumes it). A `queued` one is not for {@link ensureRun}:
+   * the run it creates has its job owed in its own transaction (transactional outbox spec §6). With
+   * `queued`, one without a job past {@link ORPHAN_QUEUED_GRACE_SECONDS} counts too:
+   * {@link repairOrphan} and {@link abortIfOrphaned} still cover the dispatches and resumes that add
+   * their job after their commit.
    */
   private async isOrphan(
     conversationId: string,
     active: ActiveRunRow,
     kind: ConversationKind,
+    opts: { queued?: boolean } = {},
   ): Promise<boolean> {
     if (active.status === "waiting") return false;
-    if (active.status === "queued" && !active.past_grace) return false;
+    if (active.status === "queued" && !(opts.queued && active.past_grace)) return false;
     const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
     const job = await this.jobs.getJob(jobId, runQueueNameFor(kind));
     return !job;
@@ -800,20 +804,6 @@ export class RunQueue {
     await this.checkpoints
       .deleteThread(runId)
       .catch((err) => this.log.warn("checkpoint delete failed", { runId, err }));
-  }
-
-  @Transactional()
-  private async deleteQueued(runId: string): Promise<void> {
-    const gone = await this.db
-      .deleteFrom("runs")
-      .where("id", "=", runId)
-      .where("status", "=", "queued")
-      .returning("scheduled_task_run_id")
-      .executeTakeFirst();
-    // its scheduled task run waits for the message's next run again
-    if (gone?.scheduled_task_run_id != null) {
-      await unlinkRunIn(this.db, gone.scheduled_task_run_id, runId);
-    }
   }
 }
 

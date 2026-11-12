@@ -21,7 +21,7 @@ import { accountsFor, orgsFor } from "../helpers/identity.js";
  */
 
 /** A name no registry entry carries: the registry is checked at the type level only (R2). */
-const TEST_JOB = "outbox-test-job" as OutboxJobName;
+const TEST_JOB = "outbox-test-job" as string as OutboxJobName;
 
 let pgc: TestContainer;
 // biome-ignore lint/suspicious/noExplicitAny: the pool has no schema types

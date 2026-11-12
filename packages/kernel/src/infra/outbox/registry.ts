@@ -1,19 +1,42 @@
+import type { JobsOptions } from "bullmq";
 import type { KernelQueueName } from "../queue/queue-names.js";
 
 /** What the registry says about one job name added through the outbox (spec §3.5, §5). */
 export interface OutboxJobSpec {
-  /** The kernel queue the job is added to. */
-  queue: KernelQueueName;
+  /** The kernel queue the job is added to, or the queues when one job name serves several. */
+  queue: KernelQueueName | readonly KernelQueueName[];
   /** One sentence: why a duplicate delivery of this job is harmless (state check, key, id). */
   idempotent: string;
   /** Repo-relative path of the file whose `@Processor` handles the job. */
   processedIn: string;
+  /**
+   * BullMQ options the dispatcher adds the job with over the queue defaults
+   * (`QUEUE_JOB_DEFAULTS`); the job id and the delay always come from the row.
+   */
+  opts?: Pick<JobsOptions, "attempts" | "removeOnComplete" | "removeOnFail">;
 }
 
 /**
  * Every job name added through the outbox. The task that introduces a job name adds its entry; a
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
-export const OUTBOX_JOBS = {} as const satisfies Record<string, OutboxJobSpec>;
+export const OUTBOX_JOBS = {
+  // `runtime/run-jobs.ts` RUN_JOB: one name on both run queues (a sub-agent's runs go to the
+  // sub-agent queue), under the job ids `runJobId` builds
+  run: {
+    queue: ["cap-kernel-runs", "cap-kernel-subagent-runs"],
+    idempotent:
+      "the run worker starts only a run in `queued` state for this job's runId; a finished run's job only repeats the idempotent post-run ensureRun, a waiting run's does nothing",
+    processedIn: "packages/kernel/src/runtime/run-processors.ts",
+    // one attempt (the run's own paths handle failures); removed once done, so the next run of the
+    // same trigger can take the id again (the post-run ensureRun, R34)
+    opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+  },
+} as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;
+
+/** The registry's BullMQ options of a job name (none for a name it does not list). */
+export function outboxJobOptions(name: string): OutboxJobSpec["opts"] {
+  return (OUTBOX_JOBS as Record<string, OutboxJobSpec>)[name]?.opts;
+}

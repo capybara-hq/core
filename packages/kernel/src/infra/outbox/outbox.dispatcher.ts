@@ -10,6 +10,7 @@ import { Transactional } from "../database/transactional.decorator.js";
 import { QUEUE_JOB_DEFAULTS } from "../queue/queue.module.js";
 import { KERNEL_QUEUES, type KernelQueueName } from "../queue/queue-names.js";
 import { KERNEL_LOGGER } from "../tokens.js";
+import { outboxJobOptions } from "./registry.js";
 
 /**
  * Retry schedule of a row whose add failed (spec §3.4): the next attempt waits
@@ -91,7 +92,8 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
 /**
  * Delivers outbox rows to BullMQ (transactional outbox spec §3.3, §3.4). A pass claims rows
  * `FOR UPDATE SKIP LOCKED` (so concurrent passes never take the same row), adds their jobs per
- * queue with `addBulk` (the row's job id, a future `run_at` as the remaining `delay`), and deletes
+ * queue with `addBulk` (the queue defaults overlaid by the registry's options of the job name, the
+ * row's job id, a future `run_at` as the remaining `delay`), and deletes
  * the delivered rows in the same short transaction. A crash after the add and before the commit
  * leaves the rows; the next pass adds again and BullMQ ignores the existing job id. A queue whose
  * add fails keeps its rows, and a second short update records the attempt with exponential
@@ -261,6 +263,7 @@ export class OutboxDispatcher {
               data: r.data,
               opts: {
                 ...(QUEUE_JOB_DEFAULTS as JobsOptions),
+                ...outboxJobOptions(r.job_name),
                 jobId: r.job_id,
                 delay: r.run_at ? Math.max(0, r.run_at.getTime() - now) : 0,
               },

@@ -409,7 +409,7 @@ export const KC_PENDING: KcPending = {
     },
     {
       path: "packages/kernel/src/runtime/run-queue.ts",
-      max: 3,
+      max: 2,
       reason: "moves to the outbox in PR 2",
     },
     {

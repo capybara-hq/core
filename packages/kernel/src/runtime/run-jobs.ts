@@ -3,6 +3,8 @@ import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue } from "bullmq";
 import type { ConversationKind } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { OUTBOX_JOBS } from "../infra/outbox/registry.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -33,14 +35,20 @@ export interface RunJobData {
 export const runJobId = (conversationId: string, maxUserSeq: number): string =>
   `run-${conversationId}-${maxUserSeq}`;
 
-/** The options of every run job: one attempt (the run's own paths handle failures), not kept. */
-const RUN_JOB_OPTIONS = { attempts: 1, removeOnComplete: true, removeOnFail: true } as const;
+/** The BullMQ job name of every run job, on both run queues (an outbox registry name). */
+export const RUN_JOB = "run";
 
 /**
- * The producer side of the two run queues (`cap-kernel-runs`, `cap-kernel-subagent-runs`): adds
- * run jobs under the caller's job id and looks them up. The run queue (`ensureRun`, orphan
- * repairs), the waits (resumes) and the sub-agent dispatch enqueue through it; the run worker
- * consumes both queues.
+ * The options of every run job: one attempt (the run's own paths handle failures), not kept. The
+ * outbox registry holds them, so a run job owed through the outbox is added with the same.
+ */
+const RUN_JOB_OPTIONS = OUTBOX_JOBS[RUN_JOB].opts;
+
+/**
+ * The producer side of the two run queues (`cap-kernel-runs`, `cap-kernel-subagent-runs`): owes
+ * run jobs in the caller's transaction ({@link owe}, `ensureRun`), adds them directly under the
+ * caller's job id (orphan repairs, the waits' resumes, the sub-agent dispatch) and looks them up;
+ * the run worker consumes both queues.
  */
 @Injectable()
 export class RunJobs {
@@ -51,6 +59,7 @@ export class RunJobs {
     @Inject(getQueueToken(RUN_QUEUE_NAME)) runs: Queue<RunJobData>,
     @Inject(getQueueToken(SUBAGENT_RUN_QUEUE_NAME)) subagentRuns: Queue<RunJobData>,
     @Inject(KERNEL_LOGGER) log: KernelLogger,
+    @Inject(OutboxService) private readonly outbox: OutboxService,
   ) {
     this.queues = { [RUN_QUEUE_NAME]: runs, [SUBAGENT_RUN_QUEUE_NAME]: subagentRuns };
     for (const [name, q] of Object.entries(this.queues)) {
@@ -71,6 +80,21 @@ export class RunJobs {
   }
 
   /**
+   * Owes the run job in the caller's transaction (transactional outbox spec §6): the outbox row
+   * commits or rolls back with the run row, on the queue of the conversation's `kind`. Returns
+   * false when the same job id is already owed (nothing written; the caller creates no run).
+   */
+  owe(data: RunJobData, jobId: string, kind: ConversationKind, orgId: string): Promise<boolean> {
+    return this.outbox.add({
+      queue: kind === "subagent" ? SUBAGENT_RUN_QUEUE_NAME : RUN_QUEUE_NAME,
+      name: RUN_JOB,
+      jobId,
+      data,
+      orgId,
+    });
+  }
+
+  /**
    * Enqueues a run job under the caller's job id (`ensureRun`, resumes, dispatches, repairs). The
    * queue follows the conversation's kind (a sub-agent's runs go to
    * {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind` when the caller knows it, else it is read.
@@ -86,7 +110,7 @@ export class RunJobs {
           .executeTakeFirst()
       )?.kind ??
       "chat";
-    await this.queue(runQueueNameFor(k)).add("run", data, { jobId, ...RUN_JOB_OPTIONS });
+    await this.queue(runQueueNameFor(k)).add(RUN_JOB, data, { jobId, ...RUN_JOB_OPTIONS });
   }
 }
 
