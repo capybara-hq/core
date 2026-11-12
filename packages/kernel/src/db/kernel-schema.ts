@@ -1,4 +1,5 @@
 import type {
+  ConversationSource,
   FileSystemHandle,
   ParsedTheme,
   SandboxTier,
@@ -304,6 +305,8 @@ export interface ConversationsTable {
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0113: the scheduled task that created it (`new` mode); null otherwise. */
   scheduled_task_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0119: where the conversation comes from, set at creation and never changed. */
+  source: ColumnType<ConversationSource, ConversationSource | undefined, never>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */

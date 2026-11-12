@@ -8,6 +8,7 @@ import { ConversationAccess, ConversationAccessModule } from "../conversations/a
 import { ConversationsModule } from "../conversations/conversations.module.js";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import { ConversationQueue } from "../conversations/queue.service.js";
+import { channelSource } from "../conversations/source.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -369,6 +370,7 @@ export class ScheduledTaskFirer {
           task.agentId,
           // a chat task takes no device (new mode only): an IM conversation's default
           { im: true },
+          { source: channelSource(plan.target.chatType) },
         );
         await t
           .updateTable("conversations")
@@ -407,19 +409,21 @@ export class ScheduledTaskFirer {
       .executeTakeFirst();
     if (locked?.status !== "pending") return null;
     if (locked.conversation_id !== null) return locked.conversation_id;
+    const target: ChannelTarget = { chatId: plan.chatId, chatType: "group" };
     const conv = await this.conversations.create(
       task.orgId,
       task.accountId,
       task.agentId,
       // a chat task takes no device (new mode only): an IM conversation's default
       { im: true },
+      // stored now: the thread to derive it from binds only at the run's first post
+      { source: channelSource(target.chatType) },
     );
     await t
       .updateTable("conversations")
       .set({ scheduled_task_id: task.id })
       .where("id", "=", conv.id)
       .execute();
-    const target: ChannelTarget = { chatId: plan.chatId, chatType: "group" };
     await t
       .insertInto("channel_deliveries")
       .values({
