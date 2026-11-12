@@ -86,7 +86,9 @@ const UNSUPPORTED_MESSAGE =
 const UNCONFIRMED_MESSAGE =
   "The device's machine did not confirm the policy change; the platform checks it again shortly.";
 const INTERRUPTED_MESSAGE =
-  "capybara-device stopped while applying the policy change, before it was written.";
+  "capybara-device stopped while applying the policy change, and the change is not in the device's policy now.";
+/** The longest text of the machine's own error the caller is told (as its op log keeps it). */
+const MAX_MACHINE_MESSAGE = 500;
 const NOT_RECEIVED_MESSAGE = "The device's machine never received the policy change.";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -144,7 +146,9 @@ export class DevicePolicyService {
     this.afterCall(intent.opId);
     const out = await this.settle(intent, sent.result);
     if (sent.notFound) throw deviceNotFound();
-    return out ?? sent.outcome;
+    // unknown: the caller is told what the call saw (offline, or an answer the machine did not
+    // confirm), not the recorded state's generic text
+    return sent.result.outcome === "unknown" ? sent.outcome : (out ?? sent.outcome);
   }
 
   /**
@@ -242,17 +246,16 @@ export class DevicePolicyService {
         opId: intent.opId,
         error: errMsg(e),
       });
-      const message = errMsg(e);
+      const raw = errMsg(e);
+      const message = (
+        raw.startsWith(ON_MACHINE_PREFIX) ? raw.slice(ON_MACHINE_PREFIX.length) : raw
+      ).slice(0, MAX_MACHINE_MESSAGE);
       return {
         result: { outcome: "unknown" },
         outcome: {
           applied: false,
           reason: "offline",
-          message: `${UNCONFIRMED_MESSAGE} ${
-            message.startsWith(ON_MACHINE_PREFIX)
-              ? message.slice(ON_MACHINE_PREFIX.length)
-              : message
-          }`,
+          message: `${UNCONFIRMED_MESSAGE} ${message}`,
         },
       };
     }

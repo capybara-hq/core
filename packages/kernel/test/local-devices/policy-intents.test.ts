@@ -580,7 +580,14 @@ describe("device policy intents", () => {
       const sim = new Sim();
       sim.after = after;
       const machine = await connect(d, sim);
-      expect(await apply(d)).toMatchObject({ applied: false, reason: "offline" });
+      const out = await apply(d);
+      expect(out).toMatchObject({ applied: false, reason: "offline" });
+      const message = out.applied ? "" : out.message;
+      expect(message).toMatch(
+        /^The device's machine did not confirm the policy change; the platform checks it again shortly\. /,
+      );
+      expect(message).not.toContain("is offline");
+      if (after === "error") expect(message.endsWith(" EIO")).toBe(true);
       const [sent] = policyReqs(machine);
       const opId = (sent?.args as { opId: string } | undefined)?.opId ?? "";
       expect(await entries(d.machineId)).toEqual([
