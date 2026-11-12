@@ -186,7 +186,7 @@ export async function advanceSkillForks(
       agent: ctx.agent,
       accountId: ctx.triggerAccountId,
       signal: ctx.signal,
-      deadline: ctx.limits.deadline,
+      ...(ctx.limits.deadline !== undefined && { deadline: ctx.limits.deadline }),
       ...(ctx.conversationKind !== undefined &&
         ctx.conversationKind !== "eval" && { conversationKind: ctx.conversationKind }),
     },

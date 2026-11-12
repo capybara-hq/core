@@ -920,7 +920,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * naming a template's skills the child loads first (skills default-on spec §6.1).
        */
       preamble: z.string(),
-      maxSteps: z.number().int().positive(),
+      /** The child's step limit; 0 = no limit (`runtime.maxSteps` 0, no template limit). */
+      maxSteps: z.number().int().nonnegative(),
       warnings: z.array(z.string()).optional(),
     }),
   ),

@@ -245,7 +245,13 @@ function collector(): { deltas: Delta[]; sink: StreamSink } {
 }
 
 const step = (
-  over: { step?: number; agent?: AgentDefinition; signal?: AbortSignal; sink?: StreamSink } = {},
+  over: {
+    step?: number;
+    agent?: AgentDefinition;
+    signal?: AbortSignal;
+    sink?: StreamSink;
+    maxSteps?: number;
+  } = {},
 ) =>
   runModelStep(deps, {
     orgId,
@@ -257,6 +263,7 @@ const step = (
     absorbedUpToSeq: ALL_ABSORBED,
     signal: over.signal ?? new AbortController().signal,
     sink: over.sink ?? (() => {}),
+    ...(over.maxSteps !== undefined && { maxSteps: over.maxSteps }),
   });
 
 const all = () => eventLog.readAfter(conversationId, 0, 10_000);
@@ -929,9 +936,8 @@ describe("runModelStep", () => {
   });
 
   it("提醒：maxSteps 3 时 step 1 写 reminder，且 model_call.request.reminderSeqs 包含它", async () => {
-    runtimeOverrides = { maxSteps: 3 };
     await say("echo:hi");
-    await step({ step: 1 });
+    await step({ step: 1, maxSteps: 3 });
     const [reminder] = await ofType("reminder");
     expect(reminder).toBeDefined();
     expect(reminder?.payload.step).toBe(1);
@@ -939,10 +945,18 @@ describe("runModelStep", () => {
     expect(call?.payload.request.reminderSeqs).toContain(reminder?.seq);
   });
 
+  it("no step limit (maxSteps absent, runtime.maxSteps 0): no step-limit reminder at any step", async () => {
+    runtimeOverrides = { maxSteps: 0 };
+    await say("echo:hi");
+    await step({ step: 49 });
+    expect(await ofType("reminder")).toEqual([]);
+    const [call] = await ofType("model_call");
+    expect(call?.payload.request.reminderSeqs ?? []).toEqual([]);
+  });
+
   it("an event written by someone else between the step's read and its own reminder append is in the request (batch 5 review I2)", async () => {
     const s = stub([stubInfo("ok")], () => "ok");
     stubImpl = s;
-    runtimeOverrides = { maxSteps: 3 };
     // a person's fork invocation whose report the wait sweep writes while this step runs
     const [lead] = await eventLog.append(conversationId, [
       {
@@ -989,6 +1003,7 @@ describe("runModelStep", () => {
         absorbedUpToSeq: ALL_ABSORBED,
         signal: new AbortController().signal,
         sink: () => {},
+        maxSteps: 3,
       },
     );
     expect(injected).toBe(true);
