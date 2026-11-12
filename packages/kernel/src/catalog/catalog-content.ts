@@ -467,6 +467,7 @@ export function templateConnectorInput(
     endpoint,
     auth,
     ...(credential !== undefined && { credential }),
+    ...(template.git !== undefined && { git: template.git }),
     template: {
       ...ref,
       ...(template.defaultToolPolicies !== undefined && {

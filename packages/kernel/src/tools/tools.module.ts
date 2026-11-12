@@ -27,7 +27,7 @@ import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorAccountPolicies } from "./connector-account-policies.js";
 import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
-import { Credentials } from "./credentials.js";
+import { CredentialsModule } from "./credentials.module.js";
 import { ToolDrift } from "./drift.js";
 import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
 import { OAuthFlow } from "./oauth/flow.js";
@@ -73,9 +73,10 @@ import { ToolRegistry } from "./registry.js";
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
     // a trial run's approvals become its scheduled task's grants (scheduled tasks spec §7)
     ScheduledTaskStoreModule,
+    // connector credentials (also the git gateway's, without importing this module)
+    CredentialsModule,
   ],
   providers: [
-    Credentials,
     ToolOutputs,
     BuiltinTools,
     // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
@@ -100,7 +101,7 @@ import { ToolRegistry } from "./registry.js";
   ],
   exports: [
     ScheduleToolsPort,
-    Credentials,
+    CredentialsModule,
     ToolOutputs,
     BuiltinTools,
     ToolRegistry,

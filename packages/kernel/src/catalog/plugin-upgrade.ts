@@ -999,6 +999,7 @@ export class PlatformPluginUpdater {
     const input: TemplateUpdateInput = {
       endpoint,
       auth: template.auth as unknown as ConnectorAuth,
+      ...(template.git !== undefined && { git: template.git }),
       template: {
         itemId,
         version,

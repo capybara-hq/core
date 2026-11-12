@@ -4,6 +4,7 @@ import {
   type AuthInjection,
   type ConnectorOperation,
   connectorToolKey,
+  type GitSource,
   type ToolAnnotations,
   ToolError,
   type ToolSpec,
@@ -132,6 +133,16 @@ export interface ConnectorSummary {
   platformTemplateId: string | null;
   /** The plugin (catalog item) its template came from (`connectors.catalog_item_id`), else null. */
   catalogItemId: string | null;
+  /**
+   * The git hosts its credential serves in sandboxes (`connectors.git_hosts`; sandbox git
+   * credentials spec §6.1), null when it declares none.
+   */
+  git: GitSource | null;
+  /**
+   * An org-ownership connector serves as a git source (`connectors.use_for_git`, set by an org
+   * admin); personal connectors with `git` always do and keep this false.
+   */
+  useForGit: boolean;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -150,6 +161,11 @@ export interface CreateConnectorInput {
   endpoint: unknown;
   auth: ConnectorAuth;
   credential?: unknown;
+  /**
+   * The git hosts the connector's credential serves in sandboxes (a template's `git`, or the
+   * create body's; validated by the SDK's `GitSourceSchema`), stored in `connectors.git_hosts`.
+   */
+  git?: GitSource | undefined;
   /**
    * Install from a platform catalog connector template (T26, filled in by the catalog service,
    * not accepted over HTTP): the connector records its source item and version, the item policy is
@@ -198,6 +214,8 @@ export interface TemplateUpdateInput {
   auth: ConnectorAuth;
   /** The template version (itemId, version, templateId, defaultToolPolicies). */
   template: ConnectorTemplateRef;
+  /** The new template's git hosts (template-owned: replaces `git_hosts`; absent clears them). */
+  git?: GitSource | undefined;
   /**
    * The auth method or the credentials it needs changed: the connector's credentials (org and
    * personal, OAuth client and tokens) are cleared and `credential` (an org or the actor's static
@@ -266,6 +284,11 @@ export interface UpdateConnectorInput {
     | undefined;
   /** 把「没有 readOnlyHint / destructiveHint 注解」的工具默认策略批量改为 allow。 */
   allowUnannotated?: boolean | undefined;
+  /**
+   * Use this connector's credential for git in sandboxes (sandbox git credentials spec §6.2): only
+   * an org-ownership connector that declares git hosts; pushes are then the bot's.
+   */
+  useForGit?: boolean | undefined;
 }
 
 const notFound = () => new ApiError("connector.not_found", "Connector not found");
@@ -775,6 +798,7 @@ export class ConnectorsService {
         connector: input.connector,
         endpoint: JSON.stringify(endpoint),
         auth: JSON.stringify(auth),
+        git_hosts: input.git !== undefined ? JSON.stringify(input.git.hosts) : null,
         created_by: actorAccountId,
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
@@ -879,6 +903,7 @@ export class ConnectorsService {
       .set({
         endpoint: JSON.stringify(p.endpoint),
         auth: JSON.stringify(input.auth),
+        git_hosts: input.git !== undefined ? JSON.stringify(input.git.hosts) : null,
         catalog_item_id: input.template.itemId,
         catalog_version: input.template.version,
         template_tool_policies: policies ? JSON.stringify(policies) : null,
@@ -1137,6 +1162,8 @@ export class ConnectorsService {
       status: r.status,
       platformTemplateId: r.platform_template_id ?? null,
       catalogItemId: r.catalog_item_id ?? null,
+      git: r.git_hosts !== null && r.git_hosts.length > 0 ? { hosts: r.git_hosts } : null,
+      useForGit: r.use_for_git,
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -1389,16 +1416,30 @@ export class ConnectorsService {
         if (issue) problems.push({ path, message: issue });
       }
     }
+    const appAuth = app.auth as unknown as ConnectorAuth;
+    if (patch.useForGit === true) {
+      if (appAuth.type === "none" || appAuth.ownership !== "org") {
+        problems.push({
+          path: "useForGit",
+          message:
+            "Only an org-credential connector can be used for git; members' own connections always are",
+        });
+      } else if (app.git_hosts === null || app.git_hosts.length === 0) {
+        problems.push({ path: "useForGit", message: "This connector declares no git hosts" });
+      }
+    }
     if (problems.length > 0) {
       throw new ApiError("validation_failed", "Request validation failed", problems);
     }
 
-    if (patch.name !== undefined || patch.status !== undefined) {
+    const gitChanged = patch.useForGit !== undefined && patch.useForGit !== app.use_for_git;
+    if (patch.name !== undefined || patch.status !== undefined || gitChanged) {
       await t
         .updateTable("connectors")
         .set({
           ...(patch.name !== undefined && { name: patch.name }),
           ...(patch.status !== undefined && { status: patch.status }),
+          ...(gitChanged && { use_for_git: patch.useForGit === true }),
           updated_at: sql`now()`,
         })
         .where("id", "=", connectorId)
@@ -1449,6 +1490,7 @@ export class ConnectorsService {
       detail: {
         ...(patch.name !== undefined && { name: { from: app.name, to: patch.name } }),
         ...(patch.status !== undefined && { status: { from: app.status, to: patch.status } }),
+        ...(gitChanged && { useForGit: { from: app.use_for_git, to: patch.useForGit } }),
         ...(toolChanges.length > 0 && { tools: Object.fromEntries(toolChanges) }),
         ...(allowed.length > 0 && { allowedUnannotated: allowed }),
       },
