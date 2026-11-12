@@ -517,14 +517,17 @@ describe("启动时加载安装记录", () => {
     await loginUsers(k);
     const orgId = await createOrg(admin);
     const quiet = { disabledTools: builtinsOff() };
-    expect((await k.app.get(ToolRegistry).forAgent(orgId, quiet)).tools).toEqual([]);
+    expect(
+      (await k.app.get(ToolRegistry).forAgent(orgId, { ...quiet, source: "web" })).tools,
+    ).toEqual([]);
     const put = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/fake-tools-ui`,
       payload: { enabled: true },
     });
     expect(put.statusCode, put.body).toBe(200);
-    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, quiet)).tools;
+    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { ...quiet, source: "web" }))
+      .tools;
     expect(tools.map((t) => t.key)).toEqual([
       "plugin__fake-tools-ui__write",
       "plugin__fake-tools-ui__web-only",
@@ -893,8 +896,9 @@ describe("引导插件（取代内置插件）", () => {
     });
     expect(put.statusCode).toBe(409);
     expect(put.json().error.code).toBe("extension.required");
-    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { disabledTools: builtinsOff() }))
-      .tools;
+    const tools = (
+      await k.app.get(ToolRegistry).forAgent(orgId, { source: "web", disabledTools: builtinsOff() })
+    ).tools;
     expect(tools.map((t) => t.key)).toEqual([
       "plugin__fake-tools-ui__write",
       "plugin__fake-tools-ui__web-only",

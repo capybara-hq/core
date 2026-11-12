@@ -66,6 +66,7 @@ class SequentialLoop implements AgentLoop {
       step,
       agent: ctx.agent,
       agentVersion: ctx.agentVersion,
+      source: ctx.source,
       signal: ctx.signal,
       sink: ctx.sink,
       absorbedUpToSeq: consumed,

@@ -381,6 +381,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
 
   const step = (agent: AgentDefinition, conversationId: string, runId: string, n: number) =>
     runModelStep(k.app.get(RunSteps).deps, {
+      source: "web",
       orgId,
       conversationId,
       runId,
@@ -407,7 +408,9 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
 
   /** The keys `forAgent` resolves for `agent` now. */
   const keysOf = async (agent: AgentDefinition) =>
-    (await k.app.get(ToolRegistry).forAgent(orgId, agent)).tools.map((t) => t.key);
+    (await k.app.get(ToolRegistry).forAgent(orgId, { ...agent, source: "web" })).tools.map(
+      (t) => t.key,
+    );
 
   it("model_call.request.tools records the tools by key with their spec hashes", async () => {
     await installConnector("docs");
@@ -417,7 +420,9 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     const r = await step(agent.definition, convId, randomUUID(), 1);
     expect(r.aborted).toBe(false);
     const [call] = await ofType(convId, "model_call");
-    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, agent.definition);
+    const { tools } = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { ...agent.definition, source: "web" });
     const hash = (key: string) => tools.find((t) => t.key === key)?.specHash;
     expect(call?.payload.request.tools).toEqual([
       { key: "mcp__docs__read", specHash: hash("mcp__docs__read") },
@@ -488,7 +493,9 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     // the org admin turns the tool off org-wide: no agent gets it, and the model is not told
     await sql`INSERT INTO capybara.org_tool_switches (org_id, plugin, tool, enabled)
       VALUES (${orgId}, 'tools-probe', 'echo', false)`.execute(raw);
-    const switched = await k.app.get(ToolRegistry).forAgent(orgId, agent.definition);
+    const switched = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { ...agent.definition, source: "web" });
     expect(switched.tools.map((t) => t.key)).not.toContain("plugin__tools-probe__echo");
     expect(switched.unavailable).toEqual([]);
     expect(switched.hidden?.some((h) => h.ref === "plugin__tools-probe__echo")).toBe(true);

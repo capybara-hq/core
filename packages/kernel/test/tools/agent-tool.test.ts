@@ -484,7 +484,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
         agents: [{ agentId: a, as: "analyst", description: "Data questions." }],
       },
     });
-    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, parent);
+    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, { ...parent, source: "web" });
     const tool = tools.find((x) => x.key === "Agent");
     expect(tool?.defaultPolicy).toBe("allow");
     expect(tool?.spec).toEqual(agentToolSpec(await resolveRoster(db, orgId, parent), 4));
@@ -498,6 +498,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     ).toBe(true);
     // without subagents the tool lists general-purpose only
     const plain = await k.app.get(ToolRegistry).forAgent(orgId, {
+      source: "web",
       disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
     });
     // an agent that has Agent also gets SendMessage, to reach its sub-agents (agent map §4.2)
@@ -507,6 +508,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
 
   it("an empty roster offers no agent tool at all", async () => {
     const r = await k.app.get(ToolRegistry).forAgent(orgId, {
+      source: "web",
       disabledTools: onlyBuiltins([
         { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "Agent" },
@@ -543,12 +545,14 @@ describe("tool resolution", { timeout: 60_000 }, () => {
         childDepth: 3,
         maxDepth: 3,
       });
-      const atMax = await k.app.get(ToolRegistry).forAgent(orgId, deep.definition);
+      const atMax = await k.app
+        .get(ToolRegistry)
+        .forAgent(orgId, { ...deep.definition, source: "web" });
       expect(atMax.tools.map((x) => x.key)).toEqual(["ReadToolOutput"]);
       // as a child's run: SendMessage to reach its parent and SubagentHandback, without Agent
       const asChild = await k.app
         .get(ToolRegistry)
-        .forAgent(orgId, { ...deep.definition, child: true });
+        .forAgent(orgId, { source: "web", ...deep.definition, child: true });
       expect(asChild.tools.map((x) => x.key)).toEqual([
         "ReadToolOutput",
         "SendMessage",
@@ -562,7 +566,9 @@ describe("tool resolution", { timeout: 60_000 }, () => {
         childDepth: 1,
         maxDepth: 3,
       });
-      const below = await k.app.get(ToolRegistry).forAgent(orgId, shallow.definition);
+      const below = await k.app
+        .get(ToolRegistry)
+        .forAgent(orgId, { ...shallow.definition, source: "web" });
       expect(below.tools.map((x) => x.key)).toEqual(["ReadToolOutput", "Agent", "SendMessage"]);
       expect(below.tools.find((x) => x.key === "Agent")?.spec.description).toContain(
         "- scout: Find.",

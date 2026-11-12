@@ -206,10 +206,14 @@ describe("offered with Bash", () => {
   it("a definition naming only Bash gets TaskOutput and TaskStop; their policies validate", async () => {
     const c = await conversation();
     const registry = k.app.get(ToolRegistry);
-    const got = await registry.forAgent(c.orgId, { disabledTools: builtinsOff("Bash") });
+    const got = await registry.forAgent(c.orgId, {
+      source: "web",
+      disabledTools: builtinsOff("Bash"),
+    });
     expect(got.tools.map((t) => t.key)).toEqual(["Bash", "TaskOutput", "TaskStop"]);
     // an explicit ref changes nothing
     const both = await registry.forAgent(c.orgId, {
+      source: "web",
       disabledTools: onlyBuiltins([
         { kind: "builtin", name: "TaskStop" },
         { kind: "builtin", name: "Bash" },
@@ -218,7 +222,10 @@ describe("offered with Bash", () => {
     expect(both.tools.map((t) => t.key).sort()).toEqual(["Bash", "TaskOutput", "TaskStop"]);
     expect(both.unavailable).toEqual([]);
     // without Bash they are not offered
-    const none = await registry.forAgent(c.orgId, { disabledTools: builtinsOff("Read") });
+    const none = await registry.forAgent(c.orgId, {
+      source: "web",
+      disabledTools: builtinsOff("Read"),
+    });
     expect(none.tools.map((t) => t.key)).toEqual(["Read"]);
 
     // through the agents API: a policy for TaskStop with only Bash referenced is accepted

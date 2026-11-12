@@ -14,6 +14,7 @@ import {
   NETWORK_HOST_MAX_CHARS,
   type ToolView,
 } from "../conversations/events.js";
+import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -1068,6 +1069,8 @@ export class ApprovalsService {
       disabledTools: def?.disabledTools ?? [],
       subagentTools: def?.subagentTools,
       subagents: def?.subagents,
+      // the tools of the trial run's conversation, where the approval was asked
+      source: await conversationSourceOf(t, a.conversationId),
     });
     const tool = tools.find((x) => x.key === a.toolKey);
     const { forbiddenTools } = await readScheduleSettings(t, this.config, a.orgId);

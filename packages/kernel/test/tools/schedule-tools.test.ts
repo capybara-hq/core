@@ -308,7 +308,9 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
 
   it("an unattended run cannot create a task", async () => {
     const conv = await createConv(alice, orgId, agentId);
-    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, definition);
+    const { tools } = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { ...definition, source: "web" });
     const create = tools.find((t) => t.key === "ScheduleCreate") as ResolvedTool;
     const update = tools.find((t) => t.key === "ScheduleUpdate") as ResolvedTool;
     expect(create).toBeDefined();
@@ -485,14 +487,14 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
   });
 
   it("the tools are hidden while the org has scheduled tasks turned off", async () => {
-    const before = await k.app.get(ToolRegistry).forAgent(orgId, definition);
+    const before = await k.app.get(ToolRegistry).forAgent(orgId, { ...definition, source: "web" });
     expect(before.tools.map((t) => t.key)).toEqual(
       expect.arrayContaining([...SCHEDULE_TOOL_NAMES]),
     );
     await k.app
       .get(OrgSettingsService)
       .update(orgId, { scheduledTasks: { enabled: false } }, ownerId);
-    const after = await k.app.get(ToolRegistry).forAgent(orgId, definition);
+    const after = await k.app.get(ToolRegistry).forAgent(orgId, { ...definition, source: "web" });
     for (const n of SCHEDULE_TOOL_NAMES) expect(after.tools.map((t) => t.key)).not.toContain(n);
     expect(after.unavailable).toEqual([]);
   });

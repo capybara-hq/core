@@ -206,9 +206,9 @@ export interface ModelStepInput {
   accountId?: string;
   /**
    * The conversation's source (memory plugin spec §6.2): extension tools limited by
-   * `spec.sources` are listed by it. Absent = `web`.
+   * `spec.sources` are listed by it.
    */
-  source?: ConversationSource;
+  source: ConversationSource;
   /** Hooks fire for `chat` and `subagent` (never for eval replays). */
   conversationKind?: ConversationKindForHooks;
   /** A sub-agent's run: where it was dispatched from (hook payloads carry it as `parent`). */
@@ -415,7 +415,7 @@ async function runStep(
       forkChild: input.parent?.forSkill === true,
       sandboxConversationId: input.parent?.rootConversationId ?? input.conversationId,
       replay: input.conversationKind === "eval",
-      ...(input.source !== undefined && { source: input.source }),
+      source: input.source,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>

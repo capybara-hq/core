@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
@@ -11,6 +12,7 @@ import { ConversationsService } from "../../src/conversations/conversations.serv
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -102,8 +104,7 @@ beforeEach(async () => {
   agentId = (res.json() as { agent: { id: string } }).agent.id;
 });
 
-const listed = (source?: ConversationSource) =>
-  k.app.get(ToolRegistry).forAgent(orgId, source === undefined ? {} : { source });
+const listed = (source: ConversationSource) => k.app.get(ToolRegistry).forAgent(orgId, { source });
 
 /** The `tool_result` of the run's `web-only` call. */
 async function callIn(conv: string, req: Req): Promise<{ content: string; isError: boolean }> {
@@ -122,7 +123,7 @@ const setSource = (conv: string, source: ConversationSource) =>
 
 describe("extension tools by conversation source", { timeout: 60_000 }, () => {
   it("forAgent hides a tool from the sources it leaves out, with the reason", async () => {
-    for (const source of [undefined, "web", "channel_dm"] as const) {
+    for (const source of ["web", "channel_dm"] as const) {
       const r = await listed(source);
       expect(r.tools.map((t) => t.key)).toContain(KEY);
       expect(r.hidden?.some((h) => h.ref === KEY)).toBe(false);
@@ -180,6 +181,25 @@ describe("extension tools by conversation source", { timeout: 60_000 }, () => {
       expect(r.isError).toBe(true);
       expect(r.content).toContain(`Not available in ${source} conversations`);
     }
+  });
+
+  it("platform.me lists the tools of the source of the conversation it runs in", async () => {
+    const me = async (source: ConversationSource) => {
+      const conv = await createConv(owner, orgId, agentId);
+      await setSource(conv, source);
+      const op = k.app.get(PlatformOperations).get("platform.me");
+      const ctx = {
+        orgId,
+        actorAccountId: ownerId,
+        agentId,
+        conversationId: conv,
+        runId: randomUUID(),
+        signal: new AbortController().signal,
+      };
+      return ((await op?.run({}, ctx)) as { tools: string[] }).tools;
+    };
+    expect(await me("web")).toContain(KEY);
+    expect(await me("channel_group")).not.toContain(KEY);
   });
 
   it("a full-run replay offers the tools of the original conversation's source", async () => {

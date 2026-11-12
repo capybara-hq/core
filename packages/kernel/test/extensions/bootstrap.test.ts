@@ -348,6 +348,7 @@ describe("a fresh deployment", { timeout: 30_000 }, () => {
     expect(pairs).not.toContainEqual({ org_id: orgId, plugin: "beta" });
     // A required plugin's tools are available to the org's agents
     const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
+      source: "web",
       disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "alpha", name: "wait" }]),
     });
     expect(tools.tools.map((t) => t.key)).toEqual(["plugin__alpha__wait"]);

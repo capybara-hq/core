@@ -555,10 +555,10 @@ export class ToolRegistry {
       /** An eval replay's listing: its calls are never executed (the sandbox tools are listed). */
       replay?: boolean;
       /**
-       * The conversation's source (memory plugin spec §6.2), absent = `web`: an extension tool
-       * whose `spec.sources` leaves it out is hidden.
+       * The conversation's source (memory plugin spec §6.2): an extension tool whose
+       * `spec.sources` leaves it out is hidden. Required, so nothing defaults to the widest.
        */
-      source?: ConversationSource;
+      source: ConversationSource;
     },
   ): Promise<AgentTools> {
     const resolved = await this.resolve(orgId, def);
@@ -618,11 +618,11 @@ export class ToolRegistry {
       subagents?: AgentDefinition["subagents"];
       sandboxConversationId?: string;
       replay?: boolean;
-      source?: ConversationSource;
+      source: ConversationSource;
     },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const disabled = def.disabledTools ?? [];
-    const source = def.source ?? "web";
+    const { source } = def;
     const scope: ToolListingScope = {
       orgId,
       ...(def.sandboxConversationId !== undefined && {
