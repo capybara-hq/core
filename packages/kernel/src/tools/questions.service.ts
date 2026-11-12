@@ -394,18 +394,12 @@ export class QuestionsService {
   }
 
   /**
-   * 在调用方的事务内（`mandatory`）取消某组织里由 `accountId` 发起的运行上的全部 pending 输入请求（只有运行发起人能回答，
-   * 即「其作为处理人」的提问；成员离职时调用），走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、
-   * 写 `question_answered{cancelled}`。返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件。
+   * The conversations of `orgId` holding a pending question of a run `accountId` started (only the
+   * run's starter answers), read without locks: offboarding locks them, by tree root first
+   * (`lockConversationTrees`), before {@link cancelPendingFor}.
    */
-  @Transactional({ propagation: "mandatory" })
-  async cancelPendingFor(
-    orgId: string,
-    accountId: string,
-  ): Promise<{ records: QuestionRecord[]; seqs: Map<string, number> }> {
-    const t = this.db.db;
-    // the conversations first, in id order (lock order D7: conversation, then question rows)
-    const convs = await t
+  async pendingConversationsFor(orgId: string, accountId: string): Promise<string[]> {
+    const rows = await this.db
       .selectFrom("questions")
       .select("conversation_id")
       .distinct()
@@ -415,31 +409,33 @@ export class QuestionsService {
         eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),
       )
       .execute();
-    if (convs.length > 0) {
-      await t
-        .selectFrom("conversations")
-        .select("id")
-        .where(
-          "id",
-          "in",
-          convs.map((c) => c.conversation_id),
-        )
-        .orderBy("id")
-        .forUpdate()
-        .execute();
-    }
-    // only the conversations locked above: a question asked meanwhile in another one waits for
-    // the run's stop (offboarding aborts it) or the sweep, so no conversation is locked after a row
+    return rows.map((r) => r.conversation_id);
+  }
+
+  /**
+   * In the caller's transaction (`mandatory`; offboarding): cancels every pending question of a run
+   * `accountId` started in `orgId` within `conversationIds`, the conversations the caller already
+   * locked (by tree root first, `lockConversationTrees`; lock order D7: conversation, then question
+   * rows), along the same path as {@link cancelPendingIn}: `cancelled`,
+   * `question_answered{cancelled}`. A question asked meanwhile in another conversation waits for
+   * its run's stop (offboarding owes it), so no conversation is locked after a row. Returns the
+   * cancelled records and the highest seq written per conversation; the caller publishes after the
+   * commit.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async cancelPendingFor(
+    orgId: string,
+    accountId: string,
+    conversationIds: readonly string[],
+  ): Promise<{ records: QuestionRecord[]; seqs: Map<string, number> }> {
+    const t = this.db.db;
+    const convs = [...conversationIds];
     if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("questions")
       .selectAll()
       .where("org_id", "=", orgId)
-      .where(
-        "conversation_id",
-        "in",
-        convs.map((c) => c.conversation_id),
-      )
+      .where("conversation_id", "in", convs)
       .where("status", "=", "pending")
       .where("run_id", "in", (eb) =>
         eb.selectFrom("runs").select("id").where("trigger_account_id", "=", accountId),

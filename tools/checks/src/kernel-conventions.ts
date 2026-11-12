@@ -270,6 +270,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
       "transactions, so there is no kernel row for the job to be owed by",
   },
   {
+    rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/sandbox/jobs.ts",
+    within: "resetFiles",
+    reason:
+      "a files reset is a request-time action that no write owes (the audit row only records the " +
+      "request): the request fails when the add fails, so it is not owed work (ruling R28)",
+  },
+  {
     rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
@@ -384,30 +392,12 @@ export const KC_PENDING: KcPending = {
       max: 1,
       reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
     },
-    { path: "packages/kernel/src/sandbox/jobs.ts", max: 2, reason: "moves to the outbox in PR 5" },
     {
       path: "packages/kernel/src/schedules/fire.ts",
       max: 1,
       reason: "moves to the outbox in PR 2",
     },
-    {
-      path: "packages/kernel/src/schedules/scan.job.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
     { path: "packages/kernel/src/tools/drift.ts", max: 2, reason: "moves to the outbox in PR 7" },
-  ],
-  "kc-after-commit-hint": [
-    {
-      path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
   ],
 };
 

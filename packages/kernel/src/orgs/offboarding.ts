@@ -1,9 +1,9 @@
 import { DIRECTORY_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import { retargetSetupRequests } from "../agents/pending-connector-requests.js";
 import { EventLog } from "../conversations/event-log.js";
+import { lockConversationTrees } from "../conversations/tree.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -12,12 +12,12 @@ import { SessionService } from "../identity/sessions.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { LockService } from "../infra/lock/lock.service.js";
-import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
-import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunControl } from "../runtime/run-control.js";
-import { SandboxJobs } from "../sandbox/jobs.js";
+import { oweDeviceDestroy } from "../sandbox/jobs.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -40,11 +40,11 @@ export interface OffboardResult {
   revokedSessionIds: string[];
   /** 写了 cancelled 事件的会话 → 最大 seq（提交后发布）。 */
   notify: Map<string, number>;
-  /** 此人在该组织进行中的运行（queued / running / waiting），提交后中止。 */
+  /** The person's active runs in the org (queued / running / waiting): a `run-stop` job each is owed. */
   runs: InFlightRun[];
   /** 负责的 agent 转交给的所有者；没有转交时为 null。 */
   newOwnerId: string | null;
-  /** The person's devices in the org, soft-deleted here; destroyed by a job after commit. */
+  /** The person's devices in the org, soft-deleted here; a destroy job each is owed. */
   devices: string[];
   /** Conversations whose queued messages were deleted (`changed: queue` after commit). */
   queueConversations: string[];
@@ -58,18 +58,25 @@ export interface OffboardingRunControl {
     runId: string,
     byAccountId: string | null,
   ): Promise<boolean>;
+  abortQueued(conversationId: string, runId: string, byAccountId: string | null): Promise<boolean>;
   requestAbort(runId: string, byAccountId: string | null): Promise<void>;
 }
 
-/** The safety-net sweep: cron job name (no `:`), every 10 minutes, and the rows per page. */
-export const OFFBOARD_SWEEP_JOB = "offboard-sweep";
-export const OFFBOARD_SWEEP_BATCH = 500;
-/** 一次兜底扫描最多翻的页数（每页 {@link OFFBOARD_SWEEP_BATCH} 条），防止单次任务无限长。 */
-export const OFFBOARD_SWEEP_MAX_PAGES = 20;
-/** 已经广播中止的运行的标记保留时长（秒），长于扫描周期：期间扫描不再重复广播。 */
-export const OFFBOARD_ABORT_MARK_TTL_SECONDS = 1800;
-/** 「已请求中止」标记（Redis 键）。 */
-export const offboardAbortKey = (runId: string) => `capk:offboard-abort:${runId}`;
+/**
+ * The stop of a departed member's run (transactional outbox spec §8.1), owed by the offboard
+ * transaction on the maintenance queue under {@link runStopJobId}; `MaintenanceProcessor` runs
+ * {@link Offboarding.stopRun}.
+ */
+export const RUN_STOP_JOB = "run-stop";
+
+/** The `run-stop` job's data. */
+export interface RunStopJobData {
+  conversationId: string;
+  runId: string;
+}
+
+/** The `run-stop` job id: a run is stopped once (no `:`). */
+export const runStopJobId = (runId: string): string => `run-stop-${runId}`;
 
 const ACTIVE = ["queued", "running", "waiting"] as const;
 /** 通讯录同步加入的成员关系的 `source` 前缀（`directory:<插件名>`）。 */
@@ -77,8 +84,10 @@ const DIRECTORY_SOURCE_PREFIX = "directory:";
 
 /**
  * 成员离职（spec 3.3）：管理员移出、本人离开与通讯录同步共用这一条路径，全部写入在调用方的同一个事务内，
- * 要么都生效要么都不生效。Redis 吊销标记、事件发布与中止进行中的运行是提交后的尽力而为（{@link afterOffboard}），
- * 漏掉的运行由兜底扫描（{@link sweep}：发起人已不是该组织成员的进行中运行）中止。框架无关。
+ * 要么都生效要么都不生效。The stops of the person's runs and the destruction of their devices are owed
+ * in that transaction (outbox jobs, transactional outbox spec §8.1); the Redis revocation markers
+ * and the event publishes after the commit are hints ({@link afterOffboard}: `revoked_at` in PG is
+ * the authority).
  *
  * 已接受的窄窗口：离职提交时正在进行的 OAuth token 刷新（`Credentials` 刷新锁内）可能在提交之后把此人的
  * 个人凭据重新写回（upsert）。凭据只在此人以成员身份调用工具时使用，而其运行已被中止、成员关系已删除，
@@ -90,18 +99,23 @@ export class Offboarding {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SessionService) private readonly sessions: Pick<SessionService, "markRevoked">,
-    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
-    /** The departed member's devices: one-off maintenance jobs, destroyed by a worker. */
-    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
-    /** Stops the departed member's runs (`by: null`, a system action). */
+    /** Owes the run stops and device destroys in the offboard transaction. */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    /** Stops the departed member's runs (`by: null`, a system action) in the `run-stop` job. */
     @Inject(RunControl) private readonly runs: OffboardingRunControl,
     @Inject(Credentials) private readonly credentials: Pick<Credentials, "clearAccount">,
     @Inject(ApprovalsService)
-    private readonly approvals: Pick<ApprovalsService, "cancelPendingFor">,
+    private readonly approvals: Pick<
+      ApprovalsService,
+      "pendingConversationsFor" | "cancelPendingFor"
+    >,
     @Inject(QuestionsService)
-    private readonly questions: Pick<QuestionsService, "cancelPendingFor">,
+    private readonly questions: Pick<
+      QuestionsService,
+      "pendingConversationsFor" | "cancelPendingFor"
+    >,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
@@ -113,7 +127,8 @@ export class Offboarding {
    *    account (both are account-wide, so conservatively all); a person who leaves (`left`) keeps
    *    them, and the session's current org is cleared (the membership check ends the access);
    * 3. 删除其在该组织所有连接器上的个人凭据；
-   * 4. 取消其作为处理人的 pending 审批与提问（写 cancelled 事件），记下此人在该组织进行中的运行（提交后中止）；
+   * 4. 取消其作为处理人的 pending 审批与提问（写 cancelled 事件）; owes a `run-stop` job for each of the
+   *    person's active runs in the org;
    * 5. 其负责的该组织 agent 转给组织所有者（最早加入的 owner）并置 `needs_reassignment = true`；
    * 6. 归档其在该组织各渠道连接上的 IM 话题行（重新加入后在 IM 里开始新的对话，不接着旧会话），
    *    删除其在该组织的「以后都允许」工具授权（`tool_grants`）；
@@ -121,9 +136,8 @@ export class Offboarding {
    *    以及成员关系自身的 `directory:<插件>` 来源，不论此人当初是不是由通讯录加入（手动重新加入后再被移出也不会被同步加回）；
    *    同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
    * 8. 审计 `org.member.offboarded`；
-   * 9. Soft-deletes the person's devices in the org and clears their default row (the
-   *    instances and files are destroyed after the commit, best effort; the hourly sweep finishes
-   *    any left).
+   * 9. Soft-deletes the person's devices in the org and clears their default row, and owes the
+   *    destruction of each (instance and files, `device-destroy-<deviceId>`).
    */
   @Transactional({ propagation: "mandatory" })
   async offboard(
@@ -156,17 +170,26 @@ export class Offboarding {
       .orderBy("id")
       .forNoKeyUpdate()
       .execute();
-    // then the member's conversations in id order, before any of their queue rows (final review
-    // m2): queue dispatch, send-now and remove lock a conversation, then its queue rows; deleting
-    // the rows first and updating the conversations after could deadlock with them (40P01)
-    await this.db
+    // then, in one pass, the member's conversations and those holding a pending approval or
+    // question this offboarding cancels, before any of their queue, approval or question rows
+    // (final review m2: queue dispatch, send-now and remove lock a conversation, then its queue
+    // rows). Locked tree by tree, root first (`lockConversationTrees`), not in id order: a reply
+    // locks its root and then the sub-agents' conversations whose network asks it skips, and a
+    // child's id may sort before its root's (40P01)
+    const own = await this.db
       .selectFrom("conversations")
       .select("id")
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
-      .orderBy("id")
-      .forNoKeyUpdate()
       .execute();
+    const approvalConvs = await this.approvals.pendingConversationsFor(orgId, accountId);
+    const questionConvs = await this.questions.pendingConversationsFor(orgId, accountId);
+    const locked = await lockConversationTrees(this.db.db, [
+      ...own.map((c) => c.id),
+      ...approvalConvs,
+      ...questionConvs,
+    ]);
+    const isLocked = new Set(locked);
     const owner = await this.db
       .selectFrom("memberships")
       .select("account_id")
@@ -212,8 +235,17 @@ export class Offboarding {
 
     // in this transaction (the approvals and questions services join it: `mandatory`)
     const credentials = await this.credentials.clearAccount(orgId, accountId);
-    const approvals = await this.approvals.cancelPendingFor(orgId, accountId);
-    const questions = await this.questions.cancelPendingFor(orgId, accountId);
+    // only in the conversations locked above (one asked meanwhile elsewhere waits for its run's stop)
+    const approvals = await this.approvals.cancelPendingFor(
+      orgId,
+      accountId,
+      approvalConvs.filter((c) => isLocked.has(c)),
+    );
+    const questions = await this.questions.cancelPendingFor(
+      orgId,
+      accountId,
+      questionConvs.filter((c) => isLocked.has(c)),
+    );
     const notify = new Map(approvals.seqs);
     for (const [c, seq] of questions.seqs) notify.set(c, Math.max(notify.get(c) ?? 0, seq));
 
@@ -235,6 +267,16 @@ export class Offboarding {
         ]),
       )
       .execute();
+    // their stops are owed with the offboarding (the job reads the run's state when it runs)
+    for (const r of runs) {
+      await this.outbox.add<RunStopJobData>({
+        queue: MAINTENANCE_QUEUE_NAME,
+        name: RUN_STOP_JOB,
+        jobId: runStopJobId(r.id),
+        data: { conversationId: r.conversation_id, runId: r.id },
+        orgId,
+      });
+    }
 
     const agents = await this.db
       .updateTable("agents")
@@ -318,6 +360,7 @@ export class Offboarding {
       .where("deleted_at", "is", null)
       .returning("id")
       .execute();
+    for (const d of devices) await oweDeviceDestroy(this.outbox, d.id, orgId);
     await this.db
       .deleteFrom("device_defaults")
       .where("org_id", "=", orgId)
@@ -387,9 +430,9 @@ export class Offboarding {
 
   /**
    * After the commit (callers register it with the infra `afterCommit` inside their transaction):
-   * writes the session revocation markers, publishes the cancelled events, stops the person's
-   * runs in the org and schedules destroying their devices. A failing step only logs a
-   * warning.
+   * writes the session revocation markers and publishes the cancelled events and queue changes,
+   * all hints (the run stops and device destroys were owed in the transaction). A failing step
+   * only logs a warning.
    */
   async afterOffboard(r: OffboardResult): Promise<void> {
     const { sessions, log, eventLog } = this;
@@ -412,127 +455,49 @@ export class Offboarding {
         log.warn("offboarding: queue change notify failed", { conversationId, err });
       }
     }
-    for (const run of r.runs) await this.stopRun(run);
-    if (r.devices.length > 0) {
-      try {
-        await this.sandboxJobs.destroy(r.devices);
-      } catch (err) {
-        log.warn("offboarding: cannot schedule device destruction", {
-          count: r.devices.length,
-          err,
-        });
-      }
-    }
   }
 
   /**
-   * 中止一个运行，顺序同会话中止接口：waiting → 直接取消等待并写终态；孤儿 → 直接写终态；
-   * 否则经 Redis 广播中止（运行所在副本收到后结束；尚未开始的运行开始时补查中止标记）。失败只记 warn。
-   * 不像会话中止那样随后起新一轮运行：离职者的待处理消息不再处理。
+   * The `run-stop` job (`MaintenanceProcessor`): stops a departed member's run the way the
+   * conversation's stop does (`POST .../abort`), by no account: a waiting run is aborted directly,
+   * a queued run is ended in PG (ruling R27: it never starts later, however long it was held), an
+   * orphan is finished directly, a running run is asked to stop through Redis (its replica ends it). A finished run is left alone. No
+   * new run follows, as after a person's stop: the departed member's queued messages were deleted.
+   * A failure throws (the job is retried).
    */
-  private async stopRun(run: InFlightRun): Promise<void> {
+  async stopRun(data: RunStopJobData): Promise<void> {
+    const run = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", data.runId)
+      .executeTakeFirst();
+    if (run === undefined || !(ACTIVE as readonly string[]).includes(run.status)) return;
     const ctl = this.runs;
-    try {
-      if (
-        run.status === "waiting" &&
-        (await ctl.abortWaiting(run.conversationId, run.runId, null))
-      ) {
-        return;
-      }
-      if (await ctl.abortIfOrphaned(run.conversationId, run.runId, null)) return;
-      await ctl.requestAbort(run.runId, null);
-      // 广播中止的运行要等所在副本到达步骤边界才真正结束：广播成功后记标记，扫描在其有效期内不再重复广播
-      // （广播失败不记，下一轮扫描重试）
-      await this.redis
-        .set(offboardAbortKey(run.runId), "1", "EX", OFFBOARD_ABORT_MARK_TTL_SECONDS)
-        .catch((err: unknown) => this.log.warn("offboarding: cannot mark abort", { err }));
-    } catch (err) {
-      this.log.warn("offboarding: cannot stop run", { runId: run.runId, err });
+    if (
+      run.status === "waiting" &&
+      (await ctl.abortWaiting(data.conversationId, data.runId, null))
+    ) {
+      return;
     }
-  }
-
-  /**
-   * 兜底扫描（维护队列每 10 分钟）：进行中、且发起人已不是该会话所属组织成员的运行 → 中止
-   * （提交后的中止没做成时，如进程崩溃）。按 `(runs.created_at, runs.id)` 键集分页翻完（每页 500 条，
-   * 至多 20 页）：经广播中止、尚未真正结束的运行仍是进行中，若只取前 500 条，超过 500 条卡住的运行会
-   * 一直占满这一页，后面的永远轮不到。已广播中止、仍带 `capk:offboard-abort:<runId>` 标记（30 分钟）的运行跳过，
-   * 不每轮重复广播；标记过期仍未结束的再处理一次。返回本次处理（未跳过）的运行数。
-   * 现任成员（含匿名访客这样的 guest 成员）发起的运行不受影响。
-   */
-  async sweep(batch = OFFBOARD_SWEEP_BATCH): Promise<number> {
-    const db = this.db;
-    // 游标的时间用文本保存完整的微秒精度（JS Date 只有毫秒，会让同一行再被取到）
-    let after: { createdAt: string; id: string } | undefined;
-    let total = 0;
-    for (let page = 0; page < OFFBOARD_SWEEP_MAX_PAGES; page++) {
-      const cursor = after;
-      const rows = await db
+    if (run.status === "queued") {
+      // a queued run may wait for hours: it is ended in PG, never left to the stop marker's TTL
+      // (ruling R27); the marker first, so a worker that takes it meanwhile stops too
+      await ctl.requestAbort(data.runId, null);
+      if (await ctl.abortQueued(data.conversationId, data.runId, null)) return;
+      // a worker took it (now running) or it moved on: the marker stops it; re-read and go on
+      const now = await this.db
         .selectFrom("runs")
-        .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-        .select(["runs.id", "runs.conversation_id", "runs.status"])
-        .select(sql<string>`runs.created_at::text`.as("created_at_text"))
-        .where("runs.status", "in", ACTIVE)
-        // a removed member's sub-agents run with their identity and credentials: stopped too
-        .where("conversations.kind", "in", ["chat", "subagent"])
-        .where(({ not, exists, selectFrom }) =>
-          not(
-            exists(
-              selectFrom("memberships")
-                .select(sql`1`.as("one"))
-                .whereRef("memberships.org_id", "=", "conversations.org_id")
-                .whereRef("memberships.account_id", "=", "runs.trigger_account_id"),
-            ),
-          ),
-        )
-        .$if(cursor !== undefined, (q) =>
-          q.where(
-            sql<boolean>`(runs.created_at, runs.id) > (${cursor?.createdAt}::timestamptz, ${cursor?.id})`,
-          ),
-        )
-        .orderBy("runs.created_at")
-        .orderBy("runs.id")
-        .limit(batch)
-        .execute();
-      for (const r of rows) {
-        if (await this.recentlyAborted(r.id)) continue;
-        total++;
-        this.log.warn("offboard sweep: stopping run of a former member", { runId: r.id });
-        await this.stopRun({
-          conversationId: r.conversation_id,
-          runId: r.id,
-          status: r.status as InFlightRun["status"],
-        });
+        .select("status")
+        .where("id", "=", data.runId)
+        .executeTakeFirst();
+      if (now?.status === "queued") {
+        throw new Error(`run ${data.runId} is still queued; the run-stop job retries`);
       }
-      const last = rows[rows.length - 1];
-      if (rows.length < batch || !last) break;
-      after = { createdAt: last.created_at_text, id: last.id };
+      if (now?.status !== "waiting") return;
+      await ctl.abortWaiting(data.conversationId, data.runId, null);
+      return;
     }
-    return total;
-  }
-
-  private async recentlyAborted(runId: string): Promise<boolean> {
-    try {
-      return (await this.redis.exists(offboardAbortKey(runId))) === 1;
-    } catch {
-      return false;
-    }
-  }
-}
-
-/**
- * The offboarding safety-net sweep ({@link Offboarding.sweep}) every 10 minutes, once per tick
- * across replicas; a worker-role job (`WorkerModule`).
- */
-@Injectable()
-export class OffboardSweepJob {
-  constructor(
-    @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "sweep">,
-    @Inject(LockService) readonly lockService: LockService,
-    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
-  ) {}
-
-  @LockedCron("*/10 * * * *", { name: OFFBOARD_SWEEP_JOB })
-  async run(): Promise<void> {
-    await this.offboarding.sweep();
+    if (await ctl.abortIfOrphaned(data.conversationId, data.runId, null)) return;
+    await ctl.requestAbort(data.runId, null);
   }
 }

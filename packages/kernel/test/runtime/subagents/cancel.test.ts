@@ -11,7 +11,6 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { LockedIntervalScheduler } from "../../../src/infra/schedule/locked-interval.js";
-import { Offboarding } from "../../../src/orgs/offboarding.js";
 import { RunAbort } from "../../../src/runtime/abort.js";
 import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../../src/runtime/run-orphan-check.job.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
@@ -41,7 +40,6 @@ import {
   startKernel,
   type TestKernel,
   waitFor,
-  waitForEvent,
   waitForTerminal,
 } from "../../helpers/runs.js";
 import {
@@ -697,20 +695,5 @@ describe("offboarding", () => {
     await allStopped(children.map((c) => c.runId));
     const ds = await deliveredFor(conv, children);
     expect([...ds.values()].map((d) => d.status)).toEqual(["aborted"]);
-  }, 60_000);
-
-  it("the offboarding sweep stops a former member's sub-agent runs", async () => {
-    await subQueue.pause();
-    const conv = await createConv(member, orgId, agentId);
-    await postMessage(member, orgId, conv, "SCENARIO hang-one");
-    await waitForTerminal(db, conv, 1, 20_000);
-    const children = await childRunsOf(db, conv);
-    // the membership went away without the offboarding steps (a crash): only the offboarding
-    // sweep catches the child
-    await db.deleteFrom("memberships").where("account_id", "=", memberId).execute();
-    expect(await k.app.get(Offboarding).sweep()).toBe(1);
-    await subQueue.resume();
-    await allStopped(children.map((c) => c.runId));
-    await waitForEvent(db, conv, (e) => e.type === "subagent_finished", 10_000);
   }, 60_000);
 });

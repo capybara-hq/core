@@ -78,6 +78,35 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `orgs/offboarding.ts` RUN_STOP_JOB: owed by the offboard transaction for each of the departed
+  // member's active runs in the org, under `runStopJobId` (spec §8.1)
+  "run-stop": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "stopping a finished run is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // retried while PG or Redis is briefly unavailable; removed once done; a job that failed every
+    // attempt is kept a week (no sweep stops the run after it: the failure must stay visible)
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: { age: 7 * 86_400, count: 1_000 },
+    },
+  },
+  // `sandbox/jobs.ts` SANDBOX_DESTROY_FOR_JOB: owed by the transaction that soft-deletes a device
+  // (its deletion, offboarding), under `deviceDestroyJobId` (spec §8.1)
+  "sandbox-destroy-for": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "destroying a destroyed device is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // the options the direct enqueue had: retried while the provider is down
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 30_000 },
+      removeOnComplete: true,
+      removeOnFail: 100,
+    },
+  },
   // `runtime/subagents/tree-jobs.ts` DELIVER_TO_PARENT_JOB: owed by a sub-agent run's terminal
   // transaction, under `deliverToParentJobId` (spec §6)
   "deliver-to-parent": {
@@ -176,6 +205,38 @@ export const OUTBOX_JOBS = {
     // a few retries while PG is briefly unavailable; removed once done
     opts: {
       attempts: 3,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `schedules/job-ids.ts` SCHED_FIRE_JOB: owed by the transaction that writes a pending task run
+  // (the scan's tick, a person's "run now"), under `schedFireJobId` (spec §8.1)
+  "sched-fire": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "a fire acts only on a pending task run, under its row lock; a retried start reuses what the first one made",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // a few retries while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 2_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `schedules/job-ids.ts` SCHED_SETTLE_JOB: the claimed check, owed by the fire job's claim (the
+  // transaction that writes `fired_at`) with `runAt` 10 min on, under `schedSettleJobId` (a run
+  // still in flight owes the next check an hour on); the unfired check, owed with the task run
+  // (scan tick, "run now") under `schedSettleUnfiredJobId` (ruling R26)
+  "sched-settle": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "a check acts only on a task run still pending (claimed for the claimed check, unclaimed for the unfired one), under the task and run row locks, so a run claimed, started, ended or skipped since is left as it is",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // retried while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 5,
       backoff: { type: "exponential", delay: 5_000 },
       removeOnComplete: true,
       removeOnFail: true,

@@ -190,6 +190,8 @@ export interface RunControl {
    * 否则返回 false。
    */
   abortIfOrphaned(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
+  /** Ends a run still `queued` in PG before a worker started it (`RunQueue.abortQueued`): true. */
+  abortQueued(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
   /**
    * 运行在等人处理（waiting）时直接中止：取消等待、写 `run_aborted`、删除 checkpoint，返回 true；
    * 运行已不是 waiting（例如刚被续跑）→ false。
@@ -1519,6 +1521,15 @@ export class ConversationsService {
     // waited for the stopped run now
     if (run.status === "waiting" && (await runs.abortWaiting(conversationId, run.id, accountId))) {
       await runs.ensureRunAfterCommit(conversationId);
+      return run.id;
+    }
+    // a queued run no worker has started yet is ended in PG (ruling R27), never left to the stop
+    // marker's TTL: the marker first, so a worker that takes it meanwhile stops too
+    if (run.status === "queued") {
+      await runs.requestAbort(run.id, accountId);
+      if (await runs.abortQueued(conversationId, run.id, accountId)) {
+        await runs.ensureRunAfterCommit(conversationId);
+      }
       return run.id;
     }
     // 孤儿运行没有 worker 在听中止广播：直接写成 aborted，之后再看有没有等待中的消息要起新一轮。

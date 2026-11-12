@@ -2,10 +2,8 @@ import { Inject, Module, type OnModuleInit } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
-import { QueueModule } from "../infra/queue/queue.module.js";
 import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduleToolsPort } from "../tools/builtins/schedules.js";
@@ -33,8 +31,6 @@ import { ScheduledTaskStoreModule } from "./store.module.js";
     // network grants: the org's effective egress and the task device's policy summary
     SandboxModule,
     LocalDevicesModule,
-    // "run now" enqueues the fire job
-    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [ScheduledTasksService],
   exports: [ScheduledTasksService, ScheduledTaskStoreModule],

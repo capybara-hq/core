@@ -13,6 +13,7 @@ import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
+import { Offboarding, RUN_STOP_JOB, type RunStopJobData } from "../orgs/offboarding.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import {
   runSandboxDestroyFor,
@@ -23,7 +24,12 @@ import {
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
-import { SCHED_FIRE_JOB, type SchedFireJobData } from "../schedules/job-ids.js";
+import {
+  SCHED_FIRE_JOB,
+  SCHED_SETTLE_JOB,
+  type SchedFireJobData,
+  type SchedSettleJobData,
+} from "../schedules/job-ids.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -50,10 +56,10 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` and
  * `sandbox-reset-files` → {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
- * {@link DirectorySync}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
+ * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
- * {@link OwnedPluginCleanup}, `sched-fire` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -71,9 +77,11 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly sandbox: Pick<SandboxService, "destroyDevice" | "resetFileSystem">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
+    @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "stopRun">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
-    @Inject(ScheduledTaskFirer) private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire">,
+    @Inject(ScheduledTaskFirer)
+    private readonly scheduledTasks: Pick<ScheduledTaskFirer, "fire" | "settle">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
@@ -119,6 +127,22 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case DIRECTORY_SYNC_JOB:
         await this.directory.runSyncJob(job.data as SyncJobData);
         return;
+      // a departed member's run stop, owed by the offboarding (transactional outbox spec §8.1)
+      case RUN_STOP_JOB:
+        try {
+          await this.offboarding.stopRun(job.data as RunStopJobData);
+        } catch (err) {
+          // nothing stops the run after its last attempt: say so (the failed job is kept)
+          if (job.attemptsMade + 1 >= (job.opts.attempts ?? 1)) {
+            this.log.error("a departed member's run could not be stopped", {
+              jobId: job.id,
+              runId: (job.data as RunStopJobData).runId,
+              err,
+            });
+          }
+          throw err;
+        }
+        return;
       // the end of a conversation's wake window (background Bash spec §3)
       case BG_WAKE_JOB: {
         // fired before the window ended (clock skew): it reschedules under its next retry id
@@ -145,6 +169,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       // one task run of a scheduled task (scheduled tasks spec §6)
       case SCHED_FIRE_JOB:
         await this.scheduledTasks.fire((job.data as SchedFireJobData).taskRunId);
+        return;
+      // a task run's settle check, claimed or unfired (ruling R26)
+      case SCHED_SETTLE_JOB:
+        await this.scheduledTasks.settle(job.data as SchedSettleJobData);
         return;
       default:
         if (await this.scheduled.runNow(job.name)) return;

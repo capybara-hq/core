@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { CHANNEL_EXTENSION_POINT, type Channel } from "@capybara-hq/plugin-sdk";
-import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Queue } from "bullmq";
 import { AgentLookup, type AgentView } from "../agents/agent-lookup.js";
 import type { ModelRef } from "../agents/definition.js";
 import { ConversationAccess } from "../conversations/access.js";
@@ -12,17 +10,16 @@ import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { orgAllows } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { isTimeZone } from "../time-zone.js";
@@ -60,7 +57,7 @@ import {
   TIER_GRANT_SPEC_HASH,
   tierGrantRefusal,
 } from "./grant-rules.js";
-import { schedFireJob } from "./job-ids.js";
+import { oweSchedFire, oweSchedSettleUnfired } from "./job-ids.js";
 import { pauseTaskIn } from "./pause.js";
 import { jitterForGap, minGapMinutes, nextTick, validateTrigger } from "./schedule-math.js";
 import { type ScheduledTaskPatch, ScheduledTaskStore } from "./store.js";
@@ -284,8 +281,8 @@ export class ScheduledTasksService {
     /** A task's model must resolve for the org and declare its effort (as a message's switch). */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /** "Run now" enqueues the fire job (consumed by the worker role). */
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
+    /** "Run now" owes the fire job (consumed by the worker role). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     /** Network grants: the org's effective egress (network ask-to-allow spec §8.1). */
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "ceilingLimits" | "devicePolicy">,
@@ -1137,7 +1134,7 @@ export class ScheduledTasksService {
   /**
    * "Run now" (spec §6), creator only: a task run for the request time, outside the schedule (no
    * unique-key conflict with a tick, and `next_run_at` does not move), fired at once through the
-   * fire job after the commit. `trial`: an attended trial run whose approvals become the task's
+   * fire job its transaction owes. `trial`: an attended trial run whose approvals become the task's
    * grants (§7). Counted in the rate limit like any run. An ended task cannot run; a paused one
    * can (only its creator gets here: the run is `manual`, which the fire's paused check lets by).
    */
@@ -1170,10 +1167,9 @@ export class ScheduledTasksService {
       target: task.id,
       detail: { taskRunId: run.id, trial: opts.trial },
     });
-    const job = schedFireJob(run.id);
-    afterCommit(async () => {
-      await this.maintenance.add(job.name, job.data, job.opts);
-    });
+    await oweSchedFire(this.outbox, run.id, orgId);
+    // a fire job that fails for good before its claim leaves the run to this check (`removed`)
+    await oweSchedSettleUnfired(this.outbox, run.id, orgId, run.scheduledFor, null);
     return run;
   }
 

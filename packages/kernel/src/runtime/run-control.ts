@@ -18,7 +18,12 @@ export class RunControl {
     @Inject(RunQueue)
     private readonly queue: Pick<
       RunQueue,
-      "ensureRun" | "oweEnsureRun" | "abortIfOrphaned" | "wakeHeldTree" | "oweHeldTreeIn"
+      | "ensureRun"
+      | "oweEnsureRun"
+      | "abortIfOrphaned"
+      | "abortQueued"
+      | "wakeHeldTree"
+      | "oweHeldTreeIn"
     >,
     @Inject(Waits)
     private readonly waits: Pick<
@@ -118,6 +123,26 @@ export class RunControl {
       await this.waits
         .stopChildren(runId, null)
         .catch((err) => this.log.error("cannot stop the sub-agents of a run", { runId, err }));
+    }
+    return r;
+  }
+
+  /**
+   * Ends a run still `queued` in PG ({@link RunQueue.abortQueued}; the caller wrote the stop marker
+   * first): true when it did. A stopped sub-agent then reports to its parent at once.
+   */
+  async abortQueued(
+    conversationId: string,
+    runId: string,
+    byAccountId: string | null,
+  ): Promise<boolean> {
+    const r = await this.queue.abortQueued(conversationId, runId, byAccountId);
+    if (r) {
+      await this.waits
+        .childFinished(runId)
+        .catch((err) =>
+          this.log.error("cannot report finished sub-agent run to its parent", { runId, err }),
+        );
     }
     return r;
   }
