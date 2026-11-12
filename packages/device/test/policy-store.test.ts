@@ -247,7 +247,10 @@ for (let i = 0; i < 15; i++) {
     const tsx = join(import.meta.dirname, "../../../node_modules/.bin/tsx");
     const run = (who: string) =>
       new Promise<number | null>((resolve) => {
-        const c = spawn(tsx, [script, dir, who], { stdio: "inherit" });
+        // source condition: the workspace packages it imports (plugin-sdk) are not built in CI
+        const c = spawn(tsx, ["--conditions=@capybara-hq/source", script, dir, who], {
+          stdio: "inherit",
+        });
         c.on("exit", (code) => resolve(code));
       });
     expect(await Promise.all(["a", "b", "c", "d"].map(run))).toEqual([0, 0, 0, 0]);
