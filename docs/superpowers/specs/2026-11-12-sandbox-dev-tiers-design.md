@@ -231,7 +231,7 @@ person's own caches **(designer's call)**:
   `UV_CACHE_DIR`, `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`,
   `MAVEN_OPTS=-Dmaven.repo.local=…`, `PLAYWRIGHT_BROWSERS_PATH`, `COREPACK_HOME` to subdirectories of
   `<dir>/cache/` (one per device, outside `workspace/` so `Glob` / `Grep` don't wade through it,
-  writable, kept across runs, removed by `capybara-device logout`). The person's real `~/.npm`,
+  writable, kept across runs, left in place by `capybara-device logout` like the working directory). The person's real `~/.npm`,
   `~/.cache`, pnpm store etc. stay read-only (not denied: reading them is how `npm` finds nothing
   and moves on) **(designer's call)**. A command that sets its own value wins (`args.env` is
   applied after).
@@ -319,7 +319,10 @@ credentials the sandbox does not hold).
 
 ### 5.4 Unsandboxed (local devices only)
 
-- **What it is**: `tier: "open"` + `isolation: "none"` in the local policy, OS mode only (a
+- **What it is**: an explicit local `tier: "open"` + `isolation: "none"` in the local policy, OS
+  mode only; a tier that is open only because the org's default is open never removes the sandbox,
+  and a `policy` op that changes the tier of a device set to `isolation: "none"` also sets it back to
+  `sandbox`, so the deployment is never the last step that makes a device unsandboxed (a
   Docker-mode device is already isolated by its container and refuses the key). Commands run with
   `bash -c` directly on the host as the person, with their real `HOME`, `PATH`, environment, caches,
   credentials, keychain, Docker socket and network, like Claude Code with its sandbox off. The
@@ -489,7 +492,10 @@ interface SandboxProvider {
   devices go through the `policy` op). Platform: the device tier field is an exclusion ("a person
   decides their device's sandbox level"); the org-settings operation accepts `sandboxTier` only when
   it narrows, otherwise an actionable error ("Raising the sandbox level needs a person in the
-  organization settings.") **(designer's call)**; `platform-parity.test.ts` and
+  organization settings.") **(designer's call)**; the same narrowing-only rule applies to an
+  API token (PAT) on the org settings route, and to `sandboxEgress` (a token or the Platform tool
+  cannot lift `none` or add hosts to the base list), comparing both the effective values and the
+  stored per-field caps (clearing an explicit cap counts as widening); `platform-parity.test.ts` and
   `check:platform-ops` cover both.
 
 ### 7.3 Device protocol and program

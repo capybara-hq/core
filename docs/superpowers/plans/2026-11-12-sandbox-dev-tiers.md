@@ -74,7 +74,7 @@
 - Platform op `org-settings`: `sandboxTier` accepted only when it narrows (compare effective
   before / after), else an English actionable error; parity test stays green.
 - Startup warning moves to `sandbox.tiers.max = "open"` with the provider plugin's
-  `openEgress` absent or `"off"` (read `extensionConfig.<plugin>.openEgress`).
+  `openEgress` set to `"off"` (absent means `"proxy"`; read `extensionConfig.<plugin>.openEgress`).
 
 ### B2. Device dev tier, OS mode
 
