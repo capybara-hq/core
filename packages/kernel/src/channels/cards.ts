@@ -6,7 +6,12 @@ import {
   parseToolKey,
 } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import type { ApprovalsService, ApprovalView, NetworkAskView } from "../tools/approvals.service.js";
+import type {
+  ApprovalsService,
+  ApprovalView,
+  GitAskView,
+  NetworkAskView,
+} from "../tools/approvals.service.js";
 import { type ToolInfo, toolInfo } from "../tools/info.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
@@ -242,6 +247,33 @@ export function networkCardText(
 }
 
 /**
+ * A git push ask's card text (sandbox git credentials spec §7): the title names the repository;
+ * the preview is `<host>/<repo>`, the refs (`refs/heads/` dropped) and the command clipped to
+ * {@link CARD_SUMMARY_MAX}. Model-controlled values are redacted by `redact`.
+ */
+export function gitCardText(
+  detail: Pick<GitAskView, "host" | "repo" | "refs" | "command">,
+  locale: ChannelLocale,
+  redact: (s: string) => string = (s) => s,
+): NetworkCardText {
+  const repo = redact(detail.repo);
+  const refs = detail.refs.map((r) => redact(r.replace(/^refs\/heads\//, "")));
+  const command = cut(redact((detail.command ?? "").trim()), CARD_SUMMARY_MAX);
+  return {
+    title: phrase("gitTitle", locale).replace("{repo}", repo),
+    inputPreview: [
+      `${redact(detail.host)}/${repo}`,
+      ...(refs.length > 0 ? [refs.join(", ")] : []),
+      ...(command !== "" ? ["", command] : []),
+    ].join("\n"),
+    scopeLabels: {
+      once: phrase("gitAllowOnce", locale),
+      always: phrase("gitAllowAlways", locale),
+    },
+  };
+}
+
+/**
  * The approval card in the approval's current state; undefined when the approval does not exist.
  * A role escalation offers only "once". A network ask names its hosts and command and labels its
  * scopes ({@link networkCardText}). `webUrl` = `http.publicUrl` + the conversation path.
@@ -256,8 +288,13 @@ export async function approvalCard(
   const v = await d.approvals.describe(approvalId);
   if (!v) return undefined;
   const decidedBy = await displayName(d.db, v.decidedBy);
+  // a network or git ask names what it asks about instead of a tool call (same card shape)
   const network =
-    v.kind === "network" && v.detail !== null ? networkCardText(v.detail, locale, redact) : null;
+    v.kind === "network" && v.detail !== null
+      ? networkCardText(v.detail, locale, redact)
+      : v.kind === "git" && v.git != null
+        ? gitCardText(v.git, locale, redact)
+        : null;
   const display =
     v.summary === null && network === null
       ? (await toolInfo({ db: d.db, registry: d.registry }, v.orgId, [v.toolKey]))[0]

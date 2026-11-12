@@ -39,6 +39,14 @@ export const personalAuth = (auth: unknown): boolean => {
   return a !== null && a.type !== "none" && (a as { ownership?: unknown }).ownership === "personal";
 };
 
+/**
+ * The tool name of a member's own policy for pushes to one repository through the connector
+ * (sandbox git credentials spec §7: the virtual tool `git_push`, `git_push:<owner>/<repo>`). No
+ * `connector_tools` row backs it, so the 权限 sheet ({@link ConnectorAccountPolicies.read}) does
+ * not list it; 「一直允许」 on a git push ask writes it.
+ */
+export const gitPushPolicyName = (repo: string) => `git_push:${repo}`;
+
 const notPersonal = () =>
   new ApiError(
     "connector.not_personal",

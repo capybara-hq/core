@@ -58,6 +58,12 @@ const ApproverFields = {
 export const NETWORK_ASK_MAX_HOSTS = 20;
 /** The longest host name a network ask or `network_blocked` event carries. */
 export const NETWORK_HOST_MAX_CHARS = 255;
+/** The most refs one git push ask (and its `approval_requested.git`) lists. */
+export const GIT_ASK_MAX_REFS = 20;
+/** The longest ref name a git push ask carries. */
+export const GIT_REF_MAX_CHARS = 255;
+/** The longest `<owner>/<repo>` a git push ask carries (GitHub allows 39 + 100 characters). */
+export const GIT_REPO_MAX_CHARS = 200;
 /** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 /** 一条 `media_excluded` 事件最多的附件数。 */
@@ -683,6 +689,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             .array(z.string().min(1).max(NETWORK_HOST_MAX_CHARS))
             .min(1)
             .max(NETWORK_ASK_MAX_HOSTS),
+        })
+        .optional(),
+      /**
+       * A git push ask (sandbox git credentials spec §7): the host, repository and refs the push
+       * the gateway held would have updated. Display only, never model-visible, as `network`.
+       */
+      git: z
+        .object({
+          host: z.string().min(1).max(NETWORK_HOST_MAX_CHARS),
+          repo: z.string().min(1).max(GIT_REPO_MAX_CHARS),
+          refs: z.array(z.string().min(1).max(GIT_REF_MAX_CHARS)).max(GIT_ASK_MAX_REFS),
         })
         .optional(),
       ...ApproverFields,
