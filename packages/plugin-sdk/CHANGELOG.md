@@ -1,5 +1,40 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.16
+
+### Minor Changes
+
+- 2682d5f: Agent templates turn skills off with `disallowedSkills` (`<plugin>:<name>`, `<plugin>:*` or a bare
+  `<name>`, at most 64; `isDisallowedSkillRef`) instead of selecting them: `selectedSkills` is
+  removed. Creating an agent from a template turns those skills off and lists every name in `skills`
+  as carried or unavailable; saving an agent as an org template writes its off-list.
+- 2e52ca1: Network asks: `ExecResult.network` reports the hosts a command was refused and the layer that
+  refused them (`parseOpResult("exec")` keeps the valid entries, at most 20, and drops a malformed
+  report); the device hello may carry `features` and a local policy summary; a new device op `policy`
+  edits a device's allowed domains; exec args may carry run or task `grants`; `SandboxActor.runId`;
+  the `approval` card gains `scopeLabels` and the `skipped` state.
+- 8fa0e32: Sandbox tiers: `SandboxTier` (`strict` < `dev` < `open`), `SANDBOX_TIERS`, `isSandboxTier`,
+  `compareTiers`, `tierAtMost`, `minTier` and the dev hosts preset `DEV_HOSTS`. `SandboxLimits`
+  requires `tier` and `devHosts` and may carry `defaultTier` and `allowUnsandboxed` (local exec args:
+  whether the command may run without a sandbox; absent = no), with the refusal text
+  `UNSANDBOXED_NOT_ALLOWED_MESSAGE`; `SandboxProvider` gains the optional
+  `update(h, limits, signal)` and `limitsApplyAt`. Device protocol: the local policy summary replaces
+  `network` with `tier` (absent = follows the org), `effectiveTier`, `isolation`, `localhost` and
+  `unixSockets`; the hello feature `tiers`; the `policy` op takes `tier` (null = follow the org) and
+  `isolation: "sandbox"` instead of `network`. `DeviceNetworkMode` is removed.
+- 95fc4b0: Skills are on by default and pinning is gone. Every skill on in an org is on for every agent unless
+  the agent's new `disabledSkills` turns it off (a plugin's skills by name, a whole plugin as `"all"`
+  including skills it gains later, or a skill without a plugin by id); builtin skills, the agent's
+  own and its shared skills cannot be turned off. `skills.orgSkills` and `skills.pinned` are removed
+  from the agent definition (refused on save; migration 0116 rewrites every agent version), run start
+  no longer injects pinned skill bodies (an old conversation gets a "Pinned skills removed" notice),
+  and `agent.pinned_invalid` is gone. A sub-agent template's `skills` become one logged line telling
+  the child to load them with `Skill` first. `plugin.json` `skills[].pinned` and the import confirm's
+  `pinnedSuggestions` are removed; the skill APIs drop `suggestPinned`, `entryBytes` and
+  `tokenEstimate` and the library list gains `builtin`; the Claude Code import reports a
+  `session_start_hook` warning instead of a pin hint. The Platform tool's `agents.create` /
+  `agents.update` take `disabledSkills`, and `platform.me` lists the agent's skills.
+
 ## 0.1.0-rc.15
 
 ### Minor Changes
