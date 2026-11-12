@@ -202,6 +202,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { runSyncJob: async (d) => void calls.push(["directory", d]) },
+      { stopRun: async (d) => void calls.push(["run-stop", d]) },
       {
         ensureRun: async (id) => {
           calls.push(["wake", id]);
@@ -231,6 +232,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
+    await processor.process(job("run-stop", { conversationId: "c4", runId: "r4" }));
     await processor.process(job("bg-wake", { conversationId: "c2" }));
     await processor.process(job("stop-tree", { runId: "r1" }));
     await processor.process(job("stop-tree", { conversationId: "c3", byAccountId: "a1" }));
@@ -246,6 +248,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["reset", "e1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
+      ["run-stop", { conversationId: "c4", runId: "r4" }],
       ["wake", "c2"],
       ["stop-children", "r1", null],
       ["stop-descendants", "r1"],

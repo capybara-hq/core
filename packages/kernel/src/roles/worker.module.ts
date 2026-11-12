@@ -21,7 +21,6 @@ import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js"
 import { OutboxRelayModule } from "../infra/outbox/outbox-relay.module.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
-import { OffboardSweepJob } from "../orgs/offboarding.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { MaintenanceModule } from "../runtime/maintenance.js";
@@ -97,7 +96,6 @@ export class WorkerModule {
         ClientReportsCron,
         CatalogJobs,
         DirectoryScanJob,
-        OffboardSweepJob,
         PluginsReconcileJob,
         GatewayCheckJob,
         WorkerRole,

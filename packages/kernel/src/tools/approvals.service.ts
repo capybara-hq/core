@@ -1252,27 +1252,40 @@ export class ApprovalsService {
   }
 
   /**
-   * 在调用方的事务内（`mandatory`）取消某组织里指定由 `accountId` 处理（`requested_for`）的全部 pending 审批（成员离职），
-   * 走与 {@link cancelPendingIn} 相同的取消路径：置 cancelled、写 `approval_decided{cancelled}`（处理人为 null）。
-   * 返回被取消的记录与各会话写到的最大 seq；调用方提交后发布事件（并可续跑对应运行）。
+   * The conversations of `orgId` holding a pending approval `accountId` is asked to decide
+   * (`requested_for`), read without locks: offboarding locks them, by tree root first
+   * (`lockConversationTrees`), before {@link cancelPendingFor}.
+   */
+  async pendingConversationsFor(orgId: string, accountId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("approvals")
+      .select("conversation_id")
+      .distinct()
+      .where("org_id", "=", orgId)
+      .where("requested_for", "=", accountId)
+      .where("status", "=", "pending")
+      .execute();
+    return rows.map((r) => r.conversation_id);
+  }
+
+  /**
+   * In the caller's transaction (`mandatory`; offboarding): cancels every pending approval of
+   * `orgId` that `accountId` is asked to decide (`requested_for`) in `conversationIds`, the
+   * conversations the caller already locked (by tree root first, `lockConversationTrees`; lock
+   * order: conversations, then approval rows), along the same path as {@link cancelPendingIn}:
+   * `cancelled`, `approval_decided{cancelled}` with no decider. An approval asked meanwhile in
+   * another conversation is left to its run's stop, so no conversation is locked after a row.
+   * Returns the cancelled records and the highest seq written per conversation; the caller
+   * publishes after the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async cancelPendingFor(
     orgId: string,
     accountId: string,
+    conversationIds: readonly string[],
   ): Promise<{ records: ApprovalRecord[]; seqs: Map<string, number> }> {
     const t = this.db.db;
-    // the conversations first, in id order (lock order: conversation, then approval rows)
-    const convs = await this.lockConversations(
-      t
-        .selectFrom("approvals")
-        .select("conversation_id")
-        .where("org_id", "=", orgId)
-        .where("requested_for", "=", accountId)
-        .where("status", "=", "pending"),
-    );
-    // only the conversations locked above: an approval asked meanwhile in another one is left to
-    // the run's stop or the sweep, so no conversation is locked after a row
+    const convs = [...conversationIds];
     if (convs.length === 0) return { records: [], seqs: new Map() };
     const rows = await t
       .selectFrom("approvals")

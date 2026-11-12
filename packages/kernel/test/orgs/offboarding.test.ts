@@ -12,12 +12,13 @@ import type { ApiError } from "../../src/errors.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { Offboarding } from "../../src/orgs/offboarding.js";
+import { Offboarding, RUN_STOP_JOB, runStopJobId } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/jobs.js";
+import { deviceDestroyJobId, SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/jobs.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Credentials } from "../../src/tools/credentials.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
@@ -33,7 +34,7 @@ import {
   testOffboarding,
 } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { approvalsFor, credentialsFor, questionsFor } from "../helpers/tools.js";
 
 const PW = "correct horse battery";
@@ -323,9 +324,14 @@ async function expectOffboarded(reason: "removed" | "left") {
       `other:credentials:app:${f.otherAppId}:user:${f.leaver.id}`,
     ].sort(),
   );
-  // 审批 / 提问取消并写入 cancelled 事件；同一运行被中止，按角色升级的审批随之取消
+  // approvals and questions are cancelled with cancelled events; the run's owed stop (the run-stop
+  // job, after the commit) cancels the approval escalated by role too
   expect(await status("approvals", f.approvalId)).toBe("cancelled");
-  expect(await status("approvals", f.roleApprovalId)).toBe("cancelled");
+  await waitFor(
+    async () => (await status("approvals", f.roleApprovalId)) === "cancelled",
+    10_000,
+    "the run stopped",
+  );
   expect(await status("questions", f.questionId)).toBe("cancelled");
   const events = await db
     .selectFrom("conversation_events")
@@ -392,6 +398,7 @@ describe("离职处理", () => {
         () => k.app.get(KernelConfigService).get(),
       ),
       questions: {
+        pendingConversationsFor: async () => [],
         cancelPendingFor: async () => {
           throw new Error("boom");
         },
@@ -502,7 +509,7 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
       url: `/api/v1/orgs/${f.orgId}/members/${f.leaver.id}`,
     });
     expect(res.statusCode).toBe(204);
-    expect(await runStatus(f.runId)).toBe("aborted");
+    await waitFor(async () => (await runStatus(f.runId)) === "aborted", 10_000, "run aborted");
     expect(await runStatus(f.otherRunId)).toBe("waiting");
     const ev = await db
       .selectFrom("conversation_events")
@@ -513,131 +520,40 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
     expect(ev).toHaveLength(1);
   });
 
-  it("提交后的中止没做成（如进程崩溃）→ 兜底扫描中止该运行", async () => {
-    await kernelTransaction(k, () =>
-      k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "directory"),
-    );
-    expect(await runStatus(f.runId)).toBe("waiting");
-    // 事务内只取消其作为处理人的审批
+  it("the offboard transaction owes the stop; the run-stop job stops the run once", async () => {
+    // read in the transaction: after the commit the fast path delivers the row at once
+    const owed = await kernelTransaction(k, async () => {
+      await k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "directory");
+      return k.app
+        .get(KernelDb)
+        .selectFrom("outbox")
+        .select(["job_name", "job_id", "data"])
+        .where("job_name", "=", RUN_STOP_JOB)
+        .execute();
+    });
+    // only the approvals the person decides are cancelled in the transaction
     expect(await status("approvals", f.approvalId)).toBe("cancelled");
-    expect(await status("approvals", f.roleApprovalId)).toBe("pending");
-    const n = await k.app.get(Offboarding).sweep();
-    expect(n).toBe(1);
+    expect(owed).toEqual([
+      {
+        job_name: RUN_STOP_JOB,
+        job_id: runStopJobId(f.runId),
+        data: { conversationId: f.conversationId, runId: f.runId },
+      },
+    ]);
+    const job = { conversationId: f.conversationId, runId: f.runId };
+    await k.app.get(Offboarding).stopRun(job);
     expect(await runStatus(f.runId)).toBe("aborted");
+    expect(await status("approvals", f.roleApprovalId)).toBe("cancelled");
     expect(await runStatus(f.otherRunId)).toBe("waiting");
-    expect(await k.app.get(Offboarding).sweep()).toBe(0);
-  });
-});
-
-describe("兜底扫描：按创建时间分页、不碰现任成员的运行", () => {
-  /** 在 f.orgId 里给 accountId 建一个会话与一个 running 的运行。 */
-  async function runOf(accountId: string, createdAt: string): Promise<string> {
-    const conv = randomUUID();
-    const run = randomUUID();
-    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-      VALUES (${conv}, ${f.orgId}, ${f.agentId}, ${accountId})`.execute(raw);
-    await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq, created_at)
-      VALUES (${run}, ${conv}, 'running', 1, ${accountId}, 0, ${createdAt}::timestamptz)`.execute(
-      raw,
-    );
-    return run;
-  }
-
-  it("现任成员（含匿名访客 guest 成员）的运行不被中止；超过一批的前成员运行全部处理", async () => {
-    const anon = await anonymousGuestsFor(raw).ensure(f.orgId);
-    const memberRun = await runOf(f.bystander.id, "2026-01-01T00:00:00Z");
-    const anonRun = await runOf(anon, "2026-01-01T00:00:01Z");
-    const formerRuns: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      formerRuns.push(await runOf(f.leaver.id, `2026-01-02T00:00:0${i}Z`));
-    }
-    await db.transaction().execute(async (t) => {
-      await t
-        .deleteFrom("memberships")
-        .where("org_id", "=", f.orgId)
-        .where("account_id", "=", f.leaver.id)
-        .execute();
-    });
-    const aborted: string[] = [];
-    const sweeper = testOffboarding(
-      db,
-      {
-        credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(
-          db,
-          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-          () => k.app.get(KernelConfigService).get(),
-        ),
-        questions: questionsFor(
-          db,
-          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-          () => k.app.get(KernelConfigService).get(),
-        ),
-        offboardRuns: {
-          abortWaiting: async () => false,
-          abortIfOrphaned: async () => false,
-          requestAbort: async (runId) => {
-            aborted.push(runId);
-          },
-        },
-      },
-      { redis },
-    );
-    // pages of 2
-    const n = await sweeper.sweep(2);
-    // 前成员：fixture 里等待中的运行 + 5 个 running，分 2 条一批全部处理，按创建时间先后
-    expect(n).toBe(6);
-    expect(aborted).toEqual([...formerRuns, f.runId]);
-    expect(aborted).not.toContain(memberRun);
-    expect(aborted).not.toContain(anonRun);
-    // 已请求中止、还在进行中的运行带着标记：下一轮不再重复广播
-    expect(await redis.exists(`capk:offboard-abort:${f.runId}`)).toBe(1);
-    expect(await sweeper.sweep(2)).toBe(0);
-    expect(aborted).toHaveLength(6);
-    // 标记过期后（真没停下来）再处理
-    await redis.del(`capk:offboard-abort:${formerRuns[0]}`);
-    expect(await sweeper.sweep(2)).toBe(1);
-    expect(aborted.slice(6)).toEqual([formerRuns[0]]);
-  });
-
-  it("广播中止失败 → 不记标记，下一轮扫描重试", async () => {
-    await db.transaction().execute(async (t) => {
-      await t
-        .deleteFrom("memberships")
-        .where("org_id", "=", f.orgId)
-        .where("account_id", "=", f.leaver.id)
-        .execute();
-    });
-    let calls = 0;
-    const sweeper = testOffboarding(
-      db,
-      {
-        credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(
-          db,
-          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-          () => k.app.get(KernelConfigService).get(),
-        ),
-        questions: questionsFor(
-          db,
-          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-          () => k.app.get(KernelConfigService).get(),
-        ),
-        offboardRuns: {
-          abortWaiting: async () => false,
-          abortIfOrphaned: async () => false,
-          requestAbort: async () => {
-            calls++;
-            throw new Error("redis down");
-          },
-        },
-      },
-      { redis },
-    );
-    expect(await sweeper.sweep()).toBe(1);
-    expect(await redis.exists(`capk:offboard-abort:${f.runId}`)).toBe(0);
-    expect(await sweeper.sweep()).toBe(1);
-    expect(calls).toBe(2);
+    // stopping a finished run is a no-op
+    await k.app.get(Offboarding).stopRun(job);
+    const ev = await db
+      .selectFrom("conversation_events")
+      .select("type")
+      .where("conversation_id", "=", f.conversationId)
+      .where("type", "=", "run_aborted")
+      .execute();
+    expect(ev).toHaveLength(1);
   });
 });
 
@@ -893,21 +809,26 @@ describe("offboarding and the leaver's devices", () => {
       VALUES (${f.orgId}, ${f.leaver.id}, ${named}),
              (${f.otherOrgId}, ${f.leaver.id}, ${otherOrg}),
              (${f.orgId}, ${f.bystander.id}, ${others})`.execute(raw);
-    const scheduled: string[][] = [];
+    const owed: { name: string; jobId: string; data: unknown }[] = [];
     const off = testOffboarding(db, {
       ...toolDeps(),
-      sandboxDestroy: {
-        destroy: async (ids) => {
-          scheduled.push(ids);
-        },
+      outbox: {
+        add: async (j) => owed.push({ name: j.name, jobId: j.jobId, data: j.data }) > 0,
       },
     });
     const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
     expect([...r.devices].sort()).toEqual([mine, named].sort());
-    // nothing is enqueued before the caller's commit hook runs
-    expect(scheduled).toEqual([]);
-    await off.afterOffboard(r);
-    expect(scheduled.map((ids) => [...ids].sort())).toEqual([[mine, named].sort()]);
+    // each device's destruction is owed in the transaction, under its own id
+    expect(owed.filter((j) => j.name === SANDBOX_DESTROY_FOR_JOB)).toEqual(
+      expect.arrayContaining(
+        [mine, named].map((id) => ({
+          name: SANDBOX_DESTROY_FOR_JOB,
+          jobId: deviceDestroyJobId(id),
+          data: { deviceIds: [id] },
+        })),
+      ),
+    );
+    expect(owed.filter((j) => j.name === SANDBOX_DESTROY_FOR_JOB)).toHaveLength(2);
 
     const live = await db
       .selectFrom("devices")
@@ -936,27 +857,6 @@ describe("offboarding and the leaver's devices", () => {
     expect(audit.detail).toMatchObject({ devicesDeleted: 2 });
   });
 
-  it("a failed enqueue only warns and does not fail the offboarding", async () => {
-    await env(f.orgId, f.leaver.id, null);
-    const warns: string[] = [];
-    const off = testOffboarding(
-      db,
-      {
-        ...toolDeps(),
-        sandboxDestroy: {
-          destroy: async () => {
-            throw new Error("queue down");
-          },
-        },
-      },
-      { log: { warn: (m: string) => void warns.push(m) } },
-    );
-    const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
-    await off.afterOffboard(r);
-    expect(warns).toContain("offboarding: cannot schedule device destruction");
-    expect(await isMember(f.orgId, f.leaver.id)).toBe(false);
-  });
-
   it("kernel: removing a member enqueues sandbox-destroy-for with their device ids", async () => {
     const mine = await env(f.orgId, f.leaver.id, null);
     const connection = new Redis(rd.url);
@@ -970,9 +870,17 @@ describe("offboarding and the leaver's devices", () => {
         url: `/api/v1/orgs/${f.orgId}/members/${f.leaver.id}`,
       });
       expect(res.statusCode).toBe(204);
-      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
-      const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
+      // the fast path adds the owed job right after the commit, detached from the request
+      const job = await waitFor(
+        async () =>
+          (await q.getJobs(["waiting", "delayed", "active", "completed", "failed"])).find(
+            (j) => j.name === SANDBOX_DESTROY_FOR_JOB,
+          ),
+        10_000,
+        "the destroy job",
+      );
       expect(job?.data).toEqual({ deviceIds: [mine] });
+      expect(job?.id).toBe(deviceDestroyJobId(mine));
     } finally {
       await q.resume();
       await q.close();

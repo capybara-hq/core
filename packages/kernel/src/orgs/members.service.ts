@@ -200,7 +200,7 @@ export class MembersService {
     }
     const actor = { actorAccountId, ...(actorTokenId !== undefined && { actorTokenId }) };
     const res = await this.offboarding.offboard(orgId, targetId, "removed", actor);
-    // the markers, events and run stops follow the root commit (none after a rollback)
+    // the revocation markers and events follow the root commit (hints; none after a rollback)
     afterCommit(() => this.offboarding.afterOffboard(res));
     await audit(this.db.db, {
       ...actor,

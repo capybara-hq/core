@@ -384,7 +384,12 @@ export const KC_PENDING: KcPending = {
       max: 1,
       reason: "the delayed bg-wake add, not in the run lifecycle tasks: settled in PR 7",
     },
-    { path: "packages/kernel/src/sandbox/jobs.ts", max: 2, reason: "moves to the outbox in PR 5" },
+    {
+      path: "packages/kernel/src/sandbox/jobs.ts",
+      max: 1,
+      reason:
+        "the files reset a request enqueues directly (no transaction owes it): not in PR 5's tasks",
+    },
     {
       path: "packages/kernel/src/schedules/fire.ts",
       max: 1,

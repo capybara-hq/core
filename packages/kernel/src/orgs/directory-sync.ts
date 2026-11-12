@@ -747,7 +747,7 @@ export class DirectorySync {
       .executeTakeFirst();
     if (row?.source !== source) return undefined;
     const result = await this.offboarding.offboard(orgId, accountId, "directory");
-    // the markers, events and run stops follow the root commit (none after a rollback)
+    // the revocation markers and events follow the root commit (hints; none after a rollback)
     afterCommit(() => this.offboarding.afterOffboard(result));
     return result;
   }

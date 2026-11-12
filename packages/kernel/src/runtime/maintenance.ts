@@ -13,6 +13,7 @@ import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
+import { Offboarding, RUN_STOP_JOB, type RunStopJobData } from "../orgs/offboarding.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import {
   runSandboxDestroyFor,
@@ -55,7 +56,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` and
  * `sandbox-reset-files` → {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
- * {@link DirectorySync}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
+ * {@link DirectorySync}, `run-stop` → {@link Offboarding.stopRun}, `bg-wake` and `ensure-run` → {@link RunQueue.ensureRun}, `stop-tree` →
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
@@ -76,6 +77,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     private readonly sandbox: Pick<SandboxService, "destroyDevice" | "resetFileSystem">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
+    @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "stopRun">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
     @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
     @Inject(ScheduledTaskFirer)
@@ -124,6 +126,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       }
       case DIRECTORY_SYNC_JOB:
         await this.directory.runSyncJob(job.data as SyncJobData);
+        return;
+      // a departed member's run stop, owed by the offboarding (transactional outbox spec §8.1)
+      case RUN_STOP_JOB:
+        await this.offboarding.stopRun(job.data as RunStopJobData);
         return;
       // the end of a conversation's wake window (background Bash spec §3)
       case BG_WAKE_JOB: {

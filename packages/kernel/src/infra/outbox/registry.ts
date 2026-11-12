@@ -78,6 +78,34 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `orgs/offboarding.ts` RUN_STOP_JOB: owed by the offboard transaction for each of the departed
+  // member's active runs in the org, under `runStopJobId` (spec §8.1)
+  "run-stop": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "stopping a finished run is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // retried while PG or Redis is briefly unavailable; removed once done
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `sandbox/jobs.ts` SANDBOX_DESTROY_FOR_JOB: owed by the transaction that soft-deletes a device
+  // (its deletion, offboarding), under `deviceDestroyJobId` (spec §8.1)
+  "sandbox-destroy-for": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "destroying a destroyed device is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // the options the direct enqueue had: retried while the provider is down
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 30_000 },
+      removeOnComplete: true,
+      removeOnFail: 100,
+    },
+  },
   // `runtime/subagents/tree-jobs.ts` DELIVER_TO_PARENT_JOB: owed by a sub-agent run's terminal
   // transaction, under `deliverToParentJobId` (spec §6)
   "deliver-to-parent": {
