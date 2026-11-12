@@ -1,6 +1,8 @@
+import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AbsorbableEvent } from "../conversations/events.js";
+import type { OrgRole } from "../orgs/roles.js";
 import type { StreamSink } from "./model-call.js";
 
 /** 一次运行交给 loop 的上下文（spec 4.4）。 */
@@ -13,6 +15,12 @@ export interface LoopContext {
   agentId: string;
   /** 发起本次运行的人（对话发起人）：工具调用用其个人凭据，审计记为 actor。 */
   triggerAccountId: string;
+  /** The conversation's source, read once per run (memory plugin spec §6.2). */
+  source: ConversationSource;
+  /** The conversation's owner (`conversations.account_id`); plugin tool handlers receive it. */
+  ownerAccountId: string;
+  /** The trigger account's org role when the run starts; plugin tool handlers receive it. */
+  role: OrgRole;
   agent: AgentDefinition;
   agentVersion: number;
   /** 用户中止或到达 deadline 时触发：进行中的模型调用立即停下。 */

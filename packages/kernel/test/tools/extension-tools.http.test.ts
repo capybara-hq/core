@@ -107,6 +107,18 @@ describe("extension tools over HTTP", () => {
           defaultPolicy: "allow",
           switchedOff: false,
         },
+        {
+          name: "web-only",
+          key: "plugin__fake-tools-ui__web-only",
+          title: null,
+          description:
+            "Report who and where this call runs: the conversation source, its owner, the " +
+            "caller and the caller's role. Offered only in web and direct-message " +
+            "conversations. Test fixture only.",
+          annotations: {},
+          defaultPolicy: "allow",
+          switchedOff: false,
+        },
       ],
     });
 

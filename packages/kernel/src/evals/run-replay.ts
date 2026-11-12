@@ -713,6 +713,13 @@ export async function replayRun(
     s.events.filter((e) => e.runId === s.runId),
   );
   const loop = d.loop({ toolPipeline: pipeline, registry, skillForks, ...(media && { media }) });
+  // a replay never executes a tool, so the role only completes the context
+  const membership = await db
+    .selectFrom("memberships")
+    .select("role")
+    .where("org_id", "=", s.orgId)
+    .where("account_id", "=", accountId)
+    .executeTakeFirst();
   let outcome: LoopOutcome;
   try {
     outcome = await loop.run({
@@ -721,6 +728,10 @@ export async function replayRun(
       runId,
       agentId: s.agentId,
       triggerAccountId: accountId,
+      // the seeded conversation's source; a child case lists its tools as a sub-agent's
+      source: subagent === undefined ? "web" : "subagent",
+      ownerAccountId: accountId,
+      role: membership?.role ?? "guest",
       agent,
       agentVersion: candidate.agentVersion,
       signal: loopSignal,

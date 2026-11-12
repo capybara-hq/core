@@ -1,4 +1,4 @@
-import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
+import type { ConversationSource, ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
@@ -442,7 +442,7 @@ export class RunWorker {
     if (run.status === "waiting") return;
     const conv = await this.db
       .selectFrom("conversations")
-      .select(["org_id", "agent_id", "kind", "subagent_depth"])
+      .select(["org_id", "agent_id", "kind", "subagent_depth", "source", "account_id"])
       .where("id", "=", conversationId)
       .executeTakeFirst();
     if (!conv) return;
@@ -579,6 +579,8 @@ export class RunWorker {
       agent_id: string;
       kind: ConversationKind;
       subagent_depth: number;
+      source: ConversationSource;
+      account_id: string;
     },
     state: ActiveRun,
   ): Promise<ExecResult> {
@@ -769,6 +771,15 @@ export class RunWorker {
         return kept;
       };
 
+      // the trigger account's role, read once per run for plugin tool handlers (memory plugin
+      // spec §6.2); an account no longer in the org counts as a guest (the least it may do)
+      const membership = await this.db
+        .selectFrom("memberships")
+        .select("role")
+        .where("org_id", "=", conv.org_id)
+        .where("account_id", "=", run.trigger_account_id)
+        .executeTakeFirst();
+
       let outcome: LoopOutcome;
       try {
         outcome = await this.loop.run({
@@ -777,6 +788,9 @@ export class RunWorker {
           runId,
           agentId: conv.agent_id,
           triggerAccountId: run.trigger_account_id,
+          source: conv.source,
+          ownerAccountId: conv.account_id,
+          role: membership?.role ?? "guest",
           agent,
           agentVersion: run.agent_version,
           signal: ac.signal,

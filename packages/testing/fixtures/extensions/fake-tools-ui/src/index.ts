@@ -13,6 +13,8 @@ import { z } from "zod";
  * it needs no object store (storage is `fake-storage-user`'s).
  * - tool `write` (model-visible `plugin__fake-tools-ui__write`, default policy allow): replaces the
  *   conversation's item list in the extension's own table, then invalidates the view `tasks`;
+ * - tool `web-only` (default policy allow, `sources: ["web", "channel_dm"]`): returns, as JSON
+ *   text, the call's `source`, `ownerAccountId`, `accountId` and `role`;
  * - view `tasks` (conversation tab): badge `<done>/<total>` and a checklist;
  * - the plugin also ships the skill `fake-notes` and the connector template `fake-notes`
  *   (for the `fake-connector` extension).
@@ -60,6 +62,16 @@ const WRITE: ToolSpec = {
     additionalProperties: false,
   },
   defaultPolicy: "allow",
+};
+
+const WEB_ONLY: ToolSpec = {
+  name: "web-only",
+  description:
+    "Report who and where this call runs: the conversation source, its owner, the caller and the " +
+    "caller's role. Offered only in web and direct-message conversations. Test fixture only.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  defaultPolicy: "allow",
+  sources: ["web", "channel_dm"],
 };
 
 const render = (items: FakeItem[]): string =>
@@ -126,7 +138,7 @@ export default defineExtension({
     },
   ],
   permissions: {
-    tools: ["write"],
+    tools: ["write", "web-only"],
     ui: { views: ["tasks", "agent-notes", "org-admin", "platform-home"] },
   },
   setup(ctx) {
@@ -154,6 +166,14 @@ export default defineExtension({
             en: `Updated items (${items.length})`,
           },
         },
+      };
+    });
+    ctx.tools.register(WEB_ONLY, async (_input, tctx) => {
+      const { source, ownerAccountId, accountId, role } = tctx;
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ source, ownerAccountId, accountId, role }) },
+        ],
       };
     });
     ctx.ui.view("tasks", async ({ conversationId }) =>

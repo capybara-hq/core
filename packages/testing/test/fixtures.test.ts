@@ -146,7 +146,7 @@ describe("packing", () => {
     ).toEqual([["fake-notes", "fake-connector", "fake"]]);
     // Like todo: no storage permission, so it runs without an object store
     expect(plugin.manifest.extension?.manifest.permissions).toEqual({
-      tools: ["write"],
+      tools: ["write", "web-only"],
       ui: { views: ["tasks", "agent-notes", "org-admin", "platform-home"] },
     });
     const storageUser = await readPluginPackage(packed.get("fake-storage-user") as Uint8Array, {
@@ -709,7 +709,7 @@ describe("loaded by path in a kernel", () => {
         .get(ExtensionHost)
         .tools()
         .filter((t) => t.plugin === "fake-tools-ui");
-      expect(tools.map((t) => t.spec.name)).toEqual(["write"]);
+      expect(tools.map((t) => t.spec.name)).toEqual(["write", "web-only"]);
       const write = tools.find((t) => t.spec.name === "write");
       const orgId = randomUUID();
       const r = await write?.handler(

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   Connector,
+  ConversationSource,
   HookParentScope,
   InputRequired,
   NetworkBlockedHost,
@@ -266,6 +267,10 @@ export function specHash(spec: unknown): string {
 export function policyFromAnnotations(a: ToolAnnotations | undefined): "allow" | "ask" {
   return a?.readOnlyHint === true ? "allow" : "ask";
 }
+
+/** Why an extension tool limited by `spec.sources` is not offered in a `source` conversation. */
+export const sourceHiddenReason = (source: ConversationSource): string =>
+  `Not available in ${source} conversations`;
 
 /** `forAgent` 的结果。 */
 export interface AgentTools {
@@ -549,6 +554,11 @@ export class ToolRegistry {
       sandboxConversationId?: string;
       /** An eval replay's listing: its calls are never executed (the sandbox tools are listed). */
       replay?: boolean;
+      /**
+       * The conversation's source (memory plugin spec §6.2), absent = `web`: an extension tool
+       * whose `spec.sources` leaves it out is hidden.
+       */
+      source?: ConversationSource;
     },
   ): Promise<AgentTools> {
     const resolved = await this.resolve(orgId, def);
@@ -608,9 +618,11 @@ export class ToolRegistry {
       subagents?: AgentDefinition["subagents"];
       sandboxConversationId?: string;
       replay?: boolean;
+      source?: ConversationSource;
     },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const disabled = def.disabledTools ?? [];
+    const source = def.source ?? "web";
     const scope: ToolListingScope = {
       orgId,
       ...(def.sandboxConversationId !== undefined && {
@@ -691,6 +703,12 @@ export class ToolRegistry {
         // the pipeline refuses such calls too (a resumed step), this keeps them from the model
         if (offKeys.has(key)) {
           hidden.push({ ref: key, reason: toolTurnedOffReason(key) });
+          continue;
+        }
+        // offered only in some conversation sources; the source never changes, so this also
+        // refuses a resumed call (the pipeline resolves the step's tools with the same source)
+        if (t.spec.sources !== undefined && !t.spec.sources.includes(source)) {
+          hidden.push({ ref: key, reason: sourceHiddenReason(source) });
           continue;
         }
         if (!(await configuredIn(t.plugin))) {
