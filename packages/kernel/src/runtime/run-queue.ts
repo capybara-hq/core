@@ -575,17 +575,52 @@ export class RunQueue {
    * Re-derives the wakes a paused root held for its tree (agent map spec §5.3: a paused root queue
    * holds the wakes of the whole tree): after the root's queue is unpaused, {@link ensureRun} on
    * every sub-agent conversation below it that has an unconsumed wake event or message and no
-   * active run (the root itself is the caller's own `ensureRun`). Errors are logged; the next
-   * event, run end or page opening of that conversation re-derives its wake.
+   * active run (the root itself is the caller's own `ensureRun`). Errors are logged; the
+   * ensure-run backstop the releasing transaction owed ({@link oweHeldTreeIn}) wakes it later.
    */
   async wakeHeldTree(rootId: string): Promise<void> {
+    for (const c of await this.heldTree(rootId)) {
+      try {
+        await this.ensureRun(c.id);
+      } catch (err) {
+        this.log.warn("cannot wake a held sub-agent", { conversationId: c.id, err });
+      }
+    }
+  }
+
+  /**
+   * Owes, in the caller's transaction (the one that unpauses the root's queue or sends its item
+   * now), the ensure-run backstop of every sub-agent {@link wakeHeldTree} would wake after the
+   * commit, under the sub-agent's newest seq (transactional outbox spec §6): a process that dies
+   * before that call leaves no held wake behind. A root whose queue is still paused (or that is
+   * deleted) releases nothing and owes nothing.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async oweHeldTreeIn(rootId: string): Promise<void> {
+    const root = await this.db
+      .selectFrom("conversations")
+      .select(["queue_paused", "deleted_at"])
+      .where("id", "=", rootId)
+      .executeTakeFirst();
+    if (!root || root.queue_paused || root.deleted_at !== null) return;
+    for (const c of await this.heldTree(rootId)) {
+      await this.jobs.oweEnsureRun(c.id, c.seq, c.org_id);
+    }
+  }
+
+  /**
+   * The sub-agent conversations below `rootId` a paused root holds: not deleted, with an
+   * unconsumed wake event (a finished background task, a delivery) or message, and no active run;
+   * with their org and newest seq. Reads only (no row locks).
+   */
+  private async heldTree(rootId: string) {
     const ids = (await conversationTree(this.db, rootId))
       .filter((c) => c.level > 0)
       .map((c) => c.id);
-    if (ids.length === 0) return;
-    const held = await this.db
+    if (ids.length === 0) return [];
+    return this.db
       .selectFrom("conversations as c")
-      .select("c.id")
+      .select(["c.id", "c.org_id", "c.last_seq as seq"])
       .where("c.id", "in", ids)
       .where("c.deleted_at", "is", null)
       .where(({ exists, selectFrom }) =>
@@ -612,13 +647,6 @@ export class RunQueue {
         ),
       )
       .execute();
-    for (const c of held) {
-      try {
-        await this.ensureRun(c.id);
-      } catch (err) {
-        this.log.warn("cannot wake a held sub-agent", { conversationId: c.id, err });
-      }
-    }
   }
 
   /**

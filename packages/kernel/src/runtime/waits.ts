@@ -170,8 +170,8 @@ export class Waits implements OnApplicationShutdown {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {
     // an orphaned parent run (marked failed by `ensureRun`) stops its fork child at once
-    // (background children keep running, agent map spec §5.4); the sweep's
-    // `sweepForkChildrenOfFinished` is the backstop
+    // (background children keep running, agent map spec §5.4); the `stop-tree` job its terminal
+    // transaction owed is the backstop
     this.unsubscribe = events.on("run.orphaned", ({ runId }) =>
       this.stopChildren(runId, null)
         .then(() => {})
@@ -422,7 +422,8 @@ export class Waits implements OnApplicationShutdown {
       this.log.error("cannot report stopped sub-agent run", { runId, err }),
     );
     // a stopped run stops its fork child (spec §12), on its behalf (no account: it reports
-    // "stopped with this run"); background children keep running; the wait sweep is the backstop
+    // "stopped with this run"); background children keep running; the `stop-tree` job the
+    // terminal transaction owed is the backstop
     await this.stopChildren(runId, null).catch((err) =>
       this.log.error("cannot stop the sub-agents of a run", { runId, err }),
     );

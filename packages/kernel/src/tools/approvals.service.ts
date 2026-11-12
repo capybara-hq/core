@@ -1306,8 +1306,9 @@ export class ApprovalsService {
    * active runs `authorAccountId` started, in the conversation and in its sub-agents'
    * conversations at any depth (their asks are shown in the root). Each becomes `skipped` with
    * `approval_decided{skipped}` by the author; access stays blocked. Returns the skipped records and
-   * the highest seq written per conversation; a waiting run resumes in this transaction; the caller
-   * notifies and emits `approval.decided{skipped}` (the IM card's hint) after the commit.
+   * the highest seq written per conversation; the caller resumes their waiting runs in this
+   * transaction once every skipped row is locked (`ConversationsService.skipWaitsIn`), and notifies
+   * and emits `approval.decided{skipped}` (the IM card's hint) after the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async skipNetworkIn(
@@ -1354,8 +1355,6 @@ export class ApprovalsService {
       seqs.set(row.conversation_id, Math.max(seqs.get(row.conversation_id) ?? 0, seq));
       records.push(toRecord(updated));
     }
-    // each run resumes in the message's transaction, after every skipped row (lock order)
-    for (const r of records) await this.resumes.resumeIn(r.runId, r.id);
     return { records, seqs };
   }
 

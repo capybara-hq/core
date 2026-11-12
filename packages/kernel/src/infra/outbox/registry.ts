@@ -60,6 +60,34 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `runtime/subagents/tree-jobs.ts` STOP_TREE_JOB: owed by a run's terminal transaction that
+  // leaves an active fork child (or a person-stopped sub-agent's descendants), under
+  // `stopChildrenJobId`, and by a root's delete, under `stopDeletedTreeJobId` (spec §6)
+  "stop-tree": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "stopping a stopped run is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // retried while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
+  // `runtime/subagents/tree-jobs.ts` DELIVER_TO_PARENT_JOB: owed by a sub-agent run's terminal
+  // transaction, under `deliverToParentJobId` (spec §6)
+  "deliver-to-parent": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "the delivery's idempotency key is the child run id",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

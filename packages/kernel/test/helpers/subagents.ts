@@ -1,9 +1,14 @@
+import type { INestApplicationContext } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { type FinishRunArgs, RunFinish } from "../../src/runtime/run-finish.js";
+import { commitDispatchIn, type DispatchDeps } from "../../src/runtime/subagents/dispatch.js";
 import { handlesFor } from "./identity.js";
 import { waitFor } from "./runs.js";
 
@@ -26,6 +31,33 @@ export function finishRun(
     // no outbox here: the ensure-run backstop is not under test
     { add: async () => true },
   ).finish(a);
+}
+
+/**
+ * A `DispatchDeps.commitDispatch` that runs the kernel's dispatch transaction
+ * (`commitDispatchIn`, as `SubagentsService.commitDispatch` does) with the test's `owe` in place
+ * of the outbox: a test that finishes its children by hand owes nothing, so no worker runs them.
+ */
+export function commitDispatchOwing(
+  app: Pick<INestApplicationContext, "get">,
+  eventLog: EventLog,
+  owe: DispatchDeps["owe"],
+): DispatchDeps["commitDispatch"] {
+  const kdb = app.get(KernelDb);
+  const config = app.get(KernelConfigService);
+  const deps = {
+    // the context's handle: the dispatch's transaction inside `run`
+    get db() {
+      return kdb.db;
+    },
+    eventLog,
+    config,
+    owe,
+  };
+  return (a, plan, child) =>
+    app
+      .get(TransactionHost)
+      .run(() => commitDispatchIn(deps, a, plan, child), { propagation: "requires_new" });
 }
 
 /** A dispatched child run of a parent conversation, oldest first. */

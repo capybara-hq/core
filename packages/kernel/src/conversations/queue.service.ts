@@ -69,7 +69,7 @@ export class ConversationQueue {
     @Inject(RunControlService)
     private readonly runs: Pick<
       RunControl,
-      "ensureRunAfterCommit" | "oweEnsureRun" | "wakeHeldTree"
+      "ensureRunAfterCommit" | "oweEnsureRun" | "wakeHeldTree" | "oweHeldTreeIn"
     >,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -353,6 +353,8 @@ export class ConversationQueue {
     // a task's queued message deleted by a person: its run is skipped (scheduled tasks §6)
     await releaseQueuedTaskRunIn(t, gone.schedule);
     await unpauseIfEmpty(t, conversationId);
+    // the wakes an unpause releases for the tree are owed with it (transactional outbox spec §6)
+    await this.runs.oweHeldTreeIn(conversationId);
   }
 
   /**
@@ -431,8 +433,10 @@ export class ConversationQueue {
     const skips = sent
       ? { skipped: NO_REPLY_SKIPS, toSeq: null }
       : await this.conversations.skipWaitsIn(conversationId, row.account_id, out.event.seq);
-    // the run the sent message starts is owed with it (transactional outbox spec §6)
+    // the run the sent message starts is owed with it (transactional outbox spec §6), and so are
+    // the wakes the unpause releases for the tree
     await this.runs.oweEnsureRun(conversationId, out.event.seq, orgId);
+    await this.runs.oweHeldTreeIn(conversationId);
     return {
       ...out,
       fresh: !sent,
@@ -465,6 +469,8 @@ export class ConversationQueue {
       .returning("last_seq")
       .executeTakeFirstOrThrow();
     await this.runs.oweEnsureRun(conversationId, conv.last_seq, orgId);
+    // the wakes the root held for its tree (agent map spec §5.3) are owed with the unpause
+    await this.runs.oweHeldTreeIn(conversationId);
   }
 
   /** A queued item or a sent message for this client id (outside any transaction). */

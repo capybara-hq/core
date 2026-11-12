@@ -174,6 +174,22 @@ export interface RunControl {
   /** After a root's queue was unpaused: the wakes it held for its tree (agent map spec §5.3). */
   wakeHeldTree(rootId: string): Promise<void>;
   /**
+   * In the transaction that may release a root's hold: owes the ensure-run backstop of each
+   * sub-agent {@link wakeHeldTree} wakes after the commit (transactional outbox spec §6).
+   */
+  oweHeldTreeIn(rootId: string): Promise<void>;
+  /**
+   * In a decision's transaction, after its decided rows: resumes the waiting run when it waits on
+   * nothing else (lock order: conversations, decided rows, runs).
+   */
+  resumeIn(runId: string, waitId: string): Promise<unknown>;
+  /** In a root's delete transaction: owes the stop of its sub-agent tree (`stop-tree`). */
+  oweStopDeletedTree(
+    conversationId: string,
+    byAccountId: string | null,
+    orgId: string,
+  ): Promise<boolean>;
+  /**
    * 运行是孤儿（会话锁空闲、任务已不存在，没有 worker 会收到中止广播）时直接把它写成 aborted，返回 true；
    * 否则返回 false。
    */
@@ -637,7 +653,7 @@ export class ConversationsService {
     } catch (e) {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
-    await this.markDeleted(conversationId);
+    await this.markDeleted(orgId, conversationId, accountId);
     // after the mark, so no finish or delivery of the stops below can start a run on the deleted
     // root (`ensureRun` refuses it). The sandbox's tasks stop first, so the sub-agents' tasks end
     // as a deletion; the tree stop then only stops a task a sub-agent started in between
@@ -648,14 +664,20 @@ export class ConversationsService {
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 
-  // the publish happens after the commit, in the caller
+  // the publish happens after the commit, in the caller; the tree stop after it is owed here
+  // (transactional outbox spec §6), so a process that dies before it still stops the tree
   @Transactional()
-  private async markDeleted(conversationId: string): Promise<void> {
+  private async markDeleted(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+  ): Promise<void> {
     await this.db
       .updateTable("conversations")
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", conversationId)
       .execute();
+    await this.runs.oweStopDeletedTree(conversationId, accountId, orgId);
     // Queued messages must not start a run on a deleted conversation
     await this.db
       .deleteFrom("conversation_queue")
@@ -1260,6 +1282,10 @@ export class ConversationsService {
    * conversations (network ask-to-allow spec §6.7). The queue's "send now" uses it as the direct
    * send does; announce after the commit with {@link announceSkipped}. `toSeq` is the highest seq
    * written in this conversation (null: none).
+   *
+   * One lock order (conversations, decided rows, runs): the questions here (this conversation's,
+   * locked by the caller), then the sub-agents' conversations and their asks, and only then the
+   * run rows, as each skipped wait's run resumes in this transaction.
    */
   @Transactional({ propagation: "mandatory" })
   async skipWaitsIn(
@@ -1269,6 +1295,7 @@ export class ConversationsService {
   ): Promise<{ skipped: ReplySkips; toSeq: number | null }> {
     const q = await this.questions.skipPendingIn(conversationId, accountId, messageSeq);
     const n = await this.approvals.skipNetworkIn(conversationId, accountId);
+    for (const w of [...q.records, ...n.records]) await this.runs.resumeIn(w.runId, w.id);
     const here = n.seqs.get(conversationId);
     const toSeq = q.toSeq === null && here === undefined ? null : Math.max(q.toSeq ?? 0, here ?? 0);
     return { skipped: { questions: q.records, network: n.records, seqs: n.seqs }, toSeq };

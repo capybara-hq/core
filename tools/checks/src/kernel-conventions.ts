@@ -413,21 +413,6 @@ export const KC_PENDING: KcPending = {
       reason: "moves to the outbox in PR 2",
     },
     {
-      path: "packages/kernel/src/runtime/subagents/dispatch.ts",
-      max: 2,
-      reason: "moves to the outbox in PR 2",
-    },
-    {
-      path: "packages/kernel/src/runtime/subagents/messages.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 2",
-    },
-    {
-      path: "packages/kernel/src/runtime/subagents/subagents.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 2",
-    },
-    {
       path: "packages/kernel/src/runtime/usage-report-jobs.ts",
       max: 1,
       reason: "moves to the outbox in PR 3",

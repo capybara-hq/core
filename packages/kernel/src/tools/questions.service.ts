@@ -469,8 +469,10 @@ export class QuestionsService {
    * by a run of it that is `running` or `waiting` and was started by `accountId`. The caller holds
    * the conversation row lock (its `appendIn`), so only questions logged before the message are
    * seen. Each becomes `skipped` with `question_answered { outcome: "skipped", skippedBySeq }`.
-   * A waiting run resumes in this transaction. Returns the records and the highest seq written
-   * (null: none); the caller notifies and emits `question.answered` after the commit.
+   * The caller resumes their waiting runs in this transaction after it locked every row it skips
+   * (`ConversationsService.skipWaitsIn`: conversations, decided rows, runs). Returns the records and
+   * the highest seq written (null: none); the caller notifies and emits `question.answered` after
+   * the commit.
    */
   @Transactional({ propagation: "mandatory" })
   async skipPendingIn(
@@ -504,8 +506,6 @@ export class QuestionsService {
       toSeq = await this.answeredEvent(toRecord(row), null, accountId, "skipped", messageSeq);
       records.push(toRecord(updated));
     }
-    // each run resumes in the message's transaction, after every skipped row (lock order)
-    for (const r of records) await this.resumes.resumeIn(r.runId, r.id);
     return { records, toSeq };
   }
 

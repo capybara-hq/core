@@ -239,7 +239,8 @@ export class RunWorker {
   /**
    * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
    * active fork invocation child on its behalf (no account); background `Agent` children keep
-   * running (agent map spec §5.4). The wait sweep is the backstop.
+   * running (agent map spec §5.4). The terminal transaction owed the same stop (`stop-tree`), the
+   * backstop when this call never happens.
    */
   private async stopChildren(runId: string): Promise<void> {
     try {
@@ -252,7 +253,8 @@ export class RunWorker {
   /**
    * After a sub-agent run's terminal state committed (sub-agents spec §7.3): reports it to the
    * parent. Called with any run id whose conversation may be a child; runs that were not
-   * dispatched are ignored. Errors are logged (the wait sweep repairs a missed call).
+   * dispatched are ignored. Errors are logged: the terminal transaction owed the same delivery
+   * (`deliver-to-parent`) and stop (`stop-tree`), which repair a missed call.
    */
   private async childFinished(runId: string): Promise<void> {
     try {

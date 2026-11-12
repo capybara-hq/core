@@ -20,7 +20,6 @@ import { childResult, finishedEvent } from "../../../src/runtime/subagents/child
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SubagentMessages } from "../../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
-import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { AGENT_REFUSALS, agentStartedText } from "../../../src/tools/builtins/agent.js";
 import {
   SEND_MESSAGE_REFUSALS,
@@ -49,6 +48,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../../helpers/runs.js";
+import { commitDispatchOwing } from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 8: dispatching sub-agents as child runs on one kernel (`model-script` scripts the
@@ -637,7 +637,8 @@ describe("dispatch idempotency under the parent run lock", () => {
     return { conv, runId, ctx };
   }
 
-  const enqueued: string[] = [];
+  /** The run job ids the dispatch transactions owed (none runs: the children are not executed). */
+  const owed: string[] = [];
   const deps = (): DispatchDeps => ({
     db,
     // the kernel's event log: the dispatch's writes run in the kernel's transaction
@@ -646,17 +647,18 @@ describe("dispatch idempotency under the parent run lock", () => {
     registry: k.app.get(ProviderRegistry),
     config: { get: () => k.app.get(KernelConfigService).get() },
     // the child runs are not executed here
-    enqueue: async (_data, jobId) => {
-      enqueued.push(jobId);
-    },
+    owe: async () => true,
     log: { error: () => {}, warn: () => {} },
     // the dispatch's writes in the kernel's own transaction (the same database)
-    commitDispatch: (a, plan, child) => k.app.get(SubagentsService).commitDispatch(a, plan, child),
+    commitDispatch: commitDispatchOwing(k.app, k.app.get(EventLog), async (_data, jobId) => {
+      owed.push(jobId);
+      return true;
+    }),
   });
   const input = { description: "Task", prompt: "gp-task: twice" };
 
   it("the same call dispatched twice, in turn and at once: one child, the same childRunId", async () => {
-    enqueued.length = 0;
+    owed.length = 0;
     const { conv, ctx } = await parentRun();
     const first = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
     const again = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
@@ -677,10 +679,10 @@ describe("dispatch idempotency under the parent run lock", () => {
       .execute();
     expect(rows.map((r) => r.parent_call_id)).toEqual(["c1", "c2"]);
     expect(ofType(await eventsOf(db, conv), "subagent_dispatched")).toHaveLength(2);
-    // a call found already dispatched with its child still queued enqueues it again under the
-    // same job id (BullMQ dedupes it; review M4): two distinct jobs
-    expect(new Set(enqueued).size).toBe(2);
-    expect(enqueued.length).toBeGreaterThan(2);
+    // each child's run job is owed once, with its dispatch (transactional outbox spec §6); a call
+    // found already dispatched owes nothing again: its child's job was owed with the first holder
+    expect(owed).toHaveLength(2);
+    expect(new Set(owed).size).toBe(2);
   }, 60_000);
 
   it("a call dispatched before background Agent (no tool_result yet) is paired once, under its logged key", async () => {
