@@ -37,6 +37,11 @@ export const OPEN_TIER_RISK =
   "outside sites. Prompt injection can make an agent do that. Turn it on only on your own " +
   "development machine, with agents and material you trust.";
 
+/** Printed when a local tier change turned the sandbox back on. */
+export const TIER_CHANGE_SANDBOX_ON =
+  "The tier changed, so the sandbox is back on. To run commands without a sandbox again, set " +
+  "tier open and run: capybara-device policy set isolation none";
+
 /** Shown before `set isolation none` takes effect (spec §5.4). */
 export const UNSANDBOXED_RISK_TEXT =
   "Without a sandbox, agent commands run on this computer as you: they can read and write all " +
@@ -309,9 +314,13 @@ export async function policyCommand(
         }
         case "tier": {
           const next = tierValue(value);
-          change = (p) => {
-            const { tier: _old, ...rest } = p;
-            return next === undefined ? rest : { ...rest, tier: next };
+          change = (p, say) => {
+            const { tier: old, ...rest } = p;
+            // Any tier change turns the sandbox back on (spec §5.4: running without one starts
+            // only with a confirmed set isolation none, never by a later tier change).
+            const isolation = p.isolation === "none" && next !== old ? "sandbox" : p.isolation;
+            if (isolation !== p.isolation) say(TIER_CHANGE_SANDBOX_ON);
+            return next === undefined ? { ...rest, isolation } : { ...rest, tier: next, isolation };
           };
           break;
         }

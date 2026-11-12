@@ -9,5 +9,7 @@ forwarding proxy is detected; `policy set localhost allow` overrides) and unix s
 device's directories and a short socket directory that `TMPDIR` and `MAC_CHROMIUM_TMPDIR` point
 at; `open` reaches anything the organization allows and needs `--yes`. A tier change reaches the
 sandbox at the next command. Docker mode sizes `/dev/shm` per tier and opens the bridge only for
-explicit local domains or tier `open`. `policy show` says what the tier gives on this machine, and
+explicit local domains or tier `open`. The proxy guard runs again every 30 seconds (before the next
+command) and, on macOS, counts a check that fails as a proxy found. A local tier change turns the
+sandbox back on for a device set to run without one. `policy show` says what the tier gives on this machine, and
 `start` prints a notice for a legacy `network: "open"`.

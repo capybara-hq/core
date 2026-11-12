@@ -165,7 +165,16 @@ default) and loses the key at the next change; `start` says so at each start whi
   `/private/tmp/cap-<8 hex>` (mode 0700, made at start), never anywhere else (Docker's socket stays
   out of reach). `TMPDIR` and `MAC_CHROMIUM_TMPDIR` point at the socket directory, so a headless
   Chromium's socket path stays under the 104-byte limit (`chromium-headless-shell` with
-  `--single-process`; full Chrome needs the patched sandbox runtime).
+  `--single-process`; full Chrome needs the patched sandbox runtime, see below).
+- **The sandbox runtime patch is not in published installs yet.** This repository patches
+  `@anthropic-ai/sandbox-runtime` (`patches/@anthropic-ai__sandbox-runtime@*.patch`, applied by pnpm
+  in the workspace) so the macOS profile lets full Chrome read the `hw.product` and
+  `kern.hv_vmm_present` sysctls it needs to start headless. The package is built with plain `tsc`
+  and depends on the runtime from npm, so `npm i -g @capybara-hq/device` installs the unpatched
+  runtime: there, full Chrome (and Puppeteer's or Playwright's default `chrome` / `chromium`
+  headless mode) fails to start in the macOS sandbox. Everything else works the same:
+  `chromium-headless-shell` with `--single-process`, local servers, unix sockets, package caches,
+  the network rules, Linux (the patch is macOS only), Docker mode and running without a sandbox.
 - **Unix sockets (Linux).** Blocked: the sandbox runtime can only allow every socket there,
   including the host daemons' (Docker, D-Bus, ssh-agent). Allowing them with the daemons' sockets
   masked is planned after a spike that proves them unreachable; it has not been done yet. Use

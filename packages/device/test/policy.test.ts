@@ -8,6 +8,7 @@ import {
   OPEN_TIER_RISK,
   policyCommand,
   policyRisk,
+  TIER_CHANGE_SANDBOX_ON,
   UNSANDBOXED_RISK_TEXT,
 } from "../src/commands/policy.js";
 import {
@@ -20,7 +21,13 @@ import {
   srtConfig,
   tierFacts,
 } from "../src/policy.js";
-import { DEFAULT_POLICY, policyPath, readPolicy, writeCredential } from "../src/state.js";
+import {
+  DEFAULT_POLICY,
+  policyPath,
+  readPolicy,
+  writeCredential,
+  writePolicy,
+} from "../src/state.js";
 
 const limits = (
   egress: SandboxLimits["egress"],
@@ -624,6 +631,21 @@ describe("policy set tier, isolation, localhost and remoteGrants", () => {
     expect(err.join("\n")).toContain("capybara-device policy set tier open --yes");
     expect(asked).toEqual([]);
     expect(readPolicy(dir).tier).toBeUndefined();
+  });
+
+  it("a tier change turns the sandbox back on; keeping tier open keeps isolation none", async () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
+    expect(await cli(["set", "tier", "open", "--yes"])).toBe(0);
+    expect(readPolicy(dir)).toMatchObject({ tier: "open", isolation: "none" });
+    expect(await cli(["set", "tier", "dev"])).toBe(0);
+    expect(readPolicy(dir)).toMatchObject({ tier: "dev", isolation: "sandbox" });
+    expect(out).toContain(TIER_CHANGE_SANDBOX_ON);
+    // back to open: still sandboxed, until set isolation none is confirmed again
+    expect(await cli(["set", "tier", "open", "--yes"])).toBe(0);
+    expect(readPolicy(dir)).toMatchObject({ tier: "open", isolation: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, tier: "open", isolation: "none" });
+    expect(await cli(["set", "tier", "default"])).toBe(0);
+    expect(readPolicy(dir).isolation).toBe("sandbox");
   });
 
   it("tier open with --yes: prints the risk and sets it", async () => {
