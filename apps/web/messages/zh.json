@@ -168,6 +168,9 @@
       "not_found": "这个后台任务不存在或已被清理。",
       "output_unavailable": "现在读不到输出。打开任务可查看原因。"
     },
+    "outbox": {
+      "not_found": "这个后台任务已不存在。"
+    },
     "run": {
       "not_active": "当前没有进行中的回复。",
       "model_unavailable": "模型不可用。",
