@@ -1,4 +1,6 @@
-/** The scheduled tasks' jobs (a leaf module: no imports). */
+import type { OutboxService } from "../infra/outbox/outbox.service.js";
+
+/** The scheduled tasks' jobs (a leaf module: type imports only). */
 
 /**
  * The once-a-minute `@LockedCron` that turns due tasks into task runs (spec §6); its name enqueued
@@ -18,29 +20,21 @@ export interface SchedFireJobData {
 export const schedFireJobId = (taskRunId: string): string => `${SCHED_FIRE_JOB}-${taskRunId}`;
 
 /**
- * The fire job of one task run. Removed when done, so the scanner's repair can enqueue it again
- * after a lost job; the fire is idempotent on the task run's status, so retries are safe.
+ * Owes the fire job of task run `taskRunId` in the transaction in context (transactional outbox
+ * spec §8.1): the transaction that writes a pending task run (the scan's tick, a person's "run
+ * now") owes its fire, so a tick is never left unfired. The job's options are its outbox registry
+ * entry's; the fire is idempotent on the task run's status.
  */
-export function schedFireJob(taskRunId: string): {
-  name: string;
-  data: SchedFireJobData;
-  opts: {
-    jobId: string;
-    attempts: number;
-    backoff: { type: "exponential"; delay: number };
-    removeOnComplete: true;
-    removeOnFail: true;
-  };
-} {
-  return {
+export function oweSchedFire(
+  outbox: Pick<OutboxService, "add">,
+  taskRunId: string,
+  orgId: string,
+): Promise<boolean> {
+  return outbox.add<SchedFireJobData>({
+    queue: "cap-kernel-maintenance",
     name: SCHED_FIRE_JOB,
+    jobId: schedFireJobId(taskRunId),
     data: { taskRunId },
-    opts: {
-      jobId: schedFireJobId(taskRunId),
-      attempts: 3,
-      backoff: { type: "exponential", delay: 2_000 },
-      removeOnComplete: true,
-      removeOnFail: true,
-    },
-  };
+    orgId,
+  });
 }

@@ -181,6 +181,21 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
+  // `schedules/job-ids.ts` SCHED_FIRE_JOB: owed by the transaction that writes a pending task run
+  // (the scan's tick, a person's "run now"), under `schedFireJobId` (spec §8.1)
+  "sched-fire": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "a fire acts only on a pending task run, under its row lock; a retried start reuses what the first one made",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    // a few retries while PG is briefly unavailable; removed once done
+    opts: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 2_000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  },
 } as const satisfies Record<string, OutboxJobSpec>;
 
 export type OutboxJobName = keyof typeof OUTBOX_JOBS;

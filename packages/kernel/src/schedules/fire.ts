@@ -15,12 +15,10 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
-import { QueueModule } from "../infra/queue/queue.module.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { readScheduleSettings } from "./effective-settings.js";
 import { pauseTaskIn } from "./pause.js";
@@ -40,6 +38,11 @@ import type {
 export const scheduledClientMessageId = (taskRunId: string): string => `sched-${taskRunId}`;
 
 const HOUR_MS = 3_600_000;
+/**
+ * How long past the org's catch-up window a tick's fire may come before the tick is missed: the
+ * scan fires a tick still inside the window, and its fire job follows within seconds.
+ */
+const LATE_FIRE_SLACK_MS = 10 * 60_000;
 /** How many stale previous runs the overlap check releases before it gives up. */
 const OVERLAP_SETTLE_MAX = 5;
 
@@ -88,8 +91,9 @@ const DEVICE_GONE = new Set(["device.not_found", "device.unavailable", "sandbox.
  *
  * 1. The claim, one transaction under the org row lock (which serializes the org's rate limit
  *    count), then the task run and the task rows: the checks in order (task paused since the
- *    scan, unless a person's "run now"; org disabled, creator
- *    inactive or not a member, agent gone or not visible, conversation gone, connection inactive,
+ *    scan, unless a person's "run now"; a tick fired more than 10 minutes past the org's catch-up
+ *    window, `missed`, unless a "run now"; org disabled, creator inactive or not a member, agent
+ *    gone or not visible, conversation gone, connection inactive,
  *    overlap, rate limit, device offline, queue paused), each a `skipped` run with its reason, the
  *    lasting ones also pausing the task; then `fired_at` is written, after the rate limit count.
  *    A run whose claim committed before (a retried job) goes straight to the start.
@@ -192,6 +196,12 @@ export class ScheduledTaskFirer {
     // paused after the scan recorded the tick: only a person's "run now" still runs
     if (!resumed && !run.manual && task.status === "paused") return skip("task_paused");
     const settings = await readScheduleSettings(t, this.config, orgId);
+    // a tick whose fire comes this late (workers down for long) is missed, as the scan records a
+    // tick it finds outside the window; a person's "run now" still runs
+    const lateAfter = settings.catchUpWindowMinutes * 60_000 + LATE_FIRE_SLACK_MS;
+    if (!resumed && !run.manual && Date.now() - run.scheduledFor.getTime() > lateAfter) {
+      return skip("missed");
+    }
     if (!resumed && !settings.enabled) return skip("org_disabled");
     if (!resumed && !(await this.creatorActive(orgId, task.accountId))) {
       return skip("creator_inactive");
@@ -614,8 +624,6 @@ export class ScheduledTaskFirer {
     OrgLockModule,
     ScheduledTaskStoreModule,
     ScheduledTaskTrackerModule,
-    // the scanner enqueues the fire jobs
-    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [ScheduledTaskFirer, ScheduledTaskScanJob],
   exports: [ScheduledTaskFirer],

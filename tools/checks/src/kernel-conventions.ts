@@ -390,24 +390,7 @@ export const KC_PENDING: KcPending = {
       max: 1,
       reason: "moves to the outbox in PR 2",
     },
-    {
-      path: "packages/kernel/src/schedules/scan.job.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
-    {
-      path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
     { path: "packages/kernel/src/tools/drift.ts", max: 2, reason: "moves to the outbox in PR 7" },
-  ],
-  "kc-after-commit-hint": [
-    {
-      path: "packages/kernel/src/schedules/scheduled-tasks.service.ts",
-      max: 1,
-      reason: "moves to the outbox in PR 5",
-    },
   ],
 };
 
