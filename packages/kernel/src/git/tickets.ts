@@ -103,12 +103,19 @@ export class GitTickets {
       issuedAt: Date.now(),
     };
     const runKey = gitRunTicketsKey(req.runId);
-    await this.redis
+    const results = await this.redis
       .multi()
       .set(gitTicketKey(hash), JSON.stringify(binding), "EX", ttl)
       .sadd(runKey, hash)
       .expire(runKey, ttl)
       .exec();
+    // MULTI reports each command's error in its result, not as a rejection: a ticket whose
+    // binding or revocation entry was not written must not be handed out
+    if (results === null || results.some(([err]) => err !== null)) {
+      // best effort: a binding that was written dies with the refused ticket
+      await this.redis.del(gitTicketKey(hash)).catch(() => {});
+      throw new Error("git ticket: storing the binding in Redis failed");
+    }
     this.log.debug("git ticket issued", {
       ticket: hash.slice(0, 8),
       runId: req.runId,

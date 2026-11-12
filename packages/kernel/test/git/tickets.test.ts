@@ -179,6 +179,16 @@ describe("issue and resolve", () => {
     }
   });
 
+  it("throws when a command of the MULTI fails, leaving no binding behind", async () => {
+    const runId = await newRun();
+    // a run set of the wrong type makes SADD fail inside the MULTI (exec() still resolves)
+    await redis.set(gitRunTicketsKey(runId), "not-a-set", "EX", 60);
+    const before = (await redis.keys("git-ticket:*")).sort();
+    await expect(ticketsA().issue(request(runId))).rejects.toThrow(/storing the binding/);
+    expect((await redis.keys("git-ticket:*")).sort()).toEqual(before);
+    await redis.del(gitRunTicketsKey(runId));
+  });
+
   it("refuses unknown and malformed tickets", async () => {
     expect(await ticketsA().resolve(Buffer.alloc(32, 1).toString("base64url"))).toBeNull();
     expect(await ticketsA().resolve("not a ticket")).toBeNull();
@@ -278,10 +288,15 @@ describe("revocation and live checks", () => {
     expect(await ticketsA().resolve(ticket)).toBeNull();
     await setGateway({ enabled: true });
     expect(await ticketsA().resolve(ticket)).not.toBeNull();
-    // an invalid stored value reads as absent: the gateway stays on
+    // an invalid stored value fails closed: the gateway reads as off
     await setGateway("off");
-    expect(await ticketsA().resolve(ticket)).not.toBeNull();
+    expect(await ticketsA().resolve(ticket)).toBeNull();
+    await setGateway({ enabled: "yes" });
+    expect(await ticketsA().resolve(ticket)).toBeNull();
+    await setGateway({ enabled: true, hostSources: ["github.com"] });
+    expect(await ticketsA().resolve(ticket)).toBeNull();
     await db.updateTable("orgs").set({ settings: "{}" }).where("id", "=", orgId).execute();
+    expect(await ticketsA().resolve(ticket)).not.toBeNull();
   });
 });
 
