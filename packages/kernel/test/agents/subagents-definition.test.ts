@@ -200,7 +200,7 @@ describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => 
       ],
       agents: [{ agentId: a, as: "analyst", description: "Data questions." }],
     };
-    const { agent } = await create(def({ subagents, skills: { orgSkills: [s] } }));
+    const { agent } = await create(def({ subagents }));
     expect(agent.definition.subagents).toEqual(subagents);
   });
 
@@ -269,19 +269,22 @@ describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => 
     ]);
   });
 
-  it("an inline skill the agent has not selected is skill_not_selected", async () => {
+  it("an inline skill the agent does not have (turned off, or unknown) is skill_not_available", async () => {
     const s1 = await skill("one");
     const s2 = await skill("two");
     expect(
       await problems(
         create(
           def({
-            skills: { orgSkills: [s1] },
-            subagents: { inline: [inline("scout", { skills: [s1, s2] })] },
+            disabledSkills: [{ kind: "skill", skillId: s2 }],
+            subagents: { inline: [inline("scout", { skills: [s1, s2, "nope"] })] },
           }),
         ),
       ),
-    ).toEqual([["skill_not_selected", "subagents.inline.0.skills.1"]]);
+    ).toEqual([
+      ["skill_not_available", "subagents.inline.0.skills.1"],
+      ["skill_not_available", "subagents.inline.0.skills.2"],
+    ]);
   });
 
   it("an inline skill may be one of the agent's own skills", async () => {

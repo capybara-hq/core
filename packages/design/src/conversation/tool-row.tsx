@@ -6,7 +6,13 @@ import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
-import { fillCopy, type ToolKind, type ToolWaiting, waitingText } from "./tool-copy";
+import {
+  fillCopy,
+  type ToolGuard,
+  type ToolKind,
+  type ToolWaiting,
+  waitingText,
+} from "./tool-copy";
 
 export type ToolRowData = {
   id: string;
@@ -42,6 +48,11 @@ export type ToolRowData = {
   /** Lines added / removed by an edit ("+a −b"). */
   added?: number;
   removed?: number;
+  /**
+   * A done call a guard refused (the read-before-write check): the row adds the neutral word
+   * "已拦下：需先重新读取" / "Blocked: read the file again first" in `muted` (§6.16.9).
+   */
+  guard?: ToolGuard;
   /** The error; its first line is shown after "Failed". */
   error?: string;
   /** The extension whose policy hook denied the call. */
@@ -125,6 +136,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
           </span>
           {reason ? <span className="cb-muted">{` · ${reason}`}</span> : null}
         </>
+      ) : null}
+      {row.status === "done" && row.guard ? (
+        <span className="cb-muted" data-part="guard-word">
+          {` · ${t(`tool.guard.${row.guard}`)}`}
+        </span>
       ) : null}
       {row.status === "cancelled" ? (
         <span className="cb-muted">{` · ${t("tool.cancelled")}`}</span>

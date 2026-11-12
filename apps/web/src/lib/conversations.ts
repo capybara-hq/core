@@ -87,7 +87,9 @@ export type ToolView =
         lines: { kind: "ctx" | "add" | "del"; text: string }[];
       }[];
     }
-  | { kind: "read"; path: string; fromLine?: number; toLine?: number };
+  | { kind: "read"; path: string; fromLine?: number; toLine?: number }
+  /** `Edit` / `Write` refused by the read-before-write check: a neutral outcome, not a failure. */
+  | { kind: "guard"; reason: "not_read" | "modified" };
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 

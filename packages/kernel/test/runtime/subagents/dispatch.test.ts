@@ -1071,8 +1071,8 @@ describe("dispatch idempotency under the parent run lock", () => {
     const kept = randomUUID();
     const v1 = {
       ...ctx.agent,
-      // a general-purpose child takes the parent's org skills (and pins nothing)
-      skills: { orgSkills: ["s-gone", "s-kept"] },
+      // a general-purpose child takes the parent's turned-off skills
+      disabledSkills: [{ kind: "skill" as const, skillId: "s-kept" }],
     };
     const first = await dispatchSubagent(deps(), {
       ctx: { ...ctx, agent: v1 },
@@ -1089,7 +1089,7 @@ describe("dispatch idempotency under the parent run lock", () => {
         { kind: "connector" as const, connectorId: gone, tools: "all" as const },
         { kind: "connector" as const, connectorId: kept, tools: ["other"] },
       ],
-      skills: { orgSkills: ["s-kept"] },
+      disabledSkills: [{ kind: "skill" as const, skillId: "s-gone" }],
     };
     const again = await send({ ...ctx, agent: v2 }, "s1", childId, "more");
     expect(again).toMatchObject({ isError: false, logged: true });
@@ -1101,7 +1101,10 @@ describe("dispatch idempotency under the parent run lock", () => {
           { kind: "connector", connectorId: gone, tools: "all" },
           { kind: "connector", connectorId: kept, tools: ["other"] },
         ],
-        skills: { orgSkills: ["s-kept"] },
+        disabledSkills: [
+          { kind: "skill", skillId: "s-gone" },
+          { kind: "skill", skillId: "s-kept" },
+        ],
       },
     });
     await childIdle(childId, 2);

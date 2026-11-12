@@ -45,10 +45,13 @@ export interface TemplateDefinition {
   tools?: string[];
   toolPolicies?: Record<string, TightenedPolicy>;
   disallowedTools?: string[];
-  /** Preloaded (pinned) skill names, at most 3. */
+  /** Skill names a sub-agent made from the template loads first, at most 3. */
   skills?: string[];
-  /** Further skill names the agent uses (not preloaded). */
-  selectedSkills?: string[];
+  /**
+   * Skills turned off (at most 64): `<plugin>:<name>`, `<plugin>:*` (the whole plugin, its later
+   * skills too) or a bare `<name>` (a skill without a plugin).
+   */
+  disallowedSkills?: string[];
   connectors?: TemplateConnector[];
   subagents?: { general?: boolean; types?: string[]; inline?: TemplateInlineSubagent[] };
   [key: string]: unknown;
@@ -58,7 +61,7 @@ export interface TemplateDefinition {
 export const TEMPLATE_LIMITS = {
   descriptionChars: 4096,
   skills: 3,
-  selectedSkills: 32,
+  disallowedSkills: 64,
   connectors: 16,
   connectorTools: 200,
   subagentTypes: 16,

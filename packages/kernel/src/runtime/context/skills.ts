@@ -77,9 +77,34 @@ function shortDescription(d: string): string {
 }
 
 /** 一行：`- <name>: <description>`（描述折叠成一行并截断）。 */
-const line = (s: CatalogSkill) => `- ${s.name}: ${shortDescription(s.description)}`;
+export const catalogLine = (s: Pick<CatalogSkill, "name" | "description">): string =>
+  `- ${s.name}: ${shortDescription(s.description)}`;
 
-const lines = (skills: readonly CatalogSkill[]) => [...skills].sort(byName).map(line).join("\n");
+/**
+ * The heading of the name-only entries of a listing (skills default-on spec §7): the entries a
+ * snapshot recorded past the catalog budget (`nameOnly`). Every listing (the system catalog, a
+ * change notice's new or updated skills, the current catalog after a compaction) puts them after
+ * its described lines under this heading, names in code point order joined by ", ". Introduced
+ * with phase 2: no request before it has a name-only entry, so the legacy texts need no copy.
+ */
+export const MORE_SKILLS_HEADER = `More skills (names only; call ${SKILL_LOAD} with the name to read one):`;
+
+/**
+ * The listing of `skills`: the described ones as `- <name>: <description>` lines sorted by name,
+ * then the name-only ones under {@link MORE_SKILLS_HEADER}. Without name-only entries (every
+ * snapshot before phase 2) it is exactly the described lines, as before.
+ */
+function lines(skills: readonly CatalogSkill[]): string {
+  const described = skills.filter((s) => s.nameOnly !== true);
+  const nameOnly = skills.filter((s) => s.nameOnly === true);
+  const head = [...described].sort(byName).map(catalogLine).join("\n");
+  if (nameOnly.length === 0) return head;
+  const more = `${MORE_SKILLS_HEADER}\n${[...nameOnly]
+    .sort(byName)
+    .map((s) => s.name)
+    .join(", ")}`;
+  return head === "" ? more : `${head}\n${more}`;
+}
 
 /** 第一份目录（进 system 缓存段），按名字排序。 */
 export function skillsCatalogText(
@@ -89,7 +114,10 @@ export function skillsCatalogText(
   return `${texts.skillsCatalogHeader}\n${lines(skills)}`;
 }
 
-/** 两份快照是否相同（按 id、版本、名字、描述与来源）。顺序无关。 */
+/**
+ * 两份快照是否相同（按 id、版本、名字、描述与来源）。顺序无关。 Also by `nameOnly` (absent = false):
+ * an entry crossing the catalog budget writes a new snapshot and reads as updated.
+ */
 export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[]): boolean {
   if (a.length !== b.length) return false;
   const byId = new Map(a.map((s) => [s.id, s]));
@@ -101,7 +129,8 @@ export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[
       p.version === s.version &&
       p.name === s.name &&
       p.description === s.description &&
-      p.source === s.source
+      p.source === s.source &&
+      (p.nameOnly ?? false) === (s.nameOnly ?? false)
     );
   });
 }
@@ -164,7 +193,10 @@ function catalogChanges(
       p !== undefined &&
       p.name === s.name &&
       !pinnedIds?.has(s.id) &&
-      (p.version !== s.version || p.description !== s.description || p.source !== s.source)
+      (p.version !== s.version ||
+        p.description !== s.description ||
+        p.source !== s.source ||
+        (p.nameOnly ?? false) !== (s.nameOnly ?? false))
     );
   });
   return { added, updated, removed };

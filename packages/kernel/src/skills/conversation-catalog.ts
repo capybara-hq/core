@@ -4,13 +4,8 @@ import type { SkillChangeRequestsTable } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import type { KernelDb } from "../infra/database/kernel-db.js";
 import type { KernelLogger } from "../log.js";
-import {
-  type CatalogSkill,
-  type PinnedSkill,
-  type SkillsSnapshot,
-  sameSnapshot,
-} from "../runtime/context/skills.js";
-import { fitPinned, invocationOf, lockLatestCatalog } from "./catalog.js";
+import { type CatalogSkill, type SkillsSnapshot, sameSnapshot } from "../runtime/context/skills.js";
+import { invocationOf, lockLatestCatalog } from "./catalog.js";
 
 /** What appending a conversation's skills catalog snapshot needs. */
 export interface ConversationCatalogDeps {
@@ -34,9 +29,9 @@ const byName = (a: CatalogSkill, b: CatalogSkill) =>
  * `EventLog.append` takes) and reads the latest snapshot under it, so no other snapshot slips in
  * between "read latest" and "append". Returns the seq written, or null when nothing was written;
  * the caller calls `eventLog.notify` after the commit.
- * `derive` gets the whole latest payload, so `pinned` and `toolMap` are carried forward; a pinned
- * entry is kept only while `skills` has the same id, version and source (pinned ⊆ skills), and the
- * pinned bodies still fit the size limit. The tool map is only recomputed at run start.
+ * `derive` gets the whole latest payload, so `toolMap` is carried forward (it is only recomputed at
+ * run start). `pinned` of an old snapshot never is: new snapshots carry no pinned skills (skills
+ * default-on spec §8).
  */
 export async function appendConversationCatalog(
   deps: ConversationCatalogDeps,
@@ -49,12 +44,8 @@ export async function appendConversationCatalog(
   const derived = derive(base);
   if (derived === null) return null;
   const skills = [...derived.skills].sort(byName);
-  const live = (p: PinnedSkill) =>
-    skills.some((s) => s.id === p.id && s.version === p.version && s.source === p.source);
-  const pinned = fitPinned((derived.pinned ?? []).filter(live), deps.log, { conversationId });
   const next: SkillsSnapshot = {
     skills,
-    ...(pinned.length > 0 && { pinned }),
     ...(derived.toolMap !== undefined && { toolMap: derived.toolMap }),
   };
   if (sameSnapshot(base, next)) return null;
@@ -127,7 +118,6 @@ export async function revertTrialCatalog(
     (base) => {
       if (!base.skills.some((s) => s.source === req.object_prefix)) return null;
       const rest = base.skills.filter((s) => s.source !== req.object_prefix);
-      // The draft's pinned entry goes (Decision 8): the next run start pins the real version
       return {
         ...base,
         // A manual-only current version (phase D) stays out of the model's catalog
@@ -144,9 +134,6 @@ export async function revertTrialCatalog(
                 },
               ]
             : rest,
-        ...(base.pinned && {
-          pinned: base.pinned.filter((p) => p.source !== req.object_prefix),
-        }),
       };
     },
     `skills_catalog:revert:${req.id}`,

@@ -169,7 +169,9 @@ describe("read before write", { timeout: 90_000 }, () => {
       new_string: "bye",
     });
     expect(r.isError).toBe(true);
-    expect(r.content).toContain(NOT_READ);
+    expect(r.content).toBe(NOT_READ);
+    // display only: the web shows the refusal as the guard working, not a failure
+    expect(r.view).toEqual({ kind: "guard", reason: "not_read" });
     const cat = await step("Bash", { description: "cat", command: "cat /workspace/a.txt" });
     expect(cat.content).toContain("hello world");
   });
@@ -204,7 +206,8 @@ describe("read before write", { timeout: 90_000 }, () => {
       new_string: "uno",
     });
     expect(bad.isError).toBe(true);
-    expect(bad.content).toContain(MODIFIED);
+    expect(bad.content).toBe(MODIFIED);
+    expect(bad.view).toEqual({ kind: "guard", reason: "modified" });
     await step("Read", { file_path: "/workspace/a.txt" });
     const ok = await step("Edit", {
       file_path: "/workspace/a.txt",
@@ -225,6 +228,7 @@ describe("read before write", { timeout: 90_000 }, () => {
     const bad = await step("Write", { file_path: "/workspace/old.txt", content: "y\n" });
     expect(bad.isError).toBe(true);
     expect(bad.content).toContain(NOT_READ);
+    expect(bad.view).toEqual({ kind: "guard", reason: "not_read" });
     const cat = await step("Bash", { description: "cat", command: "cat /workspace/old.txt" });
     expect(cat.content).toContain("x");
   });

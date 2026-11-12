@@ -702,7 +702,6 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
           { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "builtin", name: "Skill" },
         ]),
-        skills: { orgSkills: [appSkillId] },
       },
       visibility: "org",
     });
@@ -727,12 +726,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
   });
 
   it("3. 卸载：kept 列出之前已启用的插件与被 agent 引用的连接器，其余移除，agent 仍能运行", async () => {
-    // agent 不再引用技能（只留连接器与 fake-tools-ui），技能应被移除
-    const cur = await ok("boss", 1, "GET", `${base}/agents/${agentId}`);
-    const def = (cur.agent as { definition: Record<string, unknown> }).definition;
-    await ok("boss", 1, "PATCH", `${base}/agents/${agentId}`, {
-      definition: { ...def, skills: { orgSkills: [] } },
-    });
+    // the agent has the skill on but does not name it (skills default-on spec §11): it is removed
     const rep = await ok("boss", 0, "DELETE", `${base}/plugin-installs/${pluginInstallId}`);
     const byKey = (xs: { kind: string; ref: string }[]) =>
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
@@ -1022,7 +1016,6 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
         instructions: "Load the skill.",
         model: { provider: "model-fake", model: "fake-1" },
         disabledTools: onlyBuiltins([{ kind: "builtin", name: "Skill" }]),
-        skills: { orgSkills: [skill?.id] },
       },
       visibility: "org",
     });
@@ -1080,11 +1073,11 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     const after = await conn(1);
     expect(after.tools.find((t) => t.name === "search")?.defaultPolicy).toBe("ask");
     expect(after.credential.status).toBe("connected");
-    // The agent is unchanged (same version, same selection); a run on B loads the new content
+    // The agent is unchanged (same version, nothing turned off); a run on B loads the new content
     const agentNow = await ok("boss", 1, "GET", `${base}/agents/${kitAgent}`);
     expect(agentNow.agent).toMatchObject({
       currentVersion: 1,
-      definition: { skills: { orgSkills: [skill?.id] } },
+      definition: { disabledSkills: [] },
     });
     const conv = await newConv("boss", 1, kitAgent);
     const r2 = await call("boss", 1, conv, "Skill", { skill: "kit-notes" }, 1);

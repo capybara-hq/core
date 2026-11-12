@@ -231,11 +231,6 @@ export const ERROR_CODES = {
   "agent.model_unavailable": 400,
   /** A save gave `instructionFiles` and an `instructions` that is not their join. */
   "agent.instructions_mismatch": 400,
-  /**
-   * `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`;
-   * reasons `not_selected`, `not_found`, `duplicate`, `too_many`, `too_large`, `manual_only`).
-   */
-  "agent.pinned_invalid": 400,
   /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
   "agent.subagents_invalid": 400,
   /** Creating from a template with a visibility other than `private` without `agents.manage`. */

@@ -4,8 +4,10 @@ import type { AgentView } from "../../agents/agent-lookup.js";
 import { AgentsService } from "../../agents/agents.service.js";
 import { AccountsService } from "../../identity/accounts.js";
 import { PreferencesSchema } from "../../identity/me.schemas.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
 import { effectiveSandboxEgress, OrgSettingsService } from "../../orgs/settings.service.js";
+import { resolveEffectiveSkills } from "../../skills/catalog.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import { SANDBOX_TOOL_NAMES } from "../../tools/builtin-names.js";
 import { ToolRegistry } from "../../tools/registry.js";
@@ -47,7 +49,26 @@ export class PlatformOperationsProvider implements OnModuleInit {
     @Inject(ToolRegistry) private readonly tools: ToolRegistry,
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(ThemesService) private readonly themes: ThemesService,
+    @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
+
+  /**
+   * The skills in the agent's catalog now, by the names a run's catalog lists them, each with its
+   * plugin (skills default-on spec §11): the resolver's result for this conversation, as the next
+   * run start would snapshot it (manual-only skills are not in the catalog).
+   */
+  private async skillNames(
+    ctx: { orgId: string; agentId: string; conversationId: string },
+    d: AgentView["definition"],
+  ) {
+    const skills = await resolveEffectiveSkills(this.db.db, {
+      orgId: ctx.orgId,
+      agentId: ctx.agentId,
+      agent: { disabledSkills: d.disabledSkills ?? [] },
+      conversationId: ctx.conversationId,
+    });
+    return skills.map((s) => ({ name: s.name, plugin: s.plugin ?? null }));
+  }
 
   /**
    * The agent's tools by the keys the model sees, as the registry resolves them for a run (tools
@@ -110,7 +131,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), skills (org and pinned), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
+          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), the skills in its catalog now by name with their plugin (every skill on in the org unless the agent turns it off, its own and builtin plugins' skills always; manual-only skills are not in the catalog), the skills it turns off (disabledSkills), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -119,7 +140,10 @@ export class PlatformOperationsProvider implements OnModuleInit {
         run: async (_input, ctx) => {
           const agent = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
           const d = agent.definition;
-          const { keys: toolKeys, unavailable } = await this.toolKeys(ctx.orgId, d);
+          const [{ keys: toolKeys, unavailable }, skills] = await Promise.all([
+            this.toolKeys(ctx.orgId, d),
+            this.skillNames(ctx, d),
+          ]);
           const sandbox = toolKeys.some((k) =>
             (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
           );
@@ -140,10 +164,8 @@ export class PlatformOperationsProvider implements OnModuleInit {
             ...(unavailable.length > 0 && { unavailableTools: unavailable }),
             disabledTools: d.disabledTools ?? [],
             toolPolicies: d.toolPolicies,
-            skills: {
-              orgSkills: d.skills?.orgSkills ?? [],
-              pinned: d.skills?.pinned ?? [],
-            },
+            skills,
+            disabledSkills: d.disabledSkills ?? [],
             subagents: d.subagents ?? null,
             sandbox: sandbox ? { enabled: true, egress: egress.egress } : { enabled: false },
             profile: {

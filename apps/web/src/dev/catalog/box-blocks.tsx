@@ -3,17 +3,21 @@ import {
   Button,
   Callout,
   Card,
+  CheckList,
+  type CheckListRow,
   CodeBlock,
   type Column,
   DataTable,
   Field,
   FormSection,
+  Icon,
   ImpactPreview,
   Input,
   ItemList,
   ItemListItem,
   KeyValue,
   Select,
+  Stack,
   Subsection,
   Text,
   ToolPolicyList,
@@ -418,8 +422,124 @@ function toolPolicyListBlocks(): ReactNode {
   );
 }
 
+/** A CheckList the catalog can tick (spec §6.39). */
+function LiveCheckList({ title, rows: initial }: { title?: string; rows: CheckListRow[] }) {
+  const [rows, setRows] = useState(initial);
+  const check = (ids: string[], next: boolean) =>
+    setRows((cur) => cur.map((r) => (ids.includes(r.id) ? { ...r, checked: next } : r)));
+  return (
+    <CheckList
+      label={title ?? "组织技能"}
+      rows={rows}
+      onCheck={(id, next) => check([id], next)}
+      {...(title !== undefined ? { title, onCheckAll: check } : {})}
+    />
+  );
+}
+
+const GUIDE: CheckListRow = {
+  id: "guide",
+  title: "skill-guide",
+  marks: (
+    <>
+      <Badge>平台</Badge>
+      <Badge>内置</Badge>
+    </>
+  ),
+  description: "How to find, read and use skills; loaded by the model when needed.",
+  checked: true,
+  locked: true,
+};
+
+/** Skills to choose, the agent page's 组织技能 (spec §6.39). */
+function checkListBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="check-list-default" width={640} pad>
+        <Card title="组织技能">
+          <LiveCheckList
+            rows={[
+              {
+                id: "brainstorming",
+                title: "brainstorming",
+                marks: <Badge>平台</Badge>,
+                description:
+                  "You MUST use this before any creative work - creating features, building components, adding functionality, modifying behavior.",
+                checked: true,
+              },
+              {
+                id: "using",
+                title: "using-superpowers",
+                marks: <Badge>平台</Badge>,
+                description:
+                  "Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions",
+                checked: false,
+              },
+              {
+                id: "csv",
+                title: "csv-report",
+                description: "Turn a CSV file into a short report with charts.",
+                checked: true,
+              },
+              GUIDE,
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="check-list-group" width={640} pad>
+        <Card title="组织技能">
+          <Stack gap={12}>
+            <Input
+              type="search"
+              density="dense"
+              prefix={<Icon name="search" size={14} />}
+              placeholder="搜索技能"
+              aria-label="搜索技能"
+            />
+            <LiveCheckList
+              title="superpowers"
+              rows={[
+                {
+                  id: "debug",
+                  title: "systematic-debugging",
+                  marks: <Badge>平台</Badge>,
+                  description:
+                    "Use when encountering any bug, test failure, or unexpected behavior.",
+                  checked: true,
+                },
+                {
+                  id: "tdd",
+                  title: "test-driven-development",
+                  marks: <Badge>平台</Badge>,
+                  description:
+                    "Use when implementing any feature or bugfix, before writing implementation code.",
+                  checked: true,
+                },
+                {
+                  id: "plans",
+                  title: "writing-plans",
+                  marks: <Badge>平台</Badge>,
+                  description: "Use when you have a spec or requirements for a multi-step task.",
+                  checked: false,
+                },
+              ]}
+            />
+            <Stack gap={4}>
+              <LiveCheckList title="内置" rows={[GUIDE]} />
+              <Text variant="small" tone="faint">
+                内置技能对每个智能体都开启，不能关闭：模型按需加载。
+              </Text>
+            </Stack>
+          </Stack>
+        </Card>
+      </RefBlock>
+    </>
+  );
+}
+
 export const BOX_BLOCKS = {
   callout: calloutBlocks,
+  "check-list": checkListBlocks,
   "impact-preview": impactPreviewBlocks,
   "item-list": itemListBlocks,
   subsection: subsectionBlocks,

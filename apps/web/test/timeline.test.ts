@@ -110,7 +110,7 @@ describe("buildTimeline", () => {
     expect(row?.detail?.output).toBe("a\nb");
   });
 
-  it("[bash, bash(exit 1), slack] is one group: 已运行 2 个命令，已使用 1 个工具（1 个失败）", () => {
+  it("[bash, bash(exit 1), slack] is one group; a non-zero exit is information, not a failure", () => {
     const events = [
       user(1, "go"),
       calls(2, [
@@ -130,9 +130,11 @@ describe("buildTimeline", () => {
     const out = buildTimeline(events, [], INFO, "zh");
     expect(kinds(out)).toEqual(["user", "tools"]);
     const rows = tools(out)[0]?.rows.map((r) => r.row) ?? [];
-    expect(summarizeTools(rows, "zh")).toBe("已运行 2 个命令，已使用 1 个工具（1 个失败）");
+    expect(summarizeTools(rows, "zh")).toBe("已运行 2 个命令，已使用 1 个工具");
     expect(rows[0]).toMatchObject({ description: "List files", detail: { command: "ls" } });
-    expect(rows[1]).toMatchObject({ status: "failed", error: "boom" });
+    expect(rows[1]).toMatchObject({ status: "done", detail: { output: "boom\nmore" } });
+    expect(rows[1]).not.toHaveProperty("error");
+    expect(rows[1]?.detail).not.toHaveProperty("errorText");
     expect(rows[0]).toMatchObject({ name: "Bash" });
     expect(rows[0]).not.toHaveProperty("tool");
     expect(rows[2]).toMatchObject({
@@ -141,6 +143,85 @@ describe("buildTimeline", () => {
       tooltip: "Search messages",
       keyArg: "#feedback",
     });
+  });
+
+  it("a timed-out or stopped command fails: 已运行 3 个命令（2 个失败）", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "Bash", input: { command: "grep x f", description: "No match" } },
+        { id: "b", name: "Bash", input: { command: "sleep 99", description: "Slow" } },
+        { id: "c", name: "Bash", input: { command: "yes", description: "Stopped" } },
+      ]),
+      result(3, "a", "Bash", { view: { kind: "command", exitCode: 1, timedOut: false } }),
+      result(4, "b", "Bash", {
+        content: "timed out",
+        isError: true,
+        view: { kind: "command", exitCode: null, timedOut: true },
+      }),
+      result(5, "c", "Bash", {
+        content: "stopped",
+        isError: true,
+        view: { kind: "command", exitCode: null, timedOut: false },
+      }),
+    ];
+    const rows = tools(buildTimeline(events, [], INFO, "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows.map((r) => r.status)).toEqual(["done", "failed", "failed"]);
+    expect(summarizeTools(rows, "zh")).toBe("已运行 3 个命令（2 个失败）");
+  });
+
+  it("a read-before-write refusal (guard view) is a neutral outcome, counted apart from failures", () => {
+    const text =
+      "File has been modified since it was read, either by the user or by another command. Read it again before writing to it.";
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        {
+          id: "e",
+          name: "Edit",
+          input: { file_path: "/w/a.py", old_string: "a", new_string: "b" },
+        },
+        { id: "w", name: "Write", input: { file_path: "/w/a.py", content: "x" } },
+      ]),
+      result(3, "e", "Edit", {
+        content: text,
+        isError: true,
+        view: { kind: "guard", reason: "modified" },
+      }),
+      result(4, "w", "Write", {
+        content: "File has not been read yet. Read it first before writing to it.",
+        isError: true,
+        view: { kind: "guard", reason: "not_read" },
+      }),
+    ];
+    const rows = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).toMatchObject({ status: "done", guard: "modified", detail: { output: text } });
+    expect(rows[0]).not.toHaveProperty("error");
+    expect(rows[1]).toMatchObject({ status: "done", guard: "not_read" });
+    const zh = summarizeTools(rows, "zh");
+    expect(zh).toContain("（2 个已拦下）");
+    expect(zh).not.toContain("失败");
+    expect(summarizeTools(rows, "en")).toContain(" (2 blocked)");
+  });
+
+  it("the same refusal in an older log (no guard view) still renders as failed", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        {
+          id: "e",
+          name: "Edit",
+          input: { file_path: "/w/a.py", old_string: "a", new_string: "b" },
+        },
+      ]),
+      result(3, "e", "Edit", {
+        content: "File has not been read yet. Read it first before writing to it.",
+        isError: true,
+      }),
+    ];
+    const row = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows[0]?.row;
+    expect(row).toMatchObject({ status: "failed" });
+    expect(row).not.toHaveProperty("guard");
   });
 
   it("a Write that could not be diffed (truncated, no hunks) has no +0 −0 and no diff", () => {

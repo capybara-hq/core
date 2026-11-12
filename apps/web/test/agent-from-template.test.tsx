@@ -64,13 +64,13 @@ const PREVIEW = {
   items: [
     { kind: "description", name: "description", state: "carried" },
     { kind: "tool", name: "AskUserQuestion", state: "carried", reason: "default" },
-    { kind: "skill", name: "pdf", state: "carried", reason: "pinned" },
+    { kind: "skill", name: "superpowers:*", state: "carried", reason: "disallowed" },
     { kind: "connector", name: "GitHub", state: "pending", reason: "no_connector" },
     { kind: "connector", name: "Docs", state: "pending", reason: "needs" },
     { kind: "tool", name: "crm__lookup", state: "unavailable", reason: "plugin_unavailable" },
   ],
   model: { provider: "model-fake", model: "fake-2", source: "tier" },
-  dropped: ["maxSteps", "connectors.connector-1.tools.delete_all"],
+  dropped: ["maxSteps", "connectors.connector-1.tools.delete_all", "disallowedSkills.ghost:*"],
   previewHash: HASH1,
 };
 
@@ -187,14 +187,17 @@ describe("用它创建 (P4-18)", () => {
     expect(within(dialog).getByText(F.reasons.tool_plugin_unavailable)).toBeTruthy();
     expect(within(dialog).getByText(F.pendingHint)).toBeTruthy();
     // 带入 is closed until opened
-    expect(within(dialog).queryByText(F.reasons.skill_pinned)).toBeNull();
+    expect(within(dialog).queryByText(F.reasons.skill_disallowed)).toBeNull();
     const user = userEvent.setup();
     await user.click(within(dialog).getByRole("button", { name: /Carried over · 3/ }));
-    expect(within(dialog).getByText(F.reasons.skill_pinned)).toBeTruthy();
-    expect(within(dialog).getByText("pdf")).toBeTruthy();
+    expect(within(dialog).getByText(F.reasons.skill_disallowed)).toBeTruthy();
+    expect(within(dialog).getByText("superpowers:*")).toBeTruthy();
     // the dropped settings, in plain words
-    await user.click(within(dialog).getByRole("button", { name: /Settings not carried over · 2/ }));
+    await user.click(within(dialog).getByRole("button", { name: /Settings not carried over · 3/ }));
     expect(within(dialog).getByText(F.dropped.maxSteps)).toBeTruthy();
+    expect(
+      within(dialog).getByText(F.dropped.disallowedSkill.replace("{entry}", "ghost:*")),
+    ).toBeTruthy();
     expect(
       within(dialog).getByText(
         "Connector GitHub's tool delete_all: the connector doesn't offer it.",

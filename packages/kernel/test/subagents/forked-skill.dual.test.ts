@@ -39,6 +39,7 @@ import {
   waitForRunJobDone,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 import { backdateRun, childRunsOf, dropChildJobs, parentWaiting } from "../helpers/subagents.js";
 
 /**
@@ -152,7 +153,7 @@ beforeEach(async () => {
     .id;
 });
 
-/** An org with an agent selecting one forked skill; returns the conversation. */
+/** An org with an agent that has one forked skill; returns the conversation. */
 async function setup(k: TestKernel, req: Req): Promise<{ orgId: string; conv: string }> {
   const orgId = await createOrg(req);
   const skill = await seedForkedSkill(
@@ -169,7 +170,7 @@ async function setup(k: TestKernel, req: Req): Promise<{ orgId: string; conv: st
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
         disabledTools: builtinsOff(),
-        skills: { orgSkills: [skill.id] },
+        disabledSkills: await onlySkills(db, orgId, [skill.id]),
       },
       visibility: "org",
     },

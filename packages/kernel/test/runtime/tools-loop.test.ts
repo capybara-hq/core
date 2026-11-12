@@ -138,6 +138,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
     fallback: null,
     modelParams: {},
     fallbackParams: {},
+    disabledSkills: [],
     disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "probe", name: "echo" }]),
     toolPolicies: {},
   };

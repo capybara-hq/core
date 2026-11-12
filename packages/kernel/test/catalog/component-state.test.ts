@@ -90,7 +90,7 @@ describe("component scope predicates", () => {
     expect(componentLocked(comp({ itemId: null }), null)).toBe(false);
   });
 
-  it("definitionRefs reads selected, pinned and inline sub-agent skills, templates and connectors", () => {
+  it("definitionRefs reads inline sub-agent skills, templates and connectors; skills on by default are not used", () => {
     // every connector of the org is on unless turned off as a whole (tools default-on spec §6)
     const refs = definitionRefs(
       {
@@ -104,7 +104,8 @@ describe("component scope predicates", () => {
       ["c1", "c2", "c3"],
     );
     expect([...refs.connectors]).toEqual(["c1", "c3"]);
-    expect([...refs.skills].sort()).toEqual(["s1", "s2", "s3"]);
+    // selected and pinned skills of an old definition are not uses (skills default-on spec §11)
+    expect([...refs.skills].sort()).toEqual(["s3"]);
     expect([...refs.templates]).toEqual(["t1"]);
     expect(definitionRefs(null).skills.size).toBe(0);
   });

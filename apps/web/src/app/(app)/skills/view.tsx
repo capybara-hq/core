@@ -3,10 +3,12 @@
 import {
   Button,
   Dialog,
+  Field,
   FilePicker,
   formatDateTime,
   ListPage,
   ObjectRow,
+  Select,
   Stack,
   Text,
   useTimeZone,
@@ -43,7 +45,8 @@ import NotFound from "../not-found";
  * list). Org-own rows carry 本组织, platform rows 平台 with their state in the org (已启用 · 平台统一 for
  * `all`, 已启用, 未启用, 插件未启用); org admins switch platform skills (启用, 停用 with the preview of the agents
  * using it), upload a .zip (a name a platform skill offered here already has is refused, rule 10)
- * or write one with 新建 (plugin scope phase 3). Members read the page. From the query cache (the
+ * or write one with 新建 (plugin scope phase 3). A plugin filter narrows the rows to one plugin's
+ * skills or the org's own (skills default-on spec §10). Members read the page. From the query cache (the
  * layout prefetched the library and the offered components on a first load); a switch or an upload
  * invalidates them.
  */
@@ -54,6 +57,9 @@ export default function SkillsView() {
   return <Skills orgId={ws.orgId} />;
 }
 
+/** The plugin filter's value for the org's own skills (no plugin name contains a space). */
+const NO_PLUGIN = " own";
+
 function Skills({ orgId }: { orgId: string }) {
   const timeZone = useTimeZone();
   const scope = usePagePath("org");
@@ -62,6 +68,7 @@ function Skills({ orgId }: { orgId: string }) {
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const [uploading, setUploading] = useState(false);
+  const [plugin, setPlugin] = useState("");
   const list = usePageQuery(skillsQuery(orgId));
   const cq = orgComponentsQuery(orgId, { kind: "skill" });
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
@@ -70,27 +77,53 @@ function Skills({ orgId }: { orgId: string }) {
   const ownerLabel = useOwnerLabel(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
-  const rows = list.kind === "ready" ? usableRows(list.data.skills, offered.data?.components) : [];
+  const all = list.kind === "ready" ? usableRows(list.data.skills, offered.data?.components) : [];
+  const pluginOf = (r: (typeof all)[number]): string | null =>
+    (r.kind === "own" ? r.item.plugin : (r.item?.plugin ?? r.component?.plugin)) ?? null;
+  const plugins = [...new Set(all.flatMap((r) => pluginOf(r) ?? []))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  // the filter: every skill, one plugin's, or the org's own without a plugin (NO_PLUGIN)
+  const rows =
+    plugin === ""
+      ? all
+      : all.filter((r) => (plugin === NO_PLUGIN ? pluginOf(r) === null : pluginOf(r) === plugin));
+  const filters =
+    plugins.length === 0 ? undefined : (
+      <Field label={t("filters.plugin")}>
+        <Select
+          value={plugin}
+          onChange={(e) => setPlugin(e.target.value)}
+          options={[
+            { value: "", label: t("filters.allPlugins") },
+            ...plugins.map((p) => ({ value: p, label: p })),
+            { value: NO_PLUGIN, label: t("filters.noPlugin") },
+          ]}
+        />
+      </Field>
+    );
   const upload = {
     label: t("upload.open"),
     icon: "upload" as const,
     onSelect: () => setUploading(true),
   };
   const empty =
-    rows.length === 0
-      ? {
-          text: t("empty"),
-          ...(admin
-            ? {
-                action: {
-                  label: upload.label,
-                  variant: "primary" as const,
-                  onSelect: upload.onSelect,
-                },
-              }
-            : {}),
-        }
-      : undefined;
+    rows.length === 0 && all.length > 0
+      ? { text: t("filters.noMatch") }
+      : rows.length === 0
+        ? {
+            text: t("empty"),
+            ...(admin
+              ? {
+                  action: {
+                    label: upload.label,
+                    variant: "primary" as const,
+                    onSelect: upload.onSelect,
+                  },
+                }
+              : {}),
+          }
+        : undefined;
   // Where it came from: its plugin, else whose upload it is (the same owner as the chip)
   const fromOf = (plugin: string | null | undefined, owner: OwnerSide) =>
     plugin
@@ -111,6 +144,7 @@ function Skills({ orgId }: { orgId: string }) {
         }}
         variant="objects"
         listLabel={t("listLabel")}
+        {...(filters !== undefined ? { filters } : {})}
         {...(error !== undefined
           ? {
               callout: {

@@ -72,7 +72,6 @@ describe("(app) 页面模板", () => {
     definition: {
       name,
       model: { provider: "model-fake", model: "fake-1" },
-      skills: { orgSkills: ["s1", "s2"] },
       tools: [{ kind: "builtin", name: "AskUserQuestion" }],
     },
     profile: { avatar: null, description: "", quickActions: [], updatedAt: "2026-10-26T06:00:00Z" },

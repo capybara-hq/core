@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AgentsService } from "../../src/agents/agents.service.js";
+import type { DisabledSkillRef } from "../../src/agents/definition.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ApiError } from "../../src/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
@@ -46,7 +47,7 @@ beforeEach(async () => {
   await env.db.deleteFrom("agents").execute();
 });
 
-async function createAgent(who: Req, orgSkills: string[] = []): Promise<string> {
+async function createAgent(who: Req, disabledSkills: unknown[] = []): Promise<string> {
   const res = await who({
     method: "POST",
     url: `/api/v1/orgs/${env.orgId}/agents`,
@@ -55,7 +56,7 @@ async function createAgent(who: Req, orgSkills: string[] = []): Promise<string> 
         name: "Writer",
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        ...(orgSkills.length > 0 && { skills: { orgSkills } }),
+        disabledSkills,
       },
       visibility: "private",
     },
@@ -126,11 +127,15 @@ const lastCatalog = async (convId: string) =>
     .at(-1)?.payload;
 
 /** The effective skills of an agent in a conversation, by name -> source. */
-async function effective(agentId: string, conversationId?: string, orgSkills: string[] = []) {
+async function effective(
+  agentId: string,
+  conversationId?: string,
+  disabledSkills: DisabledSkillRef[] = [],
+) {
   const rows = await resolveSkills(env.db, {
     orgId: env.orgId,
     agentId,
-    agent: { skills: { orgSkills } },
+    agent: { disabledSkills },
     ...(conversationId !== undefined && { conversationId }),
   });
   return Object.fromEntries(rows.map((r) => [r.skill.name, r.skill]));
@@ -196,11 +201,14 @@ describe("sharing an agent skill", () => {
     });
     // version history and files are kept
     expect(await keysUnder(v1.object_prefix)).toHaveLength(1);
-    // the original agent still has it without a definition change; another agent can select it
+    // the original agent still has it without a definition change; another agent has it on by
+    // default (skills default-on spec §3) and can turn it off
     expect((await effective(agentId)).notes?.id).toBe(own.skillId);
-    const other = await createAgent(env.boss, [own.skillId]);
-    expect((await effective(other, undefined, [own.skillId])).notes?.id).toBe(own.skillId);
-    expect(await effective(other)).toEqual({});
+    const other = await createAgent(env.boss);
+    expect((await effective(other)).notes?.id).toBe(own.skillId);
+    expect(await effective(other, undefined, [{ kind: "skill", skillId: own.skillId }])).toEqual(
+      {},
+    );
     const audits = await env.db
       .selectFrom("audit_events")
       .select("action")
@@ -324,12 +332,25 @@ describe("sharing an agent skill", () => {
         },
       ],
     });
-    const agentId = await createAgent(env.mem);
+    const orgNotes = await env.db
+      .selectFrom("skills")
+      .select("id")
+      .where("name", "=", "notes")
+      .where("scope", "=", "org")
+      .executeTakeFirstOrThrow();
+    // an agent that has the org skill on uses it: its own skill cannot take the name
+    const user = await createAgent(env.mem);
+    expect(await codeOf(svc.register(actor(user, env.memId), zipOf("notes")))).toBe(
+      "skill.name_exists",
+    );
+    // one that turned it off registers its own; sharing it then clashes with the org skill
+    const off = [{ kind: "skill", skillId: orgNotes.id }];
+    const agentId = await createAgent(env.mem, off);
     const own = await svc.register(actor(agentId, env.memId), zipOf("notes"));
     expect(await codeOf(svc.share(actor(agentId, env.memId), own.skillId))).toBe(
       "skill.name_exists",
     );
-    const boss = await createAgent(env.boss);
+    const boss = await createAgent(env.boss, off);
     const mine = await svc.register(actor(boss, env.bossId), zipOf("notes"));
     expect(await codeOf(svc.share(actor(boss, env.bossId), mine.skillId))).toBe(
       "skill.name_exists",
@@ -505,8 +526,8 @@ describe("version proposals on a shared skill", () => {
       version: 2,
       source: req.object_prefix,
     });
-    const reader = await createAgent(env.boss, [skillId]);
-    expect((await effective(reader, undefined, [skillId])).notes?.version).toBe(2);
+    const reader = await createAgent(env.boss);
+    expect((await effective(reader)).notes?.version).toBe(2);
   });
 
   it("reject reverts the trial and deletes the draft", async () => {
@@ -580,7 +601,8 @@ describe("version proposals on a shared skill", () => {
 
   it("a non-maintainer: refused for an org skill the agent uses, an own skill otherwise", async () => {
     const { agentId: origin, skillId } = await sharedByMember();
-    const user = await createAgent(env.boss, [skillId]);
+    // another agent has it on by default: it uses it
+    const user = await createAgent(env.boss);
     expect(await codeOf(svc.register(actor(user, env.bossId), zipOf("notes", "Mine.")))).toBe(
       "skill.name_exists",
     );
@@ -589,8 +611,8 @@ describe("version proposals on a shared skill", () => {
     expect(await codeOf(svc.register(actor(origin, env.bossId), zipOf("notes", "Mine.")))).toBe(
       "skill.name_exists",
     );
-    // an agent that does not use the org skill gets an own skill of the name
-    const agentId = await createAgent(env.boss);
+    // an agent that turned the org skill off gets an own skill of the name
+    const agentId = await createAgent(env.boss, [{ kind: "skill", skillId }]);
     const out = await svc.register(actor(agentId, env.bossId), zipOf("notes", "Mine."));
     expect(out.kind).toBe("version");
     expect(out.skillId).not.toBe(skillId);

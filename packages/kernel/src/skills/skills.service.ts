@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
+import { type DisabledSkillRef, skillDisabled } from "../agents/definition.js";
 import { offeredNamed } from "../catalog/component-state.js";
 import { type Owner, PLATFORM_OWNER } from "../catalog/ownership.js";
 import { type OwnerVersion, PlatformComponents } from "../catalog/platform-components.js";
@@ -26,9 +26,8 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
-import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
+import { invocationOf } from "./catalog.js";
 import {
   type CancelledDrafts,
   type ConversationCatalogDeps,
@@ -41,11 +40,15 @@ import {
   skillManifest,
 } from "./package.js";
 import {
+  agentOwnSkillIds,
   builtinSkillIds,
+  builtinSkillPlugins,
+  linkedCopyIds,
   PLATFORM_SOURCE,
   platformSkillsOn,
   platformSource,
   skillFileStore,
+  skillIdsOf,
   skillVersionsById,
   usableSkills,
 } from "./usable.js";
@@ -203,12 +206,6 @@ export interface SkillSummary {
   plugin: string | null;
   /** The format of the plugin the current version came from. */
   sourceFormat: SourceFormat;
-  /** The plugin suggests pinning the current version (spec §9.1). */
-  suggestPinned: boolean;
-  /** SKILL.md size of the current version, in bytes (0 when the manifest has none). */
-  entryBytes: number;
-  /** Token estimate of the SKILL.md of the current version (ASCII rule: bytes / 4). */
-  tokenEstimate: number;
   /** Phase D: the current version is manual-only (not in the model's catalog). */
   manual: boolean;
   /** Phase D: the current version runs as a sub-agent when a person invokes it. */
@@ -235,11 +232,11 @@ export interface SkillSummary {
    */
   linkedIds?: string[];
   /**
-   * In the library list only: a platform skill of a builtin plugin or the org's pinned copy of
-   * one, in every agent's catalog without being selected (skill authoring spec §5.7). Absent
-   * otherwise.
+   * In the library list only (true or false on every item there, absent elsewhere): a platform
+   * skill of a builtin plugin (`platformBuiltin`: builtin and platform-owned) or the org's pinned
+   * copy of one. Every agent has it and none can turn it off (skills default-on spec §3).
    */
-  builtin?: true;
+  builtin?: boolean;
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -274,39 +271,113 @@ export interface UploadedSkill {
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
 
 /**
- * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
- * (or, phase 2, a platform skill on in the org: skills/usable.ts)，
- * 否则 `validation_failed`（path `skills.orgSkills.<i>`）；不可重复。调用方须已锁组织行（技能删除同样锁组织行，二者串行）。
- * `kept`：当前版本里已有的引用（保存时合法），修改时不再核对——技能之后被删也不挡住其他改动（运行时由 T14 忽略已删除的技能）。
+ * Checks `disabledSkills` of an agent definition in the caller's transaction (skills default-on
+ * spec §4); throws 400 `validation_failed` with one detail per problem at `disabledSkills.<i>`:
+ * - a plugin entry must name a plugin with at least one skill usable in the org, and each name must
+ *   be a skill of it;
+ * - a skill entry must name a usable org skill without a plugin;
+ * - a builtin plugin, a builtin skill, the agent's own skill or an org skill it shared cannot be
+ *   turned off.
+ * What the current version already turns off (`kept`) is not checked again: a whole entry, or the
+ * names a plugin entry kept, so a plugin switched off or uninstalled later never blocks other edits.
  */
-export async function assertOrgSkills(
+export async function assertDisabledSkills(
   db: KernelSchemaDb,
-  orgId: string,
-  ids: readonly string[],
-  kept: ReadonlySet<string> = new Set(),
+  a: {
+    orgId: string;
+    /** Null when creating. */
+    agentId: string | null;
+    disabled: readonly DisabledSkillRef[];
+    kept?: readonly DisabledSkillRef[];
+  },
 ): Promise<void> {
-  const details: { path: string; message: string }[] = [];
-  const seen = new Set<string>();
-  ids.forEach((id, i) => {
-    if (seen.has(id)) details.push({ path: `skills.orgSkills.${i}`, message: "Duplicate skill" });
-    seen.add(id);
+  const kept = a.kept ?? [];
+  const keptPlugin = new Map<string, "all" | Set<string>>();
+  const keptIds = new Set<string>();
+  for (const r of kept) {
+    if (r.kind === "skill") keptIds.add(r.skillId);
+    else keptPlugin.set(r.plugin, r.skills === "all" ? "all" : new Set(r.skills));
+  }
+  const toCheck: { i: number; r: DisabledSkillRef; names?: string[] }[] = [];
+  a.disabled.forEach((r, i) => {
+    if (r.kind === "skill") {
+      if (!keptIds.has(r.skillId)) toCheck.push({ i, r });
+      return;
+    }
+    const k = keptPlugin.get(r.plugin);
+    if (k === "all") return;
+    if (k === undefined) {
+      toCheck.push({ i, r });
+      return;
+    }
+    // the plugin was turned off before: only the names added now are checked
+    if (r.skills === "all") return;
+    const added = r.skills.filter((n) => !k.has(n));
+    if (added.length > 0) toCheck.push({ i, r, names: added });
   });
-  const toCheck = [...seen].filter((id) => !kept.has(id));
-  if (toCheck.length > 0) {
-    // The org's skills, its copies linked to a platform skill while that one is on in the org
-    // (as `assertPinnedSkills` sees them), and platform skills on in the org (phase 2)
-    const found = [...(await skillVersionsById(db, orgId, toCheck)).values()]
-      .filter((r) => r.scope === "org")
-      .map((r) => r.id);
-    const live = new Set([...kept, ...found]);
-    ids.forEach((id, i) => {
-      if (!live.has(id)) {
+  if (toCheck.length === 0) return;
+  const usable = await usableSkills(db, a.orgId);
+  const linked = await linkedCopyIds(
+    db,
+    a.orgId,
+    usable.flatMap((u) => (u.origin === "platform" ? [u.id] : [])),
+  );
+  const builtinPlugins = await builtinSkillPlugins(db);
+  const builtinIds = new Set(await builtinSkillIds(db, a.orgId));
+  const { own, shared } =
+    a.agentId === null
+      ? { own: [], shared: [] }
+      : await agentOwnSkillIds(db, { orgId: a.orgId, agentId: a.agentId });
+  const fixedIds = new Set([...own, ...shared]);
+  const details: { path: string; message: string }[] = [];
+  for (const { i, r, names } of toCheck) {
+    const path = `disabledSkills.${i}`;
+    if (r.kind === "skill") {
+      if (fixedIds.has(r.skillId)) {
         details.push({
-          path: `skills.orgSkills.${i}`,
-          message: `Skill ${id} does not exist in this organization or has been deleted`,
+          path,
+          message: `Skill ${r.skillId} is this agent's own and cannot be turned off`,
+        });
+        continue;
+      }
+      const skill = usable.find((u) => skillIdsOf(u, linked).includes(r.skillId));
+      if (skill === undefined || skill.plugin !== null) {
+        details.push({
+          path,
+          message: `Skill ${r.skillId} is not a skill of this organization without a plugin`,
         });
       }
-    });
+      continue;
+    }
+    if (builtinPlugins.has(r.plugin)) {
+      details.push({
+        path,
+        message: `The skills of built-in plugin "${r.plugin}" cannot be turned off`,
+      });
+      continue;
+    }
+    const ofPlugin = usable.filter((u) => u.plugin === r.plugin);
+    if (ofPlugin.length === 0) {
+      details.push({ path, message: `Plugin "${r.plugin}" has no skills in this organization` });
+      continue;
+    }
+    if (r.skills === "all") continue;
+    for (const name of names ?? r.skills) {
+      const skill = ofPlugin.find((u) => u.name === name);
+      if (skill === undefined) {
+        details.push({ path, message: `Plugin "${r.plugin}" has no skill "${name}"` });
+      } else if (
+        builtinIds.has(skill.id) ||
+        (skill.platformSkillId !== undefined && builtinIds.has(skill.platformSkillId))
+      ) {
+        details.push({ path, message: `Built-in skill "${name}" cannot be turned off` });
+      } else if (fixedIds.has(skill.id)) {
+        details.push({
+          path,
+          message: `Skill "${name}" was shared by this agent and cannot be turned off`,
+        });
+      }
+    }
   }
   if (details.length > 0) {
     throw new ApiError("validation_failed", "Invalid skill references", details);
@@ -325,102 +396,11 @@ interface SummaryRow {
   updated_at: Date;
   item_name: string | null;
   source_format: SourceFormat | null;
-  suggest_pinned: boolean | null;
   manifest: SkillManifest | null;
   shareable: boolean;
 }
 
-/** Why a pinned skill reference is refused (`agent.pinned_invalid` details). */
-export type PinnedSkillProblem =
-  | "not_selected"
-  | "not_found"
-  | "duplicate"
-  | "too_many"
-  | "too_large"
-  /** Phase D: the skill's current version is manual-only (not in the model's catalog). */
-  | "manual_only";
-
-/**
- * Checks `skills.pinned` of an agent definition in the caller's transaction (the org row is locked,
- * like {@link assertOrgSkills}); throws 400 `agent.pinned_invalid` with one detail per problem
- * (`{ skill, reason, totalBytes? }`):
- * - `duplicate`: an id listed twice; `too_many`: every id past {@link PINNED_SKILLS_LIMITS}.count;
- * - each newly added id (not in `kept`, the current definition's pinned ids) must be a live org
- *   skill listed in `skills.orgSkills` (else `not_selected`) or a live skill of this agent
- *   (`agentId`; null when creating), else `not_found`. Kept ids are not re-checked: a pinned skill
- *   deleted later does not block other edits (the run ignores it);
- * - `manual_only` (phase D): a newly added id whose current version is manual-only
- *   (`invocation.model === false`); a kept one that became manual-only is dropped at run time;
- * - `too_large`: the current SKILL.md sizes of the live pinned skills total more than
- *   {@link PINNED_SKILLS_LIMITS}.totalBytes (named by the first skill past the limit). Checked only
- *   when the pinned list changed: a pinned skill's new version never blocks an unrelated edit (the
- *   run keeps what fits).
- */
-export async function assertPinnedSkills(
-  db: KernelSchemaDb,
-  orgId: string,
-  agentId: string | null,
-  skills: AgentDefinition["skills"],
-  kept: readonly string[] = [],
-): Promise<void> {
-  const pinned = skills?.pinned;
-  if (pinned === undefined) return;
-  const details: { skill: string; reason: PinnedSkillProblem; totalBytes?: number }[] = [];
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const id of pinned) {
-    if (seen.has(id)) {
-      details.push({ skill: id, reason: "duplicate" });
-      continue;
-    }
-    seen.add(id);
-    if (unique.length >= PINNED_SKILLS_LIMITS.count) {
-      details.push({ skill: id, reason: "too_many" });
-      continue;
-    }
-    unique.push(id);
-  }
-  // org and agent skills, org copies linked to a platform skill (its current version) and platform
-  // skills on in the org (phase 2)
-  const byId = new Map(
-    [...(await skillVersionsById(db, orgId, unique)).values()].map((r) => [
-      r.id,
-      { id: r.id, scope: r.scope, agent_id: r.agentId, manifest: r.manifest },
-    ]),
-  );
-  const keptSet = new Set(kept);
-  const selected = new Set(skills?.orgSkills ?? []);
-  for (const id of unique) {
-    if (keptSet.has(id)) continue;
-    const r = byId.get(id);
-    const own = r?.scope === "agent" && agentId !== null && r.agent_id === agentId;
-    if (!r || (r.scope === "agent" && !own)) details.push({ skill: id, reason: "not_found" });
-    else if (r.scope === "org" && !selected.has(id))
-      details.push({ skill: id, reason: "not_selected" });
-    else if (!invocationOf(r.manifest).model) details.push({ skill: id, reason: "manual_only" });
-  }
-  const changed = pinned.length !== kept.length || pinned.some((id, i) => kept[i] !== id);
-  if (details.length === 0 && changed) {
-    let total = 0;
-    let over: string | undefined;
-    for (const id of unique) {
-      const size = byId.get(id)?.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
-      total += size;
-      if (over === undefined && total > PINNED_SKILLS_LIMITS.totalBytes) over = id;
-    }
-    if (over !== undefined) details.push({ skill: over, reason: "too_large", totalBytes: total });
-  }
-  if (details.length > 0) {
-    throw new ApiError(
-      "agent.pinned_invalid",
-      `Invalid pinned skills: ${details.map((d) => `${d.skill} (${d.reason})`).join(", ")}`,
-      details,
-    );
-  }
-}
-
 const summary = (r: SummaryRow): SkillSummary => {
-  const entryBytes = r.manifest?.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
   const inv = r.manifest ? invocationOf(r.manifest) : { model: true, user: true };
   return {
     id: r.id,
@@ -434,9 +414,6 @@ const summary = (r: SummaryRow): SkillSummary => {
     updatedAt: r.updated_at,
     plugin: r.item_name,
     sourceFormat: r.source_format ?? "capybara",
-    suggestPinned: r.suggest_pinned ?? false,
-    entryBytes,
-    tokenEstimate: textBytesTokens(entryBytes),
     manual: inv.model === false,
     fork: inv.fork !== undefined,
     origin: "org",
@@ -463,7 +440,6 @@ const platformSummaryQuery = (db: KernelSchemaDb) =>
       "p.owner_org_id",
       "owner.name as owner_name",
       "v.source_format",
-      "v.suggest_pinned",
       "v.manifest",
     ])
     .where("p.deleted_at", "is", null);
@@ -483,7 +459,6 @@ const platformSummary = (
     updated_at: r.updated_at,
     item_name: r.plugin_name,
     source_format: r.source_format,
-    suggest_pinned: r.suggest_pinned,
     manifest: r.manifest,
     shareable: false,
   }),
@@ -496,7 +471,7 @@ const platformSummary = (
 
 /**
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
- * source format, pinned suggestion and manifest.
+ * source format and manifest.
  */
 const summaryQuery = (db: KernelSchemaDb) =>
   db
@@ -517,7 +492,6 @@ const summaryQuery = (db: KernelSchemaDb) =>
       "s.updated_at",
       "i.name as item_name",
       "v.source_format",
-      "v.suggest_pinned",
       "v.manifest",
       "s.shareable",
     ]);
@@ -717,8 +691,6 @@ export class SkillsService {
         approvedBy?: string;
         /** The catalog version's source format (default capybara). */
         format?: SourceFormat;
-        /** The plugin manifest suggests pinning this skill (spec §9.1). */
-        suggestPinned?: boolean;
       };
       /**
        * The files are already stored (no storage I/O here, so it may join a transaction): at
@@ -912,7 +884,6 @@ export class SkillsService {
         created_by: actorAccountId,
         ...provenance,
         source_format: opts.catalog?.format ?? "capybara",
-        suggest_pinned: opts.catalog?.suggestPinned ?? false,
       })
       .execute();
     await audit(this.db.db, {
@@ -1026,8 +997,8 @@ export class SkillsService {
    * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
    * to a platform skill without a pin, and the platform skills on in the org (phase 2,
    * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`);
-   * a platform skill of a builtin plugin, or the org's pinned copy of one, carries `builtin: true`
-   * (every agent has it).
+   * every item carries `builtin`: true for a platform skill of a builtin plugin or the org's pinned
+   * copy of one (every agent has it, none can turn it off).
    */
   async list(orgId: string): Promise<SkillSummary[]> {
     const usable = await usableSkills(this.db.db, orgId);
@@ -1054,7 +1025,7 @@ export class SkillsService {
             ).map(async (r): Promise<SkillSummary> => {
               const to = promotedTo.get(r.id);
               const s = to === undefined ? summary(r) : await this.promotedSummary(r.id, to);
-              return builtin.has(r.id) ? { ...s, builtin: true } : s;
+              return { ...s, builtin: builtin.has(r.id) };
             }),
           );
     if (platformIds.length === 0) return own;
@@ -1078,7 +1049,7 @@ export class SkillsService {
     ).map((r) => ({
       ...platformSummary(r),
       linkedIds: linked.get(r.id) ?? [],
-      ...(builtin.has(r.id) && { builtin: true as const }),
+      builtin: builtin.has(r.id),
     }));
     return [...own, ...platform].sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1,
@@ -1144,7 +1115,79 @@ export class SkillsService {
    * content under its own id, so its detail is the platform skill's (its id, versions and body;
    * 404 while that skill is off in the org); a pinned copy keeps its own (Task 10).
    */
-  async get(orgId: string, skillId: string): Promise<SkillDetail> {
+  async get(orgId: string, skillId: string): Promise<SkillDetail & { agentsOff: number }> {
+    const detail = await this.detail(orgId, skillId);
+    return { ...detail, agentsOff: await this.agentsOff(orgId, detail) };
+  }
+
+  /**
+   * How many of the org's live agents turn the skill off in their current version (skills
+   * default-on spec §10: 「N 个智能体关闭了它」): matched by the rule of `agentSkills` against the
+   * skill as the org's usable set holds it. A builtin skill, one not usable in the org and an org
+   * skill for the agent that shared it count 0.
+   */
+  private async agentsOff(orgId: string, skill: SkillDetail): Promise<number> {
+    const db = this.db.db;
+    const usable = await usableSkills(db, orgId);
+    const linked = await linkedCopyIds(
+      db,
+      orgId,
+      usable.flatMap((u) => (u.origin === "platform" ? [u.id] : [])),
+    );
+    const u = usable.find((x) => skillIdsOf(x, linked).includes(skill.id));
+    if (u === undefined) return 0;
+    const ids = skillIdsOf(u, linked);
+    if (
+      u.plugin !== null &&
+      u.origin === "platform" &&
+      (await builtinSkillPlugins(db)).has(u.plugin)
+    )
+      return 0;
+    const builtinIds = new Set(await builtinSkillIds(db, orgId));
+    if (ids.some((id) => builtinIds.has(id))) return 0;
+    const rows = await db
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select([
+        "agents.id",
+        sql<unknown>`agent_versions.definition->'disabledSkills'`.as("disabled_skills"),
+      ])
+      .where("agents.org_id", "=", orgId)
+      .where("agents.deleted_at", "is", null)
+      .where(
+        sql<boolean>`jsonb_array_length(coalesce(agent_versions.definition->'disabledSkills', '[]'::jsonb)) > 0`,
+      )
+      .execute();
+    if (rows.length === 0) return 0;
+    // the agent that shared an org skill always has it
+    const sharedBy = await db
+      .selectFrom("skills")
+      .select("origin_agent_id")
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("id", "in", ids)
+      .where("origin_agent_id", "is not", null)
+      .execute();
+    const sharers = new Set(sharedBy.map((r) => r.origin_agent_id as string));
+    return rows.filter(
+      (r) =>
+        !sharers.has(r.id) &&
+        Array.isArray(r.disabled_skills) &&
+        skillDisabled(r.disabled_skills as DisabledSkillRef[], {
+          plugin: u.plugin,
+          name: u.name,
+          ids,
+        }),
+    ).length;
+  }
+
+  /** The skill's detail without `agentsOff` (no agents scan; for names and checks). */
+  async detail(orgId: string, skillId: string): Promise<SkillDetail> {
     const link = await this.db
       .selectFrom("skills")
       .select("platform_skill_id")

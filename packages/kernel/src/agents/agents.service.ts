@@ -15,7 +15,8 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { SkillChangesService } from "../skills/changes.service.js";
-import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
+import { assertDisabledSkills } from "../skills/skills.service.js";
+import { agentSkills } from "../skills/usable.js";
 import { legacyKeySaveText } from "../tools/legacy-keys.js";
 import { ToolRegistry } from "../tools/registry.js";
 import {
@@ -27,7 +28,9 @@ import {
 } from "./agent-lookup.js";
 import {
   type AgentDefinition,
+  canonicalDisabledSkills,
   canonicalDisabledTools,
+  type DisabledSkillRef,
   type DisabledToolRef,
   normalizeStoredDefinition,
   type PendingConnector,
@@ -145,9 +148,16 @@ export function keepPendingConnectors(
   return next.length > 0 ? { ...rest, pendingConnectors: [...next] } : rest;
 }
 
-/** `definition` with `disabledTools` in its canonical form (tools default-on spec §2). */
+/**
+ * `definition` with `disabledTools` and `disabledSkills` in their canonical forms (tools default-on
+ * spec §2, skills default-on spec §4).
+ */
 function withCanonicalTools(definition: AgentDefinition): AgentDefinition {
-  return { ...definition, disabledTools: canonicalDisabledTools(definition.disabledTools ?? []) };
+  return {
+    ...definition,
+    disabledTools: canonicalDisabledTools(definition.disabledTools ?? []),
+    disabledSkills: canonicalDisabledSkills(definition.disabledSkills ?? []),
+  };
 }
 
 /** Where an agent created from a template came from (ruling P4-8; set once, never versioned). */
@@ -163,7 +173,7 @@ export type SubagentsProblem =
   | "invalid_name"
   | "duplicate"
   | "tool_not_selected"
-  | "skill_not_selected"
+  | "skill_not_available"
   | "agent_not_available"
   | "self"
   | "too_many";
@@ -178,8 +188,9 @@ export type SubagentsProblem =
  *   bare template type equal to an inline name, a template typed `general-purpose`);
  * - `tool_not_selected`: an inline template's `tools`, `disallowedTools` or `toolPolicies` key that
  *   is not a tool key of this agent (`toolKeys`, from `ToolRegistry.checkRefs`);
- * - `skill_not_selected`: an inline skill id that is neither in `skills.orgSkills` nor a live
- *   skill of this agent;
+ * - `skill_not_available`: an inline skill id that is not one of this agent's skills (its own,
+ *   the ones it shared, every skill on in the org its `disabledSkills` leaves on; skills default-on
+ *   spec §4, §6.1);
  * - `self`: this agent allowlisted; `agent_not_available`: an allowlisted agent that is not a live
  *   agent of the org visible to the person saving with `subagents.dispatchable: true` in its
  *   current version;
@@ -268,25 +279,19 @@ export async function assertSubagents(
   });
 
   const inline = sub.inline ?? [];
-  const selected = new Set(a.definition.skills?.orgSkills ?? []);
-  const skillIds = [...new Set(inline.flatMap((x) => x.skills ?? []))].filter(
-    (id) => !selected.has(id),
-  );
-  const own =
-    a.agentId === null || skillIds.length === 0
+  const skillIds = [...new Set(inline.flatMap((x) => x.skills ?? []))];
+  // the agent's effective skills (an agent being created has no own or shared ones yet)
+  const available =
+    skillIds.length === 0
       ? new Set<string>()
       : new Set(
           (
-            await t
-              .selectFrom("skills")
-              .select("id")
-              .where("org_id", "=", a.orgId)
-              .where("scope", "=", "agent")
-              .where("agent_id", "=", a.agentId)
-              .where("deleted_at", "is", null)
-              .where("id", "in", skillIds)
-              .execute()
-          ).map((r) => r.id),
+            await agentSkills(t, {
+              orgId: a.orgId,
+              agentId: a.agentId ?? "",
+              disabledSkills: a.definition.disabledSkills ?? [],
+            })
+          ).flatMap((r) => (r.platformSkillId !== undefined ? [r.id, r.platformSkillId] : [r.id])),
         );
   inline.forEach((x, i) => {
     const base = `subagents.inline.${i}`;
@@ -305,7 +310,7 @@ export async function assertSubagents(
       if (!isToolPolicyKey(key, a.toolKeys)) tool(key, `${base}.toolPolicies.${key}`);
     }
     (x.skills ?? []).forEach((id, j) => {
-      if (!selected.has(id) && !own.has(id)) add("skill_not_selected", `${base}.skills.${j}`, id);
+      if (!available.has(id)) add("skill_not_available", `${base}.skills.${j}`, id);
     });
   });
 
@@ -561,6 +566,7 @@ export class AgentsService {
     const given = withoutRemovedBuiltinPolicies(request.definition);
     const input = {
       ...request,
+      givenDisabledSkills: given.disabledSkills ?? [],
       // run context spec §3.5: version 1 carries the description (the profile's when the
       // definition gives none)
       definition: withCanonicalTools(
@@ -599,6 +605,8 @@ export class AgentsService {
       visibility: AgentVisibility;
       memberIds?: string[];
       profile?: ProfileInput;
+      /** `disabledSkills` as given (before canonical form): error paths name the caller's index. */
+      givenDisabledSkills?: readonly DisabledSkillRef[];
     },
     toolKeys: Set<string>,
     template: TemplateProvenance | null,
@@ -614,8 +622,11 @@ export class AgentsService {
         "Only an organization admin can create an agent from a template for others; create it private",
       );
     }
-    await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
-    await assertPinnedSkills(t, orgId, null, input.definition.skills);
+    await assertDisabledSkills(t, {
+      orgId,
+      agentId: null,
+      disabled: input.givenDisabledSkills ?? input.definition.disabledSkills ?? [],
+    });
     await assertSubagents(t, {
       orgId,
       agentId: null,
@@ -847,16 +858,14 @@ export class AgentsService {
           .where("id", "=", agentId)
           .execute();
       }
-      // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
-      const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
-      await assertOrgSkills(t, orgId, definition.skills?.orgSkills ?? [], kept);
-      await assertPinnedSkills(
-        t,
+      // what the current version already turns off is not checked again (skills default-on §4)
+      await assertDisabledSkills(t, {
         orgId,
         agentId,
-        definition.skills,
-        (current.definition as AgentDefinition).skills?.pinned ?? [],
-      );
+        // as given, so `disabledSkills.<i>` names the caller's index; the canonical form is saved
+        disabled: patch.definition.disabledSkills ?? [],
+        kept: currentDefinition.disabledSkills ?? [],
+      });
       await assertSubagents(t, {
         orgId,
         agentId,

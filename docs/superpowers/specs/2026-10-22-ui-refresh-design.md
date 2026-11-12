@@ -407,7 +407,11 @@ Rules:
 9. **Failure**:
    - the row shows "Failed" with an error summary, e.g. "404 file not found";
    - expanding shows the full error;
-   - for shell commands, **a non-zero exit code is a failure**.
+   - for shell commands, a timeout or a stopped command is a failure; a non-zero exit code is not
+     (maintainer decision 2026-11-12, superseding "a non-zero exit is a failure": the command ran
+     and its exit code is information, shown in the row's summary). A `Write` / `Edit` the
+     read-before-write check refused is not a failure either: the row reads "Blocked: read the file
+     (again) first" from the display-only `tool_result.view.kind: "guard"`.
 10. Tool groups sit between prose; **prose is never collapsed**.
 11. A run blocked by an extension's policy hook keeps today's notice naming the extension (`run.hook_denied`); a denied tool call shows as a failed row with the denying extension (designer's call).
 
@@ -623,7 +627,7 @@ The other design calls the reference set made (listed in the step-0 report: a sq
 
 1. Phase C overlap: whichever of B and phase C merges second rebases; migration numbers are taken at implementation time.
 2. Tool `title` / `keyArgs` are display-only and excluded from the tool definition fingerprint, read live for display; `tool_specs` rows are not rewritten.
-3. A non-zero exit keeps `isError` unchanged (timeout / abort only); the exit code travels in the display-only `tool_result.view` and the row shows "Failed" from it.
+3. A non-zero exit keeps `isError` unchanged (timeout / abort only); the exit code travels in the display-only `tool_result.view`. The row first showed "Failed" from it; since 2026-11-12 (maintainer decision) the row is done and the summary names the code.
 4. A deny reason reaches the model, appended to the denied call's result; it is in the log.
 5. Model switches are honored in step and full-run replay; `model_switched` is a `DriftReason` only for a candidate that overrides a person's mid-conversation choice.
 6. Retry after a failed run re-sends the last user message with a display-only `retryOf`, folded into the failed divider.

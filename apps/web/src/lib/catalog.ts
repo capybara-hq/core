@@ -251,7 +251,9 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   other_harness: [],
   skill_ignored_restrictions: ["keys"],
   skill_claude_variables: ["variables"],
+  // stored reports from before skills default-on still carry it
   session_start_pin_hint: [],
+  session_start_hook: [],
   mcp_auth_none: [],
   mcp_type_assumed: [],
   connector_not_loaded: ["connector"],
@@ -293,7 +295,7 @@ export interface TranslationItem {
 export interface TranslationReport {
   format: "claude-code";
   manifestPath: string | null;
-  /** The plugin has a SessionStart hook: the skills section opens by default. */
+  /** The plugin has a SessionStart hook (kept for stored reports; `session_start_hook` says it). */
   sessionStart: boolean;
   items: TranslationItem[];
 }
@@ -468,8 +470,6 @@ export interface PluginReview {
     body: string;
     path: string;
     files: number;
-    /** The plugin suggests pinning the skill (changed at confirm with `pinnedSuggestions`). */
-    suggestPinned?: boolean;
   }[];
   connectorTemplates: PluginReviewTemplate[];
   /** Agent templates (phase C; absent in reviews staged before it). */
@@ -1205,8 +1205,7 @@ export const preparePluginGit = (url: string, ref: string, path: string) =>
 
 /**
  * Confirms a staged import (it also installs and enables the plugin's extension): `scope` (default
- * `optional`) and `orgs` (only with `named`) say who the plugin is offered to; `pinnedSuggestions`
- * (skill names of the review) replaces the plugin's suggested pinned skills.
+ * `optional`) and `orgs` (only with `named`) say who the plugin is offered to.
  */
 export const confirmPluginImport = (
   stagingId: string,
@@ -1214,7 +1213,6 @@ export const confirmPluginImport = (
     reviewHash: string;
     scope?: PluginScope;
     orgs?: string[];
-    pinnedSuggestions?: string[];
   },
 ) => apiFetch<PluginConfirmResult>(`${admin}/imports/${enc(stagingId)}/confirm`, post(body));
 
@@ -1325,8 +1323,7 @@ export async function uploadOrgPluginPackage(orgId: string, file: Blob): Promise
 }
 
 /**
- * Confirms the org's staged upload: `shareable` only for a new plugin (default false). Never
- * `pinnedSuggestions`: a new version keeps the plugin's own (the kernel refuses them, 400).
+ * Confirms the org's staged upload: `shareable` only for a new plugin (default false).
  */
 export const confirmOrgUpload = (
   orgId: string,

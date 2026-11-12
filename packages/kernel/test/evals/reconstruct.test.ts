@@ -13,8 +13,8 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { normalizeStoredDefinition } from "../../src/agents/definition.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { type AgentDefinition, normalizeStoredDefinition } from "../../src/agents/definition.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
@@ -37,13 +37,16 @@ import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import type { KernelLogger } from "../../src/log.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
+import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
+import { catalogLineChars, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
@@ -69,6 +72,7 @@ import {
   waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { onlySkills } from "../helpers/skills.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 
 /**
@@ -210,7 +214,12 @@ async function createAgent(
   model: { provider: string; model: string },
   extra: Record<string, unknown> = {},
 ): Promise<string> {
-  const { tools, ...rest } = extra as { tools?: Record<string, unknown>[] };
+  const { tools, skills, ...rest } = extra as {
+    tools?: Record<string, unknown>[];
+    skills?: string[];
+  };
+  // only the skills the test names: the org's other skills (seeded by earlier tests) are off
+  const disabledSkills = await onlySkills(db, orgId, skills);
   const named = new Set((tools ?? []).flatMap((r) => (r.kind === "plugin" ? [r.plugin] : [])));
   const extensionsOff = ["tools-probe", "hooks-probe"]
     .filter((p) => !named.has(p))
@@ -224,6 +233,7 @@ async function createAgent(
         instructions: "Be helpful.",
         model,
         disabledTools: [...onlyBuiltins(tools ?? []), ...extensionsOff],
+        disabledSkills,
         ...rest,
       },
       visibility: "org",
@@ -431,13 +441,20 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
 
 const reset = () => capture.reset();
 
+/**
+ * A definition's pins from before skills were on by default (skills default-on spec §4): no
+ * longer in the type, still in old definitions.
+ */
+const oldPins = (pinned: string[]) =>
+  ({ orgSkills: [], pinned }) as unknown as NonNullable<AgentDefinition["skills"]>;
+
 describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   it("多步工具、ToolSearch 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
     reset();
     const alpha = await seedSkill("alpha", "Alpha body.");
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
-      { tools: PROBE_TOOLS, skills: { orgSkills: [alpha] } },
+      { tools: PROBE_TOOLS, skills: [alpha] },
     );
     const conv = await createConv(owner, orgId, agentId);
     let n = 0;
@@ -1059,16 +1076,18 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, snap);
   });
 
-  it("pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map, and a compaction: zero drift and equal to what the provider received", async () => {
+  it("a skill version change mid-conversation, a claude-code skill with the tool map, and a compaction: nothing pinned, zero drift and equal to what the provider received", async () => {
     reset();
-    const pinned = await seedSkill("pinned-rules", "Always answer in haiku.");
+    // pinning is gone (skills default-on spec §8): the old pinned cases live on in the
+    // pre-skills-default-on fixture
+    const rules = await seedSkill("house-rules", "Always answer in haiku.");
     const brain = await seedSkill("brainstorming", "Brainstorm first.", undefined, {
       format: "claude-code",
       plugin: "superpowers",
     });
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-small" },
-      { skills: { orgSkills: [pinned, brain], pinned: [pinned] } },
+      { skills: [rules, brain] },
     );
     const conv = await createConv(owner, orgId, agentId);
     let n = 0;
@@ -1078,8 +1097,8 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     };
     await turn("echo:first");
     await turn('tool:Skill:{"skill":"superpowers:brainstorming"}');
-    // a new version of the pinned skill: the next run writes a snapshot with the new body
-    await seedSkill("pinned-rules", "Always answer in limericks.", pinned);
+    // a new version of a skill: the next run writes a snapshot with it
+    await seedSkill("house-rules", "Always answer in limericks.", rules);
     for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
 
     const events = await eventsOf(db, conv);
@@ -1087,40 +1106,97 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
         e.type === "skills_catalog",
     );
-    expect(snaps.map((e) => e.payload.pinned?.map((p) => p.version))).toEqual([[1], [2]]);
+    expect(snaps.map((e) => e.payload.pinned)).toEqual([undefined, undefined]);
+    expect(
+      snaps.map((e) => e.payload.skills.find((x) => x.name === "house-rules")?.version),
+    ).toEqual([1, 2]);
     expect(snaps.every((e) => e.payload.toolMap === CLAUDE_CODE_TOOL_MAP)).toBe(true);
     expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
     const first = sent[0] as ModelRequest;
-    expect(first.system[0]?.text).toContain('<pinned_skill name="pinned-rules" version="1">');
+    expect(first.system[0]?.text).not.toContain("<pinned_skill");
     expect(first.system[0]?.text).toContain(CLAUDE_CODE_TOOL_MAP);
     const loaded = events.find((e) => e.type === "tool_result");
     expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
     const texts = sent.flatMap((r) =>
       r.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : [])),
     );
-    expect(texts.some((t) => t.includes('<pinned_skill name="pinned-rules" version="2">'))).toBe(
-      true,
-    );
-    // the compaction restores the current pinned set after the summary (the system segment still
-    // holds version 1); without this a regression in the restore would drift baseline and
-    // recording together and still reach zero drift
-    const restored = sent.filter((r) =>
-      r.messages.some(
-        (m) =>
-          m.role === "system" &&
-          (m.content as string).includes(
-            "Pinned skills now (this replaces any earlier pinned skills):",
-          ) &&
-          (m.content as string).includes('<pinned_skill name="pinned-rules" version="2">'),
-      ),
-    );
-    expect(restored.length).toBeGreaterThan(0);
-    // and no pinned skill is listed under "Updated skills" (M3)
+    // the new version is an ordinary catalog update
     const updatedLists = texts.flatMap((t) => {
       const at = t.indexOf("Updated skills (");
       return at < 0 ? [] : [t.slice(at).split("\n\n")[0] as string];
     });
-    expect(updatedLists.some((l) => l.includes("- pinned-rules:"))).toBe(false);
+    expect(updatedLists.some((l) => l.includes("- house-rules:"))).toBe(true);
+    expect(texts.some((t) => t.includes("Pinned skill"))).toBe(false);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a catalog budget change between runs: a new snapshot with name-only entries and an updated notice, then back; zero drift", async () => {
+    reset();
+    // org skills rank before plugin skills, whatever their names (skills default-on spec §7)
+    const plugged = await seedSkill("budget-a", "A.", undefined, { plugin: "budgetplug" });
+    const b = await seedSkill("budget-b", "B.");
+    const c = await seedSkill("budget-c", "C.");
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: [plugged, b, c] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    // a smaller budget (below the schema's minimum, so set directly): budget-b and budget-c fit
+    const config = k.app.get(KernelConfigService);
+    const real = config.get();
+    const line = (name: string) => catalogLineChars({ name, description: `Use for ${name} work.` });
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      skills: { catalogBudgetChars: line("budget-b") + line("budget-c") },
+    });
+    // the service's own logger (KERNEL_LOGGER is transient: one instance per consumer)
+    const serviceLog = (k.app.get(SkillsCatalogService) as unknown as { log: KernelLogger }).log;
+    const info = vi.spyOn(serviceLog, "info");
+    try {
+      await turn("echo:second");
+    } finally {
+      spy.mockRestore();
+    }
+    const overBudget = info.mock.calls.filter(([msg]) => msg === "skills.catalog_over_budget");
+    info.mockRestore();
+    expect(overBudget).toHaveLength(1);
+    expect(overBudget[0]?.[1]).toMatchObject({
+      orgId,
+      agentId,
+      entries: 3,
+      nameOnly: 1,
+      characters: line("budget-a") + line("budget-b") + line("budget-c"),
+    });
+    await turn("echo:third");
+
+    const snaps = (await eventsOf(db, conv)).filter(
+      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+        e.type === "skills_catalog",
+    );
+    expect(
+      snaps.map((e) => e.payload.skills.filter((s) => s.nameOnly === true).map((s) => s.name)),
+    ).toEqual([[], ["budget-a"], []]);
+    const first = sent[0] as ModelRequest;
+    expect(first.system[0]?.text).toContain("- budget-a: Use for budget-a work.");
+    expect(first.system[0]?.text).not.toContain(MORE_SKILLS_HEADER);
+    const notices = sent.map((r) =>
+      r.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : [])),
+    );
+    expect(notices[1]).toContain(
+      "The skills available in this conversation have changed.\n\n" +
+        `Updated skills (call Skill again before relying on earlier instructions):\n${MORE_SKILLS_HEADER}\nbudget-a`,
+    );
+    expect(notices[2]?.at(-1)).toBe(
+      "The skills available in this conversation have changed.\n\n" +
+        "Updated skills (call Skill again before relying on earlier instructions):\n" +
+        "- budget-a: Use for budget-a work.",
+    );
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
@@ -1192,7 +1268,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       );
       const agentId = await createAgent(
         { provider: "model-fake", model: "fake-small" },
-        { skills: { orgSkills: [brain] } },
+        { skills: [brain] },
       );
       // a conversation whose skills snapshot was written before phase C: the same skills, the old map
       const probe = await createConv(owner, orgId, agentId);
@@ -1240,7 +1316,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-small" },
-      { skills: { orgSkills: [fix, brainstorm] } },
+      { skills: [fix, brainstorm] },
     );
     const conv = await createConv(owner, orgId, agentId);
     let n = 0;
@@ -1304,7 +1380,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
-      { skills: { orgSkills: [deploy] } },
+      { skills: [deploy] },
     );
     const conv = await createConv(owner, orgId, agentId);
     // before any invocation: no snapshot (the model's catalog is empty), so no Skill
@@ -1339,7 +1415,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
-      { skills: { orgSkills: [review] } },
+      { skills: [review] },
     );
     const conv = await createConv(owner, orgId, agentId);
     const res = await owner({
@@ -1397,7 +1473,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     });
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-small" },
-      { skills: { orgSkills: [fix, audit] } },
+      { skills: [fix, audit] },
     );
     const conv = await createConv(owner, orgId, agentId);
     let n = 0;
@@ -1475,7 +1551,13 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       // a candidate version without the invoked skills: the person's messages are recorded input
       const cand = reconstructRequest(snap, c.seq, {
         ...opts,
-        definition: { ...def, skills: { orgSkills: [] } },
+        definition: {
+          ...def,
+          disabledSkills: [
+            { kind: "skill", skillId: fix },
+            { kind: "skill", skillId: audit },
+          ],
+        },
         agentVersion: 2,
       });
       expect(cand.drift, `candidate seq ${c.seq}`).toEqual([]);
@@ -1966,56 +2048,11 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
     }
   });
 
-  it("a candidate version that pins differently -> pinned_changed", () => {
-    const def = snap.definitions["1"];
-    if (!def) throw new Error("definition missing");
-    const out = reconstructRequest(snap, seq, {
-      model: info,
-      definition: { ...def, skills: { orgSkills: [], pinned: ["some-skill"] } },
-    });
-    expect(out.drift).toEqual(["pinned_changed"]);
-    // the request still uses the recorded snapshot: no pinned text
-    expect(out.request.system[0]?.text).not.toContain("Pinned skills");
-    const same = reconstructRequest(snap, seq, {
-      model: info,
-      definition: { ...def, instructions: "Be terse." },
-    });
-    expect(same.drift).toEqual([]);
-  });
-
-  it("pinned_changed compares the candidate with the original version's pins, not the effective snapshot", () => {
-    const def = snap.definitions["1"];
-    if (!def) throw new Error("definition missing");
-    // the original version pinned a skill that has since been deleted: the recorded snapshot
-    // carries no pinned skills, yet the pinning of a params-only candidate is unchanged
-    const s = clone();
-    s.definitions["1"] = { ...def, skills: { orgSkills: [], pinned: ["gone-skill"] } };
-    const paramsOnly = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
-    expect(paramsOnly.drift).toEqual([]);
-    // an instructions-only candidate, with a duplicated pin, still pins the same
-    const sameDef = s.definitions["1"] as typeof def;
-    const dup = reconstructRequest(s, seq, {
-      model: info,
-      definition: {
-        ...sameDef,
-        instructions: "Be terse.",
-        skills: { orgSkills: [], pinned: ["gone-skill", "gone-skill"] },
-      },
-    });
-    expect(dup.drift).toEqual([]);
-    // a real change still gives pinned_changed
-    const changed = reconstructRequest(s, seq, {
-      model: info,
-      definition: { ...sameDef, skills: { orgSkills: [], pinned: ["other-skill"] } },
-    });
-    expect(changed.drift).toEqual(["pinned_changed"]);
-  });
-
-  it("definition_missing: the stub's empty pins add no pinned_changed; the snapshot ids are the fallback", () => {
+  it("pinned_changed: a non-baseline call whose snapshot in effect pinned skills, whatever the candidate", () => {
     const def = snap.definitions["1"];
     if (!def) throw new Error("definition missing");
     // a recorded snapshot with one pinned skill, ahead of every other event
-    const withPinned = () => {
+    const withPinned = (pinned: boolean) => {
       const s = clone();
       const first = s.events[0] as (typeof s.events)[number];
       const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
@@ -2023,29 +2060,70 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
         ...first,
         seq: first.seq - 1,
         type: "skills_catalog",
-        payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
+        payload: { skills: [skill], ...(pinned && { pinned: [{ ...skill, body: "Pinned." }] }) },
       });
-      s.definitions = {};
       return s;
     };
-    const missing = reconstructRequest(withPinned(), seq, {
+    // the baseline never reports it
+    expect(reconstructRequest(withPinned(true), seq, { model: info }).drift).not.toContain(
+      "pinned_changed",
+    );
+    // no candidate pins any more: params-only, instructions-only, another version alike
+    const paramsOnly = reconstructRequest(withPinned(true), seq, {
       model: info,
       params: { effort: "high" },
     });
+    expect(paramsOnly.drift).toContain("pinned_changed");
+    const instructions = reconstructRequest(withPinned(true), seq, {
+      model: info,
+      definition: { ...def, instructions: "Be terse." },
+    });
+    expect(instructions.drift).toContain("pinned_changed");
+    // the request still renders the recorded pinned body (a step replay never reads storage)
+    expect(instructions.request.system[0]?.text).toContain("Pinned.");
+    // a snapshot without pins: nothing, even when the candidate's raw definition carries old pins
+    const unpinned = reconstructRequest(withPinned(false), seq, {
+      model: info,
+      definition: { ...def, skills: oldPins(["p1"]) },
+    });
+    expect(unpinned.drift).not.toContain("pinned_changed");
+  });
+
+  it("pinned_changed follows the snapshot in effect at the call: a later unpinned snapshot ends it", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    const s = clone();
+    const first = s.events[0] as (typeof s.events)[number];
+    const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
+    // pinned at first, then a snapshot without pins (the "Pinned skills removed" notice) before
+    // the call
+    s.events.unshift(
+      {
+        ...first,
+        seq: first.seq - 1,
+        type: "skills_catalog",
+        payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
+      },
+      { ...first, seq: first.seq - 0.5, type: "skills_catalog", payload: { skills: [skill] } },
+    );
+    const out = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
+    expect(out.drift).not.toContain("pinned_changed");
+  });
+
+  it("definition_missing: no pinned_changed, even under a pinned snapshot", () => {
+    const s = clone();
+    const first = s.events[0] as (typeof s.events)[number];
+    const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
+    s.events.unshift({
+      ...first,
+      seq: first.seq - 1,
+      type: "skills_catalog",
+      payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
+    });
+    s.definitions = {};
+    const missing = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
     expect(missing.drift).toContain("definition_missing");
     expect(missing.drift).not.toContain("pinned_changed");
-    // the original version's definition is missing, the candidate brings its own: compare with
-    // the snapshot's pinned ids
-    const pinsSame = reconstructRequest(withPinned(), seq, {
-      model: info,
-      definition: { ...def, skills: { orgSkills: [], pinned: ["p1"] } },
-    });
-    expect(pinsSame.drift).toEqual([]);
-    const pinsOther = reconstructRequest(withPinned(), seq, {
-      model: info,
-      definition: { ...def, skills: { orgSkills: [], pinned: [] } },
-    });
-    expect(pinsOther.drift).toEqual(["pinned_changed"]);
   });
 
   it("a candidate model replacing the run's model switch -> model_switched (never for a baseline)", () => {

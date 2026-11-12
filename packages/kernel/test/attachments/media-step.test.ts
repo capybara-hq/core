@@ -209,6 +209,7 @@ const agent = (model: string, fallback: string | null = null): AgentDefinition =
   fallback: fallback === null ? null : { provider: "stub", model: fallback },
   modelParams: {},
   fallbackParams: {},
+  disabledSkills: [],
   disabledTools: builtinsOff(),
   toolPolicies: {},
 });

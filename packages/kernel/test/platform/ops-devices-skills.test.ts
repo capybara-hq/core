@@ -151,6 +151,7 @@ async function agentOf(owner: string, visibility: "private" | "org") {
       name: "Writer",
       instructions: "Write skills.",
       model: MODEL,
+      disabledSkills: [],
       disabledTools: builtinsOff("Bash"),
       toolPolicies: {},
       fallback: null,

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { visibleTo } from "../agents/agent-lookup.js";
+import { normalizeStoredDefinition } from "../agents/definition.js";
 import { offeredNamed } from "../catalog/component-state.js";
 import {
   AttachmentsService,
@@ -38,6 +38,7 @@ import {
   skillManifest,
 } from "./package.js";
 import { SkillsService } from "./skills.service.js";
+import { agentSkills } from "./usable.js";
 
 /**
  * The cap on an agent's own skills (`scope = agent`). Far below the catalog snapshot's cap
@@ -159,8 +160,8 @@ export async function shareSkillIn(
 
 /**
  * The catalog snapshot `base` with skill `name` replaced by the version just written or proposed
- * (`source` = its prefix), or removed when that version is manual-only. A pinned entry of the
- * skill gets the new version, source and body; a manual-only version drops it (no longer live).
+ * (`source` = its prefix), or removed when that version is manual-only. Pinned skills of an old
+ * snapshot are not carried (skills default-on spec §8).
  */
 function withVersion(
   base: SkillsSnapshot,
@@ -171,7 +172,6 @@ function withVersion(
     version: number;
     source: string;
     forModel: boolean;
-    pinnedBody: string | null;
   },
 ): SkillsSnapshot {
   return {
@@ -190,32 +190,7 @@ function withVersion(
           ]
         : []),
     ],
-    ...(base.pinned && {
-      pinned: base.pinned.map((p) =>
-        p.id === v.skillId && v.pinnedBody !== null
-          ? {
-              id: v.skillId,
-              version: v.version,
-              name: v.name,
-              source: v.source,
-              body: v.pinnedBody,
-            }
-          : p,
-      ),
-    }),
   };
-}
-
-/** The body of a skill's SKILL.md (as run start would read it); null if unparsable. */
-export function skillMdBody(files: readonly { path: string; data: Uint8Array }[]): string | null {
-  const md = files.find((f) => f.path === SKILL_ENTRY_FILE);
-  if (!md) return null;
-  try {
-    const parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(md.data));
-    return "errors" in parsed ? null : parsed.body;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -698,7 +673,6 @@ export class AgentSkillsService {
       .where("version", "=", out.version)
       .executeTakeFirst();
     if (!v) return null;
-    const pinnedBody = skillMdBody(pkg.files);
     return appendConversationCatalog(
       this.catalogDeps,
       conversationId,
@@ -710,7 +684,6 @@ export class AgentSkillsService {
           version: out.version,
           source: v.object_prefix,
           forModel,
-          pinnedBody,
         }),
       `skills_catalog:register:${v.object_prefix}`,
       actor.runId,
@@ -816,7 +789,6 @@ export class AgentSkillsService {
     if (actor.conversationId !== undefined) {
       // The conversation sees the new version at once: this skill replaced / added in its latest
       // snapshot (source = this version's prefix)
-      const pinnedBody = skillMdBody(pkg.files);
       toSeq = await appendConversationCatalog(
         this.catalogDeps,
         actor.conversationId,
@@ -828,7 +800,6 @@ export class AgentSkillsService {
             version,
             source: prefix,
             forModel,
-            pinnedBody,
           }),
         `skills_catalog:register:${prefix}`,
         actor.runId,
@@ -849,9 +820,10 @@ export class AgentSkillsService {
   }
 
   /**
-   * Spec §5.2: an agent's own skill may not take the name of an org skill the agent uses (selected
-   * in its current definition, or one it shared) unless the actor maintains it (then the
-   * registration is a version of it): 409 `skill.name_exists`.
+   * Spec §5.2: an agent's own skill may not take the name of an org skill the agent uses (one it
+   * has on: every org skill its current definition does not turn off, skills default-on spec §3,
+   * and the ones it shared) unless the actor maintains it (then the registration is a version of
+   * it): 409 `skill.name_exists`.
    */
   private async assertNoUsedOrgSkillNamed(actor: AgentSkillActor, name: string): Promise<void> {
     const def = await this.db
@@ -864,25 +836,22 @@ export class AgentSkillsService {
       .select("agent_versions.definition")
       .where("agents.id", "=", actor.agentId)
       .executeTakeFirst();
-    const selected = (def?.definition as { skills?: { orgSkills?: unknown } } | undefined)?.skills
-      ?.orgSkills;
-    const ids = Array.isArray(selected)
-      ? selected.filter((x): x is string => typeof x === "string")
-      : [];
-    const used = await this.db
-      .selectFrom("skills")
-      .select("id")
-      .where("org_id", "=", actor.orgId)
-      .where("scope", "=", "org")
-      .where("name", "=", name)
-      .where("deleted_at", "is", null)
-      .where((eb) =>
-        eb.or([
-          eb("origin_agent_id", "=", actor.agentId),
-          ...(ids.length > 0 ? [eb("id", "in", ids)] : []),
-        ]),
-      )
-      .executeTakeFirst();
+    const disabledSkills =
+      def === undefined ? [] : (normalizeStoredDefinition(def.definition).disabledSkills ?? []);
+    const used = (
+      await agentSkills(this.db.db, {
+        orgId: actor.orgId,
+        agentId: actor.agentId,
+        disabledSkills,
+      })
+    ).find(
+      (r) =>
+        r.scope === "org" &&
+        r.name === name &&
+        // an org skill, or the org's copy linked to a platform skill (listed under the copy's id);
+        // a platform skill itself is not the org's to clash with
+        (r.origin === "org" || (r.platformSkillId !== undefined && r.id !== r.platformSkillId)),
+    );
     if (used) {
       throw new ApiError(
         "skill.name_exists",
@@ -984,7 +953,6 @@ export class AgentSkillsService {
     const forModel = invocationOf(manifest).model;
     let toSeq: number | null = null;
     if (actor.conversationId !== undefined) {
-      const pinnedBody = skillMdBody(pkg.files);
       toSeq = await appendConversationCatalog(
         this.catalogDeps,
         actor.conversationId,
@@ -996,7 +964,6 @@ export class AgentSkillsService {
             version,
             source: prefix,
             forModel,
-            pinnedBody,
           }),
         `skills_catalog:propose:${prefix}`,
         actor.runId,

@@ -115,7 +115,7 @@ export async function recordedSkillBlocked(
   a: {
     orgId: string;
     agentId: string;
-    agent: Pick<AgentDefinition, "skills">;
+    agent: Pick<AgentDefinition, "disabledSkills">;
     conversationId: string;
     skillId: string;
   },
@@ -188,7 +188,7 @@ export class SkillInvoker {
   async list(a: {
     orgId: string;
     agentId: string;
-    agent: Pick<AgentDefinition, "skills">;
+    agent: Pick<AgentDefinition, "disabledSkills">;
     conversationId?: string;
   }): Promise<InvocableSkill[]> {
     const all = await resolveSkills(this.db.db, a);

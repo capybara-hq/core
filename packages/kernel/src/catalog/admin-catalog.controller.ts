@@ -70,8 +70,6 @@ const ConfirmBody = z
     /** The new item's scope (default `optional`); `orgs` only with `named`. */
     scope: Scope.optional(),
     orgs: Orgs.optional(),
-    /** Skill names suggested as pinned (spec §9.1); omitted keeps the plugin's flags. */
-    pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
   })
   .strict();
 
@@ -232,9 +230,8 @@ export class AdminCatalogController {
    * by sha256). An unknown field (the removed `deployExtension`) -> 400 `validation_failed`. A foreseeable failure (a downgrade to a version with
    * unrun migrations) is a 409 `extension.downgrade_unsupported` before anything is written.
    * Staging missing or expired -> 404 `plugin.staging_not_found`; `reviewHash` differs or the
-   * extension on the deployment changed -> 409 `plugin.review_stale`. `pinnedSuggestions` (skill
-   * names of the review) replaces the plugin's suggested pinning; an unknown name -> 400
-   * `validation_failed`.
+   * extension on the deployment changed -> 409 `plugin.review_stale`. The removed `pinnedSuggestions`
+   * is an unknown field (400 `validation_failed`).
    */
   @Post("imports/:stagingId/confirm")
   @HttpCode(201)
@@ -251,7 +248,6 @@ export class AdminCatalogController {
         reviewHash: body.reviewHash,
         ...(body.scope !== undefined && { scope: body.scope }),
         ...(body.orgs !== undefined && { orgs: body.orgs }),
-        ...(body.pinnedSuggestions !== undefined && { pinnedSuggestions: body.pinnedSuggestions }),
       },
       actorOpts(actor),
     );

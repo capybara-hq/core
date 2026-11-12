@@ -83,8 +83,6 @@ export interface PluginDependency {
 /** A skill of the plugin: a `./…` directory holding SKILL.md. */
 export interface PluginSkillRef {
   path: string;
-  /** Suggested as pinned when an agent selects the skill (spec §9.1). */
-  pinned?: boolean;
 }
 
 /** A connector template of the plugin: a `./…/<id>.json` file ({@link ConnectorTemplateFile}). */
@@ -344,7 +342,7 @@ const schema = z
       .max(L.dependencies)
       .optional(),
     skills: z
-      .array(z.strictObject({ path: dotPath("path"), pinned: z.boolean().optional() }))
+      .array(z.strictObject({ path: dotPath("path") }))
       .max(L.skills)
       .optional(),
     connectorTemplates: z
