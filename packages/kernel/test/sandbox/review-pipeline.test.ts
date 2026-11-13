@@ -431,6 +431,12 @@ describe("the command review in the pipeline", { timeout: 120_000 }, () => {
     expect(other.detail as Record<string, unknown>).toMatchObject({ rule: "ask.remote-destroy" });
     expect((await decide(other.id, { decision: "deny" })).statusCode).toBe(200);
     await waitForTerminal(db, conv, 3, 30_000);
+
+    // a deny rule is never granted, whatever the conversation allows: no card, a deny text
+    const denied = await call(conv, "Bash", { command: "rm -rf /", description: "Clean" }, 4);
+    expect(denied.payload.isError).toBe(true);
+    expect(denied.payload.content).toContain("Command blocked by review:");
+    expect(denied.payload.review).toMatchObject({ decision: "deny", by: "rule" });
   });
 
   it("a classifier ask offers only once (no rule to remember)", async () => {
