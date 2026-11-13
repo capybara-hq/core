@@ -199,7 +199,19 @@ describe("org cloudNetwork", () => {
       s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
     // absent = open: setting open explicitly is a no-op, not an error
     expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBeUndefined();
-    await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } });
+    // a token cannot bring a host outside the deployment's list into the allowlist: that widens
+    // the allowlist a local device in sandbox mode reaches (auto mode spec §4.1)
+    expect(
+      await codeOf(
+        tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    // a person sets the org's own list
+    await s.update(
+      orgId,
+      { cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } },
+      accountId,
+    );
     expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
