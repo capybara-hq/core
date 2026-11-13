@@ -3297,6 +3297,81 @@ States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `
 | schedule-calendar-error-text | failed | font-size | type.small |
 | schedule-calendar-block[data-selected=true] | selected | border-top-color | color.line-strong |
 
+### 6.41 DeviceNameplate
+
+`DeviceNameplate({ name, origin, state, version?, lastSeen?, badge?, labels? })` (auto mode design §4, P-D14): a device page's head, one flat band, and the only place a device's program version and last seen time appear.
+
+- **The band**: `panel` ground, the `line-card` hairline, radius `md`, padding `space.3` / `space.4`; `space.4` between its two ends. It is the nameplate itself, never a card in a card (§1), and it carries no accent of its own: the page's one bright element is its status light while the device runs.
+- **Left**: the name as the plate (`h2` step, 600, `ink`, one line with an ellipsis), and under it the meta line (`small`, `muted`, `space.2` apart): the origin (云端设备 / "Cloud device", 本地设备 / "Local device"), the status light, and the optional `badge` (a mode mark: 自动 in `warn`, 沙箱 plain, the network mode of a cloud device).
+- **Status light**: an 8 px dot (`space.2`, radius `radius.sm`) followed by the state word, never color alone: `running` `accent` (the one accent), `online` `ok`, `suspended` `warn`, `offline` `muted`. Running is a cloud device's instance; online / offline are a local device's machine.
+- **Right**: two mono figures (`small`, `space.5` apart, right-aligned), each a `muted` label over an `ink` value with tabular figures: 程序 / "Program" (`versionLabel(v)`, a dash when the machine has not reported one) and 最后活跃 / "Last seen" (the `DateTime` component — a cloud device's last use, a local one's machine's last seen; 从未连接 / "Never connected" when there is none).
+- **Phones** (below 640): the figures drop under the name, both ends of the row aligned; a long name still ellipsizes.
+- Labels come from the design i18n (§7) and a page may override any of them (`labels`).
+
+<!-- states: device-nameplate -->
+States: `cloud`, `local`, `suspended`, `offline`
+
+<!-- size-table: device-nameplate -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| device-nameplate | cloud | background-color | color.panel |
+| device-nameplate | cloud | border-radius | radius.md |
+| device-nameplate | cloud | padding-top | space.3 |
+| device-nameplate | cloud | padding-left | space.4 |
+| device-nameplate-name | cloud | font-size | type.h2 |
+| device-nameplate-name | cloud | color | color.ink |
+| device-nameplate-meta | cloud | font-size | type.small |
+| device-nameplate-meta | cloud | color | color.muted |
+| device-nameplate-light | cloud | width | space.2 |
+| device-nameplate-light | cloud | height | space.2 |
+| device-nameplate-light | cloud | border-radius | radius.sm |
+| device-nameplate-light[data-state=running] | cloud | background-color | color.accent |
+| device-nameplate-light[data-state=online] | local | background-color | color.ok |
+| device-nameplate-light[data-state=suspended] | suspended | background-color | color.warn |
+| device-nameplate-light[data-state=offline] | offline | background-color | color.muted |
+| device-nameplate-figures | cloud | column-gap | space.5 |
+| device-nameplate-label | cloud | font-size | type.small |
+| device-nameplate-label | cloud | color | color.muted |
+| device-nameplate-value | cloud | font-size | type.small |
+| device-nameplate-value | cloud | color | color.ink |
+
+### 6.42 ModeScale
+
+`ModeScale({ value, onSelect?, descriptions?, unavailable?, locked?, lockedReason?, disabled?, disabledReason?, command?, label? })` (auto mode design §4): how much power a device gives an agent's commands, as **one horizontal two-state scale** — 自动 | 沙箱, each with one sentence. It replaces the three sandbox tiers as a choice (strict / dev / open are gone, auto mode design §4.4): never a four-option stack, never a full-bleed fill.
+
+- **The scale**: a label row (运行模式 / "Run mode", `small` `muted`; under it the `lockedReason` / `disabledReason` in prose when there is one), then a 1 px `line-soft` track with two stations. Each station is its name (`body`, 500, `muted`) over a 2 px marker over its sentence (prose, `small`, `muted`). The effective station's name turns `ink` 600 and its marker `ink` — selection inside the control is neutral, never the accent (§2.3). The stations are `space.3` apart, each at least `row.default` high including its padding.
+- **A radio group**: `role="radiogroup"` named by its label, one `role="radio"` button per mode with `aria-checked`; one tab stop (the effective mode, else the first open one); ← / → / ↑ / ↓ move the choice and select it, Home / End go to the ends. Focus is the 2 px accent outline. Choosing the mode already in effect calls nothing.
+- **Not chooseable**: `unavailable` names a mode with its reason (组织不允许 / 平台不允许) — that station is `aria-disabled` and `disabled`, its name `disabled` text and the reason under its sentence; arrows skip it. `locked` is a cloud device: no choice at all, the effective mode marked, both stations disabled, `lockedReason` under the label row. `disabled` turns the whole scale off for now, `disabledReason` under the label row.
+- **Command slot** (`command`): a `KeycapCommand` under the scale (`space.1` above), for a local device's `capybara-device mode` line (§6.43).
+- The mode words are always 自动 / "Auto" and 沙箱 / "Sandbox"; a mode sentence is prose, never a tier word.
+
+<!-- states: mode-scale -->
+States: `auto`, `sandbox`, `locked`, `capped`, `disabled`
+
+<!-- size-table: mode-scale -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| mode-scale-options | auto | column-gap | space.3 |
+| mode-scale-track | auto | background-color | color.line-soft |
+| mode-scale-track | auto | height | 1 |
+| mode-scale-option | auto | min-height | row.default |
+| mode-scale-name | auto | font-size | type.body |
+| mode-scale-name | auto | color | color.muted |
+| mode-scale-option[data-state=selected] mode-scale-name | sandbox | color | color.ink |
+| mode-scale-marker | auto | height | 2 |
+| mode-scale-option[data-state=selected] mode-scale-marker | auto | background-color | color.ink |
+| mode-scale-description | auto | font-size | type.small |
+| mode-scale-description | auto | color | color.muted |
+| mode-scale-reason | capped | font-size | type.small |
+| mode-scale-reason | capped | color | color.muted |
+| mode-scale-note | locked | font-size | type.small |
+| mode-scale-note | locked | color | color.muted |
+| mode-scale-option[aria-disabled=true] mode-scale-name | disabled | color | color.disabled |
+
+### 6.43 KeycapCommand
+
+`KeycapCommand({ command, hint?, copyLabel? })` (auto mode design §4): a CLI line drawn as keycaps — each word of `command` in its own `kbd`-styled key (1 px `line` border with a 2 px bottom edge, radius `sm`, `panel` ground, `small` mono `ink`) with `space.1` between them — a copy button (dense ghost, copy 14) at the end, and an optional prose `hint` above the line. The button copies the whole command, reads 已复制 / "Copied" for two seconds, and without a usable clipboard selects the keycaps and says to copy by hand. It is the only place the command appears on a page (`capybara-device mode auto|sandbox`), and its accessible name names the command (复制 <command> / "Copy <command>"). Not in the reference set: no state list or size table yet (like `Kbd`, §6.5).
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.
@@ -3324,6 +3399,7 @@ The polish checklist below comes from an audit with [unslop](https://github.com/
 - **Names in messages**: a name interpolated into a toast or notice is quoted: corner quotes 「」 in zh (已启用「待办清单」。, 已移除「deepseek」。), straight double quotes in en (`Enabled "Todo".`).
 - **Ellipsis and punctuation**: the ellipsis is the single character "…", never three dots (`i18n-ellipsis`); in Chinese a half-width `?` `!` `:` `;` never follows a Chinese character, use `？` `！` `：` `；` (`i18n-cjk-halfwidth`).
 - **One name per object**: conversation is "会话" (not "对话", which stays a verb), sub-agent is "子智能体", rename is "重命名", a created-at column is "创建时间", the new conversation is "新会话" (the workspace has no home page and no "首页"), the admin area is "管理后台" and its first page "概览"; a page's h1 is its nav name.
+- **Device modes** (auto mode design §4): a device is 自动 / "Auto" or 沙箱 / "Sandbox"; the sandbox tier words (严格 / 开发 / 开放) are never used for a device's mode, and each mode's explanation is prose. The CLI line is `capybara-device mode auto|sandbox`, mono and once per page (`KeycapCommand`, §6.43); a cloud device's network reads 开放（挡内网） / "Open (private networks blocked)" or 白名单 / "Allowlist".
 - **"agent"**: Chinese says "智能体" (sub-agent "子智能体", agent template "智能体模板", the nav item and the page name "智能体"); English stays "agent" (`check:i18n` rule `i18n-zh-agent` rejects the Latin word in zh messages). The create verb is "新建" everywhere (buttons, the setup step, the page title "新建智能体").
 - **Roles and the platform**: the roles are "超级管理员" / "Super admin" (the deployment level), "组织所有者" / "Org owner", "组织管理员" / "Org admin", "组织成员" / "Org member" and "访客" / "Guest"; the deployment layer is "平台" / "Platform" (平台目录, 平台统一), a non-official marketplace is "自定义市场源" / "Custom marketplace", and "企业" is never used (`i18n-zh-enterprise`; plugin and component management spec §13.4b, §13.4c).
 - **The path is not translated**: the page-head path and the status bar's path line (`user@org:~/path`) keep the route words (`capybara / settings / members`, `/admin / extensions`); they mirror the URL and are the product's signature.
