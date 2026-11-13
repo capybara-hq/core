@@ -14,7 +14,7 @@ import {
   type HostContextValue,
 } from "../context.js";
 import type { ClientExtension } from "../define.js";
-import { clientHost, DESIGN_NAMES, setClientHost } from "../design.js";
+import { clientHost, DESIGN_NAMES, type SelectProps, setClientHost } from "../design.js";
 import type { ComponentSlotId } from "../slots.generated.js";
 import type { CapybaraEvent, ClientApi, ClientRole, RunState, UiView } from "../types.js";
 
@@ -46,15 +46,38 @@ export interface FakeHost {
   unmount(): void;
 }
 
-type DesignStub = ComponentType<{ children?: ReactNode }>;
-
-/** Plain stand-ins for the host's design components: `<span data-fake-design="Name">`. */
+/**
+ * Plain stand-ins for the host's design components: `<span data-fake-design="Name">`. `Select` is
+ * a native select over its options, so a test picks a value the way a person would.
+ */
 function fakeDesign(): Record<string, ComponentType<never>> {
-  const out: Record<string, DesignStub> = {};
+  const out: Record<string, ComponentType<never>> = {};
   for (const name of DESIGN_NAMES) {
-    out[name] = ({ children }) => createElement("span", { "data-fake-design": name }, children);
+    const Stub = ({ children }: { children?: ReactNode }) =>
+      createElement("span", { "data-fake-design": name }, children);
+    out[name] = Stub as ComponentType<never>;
   }
-  return out as Record<string, ComponentType<never>>;
+  const FakeSelect = (props: SelectProps) =>
+    createElement(
+      "select",
+      {
+        value: props.value ?? "",
+        disabled: props.disabled,
+        "aria-label": props["aria-label"],
+        "aria-labelledby": props["aria-labelledby"],
+        "data-fake-design": "Select",
+        onChange: (e: { target: { value: string } }) =>
+          props.onChange?.({ target: { value: e.target.value } }),
+      },
+      props.placeholder === undefined
+        ? null
+        : createElement("option", { key: "__placeholder", value: "" }, props.placeholder),
+      ...props.options.map((o) =>
+        createElement("option", { key: o.value, value: o.value, disabled: o.disabled }, o.label),
+      ),
+    );
+  out.Select = FakeSelect as ComponentType<never>;
+  return out;
 }
 
 /**

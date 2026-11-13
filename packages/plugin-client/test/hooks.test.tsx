@@ -168,7 +168,7 @@ describe("hooks, more", () => {
   });
 
   it("every design name is a package export", () => {
-    expect(DESIGN_NAMES.length).toBe(12);
+    expect(DESIGN_NAMES.length).toBe(13);
     expect(DESIGN_NAMES.filter((n) => !(n in exports))).toEqual([]);
   });
 });

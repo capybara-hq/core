@@ -216,6 +216,32 @@ export interface PropertySectionProps {
 export type RunState = "idle" | "running" | "waiting" | "failed";
 
 // @public
+export const Select: ComponentType<SelectProps>;
+
+// @public
+export interface SelectOption {
+    disabled?: boolean;
+    label: string;
+    value: string;
+}
+
+// @public
+export interface SelectProps {
+    "aria-label"?: string;
+    "aria-labelledby"?: string;
+    density?: "comfortable" | "compact";
+    disabled?: boolean;
+    onChange?: (e: {
+        target: {
+            value: string;
+        };
+    }) => void;
+    options: SelectOption[];
+    placeholder?: string;
+    value?: string;
+}
+
+// @public
 export interface SignIn {
     id: string;
 }
