@@ -116,17 +116,28 @@ describe("ModeScale", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it("caps one mode with its reason (the org or the platform forbids it)", async () => {
+  it("caps one mode with its reason and keeps the other choosable (the org or the platform forbids it)", async () => {
     const onSelect = vi.fn();
-    scale({ value: "sandbox", unavailable: { auto: "组织不允许" }, onSelect });
+    scale({ value: "auto", unavailable: { auto: "组织不允许" }, onSelect });
     const auto = screen.getByRole("radio", { name: /自动/ });
+    const sandbox = screen.getByRole("radio", { name: /沙箱/ });
     expect(auto.getAttribute("aria-disabled")).toBe("true");
+    expect(sandbox.getAttribute("aria-disabled")).toBeNull();
     expect(within(auto).getByText("组织不允许")).toBeTruthy();
+    // the capped station is not a tab stop and a click on it changes nothing
+    expect(auto.tabIndex).toBe(-1);
+    expect(sandbox.tabIndex).toBe(0);
     await userEvent.click(auto);
     expect(onSelect).not.toHaveBeenCalled();
-    // the sandbox option still chooses
-    await userEvent.click(screen.getByRole("radio", { name: /沙箱/ }));
-    expect(onSelect).not.toHaveBeenCalled();
+    // the open station still chooses
+    await userEvent.click(sandbox);
+    expect(onSelect).toHaveBeenCalledWith("sandbox");
+    // an arrow from the open station skips the capped one
+    onSelect.mockClear();
+    sandbox.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(document.activeElement).toBe(sandbox);
+    expect(onSelect).not.toHaveBeenCalledWith("auto");
   });
 
   it("turns the whole scale off with its reason", () => {

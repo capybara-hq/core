@@ -3364,7 +3364,7 @@ States: `auto`, `sandbox`, `locked`, `capped`, `disabled`
 | mode-scale-description | auto | color | color.muted |
 | mode-scale-reason | capped | font-size | type.small |
 | mode-scale-reason | capped | color | color.muted |
-| mode-scale-note | locked | font-size | type.small |
+| mode-scale-note | locked | font-size | type.prose-small |
 | mode-scale-note | locked | color | color.muted |
 | mode-scale-option[aria-disabled=true] mode-scale-name | disabled | color | color.disabled |
 
