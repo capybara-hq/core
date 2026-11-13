@@ -168,7 +168,7 @@ describe("output-cleanup", () => {
 });
 
 describe("MaintenanceProcessor (the one consumer)", () => {
-  it("dispatches each one-off job by name to its domain, a periodic job's name to its body; an unknown name is only warned", async () => {
+  it("dispatches each one-off job by name to its domain, a periodic job's name to its body; an unknown name fails", async () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
@@ -243,7 +243,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("sched-settle", { taskRunId: "tr1", check: 2 }));
     await processor.process(job("device-op-resolve", { machineId: "m1", opId: "op1" }));
     await processor.process(job("sandbox-suspend-idle", {}));
-    await processor.process(job("no-such-job", {}));
+    // an unknown name fails (BullMQ retries it, a newer replica knows it), never completes unrun
+    await expect(processor.process(job("no-such-job", {}))).rejects.toThrow(
+      'unknown maintenance job "no-such-job"',
+    );
     expect(calls).toEqual([
       ["wait", { waitId: "w" }, "tok"],
       ["sandbox", "c1"],
@@ -262,9 +265,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["device-op-resolve", { machineId: "m1", opId: "op1" }],
       ["periodic", "sandbox-suspend-idle"],
     ]);
-    expect(warned).toEqual([
-      ["unknown maintenance job", { name: "no-such-job", jobId: "no-such-job-1" }],
-    ]);
+    expect(warned).toEqual([]);
   });
 });
 

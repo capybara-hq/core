@@ -98,21 +98,21 @@ The row commits or rolls back with the business write.
 
 - **Fast path.** For a row due now (no `runAt`, or one already reached), `add` also registers an
   `afterCommit` hint that asks the local `OutboxDispatcher` to deliver the rows this transaction
-  wrote, right after the commit, on whatever replica role wrote
-  them (it is a producer, not a consumer, so the api role may do it). It claims the rows with
-  `SELECT … FOR UPDATE SKIP LOCKED`, adds the jobs to BullMQ, and deletes the rows in the same short
-  transaction. This keeps today's latency. The hint starts the dispatch detached and returns at once
-  (the commit's caller never waits on Redis). It never queues behind an outage: it skips the pass,
-  leaving the rows to the relay, when a kernel queue's Redis connection is not ready (checked without
-  waiting), or when 4 fast-path passes already run in the process (a local resource bound, no shared
-  state). So a Redis outage cannot take the PG pool.
-- **Relay.** A `@LockedInterval` job under `WorkerModule` (every 2 s, **designer's call**) claims due
-  rows (`next_attempt_at <= now()`, not dead; never by `run_at`, see delayed jobs) in batches of 500
-  with `SKIP LOCKED` and does the same. It is the only backstop: whatever the fast path did not deliver (a crash, Redis down) it
-  delivers on its next tick.
-- **Redis calls inside the claim transaction.** The dispatcher adds the BullMQ jobs while holding row
-  locks on outbox rows only (never on business rows), then deletes the rows and commits. This is the
-  one sanctioned exception to "no Redis inside a transaction", and it lives in one file. A crash
+  wrote, right after the commit, on whatever replica role wrote them (it is a producer, not a
+  consumer, so the api role may do it). It claims the rows with `SELECT … FOR UPDATE SKIP LOCKED`,
+  adds the jobs to BullMQ, and deletes the rows in the same short transaction. This keeps today's
+  latency. The hint starts the dispatch detached and returns at once (the commit's caller never
+  waits on Redis). It never queues behind an outage: it skips the pass, leaving the rows to the
+  relay, when a kernel queue's Redis connection is not ready (checked without waiting), or when 4
+  fast-path passes already run in the process (a local resource bound, no shared state). So a Redis
+  outage cannot take the PG pool.
+- **Relay.** A `@LockedInterval` job under `WorkerModule` (every 2 s, **designer's call**) claims
+  due rows (`next_attempt_at <= now()`, not dead; never by `run_at`, see delayed jobs) in batches of
+  500 with `SKIP LOCKED` and does the same. It is the only backstop: whatever the fast path did not
+  deliver (a crash, Redis down) it delivers on its next tick.
+- **Redis calls inside the claim transaction.** The dispatcher adds the BullMQ jobs while holding
+  row locks on outbox rows only (never on business rows), then deletes the rows and commits. This is
+  the one sanctioned exception to "no Redis inside a transaction", and it lives in one file. A crash
   after the add and before the commit leaves the rows; the next attempt adds again, which BullMQ
   ignores while the job id exists, and which the job's own idempotency covers after it was removed.
   The adds of one pass share one 2000 ms deadline, so a claim transaction holds its locks and its
@@ -205,7 +205,8 @@ class OutboxService {
 New job names this design introduces, all on `cap-kernel-maintenance` (**designer's call**):
 `ensure-run` (calls `RunQueue.ensureRun`), `stop-tree` (stops a run's fork children or a deleted
 root's tree), `deliver-to-parent` (a finished child's delivery when it is not written in the child's
-terminal transaction), `device-op-resolve` (§7), `run-orphan-check` (§8.3).
+terminal transaction), `device-op-resolve` (§7). `run-orphan-check` (§8.3) is no job name: it is
+a `@LockedInterval`.
 
 ## 6. Run lifecycle
 
@@ -213,7 +214,9 @@ The run path is the largest user of recovery today, so it is spelled out.
 
 - **Starting a run.** The decision `ensureRunIn` makes (new run row) and the outbox row for its job
   commit together. The read-back of the job, `deleteQueued` on a failed add and the "queued without
-  a job" orphan test are deleted: a queued run always has its job owed.
+  a job" orphan test are deleted: a queued run always has its job owed. A trigger's first run's
+  job id is `runJobId`; a later run of the same trigger gets `<runJobId>-<n>`, kept in
+  `runs.job_id`.
 - **Sending a message.** The message transaction also writes an `ensure-run` outbox job
   (`ensure-run-<conv>-<seq>`) with `runAt = now + 30 s` (**designer's call**: a backstop, not a
   second immediate call), and the request still calls `ensureRun` right after the commit as today.
@@ -369,7 +372,9 @@ it removes the last user of the platform-migration retry.
 - No ordering is promised between jobs (BullMQ promises none today either); features that need an
   order keep encoding it in state checks, as now.
 - An org's deletion deletes its pending outbox rows in the same transaction (`org_id`), except rows
-  of the deletion's own cleanup work, which carry no `org_id` (**designer's call**).
+  of the deletion's own cleanup work, which carry no `org_id` (**designer's call**), and usage
+  report rows: the usage happened, so it is still reported. `run-orphan-check` skips a deleted
+  org's runs, whose owed jobs went with the org on purpose.
 
 ## 10. Enforcement
 
@@ -414,7 +419,8 @@ it removes the last user of the platform-migration retry.
 ## 12. Rollout (one PR each, in order)
 
 1. Outbox table, service, dispatcher, relay, dead letters in the overview, registry, the checks
-   (with the allowlist holding every current direct enqueue, each marked "moves in PR n").
+   (with a pending list, `KC_PENDING`, holding every current direct enqueue, each marked "moves in
+   PR n").
 2. Run lifecycle (§6) and `run-orphan-check`, deleting the run-queue orphan code, `kickRun` and the
    `Waits.sweep` passes.
 3. Usage reports and IM delivery; delete the usage sweep.
@@ -422,9 +428,11 @@ it removes the last user of the platform-migration retry.
    sweep and the platform migration.
 5. Scheduled tasks, offboarding, device destroys; delete the scan repair and the offboard sweep.
 6. Device intents (§7) with the device protocol change (plugin-sdk frames, `capybara-device`).
-7. Empty the allowlist; AGENTS.md and skill text.
+7. Empty `KC_PENDING`; AGENTS.md and skill text.
 
-Each PR removes its rows from the check's allowlist; the allowlist is empty at the end.
+Each PR removes its rows from `KC_PENDING`, which is empty at the end. The direct adds left in
+`KC_EXCEPTIONS` (§10: a processor's own retry with no DB write, the CLI's `addJobOnce`, …) are
+permanent exceptions, each with its reason.
 
 ## 13. Risks
 

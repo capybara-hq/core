@@ -108,11 +108,34 @@ SELECT pg_size_pretty(pg_relation_size('capybara.conversation_events')) AS event
 
 Migration `0040_usage_report_sweep.sql` builds `conversation_events_usage_idx`, a partial index on
 `conversation_events (created_at) WHERE type = 'usage'`, **non-concurrently inside the migration
-transaction** (the same class of note as 0027 / 0028 above). A plain `CREATE INDEX` blocks **writes**
-to `conversation_events` until it finishes: new messages and agent runs stall, reads continue. It also
-creates the small `usage_report_sweep` table. This only matters for deployments that ran `main`
-before 0.1.0 and have large event logs; run the upgrade off-peak and estimate from the size query
-above. New installs migrate an empty table.
+transaction** (the same class of note as 0027 / 0028 above). A plain `CREATE INDEX` blocks
+**writes** to `conversation_events` until it finishes: new messages and agent runs stall, reads
+continue. It also creates the small `usage_report_sweep` table, which migration
+`0120_drop_usage_report_sweep.sql` drops again now that usage reports go through the transactional
+outbox. This only matters for deployments that ran `main` before 0.1.0 and have large event logs;
+run the upgrade off-peak and estimate from the size query above. New installs migrate an empty
+table.
+
+### Upgrading across 0119 to 0122 (transactional outbox): stop the old workers first
+
+Queued work goes through the transactional outbox (migration `0119_outbox.sql`, in 0.1.0-rc.25),
+and the jobs it replaced were removed with their tables and columns:
+
+- `0120_drop_usage_report_sweep.sql` (rc.25) drops `usage_report_sweep` (the usage report
+  sweeper's watermark) and the index `model_usage_unreported`;
+- `0121_drop_platform_migration_runs.sql` (rc.26) drops `platform_migration_runs` (the platform
+  components migration job) and the `skill_renamed` org notice kind;
+- `0122_drop_scheduled_task_runs_rechecked_at.sql` (rc.26) drops `scheduled_task_runs.rechecked_at`
+  (the scheduled task scan's repair).
+
+Replicas of an older version still run those jobs and fail against the dropped tables and columns,
+and their maintenance workers complete job names they don't know (`ensure-run`,
+`device-op-resolve`, …) without running them, so that work is lost. An upgrade across these
+migrations can't be rolled: **stop every old `worker` replica before running `capybara migrate`**
+(old `api` and `gateway` replicas may keep serving until they are replaced), then start the new
+version. Versions after 0.1.0-rc.26 fail a maintenance job they don't know instead, so BullMQ
+retries it and a newer replica can take it, but only within the job's attempts (a few seconds for
+most jobs): stopping old workers first still applies.
 
 ### 0.1.0: IM long connections move to the gateway role
 

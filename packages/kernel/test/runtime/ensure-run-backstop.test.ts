@@ -16,6 +16,7 @@ import {
 import { OUTBOX_STRICT_CONFLICTS } from "../../src/infra/outbox/outbox.service.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import {
+  ENSURE_RUN_BACKSTOP_MS,
   ENSURE_RUN_FAILS,
   ENSURE_RUN_JOB,
   ensureRunJobId,
@@ -134,20 +135,25 @@ const runRows = (convId: string) =>
 const owed = (convId: string, name: string) =>
   db
     .selectFrom("outbox")
-    .select([
-      "queue",
-      "job_id",
-      "data",
-      "org_id",
-      sql<number | null>`extract(epoch from run_at - now())::float8`.as("in_seconds"),
-    ])
+    .select(["queue", "job_id", "data", "org_id", "run_at"])
     .where("job_name", "=", name)
     .where(sql<boolean>`data ->> 'conversationId' = ${convId}`)
     .orderBy("id")
     .execute();
 
-/** Asserts the one ensure-run row the conversation owes for `seq`, due about 30 s from now. */
-async function expectEnsureRunOwed(convId: string, orgId: string, seq: number): Promise<void> {
+/**
+ * Asserts the one ensure-run row the conversation owes for `seq`, due
+ * {@link ENSURE_RUN_BACKSTOP_MS} after it was owed. `run_at` is the kernel's `Date.now()` plus the
+ * backstop, so it is asserted on that one clock: `since` is `Date.now()` taken before the call that
+ * owed the row, and the upper bound is `Date.now()` now, after it returned.
+ */
+async function expectEnsureRunOwed(
+  convId: string,
+  orgId: string,
+  seq: number,
+  since: number,
+): Promise<void> {
+  const until = Date.now();
   const rows = await owed(convId, ENSURE_RUN_JOB);
   expect(rows).toEqual([
     {
@@ -155,13 +161,12 @@ async function expectEnsureRunOwed(convId: string, orgId: string, seq: number): 
       job_id: ensureRunJobId(convId, seq),
       data: { conversationId: convId },
       org_id: orgId,
-      in_seconds: expect.any(Number),
+      run_at: expect.any(Date),
     },
   ]);
-  const secs = rows[0]?.in_seconds ?? 0;
-  expect(secs).toBeGreaterThan(20);
-  // `run_at` is this process's clock plus 30 s, read against the transaction's `now()`
-  expect(secs).toBeLessThanOrEqual(31);
+  const runAt = rows[0]?.run_at?.getTime() ?? 0;
+  expect(runAt).toBeGreaterThanOrEqual(since + ENSURE_RUN_BACKSTOP_MS);
+  expect(runAt).toBeLessThanOrEqual(until + ENSURE_RUN_BACKSTOP_MS);
 }
 
 /**
@@ -203,10 +208,11 @@ describe("the ensure-run backstop", () => {
   it("a message whose direct ensureRun is skipped (crash seam) starts its run when ensure-run fires", async () => {
     const { orgId, convId } = await setup();
     ensureFails = true;
+    const since = Date.now();
     const seq = await postMessage(req, orgId, convId, "echo:hi");
     // the direct call never happened: no run, but the message's transaction owes the backstop
     expect(await runRows(convId)).toEqual([]);
-    await expectEnsureRunOwed(convId, orgId, seq);
+    await expectEnsureRunOwed(convId, orgId, seq, since);
     expect(await owed(convId, "run")).toEqual([]);
 
     await deliverOwed();
@@ -225,10 +231,11 @@ describe("the ensure-run backstop", () => {
 
   it("ensure-run after the direct call already started the run adds nothing", async () => {
     const { orgId, convId } = await setup();
+    const since = Date.now();
     const seq = await postMessage(req, orgId, convId, "echo:once");
     const [run] = await runRows(convId);
     expect(run?.status).toBe("queued");
-    await expectEnsureRunOwed(convId, orgId, seq);
+    await expectEnsureRunOwed(convId, orgId, seq, since);
     expect(await owed(convId, "run")).toHaveLength(1);
 
     // both the run job and the backstop are delivered: the backstop finds the run and does nothing
@@ -272,6 +279,7 @@ describe("the ensure-run backstop", () => {
     const task = await store.get(id);
     if (!task) throw new Error("task row missing");
     // the poller's finish: `BackgroundWake`'s ensureRun after the commit throws (seam)
+    const since = Date.now();
     const done = await api.app
       .get(BackgroundTaskFinisher)
       .finish(task, { status: "completed", exitCode: 0 }, "out\n", false);
@@ -282,7 +290,7 @@ describe("the ensure-run backstop", () => {
     expect(finished).toBeDefined();
     const seq = finished?.seq ?? 0;
     expect(await runRows(convId)).toEqual([]);
-    await expectEnsureRunOwed(convId, orgId, seq);
+    await expectEnsureRunOwed(convId, orgId, seq, since);
 
     await deliverOwed();
     worker = await startKernel(runConfig(urls(), { roles: ["worker"] }));
@@ -297,6 +305,7 @@ describe("the ensure-run backstop", () => {
     const agentId = await createAgent(req, orgId);
     // Redis is down: the direct ensureRun throws and the fast path delivers nothing
     ensureFails = true;
+    const since = Date.now();
     const res = await req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations`,
@@ -307,7 +316,7 @@ describe("the ensure-run backstop", () => {
     const convId = body.conversation.id;
     const seq = body.event.seq;
     expect(await runRows(convId)).toEqual([]);
-    await expectEnsureRunOwed(convId, orgId, seq);
+    await expectEnsureRunOwed(convId, orgId, seq, since);
 
     // Redis returns: the relay delivers the backstop, which starts the run
     ensureFails = false;
@@ -321,6 +330,7 @@ describe("the ensure-run backstop", () => {
   it("with Redis unreachable a queued item is added (201) and goes out once ensure-run fires", async () => {
     const { orgId, convId } = await setup();
     ensureFails = true;
+    const since = Date.now();
     const res = await seedQueued(api.app, orgId, convId, ownerId, {
       text: "echo:queued",
       clientMessageId: randomUUID(),
@@ -333,7 +343,7 @@ describe("the ensure-run backstop", () => {
       .select("last_seq")
       .where("id", "=", convId)
       .executeTakeFirstOrThrow();
-    await expectEnsureRunOwed(convId, orgId, Number(last_seq));
+    await expectEnsureRunOwed(convId, orgId, Number(last_seq), since);
 
     ensureFails = false;
     await deliverOwed();

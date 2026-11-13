@@ -6,16 +6,26 @@ import type { OutboxService } from "../infra/outbox/outbox.service.js";
  * domain. `jobs.ts` (the producer) re-exports these names.
  */
 
-/** 渠道队列（出站投递与入站任务，不含 `:`），只在 worker 角色上消费。 */
+/** The channel queue (outbound deliveries and inbound jobs; no `:`), consumed only by workers. */
 export const CHANNEL_QUEUE_NAME = "cap-kernel-channels";
-/** 投递任务名。 */
+/** The delivery job's name. */
 export const DELIVER_JOB = "deliver";
-/** 投递任务 id（不含 `:`）：同一会话、同一日志位置只排一个任务。 */
+/** The delivery job id (no `:`): one job per conversation and log position. */
 export const deliverJobId = (conversationId: string, seq: number) =>
   `deliver-${conversationId}-${seq}`;
 
 export interface DeliverJobData {
   conversationId: string;
+}
+
+/** The catch-up job of a connection that can deliver again (re-enabled, credentials rotated). */
+export const RESUME_JOB = "channel-resume";
+/** Its job id: one per connection and update (`updated_at` in ms; no `:`). */
+export const resumeJobId = (connectionId: string, at: Date) =>
+  `channel-resume-${connectionId}-${at.getTime()}`;
+
+export interface ResumeJobData {
+  connectionId: string;
 }
 
 /**

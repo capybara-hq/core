@@ -253,6 +253,53 @@ describe("dead outbox rows", { timeout: 60_000 }, () => {
     ]);
   });
 
+  it("a second unique-index conflict on the retry's second run is a 409, the row left dead", async () => {
+    const id = await deadRow("race-2");
+    const service = k.app.get(OutboxDeadService);
+    // biome-ignore lint/suspicious/noExplicitAny: spying on the private one-attempt transaction
+    const internal = service as any;
+    const conflict = Object.assign(new Error("duplicate key"), {
+      code: "23505",
+      constraint: "outbox_job_uniq",
+    });
+    const spy = vi.spyOn(internal, "retryOnce").mockRejectedValue(conflict);
+    try {
+      const r = await root({ method: "POST", url: `/api/v1/admin/outbox/dead/${id}/retry` });
+      expect(r.statusCode, r.body).toBe(409);
+      expect((r.json() as { error: { code: string } }).error.code).toBe("conflict");
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await db.selectFrom("outbox").select(["job_id", "dead_at"]).execute()).toEqual([
+      { job_id: "race-2", dead_at: expect.any(Date) },
+    ]);
+  });
+
+  it("the caller's audit detail cannot override the row's fields", async () => {
+    const id = await deadRow("audit-1");
+    const actor = { accountId: rootId };
+    await k.app
+      .get(OutboxDeadService)
+      .discard(id, actor, { via: "agent", queue: "forged", jobName: "forged", jobId: "forged" });
+    expect((await auditOf("outbox.discarded"))[0]?.detail).toEqual({
+      via: "agent",
+      queue: QUEUE,
+      jobName: TEST_JOB,
+      jobId: "audit-1",
+    });
+    const retried = await deadRow("audit-2");
+    await k.app
+      .get(OutboxDeadService)
+      .retry(retried, actor, { outcome: "forged", jobId: "forged" });
+    expect((await auditOf("outbox.retried"))[0]?.detail).toEqual({
+      outcome: "retried",
+      queue: QUEUE,
+      jobName: TEST_JOB,
+      jobId: "audit-2",
+    });
+  });
+
   it("discard deletes it and writes the audit", async () => {
     const id = await deadRow("discard-1");
     const r = await root({ method: "DELETE", url: `/api/v1/admin/outbox/dead/${id}` });

@@ -396,7 +396,11 @@ export interface RunsTable {
   waiting_since: TsNullable;
   /** 0012：累计等待时长（毫秒），不计入运行时长。 */
   waited_ms: Int8;
-  /** 0012：续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
+  /**
+   * 0012: the run's job id when it is not the trigger's `runJobId`: a resume's
+   * (`resumeJobId`), or `<runJobId>-<n>` for a later run of the same trigger (R34); null: the
+   * trigger's first run, under `runJobId`.
+   */
   job_id: string | null;
   /** 0012：最近一次（续跑）回到 queued 的时刻。 */
   queued_at: TsNullable;

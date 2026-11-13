@@ -18,6 +18,7 @@ import {
   sanitizeSenderName,
   snapshotDescription,
 } from "./context/run-context.js";
+import { runEndedIn } from "./run-status.js";
 
 /**
  * Optional provider: the clock run start reads the date from and the `CurrentTime` builtin reads
@@ -68,19 +69,25 @@ export class RunContextService {
     return new Date(this.now());
   }
 
-  /** Records the run's context (see the class) and notifies after the commit. */
-  async record(input: RunContextInput): Promise<void> {
+  /**
+   * Records the run's context (see the class) and notifies after the commit. False: the run had
+   * ended (a stop got there first), so nothing was appended and the run must not go on.
+   */
+  async record(input: RunContextInput): Promise<boolean> {
     const seq = await this.append(input);
+    if (seq === "ended") return false;
     if (seq !== null) await this.eventLog.notify(input.conversationId, seq);
+    return true;
   }
 
   /**
    * One transaction under the conversation row lock (as `lockLatestCatalog`): fold, read the
    * current values, append when something differs, with the idem key `run_context:<runId>` (a
-   * retried run start finds its event, or finds nothing changed). Returns the seq written.
+   * retried run start finds its event, or finds nothing changed). Returns the seq written;
+   * `ended` when the run is terminal under the locks (nothing is appended after its end).
    */
   @Transactional()
-  private async append(input: RunContextInput): Promise<number | null> {
+  private async append(input: RunContextInput): Promise<number | null | "ended"> {
     const t = this.db.db;
     await t
       .selectFrom("conversations")
@@ -88,6 +95,7 @@ export class RunContextService {
       .where("id", "=", input.conversationId)
       .forUpdate()
       .executeTakeFirst();
+    if (await runEndedIn(t, input.runId)) return "ended";
     const prev = await foldOf(t, input.conversationId);
     const next =
       input.subagent === undefined

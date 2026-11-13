@@ -69,11 +69,13 @@ boundary is checked automatically (`pnpm check:deps`); the rest relies on review
   deterministic id.
 - Periodic kernel jobs are `@LockedCron` / `@LockedInterval` (once per tick across replicas), and
   they and every queue consumer are provided only under `WorkerModule`.
-- Writes run in `@Transactional()` methods; enqueues, bus publishes and Redis calls happen in
-  `afterCommit`, never inside the transaction. Distributed locks are `LockService` / `@WithLock`,
-  never taken inside a transaction.
+- Writes run in `@Transactional()` methods. Work that must follow the commit is an outbox row
+  written in the same transaction (`OutboxService.add`); `afterCommit` is only for hints whose loss
+  is harmless (bus publishes for SSE, cache evictions). An external call whose effect must match a
+  record writes its intent first. Distributed locks are `LockService` / `@WithLock`, never taken
+  inside a transaction.
 
-Details (tick gates, lock loss, `XactLock`, sub-agent waits, sandbox leases): the
+Details (the outbox, tick gates, lock loss, `XactLock`, sub-agent waits, sandbox leases): the
 [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md) skill and the area skills.
 
 ## Rules by area

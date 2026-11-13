@@ -20,6 +20,11 @@ import { QUEUE_LOST_JOBS_KEY } from "../../src/runtime/queue-lost-jobs.js";
 import { RunFinish } from "../../src/runtime/run-finish.js";
 import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../src/runtime/run-orphan-check.job.js";
 import { RUN_QUEUE_NAME, runJobId, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
+import {
+  USAGE_REPORT_JOB,
+  USAGE_REPORT_QUEUE,
+  usageReportJobId,
+} from "../../src/runtime/usage-report-jobs.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
@@ -376,6 +381,58 @@ describe("run-orphan-check", () => {
     expect(await runStatus(db, fresh.runId)).toBe("running");
     expect(await runStatus(db, owed.runId)).toBe("queued");
     expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
+  }, 60_000);
+
+  it("a deleted org's queued run whose owed job went with the org is no lost job; its usage stays owed", async () => {
+    // queued, its job still owed by the outbox (Redis was down): the org's deletion purges the row
+    const owed = await runningOrphan();
+    await db.updateTable("runs").set({ status: "queued" }).where("id", "=", owed.runId).execute();
+    const later = sql<Date>`now() + interval '1 hour'`;
+    await db
+      .insertInto("outbox")
+      .values([
+        {
+          queue: RUN_QUEUE_NAME,
+          job_name: "run",
+          job_id: runJobId(owed.conv, owed.seq),
+          data: JSON.stringify({ runId: owed.runId, conversationId: owed.conv }),
+          org_id: orgId,
+          next_attempt_at: later,
+        },
+        {
+          // the usage happened: billing plugins are still told about it
+          queue: USAGE_REPORT_QUEUE,
+          job_name: USAGE_REPORT_JOB,
+          job_id: usageReportJobId(owed.conv, owed.seq),
+          data: JSON.stringify({ conversationId: owed.conv, seq: owed.seq }),
+          org_id: orgId,
+          next_attempt_at: later,
+        },
+      ])
+      .execute();
+    const res = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}` });
+    expect(res.statusCode, res.body).toBe(204);
+    const left = await db
+      .selectFrom("outbox")
+      .select(["queue", "job_id"])
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(left).toEqual([
+      { queue: USAGE_REPORT_QUEUE, job_id: usageReportJobId(owed.conv, owed.seq) },
+    ]);
+
+    expect(await check()).toEqual({ runningRepaired: 0, queuedReadded: 0 });
+    expect(errors.map((e) => e.msg)).not.toContain("queued run without a job: the queue lost jobs");
+    expect(await redis.exists(QUEUE_LOST_JOBS_KEY)).toBe(0);
+    expect(await runQueue.getJob(runJobId(owed.conv, owed.seq))).toBeUndefined();
+    expect(
+      await db
+        .selectFrom("outbox")
+        .select("id")
+        .where("queue", "=", RUN_QUEUE_NAME)
+        .where("job_id", "=", runJobId(owed.conv, owed.seq))
+        .execute(),
+    ).toEqual([]);
   }, 60_000);
 
   it("reaches an orphan behind a full page of healthy candidates, and skips a dead-lettered job", async () => {

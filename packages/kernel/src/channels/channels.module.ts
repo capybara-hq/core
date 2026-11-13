@@ -26,6 +26,7 @@ import {
   ChannelJobs,
   DELIVER_JOB,
   INBOUND_JOB,
+  RESUME_JOB,
 } from "./jobs.js";
 import { ChannelOutbound, deliverBackoff } from "./outbound.js";
 import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
@@ -37,8 +38,8 @@ const CHANNEL_QUEUE_MODULE = QueueModule.registerQueue(CHANNEL_QUEUE_NAME);
  * Channels on every role: the org's channel connections, inbound (dedupe and enqueue; the inbound
  * jobs), the outbound delivery, the producer of the channel queue `cap-kernel-channels`, the
  * anonymous guests. The roles' parts are the role modules': the queue's consumer
- * ({@link ChannelWorkersModule}) and the gateway check job are the worker role's, the long-connection
- * supervisor and the webhook inbound the gateway role's (`GatewayModule`).
+ * ({@link ChannelWorkersModule}) and the gateway check job are the worker role's, the
+ * long-connection supervisor and the webhook inbound the gateway role's (`GatewayModule`).
  */
 @Module({
   imports: [
@@ -76,7 +77,8 @@ export class ChannelsModule {}
 
 /**
  * The consumer of `cap-kernel-channels`: deliveries (`DELIVER_JOB`, owed through the outbox or
- * hinted) and inbound jobs (`INBOUND_JOB`), both handled by {@link ChannelOutbound}.
+ * hinted), a connection's catch-up (`RESUME_JOB`, owed) and inbound jobs (`INBOUND_JOB`), all
+ * handled by {@link ChannelOutbound}.
  */
 @Injectable()
 export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
@@ -85,7 +87,7 @@ export class ChannelsProcessor extends WorkerHost<Worker<ChannelJobData>> {
   }
 
   process(job: Job<ChannelJobData>, token?: string): Promise<void> {
-    if (job.name !== DELIVER_JOB && job.name !== INBOUND_JOB) {
+    if (job.name !== DELIVER_JOB && job.name !== INBOUND_JOB && job.name !== RESUME_JOB) {
       return Promise.reject(new UnrecoverableError(`unknown channel job "${job.name}"`));
     }
     return runJob(CHANNEL_QUEUE_NAME, job, () => this.outbound.process(job, token));
@@ -120,11 +122,11 @@ export function channelsProcessorOptions(
 }
 
 /**
- * The consumer of the channel queue (concurrency `channels.deliveryConcurrency`, the run queue's job
- * lock and stalled detection, the delivery backoff). Imported only by the worker role
- * (`WorkerModule`), so other roles get no processor and no BullMQ worker. It never starts by itself:
- * the worker role (`WorkerRole`) starts it after the extension load; `ChannelOutbound.close` closes it
- * on stop.
+ * The consumer of the channel queue (concurrency `channels.deliveryConcurrency`, the run queue's
+ * job lock and stalled detection, the delivery backoff). Imported only by the worker role
+ * (`WorkerModule`), so other roles get no processor and no BullMQ worker. It never starts by
+ * itself: the worker role (`WorkerRole`) starts it after the extension load;
+ * `ChannelOutbound.close` closes it on stop.
  */
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module

@@ -17,10 +17,10 @@ export type StepAuditEntry = Parameters<typeof audit>[1];
 
 /**
  * The writes of a run step that go to the event log together with another row, each in a
- * transaction of its own (the caller notifies the log after the commit): a model call with the
- * tool definitions it sent, a denial with its audit row, usage events with their owed
- * `usage.report` deliveries (transactional outbox spec §8.1), and a sub-agent's usage counted on
- * its parent run. The step functions (`model-call.ts`, `hook-calls.ts`) reach it through their deps.
+ * transaction of its own (the caller notifies the log after the commit): a model call with the tool
+ * definitions it sent, a denial with its audit row, usage events with their owed `usage.report`
+ * deliveries (transactional outbox spec §8.1), and a sub-agent's usage counted on its parent run.
+ * The step functions (`model-call.ts`, `hook-calls.ts`) reach it through their deps.
  */
 @Injectable()
 export class StepLog {
@@ -53,7 +53,8 @@ export class StepLog {
    * the whole tree counts on one run): `counter.budgetRunId`, the run's own window
    * (`SubagentParent.budgetRunId`), else the parent run's ({@link budgetRunOf}). A usage event
    * already in the log (an idempotent hit after a crash) adds nothing, so each call counts exactly
-   * once; the new usage events' `usage.report` deliveries are owed in the same transaction. Returns what was written (hits included) and the highest new seq (null: nothing new).
+   * once; the new usage events' `usage.report` deliveries are owed in the same transaction. Returns
+   * what was written (hits included) and the highest new seq (null: nothing new).
    */
   @Transactional({ propagation: "requires_new" })
   async appendCounted(
