@@ -362,7 +362,7 @@ export class DockerExecutor implements Executor {
   /**
    * Creates the container, or reuses the existing one when it matches; call inside `serial`.
    * A file operation (`anySpec`) reuses any container that sees the directory: it needs no
-   * particular flags, and before the first command the tier is not known yet. The next command
+   * particular flags, and before the first command the policy is not known yet. The next command
    * that finds it idle recreates it if its flags differ.
    */
   private async ensureContainer(opts: { anySpec?: boolean } = {}): Promise<void> {
@@ -493,7 +493,7 @@ export class DockerExecutor implements Executor {
         let served: boolean;
         try {
           served = await this.serial(async () => {
-            // The policy or the tier changed the container's flags (shm, cpu, memory): recreate
+            // The policy or the mode changed the container's flags (shm, cpu, memory): recreate
             // it once nothing runs in it.
             if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) {
               this.ready = false;

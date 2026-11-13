@@ -45,9 +45,11 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]`, `start`, `stop`, `drain [--wait] [--timeout <seconds>]`,
-`mode [auto|sandbox] [--yes]`, `policy [show | set <key> <value> | add|remove <key> <value>]` and
-`service install|uninstall`.
+`status [--json]` (it prints the command mode too), `start`, `stop`,
+`drain [--wait] [--timeout <seconds>]`, `mode [auto|sandbox] [--yes]`,
+`policy [show | set <key> <value> | add|remove <key> <value>]` and `service install|uninstall`.
+`mode` is the only way to switch the command mode (`policy set mode` points there); `mode auto`
+prints the risk text and asks for confirmation unless `--yes` is given.
 
 State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the

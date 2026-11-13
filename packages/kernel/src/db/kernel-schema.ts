@@ -1032,9 +1032,10 @@ export interface DeviceInstancesTable {
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
   /**
-   * 0117: the limits in force on the instance, `{ tier, egress }`, plus `unapplied` when the
+   * 0117: the limits in force on the instance, `{ mode, network }`, plus `unapplied` when the
    * provider could not apply a newer value without a file reset; null = unknown (made before
-   * 0117). Read with `readInstanceLimits` (`sandbox/tiers.ts`).
+   * 0117 or in the old `{ tier, egress }` shape). Read with `readInstanceLimits`
+   * (`sandbox/modes.ts`).
    */
   instance_limits: ColumnType<unknown | null, string | null | undefined, string | null>;
 }

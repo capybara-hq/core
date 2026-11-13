@@ -6,6 +6,7 @@ import {
   type ProviderHost,
   ProviderRegistry,
 } from "../../src/runtime/providers.js";
+import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/classifier.js";
 import { WEB_FETCH_SYSTEM_PROMPT } from "../../src/tools/builtins/web/extract.js";
 
 /**
@@ -15,8 +16,8 @@ import { WEB_FETCH_SYSTEM_PROMPT } from "../../src/tools/builtins/web/extract.js
  */
 export interface ProviderCapture {
   /**
-   * Requests in the order they were sent, compaction, title and WebFetch extraction requests left
-   * out (deep copies).
+   * Requests in the order they were sent, compaction, title, WebFetch extraction and command review
+   * requests left out (deep copies).
    */
   readonly sent: ModelRequest[];
   /** Compaction requests (their system carries the compaction marker). */
@@ -25,6 +26,12 @@ export interface ProviderCapture {
   readonly titles: ModelRequest[];
   /** `WebFetch` extraction requests (their system is the extraction prompt). */
   readonly webFetches: ModelRequest[];
+  /**
+   * Command review classifier requests (their system is the review prompt). Not a conversation
+   * model call: the review runs outside the run's steps (auto mode spec §5.3), so `sent` and the
+   * zero-drift replay comparisons leave it out.
+   */
+  readonly reviews: ModelRequest[];
   /** Empties every list. */
   reset(): void;
   /** Wraps `resolve`; from now on every provider request is recorded. */
@@ -38,17 +45,20 @@ export function captureProviderRequests(): ProviderCapture {
   const compactions: ModelRequest[] = [];
   const titles: ModelRequest[] = [];
   const webFetches: ModelRequest[] = [];
+  const reviews: ModelRequest[] = [];
   const originalResolve = ProviderRegistry.prototype.resolve;
   return {
     sent,
     compactions,
     titles,
     webFetches,
+    reviews,
     reset() {
       sent.length = 0;
       compactions.length = 0;
       titles.length = 0;
       webFetches.length = 0;
+      reviews.length = 0;
     },
     install() {
       ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, orgId, ref) {
@@ -62,6 +72,8 @@ export function captureProviderRequests(): ProviderCapture {
             else if (req.system.some((s) => s.text === TITLE_PROMPT)) titles.push(copy);
             else if (req.system.some((s) => s.text.startsWith(WEB_FETCH_SYSTEM_PROMPT))) {
               webFetches.push(copy);
+            } else if (req.system.some((s) => s.text.startsWith(REVIEW_SYSTEM_PROMPT))) {
+              reviews.push(copy);
             } else sent.push(copy);
             return inner.stream(req, opts);
           },

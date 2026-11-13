@@ -197,7 +197,7 @@ export class AdminController {
   ): Promise<DeploymentSettingsView> {
     const actor = requireUser(principal);
     const tokenId = patTokenId(actor);
-    // an API token may lower the platform's sandbox tiers, never raise them (dev tiers spec §2)
+    // an API token may turn the platform's auto mode off, never on (auto mode spec §4.3)
     return this.settings.update(body, actor.account.id, tokenId, undefined, {
       onlyNarrows: tokenId !== undefined,
     });

@@ -12,6 +12,7 @@ import {
   type OrgSettingsService,
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
+import { orgAllowedDomains } from "../../src/sandbox/modes.js";
 import { DEVICES_AUTO_MODE_SETTING } from "../../src/sandbox/platform-auto-mode.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgSettingsFor, orgsFor } from "../helpers/identity.js";
@@ -27,6 +28,12 @@ const LIMITS = {
   allowHosts: ["registry.npmjs.org", "github.com"],
   cpu: 1,
   memoryMb: 2048,
+};
+
+/** The deployment side of {@link orgAllowedDomains}: the org's list, else this one. */
+const DEPLOYMENT = {
+  autoMode: "allowed" as const,
+  limits: { egress: LIMITS.egress, allowHosts: LIMITS.allowHosts },
 };
 
 /** A config holder: the startup config's `devices.autoMode` (unset here unless the test says so). */
@@ -193,46 +200,141 @@ describe("org cloudNetwork", () => {
     });
   });
 
-  it("narrow only: open -> allowlist and removing hosts narrow; allowlist -> open and adding hosts widen", async () => {
+  it("narrow only: an allowlist of deployment hosts replaces open and removing hosts narrows; open and added hosts widen", async () => {
     const s = settingsWith();
     const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
       s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
     // absent = open: setting open explicitly is a no-op, not an error
     expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBeUndefined();
-    // a token cannot bring a host outside the deployment's list into the allowlist: that widens
-    // the allowlist a local device in sandbox mode reaches (auto mode spec §4.1)
+    // an open org still caps its local sandbox-mode devices at the deployment's list, so this
+    // allowlist raises that ceiling: a token cannot add a host outside the list
     expect(
       await codeOf(
         tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
       ),
     ).toBe("org.sandbox_egress_not_allowed");
-    // a person sets the org's own list
-    await s.update(
-      orgId,
-      { cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } },
-      accountId,
-    );
+    // a host the deployment already allows is a narrowing from open
+    expect(
+      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["github.com"] } }),
+    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["github.com"] } });
+    // from an allowlist: open widens, and so does a host the allowlist does not have
     expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
     expect(
       await codeOf(
         tokenUpdate({
-          cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com", "b.example.com"] },
+          cloudNetwork: { mode: "allowlist", allowHosts: ["github.com", "b.example.com"] },
         }),
       ),
     ).toBe("org.sandbox_egress_not_allowed");
     expect(
-      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
-    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } });
+      await codeOf(
+        tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["b.example.com"] } }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    // the same value or dropping a host narrows
+    expect(
+      (await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["github.com"] } }))
+        .cloudNetwork,
+    ).toEqual({ mode: "allowlist", allowHosts: ["github.com"] });
+    expect(
+      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: [] } }),
+    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: [] } });
     // allowlist -> the deployment's open network is a widening, so clearing is refused
     expect(await codeOf(tokenUpdate({ cloudNetwork: null }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
-    // the same value is a no-op, not an error
+  });
+
+  it("a switch from open to an allowlist is only a narrowing with hosts the deployment already has", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    // the deployment's own hosts are registry.npmjs.org and github.com: an allowlist disjoint from
+    // that list raises the local sandbox-mode ceiling the org still has while it gives no list of
+    // its own, so a token cannot set it (a person in the session can)
     expect(
-      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
-    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } });
+      await codeOf(
+        tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["nowhere.example"] } }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    expect((await s.get(orgId)).cloudNetwork).toBeUndefined();
+    await s.update(
+      orgId,
+      { cloudNetwork: { mode: "allowlist", allowHosts: ["nowhere.example"] } },
+      accountId,
+    );
+    // once the org is on that allowlist, a second host widens it, in the deployment's own list or
+    // not
+    expect(
+      await codeOf(
+        tokenUpdate({
+          cloudNetwork: {
+            mode: "allowlist",
+            allowHosts: ["nowhere.example", "elsewhere.example"],
+          },
+        }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    // dropping every host narrows
+    expect(
+      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: [] } }),
+    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: [] } });
+  });
+
+  it("a token can never widen the local ceiling with an open network's allowHosts", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    const ceiling = async () => orgAllowedDomains(DEPLOYMENT, await s.get(orgId));
+    // the org follows the deployment: open, with the deployment's hosts as its local ceiling
+    expect(await s.get(orgId)).not.toHaveProperty("cloudNetwork");
+    expect(await ceiling()).toEqual(LIMITS.allowHosts);
+    // `allowHosts` is the local sandbox-mode ceiling whatever the cloud mode, so an open target
+    // carrying a host outside the current list raises it: a token cannot set it
+    expect(
+      await codeOf(
+        tokenUpdate({ cloudNetwork: { mode: "open", allowHosts: ["files.slack.com"] } }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    expect(await s.get(orgId)).not.toHaveProperty("cloudNetwork");
+    expect(await ceiling()).toEqual(LIMITS.allowHosts);
+  });
+
+  it("a token keeps the ceiling with an open target of the current hosts (or none)", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    // no allowHosts: the deployment's list applies, nothing grows
+    expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBeUndefined();
+    // the deployment's own list under an open mode is the same ceiling
+    expect(
+      await tokenUpdate({
+        cloudNetwork: { mode: "open", allowHosts: [...LIMITS.allowHosts] },
+      }),
+    ).toMatchObject({ cloudNetwork: { mode: "open", allowHosts: LIMITS.allowHosts } });
+    expect(orgAllowedDomains(DEPLOYMENT, await s.get(orgId))).toEqual(LIMITS.allowHosts);
+  });
+
+  it("a token may drop hosts while staying open", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    // a person opens the network with a list of their own
+    await s.update(
+      orgId,
+      { cloudNetwork: { mode: "open", allowHosts: ["a.example.com", "b.example.com"] } },
+      accountId,
+    );
+    expect(
+      await codeOf(tokenUpdate({ cloudNetwork: { mode: "open", allowHosts: ["a.example.com"] } })),
+    ).toBeUndefined();
+    expect(orgAllowedDomains(DEPLOYMENT, await s.get(orgId))).toEqual(["a.example.com"]);
+    expect(
+      await codeOf(tokenUpdate({ cloudNetwork: { mode: "open", allowHosts: [] } })),
+    ).toBeUndefined();
+    expect(orgAllowedDomains(DEPLOYMENT, await s.get(orgId))).toEqual([]);
   });
 
   it("a deployment kill switch (sandbox.limits.egress none) makes the default an empty allowlist", async () => {

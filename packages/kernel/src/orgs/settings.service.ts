@@ -429,11 +429,15 @@ export class OrgSettingsService {
    * never the Platform tool or an API token):
    * - `autoMode`: `allowed` where the organization runs `off` (an absent value follows the
    *   platform); clearing it follows the platform too, never wider than the platform allows;
-   * - `cloudNetwork`: `open` where the network is the allowlist, or (still on the allowlist) a
-   *   host the current allowlist does not have (the deployment's list when the org gives none).
-   *   An open cloud network does not make a host already allowed: a local device in sandbox mode
-   *   always reaches the allowlist, so a patch that switches to an allowlist carrying a host
-   *   outside the current one widens that device's network (auto mode spec §4.1, §5.2).
+   * - `cloudNetwork`: `open` where the network is the allowlist, or a host the current allowlist
+   *   does not have (the deployment's `sandbox.limits.allowHosts` when the org gives none).
+   *   `cloudNetwork.allowHosts` is also the local sandbox-mode ceiling (`orgAllowedDomains` in
+   *   `sandbox/modes.ts` becomes `deviceLimits.localAllowedDomains`, which the device intersects
+   *   with its own list): an org with no `cloudNetwork` still caps its local devices at the
+   *   deployment's list, and an org whose network is `open` still caps them at its own `allowHosts`.
+   *   The host comparison therefore applies to both shapes, whatever the target mode: a patch may
+   *   only keep or lower the host set. Switching from `open` is a widening by itself, and the host
+   *   set must not grow even when the target stays `open` (spec §4.2, §4.3).
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.autoMode !== undefined) {
@@ -455,9 +459,8 @@ export class OrgSettingsService {
       const hostsOf = (v: typeof prev): string[] => v?.allowHosts ?? defaultHosts;
       const nextMode = next?.mode ?? defaultMode;
       const widens =
-        nextMode === "open"
-          ? modeOf(prev) !== "open"
-          : !hostsOf(next).every((h) => hostsOf(prev).includes(h));
+        (nextMode === "open" && modeOf(prev) !== "open") ||
+        !hostsOf(next).every((h) => hostsOf(prev).includes(h));
       if (widens) {
         throw new ApiError(
           "org.sandbox_egress_not_allowed",

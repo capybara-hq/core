@@ -111,9 +111,10 @@ export interface ScheduleAttention {
    */
   needsAdmin: string[];
   /**
-   * `missing` holds `network:` keys and the task's device reports it takes no network grants from
-   * the deployment (`remoteGrants` off): a task grant would not reach it; its owner allows the
-   * domains locally (`capybara-device policy add allowedDomains <host>`).
+   * `missing` holds `network:` keys and the task's device cannot take network grants from the
+   * deployment (Docker mode, or a program too old to take them): a task grant would not reach it;
+   * its owner allows the domains locally (`capybara-device policy add allowedDomains <host>`). No
+   * device reports this now, so the kernel always sends false; the wire field stays for the web.
    */
   deviceRefuses: boolean;
   /** `failed` only: the run's error; else null. */

@@ -120,7 +120,7 @@ export class KernelConfigService {
    * Where the current value of a field without a schema default comes from: `env` when an
    * environment variable sets it, else the config source (`file` / `nacos`) when it is set at all;
    * undefined when nothing sets it (a layer below the startup config decides, e.g. the deployment
-   * settings for `sandbox.tiers.*`). Such fields are read-only in the admin console.
+   * settings for `devices.autoMode`). Such fields are read-only in the admin console.
    */
   fieldSource(path: string): "env" | "file" | "nacos" | undefined {
     if (getPath(this.current, path) === undefined) return undefined;

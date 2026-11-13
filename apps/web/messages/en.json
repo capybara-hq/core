@@ -326,7 +326,7 @@
       "file_not_found": "No file at this path in the sandbox.",
       "file_is_directory": "This path is a directory; pass one file.",
       "file_too_large": "The file is too large.",
-      "tier_refused": "The cloud sandbox can't run this device at its sandbox level. Lower the device's level, or ask an org admin or the super admin.",
+      "open_network_refused": "The cloud sandbox cannot give this device the open network and refused to create it. An org admin can switch the organization's cloud network to an allowlist, or a super admin can allow the open network in the sandbox extension's settings.",
       "create_failed": "The cloud sandbox could not be created. Try again; if it keeps failing, ask the super admin to check the sandbox extension's settings."
     },
     "device": {
@@ -341,7 +341,9 @@
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
-      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine."
+      "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
+      "auto_mode_not_allowed": "This device's machine runs in auto mode, which your organization does not allow. Run capybara-device mode sandbox on that machine to switch it to sandbox mode.",
+      "mode_on_device": "This device's mode is kept on its connected machine: switch to sandbox mode from the device page, or run capybara-device mode sandbox there."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",

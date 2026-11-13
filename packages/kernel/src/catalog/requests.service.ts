@@ -204,7 +204,7 @@ const ORG_KINDS = ["enable", "connector_setup", "network_allowlist"] as const;
  *   (`PendingConnectorRequests`), closed by binding (`approved`) or the agent's deletion
  *   (`cancelled`); here it is listed and rejected;
  * - `network_allowlist` (network ask-to-allow spec §5.3): a member asks the org admins to add hosts
- *   to the org's sandbox egress allowlist; approving merges them into the org's `sandboxEgress`.
+ *   to the org's cloud network allowlist; approving merges them into the org's `cloudNetwork`.
  * A rejection stores an optional reason. Decided requests show in the requester's inbox until
  * dismissed. No in-process state.
  */
@@ -220,7 +220,7 @@ export class CatalogRequestsService {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
-    /** Approving a network request writes the org's `sandboxEgress` through the settings path. */
+    /** Approving a network request writes the org's `cloudNetwork` through the settings path. */
     @Inject(OrgSettingsService) private readonly orgSettings: OrgSettingsService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Serializes the approvals of one `import` request (`@WithLock`). */
@@ -569,7 +569,7 @@ export class CatalogRequestsService {
    * An org admin decides a member's `enable`, `network_allowlist` or `connector_setup` request
    * (`catalog.decide`). Not this org's request of those kinds -> `catalog.request_not_found`;
    * decided -> `catalog.request_decided`. Approving a `network_allowlist` request merges its hosts
-   * into the org's `sandboxEgress` (`approveNetwork`). Approving an `enable` request switches the
+   * into the org's `cloudNetwork` (`approveNetwork`). Approving an `enable` request switches the
    * item on in the org as the deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
    * needs, leave the request pending); the install itself resolves the request. A
    * `connector_setup` request is approved only by binding its connectors (ruling P4-T6-6):
