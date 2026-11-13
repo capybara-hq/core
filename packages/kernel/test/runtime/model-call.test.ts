@@ -245,9 +245,16 @@ function collector(): { deltas: Delta[]; sink: StreamSink } {
 }
 
 const step = (
-  over: { step?: number; agent?: AgentDefinition; signal?: AbortSignal; sink?: StreamSink } = {},
+  over: {
+    step?: number;
+    agent?: AgentDefinition;
+    signal?: AbortSignal;
+    sink?: StreamSink;
+    maxSteps?: number;
+  } = {},
 ) =>
   runModelStep(deps, {
+    source: "web",
     orgId,
     conversationId,
     runId,
@@ -257,6 +264,7 @@ const step = (
     absorbedUpToSeq: ALL_ABSORBED,
     signal: over.signal ?? new AbortController().signal,
     sink: over.sink ?? (() => {}),
+    ...(over.maxSteps !== undefined && { maxSteps: over.maxSteps }),
   });
 
 const all = () => eventLog.readAfter(conversationId, 0, 10_000);
@@ -635,6 +643,7 @@ describe("runModelStep", () => {
     const r = await runModelStep(
       { ...deps, registry },
       {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -679,6 +688,7 @@ describe("runModelStep", () => {
     const p = runModelStep(
       { ...deps, registry },
       {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -825,7 +835,7 @@ describe("runModelStep", () => {
         sink: () => {},
         parentRunId,
       };
-      await runModelStep(deps, input);
+      await runModelStep(deps, { ...input, source: "web" });
       const usage = await ofType("usage");
       expect(usage.map((u) => u.payload.purpose ?? "step")).toEqual(["compaction", "step"]);
       const sum = usage.reduce(
@@ -850,7 +860,7 @@ describe("runModelStep", () => {
       expect(sum).toBeGreaterThan(0);
       expect(await counter()).toBe(sum);
       // the same step again (a resume after a crash) hits the log and counts nothing more
-      await runModelStep(deps, input);
+      await runModelStep(deps, { ...input, source: "web" });
       expect(await counter()).toBe(sum);
     });
 
@@ -878,7 +888,7 @@ describe("runModelStep", () => {
         sink: () => {},
         parentRunId,
       };
-      const r = await runModelStep(deps, input);
+      const r = await runModelStep(deps, { ...input, source: "web" });
       expect(r.budget).toBe(true);
       expect((await ofType("usage")).map((u) => u.payload.purpose ?? "step")).toEqual([
         "compaction",
@@ -886,7 +896,7 @@ describe("runModelStep", () => {
       expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(0);
       // the loop then hands back in the budget wrap-up at the same step: the one call over the
       // cap, with the budget reminder logged last
-      const w = await runFinalWrapUp(deps, input, "budget");
+      const w = await runFinalWrapUp(deps, { ...input, source: "web" }, "budget");
       expect(w.budget).toBeUndefined();
       expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(1);
       expect((await ofType("reminder")).at(-1)?.payload.text).toBe(BUDGET_WRAP_UP_REMINDER);
@@ -929,9 +939,8 @@ describe("runModelStep", () => {
   });
 
   it("提醒：maxSteps 3 时 step 1 写 reminder，且 model_call.request.reminderSeqs 包含它", async () => {
-    runtimeOverrides = { maxSteps: 3 };
     await say("echo:hi");
-    await step({ step: 1 });
+    await step({ step: 1, maxSteps: 3 });
     const [reminder] = await ofType("reminder");
     expect(reminder).toBeDefined();
     expect(reminder?.payload.step).toBe(1);
@@ -939,10 +948,18 @@ describe("runModelStep", () => {
     expect(call?.payload.request.reminderSeqs).toContain(reminder?.seq);
   });
 
+  it("no step limit (maxSteps absent, runtime.maxSteps 0): no step-limit reminder at any step", async () => {
+    runtimeOverrides = { maxSteps: 0 };
+    await say("echo:hi");
+    await step({ step: 49 });
+    expect(await ofType("reminder")).toEqual([]);
+    const [call] = await ofType("model_call");
+    expect(call?.payload.request.reminderSeqs ?? []).toEqual([]);
+  });
+
   it("an event written by someone else between the step's read and its own reminder append is in the request (batch 5 review I2)", async () => {
     const s = stub([stubInfo("ok")], () => "ok");
     stubImpl = s;
-    runtimeOverrides = { maxSteps: 3 };
     // a person's fork invocation whose report the wait sweep writes while this step runs
     const [lead] = await eventLog.append(conversationId, [
       {
@@ -980,6 +997,7 @@ describe("runModelStep", () => {
     await runModelStep(
       { ...deps, eventLog: racing },
       {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -989,6 +1007,7 @@ describe("runModelStep", () => {
         absorbedUpToSeq: ALL_ABSORBED,
         signal: new AbortController().signal,
         sink: () => {},
+        maxSteps: 3,
       },
     );
     expect(injected).toBe(true);
@@ -1010,6 +1029,7 @@ describe("runModelStep", () => {
     stubImpl = s;
     await say("hi");
     const r = await runFinalWrapUp(deps, {
+      source: "web",
       orgId,
       conversationId,
       runId,
@@ -1044,6 +1064,7 @@ describe("runModelStep", () => {
       });
     const wrapUp = (agent: AgentDefinition) =>
       runFinalWrapUp(deps, {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1147,6 +1168,7 @@ describe("runModelStep", () => {
       };
       await say("hi");
       await runModelStep(searchDeps, {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1207,6 +1229,7 @@ describe("tool set changes (tool naming spec §9.1)", () => {
         },
       },
       {
+        source: "web",
         orgId,
         conversationId,
         runId: over.runId ?? runId,
@@ -1336,6 +1359,7 @@ describe("model.request hooks", () => {
     let err: unknown;
     try {
       await runModelStep(hooked, {
+        source: "web",
         orgId,
         conversationId,
         runId,
@@ -1386,6 +1410,7 @@ describe("model.request hooks: stickiness, compaction (M-4, M-2, I-1)", () => {
   };
   const hookedStep = (d: ModelStepDeps, agent = agentWith(), n = 1) =>
     runModelStep(d, {
+      source: "web",
       orgId,
       conversationId,
       runId,

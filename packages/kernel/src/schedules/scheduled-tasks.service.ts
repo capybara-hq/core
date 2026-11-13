@@ -807,6 +807,8 @@ export class ScheduledTasksService {
       disabledTools: d.disabledTools ?? [],
       subagentTools: d.subagentTools,
       subagents: d.subagents,
+      // no conversation at hand: a web one's tools; a run elsewhere still refuses by spec.sources
+      source: "web",
     });
     const ctx: GrantContext = {
       role,
@@ -1096,6 +1098,8 @@ export class ScheduledTasksService {
         disabledTools: d.disabledTools ?? [],
         subagentTools: d.subagentTools,
         subagents: d.subagents,
+        // no conversation at hand: a web one's tools; a run elsewhere still refuses by spec.sources
+        source: "web",
       });
       return new Map(
         tools.map((x) => [
@@ -1431,6 +1435,8 @@ export class ScheduledTasksService {
       disabledTools: d.disabledTools ?? [],
       subagentTools: d.subagentTools,
       subagents: d.subagents,
+      // no conversation at hand: a web one's tools; a run elsewhere still refuses by spec.sources
+      source: "web",
     });
     for (const g of toolGrants) {
       const tool = tools.find((x) => x.key === g.toolKey);

@@ -17,6 +17,7 @@ import { ApiError } from "../../src/errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
+import { TASK_LIST_FINISHED_LIMIT } from "../../src/tools/builtins/sandbox/task-list.js";
 import {
   subagentNotTaskText,
   taskReadScript,
@@ -206,22 +207,34 @@ async function reservation(c: Conv, id: string): Promise<void> {
 }
 
 describe("offered with Bash", () => {
-  it("a definition naming only Bash gets TaskOutput and TaskStop; their policies validate", async () => {
+  it("a definition naming only Bash gets TaskOutput, TaskStop and TaskList; their policies validate", async () => {
     const c = await conversation();
     const registry = k.app.get(ToolRegistry);
-    const got = await registry.forAgent(c.orgId, { disabledTools: builtinsOff("Bash") });
-    expect(got.tools.map((t) => t.key)).toEqual(["Bash", "TaskOutput", "TaskStop"]);
+    const got = await registry.forAgent(c.orgId, {
+      source: "web",
+      disabledTools: builtinsOff("Bash"),
+    });
+    expect(got.tools.map((t) => t.key)).toEqual(["Bash", "TaskOutput", "TaskStop", "TaskList"]);
     // an explicit ref changes nothing
     const both = await registry.forAgent(c.orgId, {
+      source: "web",
       disabledTools: onlyBuiltins([
         { kind: "builtin", name: "TaskStop" },
         { kind: "builtin", name: "Bash" },
       ]),
     });
-    expect(both.tools.map((t) => t.key).sort()).toEqual(["Bash", "TaskOutput", "TaskStop"]);
+    expect(both.tools.map((t) => t.key).sort()).toEqual([
+      "Bash",
+      "TaskList",
+      "TaskOutput",
+      "TaskStop",
+    ]);
     expect(both.unavailable).toEqual([]);
     // without Bash they are not offered
-    const none = await registry.forAgent(c.orgId, { disabledTools: builtinsOff("Read") });
+    const none = await registry.forAgent(c.orgId, {
+      source: "web",
+      disabledTools: builtinsOff("Read"),
+    });
     expect(none.tools.map((t) => t.key)).toEqual(["Read"]);
 
     // through the agents API: a policy for TaskStop with only Bash referenced is accepted
@@ -400,6 +413,7 @@ describe("TaskOutput", () => {
         const e = await run(parent, { task_id: id }).catch((x: unknown) => x);
         expect(e).toBeInstanceOf(ToolError);
         expect((e as Error).message).toContain(`No background task ${id} in this conversation`);
+        expect((e as Error).message).toContain("call TaskList to see this conversation's tasks");
       }
     }
     expect((await store.get(t.id))?.status).toBe("running");
@@ -601,4 +615,222 @@ describe("the Claude Code tool map", () => {
     expect(CLAUDE_CODE_TOOL_MAP).toContain("- TaskOutput -> TaskOutput, TaskStop -> TaskStop");
     expect(CLAUDE_CODE_TOOL_MAP).not.toContain("TaskOutput, TaskStop -> not available");
   });
+});
+
+describe("TaskList", () => {
+  const list = (c: Conv, input: Record<string, unknown> = {}, over?: Partial<BuiltinCallContext>) =>
+    tool("TaskList").run(input, ctxOf(c, over));
+
+  /** A fresh task id (`bt_` and six base32 letters). */
+  const taskId = (): string => {
+    const abc = "abcdefghijklmnopqrstuvwxyz234567";
+    let id = "bt_";
+    for (let i = 0; i < 6; i++) id += abc[Math.floor(Math.random() * abc.length)];
+    return id;
+  };
+
+  /** A task row written directly (no process): finished ones end `minutesAgo` minutes ago. */
+  async function seedTask(
+    c: Conv,
+    opts: {
+      conversationId?: string;
+      description?: string;
+      status?: "running" | "completed" | "failed" | "stopped" | "timed_out" | "lost";
+      exitCode?: number | null;
+      minutesAgo?: number;
+    } = {},
+  ): Promise<string> {
+    const id = taskId();
+    const status = opts.status ?? "completed";
+    const ago = opts.minutesAgo ?? 1;
+    const now = Date.now();
+    const finished = status === "running" ? null : new Date(now - ago * 60_000);
+    await sql`INSERT INTO capybara.background_tasks (id, org_id, conversation_id,
+        sandbox_conversation_id, device_id, run_id, call_id, trigger_account_id, description,
+        command, sid, output_path, status, exit_code, started_at, finished_at, deadline_at,
+        sandbox_created_at)
+      VALUES (${id}, ${c.orgId}, ${opts.conversationId ?? c.conversationId}, ${c.conversationId},
+        ${c.deviceId}, 'run-1', ${`call-${id}`}, ${c.accountId}, ${opts.description ?? id},
+        'true', '4242', ${`/workspace/.capybara/tasks/${id}.out`}, ${status},
+        ${opts.exitCode ?? null}, ${new Date(now - (ago + 2) * 60_000)}, ${finished},
+        ${new Date(Date.now() + 3_600_000)}, ${new Date()})`.execute(raw);
+    return id;
+  }
+
+  /** A sub-agent of `parent` with its dispatch row and, unless null, a latest run in `status`. */
+  async function seedChild(
+    c: Conv,
+    parent: string,
+    title: string,
+    status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted" | null,
+    opts: { dispatch?: boolean } = {},
+  ): Promise<string> {
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id, title)
+      VALUES (${id}, ${c.orgId}, ${c.agentId}, ${c.accountId}, 'subagent', ${parent},
+        ${title})`.execute(raw);
+    const runId = randomUUID();
+    if (opts.dispatch !== false) {
+      await sql`INSERT INTO capybara.subagent_dispatches (parent_run_id, parent_call_id,
+          parent_conversation_id, step, child_conversation_id, child_run_id, budget_run_id)
+        VALUES (${randomUUID()}, 'c1', ${parent}, 1, ${id}, ${runId}, ${runId})`.execute(raw);
+    }
+    if (status !== null) {
+      const done = ["completed", "failed", "aborted"].includes(status);
+      await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
+          trigger_account_id, trigger_seq, finished_at)
+        VALUES (${runId}, ${id}, ${status}, 1, ${c.accountId}, 0,
+          ${done ? new Date() : null})`.execute(raw);
+    }
+    return id;
+  }
+
+  it("is read-only and allowed by default", () => {
+    const t = tool("TaskList");
+    expect(t.spec.annotations).toEqual({ readOnlyHint: true });
+    expect(t.defaultPolicy).toBe("allow");
+    expect(t.spec.description).toContain(`(at most ${TASK_LIST_FINISHED_LIMIT})`);
+    expect(t.spec.inputSchema.required).toBeUndefined();
+  });
+
+  it("an empty conversation says so", async () => {
+    const c = await conversation();
+    const r = await list(c);
+    expect(isError(r)).toBe(false);
+    expect(textOf(r)).toBe("No background tasks or sub-agents in this conversation.");
+    expect(textOf(await list(c, { status: "running" }))).toBe(
+      "No background tasks or sub-agents are running in this conversation.",
+    );
+  }, 30_000);
+
+  it("lists running tasks first, then finished ones with exit code and output path", async () => {
+    const c = await conversation();
+    const ctx = ctxOf(c);
+    const running = await start(ctx, "sleep 30");
+    const failed = await start(ctx, "echo out; exit 3");
+    // TaskOutput observes the end: the failed task is finished
+    await output(c, { task_id: failed.id, timeout: 10_000 });
+    expect((await store.get(failed.id))?.status).toBe("failed");
+
+    const text = textOf(await list(c));
+    expect(text).toMatch(/^Background tasks: 1 running, 1 finished\.\n/);
+    expect(text).toMatch(
+      new RegExp(
+        `- ${running.id} running for \\d+s: "Run it"\\n  Output: /workspace/\\.capybara/tasks/${running.id}\\.out`,
+      ),
+    );
+    expect(text).toMatch(
+      new RegExp(
+        `- ${failed.id} failed, exit code 3, after \\d+s: "Run it"\\n  Output: /workspace/\\.capybara/tasks/${failed.id}\\.out`,
+      ),
+    );
+    expect(text.indexOf(running.id)).toBeLessThan(text.indexOf(failed.id));
+    expect(text).toContain("Use TaskOutput to check a task now");
+    expect(text).not.toContain("Sub-agents");
+
+    // only the running one
+    const only = textOf(await list(c, { status: "running" }));
+    expect(only).toContain(running.id);
+    expect(only).not.toContain(failed.id);
+    expect(only).toMatch(/^Background tasks: 1 running\./);
+  }, 60_000);
+
+  it("shows every finished status, lost with its reason", async () => {
+    const c = await conversation();
+    const ids = {
+      completed: await seedTask(c, { status: "completed", exitCode: 0 }),
+      stopped: await seedTask(c, { status: "stopped" }),
+      timed_out: await seedTask(c, { status: "timed_out" }),
+    };
+    const lost = await seedTask(c, { status: "lost" });
+    await sql`UPDATE capybara.background_tasks SET lost_reason = 'sandbox_suspended'
+      WHERE id = ${lost}`.execute(raw);
+    const text = textOf(await list(c));
+    expect(text).toContain(`- ${ids.completed} completed, exit code 0, after 2m00s:`);
+    expect(text).toContain(`- ${ids.stopped} stopped, after 2m00s:`);
+    expect(text).toContain(`- ${ids.timed_out} timed_out, after 2m00s:`);
+    expect(text).toContain(`- ${lost} lost (the sandbox was suspended), after 2m00s:`);
+  }, 30_000);
+
+  it("never lists another conversation's tasks, nor a sub-agent's", async () => {
+    const parent = await conversation();
+    const other = await conversation();
+    const child = await seedChild(parent, parent.conversationId, "Child", "running");
+    const mine = await seedTask(parent, { status: "running" });
+    const childs = await seedTask(parent, { conversationId: child, status: "running" });
+    const others = await seedTask(other, { status: "completed" });
+
+    const fromParent = textOf(await list(parent));
+    expect(fromParent).toContain(mine);
+    expect(fromParent).not.toContain(childs);
+    expect(fromParent).not.toContain(others);
+
+    // the sub-agent lists its own task only
+    const fromChild = textOf(
+      await list(
+        parent,
+        {},
+        { conversationId: child, sandboxConversationId: parent.conversationId },
+      ),
+    );
+    expect(fromChild).toContain(childs);
+    expect(fromChild).not.toContain(mine);
+    expect(fromChild).not.toContain(child);
+
+    const fromOther = textOf(await list(other));
+    expect(fromOther).toContain(others);
+    expect(fromOther).not.toContain(mine);
+    expect(fromOther).not.toContain("Sub-agents");
+  }, 30_000);
+
+  it("lists the sub-agents this conversation dispatched, running first", async () => {
+    const c = await conversation();
+    const done = await seedChild(c, c.conversationId, "Search the docs", "completed");
+    const running = await seedChild(c, c.conversationId, "Write the report", "running");
+    const waiting = await seedChild(c, c.conversationId, "Ask for access", "waiting");
+    const aborted = await seedChild(c, c.conversationId, "Old idea", "aborted");
+    const failed = await seedChild(c, c.conversationId, "Broken", "failed");
+    // a grandchild, and a child conversation never dispatched, are not listed
+    const grandchild = await seedChild(c, running, "Nested", "running");
+    const undispatched = await seedChild(c, c.conversationId, "Never", "running", {
+      dispatch: false,
+    });
+
+    const text = textOf(await list(c));
+    expect(text).toMatch(/^Background tasks: none\.\n\nSub-agents: 2 running, 3 finished\./);
+    expect(text).toContain(`- ${running} running: "Write the report"`);
+    expect(text).toContain(`- ${waiting} waiting: "Ask for access"`);
+    expect(text).toContain(`- ${done} completed: "Search the docs"`);
+    expect(text).toContain(`- ${aborted} stopped: "Old idea"`);
+    expect(text).toContain(`- ${failed} failed: "Broken"`);
+    expect(text.indexOf(waiting)).toBeLessThan(text.indexOf(done));
+    expect(text).not.toContain(grandchild);
+    expect(text).not.toContain(undispatched);
+    expect(text).toContain("use SendMessage to give it more instructions");
+
+    const only = textOf(await list(c, { status: "running" }));
+    expect(only).toContain(running);
+    expect(only).not.toContain(done);
+    expect(only).toMatch(/Sub-agents: 2 running\./);
+  }, 30_000);
+
+  it(`lists at most ${TASK_LIST_FINISHED_LIMIT} finished tasks, the most recent first`, async () => {
+    const c = await conversation();
+    const ids: string[] = [];
+    // ids[0] finished most recently
+    for (let i = 0; i < TASK_LIST_FINISHED_LIMIT + 3; i++) {
+      ids.push(await seedTask(c, { status: "completed", exitCode: 0, minutesAgo: i + 1 }));
+    }
+    const running = await seedTask(c, { status: "running" });
+    const text = textOf(await list(c));
+    expect(text).toMatch(
+      new RegExp(`^Background tasks: 1 running, ${TASK_LIST_FINISHED_LIMIT + 3} finished\\.`),
+    );
+    for (const id of ids.slice(0, TASK_LIST_FINISHED_LIMIT)) expect(text).toContain(id);
+    for (const id of ids.slice(TASK_LIST_FINISHED_LIMIT)) expect(text).not.toContain(id);
+    expect(text).toContain("(3 older finished tasks are not listed.)");
+    expect(text.indexOf(running)).toBeLessThan(text.indexOf(ids[0] as string));
+    expect(text.indexOf(ids[0] as string)).toBeLessThan(text.indexOf(ids[1] as string));
+  }, 30_000);
 });

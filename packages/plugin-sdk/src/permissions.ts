@@ -61,6 +61,9 @@ export const HOOK_MOUNT_POINTS = [
   "tool.preExecute",
   "tool.postExecute",
   "usage.report",
+  "org.member_removed",
+  "agent.deleted",
+  "org.deleted",
 ] as const;
 
 /** hook 挂载点名。 */

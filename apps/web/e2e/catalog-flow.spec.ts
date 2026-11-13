@@ -149,7 +149,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   });
 });
 
-/** Imports `notes <version>` from the git marketplace's entries and confirms the review. */
+/** Installs `notes <version>` from the git marketplace's entries and confirms the review. */
 async function importNotes(page: Page, version: string, { latest }: { latest: boolean }) {
   await page.goto("/admin/plugins/market");
   await page.getByRole("tab", { name: "Team git" }).click();
@@ -161,11 +161,8 @@ async function importNotes(page: Page, version: string, { latest }: { latest: bo
     row.getByText(new RegExp(fill(D.admin.entries.gitPinned, { commit: "[0-9a-f]{7}" }))),
   ).toBeVisible();
   if (latest) {
-    // 引入 v<x>, or 更新 once an older version of the plugin was imported
-    await row
-      .getByRole("button", { name: label, exact: true })
-      .or(row.getByRole("button", { name: D.admin.entries.update, exact: true }))
-      .click();
+    // 安装 v<x>
+    await row.getByRole("button", { name: label, exact: true }).click();
   } else {
     // an older version is under the row's 其他版本 submenu
     await row.getByRole("button", { name: OBJECT_ROW_MENU }).click();
@@ -183,7 +180,7 @@ async function importNotes(page: Page, version: string, { latest }: { latest: bo
   await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 }
 
-test("git marketplace: add a repository in the admin console -> refresh -> import notes 1.0.0 -> turn it on in the org -> import 1.1.0 -> update the platform plugin from its admin page with a preview", async ({
+test("git marketplace: add a repository in the admin console -> refresh -> install notes 1.0.0 -> turn it on in the org -> update to 1.1.0 in one wizard (the review, then the update preview)", async ({
   page,
 }) => {
   const gitUrl = process.env.CAPYBARA_E2E_GIT_MARKETPLACE_URL as string;
@@ -205,7 +202,7 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
     page.getByText(new RegExp(fill(m.lastCommit, { commit: "[0-9a-f]{7}" }))),
   ).toBeVisible();
 
-  // 2. Import notes 1.0.0 and turn it on in the org (a skills-only plugin: no input)
+  // 2. Install notes 1.0.0 and turn it on in the org (a skills-only plugin: no input)
   await importNotes(page, "1.0.0", { latest: false });
   await page.goto("/plugins");
   // The plugin's display name (plugin.json displayName) names the row, the link and the toasts
@@ -217,15 +214,22 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   const detail = page.url();
   await expect(page.getByRole("region", { name: "notes v1.0.0", exact: true })).toBeVisible();
 
-  // 3. Import 1.1.0 (the import does not move the platform), then update the platform plugin
-  // from its admin page: the preview lists each component's change (ruling F2: one version for
-  // the deployment; the org upgrade is gone)
-  await importNotes(page, "1.1.0", { latest: true });
+  // 3. Update to 1.1.0 from the marketplace in one wizard: the review, then the update preview
+  // listing each component's change, confirmed together (maintainer decision 2026-11-13; ruling
+  // F2: one version for the deployment, the org upgrade is gone)
+  await page.goto("/admin/plugins/market");
+  await page.getByRole("tab", { name: "Team git" }).click();
   await page
-    .getByRole("button", { name: fill(D.admin.detail.actions.update, { version: "v1.1.0" }) })
+    .getByRole("listitem")
+    .filter({ hasText: "笔记" })
+    .getByRole("button", { name: fill(D.admin.entries.update, { version: "v1.1.0" }), exact: true })
     .click();
-  const dialog = page.getByRole("dialog");
-  const changes = dialog.getByRole("table", { name: D.update.components });
+  await expect(page).toHaveURL(/\/admin\/plugins\/import\?staging=/, { timeout: 60_000 });
+  await expect(
+    page.getByRole("heading", { name: fill(D.admin.review.titleUpdate, { name: "笔记" }) }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
+  const changes = page.getByRole("table", { name: D.update.components });
   await expect(
     changes.getByRole("row").filter({ hasText: "notes-extra" }).getByText(D.update.change.added),
   ).toBeVisible();
@@ -235,10 +239,11 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
       .filter({ hasText: /^notes(?!-)/ })
       .getByText(D.update.change.upgrade),
   ).toBeVisible();
-  await dialog.getByRole("button", { name: D.update.confirm }).click();
+  await page.getByRole("button", { name: D.admin.review.confirmUpdate }).click();
   await expect(
     page.getByText(fill(D.update.done, { name: "笔记", version: "v1.1.0" })),
   ).toBeVisible({ timeout: 60_000 });
+  await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
   // The org's install moved with the platform
   await page.goto(detail);
   const upgraded = page.getByRole("region", { name: "notes v1.1.0", exact: true });

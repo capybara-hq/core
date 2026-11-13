@@ -505,6 +505,7 @@ describe("progress and usage", () => {
           agent_id: agentId,
           account_id: owner0.account_id,
           kind: "subagent",
+          source: "subagent",
           parent_conversation_id: parent,
           subagent_depth: depth,
           title: `Depth ${depth}`,

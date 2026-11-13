@@ -159,6 +159,7 @@ describe("tool kinds", () => {
       Deliver: "tool",
       TaskOutput: "read",
       TaskStop: "command",
+      TaskList: "read",
       ToolSearch: "meta",
       Skill: "meta",
       ReadToolOutput: "meta",

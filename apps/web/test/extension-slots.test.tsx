@@ -173,6 +173,55 @@ describe("extension slots fail alone (review focus 3)", () => {
   });
 });
 
+describe("a properties section with nothing to show is not drawn (todo acceptance)", () => {
+  const empty: UiView = { badge: "0/0", blocks: [{ type: "checklist", items: [] }] };
+  const sectionGets = (calls: Call[]) =>
+    calls.filter((c) => c.method === "GET" && c.url.startsWith(`${UI}/views/todo/tasks-section`));
+
+  it("an empty view draws no section, no empty state and no badge; a refresh with items draws it", async () => {
+    let current = empty;
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`GET ${UI}/views/todo/tasks-section`]: () => json(200, { view: current }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute({ locale: "zh" });
+    await vi.waitFor(() => expect(sectionGets(calls)).toHaveLength(1));
+    // let the answer settle: still nothing drawn for the section
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelector('[data-extension-section="todo/tasks-section"]')).toBeNull();
+    expect(screen.queryByText("0/0")).toBeNull();
+    expect(screen.queryByText(en.ui.empty)).toBeNull();
+    current = view("First todo");
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("ui", { plugin: "todo", contribution: "tasks-section" }));
+    expect(await screen.findByText("First todo")).toBeTruthy();
+    const section = document.querySelector(
+      '[data-extension-section="todo/tasks-section"]',
+    ) as HTMLElement;
+    expect(within(section).getAllByText("待办").length).toBeGreaterThan(0);
+    expect(within(section).getByText("1/3")).toBeTruthy();
+    // the list emptied again: the section goes away
+    current = empty;
+    act(() => es.emit("ui", { plugin: "todo", contribution: "tasks-section" }));
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-extension-section="todo/tasks-section"]')).toBeNull(),
+    );
+  });
+
+  it("a view with no blocks draws no section either", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`GET ${UI}/views/todo/tasks-section`]: () => json(200, { view: { blocks: [] } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    await vi.waitFor(() => expect(sectionGets(calls)).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelector('[data-extension-section="todo/tasks-section"]')).toBeNull();
+  });
+});
+
 describe("inline cards load and refresh only while visible (final review I4)", () => {
   class FakeObserver {
     static all: FakeObserver[] = [];

@@ -15,6 +15,7 @@ import {
   imSenderContext,
   recipientLocale,
 } from "../conversations/message-context.js";
+import { channelSource } from "../conversations/source.js";
 import { DevicesService, type DeviceView } from "../devices/devices.service.js";
 import { DEFAULT_DEVICE_ALIASES, deviceLabel } from "../devices/label.js";
 import { ApiError } from "../errors.js";
@@ -264,8 +265,15 @@ export class ChannelInbound {
       try {
         // bound to the person's IM default device, else their default (environments spec
         // §4.2 item 8); an anonymous sender's stays unbound (no sandbox)
-        created = (await this.conversations.create(row.orgId, accountId, row.agentId, { im: true }))
-          .id;
+        created = (
+          await this.conversations.create(
+            row.orgId,
+            accountId,
+            row.agentId,
+            { im: true },
+            { source: channelSource(e.target.chatType) },
+          )
+        ).id;
       } catch (err) {
         if (err instanceof ApiError && err.code === "agent.not_found") {
           await reply("agentUnavailable");

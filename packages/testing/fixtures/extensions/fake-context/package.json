@@ -1,0 +1,12 @@
+{
+  "name": "@capybara-hq/test-plugin-fake-context",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test fake: a scripted context provider (context@1) and one tool limited to one-to-one conversations",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-sdk": "^0.1.0-rc.0",
+    "zod": "^4.6.7"
+  }
+}

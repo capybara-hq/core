@@ -14,14 +14,16 @@ import { fileURLToPath } from "node:url";
  * | `fake-connector` | `connector@1` kind `fake`: an MCP client for `startFakeMcpServer` (auth, one 401 retry, connectorData routes from `_meta["fake/route"]`, onToolsChanged, onElicit incl. `-32042`, resources, prompts, inspect); endpoint `{ url, headers?, notesText? }`; template `fake-demo`; deployment config `allowInsecureLoopback` (default true), `inspectAuth` (`bearer` / `api_key`), `kind` (default `fake`; `mcp` lets clients that know only the official kinds drive it) |
  * | `fake-openapi` | `connector@1` kind `openapi` (the web wizard's OpenAPI flow): reads a small JSON document (`securitySchemes` as auth hints, `operations` as tools) from the endpoint's `specUrl`, calls operations over HTTP with the injected auth; endpoint `{ specUrl, baseUrl?, operations? }`; deployment config `allowInsecureLoopback` (default true) |
  * | `fake-object-store` | `object-store@1` on the `startTestS3()` container (deployment config as `TestS3` gives it; POST-policy presign) |
- * | `fake-tools-ui` | tool `write`, view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector); no storage |
+ * | `fake-tools-ui` | tools `write` and `web-only` (`sources` web and channel_dm; returns its call context), view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector); no storage |
  * | `fake-storage-user` | tools `note` / `read_note` through `ctx.storage` (`permissions.storage`) |
+ * | `fake-lifecycle` | observes `org.member_removed`, `agent.deleted` and `org.deleted`; a migration with tables `calls` (every call) and `deliveries` (every call that succeeded), each row the mount and the payload; deployment config `failTimes` (default 0): the first `failTimes` calls of each (mount, payload) throw, and `label` (optional, at most 10 characters, overridable per org: an invalid org copy) |
  * | `fake-embed` | embeds `panel` (page) and `panel-conv` (conversation), static `/ui/panel.js`, token-checked routes, SSE over `ctx.bus` |
  * | `fake-bootstrap-a` | `model-provider@2` with a required secret `apiKey` (pending configuration until set) |
  * | `fake-bootstrap-b` | `object-store@1` kept in its own PG table; `bucket` + secret `secretKey` |
  * | `fake-dep-provider` / `fake-dep-requirer` | a dependency pair on `counter@1` (the requirer's plugin.json depends on the provider) |
  * | `fake-im` | a whole IM platform for `startFakeChannelServer`: `channel@1` (cards, edits, threads, webhook inbound), `identity-source@1`, `directory@1` (org config `url` of a directory book) and tool `post_announcement` (default policy ask, posts to the platform); deployment config `platformUrl`, `tenant`, `clientId`, secret `clientSecret`. Its `src/index.ts` also exports `makeFakeImChannel`, `fakeImIdentitySource`, `fakeImDirectory` for test extensions that need one part |
  * | `fake-web` / `fake-web-2` | `web-search@1` and `web-fetch@1`, scripted by a prefix of the query or of the fetched URL's path (`error:<kind>`, `throw:`, `hang:`, `redirect:<url>`, `junk:`, `empty:`, `big:<n>`; see `makeFakeWeb`); results name the provider; org config secret `token`, `configured()` iff it is set (throws for `throw:configured`); calls recorded on `globalThis.__fakeWeb` (`fakeWebProbe`) |
+ * | `fake-context` | `context@1` scripted by its deployment config (`text`, default "fake context"; `mode` `ok` / `null` / `throw` / `hang`); calls recorded on `globalThis.__fakeContext` (`fakeContextProbe`); tool `note` (`sources` web and channel_dm) |
  * | `fake-client` | client extension (`permissions.client`, no extension point): components `hud` (`conversation.properties.section`, server view with `data`), `brand` (`shell.brand`, renders `builtin` in `data-testid="fake-client-brand"`), `empty` (`conversation.empty`), `frame` (`conversation.composer.frame`) and `fx` (`shell.overlay`); `client/styles/fake.css` (outline-color on `button.primary` and the composer's buttons, `--cx-fake-client-run` while `run=running`); an `events` listener storing the last event type; theme `fake`; `suggestedAppearance` = theme `fake` + `shell.brand` -> `brand` |
  * | `fake-client-broken` | client code that throws: component `boom` (render), a `run.started` events listener, and a `conversation.empty` replacement (render) |
  * | `fake-config-form` | display name 表单样例 / Form sample; no extension point: an openai-compatible-shaped deployment config (endpoints with a preset menu, an API key per endpoint in the secret record `apiKeys`, model rows, advanced fields, localized custom issues) carrying the config form hints of the extension config forms spec §6, for the web form e2e |
@@ -32,6 +34,7 @@ export const FAKE_EXTENSIONS = [
   "fake-object-store",
   "fake-tools-ui",
   "fake-storage-user",
+  "fake-lifecycle",
   "fake-embed",
   "fake-bootstrap-a",
   "fake-bootstrap-b",
@@ -40,6 +43,7 @@ export const FAKE_EXTENSIONS = [
   "fake-im",
   "fake-web",
   "fake-web-2",
+  "fake-context",
   "fake-config-form",
   "fake-client",
   "fake-client-broken",

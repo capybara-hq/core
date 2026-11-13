@@ -261,9 +261,10 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Live devices only**: the instance row is created only for a live device (`deleted_at IS NULL`) of the caller's org, with the device's own `org_id`, and
   the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyDevice` gets `device.not_found` instead of bringing
   the provider resources back. A row of another org is also reported as `device.not_found`.
-- **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `Bash` defaults to 120 seconds. A command timeout is also tightened to
-  the time remaining in the owning run minus 30 seconds (`runtime.maxRunSeconds`, default 900, Ruling M20; the built-in tool context's `runDeadline`), and the result
-  tells the model it was due to the run time limit. Long commands need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.
+- **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `Bash` defaults to 120 seconds. When a run duration limit is set
+  (`runtime.maxRunSeconds` > 0; the default 0 is no limit, and then there is no `runDeadline` and no tightening), a command timeout is also
+  tightened to the time remaining in the owning run minus 30 seconds (Ruling M20; the built-in tool context's `runDeadline`), and the result
+  tells the model it was due to the run time limit. Long commands then need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.
 - **Background task jobs** (`packages/kernel/src/background`, rows in `capybara.background_tasks`): the worker's `@LockedInterval`
   `background-task-poll` (every `sandbox.background.pollSeconds`) checks running tasks through `SandboxService.ifRunning` and finishes each
   with one conditional update plus its event; the daily `@LockedCron` `background-task-prune` deletes finished rows after

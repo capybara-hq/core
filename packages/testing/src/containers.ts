@@ -108,14 +108,19 @@ export async function withStartSlot<T>(
   }
 }
 
+/** The PostgreSQL image tests run on: PostgreSQL 17 with pgvector, as in the compose files. */
+export const TEST_PG_IMAGE = "pgvector/pgvector:pg17";
+
 /**
- * Start a throwaway PostgreSQL 17 container. `tuned` is for the run-wide shared instance: many files
- * connect at once (raise `max_connections`), and durability is irrelevant for tests (no fsync).
+ * Start a throwaway PostgreSQL 17 container (`TEST_PG_IMAGE` unless `image` names another, e.g.
+ * plain `postgres:17` to test a server without pgvector). `tuned` is for the run-wide shared
+ * instance: many files connect at once (raise `max_connections`), and durability is irrelevant for
+ * tests (no fsync).
  */
 export async function startPostgresContainer(
-  opts: { tuned?: boolean } = {},
+  opts: { tuned?: boolean; image?: string } = {},
 ): Promise<TestContainer> {
-  const image = new PostgreSqlContainer("postgres:17");
+  const image = new PostgreSqlContainer(opts.image ?? TEST_PG_IMAGE);
   if (opts.tuned) {
     image.withCommand([
       "postgres",

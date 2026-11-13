@@ -1,5 +1,92 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.26
+
+### Patch Changes
+
+- b177905: The compose files and test containers run PostgreSQL 17 with pgvector (`pgvector/pgvector:pg17`),
+  and migration 0123 creates the `vector` extension in `public` when the server offers it and the
+  migrating role may create it; otherwise it only raises a notice, and plugins fall back to `real[]`.
+  `@capybara-hq/testing` exports `startPostgresContainer` (with an `image` option) and `TEST_PG_IMAGE`.
+- Updated dependencies [fc46148]
+- Updated dependencies [23c16d8]
+- Updated dependencies [b7e70f7]
+- Updated dependencies [b177905]
+- Updated dependencies [fcfabb4]
+- Updated dependencies [b4d2b44]
+- Updated dependencies [240801c]
+  - @capybara-hq/kernel@0.1.0-rc.25
+
+## 0.1.0-rc.25
+
+### Patch Changes
+
+- 4807c1f: The `Bash` description tells the model that tools ignoring HTTP(S)_PROXY, such as browsers, need
+  the proxy passed explicitly (Chromium: `--proxy-server=$HTTPS_PROXY`).
+- ba36733: A device's recent sandbox changes now list the policy changes its owner makes on the machine
+  (`capybara-device policy ...`: tier from and to, localhost, allowed domains added and removed,
+  isolation, remote grants) as 本机 beside the web's, each change once.
+- 67e6ad5: A local OS-sandboxed device now kills what a foreground command leaves running (`server &`,
+  `nohup …`) when the command ends, by its process group and by a per-command marker for processes
+  that left the group. Inside the sandbox no later command could signal them, so they leaked. A
+  background task launch, whose command starts with the new `BACKGROUND_LAUNCH_LINE`
+  (`@capybara-hq/plugin-sdk`), keeps what it starts. The `Bash` description tells the model to use
+  `run_in_background` for servers and watchers.
+- 916b1d0: An extension's properties section whose schema view has nothing to show (no blocks, or only empty
+  lists) is no longer drawn: no header, badge or empty state until it has content (the todo
+  section before the agent's first to-do), and no skeleton during its first load.
+  
+  The bootstrap `todo` plugin moves to 0.1.0-rc.8 (the plugins marketplace at 4bfd588): the list is
+  titled 「待办」 / "Todos" and its properties section stays hidden until the first to-do.
+- 9370947: Updating an installed platform plugin to a newer version is one wizard: 更新到 vX on the admin
+  plugin list, the plugin's page and the marketplace tab stages the version and shows the import
+  review, then the platform update preview; one confirm applies both (`GET
+  /api/v1/admin/catalog/imports/:stagingId/update-preview`, `POST …/imports/:stagingId/update`).
+  Cancelling writes nothing; an update failing after the import says so (409
+  `plugin.imported_not_updated`) and leaves the platform on its version. An installed plugin is no
+  longer imported on its own; the 版本 tab moves the platform to another imported version (更新到 /
+  回退到). A plugin not installed yet shows 安装 instead of 导入 / 引入.
+- 73c1232: Org-side plugin wording follows install/update: 申请安装, 已安装, 不能安装; the audit reads 安装了插件.
+- 3a884eb: A cloud sandbox provider that refuses a device's tier (for example sandbox-docker or sandbox-e2b with
+  `openEgress: "off"` at the open tier) now gives the model an actionable tool error
+  (`sandbox.tier_refused`) instead of a generic failure; any other failed create is
+  `sandbox.create_failed`. TaskOutput and TaskStop called with a sub-agent's agentId say that its
+  report arrives as a notification, so the model stops polling for it.
+  
+  The bootstrap plugins move to the plugins marketplace at 3750cf7: sandbox-docker 0.1.0-rc.12 (sandbox
+  tiers, `openEgress` defaulting to `proxy`; rc.10 refused the open tier by default), and the other
+  pins to the versions built on plugin-sdk rc.17. The compose sandbox image contexts follow the commit.
+- 46fda48: A scheduled task calendar read: `GET /api/v1/orgs/:orgId/schedules/calendar` (and the Platform
+  operation `schedules.calendar`) returns a range's recorded runs and the planned occurrences the
+  scheduler will fire, from its own ticker, with dense task-days summarized per day.
+- 42b1637: The scheduled tasks calendar on `/schedules`: 列表 / 日历 tabs in the page head (remembered per
+  browser), a week and a month of recorded and planned runs, dense tasks collapsed per day, the run
+  panel (from the address hash) with the run, its conversation and the task, the admin 全组织 scope
+  and the phone's agenda.
+- e2731bd: New builtin tool `TaskList`, offered with `Bash` like `TaskOutput` and `TaskStop`: it lists the
+  conversation's own background tasks (running first, then the 20 most recently finished, with id,
+  description, status, elapsed time, exit code and output file) and the sub-agents it dispatched.
+  Read-only and allowed by default; `status: "running"` lists only what still runs. `TaskOutput`'s
+  not-found error and the `Bash` description point to it.
+- c619811: A transactional outbox: work that must follow a commit is a row in `capybara.outbox` written in the
+  same transaction (`OutboxService.add`), delivered right after the commit by a fast path and, when
+  that fails, by a relay on the worker role every 2 s; failures back off and after 20 attempts the
+  row is a dead letter the super admin sees in the overview (无法排入队列的后台任务) and can retry or
+  discard (`/api/v1/admin/outbox/dead`, Platform operations). New checks `kc-enqueue-via-outbox`,
+  `kc-after-commit-hint` and `check:outbox-registry` (migration 0119).
+- 86c258c: Agent runs have no step limit and no duration limit by default: `runtime.maxSteps` and
+  `runtime.maxRunSeconds` default to 0 (no limit), so a run goes on until the model stops calling
+  tools or someone stops it. Without a run duration limit, sandbox commands are limited only by
+  `sandbox.limits.maxCommandSeconds` and the tool timeouts; explicit positive limits work as before.
+- Updated dependencies [ba36733]
+- Updated dependencies [9370947]
+- Updated dependencies [e2731bd]
+- Updated dependencies [c619811]
+- Updated dependencies [b8a3c5b]
+- Updated dependencies [36d904d]
+- Updated dependencies [86c258c]
+  - @capybara-hq/kernel@0.1.0-rc.24
+
 ## 0.1.0-rc.24
 
 ### Patch Changes

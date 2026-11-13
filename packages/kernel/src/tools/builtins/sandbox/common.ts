@@ -15,6 +15,7 @@ import type { BackgroundTaskFinisher } from "../../../background/finish.js";
 import type { BackgroundTaskStopper } from "../../../background/stop.js";
 import type { BackgroundTaskStore } from "../../../background/store.js";
 import type { KernelConfig } from "../../../config/schema.js";
+import type { ChildAgent } from "../../../conversations/agent-tree.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
 import {
@@ -65,16 +66,22 @@ export interface SandboxToolDeps {
     | "releaseStop"
     | "get"
     | "advanceOffset"
+    | "runningOwnedBy"
+    | "finishedOwnedBy"
   >;
+  /**
+   * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
+   * TaskStop tell a sub-agent's agentId apart from an unknown task id), and the sub-agents a
+   * conversation dispatched itself (`TaskList`); absent in test stubs.
+   */
+  subagents?: {
+    inTree(rootConversationId: string, id: string): Promise<boolean>;
+    childrenOf(orgId: string, conversationId: string): Promise<ChildAgent[]>;
+  };
   /**
    * What `TaskOutput` and `TaskStop` finish and stop tasks with; absent in test stubs, where both
    * answer that background tasks are not available.
    */
-  /**
-   * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
-   * TaskStop tell a sub-agent's agentId apart from an unknown task id); absent in test stubs.
-   */
-  subagents?: { inTree(rootConversationId: string, id: string): Promise<boolean> };
   tasks?: {
     finisher: Pick<BackgroundTaskFinisher, "finish">;
     stopper: Pick<BackgroundTaskStopper, "stop">;

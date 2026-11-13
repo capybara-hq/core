@@ -7,6 +7,7 @@ import { PLUGIN_SCOPE_QUEUE } from "../catalog/scope-sync.js";
 import { CHANNEL_QUEUE_NAME } from "../channels/jobs.js";
 import { TITLE_QUEUE } from "../conversations/titles.js";
 import { EVAL_QUEUE_NAME } from "../evals/jobs.js";
+import { LIFECYCLE_QUEUE } from "../extensions/lifecycle-hooks.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { type LiveReplica, ReplicaPresence } from "../infra/presence/replica-presence.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
@@ -26,6 +27,7 @@ export const KERNEL_QUEUE_NAMES = [
   TITLE_QUEUE,
   USAGE_REPORT_QUEUE,
   EVAL_QUEUE_NAME,
+  LIFECYCLE_QUEUE,
 ] as const;
 
 /** How long each source's reads may take before the answer marks it unavailable. */
@@ -148,6 +150,7 @@ export class AdminHealthService {
     @Inject(getQueueToken(TITLE_QUEUE)) titles: Queue,
     @Inject(getQueueToken(USAGE_REPORT_QUEUE)) usageReport: Queue,
     @Inject(getQueueToken(EVAL_QUEUE_NAME)) evals: Queue,
+    @Inject(getQueueToken(LIFECYCLE_QUEUE)) lifecycle: Queue,
   ) {
     // the order of KERNEL_QUEUE_NAMES
     this.queues = [
@@ -159,6 +162,7 @@ export class AdminHealthService {
       titles,
       usageReport,
       evals,
+      lifecycle,
     ];
   }
 

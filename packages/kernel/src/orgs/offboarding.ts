@@ -6,6 +6,7 @@ import { EventLog } from "../conversations/event-log.js";
 import { lockConversationTrees } from "../conversations/tree.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { LifecycleHooks } from "../extensions/lifecycle-hooks.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SessionService } from "../identity/sessions.js";
@@ -116,6 +117,9 @@ export class Offboarding {
       QuestionsService,
       "pendingConversationsFor" | "cancelPendingFor"
     >,
+    /** Owes `org.member_removed` to the subscribing plugins, in the offboard transaction. */
+    @Inject(LifecycleHooks)
+    private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
@@ -137,7 +141,9 @@ export class Offboarding {
    *    同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
    * 8. 审计 `org.member.offboarded`；
    * 9. Soft-deletes the person's devices in the org and clears their default row, and owes the
-   *    destruction of each (instance and files, `device-destroy-<deviceId>`).
+   *    destruction of each (instance and files, `device-destroy-<deviceId>`);
+   * 10. Owes the `org.member_removed` lifecycle hook deliveries (outbox jobs, one per subscribing
+   *    plugin).
    */
   @Transactional({ propagation: "mandatory" })
   async offboard(
@@ -390,6 +396,10 @@ export class Offboarding {
         ...(devices.length > 0 && { devicesDeleted: devices.length }),
         ...(queued.length > 0 && { queuedMessagesDeleted: queued.length }),
       },
+    });
+    await this.lifecycle.recordIn("org.member_removed", {
+      orgId,
+      accountId,
     });
     return {
       role: deleted.role,

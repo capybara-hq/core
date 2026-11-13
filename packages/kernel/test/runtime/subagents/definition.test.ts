@@ -478,9 +478,17 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     });
   });
 
-  it("the key filter narrows the resolved tools; TaskOutput / TaskStop follow Bash", () => {
+  it("the key filter narrows the resolved tools; TaskOutput / TaskStop / TaskList follow Bash", () => {
     const t = (key: string) => ({ key }) as ResolvedTool;
-    const all = ["Bash", "TaskOutput", "TaskStop", "Read", "Agent", "mcp__jira__search"].map(t);
+    const all = [
+      "Bash",
+      "TaskOutput",
+      "TaskStop",
+      "TaskList",
+      "Read",
+      "Agent",
+      "mcp__jira__search",
+    ].map(t);
     const keys = (f: Parameters<typeof filterSubagentTools>[1]) =>
       filterSubagentTools(all, f).map((x) => x.key);
     expect(keys(undefined)).toEqual(all.map((x) => x.key));
@@ -489,6 +497,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       "Bash",
       "TaskOutput",
       "TaskStop",
+      "TaskList",
       "mcp__jira__search",
     ]);
     expect(keys({ allow: [], deny: [] })).toEqual([]);
@@ -500,6 +509,20 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.definition.disabledTools).toEqual([]);
     expect(r.definition.subagentTools).toEqual({ deny: REMOVED });
     expect(r.maxSteps).toBe(5);
+  });
+
+  it("runtime.maxSteps 0 (no limit): a template's own limit holds, a template without one logs 0 (no limit)", async () => {
+    const saved = cfg;
+    cfg = { ...cfg, runtime: { ...cfg.runtime, maxSteps: 0 } };
+    try {
+      const parent = def({
+        subagents: { inline: [inline("scout", { maxSteps: 5 }), inline("free")] },
+      });
+      expect((await eff(parent, "scout")).maxSteps).toBe(5);
+      expect((await eff(parent, "free")).maxSteps).toBe(0);
+    } finally {
+      cfg = saved;
+    }
   });
 
   it("a template allowlist or deny key under a connector stays a key: a later tool never slips past", async () => {

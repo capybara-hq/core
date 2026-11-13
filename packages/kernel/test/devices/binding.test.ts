@@ -425,14 +425,18 @@ describe("conversations bound to devices", { timeout: 60_000 }, () => {
         .execute();
     const chosen = await newDevice(a.req, "IM work");
     await imDefault(chosen);
-    expect((await convs.create(orgId, a.id, agentId, { im: true })).deviceId).toBe(chosen);
+    expect(
+      (await convs.create(orgId, a.id, agentId, { im: true }, { source: "channel_dm" })).deviceId,
+    ).toBe(chosen);
     // the web ignores the IM default
-    expect((await convs.create(orgId, a.id, agentId)).deviceId).toBe(await defaultOf(a.id));
-    // a row naming someone else's device (no DB guard) is never used
-    await imDefault(await newDevice(b.req, "Not yours"));
-    expect((await convs.create(orgId, a.id, agentId, { im: true })).deviceId).toBe(
+    expect((await convs.create(orgId, a.id, agentId, {}, { source: "web" })).deviceId).toBe(
       await defaultOf(a.id),
     );
+    // a row naming someone else's device (no DB guard) is never used
+    await imDefault(await newDevice(b.req, "Not yours"));
+    expect(
+      (await convs.create(orgId, a.id, agentId, { im: true }, { source: "channel_dm" })).deviceId,
+    ).toBe(await defaultOf(a.id));
     // nor a deleted one
     await imDefault(chosen);
     await db
@@ -440,15 +444,15 @@ describe("conversations bound to devices", { timeout: 60_000 }, () => {
       .set({ deleted_at: new Date() })
       .where("id", "=", chosen)
       .execute();
-    expect((await convs.create(orgId, a.id, agentId, { im: true })).deviceId).toBe(
-      await defaultOf(a.id),
-    );
+    expect(
+      (await convs.create(orgId, a.id, agentId, { im: true }, { source: "channel_dm" })).deviceId,
+    ).toBe(await defaultOf(a.id));
   });
 
   it("anonymous IM conversation has no sandbox", async () => {
     const guest = await k.app.get(AnonymousGuests).ensure(orgId);
     const convs = k.app.get(ConversationsService);
-    const conv = await convs.create(orgId, guest, agentId, { im: true });
+    const conv = await convs.create(orgId, guest, agentId, { im: true }, { source: "channel_dm" });
     expect(conv.deviceId).toBeNull();
     await convs.postUserMessage(orgId, conv.id, guest, {
       text: `tool:Bash:${JSON.stringify({ description: "Try", command: "true" })}`,

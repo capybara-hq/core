@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-context",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: a scripted context provider (context@1) and one tool limited to one-to-one conversations"
+}

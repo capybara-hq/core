@@ -17,6 +17,7 @@ import { LegacySandboxCleanupJob } from "../devices/legacy-cleanup.job.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
+import { LifecycleHookWorkersModule } from "../extensions/lifecycle-hooks.js";
 import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
 import { OutboxRelayModule } from "../infra/outbox/outbox-relay.module.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
@@ -64,6 +65,7 @@ export class WorkerModule {
         ChannelWorkersModule.forRoot(config),
         MaintenanceModule,
         PluginScopeWorkersModule,
+        LifecycleHookWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         RunJobsModule,

@@ -22,6 +22,7 @@ import type { ModelPurposesService } from "../../models/purposes.js";
 import { invocationOf, resolveSkills } from "../../skills/catalog.js";
 import { agentSkills, usableSkills } from "../../skills/usable.js";
 import { AGENT_TOOL, CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
+import { tightestLimit } from "../limits.js";
 import type { ProviderRegistry } from "../providers.js";
 import { SUBAGENT_PREAMBLE } from "./preamble.js";
 import type { RosterEntry } from "./roster.js";
@@ -44,6 +45,7 @@ export class SubagentTypeGoneError extends Error {
 export interface EffectiveDefinition {
   definition: AgentDefinition;
   template: EventPayload<"subagent_started">["template"];
+  /** The child's step limit; 0 = no limit. */
   maxSteps: number;
   /**
    * The child's preamble, frozen into `subagent_started.preamble` (model-visible):
@@ -334,7 +336,7 @@ function orgAgentDefinition(
  * - `general` / `inline` / `plugin`: the parent's definition narrowed by the template (tools by
  *   resolved key, `disallowedTools`, {@link CHILD_REMOVED_TOOLS}; policies stricter-wins; skills
  *   by its `disallowedSkills`), the template's instructions, its `skills` the child has named in
- *   the preamble to load first (general gets no line), `maxSteps = min(template ?? runtime.maxSteps, runtime.maxSteps)`, and the model tier
+ *   the preamble to load first (general gets no line), `maxSteps` = the tighter of the template's and `runtime.maxSteps` (0 = no limit), and the model tier
  *   `tier` (the call's) → the template's → `inherit`; an unmapped tier runs on the parent's model
  *   (`tierFallback`); a template `effort` is set when the resolved model declares it;
  * - `agent`: the org agent's version that passed the gates (`orgAgent`, from {@link checkOrgAgent}),
@@ -421,7 +423,8 @@ export async function effectiveDefinition(
   return {
     definition,
     template: ref,
-    maxSteps: Math.min(template?.maxSteps ?? runtimeMax, runtimeMax),
+    // the tighter of the template's and the deployment's, 0 = no limit (`runtime.maxSteps` 0)
+    maxSteps: tightestLimit(template?.maxSteps, runtimeMax) ?? 0,
     preamble:
       names.length === 0
         ? SUBAGENT_PREAMBLE

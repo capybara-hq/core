@@ -505,6 +505,7 @@ describe("dispatching an org agent", () => {
         agent_id: analystId,
         account_id: ids.member,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: child.id,
         subagent_depth: 2,
         title: "Grandchild",

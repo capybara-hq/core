@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   Connector,
+  ConversationSource,
   HookParentScope,
   InputRequired,
   NetworkBlockedHost,
@@ -81,6 +82,8 @@ export interface BuiltinCallContext extends ToolCallContext {
   /**
    * 本次运行的截止时间（epoch 毫秒，`runtime.maxRunSeconds` 起算，Ruling M20）。到点运行被中止；
    * 沙箱命令按它收紧超时，赶在截止前自己超时、给模型可执行的说明。
+   * Absent when the run has no duration limit (`runtime.maxRunSeconds` 0): commands are then limited
+   * only by `sandbox.limits.maxCommandSeconds` and the tool timeouts.
    */
   runDeadline?: number;
   /**
@@ -267,6 +270,10 @@ export function policyFromAnnotations(a: ToolAnnotations | undefined): "allow" |
   return a?.readOnlyHint === true ? "allow" : "ask";
 }
 
+/** Why an extension tool limited by `spec.sources` is not offered in a `source` conversation. */
+export const sourceHiddenReason = (source: ConversationSource): string =>
+  `Not available in ${source} conversations`;
+
 /** `forAgent` 的结果。 */
 export interface AgentTools {
   tools: ResolvedTool[];
@@ -328,7 +335,7 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  *
  * What is offered:
  * - builtins: every {@link AGENT_BUILTIN_NAMES} entry registered here that can run (`unavailable`
- *   says why not), `TaskOutput` / `TaskStop` with `Bash`, `Agent` while its roster is not empty;
+ *   says why not), `TaskOutput` / `TaskStop` / `TaskList` with `Bash`, `Agent` while its roster is not empty;
  * - extension tools: every tool registered by an extension loaded on this replica and enabled in
  *   the org (`extension_org_configs.enabled`; required bootstrap plugins are enabled in every org,
  *   `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
@@ -549,6 +556,11 @@ export class ToolRegistry {
       sandboxConversationId?: string;
       /** An eval replay's listing: its calls are never executed (the sandbox tools are listed). */
       replay?: boolean;
+      /**
+       * The conversation's source (memory plugin spec §6.2): an extension tool whose
+       * `spec.sources` leaves it out is hidden. Required, so nothing defaults to the widest.
+       */
+      source: ConversationSource;
     },
   ): Promise<AgentTools> {
     const resolved = await this.resolve(orgId, def);
@@ -608,9 +620,11 @@ export class ToolRegistry {
       subagents?: AgentDefinition["subagents"];
       sandboxConversationId?: string;
       replay?: boolean;
+      source: ConversationSource;
     },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const disabled = def.disabledTools ?? [];
+    const { source } = def;
     const scope: ToolListingScope = {
       orgId,
       ...(def.sandboxConversationId !== undefined && {
@@ -656,7 +670,8 @@ export class ToolRegistry {
         spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
       }
       add(builtinTool(b, spec));
-      // `TaskOutput` and `TaskStop` come with an available `Bash` (background Bash spec §2)
+      // `TaskOutput`, `TaskStop` and `TaskList` come with an available `Bash` (background Bash
+      // spec §2)
       if (name === BUILTIN.Bash) {
         for (const companion of BASH_COMPANION_TOOLS) {
           const c = this.builtins.find((x) => x.spec.name === companion);
@@ -691,6 +706,12 @@ export class ToolRegistry {
         // the pipeline refuses such calls too (a resumed step), this keeps them from the model
         if (offKeys.has(key)) {
           hidden.push({ ref: key, reason: toolTurnedOffReason(key) });
+          continue;
+        }
+        // offered only in some conversation sources; the source never changes, so this also
+        // refuses a resumed call (the pipeline resolves the step's tools with the same source)
+        if (t.spec.sources !== undefined && !t.spec.sources.includes(source)) {
+          hidden.push({ ref: key, reason: sourceHiddenReason(source) });
           continue;
         }
         if (!(await configuredIn(t.plugin))) {
@@ -865,7 +886,7 @@ export class ToolRegistry {
 
 /**
  * `tools` narrowed by a sub-agent's key filter (tools default-on spec §4): `deny` keys removed,
- * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` follow `Bash`, as they come with
+ * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` / `TaskList` follow `Bash`, as they come with
  * it. Without a filter the list is returned as it is.
  */
 export function filterSubagentTools(

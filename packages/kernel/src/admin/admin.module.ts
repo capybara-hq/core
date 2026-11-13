@@ -4,6 +4,7 @@ import { ChannelsModule } from "../channels/channels.module.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LifecycleHooksModule } from "../extensions/lifecycle-hooks.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
@@ -40,6 +41,7 @@ import { AdminUsageService } from "./usage.service.js";
     TitlesModule,
     UsageReportModule,
     EvalsModule,
+    LifecycleHooksModule,
     // the price table of the usage aggregate
     ModelsModule,
   ],

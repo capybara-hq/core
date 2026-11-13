@@ -50,6 +50,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../../helpers/runs.js";
+import { webCaller } from "../../helpers/step-context.js";
 import { runStatus } from "../../helpers/subagents.js";
 
 /**
@@ -172,6 +173,7 @@ async function parentRun(opts: { conv?: string; seq?: number; step?: number } = 
     agentVersion: 1,
     agent: normalizeStoredDefinition(v.definition),
     accountId: ownerId,
+    ...webCaller(ownerId),
     signal: new AbortController().signal,
   };
   return { conv, runId, ctx };
@@ -504,6 +506,7 @@ describe("sub-agent work owed in its transactions", () => {
         agent_id: agentId,
         account_id: ownerId,
         kind: "subagent",
+        source: "subagent",
         parent_conversation_id: root,
         subagent_type: "general-purpose",
         subagent_depth: 1,

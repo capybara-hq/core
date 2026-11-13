@@ -6,6 +6,8 @@ The full repository map and the package dependency rules. [AGENTS.md](../AGENTS.
 
 Terms (renamed 2026-10-24, see `docs/superpowers/specs/2026-10-22-package-ecosystem-design.md` §1): a **plugin** is the install and distribution unit (a bundle of an extension, connector templates and skills; the packages under `plugins/*` of `capybara-hq/plugins` and core's `plugins/model-fake`, npm `@capybara-hq/plugin-*`); an **extension** is the in-process code inside a plugin (`defineExtension`, `ctx`, the permission manifest, approval); an **extension point** is a versioned contract an extension provides or consumes (`channel@1`); the **catalog** is what a deployment has imported for orgs to install; a **marketplace** is a manifest listing importable plugins; "app" means only an external app calling the kernel over HTTP. Data locations keep their old names (`plugin_<name>` schemas, `plugins/<plugin>/<orgId>/` storage keys, `/plugin-ui`, `/plugins/<name>/…` routes).
 
+Extension points that feed the model: `context@1` (`packages/plugin-sdk/src/context.ts`) lets an extension add text to the model's context at run start; the kernel records it as a `plugin_context` event (`runtime/context/plugin-context.ts`, called by `runtime/plugin-context.service.ts`). Tools can be limited to conversation sources (`ToolSpec.sources`), and the lifecycle hooks `org.member_removed`, `agent.deleted` and `org.deleted` are delivered durably (`extensions/lifecycle-hooks.ts`).
+
 ## Repository map
 
 | Path | What it is |

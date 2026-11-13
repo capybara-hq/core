@@ -18,6 +18,7 @@ import { RunAbort } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
+import { PluginContextService } from "./plugin-context.service.js";
 import { ProvidersModule } from "./providers.js";
 import { EVAL_QUOTA, EVAL_QUOTA_PREFIX, OrgQuota, RUN_QUOTA, RUN_QUOTA_PREFIX } from "./quota.js";
 import { RunContextService } from "./run-context.service.js";
@@ -76,6 +77,7 @@ import { Waits } from "./waits.js";
     AgentLoops,
     RunSteps,
     RunContextService,
+    PluginContextService,
     RunWorker,
     // a finished background task wakes an idle conversation (background Bash spec §3)
     BackgroundWake,

@@ -420,7 +420,7 @@ describe("creating an agent from a template", () => {
 
     // pending connectors are model-invisible; SendMessage comes with Agent; Bash cannot run
     // without a sandbox provider here, so it is not offered (and not reported)
-    const resolved = await env.k.app.get(ToolRegistry).forAgent(env.orgId, d);
+    const resolved = await env.k.app.get(ToolRegistry).forAgent(env.orgId, { ...d, source: "web" });
     const keys = resolved.tools.map((t) => t.key);
     expect(keys).toEqual(
       expect.arrayContaining([

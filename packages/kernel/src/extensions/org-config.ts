@@ -196,6 +196,22 @@ function secretPaths(schema: z.ZodTypeAny): string[] {
 }
 
 /**
+ * An org's stored config of a plugin no longer matches its org schema (e.g. after a plugin upgrade):
+ * a known state, not a read error. The message names the plugin, the org and the failing paths,
+ * never the values.
+ */
+export class OrgConfigInvalidError extends Error {
+  constructor(
+    readonly plugin: string,
+    readonly orgId: string,
+    detail: string,
+  ) {
+    super(`plugin ${plugin}: stored organization config for org ${orgId} is invalid: ${detail}`);
+    this.name = "OrgConfigInvalidError";
+  }
+}
+
+/**
  * Org-level extension config: enablement and the `config.org` config stored per org.
  * The non-secret part is stored in `capybara.extension_org_configs.config`; each secret field is
  * encrypted separately in `capybara.secrets` (namespace `kernel`, key `plugin-config:<plugin>:<path>`),
@@ -603,7 +619,9 @@ export class OrgExtensionConfigs {
    * A required bootstrap plugin is enabled without a row (its stored config, or `{}`, is validated).
    * 无记录 → undefined；插件无 `config.org` 或已停用（`enabled=false`，不校验、不读密钥）时 `config` 为 null。
    * 配置行与密钥在同一个 `REPEATABLE READ` 只读事务里读取。
-   * 已存配置不再满足 schema（如插件升级后）→ 抛 Error，信息含插件名、组织 ID 与出错路径（不含值）。
+   * A stored config that no longer matches the schema (e.g. after a plugin upgrade) throws
+   * {@link OrgConfigInvalidError} (plugin, org ID and the failing paths, no values); other errors are
+   * read errors.
    */
   async get(
     orgId: string,
@@ -663,9 +681,7 @@ export class OrgExtensionConfigs {
       const detail = toIssues(r.error)
         .map((i) => `${i.path || "<root>"}: ${i.message}`)
         .join("; ");
-      throw new Error(
-        `plugin ${plugin}: stored organization config for org ${orgId} is invalid: ${detail}`,
-      );
+      throw new OrgConfigInvalidError(plugin, orgId, detail);
     }
     return { enabled: true, config: r.data };
   }

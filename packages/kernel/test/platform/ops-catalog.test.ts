@@ -158,6 +158,7 @@ describe("registration", () => {
       "plugins.import-git",
       "plugins.import-npm",
       "plugins.import-review",
+      "plugins.import-update-preview",
       "plugins.installs",
       "plugins.list",
       "plugins.owned-delete",
@@ -544,14 +545,19 @@ describe("connectors and extensions", () => {
       },
       visibility: "private",
     });
-    const me = (await run(
-      "platform.me",
-      {},
-      {
-        ...ctxOf(env.bossId),
-        agentId: agent.agent.id,
-      },
-    )) as { tools: string[] };
+    const ctx = { ...ctxOf(env.bossId), agentId: agent.agent.id };
+    // platform.me lists the tools of the run's conversation's source: a web conversation
+    await env.db
+      .insertInto("conversations")
+      .values({
+        id: ctx.conversationId,
+        org_id: ctx.orgId,
+        agent_id: ctx.agentId,
+        account_id: ctx.actorAccountId,
+        source: "web",
+      })
+      .execute();
+    const me = (await run("platform.me", {}, ctx)) as { tools: string[] };
     expect(me.tools).toEqual(expect.arrayContaining(["Platform", ...enabled]));
     expect(me.tools).not.toContain("Bash");
     expect((me as unknown as { disabledTools: unknown[] }).disabledTools).toEqual(

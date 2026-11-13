@@ -66,7 +66,8 @@ const SPEC: ToolSpec = {
     "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
     "test suite. The call returns at once with a task id and the command's output goes to a file " +
     "under .capybara/tasks in the workspace directory. Read the output with TaskOutput (or Read) and stop the " +
-    "task with TaskStop; you will be told when it finishes. You do not need to use '&' at the end " +
+    "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
+    "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
     "of the command when using this parameter. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +

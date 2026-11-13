@@ -1004,3 +1004,33 @@ Maintainer decision 2026-11-08: the admin 插件 → 市场 rows show icons, not
   the same way. Both icon routes are Platform exclusions (transport: image bytes).
 - **Web:** the admin and the workspace market rows' mark is `ObjectMark` with `image: icon` (the
   initial when null or when the image fails).
+
+## 17. Install and update: one wizard each (2026-11-13)
+
+Maintainer decision in acceptance (2026-11-13): getting a newer marketplace version of an installed
+plugin running took two actions (导入 vX, then 更新到 vX); that is one action now.
+
+- **Installed plugin, newer version:** the admin plugin list and detail show one primary 更新到 vX
+  ("Update to vX"; the marketplace tab too). It stages the version (any import prepare) and opens
+  one wizard at `/admin/plugins/import?staging=<id>`: 1. the import review (integrity, permissions
+  with additions marked, components, the Claude translation report), 2. the platform update preview
+  of the staged version (per-component changes, the extension's move, affected orgs, templates
+  needing config). One confirm applies both. There is no import alone for an installed plugin:
+  the marketplace tab offers it only newer versions as 更新到, and a version older than the
+  platform's is reached by the 版本 tab's row menu (更新到 / 回退到 an imported version, the plain
+  update preview).
+- **Kernel:** `GET /api/v1/admin/catalog/imports/:stagingId/update-preview` (the updater's diff
+  with the target read from the staging, `PlatformPluginUpdater.previewStaged`; nothing written;
+  not a live platform item -> 409 `plugin.upgrade_target_invalid`, reason `not_installed`;
+  Platform operation `plugins.import-update-preview`) and `POST …/imports/:stagingId/update
+  { reviewHash, diffHash }` (`PlatformImportUpdate`, human-only exclusion). The confirm holds the
+  item's update lock, recomputes the preview (stale -> 409 `plugin.upgrade_stale`), commits the
+  import without deploying its extension (the snapshot is written as reviewed), then runs the
+  platform update, which moves the extension with its rollback and writes the components in one
+  transaction. Cancelling before the confirm writes nothing (the staging row expires). An update
+  failing after the import leaves the platform and the extension where they were, puts the
+  previous approval back and answers 409 `plugin.imported_not_updated`; the version stays in the
+  catalog and the plugin page's 更新到 retries with the plain update.
+- **Uninstalled plugin:** 安装 ("Install") replaces 导入 / 引入 in the admin UI (buttons, the
+  wizard title 安装插件, toasts, inbox texts); the flow is unchanged (the review, the scope at
+  confirm). Data, API and route names keep `import`.

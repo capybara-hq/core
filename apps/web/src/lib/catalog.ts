@@ -1225,6 +1225,29 @@ export const confirmPluginImport = (
 export const getStagedImport = (stagingId: string) =>
   apiFetch<PluginPrepared>(`${admin}/imports/${enc(stagingId)}`);
 
+/**
+ * The platform update a staged new version of an installed platform plugin applies (the 更新到
+ * wizard's second step; nothing written). Not installed yet -> 409 `plugin.upgrade_target_invalid`.
+ */
+export const getStagedUpdatePreview = (stagingId: string) =>
+  apiFetch<PlatformUpdatePreview>(`${admin}/imports/${enc(stagingId)}/update-preview`);
+
+/** `POST /api/v1/admin/catalog/imports/:stagingId/update` (kernel `PlatformImportUpdateResult`). */
+export interface PlatformImportUpdateResult {
+  item: CatalogItem;
+  update: PlatformUpdateResult;
+}
+
+/**
+ * Imports the staged version and updates the platform plugin to it, with the review's
+ * `reviewHash` and the update preview's `diffHash`. 409 `plugin.imported_not_updated`: the version
+ * was imported but the update failed (the platform stays on its version).
+ */
+export const confirmImportUpdate = (
+  stagingId: string,
+  body: { reviewHash: string; diffHash: string },
+) => apiFetch<PlatformImportUpdateResult>(`${admin}/imports/${enc(stagingId)}/update`, post(body));
+
 /** The import page of a staged import (it loads the review with {@link getStagedImport}). */
 export const importPageHref = (stagingId: string) =>
   `/admin/plugins/import?staging=${enc(stagingId)}`;

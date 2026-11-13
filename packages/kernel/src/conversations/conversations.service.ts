@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ConversationSource } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
@@ -330,6 +331,15 @@ export interface InternalMessageOptions {
   timeZoneOverride?: string;
 }
 
+/** Options of a conversation created by a kernel caller (never an HTTP body). */
+export interface NewConversationOptions {
+  /**
+   * Where it comes from (memory plugin spec §6.2), fixed at creation. Required: a channel or group
+   * conversation that fell back to `web` would be offered what only the web and DMs may see.
+   */
+  source: ConversationSource;
+}
+
 interface UsageRow {
   input_tokens: string;
   output_tokens: string;
@@ -398,13 +408,15 @@ export class ConversationsService {
    * Creates an empty conversation bound to its device (`pick`, see
    * {@link ConversationDevices.forNew}); an agent the account cannot use →
    * `agent.not_found`, a device it may not use → `device.not_found` /
-   * `device.unavailable`, and nothing is created.
+   * `device.unavailable`, and nothing is created. `opts.source` records where the conversation
+   * comes from.
    */
   async create(
     orgId: string,
     accountId: string,
     agentId: string,
     pick: NewConversationDevice = {},
+    opts: NewConversationOptions,
   ): Promise<ConversationView> {
     await this.agents.get(orgId, agentId, accountId);
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
@@ -416,6 +428,7 @@ export class ConversationsService {
         agent_id: agentId,
         account_id: accountId,
         device_id: deviceId,
+        source: opts.source,
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -430,8 +443,8 @@ export class ConversationsService {
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
    * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
    * the message when the send switched), so a client can seed the new conversation's log whole.
-   * `internal` (kernel callers only): a scheduled task's marker, which also sets
-   * `conversations.scheduled_task_id`, and its zone override.
+   * `internal`: the conversation's source and, for kernel callers only, a scheduled task's marker,
+   * which also sets `conversations.scheduled_task_id`, and its zone override.
    */
   async createWithMessage(
     orgId: string,
@@ -439,7 +452,7 @@ export class ConversationsService {
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
     pick: NewConversationDevice = {},
-    internal: InternalMessageOptions = {},
+    internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -488,7 +501,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
-    internal: InternalMessageOptions,
+    internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
     const row = await this.db
@@ -501,6 +514,7 @@ export class ConversationsService {
         device_id: conv.deviceId,
         create_request_id: input.clientMessageId,
         scheduled_task_id: internal.schedule?.taskId ?? null,
+        source: internal.source,
       })
       .onConflict((oc) =>
         oc

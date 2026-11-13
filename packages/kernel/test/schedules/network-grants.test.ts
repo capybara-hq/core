@@ -47,6 +47,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { webCaller } from "../helpers/step-context.js";
 import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
 
 /**
@@ -374,6 +375,7 @@ async function curlStep(
     agentVersion: 1,
     agent,
     accountId: s.accountId,
+    ...webCaller(s.accountId),
     signal: new AbortController().signal,
     unattended: {
       taskId,
