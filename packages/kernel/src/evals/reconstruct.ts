@@ -25,7 +25,7 @@ import {
   planMedia,
   type RequestTool,
 } from "../runtime/context/build.js";
-import { applyFit, type FitPlan, planFit } from "../runtime/context/fit.js";
+import { applyFit, clampOutput, type FitPlan, planFit } from "../runtime/context/fit.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
@@ -53,12 +53,17 @@ const DEFAULT_RESERVE_TOKENS = COMPACTION_SETTINGS.parse({}).reserveTokens;
 /** Two hard-fit plans trim the same messages and blocks (the recorded plan may be absent). */
 function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolean {
   if (a === null || a === undefined || b === undefined) return (a ?? undefined) === b;
-  if (a.droppedSeqs.length !== b.droppedSeqs.length) return false;
-  if (a.droppedSeqs.some((x, i) => x !== b.droppedSeqs[i])) return false;
+  if (a.droppedMessageIndexes.length !== b.droppedMessageIndexes.length) return false;
+  if (a.droppedMessageIndexes.some((x, i) => x !== b.droppedMessageIndexes[i])) return false;
   if (a.truncated.length !== b.truncated.length) return false;
   return a.truncated.every((t, i) => {
     const o = b.truncated[i];
-    return o !== undefined && t.seq === o.seq && t.block === o.block && t.note === o.note;
+    return (
+      o !== undefined &&
+      t.messageIndex === o.messageIndex &&
+      t.block === o.block &&
+      t.note === o.note
+    );
   });
 }
 
@@ -366,10 +371,16 @@ export function reconstructRequest(
   const { request, meta, mediaTokens } = built;
 
   if (!baseline) {
-    // The hard fit guard against the candidate's window (spec §4.9): the candidate applies the fit
-    // it would have used, and a different plan than the recorded one is `context_fit`.
+    // The hard fit guard against the candidate's window (spec §4.9): clamp the output cap and the
+    // reserve to that window, apply the fit the candidate would have used, and report
+    // `context_fit` when the plan differs from the recorded one.
     const reserve = opts.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
     const estimate = estimateTokens(request.messages, request.system, request.tools, mediaTokens);
+    request.maxOutputTokens = clampOutput(
+      opts.model.contextWindow,
+      request.maxOutputTokens,
+      estimate,
+    );
     const recomputed = planFit({
       events: inputEvents(all, call),
       request,

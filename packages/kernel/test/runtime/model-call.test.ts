@@ -166,7 +166,11 @@ beforeAll(async () => {
     config: {
       get: () => ({ ...baseConfig, runtime: { ...baseConfig.runtime, ...runtimeOverrides } }),
     },
-    compactionSettings: { resolve: async () => COMPACTION_SETTINGS.parse({}) },
+    // a zero reserve: the small-window test models cannot hold the default 8000 alongside their
+    // output cap, and a test that needs the reserve sets its own below
+    compactionSettings: {
+      resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
+    },
     tools: k.app.get(ToolRegistry),
     log: silent,
   };
@@ -759,29 +763,49 @@ describe("runModelStep", () => {
     /** 每条 ~400 个 ASCII 字符 ≈ 100 token。 */
     const filler = (n: number) => `turn ${n} `.padEnd(400, "x");
 
-    it("超过阈值 → 先写 compaction_summary，再写 model_call（summarySeq 指向摘要）；下一步不再压缩", async () => {
-      for (let i = 0; i < 8; i++) {
-        await say(filler(i));
-        await answer(filler(i));
+    /** Run `fn` with the given compaction settings in effect (restored afterwards). */
+    const withSettings = async (
+      over: Partial<ReturnType<typeof COMPACTION_SETTINGS.parse>>,
+      fn: () => Promise<void>,
+    ): Promise<void> => {
+      const real = deps.compactionSettings;
+      deps.compactionSettings = {
+        resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), ...over }),
+      };
+      try {
+        await fn();
+      } finally {
+        deps.compactionSettings = real;
       }
-      await say("echo:after compaction");
-      const agent = agentWith({ model: { provider: "model-fake", model: "fake-small" } });
-      const r = await step({ agent });
-      expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
+    };
 
-      const events = await all();
-      const summary = events.find((e) => e.type === "compaction_summary");
-      const call = events.find((e) => e.type === "model_call");
-      expect(summary).toBeDefined();
-      expect(call).toBeDefined();
-      expect((summary as ConversationEvent).seq).toBeLessThan((call as ConversationEvent).seq);
-      expect(
-        ((call as ConversationEvent).payload as EventPayload<"model_call">).request.summarySeq,
-      ).toBe(summary?.seq);
+    it("超过阈值 → 先写 compaction_summary，再写 model_call（summarySeq 指向摘要）；下一步不再压缩", async () => {
+      // fake-small's 2000-token window cannot hold the model's 4096 output cap and the default
+      // 8000 reserve: a zero reserve keeps the target reachable (the hard line still arms)
+      await withSettings({ reserveTokens: 0 }, async () => {
+        for (let i = 0; i < 8; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("echo:after compaction");
+        const agent = agentWith({ model: { provider: "model-fake", model: "fake-small" } });
+        const r = await step({ agent });
+        expect(r.content).toEqual([{ type: "text", text: "after compaction" }]);
 
-      await step({ agent, step: 2 });
-      expect(await ofType("compaction_summary")).toHaveLength(1);
-      expect(await ofType("model_call")).toHaveLength(2);
+        const events = await all();
+        const summary = events.find((e) => e.type === "compaction_summary");
+        const call = events.find((e) => e.type === "model_call");
+        expect(summary).toBeDefined();
+        expect(call).toBeDefined();
+        expect((summary as ConversationEvent).seq).toBeLessThan((call as ConversationEvent).seq);
+        expect(
+          ((call as ConversationEvent).payload as EventPayload<"model_call">).request.summarySeq,
+        ).toBe(summary?.seq);
+
+        await step({ agent, step: 2 });
+        expect(await ofType("compaction_summary")).toHaveLength(1);
+        expect(await ofType("model_call")).toHaveLength(2);
+      });
     });
 
     it("校正按总输入（未缓存 + 缓存读 + 缓存写）计算：大量缓存命中时仍会触发压缩", async () => {
@@ -800,20 +824,50 @@ describe("runModelStep", () => {
         }),
       );
       const agent = agentWith({ model: { provider: "stub", model: "cached" } });
-      await say("hi");
-      await step({ agent });
-      expect(await ofType("compaction_summary")).toHaveLength(0);
+      await withSettings({ reserveTokens: 0 }, async () => {
+        await say("hi");
+        await step({ agent });
+        expect(await ofType("compaction_summary")).toHaveLength(0);
 
-      for (let i = 0; i < 8; i++) {
-        await say(filler(i));
-        await answer(filler(i));
-      }
-      await say("go");
-      runId = randomUUID();
-      const r = await step({ agent });
-      expect(r.content).toEqual([{ type: "text", text: "answer" }]);
-      expect(await ofType("compaction_summary")).toHaveLength(1);
-      expect(await ofType("compaction_failed")).toHaveLength(0);
+        for (let i = 0; i < 8; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+        await say("go");
+        runId = randomUUID();
+        const r = await step({ agent });
+        expect(r.content).toEqual([{ type: "text", text: "answer" }]);
+        expect(await ofType("compaction_summary")).toHaveLength(1);
+        expect(await ofType("compaction_failed")).toHaveLength(0);
+      });
+    });
+
+    it("hard fit guard: a small window clamps the output cap, then trims, without overflowing", async () => {
+      // W 2000, requested O 4096, R 500: the cap is clamped to the room left after the input, the
+      // reserve to what the clamp leaves, and the oversized latest turn is truncated
+      const model = stubInfo("capped", { contextWindow: 2000, maxOutputTokens: 4096 });
+      stubImpl = stub([model], () => "ok");
+      const agent = agentWith({ model: { provider: "stub", model: "capped" } });
+      await withSettings({ enabled: false, reserveTokens: 500 }, async () => {
+        await say("x".repeat(4000));
+        const r = await step({ agent });
+        expect(r.content).toEqual([{ type: "text", text: "ok" }]);
+        const sent = (stubImpl as Stub).calls.at(-1) as ModelRequest;
+        const input = estimateTokens(sent.messages, sent.system, sent.tools);
+        expect(sent.maxOutputTokens).toBeGreaterThan(0);
+        expect(sent.maxOutputTokens).toBeLessThan(4096);
+        expect(input + sent.maxOutputTokens).toBeLessThanOrEqual(2000);
+        // the clamped cap is what was recorded, and the trim is in the log
+        const [call] = await ofType("model_call");
+        expect(call?.payload.request.maxOutputTokens).toBe(sent.maxOutputTokens);
+        expect(call?.payload.request.fit?.truncated).toEqual([
+          {
+            messageIndex: 0,
+            block: 0,
+            note: "[content truncated to fit the model's context window]",
+          },
+        ]);
+      });
     });
 
     it("hard fit guard: a request over W - O - R drops the oldest assistant text and records the plan", async () => {
@@ -822,15 +876,7 @@ describe("runModelStep", () => {
       const model = stubInfo("fit", { contextWindow: 5200, maxOutputTokens: 1000 });
       stubImpl = stub([model], () => "ok");
       const agent = agentWith({ model: { provider: "stub", model: "fit" } });
-      const real = deps.compactionSettings;
-      deps.compactionSettings = {
-        resolve: async () => ({
-          ...COMPACTION_SETTINGS.parse({}),
-          enabled: false,
-          reserveTokens: 2000,
-        }),
-      };
-      try {
+      await withSettings({ enabled: false, reserveTokens: 2000 }, async () => {
         await say("old");
         await answer("x".repeat(9000));
         await say("latest");
@@ -841,30 +887,26 @@ describe("runModelStep", () => {
         expect(JSON.stringify(sent.messages)).not.toContain("xxxxxxxxxx");
         // the plan and the post-fit estimate are in the log (the request replays from them)
         const [call] = await ofType("model_call");
-        expect(call?.payload.request.fit).toEqual({ droppedSeqs: [1], truncated: [] });
+        expect(call?.payload.request.fit).toEqual({ droppedMessageIndexes: [1], truncated: [] });
         expect(call?.payload.request.estimatedInputTokens).toBeLessThan(500);
-      } finally {
-        deps.compactionSettings = real;
-      }
+      });
     });
 
     it("hard fit guard: system prompt and latest turn over the target -> run.context_too_large before any call", async () => {
-      const model = stubInfo("tiny", { contextWindow: 1050, maxOutputTokens: 1000 });
+      // a 100-token window and a system prompt longer than it: neither the latest turn nor the
+      // system text can be trimmed under the target
+      const model = stubInfo("tiny", { contextWindow: 100, maxOutputTokens: 1000 });
       stubImpl = stub([model], () => "ok");
-      const agent = agentWith({ model: { provider: "stub", model: "tiny" } });
-      const real = deps.compactionSettings;
-      deps.compactionSettings = {
-        resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
-      };
-      try {
+      const agent = agentWith({
+        instructions: "x".repeat(400),
+        model: { provider: "stub", model: "tiny" },
+      });
+      await withSettings({ reserveTokens: 0 }, async () => {
         await say("hi");
-        // target = 1050 - 1000 - 0 = 50: the system prompt alone is larger and cannot be trimmed
         expect(await runErrorCode(step({ agent }))).toBe("run.context_too_large");
         expect((stubImpl as Stub).calls).toHaveLength(0);
         expect(await ofType("model_call")).toHaveLength(0);
-      } finally {
-        deps.compactionSettings = real;
-      }
+      });
     });
 
     it("a sub-agent's step and compaction usage both add to the parent run's counter, once (§8.3)", async () => {
@@ -888,33 +930,35 @@ describe("runModelStep", () => {
         sink: () => {},
         parentRunId,
       };
-      await runModelStep(deps, { ...input, source: "web" });
-      const usage = await ofType("usage");
-      expect(usage.map((u) => u.payload.purpose ?? "step")).toEqual(["compaction", "step"]);
-      const sum = usage.reduce(
-        (n, u) =>
-          n +
-          u.payload.inputTokens +
-          u.payload.outputTokens +
-          u.payload.cacheReadTokens +
-          u.payload.cacheWriteTokens,
-        0,
-      );
-      const counter = async () =>
-        Number(
-          (
-            await db
-              .selectFrom("runs")
-              .select("subagent_tokens_used")
-              .where("id", "=", parentRunId)
-              .executeTakeFirstOrThrow()
-          ).subagent_tokens_used,
+      await withSettings({ reserveTokens: 0 }, async () => {
+        await runModelStep(deps, { ...input, source: "web" });
+        const usage = await ofType("usage");
+        expect(usage.map((u) => u.payload.purpose ?? "step")).toEqual(["compaction", "step"]);
+        const sum = usage.reduce(
+          (n, u) =>
+            n +
+            u.payload.inputTokens +
+            u.payload.outputTokens +
+            u.payload.cacheReadTokens +
+            u.payload.cacheWriteTokens,
+          0,
         );
-      expect(sum).toBeGreaterThan(0);
-      expect(await counter()).toBe(sum);
-      // the same step again (a resume after a crash) hits the log and counts nothing more
-      await runModelStep(deps, { ...input, source: "web" });
-      expect(await counter()).toBe(sum);
+        const counter = async () =>
+          Number(
+            (
+              await db
+                .selectFrom("runs")
+                .select("subagent_tokens_used")
+                .where("id", "=", parentRunId)
+                .executeTakeFirstOrThrow()
+            ).subagent_tokens_used,
+          );
+        expect(sum).toBeGreaterThan(0);
+        expect(await counter()).toBe(sum);
+        // the same step again (a resume after a crash) hits the log and counts nothing more
+        await runModelStep(deps, { ...input, source: "web" });
+        expect(await counter()).toBe(sum);
+      });
     });
 
     it("a sub-agent whose compaction call uses up the budget makes no step request (review M5)", async () => {
@@ -970,28 +1014,32 @@ describe("runModelStep", () => {
       }
       await say("go");
       const agent = agentWith({ model: { provider: "stub", model: "small" } });
-      const r = await step({ agent });
-      expect(r.content).toEqual([{ type: "text", text: "answer" }]);
-      const failed = await ofType("compaction_failed");
-      expect(failed.map((f) => f.payload.attempt)).toEqual([1]);
-      expect(await ofType("compaction_summary")).toHaveLength(0);
-      const compactionCalls = () =>
-        s.calls.filter((c) => c.system.some((x) => x.text.includes(COMPACTION_MARKER))).length;
-      expect(compactionCalls()).toBe(1);
+      // the default 8000 reserve (the stub harness uses 0): a 10k window with a 1k cap keeps the
+      // proactive trigger below the hard line, where the backoff applies
+      await withSettings({ reserveTokens: 8000 }, async () => {
+        const r = await step({ agent });
+        expect(r.content).toEqual([{ type: "text", text: "answer" }]);
+        const failed = await ofType("compaction_failed");
+        expect(failed.map((f) => f.payload.attempt)).toEqual([1]);
+        expect(await ofType("compaction_summary")).toHaveLength(0);
+        const compactionCalls = () =>
+          s.calls.filter((c) => c.system.some((x) => x.text.includes(COMPACTION_MARKER))).length;
+        expect(compactionCalls()).toBe(1);
 
-      // 下一轮（失败后新增 1 个 user 轮次 < 2^1）：跳过压缩。
-      await say("again");
-      runId = randomUUID();
-      await step({ agent });
-      expect(await ofType("compaction_failed")).toHaveLength(1);
-      expect(compactionCalls()).toBe(1);
+        // 下一轮（失败后新增 1 个 user 轮次 < 2^1）：跳过压缩。
+        await say("again");
+        runId = randomUUID();
+        await step({ agent });
+        expect(await ofType("compaction_failed")).toHaveLength(1);
+        expect(compactionCalls()).toBe(1);
 
-      // 再一轮（新增 2 个 user 轮次）：再次尝试并失败，attempt 递增为 2。
-      await say("third");
-      runId = randomUUID();
-      await step({ agent });
-      expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
-      expect(compactionCalls()).toBe(2);
+        // 再一轮（新增 2 个 user 轮次）：再次尝试并失败，attempt 递增为 2。
+        await say("third");
+        runId = randomUUID();
+        await step({ agent });
+        expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
+        expect(compactionCalls()).toBe(2);
+      });
     });
 
     it("the hard line compacts even with enabled: false, and proactive compaction stays off below it (spec §4.1)", async () => {
@@ -1002,8 +1050,13 @@ describe("runModelStep", () => {
       );
       const agent = agentWith({ model: { provider: "stub", model: "tight" } });
       const original = deps.compactionSettings;
+      // a zero reserve: a 6000-token window cannot hold the output cap plus the default 8000
       deps.compactionSettings = {
-        resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), enabled: false }),
+        resolve: async () => ({
+          ...COMPACTION_SETTINGS.parse({}),
+          enabled: false,
+          reserveTokens: 0,
+        }),
       };
       try {
         // 15 turns ≈ 3000 tokens, below the hard line (6000 - 1000): proactive compaction is off
@@ -1047,7 +1100,10 @@ describe("runModelStep", () => {
         },
       ]);
       await say("go");
-      await step({ agent });
+      // a zero reserve: a 6000-token window cannot hold the output cap plus the default 8000
+      await withSettings({ reserveTokens: 0 }, async () => {
+        await step({ agent });
+      });
       // the hard line bypasses the backoff: another failure is written (attempt 2), not skipped
       expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
     });

@@ -163,10 +163,14 @@ beforeAll(async () => {
     { overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }] },
   );
   // the compaction settings this fixture used to set through `runtime.keepRecentTurns` (context
-  // compaction spec §4.8 moved them to the deployment settings, read live per model step)
+  // compaction spec §4.8 moved them to the deployment settings, read live per model step). The
+  // zero reserve keeps the hard fit guard's target reachable for the small-window fake model
   await db
     .insertInto("deployment_settings")
-    .values({ key: "compaction", value: JSON.stringify({ keepRecentTurns: 1 }) })
+    .values({
+      key: "compaction",
+      value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }),
+    })
     .execute();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
@@ -1604,6 +1608,9 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       const opts = {
         model: info,
         mediaBudgetBytes: k.app.get(KernelConfigService).get().attachments.requestMediaBytes,
+        // the run's reserve (the fixture's deployment setting): the candidate's fit recomputes
+        // against the same target, so it matches the recorded request
+        reserveTokens: 0,
       };
       const out = reconstructRequest(snap, c.seq, opts);
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
@@ -1810,7 +1817,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       const fit = calls[2]?.payload.request.fit;
       expect(fit).toBeDefined();
       // the oldest assistant text is dropped
-      expect(fit?.droppedSeqs.length).toBeGreaterThan(0);
+      expect(fit?.droppedMessageIndexes.length).toBeGreaterThan(0);
       // the provider received the trimmed request, not the huge replies
       expect(JSON.stringify(sent[2])).not.toContain("word6000");
       expect(JSON.stringify(sent[2])).toContain("echo:after");
@@ -1835,7 +1842,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     } finally {
       await db
         .updateTable("deployment_settings")
-        .set({ value: JSON.stringify({ keepRecentTurns: 1 }) })
+        .set({ value: JSON.stringify({ keepRecentTurns: 1, reserveTokens: 0 }) })
         .where("key", "=", "compaction")
         .execute();
     }

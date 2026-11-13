@@ -3,33 +3,59 @@ import type { ConversationEvent } from "../../conversations/events.js";
 import { estimateTokens } from "./tokens.js";
 
 /**
- * The hard fit guard (context compaction spec §4.3): a request whose input is over `W - O - R` is
+ * The hard fit guard (context compaction spec §4.3): a request whose input is over the fit target is
  * trimmed with a deterministic plan, recorded in `model_call.request.fit`, and replayed by applying
  * the same plan to the rebuilt request (byte-for-byte).
  *
- * A plan names positions in the **assembled request**: `droppedSeqs` are message indexes, and a
- * `truncated` entry is the block index inside that message. Message indexes keep `applyFit` a pure
- * function of the request alone; the builder and the replay path assemble the same messages from the
- * same log, so the same plan applies to both. A message is never split from its tool call/result
- * partner.
+ * A plan names **indexes into the assembled request's message list**: `droppedMessageIndexes` are
+ * message positions, and a `truncated` entry is the block index inside that message. Indexes keep
+ * `applyFit` a pure function of the request alone; the builder and the replay path assemble the same
+ * messages from the same log, so the same plan applies to both. A message is never split from its
+ * tool call/result partner.
  */
 export interface FitPlan {
-  /** Message indexes of the assembled request to drop, in the order they were chosen. */
-  droppedSeqs: number[];
+  /** Indexes into the assembled request's messages, in the order they were chosen. */
+  droppedMessageIndexes: number[];
   /** Text / tool_result blocks of the kept tail replaced by the note. */
-  truncated: { seq: number; block: number; note: string }[];
+  truncated: { messageIndex: number; block: number; note: string }[];
 }
 
 /** The note an oversized block carries once truncated (model-visible, English; spec §4.3). */
 export const FIT_TRUNCATION_NOTE = "[content truncated to fit the model's context window]";
 
-/** The input room left below the window: the output cap and the safety reserve (spec §4.3). */
-export function fitTarget(
+/**
+ * The output cap actually sent (`O'`, spec §4.3 point 2): the configured cap, lowered so the
+ * provider-visible total (`input + O'`) fits the window. At least one output token is always left.
+ * When the window is smaller than the requested cap this is what keeps the plan's target reachable.
+ */
+export function clampOutput(
   contextWindow: number,
   maxOutputTokens: number,
+  estimate: number,
+): number {
+  return Math.max(1, Math.min(maxOutputTokens, Math.max(1, contextWindow - estimate)));
+}
+
+/**
+ * The reserve actually kept (`R_eff`, spec §4.3 point 2): the configured reserve, reduced to what
+ * the clamped output leaves below the window. A reserve larger than the window is sacrificed
+ * (the hard bound is what must hold), so the target keeps at least one token of room.
+ */
+export function effectiveReserve(
+  contextWindow: number,
+  clampedOutput: number,
   reserveTokens: number,
 ): number {
-  return contextWindow - maxOutputTokens - reserveTokens;
+  return Math.min(reserveTokens, Math.max(0, contextWindow - clampedOutput - 1));
+}
+
+/** The input room left below the window: `W - O' - R_eff` with the clamped output and reserve. */
+export function fitTarget(
+  contextWindow: number,
+  clampedOutput: number,
+  reserveTokens: number,
+): number {
+  return contextWindow - clampedOutput - reserveTokens;
 }
 
 export interface PlanFitInput {
@@ -39,9 +65,9 @@ export interface PlanFitInput {
   request: ModelRequest;
   /** The model the request is for: its context window is the hard bound. */
   model: ModelInfo;
-  /** `O`: the request's output cap (`ModelRequest.maxOutputTokens`). */
+  /** `O`: the requested output cap (`ModelRequest.maxOutputTokens`, before the clamp). */
   maxOutputTokens: number;
-  /** `R`: the safety reserve in effect for the run's organization. */
+  /** `R`: the safety reserve in effect for the run's organization, before the clamp. */
   reserveTokens: number;
   /** The request's input-token estimate (uncalibrated, as recorded). */
   estimate: number;
@@ -78,21 +104,23 @@ const truncatable = (b: ContentBlock): boolean =>
   (b.type === "tool_result" && b.content !== FIT_TRUNCATION_NOTE);
 
 /**
- * The deterministic fit plan for a request over `window - maxOutputTokens - reserveTokens`, or
- * null when it already fits (or the target is not positive: an output cap and reserve larger than
- * the window cannot be honoured, and the provider's own rejection is the backstop, spec §4.3 point 5).
+ * The deterministic fit plan for a request over `W - O' - R_eff` (the output cap and reserve first
+ * clamped to the window, {@link clampOutput} / {@link effectiveReserve}), or null when it already
+ * fits. A plan that cannot reach the target even after dropping every droppable message and
+ * truncating every kept text / `tool_result` block is still returned: the caller raises
+ * `run.context_too_large` before any provider call.
  *
  * Drops, in this order, every droppable message before the latest user turn until the estimate is
  * at or below the target: complete tool pairs first (a tool call with the results message that
  * follows it), then assistant text, then complete older user turns. Never a pair's half, never the
  * summary. If that is not enough, it truncates the kept tail's largest text / `tool_result` blocks
- * (replacing the content with {@link FIT_TRUNCATION_NOTE}). It may still return an over-target plan
- * (a system prompt, tools and latest turn that cannot fit): the caller raises
- * `run.context_too_large` before any provider call.
+ * (replacing the content with {@link FIT_TRUNCATION_NOTE}).
  */
 export function planFit(input: PlanFitInput): FitPlan | null {
   const { request, model, maxOutputTokens, reserveTokens, estimate } = input;
-  const target = fitTarget(model.contextWindow, maxOutputTokens, reserveTokens);
+  const output = clampOutput(model.contextWindow, maxOutputTokens, estimate);
+  const reserve = effectiveReserve(model.contextWindow, output, reserveTokens);
+  const target = fitTarget(model.contextWindow, output, reserve);
   if (target <= 0 || estimate <= target) return null;
 
   const messages = request.messages;
@@ -105,7 +133,7 @@ export function planFit(input: PlanFitInput): FitPlan | null {
     return i < keepFrom && m !== undefined && m.role !== "system" && !isSummary(m);
   };
 
-  const plan: FitPlan = { droppedSeqs: [], truncated: [] };
+  const plan: FitPlan = { droppedMessageIndexes: [], truncated: [] };
   const dropped = new Set<number>();
   let current = estimate;
   const drop = (indexes: readonly number[]): void => {
@@ -114,7 +142,7 @@ export function planFit(input: PlanFitInput): FitPlan | null {
       const m = messages[i];
       if (m === undefined) continue;
       dropped.add(i);
-      plan.droppedSeqs.push(i);
+      plan.droppedMessageIndexes.push(i);
       current -= messageTokens(m);
     }
   };
@@ -147,21 +175,27 @@ export function planFit(input: PlanFitInput): FitPlan | null {
 
   // the latest turn alone is too large: replace its largest text / tool_result blocks (and those of
   // the kept tail) with the note, largest first, ties by position
-  const candidates: { seq: number; block: number; tokens: number }[] = [];
+  const candidates: { messageIndex: number; block: number; tokens: number }[] = [];
   for (let i = keepFrom; i < messages.length; i++) {
     const m = messages[i];
     if (m === undefined || m.role === "system" || isSummary(m)) continue;
     m.content.forEach((b, block) => {
       if (!truncatable(b)) return;
       const tokens = blockTokens(b);
-      if (tokens > NOTE_TOKENS) candidates.push({ seq: i, block, tokens });
+      if (tokens > NOTE_TOKENS) candidates.push({ messageIndex: i, block, tokens });
     });
   }
-  candidates.sort((a, b) => b.tokens - a.tokens || a.seq - b.seq || a.block - b.block);
+  candidates.sort(
+    (a, b) => b.tokens - a.tokens || a.messageIndex - b.messageIndex || a.block - b.block,
+  );
   for (const c of candidates) {
     if (current <= target) break;
     current -= c.tokens - NOTE_TOKENS;
-    plan.truncated.push({ seq: c.seq, block: c.block, note: FIT_TRUNCATION_NOTE });
+    plan.truncated.push({
+      messageIndex: c.messageIndex,
+      block: c.block,
+      note: FIT_TRUNCATION_NOTE,
+    });
   }
   return plan;
 }
@@ -172,12 +206,12 @@ export function planFit(input: PlanFitInput): FitPlan | null {
  * runtime and the replay path (rebuilding the same messages from the log) produce the same request.
  */
 export function applyFit(request: ModelRequest, plan: FitPlan): ModelRequest {
-  const dropped = new Set(plan.droppedSeqs);
+  const dropped = new Set(plan.droppedMessageIndexes);
   const truncated = new Map<number, Map<number, string>>();
   for (const t of plan.truncated) {
-    const byBlock = truncated.get(t.seq) ?? new Map<number, string>();
+    const byBlock = truncated.get(t.messageIndex) ?? new Map<number, string>();
     byBlock.set(t.block, t.note);
-    truncated.set(t.seq, byBlock);
+    truncated.set(t.messageIndex, byBlock);
   }
   const messages: ModelMessage[] = [];
   request.messages.forEach((m, i) => {
@@ -208,12 +242,12 @@ export function applyFit(request: ModelRequest, plan: FitPlan): ModelRequest {
  */
 export function estimateAfterFit(request: ModelRequest, estimate: number, plan: FitPlan): number {
   let out = estimate;
-  for (const i of plan.droppedSeqs) {
+  for (const i of plan.droppedMessageIndexes) {
     const m = request.messages[i];
     if (m !== undefined) out -= messageTokens(m);
   }
   for (const t of plan.truncated) {
-    const m = request.messages[t.seq];
+    const m = request.messages[t.messageIndex];
     if (m === undefined || m.role === "system") continue;
     const b = m.content[t.block];
     if (b === undefined) continue;

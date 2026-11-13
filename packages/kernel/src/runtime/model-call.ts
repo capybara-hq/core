@@ -47,7 +47,15 @@ import {
   compactionPlan,
   shouldCompact,
 } from "./context/compaction.js";
-import { applyFit, estimateAfterFit, type FitPlan, fitTarget, planFit } from "./context/fit.js";
+import {
+  applyFit,
+  clampOutput,
+  effectiveReserve,
+  estimateAfterFit,
+  type FitPlan,
+  fitTarget,
+  planFit,
+} from "./context/fit.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
@@ -1220,21 +1228,24 @@ async function ladder(
         tools,
         wrapUp,
       );
-      // the hard fit guard (context compaction spec §4.3): after compaction, a request over
-      // W - O - R is trimmed deterministically. The plan is recorded and replayed byte-for-byte;
-      // a request the system prompt, tools and latest turn cannot bring under the target fails
-      // before any provider call.
-      const target = fitTarget(
+      // the hard fit guard (context compaction spec §4.3): the output cap is first clamped to what
+      // the window leaves after the input, the reserve to what the clamped cap leaves, and a request
+      // over the resulting target is trimmed deterministically. The plan is recorded and replayed
+      // byte-for-byte; a request the system prompt, tools and latest turn cannot bring under the
+      // target fails before any provider call.
+      request.maxOutputTokens = clampOutput(info.contextWindow, request.maxOutputTokens, estimate);
+      const reserve = effectiveReserve(
         info.contextWindow,
         request.maxOutputTokens,
         compaction.reserveTokens,
       );
+      const target = fitTarget(info.contextWindow, request.maxOutputTokens, reserve);
       const planned = planFit({
         events: evs,
         request,
         model: info,
         maxOutputTokens: request.maxOutputTokens,
-        reserveTokens: compaction.reserveTokens,
+        reserveTokens: reserve,
         estimate,
       });
       let sentRequest = request;
