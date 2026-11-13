@@ -9,3 +9,7 @@ shows the platform's switch with where it comes from, `/settings/sandbox` holds 
 and the cloud devices' sandbox-mode network, and a device page shows its mode, the 自动 / 沙箱
 switch and its network (sandbox mode only). A command the review holds appears as its own approval
 card in the conversation and in the inbox.
+
+Migration 0130 drops `devices.tier` and the `sandboxTiers` setting, so this is not a rolling update:
+on a deployment with more than one replica, drain or stop the old `api`, `worker`, `gateway` and
+`web` replicas before running `capybara migrate`.

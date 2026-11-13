@@ -11,4 +11,6 @@ and fails closed; an unattended run never waits for one. The Platform tool and p
 tokens may only narrow auto mode and the cloud network, never widen them, and
 `POST /devices/:id/policy` stays human-only and may only narrow to `sandbox`. New errors
 `sandbox.open_network_refused`, `device.auto_mode_not_allowed` and `device.mode_on_device`;
-`sandbox.tier_refused` is gone.
+`sandbox.tier_refused` is gone. Migration 0130 drops `devices.tier` and the `sandboxTiers` setting,
+so this step is not a rolling update: a deployment that runs more than one replica must drain or
+stop the old replicas before it applies the migration set.

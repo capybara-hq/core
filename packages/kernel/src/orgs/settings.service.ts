@@ -59,6 +59,8 @@ export const ORG_SANDBOX_ALLOW_HOSTS_MAX = 200;
  * private and cloud metadata addresses are blocked outside the container) or `allowlist` with
  * `allowHosts`. `allowHosts` given **replaces** the deployment's list (the org may drop the presets
  * and add its own hosts); omitted, the deployment's `sandbox.limits.allowHosts` applies.
+ * The host list is also the ceiling a local device in sandbox mode reaches (the device intersects
+ * it with its own list), so narrowing it limits local sandbox devices too.
  */
 export const CloudNetworkSettingSchema = z
   .object({

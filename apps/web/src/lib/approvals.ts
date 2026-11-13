@@ -62,7 +62,7 @@ export interface CommandAskDetail {
 export interface Approval {
   id: string;
   /** `network`: a device refused a command network hosts; `command`: a command review ask. */
-  kind?: "tool" | "network" | "command";
+  kind?: "tool" | "network" | "git" | "command";
   /** A network ask's detail; null for other approvals. */
   detail?: NetworkApprovalDetail | null;
   /** A command review ask's detail; null for other approvals. */

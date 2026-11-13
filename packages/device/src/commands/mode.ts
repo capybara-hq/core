@@ -27,10 +27,18 @@ export const AUTO_MODE_LOGIN_LINE =
   "New logins start in auto mode: agent commands run as you on this machine, and the deployment " +
   "reviews every command. Switch with `capybara-device mode sandbox`.";
 
-/** The line `login` prints when the organization forbids auto mode. */
+/** The line `login` prints when the organization forbids auto mode and the policy now says so. */
 export const SANDBOX_MODE_LOGIN_LINE =
   "This organization does not allow auto mode, so this device runs in sandbox mode: agent " +
   "commands run inside the OS sandbox on this machine.";
+
+/**
+ * The line `login` prints when the organization forbids auto mode but the machine keeps its own
+ * auto policy: the kernel refuses every command until the owner switches the machine.
+ */
+export const AUTO_POLICY_REFUSED_LOGIN_LINE =
+  "This organization does not allow auto mode, but this machine's local policy is auto mode: the " +
+  "deployment refuses every command until you run `capybara-device mode sandbox`.";
 
 export interface ModeDeps {
   stateDir: string;

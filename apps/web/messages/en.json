@@ -2384,7 +2384,7 @@
     },
     "cloudNetwork": {
       "title": "Cloud devices' network",
-      "description": "The network cloud devices use in sandbox mode; in auto mode there is no network restriction.",
+      "description": "The network cloud devices use in sandbox mode; in auto mode there is no network restriction. The host list is also the ceiling for a local device in sandbox mode (the device intersects it with its own list), so narrowing it limits local sandbox devices too.",
       "open": "Open (internal blocked)",
       "openHint": "Any public address and port.",
       "allowlist": "Allowlist",

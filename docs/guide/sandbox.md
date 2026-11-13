@@ -96,6 +96,9 @@ which is always the open public network.
   npm, PyPI and GitHub's clone, archive, raw and release download addresses) over HTTP(S). It
   blocks the internal network and every other host; it does not stop data sent to an allowed host
   (`git push` to github.com, publishing to npm).
+- **Local devices**: the same host list is the ceiling a local device in sandbox mode reaches (the
+  device intersects it with its own list), so narrowing the org's list limits local sandbox devices
+  too, not only cloud devices.
 - **The platform kill switch**: `sandbox.limits.egress: none` forces every cloud device to an empty
   allowlist and every local device's sandbox mode to no network; auto mode on a local device uses
   the machine's own network, which the kernel cannot cut.

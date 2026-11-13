@@ -18,9 +18,13 @@ import { logout } from "../src/commands/logout.js";
 import {
   AUTO_MODE_LOGIN_LINE,
   AUTO_MODE_RISK_TEXT,
+  AUTO_POLICY_REFUSED_LOGIN_LINE,
   SANDBOX_MODE_LOGIN_LINE,
 } from "../src/commands/mode.js";
 import { pidPath, writePid } from "../src/pid.js";
+import { PolicyStore } from "../src/policy-store.js";
+import { policySummary } from "../src/server-ops.js";
+import { policyPath, readPolicy } from "../src/state.js";
 
 interface Seen {
   path: string;
@@ -115,7 +119,10 @@ const granted = {
     reconnectGraceSeconds: 90,
   },
 };
-const credFile = () => join(home, "cfg", "capybara-device", "credential.json");
+const stateDir = () => join(home, "cfg", "capybara-device");
+const credFile = () => join(stateDir(), "credential.json");
+/** The mode the hello reports before the first exec: `policySummary` with no ceiling seen. */
+const helloMode = () => policySummary(new PolicyStore(stateDir()).current(), { mode: "os" }).mode;
 
 describe("login", () => {
   it("polls until approved and writes a 0600 credential", async () => {
@@ -151,7 +158,7 @@ describe("login", () => {
     expect(JSON.parse(readFileSync(credFile(), "utf8")).maxFrameBytes).toBe(4_194_304);
   });
 
-  it("prints the auto-mode line and the risk text once", async () => {
+  it("prints the auto-mode line and the risk text once, and keeps the auto default", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(out).toContain(AUTO_MODE_LOGIN_LINE);
@@ -159,14 +166,49 @@ describe("login", () => {
     // A deployment that does not say counts as allowing auto mode.
     expect(out.filter((l) => l === AUTO_MODE_LOGIN_LINE)).toHaveLength(1);
     expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+    // No policy file: the default (auto) stands, which is what the hello reports.
+    expect(existsSync(policyPath(stateDir()))).toBe(false);
+    expect(helloMode()).toBe("auto");
   });
 
-  it("prints the sandbox line for an organization that forbids auto mode", async () => {
+  it("writes sandbox mode for a new device when the organization forbids auto mode", async () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
+    // The policy is written, not just announced: the hello reports sandbox and passes the gate.
+    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(helloMode()).toBe("sandbox");
     expect(out).toContain(SANDBOX_MODE_LOGIN_LINE);
     expect(out).not.toContain(AUTO_MODE_LOGIN_LINE);
     expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
+  });
+
+  it("keeps an explicit auto policy under an auto-forbidden org, and says commands are refused", async () => {
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      policyPath(stateDir()),
+      `${JSON.stringify({ allowedDomains: [], allowCredentials: [], cpu: null, memoryMb: null, mode: "auto" }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    expect(await run(["login", "--url", base])).toBe(0);
+    // An existing policy is the owner's choice: login never rewrites it, and the line matches it.
+    expect(readPolicy(stateDir()).mode).toBe("auto");
+    expect(helloMode()).toBe("auto");
+    expect(out).toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
+    expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+  });
+
+  it("keeps an explicit sandbox policy under an auto-forbidden org", async () => {
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(policyPath(stateDir()), `${JSON.stringify({ mode: "sandbox" })}\n`, {
+      mode: 0o600,
+    });
+    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(out).toContain(SANDBOX_MODE_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
   });
 
   it("logging in again after the files were lost recreates the directory and marker", async () => {

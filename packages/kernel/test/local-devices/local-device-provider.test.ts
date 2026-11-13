@@ -616,4 +616,21 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
     reportedMode = null;
     expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
   });
+
+  it("serves a fresh login in an auto-forbidden org and refuses an explicit auto policy", async () => {
+    orgSettings = { autoMode: "off" };
+    // `capybara-device login` writes `mode: "sandbox"` for a new device in this org, so the hello
+    // reports sandbox and the gate serves the exec (packages/device/test/login.test.ts).
+    reportedMode = "sandbox";
+    expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
+    // A machine the owner set to auto mode is still refused, with the command that fixes it.
+    reportedMode = "auto";
+    const { error } = await execOnce(attended);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("device.auto_mode_not_allowed");
+    expect((error as Error).message).toContain("capybara-device mode sandbox");
+    // An organization that allows auto mode keeps a new device in auto mode.
+    orgSettings = {};
+    expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "auto" });
+  });
 });
