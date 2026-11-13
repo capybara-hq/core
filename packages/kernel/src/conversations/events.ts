@@ -568,6 +568,19 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
          * 还原时用它重现同样的省略结果。较早的事件没有。
          */
         mediaBudgetBytes: count.optional(),
+        /**
+         * The hard fit guard's plan (context compaction spec §4.3): message indexes of the assembled
+         * request that were dropped and text / tool_result blocks replaced by the truncation note.
+         * `buildRequest` applies it, so the request replays byte-for-byte; absent when the request
+         * fit (discards older recordings). A candidate model with another window recomputes it and
+         * reports `context_fit`.
+         */
+        fit: z
+          .object({
+            droppedSeqs: z.array(count),
+            truncated: z.array(z.object({ seq: count, block: count, note: z.string() })),
+          })
+          .optional(),
       }),
     }),
   ),

@@ -435,6 +435,7 @@ async function expectZeroDrift(convId: string, snap: CaseSnapshot, upTo = sent.l
       maxOutputTokens: _m,
       droppedParams: _d,
       estimatedInputTokens: _e,
+      fit: _f,
       ...meta
     } = c.payload.request;
     expect(out.meta).toEqual(meta);
@@ -1774,6 +1775,69 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       });
     } finally {
       machine.close();
+    }
+  });
+
+  it("a trimmed request records its fit and replays byte-for-byte; a smaller candidate window is context_fit", async () => {
+    reset();
+    // A window where the fit target W - O - R is reachable but proactive compaction does not fire:
+    // enabled: false leaves only the hard line (estimate + output > window), so the hard fit guard
+    // trims instead of compacting. fake-1: W 32000, O 4096, R 20000 -> target 7904.
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ enabled: false, reserveTokens: 20_000 }) })
+      .where("key", "=", "compaction")
+      .execute();
+    try {
+      const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+      const conv = await createConv(owner, orgId, agentId);
+      // The fake model's reply to long:6000 is capped at 16384 characters (~4k tokens): the third
+      // request carries two of them (~8k), over the 7904 target and below the hard line
+      // (estimate + 4096 <= 32000), so the hard fit guard trims instead of compacting
+      await postMessage(owner, orgId, conv, "long:6000");
+      await waitForTerminal(db, conv, 1, 30_000);
+      await postMessage(owner, orgId, conv, "long:6000");
+      await waitForTerminal(db, conv, 2, 30_000);
+      await postMessage(owner, orgId, conv, "echo:after");
+      await waitForTerminal(db, conv, 3, 30_000);
+
+      const events = await eventsOf(db, conv);
+      const calls = modelCalls(events);
+      expect(calls).toHaveLength(3);
+      // the earlier requests fit: no plan (old logs without fit rebuild as before)
+      expect(calls[0]?.payload.request.fit).toBeUndefined();
+      expect(calls[1]?.payload.request.fit).toBeUndefined();
+      const fit = calls[2]?.payload.request.fit;
+      expect(fit).toBeDefined();
+      // the oldest assistant text is dropped
+      expect(fit?.droppedSeqs.length).toBeGreaterThan(0);
+      // the provider received the trimmed request, not the huge replies
+      expect(JSON.stringify(sent[2])).not.toContain("word6000");
+      expect(JSON.stringify(sent[2])).toContain("echo:after");
+
+      const info = await modelInfo("model-fake", "fake-1");
+      const snap = await snapshotOf(conv);
+      // every call reconstructs with zero drift and equals what the provider got: the recorded plan
+      // is applied to the rebuilt request
+      await expectZeroDrift(conv, snap);
+      const first = reconstructRequest(snap, calls[0]?.seq as number, { model: info });
+      expect(first.drift).toEqual([]);
+      expect(first.request).toEqual(sent[0]);
+
+      // a candidate model with a smaller window recomputes the fit: a different plan -> context_fit
+      const smaller: ModelInfo = { ...info, contextWindow: 24_000 };
+      const cand = reconstructRequest(snap, calls[2]?.seq as number, {
+        model: smaller,
+        params: {},
+        reserveTokens: 20_000,
+      });
+      expect(cand.drift).toEqual(["context_fit"]);
+    } finally {
+      await db
+        .updateTable("deployment_settings")
+        .set({ value: JSON.stringify({ keepRecentTurns: 1 }) })
+        .where("key", "=", "compaction")
+        .execute();
     }
   });
 });

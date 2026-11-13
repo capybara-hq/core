@@ -273,6 +273,7 @@ export class EvalWorker {
       replay: {
         registry,
         config,
+        compactionSettings: stepDeps.compactionSettings,
         ...(stepDeps.media !== undefined && { media: stepDeps.media }),
       },
       // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，

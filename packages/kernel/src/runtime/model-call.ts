@@ -47,6 +47,7 @@ import {
   compactionPlan,
   shouldCompact,
 } from "./context/compaction.js";
+import { applyFit, estimateAfterFit, type FitPlan, fitTarget, planFit } from "./context/fit.js";
 import { guardToolPairs } from "./context/pairing.js";
 import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
@@ -102,6 +103,17 @@ export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]
  */
 export const modelDeniedText = (plugin: string, reason: string) =>
   `Model request blocked by the "${plugin}" policy hook: ${reason}`;
+
+/**
+ * The `run.context_too_large` message (user-facing, not model-visible): the hard fit guard could
+ * not bring the request under `W - O - R` even after dropping all older history and truncating the
+ * latest turn, so the system prompt, tools and the latest message are themselves too large
+ * (context compaction spec §4.3 point 4).
+ */
+export const contextTooLargeText = (model: ModelInfo, target: number, estimate: number) =>
+  `The request is too large for the model "${model.displayName}" (estimated ${estimate} input tokens, ` +
+  `at most ${target} fit in its ${model.contextWindow}-token context window after the output cap and ` +
+  "reserve). Shorten the message or choose a model with a larger context window.";
 
 /** 可重试错误在同一模型上重试前的默认等待（供应商未给 retryAfterMs 时）。 */
 const DEFAULT_RETRY_DELAY_MS = 1000;
@@ -506,6 +518,7 @@ async function runStep(
       input,
       events,
       runtime,
+      compaction,
       tools,
       wrapUpReason,
       streamed,
@@ -720,12 +733,18 @@ export interface AssembleModelRequestInput extends Omit<BuildModelRequestInput, 
   tools: readonly RequestTool[];
   /** 参数里没有 `maxOutputTokens` 旋钮时的输出上限（运行时为 `runtime.maxOutputTokens`）。 */
   defaultMaxOutputTokens: number;
+  /**
+   * A recorded hard-fit plan (context compaction spec §4.3/§4.9): applied after the pairing guard,
+   * so a replayed request equals the one that was sent. The plan's message indexes refer to the
+   * assembled (post-guard) request; the runtime computes it on the same list.
+   */
+  fit?: FitPlan;
 }
 
 /**
  * 发给模型的请求（纯函数）：`buildModelRequest`（注入 `params` 与本步工具：模型不支持工具时不带；收尾调用带
- * `toolChoice: "none"`）→ `guardToolPairs`。输出上限：参数里有 `maxOutputTokens` 旋钮时取
- * `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`。
+ * `toolChoice: "none"`）→ `guardToolPairs` → the recorded `fit` plan (when given). 输出上限：参数里有
+ * `maxOutputTokens` 旋钮时取 `min(模型上限, 旋钮)`，否则 `min(模型上限, defaultMaxOutputTokens)`。
  * 运行时（{@link runModelStep}）与由日志还原请求（`evals/reconstruct.ts`）共用这一份，二者不会漂移。
  */
 export function assembleModelRequest(input: AssembleModelRequestInput): {
@@ -733,7 +752,7 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
   meta: ModelCallMeta;
   mediaTokens: number;
 } {
-  const { defaultMaxOutputTokens, tools, ...rest } = input;
+  const { defaultMaxOutputTokens, tools, fit, ...rest } = input;
   const built = buildModelRequest({
     ...rest,
     tools: input.model.capabilities.tools ? [...tools] : [],
@@ -745,6 +764,7 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
     input.model.maxOutputTokens,
     typeof knob === "number" ? knob : defaultMaxOutputTokens,
   );
+  if (fit !== undefined) request.messages = applyFit(request, fit).messages;
   return built;
 }
 
@@ -1117,6 +1137,7 @@ async function ladder(
   input: ModelStepInput,
   events: ConversationEvent[],
   runtime: Runtime,
+  compaction: CompactionSettings,
   tools: StepTools,
   wrapUpReason: WrapUpReason | null,
   streamed: { text: string },
@@ -1199,6 +1220,33 @@ async function ladder(
         tools,
         wrapUp,
       );
+      // the hard fit guard (context compaction spec §4.3): after compaction, a request over
+      // W - O - R is trimmed deterministically. The plan is recorded and replayed byte-for-byte;
+      // a request the system prompt, tools and latest turn cannot bring under the target fails
+      // before any provider call.
+      const target = fitTarget(
+        info.contextWindow,
+        request.maxOutputTokens,
+        compaction.reserveTokens,
+      );
+      const planned = planFit({
+        events: evs,
+        request,
+        model: info,
+        maxOutputTokens: request.maxOutputTokens,
+        reserveTokens: compaction.reserveTokens,
+        estimate,
+      });
+      let sentRequest = request;
+      let sentEstimate = estimate;
+      if (planned !== null) {
+        const after = estimateAfterFit(request, estimate, planned);
+        if (after > target) {
+          throw new RunError("run.context_too_large", contextTooLargeText(info, target, after));
+        }
+        sentRequest = applyFit(request, planned);
+        sentEstimate = after;
+      }
       sentMedia = (meta.media ?? []).flatMap((m) =>
         m.outcome === "bytes" ? [m.attachmentId] : [],
       );
@@ -1216,7 +1264,7 @@ async function ladder(
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              request: hookRequestOf(request, deps.log),
+              request: hookRequestOf(sentRequest, deps.log),
             },
             signal,
           );
@@ -1264,7 +1312,9 @@ async function ladder(
                 ...meta,
                 maxOutputTokens: request.maxOutputTokens,
                 ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
-                estimatedInputTokens: estimate,
+                ...(planned !== null && { fit: planned }),
+                // the request actually sent (post-fit): calibration and the trigger read this value
+                estimatedInputTokens: sentEstimate,
               },
             },
           },
@@ -1274,7 +1324,7 @@ async function ladder(
       sentAt = Date.now();
       const outcome = await consumeModelStream(
         provider,
-        request,
+        sentRequest,
         info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
         signal,
         (ev) => {

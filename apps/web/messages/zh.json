@@ -3392,6 +3392,7 @@
       "params_changed": "模型参数有变化",
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",
+      "context_fit": "候选模型的上下文窗口使请求的裁剪方式不同",
       "tool_unmatched": "有工具调用没有对应的记录",
       "subagent_changed": "子智能体的定义与记录时不同",
       "model_switched": "候选模型替换了会话中切换的模型"

@@ -3404,6 +3404,7 @@
       "params_changed": "Model parameters changed",
       "media_missing": "An attachment is no longer available",
       "media_changed": "An attachment changed",
+      "context_fit": "The candidate model's context window trims the request differently",
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "model_switched": "The candidate model replaces a model switch made in the conversation"

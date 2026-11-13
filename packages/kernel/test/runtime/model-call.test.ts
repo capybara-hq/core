@@ -816,6 +816,57 @@ describe("runModelStep", () => {
       expect(await ofType("compaction_failed")).toHaveLength(0);
     });
 
+    it("hard fit guard: a request over W - O - R drops the oldest assistant text and records the plan", async () => {
+      // W 5200, O 1000, R 2000 -> target 2200; the hard line is estimate + O > W (4200), and
+      // proactive compaction is off, so only the hard fit guard trims
+      const model = stubInfo("fit", { contextWindow: 5200, maxOutputTokens: 1000 });
+      stubImpl = stub([model], () => "ok");
+      const agent = agentWith({ model: { provider: "stub", model: "fit" } });
+      const real = deps.compactionSettings;
+      deps.compactionSettings = {
+        resolve: async () => ({
+          ...COMPACTION_SETTINGS.parse({}),
+          enabled: false,
+          reserveTokens: 2000,
+        }),
+      };
+      try {
+        await say("old");
+        await answer("x".repeat(9000));
+        await say("latest");
+        const r = await step({ agent });
+        expect(r.content).toEqual([{ type: "text", text: "ok" }]);
+        // the provider received the trimmed request: the huge older answer is gone
+        const sent = (stubImpl as Stub).calls[0] as ModelRequest;
+        expect(JSON.stringify(sent.messages)).not.toContain("xxxxxxxxxx");
+        // the plan and the post-fit estimate are in the log (the request replays from them)
+        const [call] = await ofType("model_call");
+        expect(call?.payload.request.fit).toEqual({ droppedSeqs: [1], truncated: [] });
+        expect(call?.payload.request.estimatedInputTokens).toBeLessThan(500);
+      } finally {
+        deps.compactionSettings = real;
+      }
+    });
+
+    it("hard fit guard: system prompt and latest turn over the target -> run.context_too_large before any call", async () => {
+      const model = stubInfo("tiny", { contextWindow: 1050, maxOutputTokens: 1000 });
+      stubImpl = stub([model], () => "ok");
+      const agent = agentWith({ model: { provider: "stub", model: "tiny" } });
+      const real = deps.compactionSettings;
+      deps.compactionSettings = {
+        resolve: async () => ({ ...COMPACTION_SETTINGS.parse({}), reserveTokens: 0 }),
+      };
+      try {
+        await say("hi");
+        // target = 1050 - 1000 - 0 = 50: the system prompt alone is larger and cannot be trimmed
+        expect(await runErrorCode(step({ agent }))).toBe("run.context_too_large");
+        expect((stubImpl as Stub).calls).toHaveLength(0);
+        expect(await ofType("model_call")).toHaveLength(0);
+      } finally {
+        deps.compactionSettings = real;
+      }
+    });
+
     it("a sub-agent's step and compaction usage both add to the parent run's counter, once (§8.3)", async () => {
       const parentRunId = randomUUID();
       await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)

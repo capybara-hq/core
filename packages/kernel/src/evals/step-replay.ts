@@ -13,6 +13,7 @@ import {
   sameModel,
 } from "../conversations/selection.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import type { CompactionSettingsService } from "../runtime/compaction-settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import {
   consumeModelStream,
@@ -83,6 +84,11 @@ export interface StepReplayDeps {
   config: Pick<KernelConfigService, "get">;
   /** 附件来源（与运行时同一个，按组织 + 对话取）；不给时媒体一律按「不再可用」占位。 */
   media?: MediaSourceDeps;
+  /**
+   * The org's effective compaction settings (context compaction spec §4.9): a candidate model
+   * recomputes the hard fit against the same `R` the run used. Absent: the built-in default.
+   */
+  compactionSettings?: Pick<CompactionSettingsService, "resolve">;
 }
 
 /** 键排序后的 JSON（比较参数是否相同）。 */
@@ -262,6 +268,11 @@ export async function replayStep(
 }> {
   const baseline = baselineOf(s, call);
   const { provider, info } = await d.registry.resolve(s.orgId, candidate.model);
+  // the reserve the run's hard fit guard used (a candidate recomputes the fit against its window)
+  const reserveTokens =
+    d.compactionSettings === undefined
+      ? undefined
+      : (await d.compactionSettings.resolve(s.orgId)).reserveTokens;
   let media: Awaited<ReturnType<typeof loadSnapshotMedia>> | undefined;
   if (d.media) {
     try {
@@ -272,6 +283,7 @@ export async function replayStep(
   }
   const { request, drift, mediaTokens } = reconstructRequest(s, call.seq, {
     model: info,
+    ...(reserveTokens !== undefined && { reserveTokens }),
     ...(candidate.changed && {
       definition: candidate.definition,
       agentVersion: candidate.agentVersion,
