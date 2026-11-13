@@ -530,7 +530,9 @@ describe("admin component detail", () => {
     );
     expect(await within(dialog).findByText("Acme")).toBeTruthy();
     expect(within(dialog).getByText(/Researcher/)).toBeTruthy();
-    expect(within(dialog).getByText(/The 2 connectors it created stay/)).toBeTruthy();
+    expect(
+      within(dialog).getByText(/The 2 connectors it created are kept but disabled with the plugin/),
+    ).toBeTruthy();
     expect(bodyOf(calls.find((c) => c.url.endsWith("/scope/preview")))).toEqual({
       scope: "named",
       orgs: ["o2"],

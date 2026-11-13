@@ -1445,7 +1445,12 @@ export class ConnectorsService {
         .updateTable("connectors")
         .set({
           ...(patch.name !== undefined && { name: patch.name }),
-          ...(patch.status !== undefined && { status: patch.status }),
+          // An explicit status change is the org's own decision: a plugin switch-off no longer
+          // owns this connector, so a later switch-on must not turn it back on
+          ...(patch.status !== undefined && {
+            status: patch.status,
+            disabled_by_plugin_id: null,
+          }),
           ...(gitChanged && { use_for_git: patch.useForGit === true }),
           updated_at: sql`now()`,
         })
@@ -1523,6 +1528,64 @@ export class ConnectorsService {
   }
 
   /**
+   * Disables a connector because its plugin was switched off in the org (spec §5 rule 8): its
+   * endpoint and credentials stay. Only a connector that was active is marked with the plugin
+   * (`connectors.disabled_by_plugin_id`), so switching the plugin back on re-enables exactly what
+   * this call disabled; one an org admin disabled by hand keeps no marker and stays disabled. The
+   * caller holds the org row lock and runs in its transaction.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async disableWithPluginIn(orgId: string, connectorId: string, itemId: string): Promise<void> {
+    const t = this.db;
+    const row = await t
+      .selectFrom("connectors")
+      .select(["status"])
+      .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) return;
+    await t
+      .updateTable("connectors")
+      .set({
+        status: "disabled",
+        // An admin's disable is not the plugin's: it is not marked and so stays off on switch-on
+        ...(row.status === "active" && { disabled_by_plugin_id: itemId }),
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .execute();
+  }
+
+  /**
+   * Re-enables a connector the given plugin's switch-off disabled
+   * ({@link disableWithPluginIn}) when the plugin is switched back on and its install takes the
+   * connector back through the reuse path. A connector an org admin disabled by hand (no marker)
+   * or one another state left disabled stays disabled. Returns whether it switched it on.
+   */
+  @Transactional()
+  async enableIfPluginDisabledIn(
+    orgId: string,
+    connectorId: string,
+    itemId: string,
+  ): Promise<boolean> {
+    const r = await this.db
+      .updateTable("connectors")
+      .set({ status: "active", disabled_by_plugin_id: null, updated_at: sql`now()` })
+      .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .where("status", "=", "disabled")
+      .where("disabled_by_plugin_id", "=", itemId)
+      .returning("id")
+      .executeTakeFirst();
+    return r !== undefined;
+  }
+
+  /**
    * Disables or enables a connector on the platform's behalf (a super admin who need not be a
    * member of the org; the caller checks the super admin): org row lock, the status update, audit
    * `connector.updated` with `via: "platform"`. `auditDetail` (a Platform tool write's
@@ -1541,7 +1604,9 @@ export class ConnectorsService {
     const app = await this.row(t, orgId, connectorId, true);
     await t
       .updateTable("connectors")
-      .set({ status, updated_at: sql`now()` })
+      // The platform's explicit choice replaces a plugin switch-off's: a later plugin switch-on
+      // leaves the connector as the platform set it
+      .set({ status, disabled_by_plugin_id: null, updated_at: sql`now()` })
       .where("id", "=", connectorId)
       .execute();
     await audit(t, {

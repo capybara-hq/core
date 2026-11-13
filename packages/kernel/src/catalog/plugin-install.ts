@@ -141,17 +141,19 @@ export interface UninstallReport {
       /** A dependency install still wanted on in the org by its own scope: it stays, standalone. */
       | "wanted_by_scope"
       /**
-       * A connector the install created, kept by a scope sync uninstall (the plugin disabled or its
-       * scope narrowed, spec §5 rule 8): it stays as the org's own, with its credentials.
+       * A connector recorded on the install (created there, or taken back from an earlier
+       * switch-off): kept with its endpoint and credentials but switched off with the plugin
+       * (spec §5 rule 8); switching the plugin back on switches it back on.
        */
-      | "org_owned";
+      | "disabled_with_plugin";
   }[];
 }
 
 /**
  * What switching a plugin off would do, read without changing anything: its components, the ones the
- * uninstall rules would keep for a reason visible beforehand (a component that pre-existed, or one an
- * agent uses), and the agents that use the plugin's skills, connectors or agent templates.
+ * uninstall rules would keep for a reason visible beforehand (a component that pre-existed, one an
+ * agent uses, a connector kept but switched off with the plugin), and the agents that use the
+ * plugin's skills, connectors or agent templates.
  */
 export interface UninstallPreview {
   installId: string;
@@ -325,7 +327,7 @@ export interface UninstallCtx {
   authorize: boolean;
   reason?: string;
   opts: { actorTokenId?: string; auditDetail?: AuditDetail };
-  /** Uninstalled by the plugin scope sync: the connectors it created stay as the org's own. */
+  /** Uninstalled by the plugin scope sync (a deployment-level disable or a narrowed scope). */
   via?: "scope";
 }
 
@@ -1176,6 +1178,9 @@ export class PluginInstaller {
         // takes it back instead of creating a second one, whose default slug the first holds
         const existing = await this.liveTemplateConnector(orgId, itemId, ct.id);
         if (existing !== undefined) {
+          // Switching the plugin back on switches back on the connectors it switched off; one an
+          // admin disabled by hand stays off
+          await this.connectors.enableIfPluginDisabledIn(orgId, existing, itemId);
           await record({
             kind: "connector",
             ref: existing,
@@ -1598,7 +1603,9 @@ export class PluginInstaller {
    * lock, one transaction). Removes only components with created=true:
    * - a skill is kept when an agent names it (an inline sub-agent template's `skills`;
    *   used_by_agents) or another plugin install in this org uses it too (used_by_other_install);
-   * - a connector is kept when an agent references it (used_by_agents);
+   * - a connector recorded on the install (created there, or taken back from an earlier switch-off)
+   *   is kept with its endpoint and credentials but switched off with the plugin
+   *   (disabled_with_plugin, spec §5 rule 8); switching the plugin back on switches it back on;
    * - an extension is kept when another plugin install uses it too (used_by_other_install), a
    *   connector still uses a connector it provides (used_by_connectors), or another enabled
    *   extension depends on it (used_by_plugins);
@@ -1630,7 +1637,8 @@ export class PluginInstaller {
    * The uninstall's one transaction; the extensions it disabled are notified once it commits. A
    * scope sync uninstall (`via: "scope"`) re-checks under the org row lock that the item is still
    * not wanted in the org and that no other live install depends on it ({@link ScopeStillWanted},
-   * nothing written), and keeps the connectors it created as the org's own (`org_owned`).
+   * nothing written). Connectors recorded on the install are kept but switched off with the plugin
+   * (spec §5 rule 8), whichever uninstall path leads here.
    */
   @Transactional()
   private async writeUninstall(
@@ -1875,6 +1883,12 @@ export class PluginInstaller {
     // failed (already rolled back) and a stale installing (a replica crashed midway) are cleaned up
     // as a rollback
     const rollbackMode = row.status !== "installed" && row.status !== "upgrading";
+    // A dependency install removed by a failed install's (or a crashed upgrade's) rollback removes
+    // what it created, like the rolled-back install itself: it is a rollback, not a switch-off
+    const connectorRollback =
+      rollbackMode ||
+      ctx.reason === "plugin_install_rollback" ||
+      ctx.reason === "plugin_upgrade_cleanup";
     const comps = await t
       .selectFrom("plugin_install_components")
       .select(["kind", "ref", "created", "skill_version"])
@@ -1920,6 +1934,15 @@ export class PluginInstaller {
         created = now.created;
       }
       const comp: Component = { kind: c.kind, ref: c.ref, created, skillVersion: c.skill_version };
+      // A connector of a switch-off is kept with its endpoint and credentials but switched off
+      // with the plugin (spec §5 rule 8), whether this install created it or took it back from an
+      // earlier switch-off; switching the plugin back on re-enables it. A rollback keeps removing
+      // what the install created (below).
+      if (c.kind === "connector" && !connectorRollback) {
+        await this.connectors.disableWithPluginIn(orgId, c.ref, row.item_id);
+        keep("disabled_with_plugin");
+        continue;
+      }
       // Skills and agent templates of earlier installs (org copies, now linked to the platform
       // components, phase 2) stay: the plugin's components go off in the org with the install
       if ((c.kind === "skill" || c.kind === "agent_template") && !rollbackMode) continue;
@@ -1945,12 +1968,8 @@ export class PluginInstaller {
         else if (outcome === "wanted_by_scope") keep("wanted_by_scope");
         continue;
       }
-      // A scope sync uninstall leaves the connectors to the org (spec §5 rule 8): the component row
-      // goes with the install row, so nothing removes them later
-      if (c.kind === "connector" && ctx.via === "scope" && !rollbackMode) {
-        keep("org_owned");
-        continue;
-      }
+      // A scope sync uninstall is a switch-off too: its connectors are disabled above with the
+      // plugin, like an org admin's switch-off.
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
       const outcome = await this.decideRemovalIn(orgId, actor, comp, removing, agentRefs, reason);
       if (outcome === "removed") addRemoved({ kind: c.kind, ref: c.ref });
@@ -1979,12 +1998,12 @@ export class PluginInstaller {
   }
 
   /**
-   * The uninstall rules for one component an install created (a skill, connector or extension;
-   * dependency installs recurse through {@link uninstallIn}), in the caller's transaction: kept
-   * when an agent uses the skill / connector (`used_by_agents`), when another live install outside
-   * `removing` has it (`used_by_other_install`, ownership handed over to the oldest one, so the
-   * uninstall order doesn't change the result), when a connector still uses the extension's
-   * connector kind (`used_by_connectors`) or another enabled extension depends on it
+   * The uninstall rules for one component an install created, in the caller's transaction (see
+   * {@link uninstall}); connectors go through the switch-off branch in {@link uninstallIn} instead,
+   * except in a rollback. Kept when an agent uses the skill (`used_by_agents`), when another live
+   * install outside `removing` has it (`used_by_other_install`, ownership handed over to the oldest
+   * one, so the uninstall order doesn't change the result), when a connector still uses the
+   * extension's connector kind (`used_by_connectors`) or another enabled extension depends on it
    * (`used_by_plugins`); otherwise removed (`removed`, or `gone` when it no longer existed). Used
    * by uninstall and by an upgrade's removals.
    */
@@ -2558,8 +2577,10 @@ export class PluginInstaller {
    * skills and agent templates are platform components (phase 2): the ones on in the org through
    * the plugin (`follow`) go off with it, so the agents using them (by the platform id or an
    * unpinned org copy linked to it) are listed, also for the dependency installs it created that
-   * go with it; ledger rows of earlier installs' org copies are not removed and not listed (an
-   * uninstall keeps legacy copies, like the platform update keeps copies of removed components).
+   * go with it; the connectors recorded on it are listed as kept but disabled with it
+   * (`disabled_with_plugin`) and their users as affected. Ledger rows of earlier installs' org
+   * copies are not removed and not listed (an uninstall keeps legacy copies, like the platform
+   * update keeps copies of removed components).
    */
   async previewUninstall(orgId: string, installId: string): Promise<UninstallPreview> {
     if (!UUID_RE.test(installId)) throw installNotFound();
@@ -2595,10 +2616,11 @@ export class PluginInstaller {
     };
     const kept: UninstallReport["kept"] = [];
     /**
-     * The agents using what goes with an install: connectors it created (they stay, kept for the
-     * agents) and the plugin's platform skills and agent templates on in the org through it
-     * (`follow`; by the platform id or an unpinned org copy linked to it). Dependency installs it
-     * created go with it unless their own scope wants them (Task 7: their components count too).
+     * The agents using what goes with an install: the connectors recorded on it (they are kept
+     * but disabled with the plugin, so their tools stop) and the plugin's platform skills and
+     * agent templates on in the org through it (`follow`; by the platform id or an unpinned org
+     * copy linked to it). Dependency installs it created go with it unless their own scope wants
+     * them (Task 7: their components count too).
      */
     const visit = async (
       itemId: string,
@@ -2607,6 +2629,13 @@ export class PluginInstaller {
       seen: Set<string>,
     ): Promise<void> => {
       for (const c of rows) {
+        // Every connector of the install, created here or taken back, is kept and disabled with
+        // the plugin (a rollback's preview is not shown): it is not removed, and its users lose it
+        if (c.kind === "connector") {
+          if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "disabled_with_plugin" });
+          for (const a of agents.filter((x) => x.connectors.has(c.ref))) use(a, c.kind, c.ref);
+          continue;
+        }
         if (!c.created) {
           if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "pre_existing" });
           continue;
@@ -2629,13 +2658,7 @@ export class PluginInstaller {
             (x) => x.kind !== "skill" && x.kind !== "agent_template",
           );
           await visit(dep.item_id, sub, false, seen);
-          continue;
         }
-        if (c.kind !== "connector") continue;
-        const users = agents.filter((a) => a.connectors.has(c.ref));
-        if (users.length === 0) continue;
-        if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "used_by_agents" });
-        for (const a of users) use(a, c.kind, c.ref);
       }
       for (const kind of ["skill", "agent_template"] as const) {
         const platform = await loadComponents(t, kind, { itemId });
