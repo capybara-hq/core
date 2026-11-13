@@ -1472,7 +1472,9 @@ describe("出站投递：发送失败", () => {
         group(`p${i}`, "u-owner", `echo:reply ${i}`, { chatId: chat, threadId: "p1" }),
       );
       i++;
-      await sleep(300);
+      // The new message pulls the next retry of the stuck event: wait for that attempt to fail
+      // before pushing the next message (one failure per message).
+      await waitFor(async () => (await failCount(conv)) >= i - 1 || phraseSent(), 15_000, "fail");
     }
     await waitFor(async () => phraseSent(), 15_000, "skip notice");
     im.push(
@@ -1578,7 +1580,13 @@ describe("出站投递：发送失败", () => {
       sentTo("cli_out", chat).some((s) => s.message.text.startsWith("A request is waiting"));
     let n = 2;
     while (!notice() && n <= 5) {
-      await sleep(1500);
+      // Each rejection of the stuck event is counted in fail_count; wait for the previous
+      // attempt before pushing the next message (the skip notice ends the round).
+      await waitFor(
+        async () => notice() || (await failCountOf(conv)) >= n - 1,
+        15_000,
+        "rejected finalization",
+      );
       if (notice()) break;
       im.push(
         connId,
@@ -1611,16 +1619,21 @@ describe("出站投递：发送失败", () => {
     const err = await waitFor(() => lastError(noEditId), 15_000, "last_error");
     expect(err).toMatch(/403/);
     const delivered = () => sentTo("cli_noedit", chat).some((s) => s.message.text === "after auth");
+    // Each new message pulls one retry of the stuck event; auth stops the round without a poison
+    // count, so the marker is the message itself reaching the conversation log.
+    const logged = async (text: string) =>
+      (await eventsOf(db, conv)).some((e) => {
+        if (e.type !== "user_message") return false;
+        const block = e.payload.content[0];
+        return block?.type === "text" && block.text === text;
+      });
     // 每条新消息触发一次续投；按毒事件计数的话第 3 次失败就会跳过它
     let n = 2;
     while (!delivered() && n <= 6) {
-      await sleep(800);
-      if (delivered()) break;
-      im.push(
-        noEditId,
-        group(`au${n}`, "u-owner", `echo:auth more ${n}`, { chatId: chat, threadId: "au1" }),
-      );
+      const text = `echo:auth more ${n}`;
+      im.push(noEditId, group(`au${n}`, "u-owner", text, { chatId: chat, threadId: "au1" }));
       n++;
+      await waitFor(async () => logged(text), 15_000, "message logged");
     }
     await waitFor(async () => delivered(), 15_000, "delivered after the credentials recovered");
     await settled(conv);

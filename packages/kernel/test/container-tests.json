@@ -5,6 +5,7 @@
   "background/tail-script.test.ts",
   "catalog/m6-segment3.dual.test.ts",
   "catalog/scope-sync.dual.test.ts",
+  "channels/lifecycle.test.ts",
   "channels/m4-segment1.dual.test.ts",
   "channels/outbound.dual.test.ts",
   "channels/priority.dual.test.ts",
