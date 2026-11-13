@@ -55,7 +55,7 @@ beforeAll(async () => {
   // the kernel's own instance: soft delete cancels pending skill changes in its transaction, which
   // must be the kernel's (a service over another pool would run them outside it)
   agents = k.app.get(AgentsService);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -173,7 +173,7 @@ const problems = async (p: Promise<unknown>) => {
 const create = (definition: AgentDefinition, by: Account = owner) =>
   agents.create(orgId, by.id, { definition, visibility: "org" });
 
-describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => {
+describe("agent definition subagents (save checks)", () => {
   it("a definition without subagents saves without a new version", async () => {
     const { agent } = await create(def());
     expect(agent.definition.subagents).toBeUndefined();

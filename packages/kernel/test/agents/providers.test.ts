@@ -43,7 +43,7 @@ beforeAll(async () => {
   );
   redis = new Redis(rd.url);
   registry = providerRegistryFor(k.app.get(ExtensionRegistry), redis);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();

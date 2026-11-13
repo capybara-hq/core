@@ -31,7 +31,7 @@ let otherOrg: string;
 beforeAll(async () => {
   env = await startOrgEnv({ tools: { timeoutMs: 5_000, oauthAllowInsecureLoopback: true } });
   otherOrg = await createOrg(env.root, "other-org");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -277,7 +277,7 @@ const decide = (req: Req, id: string, body: Record<string, unknown>) =>
 const requestUrl = (agentId: string) =>
   `/api/v1/orgs/${env.orgId}/agents/${agentId}/pending-connectors/request`;
 
-describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
+describe("binding a pending connector (P4-6)", () => {
   it("adds the connector's tools and policies, removes the key, closes the request on the last bind", async () => {
     const { templateId, platformGh } = await twoPending();
     const agent = await createFrom(env.mem, templateId);
@@ -455,7 +455,7 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("binding an OAuth connector before its first snapshot", { timeout: 60_000 }, () => {
+describe("binding an OAuth connector before its first snapshot", () => {
   it("is refused (not_synced) and keeps the entry pending", async () => {
     const itemId = await catalogItem("crm");
     const platformGh = await connectorTemplate(itemId, "gh");
@@ -500,7 +500,7 @@ describe("binding an OAuth connector before its first snapshot", { timeout: 60_0
   });
 });
 
-describe("connector setup requests (P4-7)", { timeout: 60_000 }, () => {
+describe("connector setup requests (P4-7)", () => {
   it("opens one request per agent, only for a creator without connectors.manage", async () => {
     const { templateId } = await twoPending();
     const byAdmin = await createFrom(env.boss, templateId);
@@ -800,7 +800,7 @@ describe("connector setup requests (P4-7)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("one more connector from a connector template (P4-7)", { timeout: 120_000 }, () => {
+describe("one more connector from a connector template (P4-7)", () => {
   const tokenInput = () => ({ endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } });
   const platformIdOf = async (itemId: string) =>
     (

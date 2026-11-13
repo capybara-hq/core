@@ -59,7 +59,7 @@ beforeAll(async () => {
   );
   // a second kernel on the same database with no object store provider
   kNoStore = await startKernel(runConfig(urls, { roles: ["api"], extensions: [MODEL_FAKE] }));
-}, 180_000);
+});
 afterAll(async () => {
   await kNoStore?.close();
   await k?.close();
@@ -166,7 +166,7 @@ const saveAvatar = (req: Req, a: AgentJson, uploadId: string) =>
     payload: { avatar: { kind: "upload", uploadId }, expectedUpdatedAt: a.profile.updatedAt },
   });
 
-describe("agent avatar uploads", { timeout: 60_000 }, () => {
+describe("agent avatar uploads", () => {
   it("upload registers an image attachment", async () => {
     const a = await newAgent(admin);
     const res = await requestUpload(admin, a.id, {

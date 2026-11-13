@@ -53,7 +53,7 @@ beforeAll(async () => {
   // the kernel's own instance: soft delete cancels pending skill changes in its transaction, which
   // must be the kernel's (a service over another pool would run them outside it)
   agents = k.app.get(AgentsService);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
