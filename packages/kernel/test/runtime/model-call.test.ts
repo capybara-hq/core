@@ -23,6 +23,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
+import type { MediaBytes, MediaInfo } from "../../src/runtime/context/build.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
@@ -1124,6 +1125,180 @@ describe("runModelStep", () => {
       });
       // the hard line bypasses the backoff: another failure is written (attempt 2), not skipped
       expect((await ofType("compaction_failed")).map((f) => f.payload.attempt)).toEqual([1, 2]);
+    });
+
+    describe("reactive compaction (context overflow, spec §4.4)", () => {
+      /** `history` turns of filler so the forced compaction has a transcript to summarise. */
+      const history = async () => {
+        for (let i = 0; i < 6; i++) {
+          await say(filler(i));
+          await answer(filler(i));
+        }
+      };
+
+      /** A fake media source that hands out one image's bytes (a vision model sends them). */
+      const imageMedia = (data: Uint8Array): Pick<ModelStepDeps, "media"> => ({
+        media: {
+          info: async (_o, _c, ids) =>
+            new Map(
+              ids.map((id): [string, MediaInfo] => [id, { size: data.byteLength, pages: null }]),
+            ),
+          fetch: async (_o, _c, ids) =>
+            new Map(ids.map((id): [string, MediaBytes] => [id, { mediaType: "image/png", data }])),
+        },
+      });
+
+      const sayImage = async (attachmentId: string) => {
+        await eventLog.append(conversationId, [
+          {
+            type: "user_message",
+            payload: {
+              content: [
+                { type: "text", text: "look" },
+                {
+                  type: "image",
+                  mediaType: "image/png",
+                  source: { kind: "ref", attachmentId },
+                  name: "pic.png",
+                },
+              ],
+              authorAccountId: accountId,
+            },
+          },
+        ]);
+      };
+
+      const vision = () =>
+        stubInfo("vision", { capabilities: { ...stubInfo("x").capabilities, vision: true } });
+
+      /** Whether a request carries an image content block (m.content may be a plain string). */
+      const hasImage = (req: ModelRequest): boolean =>
+        req.messages.some(
+          (m) => Array.isArray(m.content) && m.content.some((b) => b.type === "image"),
+        );
+
+      const customStep = (d: ModelStepDeps, agent: AgentDefinition) =>
+        runModelStep(d, {
+          source: "web",
+          orgId,
+          conversationId,
+          runId,
+          step: 1,
+          agent,
+          agentVersion: 1,
+          absorbedUpToSeq: ALL_ABSORBED,
+          signal: new AbortController().signal,
+          sink: () => {},
+        });
+
+      it("a context_overflow then success after forced compaction logs compaction_summary before the retried model_call", async () => {
+        let stepCalls = 0;
+        const s = stub([stubInfo("compact")], (req) => {
+          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            return `Summary: ${"s".repeat(300)}`;
+          }
+          stepCalls++;
+          if (stepCalls === 1) throw new ModelError("context_overflow", "too long");
+          return "after compaction";
+        });
+        stubImpl = s;
+        await history();
+        await say("go");
+        const agent = agentWith({ model: { provider: "stub", model: "compact" } });
+        // proactive compaction off: only the reactive path may compact (spec §4.1/§4.4)
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect((await step({ agent })).content).toEqual([
+            { type: "text", text: "after compaction" },
+          ]);
+          const events = await all();
+          const summary = events.find((e) => e.type === "compaction_summary");
+          const calls = events.filter((e) => e.type === "model_call");
+          expect(summary).toBeDefined();
+          expect(calls).toHaveLength(2);
+          // the summary is written before the retried request and is what it carries
+          expect((summary as ConversationEvent).seq).toBeLessThan(
+            (calls[1] as ConversationEvent).seq,
+          );
+          const second = calls[1] as Extract<ConversationEvent, { type: "model_call" }>;
+          expect(second.payload.request.summarySeq).toBe(summary?.seq);
+          expect(await ofType("media_excluded")).toEqual([]);
+        });
+      });
+
+      it("a media-carrying overflow writes media_excluded and retries the same step with a placeholder", async () => {
+        const id = randomUUID();
+        const s = stub([vision()], (req) => {
+          if (hasImage(req)) throw new ModelError("context_overflow", "too many bytes");
+          return "without media";
+        });
+        stubImpl = s;
+        await sayImage(id);
+        const agent = agentWith({ model: { provider: "stub", model: "vision" } });
+        const r = await customStep({ ...deps, ...imageMedia(new Uint8Array([1, 2, 3])) }, agent);
+        expect(r.content).toEqual([{ type: "text", text: "without media" }]);
+        const excluded = await ofType("media_excluded");
+        expect(excluded.map((e) => e.payload.attachmentIds)).toEqual([[id]]);
+        expect(await ofType("model_call")).toHaveLength(2);
+        // the retry was rebuilt from the log: the image is a "rejected" placeholder, no bytes
+        const second = s.calls[1] as ModelRequest;
+        expect(hasImage(second)).toBe(false);
+        expect(JSON.stringify(second.messages)).toContain("was rejected by the model provider");
+      });
+
+      it("a fallback rung with a smaller window compacts against the fallback model", async () => {
+        let fallbackStepCalls = 0;
+        const s = stub([stubInfo("main"), stubInfo("fb", { contextWindow: 4000 })], (req) => {
+          if (req.model === "main") throw new ModelError("server", "down", { retryAfterMs: 1 });
+          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            return `Summary: ${"s".repeat(300)}`;
+          }
+          fallbackStepCalls++;
+          if (fallbackStepCalls === 1) throw new ModelError("context_overflow", "too long");
+          return "fb answer";
+        });
+        stubImpl = s;
+        await history();
+        await say("go");
+        const agent = agentWith({
+          model: { provider: "stub", model: "main" },
+          fallback: { provider: "stub", model: "fb" },
+        });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect((await step({ agent })).content).toEqual([{ type: "text", text: "fb answer" }]);
+          const compactionCalls = s.calls.filter((c) =>
+            c.system.some((x) => x.text.includes(COMPACTION_MARKER)),
+          );
+          expect(compactionCalls).toHaveLength(1);
+          expect(compactionCalls[0]?.model).toBe("fb");
+        });
+      });
+
+      it("four consecutive overflows (media, compaction, trim) end with model.context_overflow and no loop", async () => {
+        const id = randomUUID();
+        let compactionCalls = 0;
+        const s = stub([vision()], (req) => {
+          if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+            compactionCalls++;
+            return `Summary: ${"s".repeat(300)}`;
+          }
+          throw new ModelError("context_overflow", "always too long");
+        });
+        stubImpl = s;
+        await history();
+        await sayImage(id);
+        const agent = agentWith({ model: { provider: "stub", model: "vision" } });
+        await withSettings({ enabled: false, reserveTokens: 0 }, async () => {
+          expect(
+            await runErrorCode(
+              customStep({ ...deps, ...imageMedia(new Uint8Array([9, 9, 9])) }, agent),
+            ),
+          ).toBe("model.context_overflow");
+          // media exclusion, forced compaction, progressive trim: four attempts, then stop
+          expect(await ofType("model_call")).toHaveLength(4);
+          expect(compactionCalls).toBe(1);
+          expect(await ofType("media_excluded")).toHaveLength(1);
+        });
+      });
     });
   });
 

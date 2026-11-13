@@ -299,6 +299,20 @@ export const modelCallIdemKey = (runId: string, step: number, attempt: number): 
 /** 一步最多的模型调用尝试次数（主模型、同模型重试、兜底，见 `ladder`）。 */
 export const MAX_MODEL_ATTEMPTS = 3;
 
+/**
+ * The most `model_call` rows one step may write (context compaction spec §4.4): the ladder's three
+ * rungs plus up to two reactive-overflow fix-up retries. The ladder stops before a further attempt,
+ * so a persistent `model.context_overflow` cannot loop.
+ */
+export const MAX_STEP_MODEL_CALLS = MAX_MODEL_ATTEMPTS + 2;
+
+/**
+ * The progressively smaller fit targets of a reactive trim, as fractions of the model's window
+ * (context compaction spec §4.3 point 5 / §4.4 point 3). The trim fix-up retries once, choosing the
+ * first target the fit plan can reach; if none is reachable it sends the 70% plan.
+ */
+export const REACTIVE_TRIM_FACTORS = [0.9, 0.8, 0.7] as const;
+
 /** 本步解析出的工具与是否启用 ToolSearch（见 `ToolRegistry.forAgent`），以及本步已取的附件字节。 */
 interface StepTools {
   list: RequestTool[];
@@ -907,6 +921,22 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
   return n;
 }
 
+/** Options of {@link maybeCompact}. */
+interface CompactOptions {
+  /**
+   * The reactive path (context compaction spec §4.4): summarise regardless of the trigger,
+   * `enabled: false` and the failure backoff. A proactive call leaves all of them in force.
+   */
+  force?: boolean;
+  /**
+   * The model to summarise with (default the agent's main model). The reactive path passes the rung
+   * that overflowed: a fallback rung may have a smaller window and the summary must fit it.
+   */
+  ref?: ModelRef;
+  /** Whether `ref` is the fallback rung (its saved params are `fallbackParams`). */
+  fallback?: boolean;
+}
+
 /**
  * Compaction: summarize the earlier conversation with the main model (consumed non-streaming) when
  * the calibrated estimate crosses the trigger (context compaction spec §4.1). The hard line
@@ -915,6 +945,9 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
  * `compaction_failed` (attempt from 1, consecutive failures increment), and the step continues
  * unchanged. When the main model cannot be resolved right now, compaction is skipped and the
  * fallback ladder handles the step.
+ *
+ * `opts.force` (the reactive path, spec §4.4) bypasses the trigger, `enabled` and the backoff, and
+ * `opts.ref` makes it summarise with the rung's model rather than the agent's main model.
  */
 async function maybeCompact(
   deps: ModelStepDeps,
@@ -923,13 +956,15 @@ async function maybeCompact(
   runtime: Runtime,
   compaction: CompactionSettings,
   tools: StepTools,
+  opts: CompactOptions = {},
 ): Promise<ConversationEvent[]> {
+  const modelRef = opts.ref ?? input.agent.model;
   let provider: BoundProvider;
   let info: ModelInfo;
   try {
-    ({ provider, info } = await deps.registry.resolve(input.orgId, input.agent.model));
+    ({ provider, info } = await deps.registry.resolve(input.orgId, modelRef));
   } catch (err) {
-    deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
+    deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
     return events;
   }
   try {
@@ -948,7 +983,7 @@ async function maybeCompact(
     events,
     input,
     info,
-    attemptParams(input.agent, info, false).value,
+    attemptParams(input.agent, info, opts.fallback === true).value,
     runtime,
     tools,
     false,
@@ -958,10 +993,13 @@ async function maybeCompact(
   // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
   const output = built.maxOutputTokens;
   // The hard line ignores both gates: enabled: false turns proactive early compaction off only,
-  // and backoff only delays proactive attempts (context compaction spec §4.1).
-  if (estimate + output <= info.contextWindow && compactionBackoff(events)) return events;
-  if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
-    return events;
+  // and backoff only delays proactive attempts (context compaction spec §4.1). The reactive path
+  // (`force`) ignores the trigger entirely (spec §4.4).
+  if (!opts.force) {
+    if (estimate + output <= info.contextWindow && compactionBackoff(events)) return events;
+    if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
+      return events;
+    }
   }
   // the input room left for the kept tail: the window minus the output cap and the reserve
   // (compactionInputBudget), minus the system prompt and tool definitions every request carries
@@ -972,7 +1010,7 @@ async function maybeCompact(
   if (!plan) return events;
 
   const { runId, step, signal, conversationId } = input;
-  const ref = input.agent.model;
+  const ref = modelRef;
   // the summary call's output cap: the org's effective setting, never above the model's own cap
   // (context compaction spec §4.8)
   const request = buildCompactionRequest(
@@ -1185,13 +1223,15 @@ async function ladder(
   let last: Failure | undefined;
   /** The agent's model did not resolve (`agent.model_unavailable`): only the fallback is left. */
   let mainUnavailable = false;
+  /** A reactive overflow used up this step's fix-ups: only the fallback (a different window) is left. */
+  let skipToFallback = false;
   let attempt = 0;
   // hooks fire only for chat runs that have a registry (eval replays omit it, P-18)
   const scope = hookScope(deps.hooks, input);
-  /** 本次尝试发出的请求里带了字节的附件（供应商拒收时写 media_excluded）。 */
+  /** The attachments whose bytes the last sent request carried (a provider rejection excludes them). */
   let sentMedia: string[] = [];
   for (const rung of rungs) {
-    if (mainUnavailable && !rung.fallback) continue;
+    if ((mainUnavailable || skipToFallback) && !rung.fallback) continue;
     if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
       deps.log.warn("model retry skipped: suggested wait exceeds cap", {
         conversationId,
@@ -1201,88 +1241,210 @@ async function ladder(
       });
       continue;
     }
-    attempt++;
-    if (last) {
-      sink({ kind: "step_reset", runId, step });
-      streamed.text = "";
-      if (!rung.fallback) await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
-    }
-    sentMedia = [];
-    /** When the request went out (model.response fires only for sent requests). */
-    let sentAt: number | undefined;
-    /** Whether this attempt resolved its model (a failure before it is a resolve failure). */
-    let resolved = false;
-    try {
-      const { provider, info } = await deps.registry.resolve(input.orgId, rung.ref);
-      resolved = true;
-      if (tools.list.length > 0 && !info.capabilities.tools) {
-        evs = await appendLocal(deps.eventLog, conversationId, evs, {
-          type: "reminder",
-          runId,
-          idemKey: idem.toolsUnsupported(runId, step),
-          payload: { step, text: TOOLS_UNSUPPORTED_REMINDER },
-        });
-      }
-      if (turnReminder !== null) {
-        evs = await appendLocal(deps.eventLog, conversationId, evs, {
-          type: "reminder",
-          runId,
-          idemKey: idem.reminder(runId, step),
-          payload: { step, text: turnReminder },
-        });
-      }
-      const params = attemptParams(agent, info, rung.fallback);
-      await loadMedia(deps, input, evs, info, tools);
-      const { request, meta, estimate } = buildRequest(
-        deps,
-        evs,
-        input,
-        info,
-        params.value,
-        runtime,
-        tools,
-        wrapUp,
-      );
-      // the hard fit guard (context compaction spec §4.3): the output cap is first clamped to what
-      // the window leaves after the input, the reserve to what the clamped cap leaves, and a request
-      // over the resulting target is trimmed deterministically. The plan is recorded and replayed
-      // byte-for-byte; a request the system prompt, tools and latest turn cannot bring under the
-      // target fails before any provider call.
-      request.maxOutputTokens = clampOutput(info.contextWindow, request.maxOutputTokens, estimate);
-      const reserve = effectiveReserve(
-        info.contextWindow,
-        request.maxOutputTokens,
-        compaction.reserveTokens,
-      );
-      const target = fitTarget(info.contextWindow, request.maxOutputTokens, reserve);
-      const planned = planFit({
-        events: evs,
-        request,
-        model: info,
-        maxOutputTokens: request.maxOutputTokens,
-        reserveTokens: reserve,
-        estimate,
-      });
-      let sentRequest = request;
-      let sentEstimate = estimate;
-      if (planned !== null) {
-        const after = estimateAfterFit(request, estimate, planned);
-        if (after > target) {
-          throw new RunError("run.context_too_large", contextTooLargeText(info, target, after));
+    // reactive `model.context_overflow` fix-ups, at most one of each per rung (context compaction
+    // spec §4.4): media exclusion, forced compaction, then a progressive trim
+    let mediaFixup = false;
+    let compactFixup = false;
+    let trimFixup = false;
+    /** Force a compaction call before this rung's next attempt. */
+    let forceCompact = false;
+    /** Apply the progressive reactive trim to this rung's next attempt. */
+    let trimPending = false;
+    /** This attempt is a same-rung overflow fix-up (no same-model retry delay). */
+    let sameRung = false;
+    for (;;) {
+      // a step writes at most MAX_STEP_MODEL_CALLS model_call rows, then stops: never a loop
+      if (attempt >= MAX_STEP_MODEL_CALLS) break;
+      attempt++;
+      if (last) {
+        sink({ kind: "step_reset", runId, step });
+        streamed.text = "";
+        if (!rung.fallback && !sameRung) {
+          await abortableSleep(last.retryAfterMs ?? DEFAULT_RETRY_DELAY_MS, signal);
         }
-        sentRequest = applyFit(request, planned);
-        sentEstimate = after;
       }
-      sentMedia = (meta.media ?? []).flatMap((m) =>
-        m.outcome === "bytes" ? [m.attachmentId] : [],
-      );
-      // model.request before model_call: a denied request is never logged as sent nor sent (a denial
-      // logged before a crash is sticky: runStep checks it before compaction)
-      if (scope && deps.hooks?.has("model.request")) {
-        let verdict: Awaited<ReturnType<HookRunner["run"]>>;
-        try {
-          verdict = await deps.hooks.run(
-            "model.request",
+      sameRung = false;
+      sentMedia = [];
+      /** Whether this attempt applies the reactive trim. */
+      const trimForAttempt = trimPending;
+      trimPending = false;
+      /** When the request went out (model.response fires only for sent requests). */
+      let sentAt: number | undefined;
+      /** Whether this attempt resolved its model (a failure before it is a resolve failure). */
+      let resolved = false;
+      try {
+        const { provider, info } = await deps.registry.resolve(input.orgId, rung.ref);
+        resolved = true;
+        if (forceCompact) {
+          forceCompact = false;
+          // the rung's model, not the agent's: a fallback may have a smaller window (spec §4.4)
+          evs = await maybeCompact(deps, input, evs, runtime, compaction, tools, {
+            force: true,
+            ref: rung.ref,
+            fallback: rung.fallback,
+          });
+        }
+        if (tools.list.length > 0 && !info.capabilities.tools) {
+          evs = await appendLocal(deps.eventLog, conversationId, evs, {
+            type: "reminder",
+            runId,
+            idemKey: idem.toolsUnsupported(runId, step),
+            payload: { step, text: TOOLS_UNSUPPORTED_REMINDER },
+          });
+        }
+        if (turnReminder !== null) {
+          evs = await appendLocal(deps.eventLog, conversationId, evs, {
+            type: "reminder",
+            runId,
+            idemKey: idem.reminder(runId, step),
+            payload: { step, text: turnReminder },
+          });
+        }
+        const params = attemptParams(agent, info, rung.fallback);
+        await loadMedia(deps, input, evs, info, tools);
+        const { request, meta, estimate } = buildRequest(
+          deps,
+          evs,
+          input,
+          info,
+          params.value,
+          runtime,
+          tools,
+          wrapUp,
+        );
+        // the hard fit guard (context compaction spec §4.3): the output cap is first clamped to what
+        // the window leaves after the input, the reserve to what the clamped cap leaves, and a request
+        // over the resulting target is trimmed deterministically. The plan is recorded and replayed
+        // byte-for-byte; a request the system prompt, tools and latest turn cannot bring under the
+        // target fails before any provider call.
+        request.maxOutputTokens = clampOutput(
+          info.contextWindow,
+          request.maxOutputTokens,
+          estimate,
+        );
+        const reserve = effectiveReserve(
+          info.contextWindow,
+          request.maxOutputTokens,
+          compaction.reserveTokens,
+        );
+        const target = fitTarget(info.contextWindow, request.maxOutputTokens, reserve);
+        const planned = trimForAttempt
+          ? reactiveTrimPlan(evs, request, info, request.maxOutputTokens, reserve, estimate)
+          : planFit({
+              events: evs,
+              request,
+              model: info,
+              maxOutputTokens: request.maxOutputTokens,
+              reserveTokens: reserve,
+              estimate,
+            });
+        let sentRequest = request;
+        let sentEstimate = estimate;
+        if (planned !== null) {
+          const after = estimateAfterFit(request, estimate, planned);
+          // a reactive trim is best effort (the estimate may be wrong; the provider is the backstop);
+          // the ordinary hard-fit guard stays strict and fails before any provider call
+          if (!trimForAttempt && after > target) {
+            throw new RunError("run.context_too_large", contextTooLargeText(info, target, after));
+          }
+          sentRequest = applyFit(request, planned);
+          sentEstimate = after;
+        }
+        sentMedia = (meta.media ?? []).flatMap((m) =>
+          m.outcome === "bytes" ? [m.attachmentId] : [],
+        );
+        // model.request before model_call: a denied request is never logged as sent nor sent (a denial
+        // logged before a crash is sticky: runStep checks it before compaction)
+        if (scope && deps.hooks?.has("model.request")) {
+          let verdict: Awaited<ReturnType<HookRunner["run"]>>;
+          try {
+            verdict = await deps.hooks.run(
+              "model.request",
+              {
+                ...scope,
+                purpose: "step",
+                step,
+                attempt,
+                provider: rung.ref.provider,
+                model: rung.ref.model,
+                request: hookRequestOf(sentRequest, deps.log),
+              },
+              signal,
+            );
+          } catch (e) {
+            // run() rejects only when the run's signal aborted: an abort, never a deny
+            if (signal.aborted) throw new StepAborted();
+            throw e;
+          }
+          if (!verdict.allowed) {
+            await recordHookDenial(
+              deps,
+              {
+                orgId: input.orgId,
+                conversationId,
+                runId,
+                ...(input.accountId !== undefined && { accountId: input.accountId }),
+                ...(input.agentId !== undefined && { agentId: input.agentId }),
+                idemKey: idem.hookDenied(runId, step, attempt),
+              },
+              "model.request",
+              verdict,
+              { step, attempt },
+            );
+            throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
+          }
+        }
+        // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
+        // （请求可由日志 + tool_specs 还原）
+        const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
+        const written = await deps.stepLog.appendWithSpecs(
+          conversationId,
+          tools.list.filter((x) => sent.has(x.specHash)),
+          [
+            {
+              type: "model_call",
+              runId,
+              idemKey: idem.modelCall(runId, step, attempt),
+              payload: {
+                step,
+                attempt,
+                provider: rung.ref.provider,
+                model: rung.ref.model,
+                fallback: rung.fallback,
+                request: {
+                  ...meta,
+                  maxOutputTokens: request.maxOutputTokens,
+                  ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
+                  ...(planned !== null && { fit: planned }),
+                  // the request actually sent (post-fit): calibration and the trigger read this value
+                  estimatedInputTokens: sentEstimate,
+                },
+              },
+            },
+          ],
+        );
+        await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
+        sentAt = Date.now();
+        const outcome = await consumeModelStream(
+          provider,
+          sentRequest,
+          info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
+          signal,
+          (ev) => {
+            if (ev.type === "text_delta") {
+              streamed.text += ev.text;
+              sink({ kind: "text", runId, step, text: ev.text });
+            } else {
+              sink({ kind: "thinking", runId, step, text: ev.text });
+            }
+          },
+        );
+        // the draft's last write, before the assistant_message is logged
+        sink({ kind: "stream_end", runId, step });
+        if (scope && deps.hooks) {
+          fireObserve(
+            deps.hooks,
+            "model.response",
             {
               ...scope,
               purpose: "step",
@@ -1290,182 +1452,182 @@ async function ladder(
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              request: hookRequestOf(sentRequest, deps.log),
+              outcome: "ok",
+              content: outcome.content,
+              stopReason: outcome.stopReason,
+              usage: outcome.usage,
+              latencyMs: Date.now() - sentAt,
             },
             signal,
+            deps.log,
           );
-        } catch (e) {
-          // run() rejects only when the run's signal aborted: an abort, never a deny
-          if (signal.aborted) throw new StepAborted();
-          throw e;
         }
-        if (!verdict.allowed) {
-          await recordHookDenial(
-            deps,
+        return { outcome, ref: rung.ref };
+      } catch (err) {
+        if (err instanceof StepAborted) throw err;
+        if (signal.aborted) throw new StepAborted();
+        // a hook denial is final (not retried, not reclassified)
+        if (err instanceof RunError) throw err;
+        const f = classify(err);
+        if (scope && deps.hooks && sentAt !== undefined) {
+          fireObserve(
+            deps.hooks,
+            "model.response",
             {
-              orgId: input.orgId,
-              conversationId,
-              runId,
-              ...(input.accountId !== undefined && { accountId: input.accountId }),
-              ...(input.agentId !== undefined && { agentId: input.agentId }),
-              idemKey: idem.hookDenied(runId, step, attempt),
-            },
-            "model.request",
-            verdict,
-            { step, attempt },
-          );
-          throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
-        }
-      }
-      // 请求里的工具定义（含目录里的）按指纹存进 tool_specs，与 model_call 同一事务
-      // （请求可由日志 + tool_specs 还原）
-      const sent = new Set([...meta.tools, ...(meta.catalog ?? [])].map((t) => t.specHash));
-      const written = await deps.stepLog.appendWithSpecs(
-        conversationId,
-        tools.list.filter((x) => sent.has(x.specHash)),
-        [
-          {
-            type: "model_call",
-            runId,
-            idemKey: idem.modelCall(runId, step, attempt),
-            payload: {
+              ...scope,
+              purpose: "step",
               step,
               attempt,
               provider: rung.ref.provider,
               model: rung.ref.model,
-              fallback: rung.fallback,
-              request: {
-                ...meta,
-                maxOutputTokens: request.maxOutputTokens,
-                ...(params.dropped.length > 0 && { droppedParams: params.dropped }),
-                ...(planned !== null && { fit: planned }),
-                // the request actually sent (post-fit): calibration and the trigger read this value
-                estimatedInputTokens: sentEstimate,
-              },
+              outcome: "failed",
+              content: [],
+              stopReason: null,
+              usage: null,
+              latencyMs: Date.now() - sentAt,
+              errorCode: f.code,
             },
-          },
-        ],
-      );
-      await deps.eventLog.notify(conversationId, Math.max(...written.map((e) => e.seq)));
-      sentAt = Date.now();
-      const outcome = await consumeModelStream(
-        provider,
-        sentRequest,
-        info.streamIdleTimeoutMs ?? runtime.streamIdleMs,
-        signal,
-        (ev) => {
-          if (ev.type === "text_delta") {
-            streamed.text += ev.text;
-            sink({ kind: "text", runId, step, text: ev.text });
-          } else {
-            sink({ kind: "thinking", runId, step, text: ev.text });
-          }
-        },
-      );
-      // the draft's last write, before the assistant_message is logged
-      sink({ kind: "stream_end", runId, step });
-      if (scope && deps.hooks) {
-        fireObserve(
-          deps.hooks,
-          "model.response",
-          {
-            ...scope,
-            purpose: "step",
-            step,
-            attempt,
-            provider: rung.ref.provider,
-            model: rung.ref.model,
-            outcome: "ok",
-            content: outcome.content,
-            stopReason: outcome.stopReason,
-            usage: outcome.usage,
-            latencyMs: Date.now() - sentAt,
-          },
-          signal,
-          deps.log,
-        );
-      }
-      return { outcome, ref: rung.ref };
-    } catch (err) {
-      if (err instanceof StepAborted) throw err;
-      if (signal.aborted) throw new StepAborted();
-      // a hook denial is final (not retried, not reclassified)
-      if (err instanceof RunError) throw err;
-      const f = classify(err);
-      if (scope && deps.hooks && sentAt !== undefined) {
-        fireObserve(
-          deps.hooks,
-          "model.response",
-          {
-            ...scope,
-            purpose: "step",
-            step,
-            attempt,
-            provider: rung.ref.provider,
-            model: rung.ref.model,
-            outcome: "failed",
-            content: [],
-            stopReason: null,
-            usage: null,
-            latencyMs: Date.now() - sentAt,
-            errorCode: f.code,
-          },
-          signal,
-          deps.log,
-        );
-      }
-      deps.log.warn("model call attempt failed", {
-        conversationId,
-        runId,
-        step,
-        attempt,
-        code: f.code,
-        retryable: f.retryable,
-        error: f.message,
-      });
-      if (
-        !resolved &&
-        !rung.fallback &&
-        agent.fallback &&
-        err instanceof ApiError &&
-        !(err instanceof ProviderListError) &&
-        err.code === "agent.model_unavailable"
-      ) {
-        mainUnavailable = true;
-        last = f;
-        continue;
-      }
-      if (!f.retryable) {
-        if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
-          // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败
-          try {
-            await excludeMedia(deps, input, attempt, sentMedia);
-          } catch (e) {
-            deps.log.warn("cannot record media_excluded", { conversationId, runId, step, err: e });
-          }
+            signal,
+            deps.log,
+          );
         }
-        throw new RunError(f.code, f.message);
+        deps.log.warn("model call attempt failed", {
+          conversationId,
+          runId,
+          step,
+          attempt,
+          code: f.code,
+          retryable: f.retryable,
+          error: f.message,
+        });
+        if (
+          !resolved &&
+          !rung.fallback &&
+          agent.fallback &&
+          err instanceof ApiError &&
+          !(err instanceof ProviderListError) &&
+          err.code === "agent.model_unavailable"
+        ) {
+          mainUnavailable = true;
+          last = f;
+          break;
+        }
+        if (f.code === "model.context_overflow") {
+          // reactive fix-ups, one of each per rung (context compaction spec §4.4). Each retries this
+          // rung in the same step, so it consumes one attempt.
+          if (sentMedia.length > 0 && !mediaFixup) {
+            mediaFixup = true;
+            // record the rejection and merge it in: the retry rebuilds from the log and the bytes
+            // become "rejected" placeholders
+            try {
+              evs = mergeLocal(evs, await excludeMedia(deps, input, attempt, sentMedia));
+            } catch (e) {
+              deps.log.warn("cannot record media_excluded", {
+                conversationId,
+                runId,
+                step,
+                err: e,
+              });
+            }
+            last = f;
+            sameRung = true;
+            continue;
+          }
+          if (!compactFixup) {
+            compactFixup = true;
+            forceCompact = true;
+            last = f;
+            sameRung = true;
+            continue;
+          }
+          if (!trimFixup) {
+            trimFixup = true;
+            trimPending = true;
+            last = f;
+            sameRung = true;
+            continue;
+          }
+          // exhausted: a fallback model (a different window) is the only rung worth trying
+          if (!rung.fallback && agent.fallback) {
+            skipToFallback = true;
+            last = f;
+            break;
+          }
+          throw new RunError(f.code, f.message);
+        }
+        if (!f.retryable) {
+          if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
+            // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败
+            try {
+              await excludeMedia(deps, input, attempt, sentMedia);
+            } catch (e) {
+              deps.log.warn("cannot record media_excluded", {
+                conversationId,
+                runId,
+                step,
+                err: e,
+              });
+            }
+          }
+          throw new RunError(f.code, f.message);
+        }
+        last = f;
+        break;
       }
-      last = f;
     }
   }
   const f = last as Failure;
   throw new RunError(f.code, f.message);
 }
 
+/**
+ * The deterministic fit plan for a reactive trim (context compaction spec §4.3 point 5 / §4.4): the
+ * request is trimmed to fit 90%, then 80%, then 70% of the model's window, using the first target the
+ * plan reaches. Returns null when the request already fits the 90% target (nothing to trim). The
+ * plan is ordinary and replays byte-for-byte like any other.
+ */
+function reactiveTrimPlan(
+  events: ConversationEvent[],
+  request: ModelRequest,
+  model: ModelInfo,
+  maxOutputTokens: number,
+  reserveTokens: number,
+  estimate: number,
+): FitPlan | null {
+  let best: FitPlan | null = null;
+  for (const factor of REACTIVE_TRIM_FACTORS) {
+    const window = Math.max(1, Math.floor(factor * model.contextWindow));
+    const plan = planFit({
+      events,
+      request,
+      model: { ...model, contextWindow: window },
+      maxOutputTokens,
+      reserveTokens,
+      estimate,
+    });
+    if (plan === null) return null;
+    best = plan;
+    if (estimateAfterFit(request, estimate, plan) <= window) break;
+  }
+  return best;
+}
+
 /** 不可重试、且可能由请求里的媒体引起的失败：带了媒体字节时写 `media_excluded`（Ruling M8）。 */
-const REJECTS_MEDIA = new Set(["model.invalid_request", "model.context_overflow"]);
+const REJECTS_MEDIA = new Set(["model.invalid_request"]);
 
 /**
  * 供应商拒收了带媒体的请求：把这些附件记进 `media_excluded`（每条最多 {@link MEDIA_EXCLUDED_MAX_IDS} 个），
- * 之后的请求一律换成占位，会话不会因同一个附件永久卡住（可由日志推出）。本次运行照常失败。
+ * 之后的请求一律换成占位，会话不会因同一个附件永久卡住（可由日志推出）。
+ *
+ * The reactive path merges the returned events into the step's local list and retries in the same
+ * step (context compaction spec §4.4); the non-retryable path lets the run fail as before.
  */
 async function excludeMedia(
   deps: ModelStepDeps,
   input: ModelStepInput,
   attempt: number,
   ids: readonly string[],
-): Promise<void> {
+): Promise<ConversationEvent[]> {
   const { conversationId, runId, step } = input;
   const events: AppendEvent[] = [];
   for (let i = 0; i < ids.length; i += MEDIA_EXCLUDED_MAX_IDS) {
@@ -1485,7 +1647,7 @@ async function excludeMedia(
     step,
     attachmentIds: ids,
   });
-  await deps.eventLog.append(conversationId, events);
+  return deps.eventLog.append(conversationId, events);
 }
 
 function classify(err: unknown): Failure {
