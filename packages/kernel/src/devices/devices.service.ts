@@ -1149,10 +1149,17 @@ export class DevicesService {
                 policy: localPolicyOf(r.machine_local_policy),
               }
             : null,
-        mode: deviceModeViewOf(policyOf(r), settings, r.source === "local", summaryOf(r), {
-          pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
-          recent: recent.get(r.id) ?? [],
-        }),
+        mode: deviceModeViewOf(
+          policyOf(r),
+          settings,
+          r.source === "local",
+          summaryOf(r),
+          {
+            pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
+            recent: recent.get(r.id) ?? [],
+          },
+          this.config.get().sandbox.limits.egress === "none",
+        ),
         // a local device's machine decides it; cloud devices have none in phase 2
         sessionIsolation: r.machine_session_isolation ?? false,
         filesLost: r.fs_status === "lost",
@@ -1362,17 +1369,25 @@ export function deviceModeViewOf(
   local: boolean,
   summary: DeviceLocalPolicySummary | null,
   extra: { pendingNextUse: boolean; recent: DeviceModeChangeView[] },
+  /** The platform kill switch (`sandbox.limits.egress: none`): the network is the platform's. */
+  killSwitch = false,
 ): DeviceModeView {
   const networkKind = local ? "allowlist" : policy.network.kind;
-  // "org" only when the org supplied the hosts in effect: auto mode ignores the org's network,
-  // an open network is the platform default, and an allowlist without org hosts uses the
-  // deployment's list
-  const source: "org" | "platform" =
-    networkKind === "allowlist" &&
-    policy.mode === "sandbox" &&
-    settings.cloudNetwork?.allowHosts !== undefined
-      ? "org"
-      : "platform";
+  const org = settings.cloudNetwork;
+  // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
+  // ignores the org's network; a local device's list is the org's only when the org gave hosts;
+  // a sandbox cloud device's kind is the org's when it matches the mode the org chose
+  const source: "org" | "platform" = killSwitch
+    ? "platform"
+    : local
+      ? policy.mode === "sandbox" && org?.allowHosts !== undefined
+        ? "org"
+        : "platform"
+      : policy.mode === "sandbox" &&
+          org !== undefined &&
+          (org.mode === "open" ? networkKind === "open-public" : networkKind === "allowlist")
+        ? "org"
+        : "platform";
   const network = local
     ? { kind: "allowlist" as const, hosts: [...policy.localAllowedDomains], source }
     : { kind: policy.network.kind, hosts: [...policy.network.hosts], source };

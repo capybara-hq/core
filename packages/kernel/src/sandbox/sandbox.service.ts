@@ -544,9 +544,10 @@ export class SandboxService {
   }
 
   /**
-   * The mode a device chose: a local device's derived one (`localModeOf`, failing closed); a cloud
-   * device's narrowing switch (`devices.mode`, `sandbox` only); null for a cloud device that follows
-   * the platform and the org or a local device with no connected machine.
+   * The mode a device chose: a local device's derived one (`localModeOf`, which never returns null
+   * — a machine with no summary or no mode feature is sandbox); a cloud device's narrowing switch
+   * (`devices.mode`, `sandbox` only), or null for a cloud device that follows the platform and the
+   * org.
    */
   private async deviceChosenMode(
     orgId: string,

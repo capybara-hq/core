@@ -7,9 +7,10 @@ import { type DeploymentDevicePolicy, effectiveDevicePolicy } from "../../src/sa
 
 const deployment = (
   autoMode: DeploymentDevicePolicy["autoMode"] = "allowed",
+  egress: "none" | "allowlist" = "allowlist",
 ): DeploymentDevicePolicy => ({
   autoMode,
-  limits: { egress: "allowlist", allowHosts: ["pypi.org"] },
+  limits: { egress, allowHosts: ["pypi.org"] },
 });
 
 const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
@@ -62,6 +63,25 @@ describe("deviceModeViewOf", () => {
       allowedMode: "sandbox",
       allowedBy: null,
       local: { reported: "auto", allowedDomains: [] },
+    });
+  });
+
+  it("a cloud device in sandbox mode with the org's open network names the org", () => {
+    const org = { cloudNetwork: { mode: "open" as const } };
+    const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
+    expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
+      mode: "sandbox",
+      network: { kind: "open-public", hosts: [], source: "org" },
+    });
+  });
+
+  it("the platform kill switch names the platform even when the org supplied hosts", () => {
+    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    // the deployment is at egress none: every read is an empty allowlist
+    const policy = effectiveDevicePolicy(deployment("allowed", "none"), org, "sandbox");
+    expect(deviceModeViewOf(policy, org, false, null, extra, true)).toMatchObject({
+      mode: "sandbox",
+      network: { kind: "allowlist", hosts: [], source: "platform" },
     });
   });
 
