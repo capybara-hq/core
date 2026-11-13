@@ -1782,6 +1782,9 @@
     "otherApprover": "Waiting for an approver.",
     "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
     "otherApproverNamed": "{tool} ({key}) needs approval; waiting for {who}.",
+    "command": {
+      "otherApprover": "The agent wants to run a command; waiting for the device owner."
+    },
     "policy": {
       "agent": "The agent's settings ask for approval",
       "connector": "The connector's policy asks for approval",
