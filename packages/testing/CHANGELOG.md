@@ -1,5 +1,22 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.18
+
+### Patch Changes
+
+- 8049c66: The fake git server takes pushes, checks Basic auth, can fail or redirect a request once, records
+  request header names, and exports `FakeGitServerOptions`.
+- Updated dependencies [87f0426]
+- Updated dependencies [3414c94]
+- Updated dependencies [59f82a3]
+- Updated dependencies [233af93]
+- Updated dependencies [907f908]
+- Updated dependencies [f453e56]
+- Updated dependencies [f78281b]
+  - @capybara-hq/kernel@0.1.0-rc.28
+  - @capybara-hq/plugin-sdk@0.1.0-rc.21
+  - @capybara-hq/plugin-tools@0.1.0-rc.13
+
 ## 0.1.0-rc.17
 
 ### Patch Changes
