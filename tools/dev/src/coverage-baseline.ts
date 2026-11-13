@@ -18,8 +18,45 @@ export type CoverageSummary = Record<
 
 /** The istanbul/v8 json-summary shape: absolute or repo-relative paths plus a `total` entry. */
 const KERNEL_SRC_PREFIX = "packages/kernel/src/";
+const KERNEL_SRC_SEGMENT = `/${KERNEL_SRC_PREFIX}`;
 const SUMMARY_PATH = join("coverage", "coverage-summary.json");
 const OUTPUT_PATH = join("docs", "testing", "coverage-baseline.md");
+
+export type ModuleCoverage = { total: number; covered: number };
+
+/**
+ * Returns the module key of a summary path (its first segment under `packages/kernel/src`), or
+ * `undefined` for the `total` entry and paths outside the kernel. The json-summary reporter writes
+ * absolute filesystem paths; hand-written summaries and older reporters use repo-relative ones, so
+ * both shapes are accepted.
+ */
+function kernelModuleKey(path: string): string | undefined {
+  if (path === "total") return undefined;
+  const normalized = path.replaceAll("\\", "/");
+  const absoluteIndex = normalized.lastIndexOf(KERNEL_SRC_SEGMENT);
+  const rest =
+    absoluteIndex !== -1
+      ? normalized.slice(absoluteIndex + KERNEL_SRC_SEGMENT.length)
+      : normalized.startsWith(KERNEL_SRC_PREFIX)
+        ? normalized.slice(KERNEL_SRC_PREFIX.length)
+        : undefined;
+  if (rest === undefined || rest === "") return undefined;
+  return rest.split("/")[0] ?? rest;
+}
+
+/** Aggregates line totals per module key; rows are only created for kernel src files. */
+export function aggregateModules(summary: CoverageSummary): Map<string, ModuleCoverage> {
+  const modules = new Map<string, ModuleCoverage>();
+  for (const [path, entry] of Object.entries(summary)) {
+    const key = kernelModuleKey(path);
+    if (key === undefined) continue;
+    const agg = modules.get(key) ?? { total: 0, covered: 0 };
+    agg.total += entry.lines.total;
+    agg.covered += entry.lines.covered;
+    modules.set(key, agg);
+  }
+  return modules;
+}
 
 /** Formats one decimal place, or an em dash when the module has no lines. */
 function formatPct(covered: number, total: number): string {
@@ -32,19 +69,7 @@ function formatPct(covered: number, total: number): string {
  * and files outside `packages/kernel/src` are ignored; rows are sorted by module key.
  */
 export function renderCoverageBaseline(summary: CoverageSummary): string {
-  const modules = new Map<string, { total: number; covered: number }>();
-  for (const [path, entry] of Object.entries(summary)) {
-    if (path === "total" || !path.startsWith(KERNEL_SRC_PREFIX)) continue;
-    const rest = path.slice(KERNEL_SRC_PREFIX.length);
-    if (rest === "") continue;
-    const key = rest.split("/")[0] ?? rest;
-    const agg = modules.get(key) ?? { total: 0, covered: 0 };
-    agg.total += entry.lines.total;
-    agg.covered += entry.lines.covered;
-    modules.set(key, agg);
-  }
-
-  const rows = [...modules.entries()]
+  const rows = [...aggregateModules(summary).entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(
       ([key, { total, covered }]) =>
@@ -67,19 +92,28 @@ export function renderCoverageBaseline(summary: CoverageSummary): string {
   ].join("\n");
 }
 
-/** Reads `coverage/coverage-summary.json` and writes the baseline into `docs/testing/`. */
-function writeBaseline(root: string): void {
+/**
+ * Reads `coverage/coverage-summary.json` and writes the baseline into `docs/testing/`. Throws an
+ * actionable error when the summary is missing or contains no kernel modules, so the CLI exits
+ * nonzero instead of writing an empty baseline.
+ */
+export function writeBaseline(root: string): void {
   const summaryPath = join(root, SUMMARY_PATH);
   let summary: CoverageSummary;
   try {
     summary = JSON.parse(readFileSync(summaryPath, "utf8")) as CoverageSummary;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    console.error(
-      `Cannot read ${SUMMARY_PATH} (${reason}). Run \`pnpm coverage\` from the repository root first.`,
+    throw new Error(
+      `Cannot read ${summaryPath} (${reason}). Run \`pnpm coverage\` from the repository root first.`,
     );
-    process.exitCode = 1;
-    return;
+  }
+
+  if (aggregateModules(summary).size === 0) {
+    throw new Error(
+      `No packages/kernel/src entries in ${summaryPath}. Run \`pnpm coverage\` from the ` +
+        "repository root (its include covers packages/kernel/src/**), then retry.",
+    );
   }
 
   const outPath = join(root, OUTPUT_PATH);
@@ -91,5 +125,10 @@ function writeBaseline(root: string): void {
 const root = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  writeBaseline(root);
+  try {
+    writeBaseline(root);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
