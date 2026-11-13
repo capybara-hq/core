@@ -43,3 +43,42 @@ describe("a page the contributions list leaves out", () => {
     expect(reads).toHaveLength(1);
   });
 });
+
+describe("/p/<plugin>: a plugin's page without the contribution id", () => {
+  const page = {
+    plugin: "board",
+    id: "memory-page",
+    title: { zh: "记忆", en: "Memory" },
+    slot: "org.page" as const,
+    kind: "view" as const,
+    icon: "puzzle" as const,
+  };
+
+  it("opens the plugin's page and draws no tab bar (one page is one view)", async () => {
+    params.current = { plugin: "board", id: "memory-page" };
+    resetNavigation("/p/board");
+    window.history.replaceState(null, "", "/p/board");
+    stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [page] }),
+      [`GET ${UI}/views/board/memory-page`]: () => json(200, { view: { blocks: [] } }),
+    });
+    await renderRouteWithCache("/p/board", lastStubRoutes(), { locale: "en" });
+    expect(await screen.findByRole("heading", { name: "Memory" })).toBeTruthy();
+    expect(screen.queryByRole("tablist")).toBeNull();
+  });
+
+  it("a plugin with no page at all is the designed not-found", async () => {
+    params.current = { plugin: "nothing", id: "memory-page" };
+    resetNavigation("/p/nothing");
+    window.history.replaceState(null, "", "/p/nothing");
+    stubApi({
+      [`GET ${UI}/contributions`]: () => json(200, { items: [page] }),
+    });
+    await renderRouteWithCache("/p/nothing", lastStubRoutes(), { locale: "en" });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-template="StatusPage"]')?.getAttribute("data-kind"),
+      ).toBe("404"),
+    );
+  });
+});
