@@ -49,6 +49,7 @@ export const SKIP_REASONS = [
   "target_gone",
   "conversation_gone",
   "org_disabled",
+  "plugin_disabled",
   "unsupported_target",
   "task_deleted",
   "task_paused",

@@ -176,6 +176,7 @@ describe("tool kinds", () => {
       ScheduleCreate: "tool",
       ScheduleUpdate: "tool",
       ScheduleList: "tool",
+      ScheduleTargets: "tool",
       ScheduleDelete: "tool",
     });
   });

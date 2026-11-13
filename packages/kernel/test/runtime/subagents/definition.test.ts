@@ -402,6 +402,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       "ScheduleCreate",
       "ScheduleUpdate",
       "ScheduleList",
+      "ScheduleTargets",
       "ScheduleDelete",
     ]);
     expect(r.definition).toEqual({

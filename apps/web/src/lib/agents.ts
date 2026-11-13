@@ -64,6 +64,7 @@ export const BUILTIN_TOOLS = [
   "ScheduleCreate",
   "ScheduleUpdate",
   "ScheduleList",
+  "ScheduleTargets",
   "ScheduleDelete",
 ] as const;
 

@@ -342,6 +342,7 @@ describe("AskUserQuestion 端到端", () => {
       "ScheduleCreate",
       "ScheduleDelete",
       "ScheduleList",
+      "ScheduleTargets",
       "ScheduleUpdate",
       "SendMessage",
     ]);

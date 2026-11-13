@@ -36,6 +36,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
+  enableExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -177,6 +178,8 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 
 /** A direct chat of `accountId` on a connection of the agent, bound to `conv` and delivered. */
 async function seedDm(conv: string, accountId: string): Promise<string> {
+  // a connection exists only on an extension the org has enabled: targets and create ask for it
+  await enableExtensions(raw, orgId, "fake-im");
   const connectionId = randomUUID();
   await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
     VALUES (${connectionId}, ${orgId}, 'fake-im', 'Team bot', ${agentId}, ${ownerId})`.execute(raw);
@@ -286,6 +289,130 @@ describe("schedule tools (spec §11)", { timeout: 120_000 }, () => {
       conversationId: null,
       chat: { connectionId, chatId: "chat-dm-1", chatType: "dm" },
       trigger: { kind: "once", at: "2099-01-01T15:00" },
+    });
+  });
+
+  it("chat mode posts into the named chat as the connection's agent", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const connectionId = await seedDm(conv, aliceId);
+    const input = {
+      name: "DM brief",
+      prompt: "Summarize the build.",
+      cron: "0 9 * * *",
+      mode: "chat",
+      chat: { connectionId, chatId: "chat-dm-1" },
+      agentId,
+    };
+    const p = await policyOf("ScheduleCreate", input, aliceId, conv);
+    expect(p).toMatchObject({ key: "ScheduleCreate", policy: "ask", remember: false });
+    expect(p.summary?.en).toContain("runs in the direct chat on Team bot");
+    const r = await tool("ScheduleCreate").run(input, callCtx(aliceId, conv));
+    expect(textOf(r)).toContain("the direct chat on Team bot");
+    const [task] = await tasksOf(aliceId);
+    expect(task).toMatchObject({
+      accountId: aliceId,
+      agentId,
+      mode: "chat",
+      conversationId: null,
+      chat: { connectionId, chatId: "chat-dm-1", chatType: "dm" },
+    });
+  });
+
+  it("a chat task for another agent is refused", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const connectionId = await seedDm(conv, aliceId);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: { name: "Other", instructions: "Be helpful.", model: definition.model },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const otherAgentId = (res.json() as { agent: { id: string } }).agent.id;
+    const input = {
+      name: "Wrong agent",
+      prompt: "Say hi.",
+      cron: "0 9 * * *",
+      mode: "chat",
+      chat: { connectionId, chatId: "chat-dm-1" },
+      agentId: otherAgentId,
+    };
+    expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toContain(
+      "The chat belongs to another agent",
+    );
+    expect(await tasksOf(aliceId)).toEqual([]);
+  });
+
+  it("ScheduleTargets lists the user's chats, the same data as the service", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const connectionId = await seedDm(conv, aliceId);
+    // a group on a channel without threads, and another member's DM, are not offered
+    await sql`INSERT INTO capybara.channel_threads
+        (id, connection_id, chat_id, thread_key, account_id, conversation_id)
+      VALUES (${randomUUID()}, ${connectionId}, 'g-1', 'm-root-1', ${aliceId}, ${conv})`.execute(
+      raw,
+    );
+    await sql`INSERT INTO capybara.channel_threads
+        (id, connection_id, chat_id, thread_key, account_id, conversation_id)
+      VALUES (${randomUUID()}, ${connectionId}, 'chat-dm-bob', 'dm:ext-bob', ${bobId}, ${conv})`.execute(
+      raw,
+    );
+    const expected = await svc().chatTargets(orgId, aliceId);
+    expect(expected.map((t) => t.chatId)).toEqual(["chat-dm-1"]);
+    const r = await tool("ScheduleTargets").run({}, callCtx(aliceId, conv));
+    const text = textOf(r);
+    expect(text).toContain(`connectionId=${connectionId}`);
+    expect(text).toContain("chatId=chat-dm-1");
+    expect(text).toContain("chatType=dm");
+    expect(text).toContain(`agentId=${agentId}`);
+    expect(text).not.toContain("chat-dm-bob");
+    expect(text).not.toContain("g-1");
+    expect("display" in r ? r.display : undefined).toEqual({
+      summary: { zh: "可送达的聊天（1 个）", en: "Listed 1 delivery chats" },
+    });
+  });
+
+  it("a chat on a channel plugin disabled in the org is hidden and refused at create", async () => {
+    const conv = await createConv(alice, orgId, agentId);
+    const connectionId = await seedDm(conv, aliceId);
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false
+      WHERE org_id = ${orgId} AND plugin = 'fake-im'`.execute(raw);
+    const listed = textOf(await tool("ScheduleTargets").run({}, callCtx(aliceId, conv)));
+    expect(listed).toContain("no IM chats");
+    const input = {
+      name: "Hidden",
+      prompt: "Say hi.",
+      cron: "0 9 * * *",
+      mode: "chat",
+      chat: { connectionId, chatId: "chat-dm-1" },
+    };
+    expect(await refusal(tool("ScheduleCreate").run(input, callCtx(aliceId, conv)))).toContain(
+      "extension is disabled in this organization",
+    );
+    expect(await tasksOf(aliceId)).toEqual([]);
+  });
+
+  it("ScheduleUpdate moves a task into a chat", async () => {
+    const task = await dailyTask(aliceId);
+    const conv = await createConv(alice, orgId, agentId);
+    const connectionId = await seedDm(conv, aliceId);
+    const input = {
+      id: task.id,
+      mode: "chat" as const,
+      chat: { connectionId, chatId: "chat-dm-1" },
+      agentId,
+    };
+    const p = await policyOf("ScheduleUpdate", input, aliceId, conv);
+    expect(p.summary?.en).toContain(
+      "runs in a new conversation for every run → the direct chat on Team bot",
+    );
+    await tool("ScheduleUpdate").run(input, callCtx(aliceId, conv));
+    expect(await store.getTask(db, orgId, task.id)).toMatchObject({
+      mode: "chat",
+      conversationId: null,
+      chat: { connectionId, chatId: "chat-dm-1", chatType: "dm" },
     });
   });
 
