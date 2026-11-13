@@ -215,7 +215,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -414,7 +414,7 @@ const grantKeys = async (s: Setup, taskId: string) => {
   return (res.json() as { items: { toolKey: string; specHash: string; stale: boolean }[] }).items;
 };
 
-describe("adding network grants", { timeout: 60_000 }, () => {
+describe("adding network grants", () => {
   it("create and add take network:<host> by the rule; the grant is stored as P-D7 says", async () => {
     const s = await setup();
     const taskId = await createTask(s, ["network:files.example.com"]);
@@ -474,7 +474,7 @@ describe("adding network grants", { timeout: 60_000 }, () => {
   });
 });
 
-describe("who may approve domains", { timeout: 60_000 }, () => {
+describe("who may approve domains", () => {
   const refusal = "Network domains are approved on the task page by a person.";
 
   it("a personal access token cannot add or create network grants", async () => {
@@ -546,7 +546,7 @@ describe("who may approve domains", { timeout: 60_000 }, () => {
   });
 });
 
-describe("unattended runs", { timeout: 60_000 }, () => {
+describe("unattended runs", () => {
   it("a task grant reaches the exec with source task; nothing is asked or missing", async () => {
     const s = await setup();
     s.dev.blocking.set("files.example.com", "device");
@@ -611,7 +611,7 @@ describe("unattended runs", { timeout: 60_000 }, () => {
   });
 });
 
-describe("NetworkGrants with task grants", { timeout: 60_000 }, () => {
+describe("NetworkGrants with task grants", () => {
   it("run and task grants merge (source task); another person's device, a trial or another org get none", async () => {
     const s = await setup();
     const taskId = await createTask(s, ["network:files.example.com"]);
@@ -656,7 +656,7 @@ describe("NetworkGrants with task grants", { timeout: 60_000 }, () => {
   });
 });
 
-describe("trial runs", { timeout: 60_000 }, () => {
+describe("trial runs", () => {
   it("the creator's 「这次允许」 becomes a task grant; an unchecked host does not", async () => {
     const s = await setup();
     s.dev.blocking.set("files.example.com", "device");

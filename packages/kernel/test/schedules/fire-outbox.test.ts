@@ -79,7 +79,7 @@ beforeAll(async () => {
   agentId = await createAgent(req, orgId);
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   maintenance = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redis });
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -180,7 +180,7 @@ async function expectOwedOnly(run: TaskRun): Promise<void> {
   expect(await runOf(run.id)).toMatchObject({ status: "pending", firedAt: null });
 }
 
-describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
+describe("scheduled fires through the outbox", () => {
   it("a scanned tick fires with the fast path disabled", async () => {
     const t = await dueTask();
     await scanner().scanAt(new Date());

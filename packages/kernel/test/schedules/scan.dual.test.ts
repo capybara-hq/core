@@ -100,7 +100,7 @@ beforeAll(async () => {
   });
   expect(agent.status, JSON.stringify(agent.json)).toBe(201);
   agentId = (agent.json.agent as { id: string }).id;
-}, 300_000);
+});
 
 afterAll(async () => {
   await maint?.close();
@@ -108,7 +108,7 @@ afterAll(async () => {
   await raw?.destroy();
   await h?.stop();
   await Promise.all([pgc?.stop(), rdc?.stop()]);
-}, 120_000);
+});
 
 async function task(over: Partial<ScheduledTaskInsert>): Promise<ScheduledTask> {
   return store.insertTask(db, {
@@ -175,7 +175,7 @@ const settledRuns = (taskId: string, n: number) =>
 const kernelRunsOf = async (r: TaskRun) =>
   db.selectFrom("runs").select("id").where("scheduled_task_run_id", "=", r.id).execute();
 
-describe("scheduled task scan on two replicas", { timeout: 120_000 }, () => {
+describe("scheduled task scan on two replicas", () => {
   it("two replicas fire one run per tick", async () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
     // the test's scans take a few seconds: started just before a five-minute boundary, the next

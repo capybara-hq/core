@@ -157,7 +157,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -369,7 +369,7 @@ const missingOf = async (taskRunId: string) =>
       .executeTakeFirstOrThrow()
   ).missing_grants;
 
-describe("adding the tier:open grant", { timeout: 60_000 }, () => {
+describe("adding the tier:open grant", () => {
   it("is taken under an open ceiling and stored without a tool; refused below it or for another tier", async () => {
     const s = await setup();
     const taskId = await createTask(s, ["tier:open"]);
@@ -423,7 +423,7 @@ describe("adding the tier:open grant", { timeout: 60_000 }, () => {
   });
 });
 
-describe("unattended runs on a local device", { timeout: 60_000 }, () => {
+describe("unattended runs on a local device", () => {
   const execs = (m: FakeMachine) =>
     m.frames.filter((f) => f.type === "req" && f.op === "exec") as KernelReq[];
 
@@ -497,7 +497,7 @@ describe("unattended runs on a local device", { timeout: 60_000 }, () => {
   });
 });
 
-describe("the unsandboxed gate reads isolation alone", { timeout: 60_000 }, () => {
+describe("the unsandboxed gate reads isolation alone", () => {
   it("a summary the kernel cannot otherwise parse still reports isolation none", async () => {
     const s = await setup();
     const grants = k.app.get(NetworkGrants);

@@ -66,7 +66,7 @@ beforeAll(async () => {
     ),
   );
   svc = k.app.get(ScheduledTasksService);
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
