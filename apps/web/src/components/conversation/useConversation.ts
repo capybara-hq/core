@@ -289,6 +289,10 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           const { added } = appendEvents(qc, orgId, conversationId, [e]);
           // The agent changed something for the person: what the pages show may be stale.
           if (added > 0 && isPlatformCallDone(e)) void invalidateAfterPlatformCall(qc);
+          // A pending approval changed without a decision: its card reads it again.
+          if (added > 0 && e.type === "approval_updated") {
+            invalidate(keys.org(orgId).approval(e.payload.approvalId));
+          }
           // The catch-up delivered something: what lives outside the log may have changed too.
           if (catchingUp.current && added > 0) {
             catchingUp.current = false;

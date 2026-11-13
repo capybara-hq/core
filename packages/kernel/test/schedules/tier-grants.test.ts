@@ -172,7 +172,7 @@ afterAll(async () => {
 
 async function setup(
   policy: Partial<DeviceLocalPolicySummary> = {},
-  features: DeviceFeature[] = ["networkReport", "policyOp", "tiers"],
+  features: DeviceFeature[] = ["networkReport", "policyOp", "policyOpId", "tiers"],
 ): Promise<Setup> {
   const login = `m-${randomUUID().slice(0, 8)}`;
   const accountId = (
@@ -403,7 +403,7 @@ describe("adding the tier:open grant", { timeout: 60_000 }, () => {
   });
 
   it("is refused for a device whose program applies no sandbox levels", async () => {
-    const s = await setup({}, ["networkReport", "policyOp"]);
+    const s = await setup({}, ["networkReport", "policyOp", "policyOpId"]);
     const res = await s.req({
       method: "POST",
       url: base(),

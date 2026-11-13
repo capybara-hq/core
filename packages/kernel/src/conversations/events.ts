@@ -741,6 +741,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
+   * A still-pending approval changed without a decision: a network ask's 「这台设备一直允许」 whose
+   * device change was not applied or not confirmed (`detail.attempt`, transactional outbox spec
+   * §7). Display only, never model-visible: the page reads the approval again.
+   */
+  ev("approval_updated", z.object({ approvalId: z.string(), callId: z.string() })),
+  /**
    * 工具调用需要用户输入（`AskUserQuestion`、插件工具的 `input_required`、MCP elicitation）：输入请求已建，
    * run 暂停等待回答。界面据此显示表单卡片（不进模型请求）。
    */

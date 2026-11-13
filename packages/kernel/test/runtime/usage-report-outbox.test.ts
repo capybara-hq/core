@@ -15,10 +15,7 @@ import {
   USAGE_SUBSCRIBERS_TTL_MS,
   UsageSubscribers,
 } from "../../src/extensions/usage-subscribers.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import type { KernelOverride } from "../../src/overrides.js";
 import { StepLog } from "../../src/runtime/step-log.js";
@@ -30,6 +27,7 @@ import {
 import { embedConsumer } from "../fixtures/plugins/embed-consumer/index.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createConv,
@@ -118,14 +116,17 @@ const owed = () =>
 const owedOf = async (conv: string) =>
   (await owed()).filter((r) => (r.data as { conversationId?: string }).conversationId === conv);
 
-/** One relay pass of `k` over the owed usage report rows (their backoff from failed passes reset). */
+/**
+ * One relay pass of `k` over the owed usage report rows (their backoff from failed passes reset),
+ * waiting until they are delivered (another kernel's pass may hold some: {@link drainOutbox}).
+ */
 async function relay(k: TestKernel): Promise<void> {
   await db
     .updateTable("outbox")
     .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
     .where("job_name", "=", "usage-report")
     .execute();
-  await k.app.get(OutboxDispatcher).dispatchDue(500);
+  await drainOutbox(k.app, { jobName: "usage-report" });
 }
 
 /**

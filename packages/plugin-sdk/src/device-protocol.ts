@@ -28,7 +28,8 @@ export type DeviceOp =
   | "killTagged"
   | "killAll"
   | "stop"
-  | "policy";
+  | "policy"
+  | "policyStatus";
 
 const DEVICE_OPS: readonly DeviceOp[] = [
   "create",
@@ -40,16 +41,23 @@ const DEVICE_OPS: readonly DeviceOp[] = [
   "killAll",
   "stop",
   "policy",
+  "policyStatus",
 ];
 
 /**
- * Optional capabilities a device announces in its hello. A kernel sends the `policy` op only to a
- * device with `policyOp`; `networkReport` means exec results may carry `network`; `tiers` means the
- * device applies `limits.tier` / `defaultTier` / `devHosts` (without it the device behaves as
- * `strict`).
+ * Optional capabilities a device announces in its hello. `policyOp`: the device takes the `policy`
+ * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
+ * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
+ * carry `network`; `tiers` means the device applies `limits.tier` / `defaultTier` / `devHosts`
+ * (without it the device behaves as `strict`).
  */
-export type DeviceFeature = "networkReport" | "policyOp" | "tiers";
-const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "policyOp", "tiers"];
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "tiers";
+const DEVICE_FEATURES: readonly DeviceFeature[] = [
+  "networkReport",
+  "policyOp",
+  "policyOpId",
+  "tiers",
+];
 
 /**
  * Whether the device accepts widening its local policy from the kernel (the `policy` op's `add`
@@ -92,6 +100,24 @@ export const MAX_NETWORK_BLOCKED_HOSTS = 20;
 /** The most hosts a `policy` op's `add` / `remove` or an exec's `grants` may carry. */
 const MAX_POLICY_HOSTS = 100;
 
+/** The longest `opId` a `policy` / `policyStatus` op may carry. */
+export const MAX_POLICY_OP_ID_LENGTH = 128;
+
+/** The most entries a hello's `recentOps` carries; the parser keeps the newest. */
+export const MAX_RECENT_POLICY_OPS = 100;
+
+/**
+ * What a device recorded of a `policy` op: `started` (written before the change, so an op the
+ * device was stopped in the middle of stays `started`), then `applied` or `refused`.
+ */
+export type DevicePolicyOpOutcome = "applied" | "refused" | "started";
+
+/** One entry of a hello's `recentOps`. */
+export interface DevicePolicyOpReport {
+  opId: string;
+  outcome: DevicePolicyOpOutcome;
+}
+
 /** First frame from the device after the WebSocket opens. */
 export interface DeviceHello {
   type: "hello";
@@ -106,6 +132,12 @@ export interface DeviceHello {
   features?: DeviceFeature[];
   /** The device's local policy at connect time (absent on older devices). */
   policy?: DeviceLocalPolicySummary;
+  /**
+   * The outcomes of the latest `policy` ops by op id, oldest first, at most
+   * {@link MAX_RECENT_POLICY_OPS} (devices with `policyOpId`; malformed entries are dropped by
+   * the parser).
+   */
+  recentOps?: DevicePolicyOpReport[];
 }
 
 /** Error kinds a device reports for a failed request. */
@@ -199,6 +231,12 @@ export interface DeviceStopArgs {
  * sandbox back on: turning it off is decided on the machine.
  */
 export interface DevicePolicyArgs {
+  /**
+   * The kernel's id of this change (non-empty, no `:`, at most {@link MAX_POLICY_OP_ID_LENGTH}
+   * characters): the device logs the op's outcome under it, for `policyStatus` and the hello's
+   * `recentOps`.
+   */
+  opId: string;
   /** Hosts to add to `allowedDomains`. */
   add?: string[];
   /** Hosts to remove from `allowedDomains`. */
@@ -213,6 +251,20 @@ export interface DevicePolicyArgs {
 /** The policy as the device wrote it. */
 export interface DevicePolicyResult {
   policy: DeviceLocalPolicySummary;
+}
+/** Asks what became of the `policy` op with this id. Read-only on the device. */
+export interface DevicePolicyStatusArgs {
+  opId: string;
+}
+/**
+ * What the device logged of a `policy` op: its {@link DevicePolicyOpOutcome}, or `unknown` when
+ * the id is not in its log (never received, or dropped from the log since). `policy` is the
+ * device's summary now; `message` the refusal's.
+ */
+export interface DevicePolicyStatus {
+  outcome: DevicePolicyOpOutcome | "unknown";
+  policy?: DeviceLocalPolicySummary;
+  message?: string;
 }
 
 /** A frame that is not valid protocol v1 (or came from the wrong side). */
@@ -361,12 +413,53 @@ function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   return out;
 }
 
+/**
+ * Whether `v` is a valid policy op id: non-empty, no `:`, at most
+ * {@link MAX_POLICY_OP_ID_LENGTH} characters.
+ */
+export function isPolicyOpId(v: unknown): v is string {
+  return (
+    typeof v === "string" && v !== "" && v.length <= MAX_POLICY_OP_ID_LENGTH && !v.includes(":")
+  );
+}
+
+function opId(o: Record<string, unknown>): string {
+  const v = o.opId;
+  if (!isPolicyOpId(v)) {
+    throw new DeviceProtocolError(
+      `field "opId" must be a non-empty string without ":" of at most ${MAX_POLICY_OP_ID_LENGTH} characters`,
+    );
+  }
+  return v;
+}
+
+const OP_OUTCOMES: readonly DevicePolicyOpOutcome[] = ["applied", "refused", "started"];
+
+/**
+ * The valid entries of a hello's `recentOps`, one per op id (the last listed), the newest
+ * {@link MAX_RECENT_POLICY_OPS}.
+ */
+function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
+  // one entry per op id: the last one listed (the newest outcome), where it is listed
+  const byId = new Map<string, DevicePolicyOpReport>();
+  for (const e of v) {
+    if (!isRecord(e) || !isPolicyOpId(e.opId)) continue;
+    if (!OP_OUTCOMES.includes(e.outcome as DevicePolicyOpOutcome)) continue;
+    byId.delete(e.opId);
+    byId.set(e.opId, { opId: e.opId, outcome: e.outcome as DevicePolicyOpOutcome });
+  }
+  return [...byId.values()].slice(-MAX_RECENT_POLICY_OPS);
+}
+
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
-function optionalHelloFields(o: Record<string, unknown>): Pick<DeviceHello, "features" | "policy"> {
-  const out: Pick<DeviceHello, "features" | "policy"> = {};
+function optionalHelloFields(
+  o: Record<string, unknown>,
+): Pick<DeviceHello, "features" | "policy" | "recentOps"> {
+  const out: Pick<DeviceHello, "features" | "policy" | "recentOps"> = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
+  if (Array.isArray(o.recentOps)) out.recentOps = parseRecentOps(o.recentOps);
   return { ...out, ...optionalPolicy(o.policy) };
 }
 
@@ -515,6 +608,7 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       return;
     }
     case "policy": {
+      opId(a);
       if (a.add !== undefined) hostArray(a, "add");
       if (a.remove !== undefined) hostArray(a, "remove");
       if (a.tier !== undefined && a.tier !== null) parseTier(a, "tier");
@@ -529,6 +623,9 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       if (src.approvalId !== undefined) str(src, "approvalId");
       return;
     }
+    case "policyStatus":
+      opId(a);
+      return;
   }
 }
 
@@ -543,6 +640,7 @@ export interface DeviceOpResults {
   killAll: null;
   stop: null;
   policy: DevicePolicyResult;
+  policyStatus: DevicePolicyStatus;
 }
 
 /** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
@@ -569,6 +667,15 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
     }
     case "policy":
       return { policy: parsePolicySummary(obj(result, "policy result").policy) };
+    case "policyStatus": {
+      const r = obj(result, "policyStatus result");
+      const out: DevicePolicyStatus = {
+        outcome: oneOf(r, "outcome", [...OP_OUTCOMES, "unknown"] as const),
+      };
+      if (r.policy !== undefined) out.policy = parsePolicySummary(r.policy);
+      if (r.message !== undefined) out.message = str(r, "message");
+      return out;
+    }
     case "readFile": {
       if (result === null) return null;
       const r = obj(result, "readFile result");

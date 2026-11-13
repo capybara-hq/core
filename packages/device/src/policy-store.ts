@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { PolicyOpLog } from "./policy-ops.js";
 import { type Policy, policyPath, readPolicyFile, withPolicyLock, writePolicy } from "./state.js";
 
 /** What identifies one version of policy.json: absent, or its inode, size and mtime. */
@@ -31,6 +32,8 @@ export class PolicyStore {
    * the key is dropped at the next write).
    */
   readonly legacyNetworkOpen: boolean;
+  /** The outcomes of the `policy` ops this machine served, by op id (next to policy.json). */
+  readonly ops: PolicyOpLog;
 
   constructor(
     private readonly dir: string,
@@ -38,6 +41,7 @@ export class PolicyStore {
   ) {
     this.file = policyPath(dir);
     this.err = opts.err ?? (() => {});
+    this.ops = new PolicyOpLog(dir);
     this.version = versionOf(this.file);
     // Without an initial policy, an unreadable file throws here: the program does not start.
     if (opts.initial !== undefined) {
@@ -80,15 +84,17 @@ export class PolicyStore {
   /**
    * Read-modify-write under policy.json.lock: reads the file (throws on an invalid one rather
    * than overwrite it), writes the change atomically keeping unknown keys, and swaps the
-   * in-memory policy. Returns the new policy.
+   * in-memory policy. `written` runs after that, still holding the lock (the `policy` op logs its
+   * outcome there, next to the change). Returns the new policy.
    */
-  update(change: (p: Policy) => Policy): Policy {
+  update(change: (p: Policy) => Policy, opts: { written?: (p: Policy) => void } = {}): Policy {
     return withPolicyLock(this.dir, () => {
       const { policy, extra } = readPolicyFile(this.dir);
       const next = change(policy);
       writePolicy(this.dir, next, extra);
       this.policy = next;
       this.version = versionOf(this.file);
+      opts.written?.(next);
       return next;
     });
   }

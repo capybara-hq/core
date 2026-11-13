@@ -252,6 +252,11 @@ type EventBody =
       };
     }
   /**
+   * A still-pending approval changed without a decision (a network ask's device change that did
+   * not take effect: its `detail.attempt`): the card reads the approval again. Display only.
+   */
+  | { type: "approval_updated"; payload: { approvalId: string; callId: string } }
+  /**
    * A command on a device was refused network hosts (display only, never model-visible): each
    * host with the layer that refused it. Device-layer hosts are asked about in an approval; the
    * org and address layers are facts under the command's row.

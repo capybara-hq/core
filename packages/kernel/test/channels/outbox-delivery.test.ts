@@ -15,13 +15,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHANNEL_QUEUE_NAME, ChannelJobs, deliverJobId } from "../../src/channels/jobs.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   cardRecorded,
   createAgent,
@@ -180,6 +178,30 @@ async function owedOf(conv: string) {
     .execute();
 }
 
+/**
+ * Waits until the conversation's title job is through: its first run's completion enqueues it, and
+ * it appends a `usage` event (purpose `title`) after the run's terminal event, which a conversation
+ * with a channel target owes a delivery for.
+ */
+async function titleSettled(conv: string): Promise<void> {
+  await waitFor(
+    async () => {
+      const c = await db
+        .selectFrom("conversations")
+        .select("title")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow();
+      if (c.title !== null) return true;
+      const r = await sql<{ n: string }>`SELECT count(*) AS n FROM capybara.conversation_events
+        WHERE conversation_id = ${conv} AND type = 'usage'
+          AND payload->>'purpose' = 'title'`.execute(raw);
+      return Number(r.rows[0]?.n) > 0;
+    },
+    15_000,
+    "the title job through",
+  );
+}
+
 async function lastSeq(conv: string): Promise<number> {
   const r = await db
     .selectFrom("conversations")
@@ -189,7 +211,10 @@ async function lastSeq(conv: string): Promise<number> {
   return Number(r.last_seq);
 }
 
-/** Lets the channel queue's adds succeed and runs one relay pass over the owed rows. */
+/**
+ * Lets the channel queue's adds succeed, runs one relay pass over the owed rows and waits until
+ * they are delivered (a concurrent pass may hold some: {@link drainOutbox}).
+ */
 async function relay(): Promise<void> {
   failing = false;
   await db
@@ -197,7 +222,7 @@ async function relay(): Promise<void> {
     .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
     .where("queue", "=", CHANNEL_QUEUE_NAME)
     .execute();
-  await k.app.get(OutboxDispatcher).dispatchDue(500);
+  await drainOutbox(k.app, { queue: CHANNEL_QUEUE_NAME });
 }
 
 describe("IM delivery is owed (transactional outbox §8.1)", { timeout: 60_000 }, () => {
@@ -206,12 +231,13 @@ describe("IM delivery is owed (transactional outbox §8.1)", { timeout: 60_000 }
     const chat = "dm-u-owner";
     im.push(connId, dm("r1", "u-owner", "echo:owed reply"));
     const conv = await convOf(chat);
-    await waitForTerminal(db, conv);
+    const [terminal] = await waitForTerminal(db, conv);
+    await titleSettled(conv);
     // the run is over, nothing reached IM: the delivery is owed, not lost
     expect(sentTo(chat)).toEqual([]);
     const owed = await owedOf(conv);
-    const last = await lastSeq(conv);
-    expect(owed.map((r) => r.job_id)).toContain(deliverJobId(conv, last));
+    expect(owed.map((r) => r.job_id)).toContain(deliverJobId(conv, terminal?.seq ?? 0));
+    expect(owed.map((r) => r.job_id)).toContain(deliverJobId(conv, await lastSeq(conv)));
     for (const r of owed) {
       expect(r).toMatchObject({
         queue: CHANNEL_QUEUE_NAME,
@@ -282,6 +308,8 @@ describe("IM delivery is owed (transactional outbox §8.1)", { timeout: 60_000 }
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "echo:before the bind");
     await waitForTerminal(db, conv);
+    // nothing appends after the bind's read of the log position
+    await titleSettled(conv);
     const last = await lastSeq(conv);
     expect(await owedOf(conv)).toEqual([]);
     await k.app

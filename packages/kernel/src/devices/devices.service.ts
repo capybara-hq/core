@@ -139,7 +139,8 @@ export const RECENT_POLICY_CHANGES = 10;
 /**
  * One sandbox change of a device, as its owner sees it on the device page (§10.4):
  * - `policy` (`device.policy_changed`): a local policy change sent to the machine (`web`, `im`),
- *   or made on the machine by its owner (`device`, `capybara-device policy ...`);
+ *   or made on the machine by its owner (`device`, `capybara-device policy ...`); one sent whose
+ *   answer never came (`device.policy_unknown`) or that failed (`device.policy_failed`) too;
  * - `tier` (`device.tier_changed`): a cloud device's tier set by its owner;
  * - `isolation` (`device.isolation_reported`): the machine reported running without a sandbox,
  *   or with one again.
@@ -165,8 +166,14 @@ export interface DeviceSandboxChangeView {
   by: string | null;
   /** `device`: made or reported on the machine itself (a `policy` change, an `isolation`). */
   via: "web" | "im" | "device";
-  /** The machine answered with the policy as written (false: the answer never came). */
-  confirmed: boolean;
+  /**
+   * What became of a `policy` change sent to the machine: `applied` (also every change made or
+   * reported on the machine, and every tier / isolation row); `unknown`, its answer never came
+   * (`device.policy_unknown`: an `applied` row follows when the machine reports it); `failed`,
+   * the machine refused it, never received it or stopped while applying it
+   * (`device.policy_failed`).
+   */
+  outcome: "applied" | "unknown" | "failed";
 }
 
 /** A change of a local device's policy by its owner (`POST /devices/:id/policy`). */
@@ -715,7 +722,7 @@ export class DevicesService {
    * refused up front with `device.policy_refused` when the machine last reported
    * `remoteGrants: "off"` (otherwise the machine decides); narrowing is always sent, and
    * `isolation` is only ever `sandbox`. The machine offline → `device.offline`; a cloud device or a
-   * program without the `policyOp` feature → `device.policy_unsupported`; the machine's refusal →
+   * program without the `policyOpId` feature → `device.policy_unsupported`; the machine's refusal →
    * `device.policy_refused` with its message. Callers are human sessions only (no personal access
    * token, no service token, no Platform op).
    */
@@ -736,7 +743,7 @@ export class DevicesService {
       (change.add?.length ?? 0) > 0 || (known !== null && tierWidens(known.tier, change.tier));
     // only a known "off" is refused here; an unknown summary, a machine that cannot take the op
     // or none at all are left to apply (the machine decides, or unsupported / offline)
-    const canApply = summary?.features.includes("policyOp") === true;
+    const canApply = summary?.features.includes("policyOpId") === true;
     if (widens && canApply && known?.remoteGrants === "off") {
       throw new ApiError("device.policy_refused", remoteGrantsOffMessage(change));
     }
@@ -1239,8 +1246,9 @@ export class DevicesService {
 
   /**
    * The last {@link RECENT_POLICY_CHANGES} sandbox changes of each device in the org (audit rows
-   * `device.policy_changed`, `device.tier_changed`, `device.isolation_reported`), newest first,
-   * with the deciding account's display name.
+   * `device.policy_changed`, `device.policy_unknown`, `device.policy_failed`,
+   * `device.tier_changed`, `device.isolation_reported`), newest first, with the deciding account's
+   * display name.
    */
   private async recentSandboxChanges(
     orgId: string,
@@ -1379,6 +1387,8 @@ const limitsView = (l: SandboxLimits): SandboxLimits => ({
 /** The audit actions a device's recent sandbox changes list. */
 const SANDBOX_CHANGE_ACTIONS = [
   "device.policy_changed",
+  "device.policy_unknown",
+  "device.policy_failed",
   "device.tier_changed",
   "device.isolation_reported",
 ] as const;
@@ -1407,10 +1417,16 @@ function sandboxChangeOf(
     by,
   };
   if (action === "device.tier_changed") {
-    return { ...base, kind: "tier", tier: { to: tierOrNull(d.to) }, via: "web", confirmed: true };
+    return {
+      ...base,
+      kind: "tier",
+      tier: { to: tierOrNull(d.to) },
+      via: "web",
+      outcome: "applied",
+    };
   }
   if (action === "device.isolation_reported") {
-    return { ...base, kind: "isolation", isolation, via: "device", confirmed: true };
+    return { ...base, kind: "isolation", isolation, via: "device", outcome: "applied" };
   }
   return {
     ...base,
@@ -1429,7 +1445,12 @@ function sandboxChangeOf(
         : null,
     remoteGrants: d.remoteGrants === "owner" || d.remoteGrants === "off" ? d.remoteGrants : null,
     via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
-    confirmed: d.confirmed === true,
+    outcome:
+      action === "device.policy_unknown"
+        ? "unknown"
+        : action === "device.policy_failed"
+          ? "failed"
+          : "applied",
   };
 }
 

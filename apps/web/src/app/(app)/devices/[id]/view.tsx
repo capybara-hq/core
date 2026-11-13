@@ -547,7 +547,7 @@ function RevokeDialog({
  * takes `*.` wildcards and whether the machine takes changes from the platform (`remoteGrants`, set
  * only on the machine: off disables the widening controls with the command to run there). The
  * level (formerly 「不限网络」) and the recent changes are the 沙箱级别 section's. A program without
- * the `policyOp` feature must be upgraded first; a Docker-mode machine can't limit single domains.
+ * the `policyOpId` feature must be upgraded first; a Docker-mode machine can't limit single domains.
  * Each change is sent to the machine, which answers with the policy as written.
  */
 function NetworkSection({ orgId, device: e }: { orgId: string; device: Device }) {
@@ -563,7 +563,7 @@ function NetworkSection({ orgId, device: e }: { orgId: string; device: Device })
   const network = e.network;
   if (network == null) return null;
   const policy = network.policy;
-  const canApply = network.features.includes("policyOp");
+  const canApply = network.features.includes("policyOpId");
   const docker = e.machine?.mode === "docker";
   const remoteOff = policy?.remoteGrants === "off";
   // widening (add) needs the machine to take it; narrowing is always sent

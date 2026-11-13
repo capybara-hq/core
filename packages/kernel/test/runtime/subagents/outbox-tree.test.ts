@@ -11,10 +11,7 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import { ConversationQueue } from "../../../src/conversations/queue.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../../src/infra/outbox/outbox.dispatcher.js";
 import { OUTBOX_STRICT_CONFLICTS } from "../../../src/infra/outbox/outbox.service.js";
 import { RunAbort } from "../../../src/runtime/abort.js";
 import { RunFinish } from "../../../src/runtime/run-finish.js";
@@ -40,6 +37,7 @@ import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
+import { drainOutbox } from "../../helpers/outbox.js";
 import {
   createConv,
   createOrg,
@@ -257,7 +255,8 @@ async function fastPathsFailed(): Promise<void> {
 
 /**
  * Redis is back: turns the dispatch seam off, makes the rows of job `name` due now (their backstop
- * delay included) and every row's next attempt due, and delivers them with one relay pass.
+ * delay included) and every row's next attempt due, delivers them with one relay pass and waits
+ * until they are gone (the worker's relay may hold some: {@link drainOutbox}).
  */
 async function deliver(name: string): Promise<void> {
   await fastPathsFailed();
@@ -268,7 +267,7 @@ async function deliver(name: string): Promise<void> {
     .set({ run_at: sql<Date>`now()` })
     .where("job_name", "=", name)
     .execute();
-  await k.app.get(OutboxDispatcher).dispatchDue(500);
+  await drainOutbox(k.app, { jobName: name });
 }
 
 /** Expects a backstop row fired about 30 s after its transaction (the database's clock). */

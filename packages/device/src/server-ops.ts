@@ -3,10 +3,13 @@ import {
   type DeviceKillTaggedArgs,
   type DeviceLocalPolicySummary,
   type DevicePolicyArgs,
+  type DevicePolicyStatus,
+  type DevicePolicyStatusArgs,
   type DeviceReadFileArgs,
   type DeviceRes,
   type DeviceStatArgs,
   type DeviceWriteFileArgs,
+  isPolicyOpId,
   isSandboxTier,
   type KernelReq,
   type SandboxTier,
@@ -17,6 +20,7 @@ import type { CommandLogEntry } from "./command-log.js";
 import { execIsolation } from "./exec/switch.js";
 import { DeviceOpError, type ExecIsolation, type Executor } from "./exec/types.js";
 import { grantedHosts, type TierLimits, tierFacts } from "./policy.js";
+import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
 import { DEFAULT_POLICY, type Policy } from "./state.js";
@@ -193,6 +197,7 @@ function applyPolicyOp(
   store: PolicyStore,
   args: DevicePolicyArgs,
   facts: SummaryFacts,
+  written: () => void,
 ): { result: { policy: DeviceLocalPolicySummary }; detail: string } {
   const source = (args.source ?? {}) as Partial<DevicePolicyArgs["source"]>;
   const fromApproval = source.approvalId !== undefined;
@@ -241,7 +246,7 @@ function applyPolicyOp(
     return p.tier === undefined || !tierAtMost(nextTier, p.tier);
   };
   let sandboxBackOn = false;
-  const next = store.update((p) => {
+  const change = (p: Policy): Policy => {
     // Judged against the file as it is now, inside the lock: a local `remoteGrants off` wins.
     if (p.remoteGrants !== "owner") {
       if (add.length > 0) throw new PolicyRefused(REMOTE_GRANTS_OFF_MESSAGE, refused);
@@ -265,11 +270,93 @@ function applyPolicyOp(
       isolation,
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
     };
-  });
+  };
+  const next = store.update(change, { written });
   const also = sandboxBackOn ? "; isolation sandbox (tier changed by the deployment)" : "";
   return {
     result: { policy: policySummary(next, facts) },
     detail: `policy ${what}${also} ${by}${approval}`,
+  };
+}
+
+/** The answer to a `policy` op whose outcome is logged already: the change is not made again. */
+function answerFromLog(
+  req: KernelReq,
+  known: PolicyOpRecord,
+  store: PolicyStore,
+  facts: SummaryFacts,
+): DeviceRes {
+  if (known.outcome === "applied") {
+    return {
+      type: "res",
+      id: req.id,
+      ok: true,
+      result: { policy: policySummary(store.current(), facts) },
+    };
+  }
+  return {
+    type: "res",
+    id: req.id,
+    ok: false,
+    error: { kind: known.kind ?? "policy", message: known.message ?? "refused" },
+  };
+}
+
+/**
+ * A `policy` op by its op id: logged `started` before anything is checked or written, then
+ * `applied` (inside the policy lock, right after the write) or `refused` with the message. An op
+ * id applied or refused before is answered from the log without applying it again. Throws like
+ * {@link applyPolicyOp}.
+ */
+function servePolicyOp(
+  req: KernelReq,
+  store: PolicyStore,
+  facts: SummaryFacts,
+): { res: DeviceRes; detail?: string } {
+  const opId: unknown = (req.args as { opId?: unknown }).opId;
+  if (!isPolicyOpId(opId)) {
+    throw new DeviceOpError("error", 'invalid request: field "opId" must be a valid op id');
+  }
+  const known = store.ops.claim(opId);
+  if (known !== undefined) return { res: answerFromLog(req, known, store, facts) };
+  try {
+    const { result, detail } = applyPolicyOp(store, req.args as DevicePolicyArgs, facts, () => {
+      try {
+        store.ops.recordHeld({ opId, outcome: "applied" });
+      } catch {
+        // the change stands; the log keeps `started` and the deployment learns it from the hello
+      }
+    });
+    return { res: { type: "res", id: req.id, ok: true, result }, detail };
+  } catch (e) {
+    // an op the log already says was applied stays applied (the log reports what the file holds)
+    if (store.ops.get(opId)?.outcome !== "applied") {
+      try {
+        store.ops.record({
+          opId,
+          outcome: "refused",
+          message: e instanceof Error ? e.message : String(e),
+          kind: e instanceof DeviceOpError ? e.kind : "error",
+        });
+      } catch {
+        // nothing was applied; the log keeps `started`
+      }
+    }
+    throw e;
+  }
+}
+
+/** What the log says of an op id, with the summary now. Read-only. */
+function policyStatus(store: PolicyStore, args: unknown, facts: SummaryFacts): DevicePolicyStatus {
+  const opId: unknown = (args as Partial<DevicePolicyStatusArgs> | null)?.opId;
+  if (!isPolicyOpId(opId)) {
+    throw new DeviceOpError("error", 'invalid request: field "opId" must be a valid op id');
+  }
+  const known = store.ops.get(opId);
+  return {
+    outcome: known?.outcome ?? "unknown",
+    policy: policySummary(store.current(), facts),
+    ...(known?.outcome === "refused" && known.message !== undefined && { message: known.message }),
   };
 }
 
@@ -291,7 +378,8 @@ function grantsDetail(
 /**
  * Runs one request and returns the answer plus its local audit line and, for an exec, its tier
  * and isolation (for the local command log). A vanished device
- * directory answers `fs_gone` for every operation except `stop` and `policy`. Never throws.
+ * directory answers `fs_gone` for every operation except `stop`, `policy` and `policyStatus`.
+ * Never throws.
  */
 export async function serveOp(
   executor: Executor,
@@ -303,7 +391,7 @@ export async function serveOp(
   try {
     if (req.op === "stop") return { res: ok(null) };
     // The policy lives in the state directory, not the device directory.
-    if (req.op === "policy") {
+    if (req.op === "policy" || req.op === "policyStatus") {
       if (ctx.policy === undefined) {
         return {
           res: {
@@ -314,12 +402,9 @@ export async function serveOp(
           },
         };
       }
-      const { result, detail } = applyPolicyOp(
-        ctx.policy,
-        req.args as DevicePolicyArgs,
-        summaryFacts(executor, ctx),
-      );
-      return { res: ok(result), detail };
+      const facts = summaryFacts(executor, ctx);
+      if (req.op === "policyStatus") return { res: ok(policyStatus(ctx.policy, req.args, facts)) };
+      return servePolicyOp(req, ctx.policy, facts);
     }
     if ((await executor.ensureRoot()) === "gone") {
       return {

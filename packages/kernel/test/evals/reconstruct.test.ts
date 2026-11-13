@@ -1704,7 +1704,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       await machine.opened;
       machine.send({
         ...HELLO,
-        features: ["networkReport", "policyOp"],
+        features: ["networkReport", "policyOp", "policyOpId"],
         policy: {
           effectiveTier: "strict",
           isolation: "sandbox",

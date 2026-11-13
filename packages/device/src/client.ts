@@ -317,14 +317,16 @@ export function connect(
   /**
    * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
    * mode has no per-host view); the device applies tiers (`limits.tier` / `defaultTier` /
-   * `devHosts`); the policy summary is the store's policy now, with the latest ceiling seen.
+   * `devHosts`); the policy summary is the store's policy now, with the latest ceiling seen; then the
+   * outcomes of the latest policy ops by op id.
    */
   const hello = (): DeviceHello => {
     const summary = summaryNow();
     sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
     const features: DeviceFeature[] = [];
     if (executor.mode === "os") features.push("networkReport");
-    if (opts.policy !== undefined) features.push("policyOp");
+    // the policy op, logged by its op id (policy-ops.json next to the policy)
+    if (opts.policy !== undefined) features.push("policyOp", "policyOpId");
     features.push("tiers");
     return {
       type: "hello",
@@ -337,6 +339,8 @@ export function connect(
       sessionIsolation: false,
       features,
       ...(summary !== undefined && { policy: summary }),
+      // what became of the latest policy ops, so an answer lost with a connection is not lost
+      ...(opts.policy !== undefined && { recentOps: opts.policy.ops.recent() }),
     };
   };
 

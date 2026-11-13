@@ -119,7 +119,7 @@ describe("client", () => {
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
     start({ policy: new PolicyStore(dir), platform: "darwin" });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp", "tiers"]);
+    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "tiers"]);
     // No exec seen yet: the owner's choice, else dev (every org's default unless changed).
     expect(hello.policy).toEqual({
       effectiveTier: "dev",
@@ -132,6 +132,7 @@ describe("client", () => {
     kernel.send(
       0,
       req("p1", "policy", {
+        opId: "op_1",
         add: ["files.slack.com"],
         source: { approvalId: "apr_1", accountId: "acc_1", accountName: "Ada", via: "im" },
       }),
@@ -190,6 +191,7 @@ describe("client", () => {
     kernel.send(
       0,
       req("p1", "policy", {
+        opId: "op_1",
         add: ["files.slack.com"],
         source: { accountId: "acc_1", accountName: "Ada", via: "web" },
       }),
@@ -209,7 +211,7 @@ describe("client", () => {
     start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");
-    expect(hello.features).toEqual(["policyOp", "tiers"]);
+    expect(hello.features).toEqual(["policyOp", "policyOpId", "tiers"]);
     expect(hello.policy).toMatchObject({
       effectiveTier: "dev",
       isolation: "sandbox",

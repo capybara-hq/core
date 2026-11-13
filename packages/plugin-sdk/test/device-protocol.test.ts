@@ -3,9 +3,13 @@ import {
   BACKGROUND_LAUNCH_LINE,
   DEFAULT_SANDBOX_ROOTS,
   type DeviceHello,
+  type DeviceLocalPolicySummary,
+  type DevicePolicyStatus,
   DeviceProtocolError,
   isBackgroundLaunch,
   MAX_NETWORK_BLOCKED_HOSTS,
+  MAX_POLICY_OP_ID_LENGTH,
+  MAX_RECENT_POLICY_OPS,
   parseDeviceFrame,
   parseOpResult,
   rootsOf,
@@ -351,43 +355,154 @@ describe("device protocol", () => {
 
   describe("the policy op", () => {
     const source = { accountId: "acc_1", accountName: "Ann", via: "web" };
+    const opId = "op_1";
 
     it("validates the args", () => {
       const goods: unknown[] = [
-        { source },
-        { add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
-        { remove: ["a.example.com"], tier: "strict", source },
-        { tier: "open", source },
-        { tier: null, source },
-        { isolation: "sandbox", source },
-        { add: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
+        { opId, source },
+        { opId, add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
+        { opId, remove: ["a.example.com"], tier: "strict", source },
+        { opId, tier: "open", source },
+        { opId, tier: null, source },
+        { opId, isolation: "sandbox", source },
+        { opId, add: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
       ];
       for (const args of goods) {
         expect(parse(req("policy", args), "kernel")().type, JSON.stringify(args)).toBe("req");
       }
       const bads: unknown[] = [
         {},
-        { add: ["a.example.com"] },
-        { add: "a.example.com", source },
-        { add: [1], source },
-        { remove: [null], source },
-        { add: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
-        { remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
-        { tier: "wide", source },
-        { tier: 1, source },
-        { isolation: "none", source },
-        { isolation: null, source },
-        { source: { ...source, via: "pat" } },
-        { source: { ...source, accountId: 1 } },
-        { source: { accountId: "acc_1", via: "web" } },
-        { source: { ...source, approvalId: 1 } },
-        { source: "x" },
+        { opId },
+        { opId, add: ["a.example.com"] },
+        { opId, add: "a.example.com", source },
+        { opId, add: [1], source },
+        { opId, remove: [null], source },
+        { opId, add: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
+        { opId, remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
+        { opId, tier: "wide", source },
+        { opId, tier: 1, source },
+        { opId, isolation: "none", source },
+        { opId, isolation: null, source },
+        { opId, source: { ...source, via: "pat" } },
+        { opId, source: { ...source, accountId: 1 } },
+        { opId, source: { accountId: "acc_1", via: "web" } },
+        { opId, source: { ...source, approvalId: 1 } },
+        { opId, source: "x" },
       ];
       for (const args of bads) {
         expect(parse(req("policy", args), "kernel"), JSON.stringify(args)).toThrow(
           DeviceProtocolError,
         );
       }
+    });
+
+    it("a policy op without opId is a protocol error", () => {
+      for (const args of [
+        { source },
+        { opId: "", source },
+        { opId: 1, source },
+        { opId: "op:1", source },
+        { opId: "x".repeat(MAX_POLICY_OP_ID_LENGTH + 1), source },
+      ]) {
+        expect(parse(req("policy", args), "kernel"), JSON.stringify(args)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+      const longest = { opId: "x".repeat(MAX_POLICY_OP_ID_LENGTH), source };
+      expect(parse(req("policy", longest), "kernel")().type).toBe("req");
+    });
+
+    it("policyStatus args and result round-trip", () => {
+      const f = parseDeviceFrame(JSON.stringify(req("policyStatus", { opId })), "kernel");
+      expect(f).toEqual({ ...req("policyStatus", { opId }), type: "req" });
+      for (const args of [{}, { opId: "" }, { opId: 1 }, { opId: "a:b" }]) {
+        expect(parse(req("policyStatus", args), "kernel"), JSON.stringify(args)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+      const policy: DeviceLocalPolicySummary = {
+        effectiveTier: "dev",
+        isolation: "sandbox",
+        localhost: "on",
+        unixSockets: "roots",
+        allowedDomains: ["a.example.com"],
+        remoteGrants: "owner",
+      };
+      const goods: DevicePolicyStatus[] = [
+        { outcome: "applied", policy },
+        { outcome: "refused", message: "This device does not accept network changes." },
+        { outcome: "started" },
+        { outcome: "unknown" },
+        { outcome: "unknown", policy },
+      ];
+      for (const good of goods) {
+        expect(parseOpResult("policyStatus", JSON.parse(JSON.stringify(good)))).toEqual(good);
+      }
+      for (const bad of [
+        null,
+        {},
+        { outcome: "maybe" },
+        { outcome: "applied", policy: { ...policy, tier: "x" } },
+        { outcome: "refused", message: 1 },
+      ]) {
+        expect(() => parseOpResult("policyStatus", bad), JSON.stringify(bad)).toThrow(
+          DeviceProtocolError,
+        );
+      }
+    });
+
+    it("hello recentOps keeps the last entry of a repeated op id", () => {
+      const h = parseDeviceFrame(
+        JSON.stringify({
+          ...hello,
+          recentOps: [
+            { opId: "a", outcome: "started" },
+            { opId: "b", outcome: "applied" },
+            { opId: "a", outcome: "refused" },
+          ],
+        }),
+        "device",
+      ) as DeviceHello;
+      expect(h.recentOps).toEqual([
+        { opId: "b", outcome: "applied" },
+        { opId: "a", outcome: "refused" },
+      ]);
+    });
+
+    it("hello recentOps keeps valid entries and drops the rest, at most 100", () => {
+      const parseHello = (o: unknown) =>
+        parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+      expect(parseHello(hello).recentOps).toBeUndefined();
+      expect(parseHello({ ...hello, recentOps: "x" }).recentOps).toBeUndefined();
+      const h = parseHello({
+        ...hello,
+        features: ["policyOp", "policyOpId"],
+        recentOps: [
+          { opId: "a", outcome: "applied" },
+          { opId: "b", outcome: "refused" },
+          { opId: "c", outcome: "started" },
+          { opId: "d", outcome: "unknown" },
+          { opId: "", outcome: "applied" },
+          { opId: "e:f", outcome: "applied" },
+          { opId: 1, outcome: "applied" },
+          { outcome: "applied" },
+          "g",
+          null,
+        ],
+      });
+      expect(h.features).toEqual(["policyOp", "policyOpId"]);
+      expect(h.recentOps).toEqual([
+        { opId: "a", outcome: "applied" },
+        { opId: "b", outcome: "refused" },
+        { opId: "c", outcome: "started" },
+      ]);
+      // oldest first: a longer list keeps its last (newest) 100 entries
+      const many = Array.from({ length: 150 }, (_, i) => ({ opId: `op${i}`, outcome: "applied" }));
+      const kept = parseHello({ ...hello, recentOps: many }).recentOps ?? [];
+      expect(kept).toHaveLength(MAX_RECENT_POLICY_OPS);
+      expect(MAX_RECENT_POLICY_OPS).toBe(100);
+      expect(kept[0]?.opId).toBe("op50");
+      expect(kept.at(-1)?.opId).toBe("op149");
     });
 
     it("validates the result", () => {

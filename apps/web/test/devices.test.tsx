@@ -641,7 +641,7 @@ describe("device network (network ask-to-allow spec §7)", () => {
       online: true,
       machine: MACHINE,
       network: {
-        features: ["networkReport", "policyOp"],
+        features: ["networkReport", "policyOp", "policyOpId"],
         policy: policy(),
         ...net,
       },
@@ -711,9 +711,10 @@ describe("device network (network ask-to-allow spec §7)", () => {
     ).toBe(false);
   });
 
-  it("a program without policyOp says to upgrade it", async () => {
+  it("a program without policyOpId says to upgrade it", async () => {
     stubApi({
-      [`GET ${BASE}/e1`]: () => json(200, { device: local({ features: ["networkReport"] }) }),
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: local({ features: ["networkReport", "policyOp"] }) }),
     });
     await renderDetail();
     expect(await screen.findByText(N.upgrade)).toBeTruthy();
@@ -795,7 +796,10 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
       provider: "@local",
       online: true,
       machine: MACHINE,
-      network: { features: ["networkReport", "policyOp", "tiers"], policy: policy(pol) },
+      network: {
+        features: ["networkReport", "policyOp", "policyOpId", "tiers"],
+        policy: policy(pol),
+      },
       sandbox: sandbox(sb),
       ...over,
     });
@@ -976,7 +980,10 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
             { effectiveTier: "strict" },
             {},
             {
-              network: { features: ["networkReport", "policyOp"], policy: policy() },
+              network: {
+                features: ["networkReport", "policyOp", "policyOpId"],
+                policy: policy(),
+              },
             },
           ),
         }),
@@ -1069,7 +1076,7 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
     expect(screen.queryByText(S.unsandboxedRisk)).toBeNull();
   });
 
-  it("recent changes list levels, isolation and hosts with who, where and unconfirmed", async () => {
+  it("recent changes list levels, isolation and hosts with who, where, unconfirmed and failed", async () => {
     stubApi({
       [`GET ${BASE}/e1`]: () =>
         json(200, {
@@ -1087,7 +1094,20 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
                 remoteGrants: null,
                 by: "Grant",
                 via: "im",
-                confirmed: false,
+                outcome: "unknown",
+              },
+              {
+                at: T,
+                kind: "policy",
+                add: ["api.example.com"],
+                remove: [],
+                tier: null,
+                isolation: null,
+                localhost: null,
+                remoteGrants: null,
+                by: "Grant",
+                via: "web",
+                outcome: "failed",
               },
               {
                 at: T,
@@ -1100,7 +1120,7 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
                 remoteGrants: null,
                 by: null,
                 via: "device",
-                confirmed: true,
+                outcome: "applied",
               },
               {
                 at: T,
@@ -1113,7 +1133,7 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
                 remoteGrants: "off",
                 by: "Owner",
                 via: "device",
-                confirmed: true,
+                outcome: "applied",
               },
             ],
           }),
@@ -1126,7 +1146,8 @@ describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText(/Grant · IM/)).toBeTruthy();
-    expect(screen.getByText(S.recent.unconfirmed)).toBeTruthy();
+    expect(screen.getByText(S.recent.outcome.unknown)).toBeTruthy();
+    expect(screen.getByText(S.recent.outcome.failed)).toBeTruthy();
     expect(screen.getByText(S.recent.isolation.none)).toBeTruthy();
     expect(screen.getAllByText(new RegExp(`· ${S.recent.via.device}$`))).toHaveLength(2);
     // a change made on the machine: the tier's from and to, the localhost access and the remote

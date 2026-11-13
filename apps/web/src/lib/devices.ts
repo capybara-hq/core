@@ -58,7 +58,8 @@ export interface DeviceNetworkPolicy {
 
 /**
  * A local device's network facts (network ask-to-allow spec §5.4, §7): the program's features
- * (`policyOp`: it takes policy changes from the deployment; `tiers`: it knows the sandbox levels)
+ * (`policyOpId`: it takes policy changes from the deployment under op ids; `tiers`: it knows the
+ * sandbox levels)
  * and its policy summary (null when it reported none).
  */
 export interface DeviceNetwork {
@@ -87,8 +88,12 @@ export interface DeviceSandboxChange {
   by: string | null;
   /** `device`: made on the machine itself (`capybara-device policy ...`, or reported). */
   via: "web" | "im" | "device";
-  /** The machine answered with the policy as written (false: the answer never came). */
-  confirmed: boolean;
+  /**
+   * What became of a change sent to the machine: `unknown`, its answer never came (an `applied`
+   * row follows once the machine reports it); `failed`, it did not take effect. Every other row is
+   * `applied`.
+   */
+  outcome: "applied" | "unknown" | "failed";
 }
 
 /** A device's sandbox level as its owner sees it (kernel `DeviceSandboxView`, spec §11.1). */

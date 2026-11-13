@@ -99,7 +99,13 @@ export function approvalsFor(
     registry,
     // no device here: deciding a network ask needs the kernel's DevicePolicyService
     {
-      apply: async () => {
+      begin: async () => {
+        throw new Error("DevicePolicyService is not available in this test");
+      },
+      send: async () => {
+        throw new Error("DevicePolicyService is not available in this test");
+      },
+      settleIn: async () => {
         throw new Error("DevicePolicyService is not available in this test");
       },
       summary: async () => null,
