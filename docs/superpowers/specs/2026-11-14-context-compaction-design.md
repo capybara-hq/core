@@ -132,14 +132,11 @@ Platform (DeploymentSettings, super admin, hot): `compaction { enabled (default 
 
 Org (org settings, org admin): the same fields, all optional; absent follows the platform, `null` clears; values validated against the same ranges.
 
-**Open decision (maintainer).** The platform layer is either:
+**Decision (maintainer, 2026-11-14).** Platform settings live in `DeploymentSettings` (hot, super-admin UI); the two `KernelConfigSchema.runtime` compaction fields are removed (pre-0.1.0, no compat; `docs/config.md` and the schema change). Org overrides live in org settings. Precedence: org > platform DB > built-in.
 
-- **Option 1 (recommended):** platform settings in `DeploymentSettings`, hot and editable in the platform UI; remove the two `KernelConfigSchema.runtime` compaction fields (pre-0.1.0, no compat; `docs/config.md` and the schema change). Org overrides in org settings. Precedence is then simply org > platform DB > built-in.
-- **Option 2:** keep the `KernelConfigSchema.runtime` fields as the platform default and add only org overrides (the `wakeOnBackgroundTask` pattern, `orgs/settings.service.ts`). No platform UI for compaction, and changing it needs a restart.
+Do not ship a three-layer precedence: `DEPLOYMENT_SETTINGS` fields carry zod defaults, so an env fallback would be unreachable, and `sandboxTiers` resolves env before stored settings, contradicting "env wins". The hard fit guard, reactive compaction and output clamp are not configurable and cannot be disabled.
 
-Do not ship the three-layer precedence from the earlier draft: `DEPLOYMENT_SETTINGS` fields carry zod defaults, so the env fallback would be unreachable, and `sandboxTiers` resolves env before stored settings, contradicting "env wins". The hard fit guard, reactive compaction and output clamp are not configurable and cannot be disabled.
-
-UI: a "Conversation compaction" section on the platform settings page (Option 1) and the org settings page, with a "follow platform" state; design components only.
+UI: a "Conversation compaction" section on the platform settings page and the org settings page, with a "follow platform" state; design components only.
 
 ### 4.9 Events, replay, SDK
 
@@ -184,7 +181,7 @@ UI: a "Conversation compaction" section on the platform settings page (Option 1)
 - Dual replica: manual compact claim, no duplicate summary; progress in Redis.
 - Web: `/compact`, title-menu action, compacting row, divider, savedTokens; i18n; `check:web-ui`.
 - Evals: full-run replay with an overflowing candidate; summary/trim replay.
-- `docs/config.md` changes only under Option 1.
+- `docs/config.md` and `KernelConfigSchema` change: the two `runtime` compaction fields are removed under the settings decision.
 
 ### 4.13 Phasing
 
