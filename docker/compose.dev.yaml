@@ -54,8 +54,9 @@ services:
   # Docker socket 代理：只有它挂 docker.sock，只放行插件用到的接口（见 sandbox-proxy/haproxy.cfg）。
   # 仅供本机开发：为了让宿主机上的内核连上才发布在 127.0.0.1:2375（插件 endpoint 填 tcp://127.0.0.1:2375）。
   # On Docker Desktop a container reaches the host loopback through host.docker.internal: never set the
-  # plugin's openEgress to "direct" (the default "proxy" sends the open tier through the egress proxy,
-  # which refuses private addresses; whether open is reachable at all is sandbox.tiers.max and the org's ceiling).
+  # plugin's openEgress to "direct" (the default "proxy" serves the open public network through the egress
+  # proxy, which refuses private addresses; a provider set to refuse the open network answers
+  # sandbox.open_network_refused, and the org may also be on an allowlist instead).
   # 生产环境绝不要把它发布到宿主机地址上，只放在内核的内部网络里（endpoint tcp://sandbox-proxy:2375）。
   sandbox-proxy:
     profiles: ["sandbox"]

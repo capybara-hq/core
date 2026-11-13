@@ -40,8 +40,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Display only: request building reads only `callId` / `content` / `isError`, and a replay renders the recorded result,
   so a denied, allowed or held command needs no `DriftReason`; a resumed `command` approval replays from its recorded
   result and is never reviewed again (`RecordedToolPipeline` never executes or reviews a tool). The review's own
-  classifier call is a `model_call` with `purpose: "review"` and a `usage` event with the same purpose — neither is
-  model-visible, so neither needs a `DriftReason`.
+  classifier call fires `model.request` / `model.response` with purpose `review` and writes a `usage` event with
+  the same purpose — neither is model-visible, so neither needs a `DriftReason`.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
   previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
   request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
