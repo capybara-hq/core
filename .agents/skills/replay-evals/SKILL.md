@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, the Claude Code tool map and old pinned skills in the skills_catalog snapshot (pinned_changed), skill invocations (skill_fork_result, no DriftReason), background sub-agents (subagent_delivery, trigger subagent), full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals, per-org concurrency, token caps, the judge's purpose eval, privacy (trajectory 404, trajectory.viewed audit, no export), and extension hooks in replays (hook_denied is not model-visible, needs no DriftReason; replays fire no hooks; compaction usage events).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (step / full-run replay, case snapshots, the judge). Covers the replay invariant and zero-drift fixtures (reconstruct.test.ts, rename-compat.test.ts), new model-visible input logged with a DriftReason, the Claude Code tool map and pinned skills (pinned_changed), skill invocations (skill_fork_result), the command review record (review, no DriftReason), background sub-agents, full-run replay from recorded tool results (RecordedToolPipeline), the eval queue cap-kernel-evals, per-org concurrency, token caps, privacy (trajectory 404, trajectory.viewed audit, no export), and hooks in replays (hook_denied is not model-visible; replays fire no hooks; compaction usage events).
 ---
 
 # Evals and replay
@@ -31,9 +31,17 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
-  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range, `guard` for a read-before-write refusal)
-  never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
-  `Bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
+  so `display` (the bilingual summary), `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range, `guard` for a read-before-write refusal)
+  and `review` (the command review's decision, below) never reach a request, are not in compaction records and need no
+  `DriftReason`. A tool's input schema change (such as `Bash`'s required `description`) needs none either: definitions
+  are fetched from the snapshot by the recorded specHash.
+- **The command review's record** (auto mode spec §5.4): `tool_result.review` says who decided a `Bash` / `Write` /
+  `Edit` call (the rule table, the classifier, or the person through a `command` approval) and the rule and reason.
+  Display only: request building reads only `callId` / `content` / `isError`, and a replay renders the recorded result,
+  so a denied, allowed or held command needs no `DriftReason`; a resumed `command` approval replays from its recorded
+  result and is never reviewed again (`RecordedToolPipeline` never executes or reviews a tool). The review's own
+  classifier call is a `model_call` with `purpose: "review"` and a `usage` event with the same purpose — neither is
+  model-visible, so neither needs a `DriftReason`.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
   previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
   request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`

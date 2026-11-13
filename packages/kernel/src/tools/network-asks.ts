@@ -79,8 +79,9 @@ const localAdd = (hosts: readonly string[]) =>
   hosts.map((h) => `capybara-device policy add allowedDomains ${h}`).join(" and ");
 
 /**
- * Not asked: the device takes no network changes from the deployment (`remoteGrants: off`), so
- * neither a run grant nor 「一直允许」 would reach it; only its owner can allow the host locally.
+ * Not asked: the device cannot take network changes from the deployment (Docker mode, or a program
+ * too old to take them), so neither a run grant nor 「一直允许」 would reach it; only its owner can
+ * allow the host locally.
  */
 export const localOnlyNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts).slice(0, -1)}, and this device does not accept network changes from the conversation. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)} or tell the user.`;
@@ -106,7 +107,7 @@ export const addressLayerNote = (hosts: readonly string[]) =>
 
 /**
  * An unattended run (spec §8.1): the task approves the host, yet the device refused it: the device
- * takes no network grants from the deployment (`remoteGrants` off, or a program too old for them).
+ * takes no network grants from the deployment (Docker mode, or a program too old for them).
  * Not asked, not a missing grant: only the device's owner can allow it locally.
  */
 export const taskGrantIgnoredNote = (hosts: readonly string[]) =>

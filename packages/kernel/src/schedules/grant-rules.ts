@@ -24,9 +24,9 @@ export interface GrantContext {
  * skills, or any other per-call key such as `Platform:<operation>`), `not_available` (not one of the agent's tools now), `needs_role` (a
  * `requiredRole` above the creator's), `fixed_ask` (always asks a person). A network grant
  * (`network:<host>`, {@link networkGrantRefusal}) adds `needs_admin` (outside the org's network
- * allowlist: only an org admin can add the host) and `device_refuses` (the task's device takes no
- * network grants from the deployment: `remoteGrants` off); an invalid or wildcard host is
- * `not_grantable`.
+ * allowlist: only an org admin can add the host) and `device_refuses` (the task's device cannot
+ * take network changes from the deployment: Docker mode or an older program); an invalid or
+ * wildcard host is `not_grantable`.
  */
 export type GrantRefusalCode =
   | "forbidden"

@@ -1,6 +1,6 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags and actor, optional image, same-name replacement), effective org limits, egress and tiers (sandboxLimitOverrides, sandboxEgress, update, limitsApplyAt), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags and actor, optional image, same-name replacement), effective limits, modes and networks (sandboxLimitOverrides, cloudNetwork, update, limitsApplyAt), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
 # Sandboxes: the kernel side of `sandbox@2`
@@ -123,44 +123,65 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
 
-### Limits and egress (`SandboxLimits`)
+### Limits, modes and networks (`SandboxLimits`)
 
-- `tier` (`strict` < `dev` < `open`, spec `docs/superpowers/specs/2026-11-12-sandbox-dev-tiers-design.md`) is the device's **effective** tier: the lowest of the
-  device's own tier (`devices.tier`, null = the org default), the org ceiling (`sandboxTier.max`) and the platform ceiling (`sandbox.tiers.max`); unattended runs are
-  capped at `dev` without a `tier:open` task grant. One function computes it: kernel `sandbox/tiers.ts` `effectiveSandboxPolicy`. Only a person widens a tier
-  (org settings over the session, the device owner on the device page); the Platform op and PATs only narrow. `devHosts` is for local exec args only; cloud
-  providers treat `allowHosts` as final.
-- `egress` / `allowHosts` are the values **in effect for the org**: the org setting `sandboxEgress` can replace the allowlist with its own or cut the network,
-  and cannot be more open than the deployment (Ruling M19). `egress: "none"` cuts the network in every tier. There is no deployment `egress: "open"` any more:
-  open egress is the `open` tier. The provider just enforces the `limits` it receives and does not read org settings.
-- `cpu` / `memoryMb` are likewise the values **in effect for the org**: a super admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
+- **`mode` (`auto` | `sandbox`, auto mode spec §4)** says what the run guarantees, not which
+  mechanism implements it: `auto` runs commands with the environment's own capability (local: the
+  owner's machine; cloud: the container is the boundary), `sandbox` adds the OS sandbox on a local
+  device and the allowlist network on a cloud one. The kernel computes one effective mode per use,
+  `effectiveDevicePolicy`, from the platform's `devices.autoMode`, the org's `autoMode` and, on a
+  local device, the machine's own reported mode (`packages/kernel/src/sandbox/modes.ts`, read live
+  in the caller's transaction). Only the machine turns auto on; the platform, the org and the web
+  may narrow to `sandbox`. A provider that ignores `mode` and `network` runs as an allowlisted
+  sandbox, the safe direction.
+- **`network` (`{ kind: "open-public" | "allowlist", hosts }`)** is the network in effect: cloud
+  instances get `open-public` in auto mode and the org's `cloudNetwork` (open by default, or its
+  allowlist) in sandbox mode; a local device's sandbox mode intersects the org's allowlist with the
+  machine's own list, and `open-public` is for cloud instances only. The provider just enforces the
+  `limits` it receives and does not read org settings or the platform switch.
+  - `open-public` (开放挡内网): any public host on any port, and the provider refuses loopback of
+    the host, private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local and cloud
+    metadata (`169.254/16`, `fe80::/10`) and the deployment's own internal addresses. This is
+    enforced outside the container (Docker: the egress proxy or the network policy the provider
+    already runs; E2B: its network filter), never by an OS sandbox inside the container.
+  - `allowlist` (the default): only `hosts` (`validateAllowHost` already rejects IP literals,
+    single-label names and `.local` / `.internal`; `*.example.com` matches subdomains and not the
+    domain itself), HTTP(S) on 443 / 80. It blocks the internal network and hosts outside the list,
+    not data sent to an allowed host.
+  - `sandbox.limits.egress: "none"` is the platform kill switch (R20, every read): it forces every
+    kernel-controlled network to an empty allowlist. A local device's auto mode uses the machine's
+    network, which the kernel cannot cut.
+- `cpu` / `memoryMb` are the values **in effect for the org**: a super admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
   orgId → `{ cpu?, memoryMb? }`, cpu 0.25–64, memoryMb an integer in 256–262144, C19); the items given replace the deployment defaults of `sandbox.limits`, and items not given and `diskMb` keep the deployment defaults (kernel `effectiveSandboxLimits`); org admins see the effective values and their source read-only in org settings.
   The provider just enforces the `limits` it receives from `create`; a provider that cannot size each sandbox (such as E2B, where the template decides the size) must state in its README
   "org-level cpu / memory overrides do not take effect for this plugin"; a deployer who needs different sizes uses different templates.
-- **Tier and egress mode follow running instances; the rest applies at create.** The kernel records the `{ tier, egress }` an instance was created with
-  (`device_instances.instance_limits`; NULL reads as `strict` with an unknown egress, so it differs once after the upgrade). On use, when the effective tier or
-  egress mode differs, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"` records the new limits; `"recreate"`, a gone
-  instance, or a provider without `update` destroys and recreates the instance on the same files (the existing "recreated" notice). A non-gone `update` failure
-  recreates on instance-bound providers; after an abort, or on a provider with `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance
-  is quarantined (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful `update` keeps the old record, and the device view
-  says `pendingFilesReset` (「重置文件后生效」): the record never claims more than is in force. Changes of `allowHosts`, `cpu`, `memoryMb` still reach only
-  instances created afterwards, and `diskMb` only file systems created afterwards. When an item cannot be done, say so in the README (Docker's default local
-  volume driver does not limit `diskMb`; E2B's cpu / memory / disk are decided by the template).
-- `egress` and `tier` together:
-  - `none`: loopback only, whatever the tier.
-  - `allowlist` (default): allow only `allowHosts` (`validateAllowHost` already rejects IP literals, single-label names and `.local` / `.internal`;
-    `*.example.com` matches subdomains and not the domain itself). `strict` keeps HTTP(S) on 443 / 80; `dev` allows any port to those hosts (sandbox-docker adds
-    SOCKS5 on the egress proxy and a larger `/dev/shm`).
-  - `open` tier: any public host. The provider's deployment config `openEgress: "off" | "proxy" | "direct"` (default `"proxy"`; it replaced `allowOpenEgress`)
-    decides how: `off` refuses a `create` or `update` that asks for open with an English error; `proxy` goes through the provider's egress proxy, which still
-    refuses private, loopback, link-local and metadata addresses; `direct` attaches the shared bridge and reaches the host and the intranet (trusted deployments
-    only). The kernel warns at start when `sandbox.tiers.max` is `open` while the provider is `off`.
-  - A cloud provider's failed `createFileSystem` / `create` / `update` (not an abort, gone, unreachable or kernel error) is logged with the provider's
-    error and replaced (`providerRefusal` in `sandbox.service.ts`): open egress → `sandbox.tier_refused` (details `[{ tier }]`), any other create →
-    `sandbox.create_failed`; the sandbox tools turn them into actionable text (`sandboxTierRefusedText`, `SANDBOX_CREATE_FAILED_TEXT`). The provider's
-    message never reaches the model (it may name settings). Test it with `setFakeSandboxRefuseOpenEgress`.
-- **The allowlist does not prevent data exfiltration**: it blocks the internal network and hosts outside the allowlist, but not data sent to allowlisted hosts (`git push` to github.com, publishing packages).
-  The README must say so and recommend `sandboxToolPolicy: ask` and / or `sandboxEgress: none` for sensitive orgs.
+- **Mode and network follow running instances; the rest applies at create.** The kernel records the
+  `{ mode, network }` an instance was created with (`device_instances.instance_limits`; NULL reads as
+  unknown, so it differs once after the upgrade, and an old `{ tier, egress }` record reads as
+  unknown too). On use, when the effective mode or network kind differs, it calls the optional
+  `update(h, limits, signal)` under the exclusive lease: `"updated"` records the new limits;
+  `"recreate"`, a gone instance, or a provider without `update` destroys and recreates the instance
+  on the same files (the existing "recreated" notice). A non-gone `update` failure recreates on
+  instance-bound providers; after an abort, or on a provider with `limitsApplyAt: "fileSystem"`
+  (E2B: the instance is its file system), the instance is quarantined (suspended or killed) and the
+  error rethrown. A `"fileSystem"` provider without a successful `update` keeps the old record, and
+  the device view says `pendingFilesReset` (「重置文件后生效」): the record never claims more than is
+  in force. Changes of `network.hosts`, `cpu`, `memoryMb` still reach only instances created
+  afterwards, and `diskMb` only file systems created afterwards. When an item cannot be done, say so
+  in the README (Docker's default local volume driver does not limit `diskMb`; E2B's cpu / memory /
+  disk are decided by the template).
+- **Provider refusals** (auto mode spec §4.2): a failed `createFileSystem` / `create` / `update`
+  that is not an abort, gone, unreachable or kernel error is logged with the provider's error and
+  replaced (`providerRefusal` in `sandbox.service.ts`); a cloud provider refusing the open public
+  network becomes `sandbox.open_network_refused`, any other create `sandbox.create_failed`. The
+  sandbox tools turn them into actionable text (`SANDBOX_OPEN_NETWORK_REFUSED_TEXT`,
+  `SANDBOX_CREATE_FAILED_TEXT`); the provider's own message never reaches the model (it may name its
+  settings). Test the refusal with `setFakeSandboxRefuseOpenEgress`.
+- **The allowlist does not prevent data exfiltration**: it blocks the internal network and hosts
+  outside the allowlist, but not data sent to allowlisted hosts (`git push` to github.com,
+  publishing packages). In auto mode the command review is the boundary and the network is the
+  environment's own. The README must say so and recommend `sandboxToolPolicy: ask` and / or a
+  tighter `cloudNetwork` / `sandbox.limits.egress: none` for sensitive orgs.
 - A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
   Where it can but more weakly, write it in the README (E2B looks only at Host / SNI and does not verify the destination IP, Ruling M14).
 

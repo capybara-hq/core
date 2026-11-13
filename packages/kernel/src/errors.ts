@@ -367,8 +367,8 @@ export const ERROR_CODES = {
   /** The local device's machine runs a `capybara-device` too old for this kernel; update it. */
   "device.program_outdated": 426,
   /**
-   * The device's machine refused a network policy change (its local `remoteGrants` is `off`, it
-   * runs in Docker mode, or a host is invalid); the message says how to allow it on the machine.
+   * The device's machine refused a network policy change (it runs in Docker mode or an older
+   * program, or a host is invalid); the message says how to allow it on the machine.
    */
   "device.policy_refused": 409,
   /** The device cannot change its network policy from the platform (cloud, or an older program). */

@@ -326,7 +326,7 @@
       "file_not_found": "沙箱里没有这个文件。",
       "file_is_directory": "这个路径是目录，请指定一个文件。",
       "file_too_large": "文件过大。",
-      "tier_refused": "云端沙箱无法以该设备的沙箱级别运行。请降低设备的级别，或联系组织管理员或超级管理员。",
+      "open_network_refused": "云端沙箱无法为该设备提供开放网络，已拒绝创建。组织管理员可以把组织对云设备的网络改为白名单，或由超级管理员在沙箱扩展设置中允许开放网络。",
       "create_failed": "无法创建云端沙箱。请重试；如果一直失败，请让超级管理员检查沙箱扩展的设置。"
     },
     "device": {
@@ -341,7 +341,9 @@
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
-      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。"
+      "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
+      "auto_mode_not_allowed": "该设备的机器以自动模式运行，但你的组织不允许自动模式。请在那台机器上运行 capybara-device mode sandbox 切换到沙箱模式。",
+      "mode_on_device": "该设备的模式保存在它所连接的机器上：请在设备页面切换到沙箱模式，或在那台机器上运行 capybara-device mode sandbox。"
     },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
