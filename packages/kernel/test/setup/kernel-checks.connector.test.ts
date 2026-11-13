@@ -132,7 +132,7 @@ beforeAll(async () => {
     .values({ org_id: env.orgId, account_id: m2.id, role: "member" })
     .execute();
   mem2 = await session(env.k, "mem2");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -184,7 +184,7 @@ async function cacheText(): Promise<string> {
   return keys.length === 0 ? "" : (await redis.mget(...keys)).join("\n");
 }
 
-describe("kernel connector checks", { timeout: 60_000 }, () => {
+describe("kernel connector checks", () => {
   it("oauth-client: ok when id and secret are stored; failing without the secret", async () => {
     expect(await run(env.boss, "capybara:oauth-client")).toMatchObject({
       status: "ok",
@@ -349,7 +349,7 @@ describe("kernel connector checks", { timeout: 60_000 }, () => {
   });
 });
 
-describe("T10 trust review follow-ups", { timeout: 60_000 }, () => {
+describe("T10 trust review follow-ups", () => {
   it("the target query needs a live platform template (t.deleted_at IS NULL)", async () => {
     secretArgs.length = 0;
     const t = await env.db

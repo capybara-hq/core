@@ -126,7 +126,7 @@ beforeAll(async () => {
     expect(en.statusCode, en.body).toBe(200);
   }
   itemId = await seedFakeImGuideItem(db);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -207,7 +207,7 @@ async function cachedValues(): Promise<string> {
   return keys.length === 0 ? "" : (await redis.mget(...keys)).join("\n");
 }
 
-describe("setup checks: reading and running", { timeout: 30_000 }, () => {
+describe("setup checks: reading and running", () => {
   it("GET checks never runs and answers not_run for every check of the rendered guide", async () => {
     const id = await connection();
     const r = await states(id);
@@ -545,7 +545,7 @@ describe("setup checks: reading and running", { timeout: 30_000 }, () => {
   });
 });
 
-describe("setup checks: Platform operations", { timeout: 30_000 }, () => {
+describe("setup checks: Platform operations", () => {
   const ctxOf = (accountId: string): OperationContext => ({
     orgId,
     actorAccountId: accountId,

@@ -130,7 +130,7 @@ beforeAll(async () => {
     .values({ org_id: env.orgId, account_id: adm2Id, role: "admin" })
     .execute();
   adm2 = await session(env.k, "adm2");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -157,7 +157,7 @@ async function states(req: Req, audience: "admin" | "member"): Promise<Record<st
   return (r.json() as { results: Record<string, State> }).results;
 }
 
-describe("setup checks for connectors", { timeout: 60_000 }, () => {
+describe("setup checks for connectors", () => {
   it("a plugin check gets the connector's ids field by field, the account only for members", async () => {
     const admin = JSON.parse((await run(env.boss, "target", "admin")).reason?.en ?? "{}");
     expect(admin.keys).toEqual(["kind", "connectorId", "templateId", "clientId", "accountId"]);
@@ -264,7 +264,7 @@ async function guideList(req: Req): Promise<Guide[]> {
 // The guide list and `setup.read` for connector template guides (plan task 13): admins get the
 // admin guide with the connector (and a template without one), members the member section.
 // Runs last: the final test removes the connector.
-describe("setup guides for connectors", { timeout: 60_000 }, () => {
+describe("setup guides for connectors", () => {
   const callOp = (id: string, input: unknown, accountId: string) => {
     const o = env.k.app.get(PlatformOperations).get(id);
     if (o === null) throw new Error(`no operation ${id}`);
