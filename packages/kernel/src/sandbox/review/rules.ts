@@ -227,7 +227,7 @@ function readWord(text: string, start: number, depth: number): WordRead {
       const sub = readSubstitution(text, i, depth);
       if (!sub.ok) return sub;
       subs.push(sub.value.commands);
-      value += "$(...)";
+      value += `$(${sub.value.source})`;
       dynamic = true;
       i = sub.value.end;
       continue;
@@ -237,7 +237,7 @@ function readWord(text: string, start: number, depth: number): WordRead {
       const sub = readBacktick(text, i, depth);
       if (!sub.ok) return sub;
       subs.push(sub.value.commands);
-      value += "$(...)";
+      value += `$(${sub.value.source})`;
       dynamic = true;
       i = sub.value.end;
       continue;
@@ -311,7 +311,7 @@ function readDoubleQuoted(
       const sub = readSubstitution(text, i, depth);
       if (!sub.ok) return sub;
       subs.push(sub.value.commands);
-      out += "$(...)";
+      out += `$(${sub.value.source})`;
       dynamic = true;
       i = sub.value.end;
       continue;
@@ -320,7 +320,7 @@ function readDoubleQuoted(
       const sub = readBacktick(text, i, depth);
       if (!sub.ok) return sub;
       subs.push(sub.value.commands);
-      out += "$(...)";
+      out += `$(${sub.value.source})`;
       dynamic = true;
       i = sub.value.end;
       continue;
@@ -364,7 +364,7 @@ function readSubstitution(
   text: string,
   at: number,
   depth: number,
-): ParseSuccess<{ commands: SimpleCommand[]; end: number }> | ParseFailure {
+): ParseSuccess<{ commands: SimpleCommand[]; end: number; source: string }> | ParseFailure {
   // `at` points at `$`, `text[at + 1] === "("`.
   let i = at + 1;
   let nested = 0;
@@ -406,7 +406,7 @@ function readSubstitution(
         const parsed = parseRaw(inner, depth + 1);
         if (!parsed.ok)
           return { ok: false, unsure: `unparseable command substitution: ${parsed.unsure}` };
-        return { ok: true, value: { commands: parsed.value, end: i + 1 } };
+        return { ok: true, value: { commands: parsed.value, end: i + 1, source: inner } };
       }
       i += 1;
       continue;
@@ -420,7 +420,7 @@ function readBacktick(
   text: string,
   at: number,
   depth: number,
-): ParseSuccess<{ commands: SimpleCommand[]; end: number }> | ParseFailure {
+): ParseSuccess<{ commands: SimpleCommand[]; end: number; source: string }> | ParseFailure {
   let i = at + 1;
   while (i < text.length) {
     const c = text[i] as string;
@@ -433,7 +433,7 @@ function readBacktick(
       const parsed = parseRaw(inner, depth + 1);
       if (!parsed.ok)
         return { ok: false, unsure: `unparseable command substitution: ${parsed.unsure}` };
-      return { ok: true, value: { commands: parsed.value, end: i + 1 } };
+      return { ok: true, value: { commands: parsed.value, end: i + 1, source: inner } };
     }
     i += 1;
   }
@@ -551,11 +551,11 @@ function stripNeutral(argv: string[]): Invocation | null {
       rest = after;
       continue;
     }
-    if (["nohup", "command", "builtin", "exec", "unbuffer", "caffeinate"].includes(program)) {
+    if (["nohup", "command", "builtin", "noglob"].includes(program)) {
       rest = rest.slice(1);
       continue;
     }
-    if (["time", "nice", "stdbuf", "ionice", "watch"].includes(program)) {
+    if (program === "nice" || program === "stdbuf") {
       rest = skipLeadingOptions(rest.slice(1), [
         "-n",
         "-t",
@@ -892,8 +892,36 @@ function normalizePath(path: string): string {
   return `${absolute ? "/" : ""}${parts.join("/")}` || "/";
 }
 
-/** `~` / `$HOME` expanded and relative paths made absolute; null when a variable is unknown. */
-function expandPath(path: string, facts: ResolvedFacts, cwd: string = facts.cwd): string | null {
+const NO_VARS: ReadonlyMap<string, string | null> = new Map();
+
+/** Replace `$X` / `${X}` from the tracked table; null when a variable has no known value. */
+function substituteVariables(
+  value: string,
+  vars: ReadonlyMap<string, string | null>,
+): string | null {
+  let unresolved = false;
+  const out = value.replace(
+    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (_match, braced: string | undefined, bare: string | undefined) => {
+      const name = braced ?? bare ?? "";
+      const known = vars.get(name);
+      if (known === undefined || known === null) {
+        unresolved = true;
+        return "";
+      }
+      return known;
+    },
+  );
+  return unresolved ? null : out;
+}
+
+/** `~` / `$HOME` / tracked variables expanded and relative paths made absolute; null if unknown. */
+function expandPath(
+  path: string,
+  facts: ResolvedFacts,
+  cwd: string = facts.cwd,
+  vars: ReadonlyMap<string, string | null> = NO_VARS,
+): string | null {
   let p = path;
   if (p === "~" || p.startsWith("~/")) {
     if (facts.home !== null) p = facts.home + p.slice(1);
@@ -906,6 +934,9 @@ function expandPath(path: string, facts: ResolvedFacts, cwd: string = facts.cwd)
       p = facts.home === null ? `~${rest}` : facts.home + rest;
     }
   }
+  const substituted = substituteVariables(p, vars);
+  if (substituted === null) return null;
+  p = substituted;
   // An unresolved variable anywhere in the path (including command substitution) cannot be
   // resolved: never treat `$HOME/$(echo .ssh)/id_rsa` as a harmless absolute path.
   if (/[$`]/.test(p)) return null;
@@ -1058,10 +1089,20 @@ const SECRET_LOOKING =
  * one that names a secret component still is.
  */
 function isConcretePathWord(candidate: string): boolean {
+  // A URL is not a local file path; `rg "http://$host/api"` stays a read.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate) || /^https?:/i.test(candidate)) return false;
   if (candidate.startsWith("/") || candidate.startsWith("~")) return true;
   if (candidate.startsWith("./") || candidate.startsWith("../")) return true;
   if (/^\$(?:\{HOME\}|HOME)(?=\/|$)/.test(candidate)) return true;
   if (SECRET_LOOKING.test(candidate)) return true;
+  // A path-like word with a simple variable is concrete: if the variable is unresolved, the read
+  // falls to `unsure` rather than `allow` (`cat $X/config`).
+  if (
+    /\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/.test(candidate) &&
+    (candidate.includes("/") || candidate.startsWith("."))
+  ) {
+    return true;
+  }
   if (/[*?[\]{}|&;<>()$`\\'"\s]/.test(candidate)) return false;
   return candidate.includes("/") || /\.[A-Za-z0-9]{1,8}$/.test(candidate);
 }
@@ -1074,12 +1115,12 @@ function secretTokens(command: SimpleCommand, facts: ResolvedFacts): string[] {
   const found = new Set<string>();
   for (const token of command.argv) {
     for (const candidate of pathCandidates(token)) {
-      const resolved = expandPath(candidate, facts, cwdOf(command, facts));
+      const resolved = expandPath(candidate, facts, cwdOf(command, facts), command.vars);
       if (resolved !== null && isSecretPath(resolved, facts)) found.add(resolved);
     }
   }
   for (const redirect of command.redirects) {
-    const resolved = expandPath(redirect.target, facts, cwdOf(command, facts));
+    const resolved = expandPath(redirect.target, facts, cwdOf(command, facts), command.vars);
     if (resolved !== null && isSecretPath(resolved, facts)) found.add(resolved);
   }
   return [...found];
@@ -1089,12 +1130,12 @@ function persistenceTokens(command: SimpleCommand, facts: ResolvedFacts): string
   const found = new Set<string>();
   for (const token of command.argv) {
     for (const candidate of pathCandidates(token)) {
-      const resolved = expandPath(candidate, facts, cwdOf(command, facts));
+      const resolved = expandPath(candidate, facts, cwdOf(command, facts), command.vars);
       if (resolved !== null && isPersistencePath(resolved, facts)) found.add(resolved);
     }
   }
   for (const redirect of command.redirects) {
-    const resolved = expandPath(redirect.target, facts, cwdOf(command, facts));
+    const resolved = expandPath(redirect.target, facts, cwdOf(command, facts), command.vars);
     if (resolved !== null && isPersistencePath(resolved, facts)) found.add(resolved);
   }
   return [...found];
@@ -1104,12 +1145,12 @@ function deviceTokens(command: SimpleCommand, facts: ResolvedFacts): string[] {
   const found = new Set<string>();
   for (const token of command.argv) {
     for (const candidate of pathCandidates(token)) {
-      const resolved = expandPath(candidate, facts, cwdOf(command, facts));
+      const resolved = expandPath(candidate, facts, cwdOf(command, facts), command.vars);
       if (resolved !== null && isDevicePath(resolved, facts)) found.add(resolved);
     }
   }
   for (const redirect of command.redirects) {
-    const resolved = expandPath(redirect.target, facts, cwdOf(command, facts));
+    const resolved = expandPath(redirect.target, facts, cwdOf(command, facts), command.vars);
     if (resolved !== null && isDevicePath(resolved, facts)) found.add(resolved);
   }
   return [...found];
@@ -1188,6 +1229,8 @@ const READ_PROGRAMS = new Set([
   "top",
   "htop",
   "kill",
+  "pgrep",
+  "pidof",
   "launchctl",
   "crontab",
 ]);
@@ -1326,6 +1369,7 @@ const NETWORK_PROGRAMS = new Set([
   "lftp",
   "telnet",
   "socat",
+  "openssl",
   "dig",
   "nslookup",
   "host",
@@ -1625,7 +1669,12 @@ function volumeHostPaths(args: string[]): Array<string | null> {
   return out;
 }
 
-function dockerPrivileged(args: string[], facts: ResolvedFacts, cwd: string): string | null {
+function dockerPrivileged(
+  args: string[],
+  facts: ResolvedFacts,
+  cwd: string,
+  vars: ReadonlyMap<string, string | null> = NO_VARS,
+): string | null {
   if (args.some((a) => a === "--privileged" || a.startsWith("--privileged="))) {
     return "runs a container with --privileged";
   }
@@ -1638,7 +1687,7 @@ function dockerPrivileged(args: string[], facts: ResolvedFacts, cwd: string): st
   if (hasArg(args, "--device")) return "passes a host device into a container (--device)";
   for (const volume of volumeHostPaths(args)) {
     if (volume === null) continue;
-    const resolved = expandPath(volume, facts, cwd);
+    const resolved = expandPath(volume, facts, cwd, vars);
     if (resolved !== null && !inside(resolved, facts.workspace)) {
       return `mounts a host path outside the workspace (${volume})`;
     }
@@ -1669,12 +1718,37 @@ const DEVICE_IDENTIFIER =
 
 const isDeviceIdentifier = (value: string): boolean => DEVICE_IDENTIFIER.test(value);
 
+/** Service subcommands that change state; status/show/list/is-active are reads. */
+const SERVICE_EDIT_ACTIONS: ReadonlySet<string> = new Set([
+  "stop",
+  "start",
+  "restart",
+  "reload",
+  "daemon-reload",
+  "enable",
+  "disable",
+  "mask",
+  "unmask",
+  "kill",
+  "load",
+  "unload",
+  "bootstrap",
+  "bootout",
+  "submit",
+  "kickstart",
+]);
+
 function isDeviceServiceCommand(inv: Invocation): boolean {
   if (!["launchctl", "systemctl", "service", "pkill", "killall", "kill"].includes(inv.program)) {
     return false;
   }
   // Match the device's own program or launch agent, not a substring of an unrelated name.
-  return inv.args.some((arg) => isDeviceIdentifier(arg));
+  if (!inv.args.some((arg) => isDeviceIdentifier(arg))) return false;
+  if (["pkill", "killall", "kill"].includes(inv.program)) return true;
+  const positional = inv.args.filter((arg) => !arg.startsWith("-"));
+  // `service NAME ACTION`: the action is the second operand.
+  const action = inv.program === "service" ? positional[1] : positional[0];
+  return action !== undefined && SERVICE_EDIT_ACTIONS.has(action);
 }
 
 /* -------------------------------------------------------------------------------------------- *
@@ -1828,6 +1902,11 @@ function writeTargetsOf(inv: Invocation): string[] {
           directory = a.slice("--directory=".length);
           continue;
         }
+        // `-C/etc` carries its value attached.
+        if (a.startsWith("-C") && a.length > 2) {
+          directory = a.slice(2);
+          continue;
+        }
         if (a === "--extract" || a === "--get") extract = true;
         if (a === "--create") create = true;
         if (a === "-f" || a === "--file") {
@@ -1841,8 +1920,11 @@ function writeTargetsOf(inv: Invocation): string[] {
           continue;
         }
         if (a.startsWith("-") && !a.startsWith("--")) {
-          if (a.includes("x")) extract = true;
-          if (a.includes("c")) create = true;
+          // Only the option letters count: `-C/etc` (handled above) must not set create from the
+          // `c` in `/etc`.
+          const letters = a.slice(1).split(/[^A-Za-z]/)[0] ?? "";
+          if (letters.includes("x")) extract = true;
+          if (letters.includes("c")) create = true;
           const f = a.indexOf("f");
           if (f > 0) {
             if (f === a.length - 1) {
@@ -1859,8 +1941,24 @@ function writeTargetsOf(inv: Invocation): string[] {
       return targets;
     }
     case "unzip": {
-      const dir = hostValue(args, "-d");
-      return [dir ?? "."];
+      // `-d/etc` is attached, `-d /etc` is separate; both name the extraction directory.
+      const dirs: string[] = [];
+      for (let i = 0; i < args.length; i += 1) {
+        const a = args[i] as string;
+        if (a === "-d") {
+          if (args[i + 1] !== undefined) dirs.push(args[i + 1] as string);
+          i += 1;
+          continue;
+        }
+        if (/^-[A-Za-z]*d$/.test(a) && args[i + 1] !== undefined) {
+          dirs.push(args[i + 1] as string);
+          i += 1;
+          continue;
+        }
+        const attached = /^-[A-Za-z]*d(.+)$/.exec(a);
+        if (attached !== null && attached[1] !== undefined) dirs.push(attached[1]);
+      }
+      return dirs.length > 0 ? dirs : ["."];
     }
     case "git": {
       if (args[0] !== "clone") return [];
@@ -1996,12 +2094,32 @@ function isSecretOwner(program: string, paths: string[], facts: ResolvedFacts): 
 }
 
 /** A command that reads a secret path rather than using it as its own tool's credential. */
+/** A path word that cannot be resolved but names (or is rooted at) a secret location. */
+function isUnresolvedSecretWord(
+  candidate: string,
+  command: SimpleCommand,
+  ctx: RuleContext,
+): boolean {
+  if (expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts), command.vars) !== null) {
+    return false;
+  }
+  return SECRET_LOOKING.test(candidate) || /^(?:\$HOME|\$\{HOME\})(?:\/|$)/.test(candidate);
+}
+
+function commandHasUnresolvedSecret(command: SimpleCommand, ctx: RuleContext): boolean {
+  const tokens = [...command.argv, ...command.redirects.map((redirect) => redirect.target)];
+  return tokens.some((token) =>
+    pathCandidates(token).some((candidate) => isUnresolvedSecretWord(candidate, command, ctx)),
+  );
+}
+
 function readsSecret(command: SimpleCommand, ctx: RuleContext): boolean {
   const tokens = secretTokens(command, ctx.facts);
   if (tokens.length > 0) {
     const owner = eachInvocation([command], (inv) => isSecretOwner(inv.program, tokens, ctx.facts));
     if (owner.length === 0) return true;
   }
+  if (commandHasUnresolvedSecret(command, ctx)) return true;
   return (
     eachInvocation(
       [command],
@@ -2052,40 +2170,97 @@ function isCredentialFlag(program: string, flag: string): boolean {
   return false;
 }
 
+/** Flags whose value is a local file uploaded or posted as data. */
+const FILE_SEND_FLAGS: ReadonlySet<string> = new Set([
+  "-T",
+  "--upload-file",
+  "--post-file",
+  "--body-file",
+]);
+
+/** Flags whose `@file` / `name=@file` value is a local file; their bare value is data. */
+const DATA_SEND_FLAGS: ReadonlySet<string> = new Set([
+  "-d",
+  "--data",
+  "--data-binary",
+  "--data-raw",
+  "--data-urlencode",
+  "-F",
+  "--form",
+]);
+
+const isUrlLike = (value: string): boolean =>
+  /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^https?:/i.test(value);
+
+/** The local files a send value names (`@file`, `name=@file`, or a file flag's bare value). */
+function sendPathCandidates(value: string, bareIsFile: boolean): string[] {
+  const at = value.indexOf("@");
+  const candidate = at >= 0 ? value.slice(at + 1) : bareIsFile ? value : "";
+  if (candidate.length === 0 || candidate === "-") return [];
+  if (isUrlLike(candidate) || isRemoteSpec(candidate)) return [];
+  if (at < 0 && !looksLikePath(candidate) && !/\$\{?[A-Za-z_]/.test(candidate)) return [];
+  return [candidate];
+}
+
+/**
+ * Whether an unresolved send value can plausibly be a secret. A URL, a remote path or a path
+ * rooted at the run's cwd (`$(pwd)/...`, `$PWD/...`) cannot; `$HOME`, absolute paths, `../`,
+ * secret-looking components and unknown variables can.
+ */
+function unresolvedSendMatters(candidate: string): boolean {
+  if (isUrlLike(candidate) || isRemoteSpec(candidate)) return false;
+  if (/^(?:\$\(\s*pwd\s*\)|\$\{?PWD\}?)(?:\/|$)/.test(candidate)) return false;
+  if (/^(?:\$HOME|\$\{HOME\})(?:\/|$)/.test(candidate)) return true;
+  if (SECRET_LOOKING.test(candidate)) return true;
+  if (candidate.startsWith("/") || candidate.startsWith("../")) return true;
+  return /\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/.test(candidate);
+}
+
 /** A secret path a network command sends (as data), not one it uses as a credential. */
 function networkSendsSecret(inv: Invocation, command: SimpleCommand, ctx: RuleContext): boolean {
-  const { args } = inv;
-  // An unresolved path-like argument could name any file, including a secret: never certify a
-  // send of it (`curl -d @$HOME/$(echo .ssh)/id_rsa ...` is denied, not allowed).
-  const sends = (token: string): boolean => {
-    for (const candidate of pathCandidates(token)) {
-      const resolved = expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts));
-      if (resolved === null) return true;
-      if (isSecretPath(resolved, ctx.facts)) return true;
-    }
-    return false;
+  const sendsPath = (candidate: string): boolean => {
+    const resolved = expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts), command.vars);
+    if (resolved !== null) return isSecretPath(resolved, ctx.facts);
+    return unresolvedSendMatters(candidate);
   };
+  const sends = (flag: string, value: string): boolean => {
+    const bareIsFile = FILE_SEND_FLAGS.has(flag);
+    if (!bareIsFile && !DATA_SEND_FLAGS.has(flag)) return false;
+    return sendPathCandidates(value, bareIsFile).some(sendsPath);
+  };
+
+  if (["scp", "sftp", "rsync"].includes(inv.program)) {
+    // The local sources are what the command sends; the last operand is the remote destination.
+    const sources: string[] = [];
+    for (let i = 0; i < inv.args.length; i += 1) {
+      const a = inv.args[i] as string;
+      if (isCredentialFlag(inv.program, a)) {
+        i += 1;
+        continue;
+      }
+      if (a.startsWith("-")) continue;
+      sources.push(a);
+    }
+    sources.pop();
+    return sources.some((source) => sendPathCandidates(source, true).some(sendsPath));
+  }
+
+  const { args } = inv;
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] as string;
-    const flag = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
+    const eq = a.indexOf("=");
+    const flag = eq > 0 ? a.slice(0, eq) : a;
     if (isCredentialFlag(inv.program, flag)) {
       if (!a.includes("=")) i += 1;
       continue;
     }
-    if (sends(a)) return true;
-    if (
-      [
-        "--body-file",
-        "--post-file",
-        "--upload-file",
-        "-T",
-        "-d",
-        "--data-binary",
-        "--data",
-      ].includes(a) &&
-      args[i + 1] !== undefined &&
-      sends(args[i + 1] as string)
-    ) {
+    if (eq > 0 && sends(flag, a.slice(eq + 1))) return true;
+    if (args[i + 1] !== undefined && sends(a, args[i + 1] as string)) {
+      i += 1;
+      return true;
+    }
+    const attached = /^-(?:d|T|F)(.+)$/.exec(a);
+    if (attached !== null && attached[1] !== undefined && sends(a.slice(0, 2), attached[1])) {
       return true;
     }
   }
@@ -2103,7 +2278,7 @@ function credentialSecretTokens(command: SimpleCommand, ctx: RuleContext): Set<s
       if (!isCredentialFlag(inv.program, flag)) continue;
       const value = eq > 0 ? a.slice(eq + 1) : inv.args[i + 1];
       if (value === undefined) continue;
-      const resolved = expandPath(value, ctx.facts, cwdOf(command, ctx.facts));
+      const resolved = expandPath(value, ctx.facts, cwdOf(command, ctx.facts), command.vars);
       if (resolved !== null) out.add(resolved);
     }
   }
@@ -2133,13 +2308,18 @@ function isServeInvocation(inv: Invocation): boolean {
 
 function writesOutside(inv: Invocation, command: SimpleCommand, ctx: RuleContext): boolean {
   for (const target of writeTargetsOf(inv)) {
-    const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts));
+    const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
     if (resolved !== null && !inside(resolved, ctx.facts.workspace) && !tmpRootOf(resolved))
       return true;
   }
   for (const redirect of command.redirects) {
     if (redirect.op === "<") continue;
-    const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
+    const resolved = expandPath(
+      redirect.target,
+      ctx.facts,
+      cwdOf(command, ctx.facts),
+      command.vars,
+    );
     if (resolved !== null && !inside(resolved, ctx.facts.workspace) && !tmpRootOf(resolved))
       return true;
   }
@@ -2180,7 +2360,12 @@ function modifiesDevice(command: SimpleCommand, ctx: RuleContext): boolean {
   // /tmp and a read of the device files are not edits).
   const redirectsDevice = command.redirects.some((redirect) => {
     if (redirect.op === "<" || isIgnoredDevice(redirect.target)) return false;
-    const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
+    const resolved = expandPath(
+      redirect.target,
+      ctx.facts,
+      cwdOf(command, ctx.facts),
+      command.vars,
+    );
     return resolved !== null && isDevicePath(resolved, ctx.facts);
   });
   if (redirectsDevice) return true;
@@ -2201,6 +2386,12 @@ function modifiesDevice(command: SimpleCommand, ctx: RuleContext): boolean {
         "install",
         "shred",
         "unlink",
+        "vi",
+        "vim",
+        "nano",
+        "emacs",
+        "code",
+        "ed",
       ].includes(inv.program),
     ).length > 0
   );
@@ -2225,10 +2416,21 @@ const RULES: readonly Rule[] = [
           const action = nonOptionArgs(inv.args)[0];
           if (action !== undefined && LAUNCHCTL_CHANGES.includes(action)) return false;
         }
-        // `find -delete` / `find -exec` is not a read: its targets are dynamic.
+        // `find -delete` / `-exec` / `-fprint` is not a read: its targets are dynamic.
         if (
           inv.program === "find" &&
-          inv.args.some((a) => ["-delete", "-exec", "-execdir", "-ok", "-okdir"].includes(a))
+          inv.args.some((a) =>
+            [
+              "-delete",
+              "-exec",
+              "-execdir",
+              "-ok",
+              "-okdir",
+              "-fprint",
+              "-fprintf",
+              "-fls",
+            ].includes(a),
+          )
         ) {
           return false;
         }
@@ -2241,7 +2443,7 @@ const RULES: readonly Rule[] = [
           pathCandidates(token).some(
             (candidate) =>
               isConcretePathWord(candidate) &&
-              expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts)) === null,
+              expandPath(candidate, ctx.facts, cwdOf(command, ctx.facts), command.vars) === null,
           ),
         );
         if (unresolved) return false;
@@ -2336,7 +2538,12 @@ const RULES: readonly Rule[] = [
           // `nc host < ~/.ssh/id_rsa`: the command sends what it reads from a secret.
           const readsSecretRedirect = command.redirects.some((redirect) => {
             if (redirect.op !== "<") return false;
-            const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
+            const resolved = expandPath(
+              redirect.target,
+              ctx.facts,
+              cwdOf(command, ctx.facts),
+              command.vars,
+            );
             return resolved === null || isSecretPath(resolved, ctx.facts);
           });
           if (readsSecretRedirect) return false;
@@ -2372,7 +2579,7 @@ const RULES: readonly Rule[] = [
         ctx.commands,
         (inv, command) =>
           inv.program === "docker" &&
-          dockerPrivileged(inv.args, ctx.facts, cwdOf(command, ctx.facts)) === null,
+          dockerPrivileged(inv.args, ctx.facts, cwdOf(command, ctx.facts), command.vars) === null,
       );
       return matched.length > 0
         ? { reason: "A Docker command without host access; this is allowed.", commands: matched }
@@ -2387,7 +2594,7 @@ const RULES: readonly Rule[] = [
       for (const command of ctx.commands) {
         if (
           writeTargets(command).some((target) => {
-            const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts));
+            const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
             return (
               resolved !== null && inside(resolved, ctx.facts.workspace) && !isGitHook(resolved)
             );
@@ -2413,7 +2620,7 @@ const RULES: readonly Rule[] = [
       for (const command of ctx.commands) {
         if (
           writeTargets(command).some((target) => {
-            const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts));
+            const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
             return resolved !== null && tmpRootOf(resolved);
           })
         ) {
@@ -2455,7 +2662,7 @@ const RULES: readonly Rule[] = [
       let why: string | null = null;
       for (const command of ctx.commands) {
         for (const target of writeTargets(command)) {
-          const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts));
+          const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
           if (resolved !== null && (inside(resolved, ctx.facts.workspace) || tmpRootOf(resolved)))
             continue;
           if (
@@ -2567,6 +2774,11 @@ const RULES: readonly Rule[] = [
         return false;
       });
       for (const command of ctx.commands) {
+        if (commandHasUnresolvedSecret(command, ctx)) {
+          matched.push(command);
+          why ??=
+            "Changes or prints a shell rc file, SSH configuration or another secret/persistence location; this needs approval.";
+        }
         const touched = [
           ...persistenceTokens(command, ctx.facts),
           ...secretTokens(command, ctx.facts),
@@ -2630,7 +2842,12 @@ const RULES: readonly Rule[] = [
       let why: string | null = null;
       const matched = eachInvocation(ctx.commands, (inv, command) => {
         if (inv.program !== "docker") return false;
-        const reason = dockerPrivileged(inv.args, ctx.facts, cwdOf(command, ctx.facts));
+        const reason = dockerPrivileged(
+          inv.args,
+          ctx.facts,
+          cwdOf(command, ctx.facts),
+          command.vars,
+        );
         if (reason === null) return false;
         why ??= `Docker ${reason}; this needs approval.`;
         return true;
@@ -2666,7 +2883,12 @@ const RULES: readonly Rule[] = [
         if (networkSendsSecret(inv, command, ctx)) return true;
         return command.redirects.some((redirect) => {
           if (redirect.op !== "<") return false;
-          const resolved = expandPath(redirect.target, ctx.facts, cwdOf(command, ctx.facts));
+          const resolved = expandPath(
+            redirect.target,
+            ctx.facts,
+            cwdOf(command, ctx.facts),
+            command.vars,
+          );
           return resolved === null || isSecretPath(resolved, ctx.facts);
         });
       });
@@ -2707,7 +2929,7 @@ const RULES: readonly Rule[] = [
       const matched = eachInvocation(ctx.commands, (inv, command) => {
         if (inv.program !== "rm" || !rmIsRecursiveForce(inv.args)) return false;
         for (const target of nonOptionArgs(inv.args)) {
-          const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts));
+          const resolved = expandPath(target, ctx.facts, cwdOf(command, ctx.facts), command.vars);
           if (resolved !== null && isDangerousDelete(resolved, ctx)) return true;
         }
         return false;
@@ -2790,6 +3012,57 @@ function assignCwds(commands: SimpleCommand[], facts: ResolvedFacts): DetailedPa
   return { ok: true, value: commands };
 }
 
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+
+/** A simple assignment value (`X=$HOME/.kube`), expanded with the variables seen so far. */
+function assignmentValue(
+  raw: string,
+  facts: ResolvedFacts,
+  vars: ReadonlyMap<string, string | null>,
+): string | null {
+  let p = raw;
+  if (p === "~" || p.startsWith("~/")) {
+    if (facts.home !== null) p = facts.home + p.slice(1);
+  } else {
+    const homeRef = /^\$(?:\{HOME\}|HOME)(?=\/|$)/.exec(p);
+    if (homeRef !== null) {
+      const rest = p.slice(homeRef[0].length);
+      p = facts.home === null ? `~${rest}` : facts.home + rest;
+    }
+  }
+  const substituted = substituteVariables(p, vars);
+  if (substituted === null || /[$`]/.test(substituted)) return null;
+  return substituted;
+}
+
+/**
+ * Track simple assignments for the rule pass: leading `X=v` environment prefixes, standalone
+ * `X=v`, and `export/declare/typeset X=v`. Each command snapshots the table visible to it (with
+ * `PWD`), so `X=$HOME/.kube cat $X/config` resolves `$X` to the secret path.
+ */
+function assignVariables(commands: SimpleCommand[], facts: ResolvedFacts): void {
+  const vars = new Map<string, string | null>();
+  for (const command of commands) {
+    const cwd = command.cwd ?? facts.cwd;
+    vars.set("PWD", cwd);
+    for (const token of command.argv) {
+      const match = ASSIGNMENT.exec(token);
+      if (match === null) break;
+      const name = match[1] as string;
+      vars.set(name, assignmentValue(match[2] ?? "", facts, vars));
+    }
+    const inv = stripNeutral(command.argv);
+    if (inv !== null && ["export", "declare", "typeset"].includes(inv.program)) {
+      for (const arg of inv.args) {
+        const match = ASSIGNMENT.exec(arg);
+        if (match === null) continue;
+        vars.set(match[1] as string, assignmentValue(match[2] ?? "", facts, vars));
+      }
+    }
+    command.vars = new Map(vars);
+  }
+}
+
 function rejectObfuscation(commands: SimpleCommand[]): DetailedParse {
   const byPipeline = new Map<number, SimpleCommand[]>();
   for (const command of commands) {
@@ -2829,6 +3102,9 @@ function rejectObfuscation(commands: SimpleCommand[]): DetailedParse {
   return { ok: true, value: commands };
 }
 
+/** Prefixes that are never stripped: the command behind them is not trusted by prefix. */
+const NEVER_PREFIX: ReadonlySet<string> = new Set(["watch", "setsid", "flock", "ionice"]);
+
 function rejectDynamicPaths(commands: SimpleCommand[]): DetailedParse {
   const writePrograms = [
     "rm",
@@ -2855,6 +3131,9 @@ function rejectDynamicPaths(commands: SimpleCommand[]): DetailedParse {
     if (RESERVED_WORDS.has(inv.program)) return { ok: false, unsure: "a shell control structure" };
     if (isUnresolvedDynamic(inv.raw)) return { ok: false, unsure: "dynamic command" };
     const outer = command.argv[0] === undefined ? "" : baseName(command.argv[0]);
+    if (NEVER_PREFIX.has(outer)) {
+      return { ok: false, unsure: `the ${outer} prefix is never trusted` };
+    }
     if (
       outer === "xargs" &&
       writePrograms.includes(inv.program) &&
@@ -2911,8 +3190,10 @@ export function reviewRules(command: string, facts: ReviewFacts): ReviewResult {
   let unsure = parsed.ok ? null : parsed.unsure;
   if (parsed.ok) {
     const withCwds = assignCwds(parsed.value, resolved);
-    if (withCwds.ok) commands = withCwds.value;
-    else unsure = withCwds.unsure;
+    if (withCwds.ok) {
+      commands = withCwds.value;
+      assignVariables(commands, resolved);
+    } else unsure = withCwds.unsure;
   }
   const ctx: RuleContext = {
     facts: resolved,

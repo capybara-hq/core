@@ -66,6 +66,11 @@ export interface SimpleCommand {
   flow?: number;
   /** The unwrapped wrapper a command belongs to (undefined outside any wrapper). */
   block?: number;
+  /**
+   * The shell variable values visible to this command (a simple `NAME=value` / `export NAME=value`
+   * table built by `reviewRules`, with `PWD`): used to resolve `$X` inside path arguments.
+   */
+  vars?: ReadonlyMap<string, string | null>;
 }
 
 /** The parsed command line: every simple command, in execution order. */

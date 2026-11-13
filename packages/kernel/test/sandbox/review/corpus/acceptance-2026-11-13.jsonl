@@ -120,5 +120,5 @@
 {"command":"timeout 30 pnpm test","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
 {"command":"nice -n 10 make","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
 {"command":"stdbuf -oL python3 app.py","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
-{"command":"watch -n 2 docker ps","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.docker"]}
-{"command":"time pnpm test","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"allow","rules":["allow.dev"]}
+{"command":"watch -n 2 docker ps","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.unparsed"]}
+{"command":"time pnpm test","cwd":"/home/dev/workspace","mode":"auto","attended":true,"outcome":"unsure","rules":["unsure.uncovered"]}
