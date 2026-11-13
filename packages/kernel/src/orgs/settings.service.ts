@@ -431,9 +431,12 @@ export class OrgSettingsService {
    *   platform); clearing it follows the platform too, never wider than the platform allows;
    * - `cloudNetwork`: `open` where the network is the allowlist, or (still on the allowlist) a
    *   host the current allowlist does not have (the deployment's list when the org gives none).
-   *   An open cloud network does not make a host already allowed: a local device in sandbox mode
-   *   always reaches the allowlist, so a patch that switches to an allowlist carrying a host
-   *   outside the current one widens that device's network (auto mode spec §4.1, §5.2).
+   *   Only a comparison of two allowlists can widen here: `open` already reaches every public
+   *   address (auto mode spec §4.2, §4.3), so a switch from it to any allowlist is a subset and
+   *   narrows, whatever hosts that allowlist carries. `cloudNetwork` is the cloud device's
+   *   sandbox-mode network only (spec §4.3, §4.4); a local device in sandbox mode reaches the
+   *   deployment's `sandbox.limits.allowHosts` and widens it through its own ask-to-allow flow, so
+   *   the deployment's list counts here only as the previous allowlist of an org that has none.
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.autoMode !== undefined) {
@@ -455,9 +458,8 @@ export class OrgSettingsService {
       const hostsOf = (v: typeof prev): string[] => v?.allowHosts ?? defaultHosts;
       const nextMode = next?.mode ?? defaultMode;
       const widens =
-        nextMode === "open"
-          ? modeOf(prev) !== "open"
-          : !hostsOf(next).every((h) => hostsOf(prev).includes(h));
+        modeOf(prev) !== "open" &&
+        (nextMode === "open" || !hostsOf(next).every((h) => hostsOf(prev).includes(h)));
       if (widens) {
         throw new ApiError(
           "org.sandbox_egress_not_allowed",

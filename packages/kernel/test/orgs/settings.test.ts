@@ -199,19 +199,12 @@ describe("org cloudNetwork", () => {
       s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
     // absent = open: setting open explicitly is a no-op, not an error
     expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBeUndefined();
-    // a token cannot bring a host outside the deployment's list into the allowlist: that widens
-    // the allowlist a local device in sandbox mode reaches (auto mode spec §4.1)
+    // open reaches every public address, so any allowlist is a subset of it: the host check does
+    // not apply while the previous mode is open
     expect(
-      await codeOf(
-        tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
-      ),
-    ).toBe("org.sandbox_egress_not_allowed");
-    // a person sets the org's own list
-    await s.update(
-      orgId,
-      { cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } },
-      accountId,
-    );
+      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
+    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } });
+    // from an allowlist: open widens, and so does a host the allowlist does not have
     expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
@@ -223,16 +216,45 @@ describe("org cloudNetwork", () => {
       ),
     ).toBe("org.sandbox_egress_not_allowed");
     expect(
-      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
-    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } });
+      await codeOf(
+        tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["b.example.com"] } }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    // the same value or dropping a host narrows
+    expect(
+      (await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }))
+        .cloudNetwork,
+    ).toEqual({ mode: "allowlist", allowHosts: ["a.example.com"] });
+    expect(
+      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: [] } }),
+    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: [] } });
     // allowlist -> the deployment's open network is a widening, so clearing is refused
     expect(await codeOf(tokenUpdate({ cloudNetwork: null }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
-    // the same value is a no-op, not an error
+  });
+
+  it("a switch from open narrows whatever its hosts; on an allowlist a host outside the deployment list widens", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    // the deployment's own hosts are registry.npmjs.org and github.com, but its default network is
+    // open: an allowlist disjoint from that list is still a subset of open, so a token may set it
     expect(
-      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } }),
-    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["a.example.com"] } });
+      await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: ["nowhere.example"] } }),
+    ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: ["nowhere.example"] } });
+    // once the org is on that allowlist, a second host widens it, in the deployment's own list or
+    // not (the deployment's list is the previous allowlist only of an org that has none)
+    expect(
+      await codeOf(
+        tokenUpdate({
+          cloudNetwork: {
+            mode: "allowlist",
+            allowHosts: ["nowhere.example", "elsewhere.example"],
+          },
+        }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
   });
 
   it("a deployment kill switch (sandbox.limits.egress none) makes the default an empty allowlist", async () => {
