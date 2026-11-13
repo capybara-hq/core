@@ -58,7 +58,7 @@ beforeAll(async () => {
     ),
   );
   reader = k.app.get(SandboxFileReader);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();

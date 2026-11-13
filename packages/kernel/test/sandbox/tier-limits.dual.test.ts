@@ -51,7 +51,7 @@ beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-tiers-dual-"));
   raw = createDb(pgc.url, 2);
-}, 120_000);
+});
 
 afterAll(async () => {
   for (const k of kernels) await k.close();
@@ -109,7 +109,7 @@ describe("sandbox tiers (two replicas)", () => {
       FROM capybara.device_instances WHERE device_id = ${deviceId}`.execute(raw);
     expect(row.rows[0]?.instance_limits).toEqual({ tier: "open", egress: "open" });
     await setFakeSandboxDelays(root, {});
-  }, 60_000);
+  });
 
   it("a replica that read a wider tier before waiting applies the tier read under the lease", async () => {
     const [k1, k2] = kernels as [TestKernel, TestKernel];
@@ -158,5 +158,5 @@ describe("sandbox tiers (two replicas)", () => {
     const row = await sql<{ instance_limits: unknown }>`SELECT instance_limits
       FROM capybara.device_instances WHERE device_id = ${deviceId}`.execute(raw);
     expect(row.rows[0]?.instance_limits).toEqual({ tier: "strict", egress: "allowlist" });
-  }, 60_000);
+  });
 });
