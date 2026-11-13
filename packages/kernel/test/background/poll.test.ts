@@ -154,7 +154,7 @@ beforeAll(async () => {
   store = k.app.get(BackgroundTaskStore);
   job = k.app.get(BackgroundTaskPollJob);
   stopper = k.app.get(BackgroundTaskStopper);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -326,7 +326,7 @@ describe("polling", () => {
     // a later poll finds nothing more
     expect(await job.pollOnce()).toBe(0);
     expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(1);
-  }, 60_000);
+  });
 
   it("a task that exits 0 ends completed", async () => {
     const c = await conversation();
@@ -334,7 +334,7 @@ describe("polling", () => {
     const row = await pollUntilFinished(t);
     expect(row).toMatchObject({ status: "completed", exitCode: 0 });
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.lastLines).toBe("a\nb\n");
-  }, 60_000);
+  });
 
   it("keeps a running task running, and keeps only the last 4 000 characters of the output", async () => {
     const c = await conversation();
@@ -350,7 +350,7 @@ describe("polling", () => {
     const last = (await finishedEvents(c.conversationId, long.id))[0]?.payload.lastLines ?? "";
     expect(last.length).toBe(4000);
     expect(last.endsWith("x\n")).toBe(true);
-  }, 60_000);
+  });
 
   it("a task whose command exited but left processes running ends completed, its session empty (M2)", async () => {
     const c = await conversation();
@@ -366,14 +366,14 @@ describe("polling", () => {
     expect(row).toMatchObject({ status: "completed", exitCode: 0 });
     expect(await alive(c, t)).toBe(false);
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.lastLines).toBe("started\n");
-  }, 60_000);
+  });
 
   it("a task killed at its timeout ends timed_out", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 60", 1);
     const row = await pollUntilFinished(t);
     expect(row).toMatchObject({ status: "timed_out", exitCode: 137 });
-  }, 60_000);
+  });
 
   it("a task whose session was killed from outside ends lost (process_gone)", async () => {
     const c = await conversation();
@@ -393,7 +393,7 @@ describe("polling", () => {
       status: "lost",
       lostReason: "process_gone",
     });
-  }, 60_000);
+  });
 
   it("a suspended sandbox's task ends lost (sandbox_suspended) with kill_pending; a resume kills nothing alive", async () => {
     const c = await conversation();
@@ -415,7 +415,7 @@ describe("polling", () => {
     // the next use resumes it and kills the pending task's session: nothing of it is alive
     expect(await alive(c, t)).toBe(false);
     expect((await store.get(t.id))?.killPending).toBe(false);
-  }, 60_000);
+  });
 
   it("a task of a rebuilt sandbox ends lost (sandbox_recreated)", async () => {
     const c = await conversation();
@@ -435,7 +435,7 @@ describe("polling", () => {
       lostReason: "sandbox_recreated",
       killPending: false,
     });
-  }, 60_000);
+  });
 
   it("a task whose sandbox is gone ends lost (sandbox_gone)", async () => {
     const c = await conversation();
@@ -443,7 +443,7 @@ describe("polling", () => {
     await sandbox.destroyDevice(c.deviceId);
     expect(await job.pollOnce()).toBe(1);
     expect(await store.get(t.id)).toMatchObject({ status: "lost", lostReason: "sandbox_gone" });
-  }, 60_000);
+  });
 
   it("keeps the sandbox alive: a poll moves last_used_at forward, so idle suspension skips it", async () => {
     const c = await conversation();
@@ -474,7 +474,7 @@ describe("polling", () => {
     await age(2 * idleMs);
     await sandbox.suspendIdle(new Date());
     expect((await status()).status).toBe("suspended");
-  }, 60_000);
+  });
 
   it("skips a reservation that has not started (no sid)", async () => {
     const c = await conversation();
@@ -502,7 +502,7 @@ describe("polling", () => {
     expect(await job.pollOnce()).toBe(0);
     expect((await store.get(id))?.status).toBe("running");
     await store.failLaunch(id, "test");
-  }, 60_000);
+  });
 
   it("fails a reservation abandoned by its launch after 2 minutes, never a younger or live-claimed one", async () => {
     const c = await conversation();
@@ -580,7 +580,7 @@ describe("polling", () => {
     // a failed launch clears a stop's claim with its status
     for (const id of [young, claimed]) await store.failLaunch(id, "test");
     expect(await store.get(claimed)).toMatchObject({ status: "failed", stoppingAt: null });
-  }, 60_000);
+  });
 });
 
 describe("finishing", () => {
@@ -601,7 +601,7 @@ describe("finishing", () => {
     expect(events.map((e) => [e.payload.status, e.payload.reported])).toEqual([
       ["completed", true],
     ]);
-  }, 60_000);
+  });
 });
 
 describe("stopping", () => {
@@ -626,7 +626,7 @@ describe("stopping", () => {
     // stopping it again changes nothing
     expect(await stopper.stop(t, "tool")).toMatchObject({ status: "stopped" });
     expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(1);
-  }, 60_000);
+  });
 
   it("a poll while a stop is between SIGTERM and its finish leaves the task to the stop", async () => {
     const c = await conversation();
@@ -644,7 +644,7 @@ describe("stopping", () => {
     expect(row).toMatchObject({ status: "stopped", stoppingAt: null });
     const events = await finishedEvents(c.conversationId, t.id);
     expect(events.map((e) => [e.payload.status, e.payload.reported])).toEqual([["stopped", true]]);
-  }, 60_000);
+  });
 
   it("a poll that read a task before a stop claimed it does not finish it", async () => {
     const c = await conversation();
@@ -661,7 +661,7 @@ describe("stopping", () => {
     expect(await job.pollOnce()).toBe(0);
     expect((await store.get(t.id))?.status).toBe("running");
     await store.releaseStop(t.id);
-  }, 60_000);
+  });
 
   it("a stop that fails while the sandbox runs keeps the task running and gives up its claim", async () => {
     const c = await conversation();
@@ -671,7 +671,7 @@ describe("stopping", () => {
     expect(await store.get(t.id)).toMatchObject({ status: "running", stoppingAt: null });
     expect(await finishedEvents(c.conversationId, t.id)).toHaveLength(0);
     expect(await alive(c, t)).toBe(true);
-  }, 60_000);
+  });
 
   it("a stop of a reservation only claims it (its launch kills what it starts)", async () => {
     const c = await conversation();
@@ -702,7 +702,7 @@ describe("stopping", () => {
     );
     await store.finishStoppedLaunch(id);
     expect(await store.get(id)).toMatchObject({ status: "stopped", stoppingAt: null });
-  }, 60_000);
+  });
 
   it("a stop of a task that already exited finishes it as its exit says", async () => {
     const c = await conversation();
@@ -717,7 +717,7 @@ describe("stopping", () => {
       reported: true,
       lastLines: "done\n",
     });
-  }, 60_000);
+  });
 
   it("a stop of a task that exited but left processes running kills them (M2)", async () => {
     const c = await conversation();
@@ -730,7 +730,7 @@ describe("stopping", () => {
     expect(await alive(c, t)).toBe(true);
     expect(await stopper.stop(t, "tool")).toMatchObject({ status: "completed", exitCode: 0 });
     expect(await alive(c, t)).toBe(false);
-  }, 60_000);
+  });
 
   it("a sub-agent run's end stops only the tasks that run started (M5)", async () => {
     const c = await conversation();
@@ -746,7 +746,7 @@ describe("stopping", () => {
     expect(await alive(c, followUp)).toBe(true);
     await stopper.stopSubagentTasks(c.conversationId, "run-new");
     expect(await store.get(followUp.id)).toMatchObject({ status: "stopped" });
-  }, 60_000);
+  });
 
   it("a stop while the sandbox is suspended ends the task lost with kill_pending", async () => {
     const c = await conversation();
@@ -757,7 +757,7 @@ describe("stopping", () => {
       lostReason: "sandbox_suspended",
       killPending: true,
     });
-  }, 60_000);
+  });
 
   describe("through the run worker and the conversation delete", () => {
     let owner: Req;
@@ -816,7 +816,7 @@ describe("stopping", () => {
       expect(await alive({ orgId, conversationId: conv }, row as NonNullable<typeof row>)).toBe(
         true,
       );
-    }, 60_000);
+    });
 
     it("stopping a child waiting for approval stops the child's task", async () => {
       const conv = await createConv(owner, orgId, agentId);
@@ -862,7 +862,7 @@ describe("stopping", () => {
       );
       expect(row).toMatchObject({ status: "stopped" });
       expect(await alive({ orgId, conversationId: conv }, row)).toBe(false);
-    }, 60_000);
+    });
 
     it("deleting a conversation stops the running tasks in its sandbox first", async () => {
       const conv = await createConv(owner, orgId, agentId);
@@ -883,7 +883,7 @@ describe("stopping", () => {
       expect(res.statusCode, res.body).toBe(204);
       expect(await store.get(t.id)).toMatchObject({ status: "stopped" });
       expect(await alive({ orgId, conversationId: conv }, t)).toBe(false);
-    }, 60_000);
+    });
 
     it("deleting an idle conversation with a running task wakes no run (I1)", async () => {
       const conv = await createConv(owner, orgId, agentId);
@@ -916,7 +916,7 @@ describe("stopping", () => {
       expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
         { status: "stopped", reported: false, stoppedBy: "deletion" },
       ]);
-    }, 60_000);
+    });
   });
 });
 
@@ -940,5 +940,5 @@ describe("pruning", () => {
     expect(await store.get(recent.id)).toBeDefined();
     expect(await store.get(running.id)).toBeDefined();
     expect(BACKGROUND_PRUNE_JOB).toBe("background-task-prune");
-  }, 60_000);
+  });
 });

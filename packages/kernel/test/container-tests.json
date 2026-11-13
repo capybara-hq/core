@@ -1,6 +1,7 @@
 [
   "admin/m6-segment2.dual.test.ts",
   "background/launch.test.ts",
+  "background/macos-device.test.ts",
   "background/poll.dual.test.ts",
   "background/tail-script.test.ts",
   "catalog/m6-segment3.dual.test.ts",

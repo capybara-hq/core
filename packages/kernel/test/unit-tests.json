@@ -2,7 +2,6 @@
   "agents/template-limits.test.ts",
   "attachments/attachments.service.test.ts",
   "attachments/media-request.test.ts",
-  "background/macos-device.test.ts",
   "background/poll-providers.test.ts",
   "build-failure-cleanup.test.ts",
   "catalog/claude-marketplace.test.ts",

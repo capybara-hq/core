@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_LAUNCH_LINE, isBackgroundLaunch } from "@capybara-hq/plugin-sdk";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   GROUP_LAUNCHER,
   launchScript,
@@ -43,13 +43,14 @@ async function instance(p: ReturnType<typeof createFakeSandbox>, name: string) {
   return p.create({ name, image: "i", limits, fileSystem, signal: sig() });
 }
 
-async function until(cond: () => boolean, ms = 10_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!cond()) {
-    if (Date.now() > end) throw new Error("condition not met in time");
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
+/** Waits until `cond` holds (the old polling loop's 10 s budget); an error surfaces. */
+const until = (cond: () => boolean, ms = 10_000): Promise<unknown> =>
+  vi.waitFor(
+    () => {
+      if (!cond()) throw new Error("condition not met yet");
+    },
+    { timeout: ms },
+  );
 
 describe("newTaskId", () => {
   it("is bt_ plus 6 lowercase base32 characters, different each time", () => {
@@ -69,7 +70,7 @@ describe("startedText", () => {
   });
 });
 
-describe("launchScript", { timeout: 30_000 }, () => {
+describe("launchScript", () => {
   it("starts the command detached under timeout -s KILL, output and exit status in task files", () => {
     const s = launchScript("bt_abcdef", "echo hi", 60);
     // a device leaves what a launch detaches running (it reaps every other exec's leftovers)
@@ -193,7 +194,7 @@ describe("launchScript", { timeout: 30_000 }, () => {
  * OS sandbox runs it in packages/device/test/exec-os-background.test.ts.
  */
 const hasPerl = spawnSync("perl", ["-MPOSIX", "-e", "1"]).status === 0;
-describe.skipIf(!hasPerl)("the process group path", { timeout: 30_000 }, () => {
+describe.skipIf(!hasPerl)("the process group path", () => {
   let ws: string;
   let env: NodeJS.ProcessEnv;
   beforeAll(async () => {

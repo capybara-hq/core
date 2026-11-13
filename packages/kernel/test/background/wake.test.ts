@@ -206,7 +206,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   for (const name of barriers()?.keys() ?? []) release(name);
@@ -354,7 +354,7 @@ async function expectNoWake(conversationId: string, before: number): Promise<voi
   expect(await runRows(conversationId)).toHaveLength(before);
 }
 
-describe("a finish during a run", { timeout: 60_000 }, () => {
+describe("a finish during a run", () => {
   it("between steps: the next request has it right after the tool results, and consumed_seq passes it", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO mid");
@@ -455,7 +455,7 @@ describe("a finish during a run", { timeout: 60_000 }, () => {
   });
 });
 
-describe("waking an idle conversation", { timeout: 60_000 }, () => {
+describe("waking an idle conversation", () => {
   it("a finish wakes a run attributed to the task's trigger account", async () => {
     const conv = await idleConversation("SCENARIO idle");
     const f = await finishTask(conv, { account: bobId });
@@ -551,7 +551,7 @@ describe("waking an idle conversation", { timeout: 60_000 }, () => {
   });
 });
 
-describe("no wake", { timeout: 60_000 }, () => {
+describe("no wake", () => {
   it("for the parent, on a sub-agent's task: the finish wakes the sub-agent, never its parent", async () => {
     const conv = await idleConversation("SCENARIO child");
     const child = randomUUID();
@@ -639,7 +639,7 @@ describe("no wake", { timeout: 60_000 }, () => {
   });
 });
 
-describe("fix round 1", { timeout: 60_000 }, () => {
+describe("fix round 1", () => {
   it("a person's stop on an idle conversation wakes nothing; the next message's run absorbs it", async () => {
     const conv = await idleConversation("SCENARIO person stop");
     const task = await runningTask(conv);
