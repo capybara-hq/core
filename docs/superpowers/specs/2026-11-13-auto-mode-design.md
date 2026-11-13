@@ -159,6 +159,13 @@ cloud devices keep the container and follow the org's `cloudNetwork` setting (�
 default; the allowlist when the org sets one) — a closed network is the org's choice there, not an
 automatic consequence of the platform switch (2026-11-14).
 
+The org's `cloudNetwork` hosts are also the ceiling a local device in sandbox mode may reach: the
+device intersects them with its own list (§4.4). An org on `open` still caps local devices at the
+deployment's `sandbox.limits.allowHosts`, so switching to an allowlist that carries a host outside
+that list raises the local ceiling — that is why only a person may widen the network, never the
+Platform tool or an API token, and why a token's open → allowlist switch is accepted only for hosts
+the deployment already allows (2026-11-14).
+
 ### 4.4 What goes away
 
 Removed (pre-0.1.0, no compatibility): the tiers `strict` / `dev` / `open` as user-facing choices,
