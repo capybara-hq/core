@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
+import { defaultSlug, installTemplates, slugOf } from "../src/components/CatalogInstallWizard";
 import {
   MARKETPLACE_ERROR_KINDS,
   MARKETPLACE_SKIP_REASONS,
@@ -3069,6 +3069,19 @@ describe("/extensions: switching on refused by the plugin", () => {
       ).toBe("/plugins");
     },
   );
+});
+
+describe("安装向导会问哪些连接器模板", () => {
+  const tpl = (id: string, defaultOff: boolean, on?: boolean) =>
+    ({ id, defaultOff, ...(on !== undefined && { on }) }) as never;
+  it("默认开着的模板问；默认关的模板只有在组织里被打开后才问", () => {
+    expect(
+      installTemplates([tpl("gh", false), tpl("pat", true), tpl("slack", true)]).map((t) => t.id),
+    ).toEqual(["gh"]);
+    expect(installTemplates([tpl("slack", true, true)]).map((t) => t.id)).toEqual(["slack"]);
+    // an older kernel without `on`: a default-off template is not asked for
+    expect(installTemplates([tpl("pat", true)]).map((t) => t.id)).toEqual([]);
+  });
 });
 
 describe("安装向导的默认 slug", () => {

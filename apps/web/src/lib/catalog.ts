@@ -870,6 +870,11 @@ export interface OrgCatalogTemplate {
   /** The template starts switched off in every org: the install wizard does not ask for it. */
   defaultOff: boolean;
   /**
+   * The template is on in this org now (a default-off one an admin switched on): the install asks
+   * for its input too, since the install is what creates its connector.
+   */
+  on?: boolean;
+  /**
    * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
    * wizard shows it above the template's input. Null without one (older kernels: absent).
    */

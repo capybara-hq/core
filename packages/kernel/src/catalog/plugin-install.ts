@@ -804,6 +804,9 @@ export class PluginInstaller {
       for (const ct of templates) {
         // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
         if (actor === null) throw systemNeedsInput(manifest.name);
+        // An earlier switch-off kept this template's connector: the install takes it back, so its
+        // input is not asked for here (the connector keeps its endpoint and credentials)
+        if ((await this.liveTemplateConnector(orgId, itemId, ct.id)) !== undefined) continue;
         connectors.set(
           ct.id,
           this.planConnector(
@@ -1178,7 +1181,9 @@ export class PluginInstaller {
           continue;
         }
         const ci = plan.connectors.get(ct.id);
-        if (!ci) throw new ApiError("internal", `Connector template ${ct.id} was not planned`);
+        // No input was needed (a live connector was taken back above, or the template was skipped
+        // at plan time): nothing to create
+        if (!ci) continue;
         if (actor === null) throw systemNeedsInput(manifest.name);
         const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await record({
