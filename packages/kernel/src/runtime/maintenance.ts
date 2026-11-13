@@ -69,7 +69,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
- * name is warned and completes. The producers are the domains' own (same names, ids and options).
+ * name fails the job (BullMQ retries it; in a rolling deploy a newer replica knows it). The producers are the domains' own (same names, ids and options).
  */
 @Injectable()
 export class MaintenanceProcessor extends WorkerHost<Worker> {
@@ -187,7 +187,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       default:
         if (await this.scheduled.runNow(job.name)) return;
-        this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
+        // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
+        // owed (its outbox row is gone once added); failing it leaves it to BullMQ's retries, which
+        // a new replica takes
+        throw new Error(`unknown maintenance job "${job.name}"`);
     }
   }
 
