@@ -67,7 +67,7 @@ beforeAll(async () => {
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -123,7 +123,7 @@ async function seenB(id: string): Promise<number> {
   return (res.json() as { calls: number }).calls;
 }
 
-describe("ctx.models.embed", { timeout: 60_000 }, () => {
+describe("ctx.models.embed", () => {
   it("splits the input by the model's maxBatch and returns the vectors in input order", async () => {
     await map(PROBE);
     const out = await ctx().models.embed({ orgId, purpose: PURPOSE, input: texts(10) });
@@ -258,7 +258,7 @@ describe("ctx.models.embed", { timeout: 60_000 }, () => {
   });
 });
 
-describe("ctx.models.embed: time limits and aborts", { timeout: 60_000 }, () => {
+describe("ctx.models.embed: time limits and aborts", () => {
   it("a batch over models.embedTimeoutMs is aborted and fails with a timeout ModelError", async () => {
     await map(PROBE);
     embedProbe().hang = true;
@@ -303,7 +303,7 @@ describe("ctx.models.embed: time limits and aborts", { timeout: 60_000 }, () => 
   });
 });
 
-describe("ctx.models.describe", { timeout: 60_000 }, () => {
+describe("ctx.models.describe", () => {
   it("returns the effective target with its embedding info, null when unmapped", async () => {
     expect(await ctx().models.describe({ orgId, purpose: PURPOSE })).toBeNull();
     await map(PROBE);

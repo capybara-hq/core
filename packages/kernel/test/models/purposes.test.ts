@@ -65,7 +65,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 120_000);
+});
 afterAll(async () => {
   await k?.close();
   redis?.disconnect();
