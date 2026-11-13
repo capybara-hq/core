@@ -137,8 +137,6 @@
     "packages/kernel/test/identity/settings.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/identity/sso.http.test.ts": "setTimeout wait; timeout override; removed by the T1 batch",
     "packages/kernel/test/identity/tokens.http.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/inbox/owner-notices.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/inbox/schedule-attention.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/infra/lock.test.ts": "fixed sleeps: simulated latency of a mocked downgrade reply and a stalled renewal, a serialized call's own duration, a nothing-happened window after a late renewal rejection, and a real-time assertion past the loss deadline",
     "packages/kernel/test/infra/outbox.dispatcher.test.ts": "double boot: the relay section runs an api kernel plus the worker kernel started after the failed fast path, as two replicas",
     "packages/kernel/test/infra/process-lifecycle.test.ts": "setTimeout wait: a nothing-happened window proving drain does not finish while a tracked promise is pending; fixed sleeps: a simulated slow presence beat in flight during a stop and a nothing-happened window after it; double boot: the short-interval suite starts two in-process kernels standing in for two replicas",
