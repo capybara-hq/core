@@ -28,7 +28,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   svc = env.k.app.get(AgentSkillsService);
   changes = env.k.app.get(SkillChangesService);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();

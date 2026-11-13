@@ -89,7 +89,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -338,7 +338,7 @@ const catalogs = async (convId: string) =>
     (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> => e.type === "skills_catalog",
   );
 
-describe("skills from platform components", { timeout: 90_000 }, () => {
+describe("skills from platform components", () => {
   it("a platform skill on in the org is on for an agent, enters the snapshot as platform:<prefix> and Skill loads it", async () => {
     const alpha = await seedPlatformSkill({
       name: "alpha",
@@ -827,7 +827,7 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
  * plugin (`skills-core`'s `skill-guide`) are in every agent's catalog and no agent can turn them
  * off; ranking and the on-in-the-org rules stay as for any platform skill.
  */
-describe("skills of builtin plugins", { timeout: 90_000 }, () => {
+describe("skills of builtin plugins", () => {
   /** A platform skill of the builtin plugin `core` (scope `all`, follows its plugin). */
   async function seedBuiltinSkill(name = "skill-guide", body = "How to write a skill.") {
     await catalogItem("core", { builtin: true });

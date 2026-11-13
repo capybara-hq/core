@@ -183,7 +183,7 @@ describe("readSkillPackage", () => {
     expect(text(r)).toContain("liar.txt");
   });
 
-  it("总量超过 50MB", { timeout: 60_000 }, async () => {
+  it("总量超过 50MB", async () => {
     const chunk = () => Buffer.from(randomBytes(4_500_000).toString("hex")); // 9MB，压缩比约 2
     const r = await rejected(
       makeZip([

@@ -88,7 +88,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -301,7 +301,7 @@ async function sandboxFilePath(convId: string, path: string): Promise<string> {
 const sandboxFile = async (convId: string, path: string) =>
   readFile(await sandboxFilePath(convId, path), "utf8").catch(() => null);
 
-describe("skills at runtime", { timeout: 90_000 }, () => {
+describe("skills at runtime", () => {
   it("catalog snapshot lists the org skills left on + agent skills; Skill returns the body; turned-off skills are invisible", async () => {
     const alpha = await seedSkill({
       name: "alpha",
@@ -487,7 +487,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
   });
 });
 
-describe("Skill handler", { timeout: 60_000 }, () => {
+describe("Skill handler", () => {
   type Snapshot = EventPayload<"skills_catalog">;
 
   function tool(snapshot: Snapshot | null, sandboxAvailable: boolean) {
@@ -736,9 +736,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
   });
 });
 
-describe("phase B snapshot: plugins and the Claude tool map; nothing is pinned any more", {
-  timeout: 90_000,
-}, () => {
+describe("phase B snapshot: plugins and the Claude tool map; nothing is pinned any more", () => {
   it("a catalog skill from a plugin carries plugin; an uploaded one does not", async () => {
     const brain = await seedSkill({
       name: "brainstorming",
@@ -909,7 +907,7 @@ describe("phase B snapshot: plugins and the Claude tool map; nothing is pinned a
   });
 });
 
-describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, () => {
+describe("phase D: Skill for invoked and forked skills", () => {
   const MANUAL = { model: false, user: true } as const;
 
   /** A person's invocation of `name` (the n-th run's trigger). */

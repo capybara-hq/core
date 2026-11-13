@@ -139,7 +139,7 @@ beforeAll(async () => {
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -178,9 +178,7 @@ async function send(payload: { text: string; skill?: { name: string } }): Promis
 const sandboxFile = (convId: string, path: string): Promise<string | null> =>
   fakeEnvFile(db, root, convId, path);
 
-describe("phase D acceptance: commands, manual-only and forked skills", {
-  timeout: 120_000,
-}, () => {
+describe("phase D acceptance: commands, manual-only and forked skills", () => {
   it("importing commands-demo from git: the command, the manual-only and the forked skill are imported", async () => {
     await srv.commit("commands-demo", loadFixtureAsStrings("commands-demo"));
     const added = await admin({
