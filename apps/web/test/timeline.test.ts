@@ -1789,3 +1789,37 @@ describe("command review asks and denials", () => {
     expect(tool?.review).toMatchObject({ decision: "deny", by: "person", rule: "ask.force-push" });
   });
 });
+
+describe("buildTimeline: the device-code card (auto mode spec §6, P-D13)", () => {
+  it("puts the URL and the code right after the command's group", () => {
+    const events = [
+      user(1, "sign in to github"),
+      calls(2, [
+        {
+          id: "g",
+          name: "Bash",
+          input: { command: "gh auth login --web", description: "Sign in to GitHub" },
+        },
+      ]),
+      ev(3, "device_code", {
+        step: 0,
+        callId: "g",
+        url: "https://github.com/login/device",
+        code: "1A2B-C3D4",
+      }),
+      result(4, "g", "Bash", { content: "! First copy your one-time code: 1A2B-C3D4" }),
+    ];
+    const out = buildTimeline(events, [], INFO, "en");
+    expect(kinds(out)).toEqual(["user", "tools", "device-code"]);
+    const card = out.find((e) => e.kind === "device-code");
+    expect(card).toMatchObject({
+      callId: "g",
+      url: "https://github.com/login/device",
+      code: "1A2B-C3D4",
+    });
+    // it never becomes a tool row's status or text
+    expect(tools(out)[0]?.rows[0]?.row.detail?.output).toBe(
+      "! First copy your one-time code: 1A2B-C3D4",
+    );
+  });
+});

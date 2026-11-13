@@ -1002,6 +1002,21 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
+   * A `gh auth login --web` device-code prompt a command printed (auto mode spec §6, P-D13): the
+   * URL to open and the one-time code. Display only, never model-visible: request building skips
+   * it (the model sees only the command's own output). The token the login finally writes stays in
+   * the device's container, so no event carries it.
+   */
+  ev(
+    "device_code",
+    z.object({
+      step: count,
+      callId: z.string(),
+      url: z.string().min(1).max(2048),
+      code: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
+    }),
+  ),
+  /**
    * The first event of a sub-agent's (child) conversation (phase C, spec §6.3), written once in the
    * dispatch transaction. Request building for a `subagent` conversation takes the definition and
    * the preamble from here, never from `agent_versions`, so later changes never alter an old

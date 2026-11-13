@@ -85,6 +85,11 @@ import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
+import {
+  DEVICE_CODE_PATTERN,
+  deviceCodeIdemKey,
+  GITHUB_DEVICE_LOGIN_URL,
+} from "./builtins/sandbox/device-code.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { canonicalJson } from "./canonical-json.js";
@@ -657,6 +662,49 @@ function networkReportOf(
   return blocked.length === 0 ? undefined : { deviceId: r.deviceId, blocked };
 }
 
+/**
+ * A kernel-internal device code (see `BuiltinResult.loginCode` and `KeptToolResult.loginCode`):
+ * the shape is checked again here so a malformed value never reaches the log (the event schema
+ * would throw).
+ */
+function validLoginCode(v: unknown): { url: string; code: string } | undefined {
+  const r = v as { url?: unknown; code?: unknown } | null | undefined;
+  if (
+    r == null ||
+    typeof r.url !== "string" ||
+    typeof r.code !== "string" ||
+    r.url !== GITHUB_DEVICE_LOGIN_URL ||
+    !DEVICE_CODE_PATTERN.test(r.code)
+  ) {
+    return undefined;
+  }
+  return { url: r.url, code: r.code };
+}
+
+/** A builtin result's kernel-internal device code (`{ loginCode: { url, code } }`). */
+function loginCodeOf(result: unknown): { url: string; code: string } | undefined {
+  return validLoginCode((result as { loginCode?: unknown } | null)?.loginCode);
+}
+
+/**
+ * The display-only `device_code` event of the call whose output carried the code (auto mode spec
+ * §6, P-D13). The key is per (run, call), so a retry of that call appends it once; a different
+ * call with the same code is deduplicated by value (`EventLog.deviceCodeShown`).
+ */
+function deviceCodeEvent(
+  runId: string,
+  step: number,
+  callId: string,
+  code: { url: string; code: string },
+): AppendEvent {
+  return {
+    type: "device_code",
+    runId,
+    idemKey: deviceCodeIdemKey(runId, callId),
+    payload: { step, callId, ...code },
+  };
+}
+
 /** 审批的等待时长（小时，四舍五入，至少 1）。 */
 const approvalHours = (a: ApprovalRecord): number =>
   Math.max(
@@ -886,12 +934,27 @@ export class ToolPipeline {
         const notes = settledNetworkNotes(ask, approvalHours(ask));
         if (notes === null) return approvalWait(ask);
         const kept = ask.detail?.result;
-        await this.writeResult(ctx, call.id, call.name, {
-          ...keptExtras(kept),
-          content: withNetworkNotes(kept?.content ?? UNKNOWN_RESULT_TEXT, notes),
-          isError: kept?.isError ?? true,
-          ...(kept?.review !== undefined && { review: kept.review }),
-        });
+        // the device code the command printed is carried in the kept result: write its
+        // display-only event here too (a crash before the ask's first write, or an older kept
+        // result; the event's ids and the per-conversation code check keep it to one)
+        const keptCode = validLoginCode(kept?.loginCode);
+        const pre: AppendEvent[] =
+          keptCode !== undefined &&
+          !(await this.deps.eventLog.deviceCodeShown(ctx.conversationId, keptCode.code))
+            ? [deviceCodeEvent(ctx.runId, ctx.step, call.id, keptCode)]
+            : [];
+        await this.writeResult(
+          ctx,
+          call.id,
+          call.name,
+          {
+            ...keptExtras(kept),
+            content: withNetworkNotes(kept?.content ?? UNKNOWN_RESULT_TEXT, notes),
+            isError: kept?.isError ?? true,
+            ...(kept?.review !== undefined && { review: kept.review }),
+          },
+          pre,
+        );
         return undefined;
       }
       // 确实开始执行过：照样审计 tool.called（耗时未知）；放行依据只认批准了所执行定义的审批记录
@@ -1327,6 +1390,12 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "plugin"
         ? this.cardOf(outcome.result, tool.source.plugin, tool.key)
         : undefined;
+    // a `gh auth login --web` device code (`Bash`; auto mode spec §6): display only, written under
+    // this call before its result, never part of the result or the request the model sees
+    const loginCode =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? loginCodeOf(outcome.result)
+        : undefined;
     const cfg = this.config.get().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -1360,6 +1429,14 @@ export class ToolPipeline {
             },
           ]
         : [];
+    if (
+      loginCode !== undefined &&
+      !(await this.deps.eventLog.deviceCodeShown(ctx.conversationId, loginCode.code))
+    ) {
+      // the per-call id makes a retry or a resumed run append it once; a second call (a task read
+      // again, another command printing the same code) does not show the same code twice (P-D13)
+      pre.push(deviceCodeEvent(ctx.runId, ctx.step, call.id, loginCode));
+    }
     const callAudit: CallAudit = {
       durationMs,
       connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
@@ -1374,16 +1451,28 @@ export class ToolPipeline {
         : undefined;
     let content = spilled.content;
     if (report !== undefined) {
-      const handled = await this.networkBlocked(ctx, call.id, outKey, input, report, callAudit, {
-        text: rendered.text,
-        content: spilled.content,
-        isError: rendered.isError,
-        ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
-        ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
-        ...(display !== undefined && { display }),
-        ...(view !== undefined && { view }),
-        ...(review !== undefined && { review }),
-      });
+      const handled = await this.networkBlocked(
+        ctx,
+        call.id,
+        outKey,
+        input,
+        report,
+        pre,
+        callAudit,
+        {
+          text: rendered.text,
+          content: spilled.content,
+          isError: rendered.isError,
+          ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
+          ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
+          ...(display !== undefined && { display }),
+          ...(view !== undefined && { view }),
+          ...(review !== undefined && { review }),
+          // carried into the kept result so a resumed run writes the event too (it was written
+          // with `network_blocked` below when the ask was created)
+          ...(loginCode !== undefined && { loginCode }),
+        },
+      );
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
           fireObserve(
@@ -1617,6 +1706,7 @@ export class ToolPipeline {
     toolKey: string,
     input: unknown,
     report: { deviceId: string; blocked: NetworkBlockedHost[] },
+    pre: readonly AppendEvent[],
     callAudit: CallAudit,
     result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
   ): Promise<
@@ -1677,13 +1767,14 @@ export class ToolPipeline {
       content: withNetworkNotes(clipKept(content), plan.notes),
       ...(outputId !== undefined && { outputId }),
     };
-    // the command ran: network_blocked and its tool.called now, the result once the ask settles
+    // the command ran: the call's display-only events (a `device_code`) and network_blocked with
+    // its tool.called now, the result once the ask settles
     const written = await this.writeResultIn(
       ctx,
       callId,
       toolKey,
       { isError: result.isError },
-      [event],
+      [...pre, event],
       callAudit,
       [],
     );

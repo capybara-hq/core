@@ -94,6 +94,12 @@ export interface KeptToolResult {
   view?: ToolView;
   /** The command review's decision, kept with the result (display only). */
   review?: ReviewRecord;
+  /**
+   * A device code the command's output carried (kernel-internal, auto mode spec §6, P-D13): the
+   * pipeline writes its display-only `device_code` event when the ask settles, so the card is
+   * still shown for a call whose result waited on a network ask.
+   */
+  loginCode?: { url: string; code: string };
 }
 
 /**

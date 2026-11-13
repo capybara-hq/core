@@ -387,6 +387,24 @@ export class EventLog {
     return r ? { size: r.file.size, sha256: r.file.sha256 } : null;
   }
 
+  /**
+   * Whether this conversation already shows a `device_code` for `code` (auto mode spec §6, P-D13):
+   * the same code printed by a second call (a background task read twice, two commands printing
+   * the same prompt) must not produce a second card. Per-code, so a new code from a new login
+   * still shows.
+   */
+  async deviceCodeShown(conversationId: string, code: string): Promise<boolean> {
+    const r = await this.db
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "device_code")
+      .where(sql<boolean>`payload->>'code' = ${code}`)
+      .limit(1)
+      .executeTakeFirst();
+    return r !== undefined;
+  }
+
   private validate(e: AppendEvent): ConversationEventBody {
     const r = ConversationEventSchema.safeParse({ type: e.type, payload: e.payload });
     if (!r.success) {

@@ -1397,6 +1397,14 @@
     },
     "stats": "第 {n} 轮 · 已用 {elapsed}",
     "contextPct": "上下文 {n}%",
+    "deviceCode": {
+      "title": "登录 GitHub",
+      "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",
+      "codeLabel": "一次性代码",
+      "copy": "复制代码",
+      "copied": "已复制",
+      "copyManual": "请选中代码后复制"
+    },
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
     "pickDevice": "设备",
