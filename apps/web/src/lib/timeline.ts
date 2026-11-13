@@ -10,11 +10,13 @@ import {
 import type {
   ApprovalPolicy,
   Approver,
+  CommandAsk,
   ContentBlock,
   ConversationEvent,
   InputForm,
   MessageAttachment,
   ModelRef,
+  ReviewRecord,
   ToolInfo,
 } from "./conversations";
 import type { OrgRole } from "./members";
@@ -167,6 +169,8 @@ export interface TimelineTool {
   outputId: string | null;
   /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
   lines?: { from: number; to: number };
+  /** The command review's decision on the call (auto mode spec §5.4), when it was reviewed. */
+  review?: ReviewRecord;
   /**
    * A background `Bash` call (`run_in_background: true`): the thread labels it "In background"
    * through i18n, as the row's `extra` (it replaces any other extra, e.g. an extension's display
@@ -187,6 +191,8 @@ export interface ApprovalItem {
   approver?: Waiter;
   /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
   network?: { hosts: string[] };
+  /** A command review ask (auto mode spec §5.4): what is held and why. */
+  command?: CommandAsk;
   decided: ApprovalDecision | null;
   decidedAt: string | null;
 }
@@ -1085,6 +1091,12 @@ export function buildEventTimeline(
         if (!c) break;
         const p = e.payload;
         const row = c.tool.row;
+        // the command review's line on the row: a deny is shown with its reason (the error text
+        // repeats it in the detail), an allow only in the record for the trajectory
+        if (p.review !== undefined) {
+          c.tool.review = p.review;
+          if (p.review.decision === "deny" && row.extra === undefined) row.extra = p.review.reason;
+        }
         const view = p.view;
         // A non-zero exit is information, not a failure (the summary names the code); a timeout or
         // a stopped command fails. A read-before-write refusal (`guard` view) is the guard working:
@@ -1359,6 +1371,14 @@ export function buildEventTimeline(
       case "approval_requested":
         waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId, approverOf(e.payload));
         approvals.set(e.payload.approvalId, out.length);
+        {
+          // a command ask's row carries the review's reason (the card shows the rest)
+          const asked = calls.get(callKey(e.runId, e.payload.callId));
+          const command = e.payload.command;
+          if (asked && command !== undefined && asked.tool.row.extra === undefined) {
+            asked.tool.row.extra = command.reason;
+          }
+        }
         out.push({
           kind: "approval",
           key,
@@ -1372,6 +1392,7 @@ export function buildEventTimeline(
             ...(e.payload.network !== undefined
               ? { network: { hosts: [...e.payload.network.hosts] } }
               : {}),
+            ...(e.payload.command !== undefined ? { command: e.payload.command } : {}),
             ...approverField(e.payload),
             decided: null,
             decidedAt: null,

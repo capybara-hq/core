@@ -66,6 +66,31 @@ export type ApprovalPolicy =
   | "fixed";
 
 /**
+ * A command review's decision on a tool call (auto mode spec §5.4; display only): who decided
+ * (the rule table, the classifier or the person through a `command` ask) and why.
+ */
+export interface ReviewRecord {
+  decision: "allow" | "deny";
+  by: "rule" | "classifier" | "person";
+  rule: string | null;
+  reason: string;
+  /** The person's choice (a `session` one covers the rule for the conversation). */
+  scope?: "once" | "session";
+}
+
+/** A `command` ask's facts (auto mode spec §5.4; display only). */
+export interface CommandAsk {
+  kind: "command" | "write";
+  /** The command text, or the tool key of the write. */
+  command: string;
+  /** A write's target path. */
+  path?: string;
+  rule: string | null;
+  reason: string;
+  mode: "auto" | "sandbox";
+}
+
+/**
  * Which layer refused a network host (network ask spec §4.1): the device's own policy, the org's
  * egress, a private or local address, or unknown.
  */
@@ -218,6 +243,8 @@ type EventBody =
         view?: ToolView;
         /** An inline card under the call (an `inline` ui contribution of the tool's extension). */
         card?: { plugin: string; view: string; key?: string };
+        /** The command review's decision on the call (auto mode spec §5.4; display only). */
+        review?: ReviewRecord;
       };
     }
   | {
@@ -236,6 +263,8 @@ type EventBody =
         policy?: ApprovalPolicy;
         /** A network ask: the device-layer hosts asked for (display only). */
         network?: { hosts: string[] };
+        /** A command review ask: what is held and why (display only). */
+        command?: CommandAsk;
       } & Approver;
     }
   | {
