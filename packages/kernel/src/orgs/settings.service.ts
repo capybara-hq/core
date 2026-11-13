@@ -320,6 +320,12 @@ export function invalidStoredAutoMode(raw: unknown): boolean {
   return v !== undefined && !AutoModeSetting.safeParse(v).success;
 }
 
+/** Whether a stored settings object holds a `cloudNetwork` this version reads as an empty allowlist. */
+export function invalidStoredCloudNetwork(raw: unknown): boolean {
+  const v = asObject(raw).cloudNetwork;
+  return v !== undefined && !CloudNetworkSettingSchema.safeParse(v).success;
+}
+
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
 @Injectable()
 export class OrgSettingsService {
@@ -336,10 +342,19 @@ export class OrgSettingsService {
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
 
-  /** Parses stored settings, warning when an invalid `autoMode` narrows to `off`. */
+  /** Parses stored settings, warning when an invalid `autoMode` narrows to `off` or an invalid
+   * `cloudNetwork` to an empty allowlist. */
   private parseStored(orgId: string, raw: unknown): OrgSettings {
     if (invalidStoredAutoMode(raw)) {
       this.log?.warn("org settings: stored autoMode is invalid; it reads as off", { orgId });
+    }
+    if (invalidStoredCloudNetwork(raw)) {
+      this.log?.warn(
+        "org settings: stored cloudNetwork is invalid; it reads as an empty allowlist",
+        {
+          orgId,
+        },
+      );
     }
     return parseOrgSettings(raw);
   }

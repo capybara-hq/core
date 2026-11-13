@@ -11,6 +11,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
   applyDevicesAutoModePatch,
+  DEVICES_AUTO_MODE_DEFAULT,
   DEVICES_AUTO_MODE_PATCH,
   DEVICES_AUTO_MODE_SETTING,
   type DevicesAutoMode,
@@ -466,8 +467,8 @@ export class SettingsService {
       await readStoredDevicesAutoMode(this.db.db, this.log),
       patch,
     );
-    const after = next.mode ?? "allowed";
-    if (opts.onlyNarrows && before.mode === "off" && after === "allowed") {
+    const after = next.mode ?? DEVICES_AUTO_MODE_DEFAULT;
+    if (opts.onlyNarrows && before.mode === "off" && after === DEVICES_AUTO_MODE_DEFAULT) {
       throw autoModeWidenRefused();
     }
     return { next, before };
@@ -598,7 +599,7 @@ export class SettingsService {
     const writes: [string, unknown][] = Object.entries(next);
     if (patch.devicesAutoMode !== undefined) {
       const r = await this.checkDevicesAutoMode(patch.devicesAutoMode, opts);
-      autoModeChange = { before: r.before, after: r.next.mode ?? "allowed" };
+      autoModeChange = { before: r.before, after: r.next.mode ?? DEVICES_AUTO_MODE_DEFAULT };
       writes.push([DEVICES_AUTO_MODE_SETTING, r.next]);
     }
     for (const [key, value] of writes) {
