@@ -72,8 +72,10 @@ const SINCE = sql<Date>`GREATEST(COALESCE(r.queued_at, r.created_at), COALESCE(r
 /**
  * One page of the active runs of chat and sub-agent conversations in `statuses` that entered their
  * state more than `minAgeMs` ago, by (state start, id), after `after` (an eval's hidden
- * conversation drives its runs itself). A deleted org's runs are never candidates: its deletion
- * purged its owed jobs on purpose, so their absence is no lost job and nothing is re-added.
+ * conversation drives its runs itself). A deleted org's runs are never candidates, running ones
+ * included: its deletion purged its owed jobs on purpose, so their absence is no lost job and
+ * nothing is re-added, and the org's data is invisible from then on, so a running orphan is left
+ * as it is rather than failed.
  */
 export async function orphanCandidates(
   db: KernelSchemaDb,

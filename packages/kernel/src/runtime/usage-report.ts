@@ -403,7 +403,7 @@ export class UsageReporter {
   /** One delivery job (the `@Processor` of {@link USAGE_REPORT_QUEUE} calls it). */
   async process(j: Job<UsageReportJob>, token: string | undefined): Promise<void> {
     const payload = await this.payloadOfJob(j.data);
-    // conversation (or org) deleted meanwhile: nothing to report
+    // conversation deleted meanwhile: nothing to report
     if (payload === null) return;
     const subscribers = await this.subscribers(payload.orgId);
     if (j.data.pending === undefined) {

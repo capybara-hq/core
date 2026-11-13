@@ -134,7 +134,8 @@ and their maintenance workers complete job names they don't know (`ensure-run`,
 migrations can't be rolled: **stop every old `worker` replica before running `capybara migrate`**
 (old `api` and `gateway` replicas may keep serving until they are replaced), then start the new
 version. Versions after 0.1.0-rc.26 fail a maintenance job they don't know instead, so BullMQ
-retries it and a newer replica takes it.
+retries it and a newer replica can take it, but only within the job's attempts (a few seconds for
+most jobs): stopping old workers first still applies.
 
 ### 0.1.0: IM long connections move to the gateway role
 

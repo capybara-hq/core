@@ -188,8 +188,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       default:
         if (await this.scheduled.runNow(job.name)) return;
         // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
-        // owed (its outbox row is gone once added); failing it leaves it to BullMQ's retries, which
-        // a new replica takes
+        // owed (its outbox row is gone once added); failing it leaves it to BullMQ's retries, so a
+        // newer replica can take it within the job's attempts (old workers still go first, see
+        // docs/deploy/upgrade.md)
         throw new Error(`unknown maintenance job "${job.name}"`);
     }
   }
