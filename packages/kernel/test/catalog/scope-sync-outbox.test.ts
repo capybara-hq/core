@@ -12,11 +12,9 @@ import {
   scopeOrgJobId,
 } from "../../src/catalog/scope-sync.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { outboxJobOptions } from "../../src/infra/outbox/registry.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
 import {
   type OrgEnv,
@@ -75,31 +73,9 @@ const owed = () =>
     .execute();
 
 /**
- * Waits until the scope queue's rows matching `which` are gone. A pass (a fast path, the worker's
- * relay tick) deletes the rows it delivered only when its claim transaction commits, after
- * `addBulk`: the job may run (and the test see its effect) while its row is still there, and a
- * pass of ours skips the rows such a pass holds (`SKIP LOCKED`).
- */
-async function delivered(which: "all" | "item-jobs"): Promise<void> {
-  await waitFor(
-    async () => {
-      let q = env.db
-        .selectFrom("outbox")
-        .select("id")
-        .where("queue", "=", PLUGIN_SCOPE_QUEUE)
-        .where("dead_at", "is", null);
-      if (which === "item-jobs") q = q.where("job_name", "=", SCOPE_ITEM_JOB);
-      return (await q.execute()).length === 0;
-    },
-    30_000,
-    `the scope queue's ${which === "all" ? "" : "item "}rows delivered`,
-  );
-}
-
-/**
  * Lets the scope queue's adds succeed, runs one relay pass over the owed rows, each due now (a
  * backstop's `runAt` brought forward), and waits until every row is delivered (a concurrent pass
- * may hold some: {@link delivered}).
+ * may hold some: {@link drainOutbox}).
  */
 async function relay(): Promise<void> {
   failing = false;
@@ -108,8 +84,7 @@ async function relay(): Promise<void> {
     .set({ next_attempt_at: sql<Date>`now()` as unknown as Date, run_at: null })
     .where("queue", "=", PLUGIN_SCOPE_QUEUE)
     .execute();
-  await env.k.app.get(OutboxDispatcher).dispatchDue(500);
-  await delivered("all");
+  await drainOutbox(env.k.app, { queue: PLUGIN_SCOPE_QUEUE });
 }
 
 /** The live installs of an item, as the orgs they are in. */
@@ -253,7 +228,7 @@ describe("plugin scope syncs are owed (transactional outbox §8.1)", { timeout: 
       "installed in B",
     );
     // the syncs owed so far are delivered (their passes committed) before adds start failing
-    await delivered("item-jobs");
+    await drainOutbox(env.k.app, { queue: PLUGIN_SCOPE_QUEUE, jobName: SCOPE_ITEM_JOB });
     // the owner deletes it: B uses it, so it is transferred and A leaves its list
     failing = true;
     const owned = `/api/v1/orgs/${orgA}/owned-plugins/${itemId}/delete`;

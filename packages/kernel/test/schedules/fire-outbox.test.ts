@@ -7,10 +7,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import {
-  OUTBOX_DISPATCH_FAILS,
-  OutboxDispatcher,
-} from "../../src/infra/outbox/outbox.dispatcher.js";
+import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import {
@@ -26,6 +23,7 @@ import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.servi
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { accountsFor } from "../helpers/identity.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createAgent,
   createOrg,
@@ -135,7 +133,10 @@ const owedFires = (taskRunIds: readonly string[]) =>
     )
     .execute();
 
-/** Lets the maintenance queue's adds succeed and runs one relay pass over the owed rows. */
+/**
+ * Lets the maintenance queue's adds succeed, runs one relay pass over the owed fire rows and waits
+ * until they are delivered (the worker's relay may hold some: {@link drainOutbox}).
+ */
 async function relay(): Promise<void> {
   failing = false;
   await db
@@ -143,7 +144,7 @@ async function relay(): Promise<void> {
     .set({ next_attempt_at: sql<Date>`now()` as unknown as Date })
     .where("job_name", "=", "sched-fire")
     .execute();
-  await k.app.get(OutboxDispatcher).dispatchDue(500);
+  await drainOutbox(k.app, { jobName: "sched-fire" });
 }
 
 async function runOf(id: string): Promise<TaskRun> {
@@ -292,14 +293,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
         })
         .where("job_id", "=", jobId)
         .execute();
-      await k.app.get(OutboxDispatcher).dispatchDue(500);
-      const left = await db
-        .selectFrom("outbox")
-        .select("id")
-        .where("job_id", "=", jobId)
-        .where("dead_at", "is", null)
-        .execute();
-      expect(left).toEqual([]);
+      await drainOutbox(k.app, { jobId });
       const added = await maintenance.getJob(jobId);
       if (added && (await added.getState()) === "delayed") await added.promote();
       await waitFor(
@@ -333,6 +327,14 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       };
     }
 
+    /**
+     * The direct `fire` calls of a test were the delivery of `taskRunId`'s fire job: its owed row
+     * goes, or the worker's relay delivers it again once the adds work (the settle checks turn
+     * the seam off) and that fire races the test.
+     */
+    const firedByHand = (taskRunId: string) =>
+      db.deleteFrom("outbox").where("job_id", "=", schedFireJobId(taskRunId)).execute();
+
     /** The fire job of `taskRunId` fails all three attempts before its claim and is gone. */
     async function fireFailsForGood(taskId: string, taskRunId: string): Promise<void> {
       const restore = await failClaims(taskId);
@@ -345,8 +347,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       } finally {
         await restore();
       }
-      // the attempts above were its delivery: its owed row is gone
-      await db.deleteFrom("outbox").where("job_id", "=", schedFireJobId(taskRunId)).execute();
+      await firedByHand(taskRunId);
       expect(await runOf(taskRunId)).toMatchObject({ status: "pending", firedAt: null });
       expect(await owedSettles(taskRunId)).toEqual([]);
     }
@@ -395,6 +396,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       } finally {
         await restore();
       }
+      await firedByHand(run.id);
       const after = Date.now();
       expect((await runOf(run.id)).status).toBe("pending");
       expect((await runOf(run.id)).firedAt).not.toBeNull();
@@ -423,6 +425,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       const [run] = await store.listRuns(db, t.id, 10);
       if (!run) throw new Error("the scan wrote no task run");
       await k.app.get(ScheduledTaskFirer).fire(run.id);
+      await firedByHand(run.id);
       const done = await settled(run.id);
       expect(done.status).toBe("completed");
 
@@ -510,6 +513,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       } finally {
         await restore();
       }
+      await firedByHand(run.id);
 
       await settleNow(run.id);
       // as the deleted scan recheck left it
@@ -536,6 +540,7 @@ describe("scheduled fires through the outbox", { timeout: 60_000 }, () => {
       } finally {
         await restore();
       }
+      await firedByHand(run.id);
       const conv = randomUUID();
       await sql`INSERT INTO capybara.conversations
           (id, org_id, account_id, agent_id, scheduled_task_id, create_request_id, consumed_seq)

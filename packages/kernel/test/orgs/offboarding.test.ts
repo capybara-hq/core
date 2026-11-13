@@ -521,7 +521,8 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
   });
 
   it("the offboard transaction owes the stop; the run-stop job stops the run once", async () => {
-    // read in the transaction: after the commit the fast path delivers the row at once
+    // read in the transaction: after the commit the fast path delivers the row at once. Only this
+    // org's rows: an earlier test's row stays until the pass that added its job commits
     const owed = await kernelTransaction(k, async () => {
       await k.app.get(Offboarding).offboard(f.orgId, f.leaver.id, "directory");
       return k.app
@@ -529,6 +530,7 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
         .selectFrom("outbox")
         .select(["job_name", "job_id", "data"])
         .where("job_name", "=", RUN_STOP_JOB)
+        .where("org_id", "=", f.orgId)
         .execute();
     });
     // only the approvals the person decides are cancelled in the transaction
