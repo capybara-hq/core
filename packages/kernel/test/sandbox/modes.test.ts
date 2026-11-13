@@ -188,6 +188,11 @@ describe("effectiveDevicePolicy", () => {
       kind: "allowlist",
       hosts: L,
     });
+    // the platform kill switch forces an empty allowlist here too (R20, every read)
+    expect(orgSandboxNetwork(dep, { mode: "allowlist", allowHosts: ["a.com"] }, "none")).toEqual({
+      kind: "allowlist",
+      hosts: [],
+    });
   });
 });
 

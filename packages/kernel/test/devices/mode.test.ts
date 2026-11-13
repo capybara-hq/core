@@ -8,6 +8,7 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import {
   type DevicePathsPayload,
   devicePathsChange,
@@ -115,6 +116,37 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
   return deviceId;
 }
 
+/** A local device whose machine is an older program with no `mode` feature. */
+async function legacyLocalDevice(isolation: "none" | "sandbox"): Promise<string> {
+  const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
+    const { id } = await devices.createLocal(orgId, ownerId, `Old ${randomUUID().slice(0, 6)}`);
+    const issued = await k.app.get(MachinesService).issue({
+      orgId,
+      deviceId: id,
+      accountId: ownerId,
+      name: "old",
+      os: "linux",
+      arch: "x64",
+      programVersion: "0.2.0",
+    });
+    return { deviceId: id, machineId: issued.machineId };
+  });
+  await k.app.get(MachinesService).recordHello(
+    machineId,
+    { ...HELLO, features: [] },
+    {
+      tier: "open",
+      effectiveTier: "open",
+      isolation,
+      localhost: "on",
+      unixSockets: "roots",
+      allowedDomains: [],
+      remoteGrants: "owner",
+    },
+  );
+  return deviceId;
+}
+
 describe("DevicesService.modeLevel", { timeout: 30_000 }, () => {
   it("a local device carries its reported mode and the org's sandbox-mode allowlist", async () => {
     const deviceId = await localDevice();
@@ -124,6 +156,32 @@ describe("DevicesService.modeLevel", { timeout: 30_000 }, () => {
       network: { kind: "allowlist", hosts: ["*.example.com"] },
       local: true,
     });
+  });
+
+  it("an older program's mode is derived fail-closed: unsandboxed auto, otherwise sandbox", async () => {
+    const unsandboxed = await legacyLocalDevice("none");
+    expect(await devices.modeLevel(orgId, unsandboxed)).toMatchObject({
+      mode: "auto",
+      local: true,
+    });
+    const sandboxed = await legacyLocalDevice("sandbox");
+    expect(await devices.modeLevel(orgId, sandboxed)).toMatchObject({
+      mode: "sandbox",
+      local: true,
+    });
+  });
+
+  it("an unsandboxed old program is refused where auto mode is not allowed (one derivation)", async () => {
+    const deviceId = await legacyLocalDevice("none");
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ autoMode: "off" })}::jsonb
+      WHERE id = ${orgId}`.execute(raw);
+    // the gate reads `reportedMode`; the policy's ceiling is sandbox: the provider refuses it
+    expect(await k.app.get(NetworkGrants).reportedMode(deviceId)).toBe("auto");
+    expect(await k.app.get(SandboxService).devicePolicy({ orgId, deviceId })).toMatchObject({
+      mode: "sandbox",
+      allowedMode: "sandbox",
+    });
+    expect((await devices.modeLevel(orgId, deviceId))?.mode).toBe("sandbox");
   });
 
   it("the org turning auto mode off cuts a device that reports auto to sandbox", async () => {
@@ -218,16 +276,16 @@ describe("DevicesService.modeLevel", { timeout: 30_000 }, () => {
       mode: "sandbox",
       network: { kind: "allowlist", hosts: ["a.com"] },
     });
-    // an unrecorded instance keeps the effective limits until the file reset
+    // an unrecorded instance may be wider than the effective limits: the widest is reported
     vi.spyOn(k.app.get(SandboxService), "limitsState").mockResolvedValue({
       applied: null,
-      effective: { mode: "auto", network: { kind: "open-public", hosts: [] } },
+      effective: { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.com"] } },
       pendingNextUse: false,
       pendingFilesReset: true,
     });
     expect(await devices.modeLevel(orgId, id)).toMatchObject({
       mode: "auto",
-      network: { kind: "open-public" },
+      network: { kind: "open-public", hosts: [] },
     });
   });
 });

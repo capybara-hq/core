@@ -24,6 +24,7 @@ import { deviceRevokedTopic } from "./keys.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
 import {
   deviceFeaturesOf,
+  legacyPolicyOf,
   localPolicyDiff,
   localPolicyOf,
   opExplains,
@@ -389,8 +390,8 @@ export class MachinesService {
       pending_policy_ops: unknown;
     },
     reported: DeviceLocalPolicySummary | undefined,
-    _rawPolicy: unknown,
-  ): Promise<DeviceLocalPolicySummary | null> {
+    rawPolicy: unknown,
+  ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
     const summary = localPolicyOf(reported);
     const prev = localPolicyOf(self.local_policy);
     const diff = summary !== null && prev !== null ? localPolicyDiff(prev, summary) : null;
@@ -434,7 +435,9 @@ export class MachinesService {
       }
       return summary;
     }
-    return summary;
+    // a pre-auto-mode payload the frame parser drops: keep its isolation so an unsandboxed old
+    // program is still recognized (and refused where auto mode is not allowed)
+    return summary ?? legacyPolicyOf(rawPolicy);
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */

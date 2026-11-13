@@ -9,8 +9,8 @@ import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
 import type { SandboxMode } from "../sandbox/modes.js";
-import { appendMissingGrant, taskGrantsRunOf } from "../schedules/unattended.js";
-import { deviceFeaturesOf, localPolicyOf } from "./policy-summary.js";
+import { taskGrantsRunOf } from "../schedules/unattended.js";
+import { localModeOf } from "./policy-summary.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -219,9 +219,9 @@ export class NetworkGrants {
   }
 
   /**
-   * The mode a local device's connected machine last reported (its policy summary), read fresh at
-   * each exec: null when no machine is connected or the program has no summary. A program without
-   * the `mode` feature behaves as an allowlisted sandbox, so it reports `sandbox`.
+   * The mode a local device's connected machine runs, read fresh at each exec: null when no machine
+   * is connected, else {@link localModeOf} (a program without the `mode` feature is `sandbox`
+   * unless its legacy summary said it ran unsandboxed, i.e. `auto`).
    */
   async reportedMode(deviceId: string): Promise<SandboxMode | null> {
     const row = await this.db
@@ -231,14 +231,7 @@ export class NetworkGrants {
       .where("revoked_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return null;
-    const summary = localPolicyOf(row.local_policy);
-    if (summary !== null) return summary.mode;
-    return deviceFeaturesOf(row.features).includes("mode") ? null : "sandbox";
-  }
-
-  /** Records `key` in the task run's `missing_grants` (once). */
-  async recordMissing(taskRunId: string, key: string): Promise<void> {
-    await appendMissingGrant(this.db.db, taskRunId, key);
+    return localModeOf(row.features, row.local_policy);
   }
 
   /** The runs of the tree whose budget run is `root`. */

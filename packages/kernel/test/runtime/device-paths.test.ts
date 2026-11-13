@@ -9,6 +9,7 @@ import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import {
   type DeviceModeLevel,
+  type DevicePathsPayload,
   devicePathsText,
   modeLevelText,
 } from "../../src/runtime/context/device-paths.js";
@@ -321,6 +322,28 @@ describe("device_paths: full-run replay", () => {
       type: "device_paths",
       payload: { roots: ROOTS, ...level },
     });
+  });
+
+  it("a recorded pre-auto-mode level is copied by the replay, all its fields", async () => {
+    const level = { tier: "dev", isolation: "sandbox", network: "none", unattended: true } as const;
+    const s = snap();
+    (s.events[2] as { payload: unknown }).payload = { roots: ROOTS, ...level };
+    const recordings = recordedCalls(s);
+    expect(recordings[0]?.devicePaths).toEqual({ roots: ROOTS, ...level });
+    const log = memLog();
+    await pipelineFor(recordings, log, { 1: ["f"] }).runStep({
+      conversationId: "e",
+      runId: "r2",
+      step: 1,
+    } as never);
+    expect(log.appended[0]).toMatchObject({
+      type: "device_paths",
+      payload: { roots: ROOTS, ...level },
+    });
+    // the old line is rendered exactly as the original model saw it
+    expect(devicePathsText(log.appended[0]?.payload as DevicePathsPayload)).toContain(
+      "Sandbox level: development.",
+    );
   });
 
   it("a replayed call that matched copies the recorded device_paths event, never twice", async () => {

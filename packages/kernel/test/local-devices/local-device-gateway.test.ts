@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import {
   deviceLeaseKey,
@@ -16,6 +17,7 @@ import {
   deviceTakenKey,
 } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
+import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
@@ -197,7 +199,8 @@ describe("the hello's policy summary and the reported mode", () => {
       features: ["networkReport", "policyOp", "mode"],
       policy: { ...SUMMARY, allowedDomains: "not-a-list" },
     });
-    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBeNull();
+    // fail closed: a program that applies modes but sent no readable summary is sandbox
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
     expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
     machine.close();
   });
@@ -249,12 +252,55 @@ describe("the hello's policy summary and the reported mode", () => {
     expect(await k.app.get(NetworkGrants).reportedMode(ok.m.deviceId)).toBe("auto");
     ok.machine.close();
     const none = await helloWith({ programVersion: "0.9.0", features: ["mode"] });
-    expect(await k.app.get(NetworkGrants).reportedMode(none.m.deviceId)).toBeNull();
+    expect(await k.app.get(NetworkGrants).reportedMode(none.m.deviceId)).toBe("sandbox");
     none.machine.close();
     // a program without the mode feature behaves as an allowlisted sandbox
     const old = await helloWith({ programVersion: "0.9.0" });
     expect(await k.app.get(NetworkGrants).reportedMode(old.m.deviceId)).toBe("sandbox");
     old.machine.close();
+  });
+
+  it("an old unsandboxed program is refused when the org forbids auto mode", async () => {
+    const { m, machine } = await helloWith({
+      programVersion: "0.9.0",
+      features: [],
+      policy: {
+        tier: "open",
+        effectiveTier: "open",
+        isolation: "none",
+        localhost: "on",
+        unixSockets: "roots",
+        allowedDomains: [],
+        remoteGrants: "owner",
+      },
+    });
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ autoMode: "off" }) })
+      .where("id", "=", orgId)
+      .execute();
+    try {
+      // the gate: reportedMode is auto (the legacy summary ran unsandboxed), the ceiling sandbox
+      const err = await k.app
+        .get(LocalDeviceProvider)
+        .exec(
+          { id: m.deviceId, roots: HELLO.roots },
+          {
+            command: "true",
+            timeoutMs: 1000,
+            maxOutputBytes: 100,
+            tag: "t",
+            actor: { accountId: m.accountId, conversationId: randomUUID() },
+            signal: AbortSignal.timeout(10_000),
+          },
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("device.auto_mode_not_allowed");
+    } finally {
+      await db.updateTable("orgs").set({ settings: "{}" }).where("id", "=", orgId).execute();
+      machine.close();
+    }
   });
 });
 

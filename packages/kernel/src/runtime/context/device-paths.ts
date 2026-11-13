@@ -42,7 +42,7 @@ export interface DevicePathsPayload {
 type LegacyTier = "strict" | "dev" | "open";
 
 /** The old level of a payload (before auto mode), for its unchanged rendering. */
-interface LegacyLevel {
+export interface LegacyLevel {
   tier: LegacyTier;
   isolation: "sandbox" | "none";
   network?: "none" | undefined;
@@ -135,29 +135,37 @@ function legacyLevel(p: DevicePathsPayload): LegacyLevel | undefined {
   };
 }
 
-/** The level a payload records; undefined for an event recorded before auto mode. */
-export function devicePathsLevel(p: DevicePathsPayload): DeviceModeLevel | undefined {
-  if (p.mode === undefined || p.allowedMode === undefined) return undefined;
-  if (typeof p.network !== "object" || p.network === null) return undefined;
-  return {
-    mode: p.mode,
-    allowedMode: p.allowedMode,
-    network: { kind: p.network.kind, hosts: [...p.network.hosts] },
-    local: p.local === true,
-  };
+/** A payload's level: the current mode/network shape or the pre-auto-mode one. */
+export type DevicePathsLevel = DeviceModeLevel | LegacyLevel;
+
+/** The level a payload records, in either shape; undefined without one. */
+export function devicePathsLevel(p: DevicePathsPayload): DevicePathsLevel | undefined {
+  if (
+    p.mode !== undefined &&
+    p.allowedMode !== undefined &&
+    typeof p.network === "object" &&
+    p.network !== null
+  ) {
+    return {
+      mode: p.mode,
+      allowedMode: p.allowedMode,
+      network: { kind: p.network.kind, hosts: [...p.network.hosts] },
+      local: p.local === true,
+    };
+  }
+  return legacyLevel(p);
 }
 
 /** The system message of a `device_paths` event (model-visible, English). */
 export function devicePathsText(p: DevicePathsPayload): string {
   const roots = rootsText(p.roots);
   const level = devicePathsLevel(p);
-  if (level !== undefined) return `${roots}\n${modeLevelText(level)}`;
-  const legacy = legacyLevel(p);
-  return legacy === undefined ? roots : `${roots}\n${sandboxLevelText(legacy)}`;
+  if (level === undefined) return roots;
+  return `${roots}\n${"mode" in level ? modeLevelText(level) : sandboxLevelText(level)}`;
 }
 
 /** The fields of a level, in a fixed order (absent ones left out). */
-const levelKey = (l: DeviceModeLevel | LegacyLevel | undefined): unknown[] => {
+const levelKey = (l: DevicePathsLevel | undefined): unknown[] => {
   if (l === undefined) return [];
   if ("mode" in l) return [l.mode, l.network.kind];
   return [
@@ -186,7 +194,7 @@ export const devicePathsIdemKey = (p: DevicePathsPayload, prevSeq: number): stri
         p.roots.workspace,
         p.roots.skills,
         p.roots.tmp,
-        ...levelKey(devicePathsLevel(p) ?? legacyLevel(p)),
+        ...levelKey(devicePathsLevel(p)),
       ]),
     )
     .digest("hex")
@@ -202,7 +210,7 @@ export function devicePathsChange(
   latest: { seq: number; payload: DevicePathsPayload } | undefined,
   roots: SandboxRoots,
   runId: string | undefined,
-  level?: DeviceModeLevel,
+  level?: DevicePathsLevel,
 ): {
   type: "device_paths";
   runId?: string;
@@ -218,12 +226,7 @@ export function devicePathsChange(
   }
   const payload: DevicePathsPayload = {
     roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
-    ...(level !== undefined && {
-      mode: level.mode,
-      allowedMode: level.allowedMode,
-      network: { kind: level.network.kind, hosts: [...level.network.hosts] },
-      local: level.local,
-    }),
+    ...(level !== undefined && level),
   };
   return {
     type: "device_paths",

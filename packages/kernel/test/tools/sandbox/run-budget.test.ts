@@ -96,3 +96,77 @@ describe("运行时限与命令超时（纯函数）", () => {
     expect(sandboxConfigWarnings(off)).toEqual([]);
   });
 });
+
+let pgc: TestContainer;
+let rd: TestContainer;
+let db: KernelSchemaDb;
+let destroyDb: () => Promise<void>;
+let k: TestKernel;
+let root: string;
+
+beforeAll(async () => {
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  const raw = createDb(pgc.url, 3);
+  db = kernelDb(raw);
+  destroyDb = () => raw.destroy();
+  root = await mkdtemp(join(tmpdir(), "cap-sbx-budget-"));
+  k = await startKernel(
+    runConfig(
+      { pg: pgc.url, redis: rd.url },
+      {
+        roles: ["api", "worker"],
+        extensions: [MODEL_FAKE, SANDBOX_FAKE],
+        extensionConfig: { "sandbox-fake": { root } },
+        runtime: { maxRunSeconds: MAX_RUN_SECONDS },
+      },
+    ),
+  );
+}, 180_000);
+
+afterAll(async () => {
+  await k?.close();
+  await destroyDb?.();
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (root) await rm(root, { recursive: true, force: true });
+});
+
+type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
+
+describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
+  it("请求的 timeout 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    const owner = await session(k, "owner");
+    const orgId = await createOrg(owner);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Coder",
+          instructions: "Use the sandbox.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const conv = await createConv(owner, orgId, (res.json() as { agent: { id: string } }).agent.id);
+
+    const t0 = Date.now();
+    const input = { description: "Test step", command: "sleep 120", timeout: 600_000 };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(input)}`);
+    const [run] = await waitForTerminal(db, conv, 1, 60_000);
+    // 命令收紧到约 4 秒后超时，运行照常结束（没有撞上截止时间）
+    expect(Date.now() - t0).toBeLessThan(MAX_RUN_SECONDS * 1000);
+    expect(run?.type).toBe("run_finished");
+    const r = (await eventsOf(db, conv)).find(
+      (e): e is ToolResultEvent => e.type === "tool_result",
+    )?.payload;
+    expect(r?.isError).toBe(true);
+    expect(r?.content).toContain("timedOut");
+    expect(r?.content).toMatch(/time budget limits commands to \d+ seconds/);
+    expect(r?.content).toContain("runtime.maxRunSeconds");
+    expect(r?.content).not.toContain("stopped before it finished");
+  });
+});

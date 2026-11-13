@@ -8,6 +8,7 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -392,5 +393,40 @@ describe("MachinesService", () => {
       .where("id", "=", m.machineId)
       .executeTakeFirstOrThrow();
     expect(later.last_seen_at?.getTime()).toBeGreaterThan(Date.now() - 10_000);
+  });
+
+  it("derives a pre-auto-mode program's mode fail-closed (unsandboxed old summary is auto)", async () => {
+    const a = await member();
+    const m = await connected(a);
+    const hello: DeviceHello = {
+      type: "hello",
+      protocol: 1,
+      programVersion: "0.2.0",
+      os: "linux",
+      arch: "x64",
+      mode: "os",
+      roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+      sessionIsolation: false,
+      features: [],
+    };
+    const legacy = {
+      tier: "open",
+      effectiveTier: "open",
+      isolation: "none",
+      localhost: "on",
+      unixSockets: "roots",
+      allowedDomains: [],
+      remoteGrants: "owner",
+    };
+    // the frame parser drops the old summary; MachinesService keeps its isolation
+    await machines.recordHello(m.machineId, hello, legacy);
+    expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("auto");
+    // a legacy summary that was sandboxed is sandbox
+    await machines.recordHello(m.machineId, hello, { ...legacy, isolation: "sandbox" });
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
+    // a program that applies modes but sends no readable summary fails closed
+    await machines.recordHello(m.machineId, { ...hello, features: ["mode"] });
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
   });
 });

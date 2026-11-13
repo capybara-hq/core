@@ -1044,7 +1044,6 @@ export class ScheduledTasksService {
       });
       if (missing.length === 0) continue;
       const needsAdmin = missing.filter((k) => isNetworkGrantKey(k) && !admits(k));
-      const deviceRefuses = false;
       let needsRole: string[] = [];
       if (facts !== null && missing.some(isTool)) {
         if (!loaded) {
@@ -1065,7 +1064,8 @@ export class ScheduledTasksService {
         missing,
         needsRole,
         needsAdmin,
-        deviceRefuses,
+        // the wire field stays for the web; no network grant is refused by a device now
+        deviceRefuses: false,
         error: null,
         at: run.fired_at ?? new Date(run.scheduled_for),
       });

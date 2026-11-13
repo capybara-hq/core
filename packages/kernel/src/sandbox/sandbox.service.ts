@@ -30,7 +30,7 @@ import { readSandboxLimitOverride } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { localPolicyOf } from "../local-devices/policy-summary.js";
+import { localModeOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
 import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -544,10 +544,9 @@ export class SandboxService {
   }
 
   /**
-   * The mode a device chose: a local device's reported one (its machine's policy summary); a cloud
-   * device's narrowing switch (`devices.mode`, `sandbox` only); null for a cloud device that
-   * follows the platform and the org, a local device with no connected machine, or an unreadable
-   * summary.
+   * The mode a device chose: a local device's derived one (`localModeOf`, failing closed); a cloud
+   * device's narrowing switch (`devices.mode`, `sandbox` only); null for a cloud device that follows
+   * the platform and the org or a local device with no connected machine.
    */
   private async deviceChosenMode(
     orgId: string,
@@ -558,26 +557,29 @@ export class SandboxService {
       .leftJoin("device_machines as m", (j) =>
         j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
       )
-      .select(["e.source", "e.mode", "m.local_policy"])
+      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return null;
-    if (row.source === "local") return localPolicyOf(row.local_policy)?.mode ?? null;
+    if (row.source === "local") return localModeOf(row.features, row.local_policy);
     return row.mode === "sandbox" ? "sandbox" : null;
   }
 
   /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */
-  private async deviceIsLocal(device: { orgId: string; deviceId?: string }): Promise<boolean> {
-    if (device.deviceId === undefined) return false;
+  private async deviceSource(device: {
+    orgId: string;
+    deviceId?: string;
+  }): Promise<"cloud" | "local"> {
+    if (device.deviceId === undefined) return "cloud";
     const row = await this.db
       .selectFrom("devices")
       .select("source")
       .where("id", "=", device.deviceId)
       .where("org_id", "=", device.orgId)
       .executeTakeFirst();
-    return row?.source === "local";
+    return row?.source === "local" ? "local" : "cloud";
   }
 
   /**
@@ -585,18 +587,20 @@ export class SandboxService {
    * `sandbox.limits` resources, cpu / memory per the super admin's org override (C19 / Ruling
    * M16), the effective mode and the network ({@link devicePolicy}). A local device always gets the
    * sandbox-mode allowlist: its device intersects it with its own list in sandbox mode and ignores
-   * it in auto mode. `opts.policy`: a policy the caller already read.
+   * it in auto mode. `opts.policy` / `opts.source`: what the caller already read (avoids the
+   * policy and source queries).
    */
   async deviceLimits(
     device: { orgId: string; deviceId?: string },
-    opts: { policy?: EffectiveDevicePolicy } = {},
+    opts: { policy?: EffectiveDevicePolicy; source?: "cloud" | "local" } = {},
   ): Promise<SandboxLimits> {
     const cfg = this.config.get().sandbox;
-    const [policy, override, local] = await Promise.all([
+    const [policy, override, source] = await Promise.all([
       opts.policy ?? this.devicePolicy(device),
       readSandboxLimitOverride(this.db.db, device.orgId),
-      this.deviceIsLocal(device),
+      opts.source ?? this.deviceSource(device),
     ]);
+    const local = source === "local";
     const network: DeviceNetwork = local
       ? { kind: "allowlist", hosts: [...policy.localAllowedDomains] }
       : policy.network;
@@ -895,7 +899,8 @@ export class SandboxService {
     _row?: Row,
   ): Promise<SandboxLimits | null> {
     if (p.plugin === LOCAL_PROVIDER) return null;
-    return await this.deviceLimits(_ctx);
+    const policy = await this.devicePolicy(_ctx);
+    return await this.deviceLimits(_ctx, { policy, source: "cloud" });
   }
 
   /**
@@ -1788,7 +1793,11 @@ export class SandboxService {
     });
     // the device's effective limits apply at creation (a changed mode or network kind is applied
     // on use, see applyLimits; other changes reach only instances created afterwards)
-    const limits = want ?? (await this.deviceLimits(ctx));
+    const limits =
+      want ??
+      (await this.deviceLimits(ctx, {
+        source: p.plugin === LOCAL_PROVIDER ? "local" : "cloud",
+      }));
     // the record says what is in force: a provider whose limits are fixed at its file system
     // records them with the file system, any other with the instance (spec §7.1)
     const record = instanceLimitsJson(appliedOf(limits));

@@ -18,7 +18,7 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
-import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
+import { deviceFeaturesOf, localModeOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
@@ -526,10 +526,10 @@ export class DevicesService {
 
   /**
    * The mode a sandbox call in the device runs at now, for the model (`device_paths`, auto mode
-   * spec §4.2): the effective policy for its machine's reported mode (a cloud device: its
-   * narrowing switch, else the allowed mode), its network, and a cloud device's pending file-reset
-   * state (the mode and network its instance still runs with). Null when the device is not a live
-   * device of the org.
+   * spec §4.2): the effective policy for the mode it runs at (a local machine's derived mode,
+   * failing closed; a cloud device's narrowing switch, else the allowed mode), its network, and a
+   * cloud device's pending file-reset state (the mode and network its instance still runs with).
+   * Null when the device is not a live device of the org.
    */
   async modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
     const row = await this.db
@@ -537,7 +537,7 @@ export class DevicesService {
       .leftJoin("device_machines as m", (j) =>
         j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
       )
-      .select(["e.source", "e.mode", "m.local_policy"])
+      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.deleted_at", "is", null)
@@ -547,10 +547,9 @@ export class DevicesService {
       readDeploymentDevicePolicy(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
     ]);
-    const summary = localPolicyOf(row.local_policy);
-    // a local device states its own mode; a cloud device's switch only narrows it (sandbox)
+    // a local device's mode is derived fail-closed; a cloud device's switch only narrows it
     const chosen: SandboxMode | null =
-      row.source === "local" ? (summary?.mode ?? null) : (row.mode ?? null);
+      row.source === "local" ? localModeOf(row.features, row.local_policy) : (row.mode ?? null);
     const policy = effectiveDevicePolicy(deployment, settings, chosen);
     let mode = policy.mode;
     let network: DeviceNetwork =
@@ -559,11 +558,12 @@ export class DevicesService {
         : policy.network;
     if (row.source === "cloud") {
       const state = await this.sandbox.limitsState({ orgId, deviceId }, { policy });
-      if (state.pendingFilesReset && state.applied !== null) {
-        // an unknown record (an instance made before auto mode) is not used here: the effective
-        // limits stand until the file reset
-        mode = state.applied.mode;
-        network = state.applied.network;
+      if (state.pendingFilesReset) {
+        // an unknown record (an instance made before auto mode) may be wider than the effective
+        // limits: tell the model the widest, never a narrower network than it may reach
+        mode = state.applied === null ? "auto" : state.applied.mode;
+        network =
+          state.applied === null ? { kind: "open-public", hosts: [] } : state.applied.network;
       }
     }
     return { mode, allowedMode: policy.allowedMode, network, local: row.source === "local" };
@@ -1077,7 +1077,7 @@ export class DevicesService {
       r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
     /** The mode the device chose: its machine's report (local) or its switch (cloud, sandbox only). */
     const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
-      r.source === "local" ? (summaryOf(r)?.mode ?? null) : r.mode;
+      r.source === "local" ? localModeOf(r.machine_features, r.machine_local_policy) : r.mode;
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
       effectiveDevicePolicy(deployment, settings, chosenOf(r));
     // each device's limits and its instance's pending change
@@ -1086,7 +1086,7 @@ export class DevicesService {
         rows.map(async (r) => {
           const policy = policyOf(r);
           const [limits, state] = await Promise.all([
-            this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy }),
+            this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy, source: r.source }),
             r.source === "cloud"
               ? this.sandbox.limitsState({ orgId, deviceId: r.id }, { policy })
               : { pendingNextUse: false, pendingFilesReset: false },
@@ -1363,7 +1363,16 @@ export function deviceModeViewOf(
   summary: DeviceLocalPolicySummary | null,
   extra: { pendingNextUse: boolean; recent: DeviceModeChangeView[] },
 ): DeviceModeView {
-  const source: "org" | "platform" = settings.cloudNetwork === undefined ? "platform" : "org";
+  const networkKind = local ? "allowlist" : policy.network.kind;
+  // "org" only when the org supplied the hosts in effect: auto mode ignores the org's network,
+  // an open network is the platform default, and an allowlist without org hosts uses the
+  // deployment's list
+  const source: "org" | "platform" =
+    networkKind === "allowlist" &&
+    policy.mode === "sandbox" &&
+    settings.cloudNetwork?.allowHosts !== undefined
+      ? "org"
+      : "platform";
   const network = local
     ? { kind: "allowlist" as const, hosts: [...policy.localAllowedDomains], source }
     : { kind: policy.network.kind, hosts: [...policy.network.hosts], source };

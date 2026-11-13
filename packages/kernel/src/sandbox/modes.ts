@@ -105,13 +105,17 @@ export function deviceNetwork(
 }
 
 /**
- * The org's sandbox-mode network, from the deployment default and the org's `cloudNetwork` choice:
- * `open-public` when either says open, else the org's hosts over the deployment's list.
+ * The org's sandbox-mode network, from the deployment default, the org's `cloudNetwork` choice and
+ * the platform kill switch: `sandbox.limits.egress: "none"` forces an empty allowlist (R20, every
+ * read); otherwise `open-public` when either says open, else the org's hosts over the deployment's
+ * list.
  */
 export function orgSandboxNetwork(
   deployment: { mode: "open" | "allowlist"; allowHosts: string[] },
   org: OrgDeviceSettings["cloudNetwork"],
+  egress: "none" | "allowlist" = "allowlist",
 ): DeviceNetwork {
+  if (egress === "none") return { kind: "allowlist", hosts: [] };
   if ((org?.mode ?? deployment.mode) === "open") return { kind: "open-public", hosts: [] };
   return { kind: "allowlist", hosts: [...(org?.allowHosts ?? deployment.allowHosts)] };
 }

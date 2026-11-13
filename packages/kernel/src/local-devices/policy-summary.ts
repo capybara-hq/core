@@ -1,4 +1,5 @@
 import type { DeviceFeature, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
+import type { SandboxMode } from "../sandbox/modes.js";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
@@ -28,6 +29,36 @@ export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
   if (!Array.isArray(o.allowedDomains)) return null;
   if (!o.allowedDomains.every((d): d is string => typeof d === "string")) return null;
   return { mode: o.mode, allowedDomains: [...o.allowedDomains] };
+}
+
+/** The isolation of a summary recorded before auto mode, if `v` is one (no `mode` field). */
+export function legacyIsolationOf(v: unknown): "sandbox" | "none" | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (o.mode !== undefined) return null;
+  return o.isolation === "none" || o.isolation === "sandbox" ? o.isolation : null;
+}
+
+/**
+ * The legacy part of a summary a program reported (a pre-auto-mode payload the frame parser drops):
+ * its isolation alone, kept so an unsandboxed old program is still recognized. Null for a summary
+ * in the current shape, a malformed one, or a program whose summary is unreadable.
+ */
+export function legacyPolicyOf(v: unknown): { isolation: "sandbox" | "none" } | null {
+  const isolation = legacyIsolationOf(v);
+  return isolation === null ? null : { isolation };
+}
+
+/**
+ * The mode a local device runs at, from its reported features and stored policy (auto mode spec
+ * §4.2), failing closed: a program that applies modes but sent no readable summary is sandbox; an
+ * older program (no `mode` feature) is auto only when its legacy summary was unsandboxed.
+ */
+export function localModeOf(features: unknown, localPolicy: unknown): SandboxMode {
+  const summary = localPolicyOf(localPolicy);
+  if (summary !== null) return summary.mode;
+  if (deviceFeaturesOf(features).includes("mode")) return "sandbox";
+  return legacyIsolationOf(localPolicy) === "none" ? "auto" : "sandbox";
 }
 
 /**

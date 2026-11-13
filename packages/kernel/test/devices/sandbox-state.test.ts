@@ -34,6 +34,15 @@ describe("deviceModeViewOf", () => {
     });
   });
 
+  it("cloud auto mode ignores the org's allowlist; the source is the platform", () => {
+    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    const policy = effectiveDevicePolicy(deployment(), org, null);
+    expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
+      mode: "auto",
+      network: { kind: "open-public", hosts: [], source: "platform" },
+    });
+  });
+
   it("a cloud device narrowed to sandbox applies the org's allowlist", () => {
     const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
     const policy = effectiveDevicePolicy(deployment(), org, "sandbox");

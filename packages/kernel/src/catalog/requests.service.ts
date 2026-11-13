@@ -352,7 +352,11 @@ export class CatalogRequestsService {
     if (this.config.get().sandbox.limits.egress === "none") throw deploymentEgressNone();
     const deployment = (await this.orgSettings.deployment()).cloudNetwork;
     const settings = await readOrgSettings(t, orgId);
-    const network = orgSandboxNetwork(deployment, settings.cloudNetwork);
+    const network = orgSandboxNetwork(
+      deployment,
+      settings.cloudNetwork,
+      this.config.get().sandbox.limits.egress,
+    );
     if (hosts.every((h) => orgAllows(h, { network }))) {
       throw new ApiError(
         "catalog.request_invalid",
@@ -842,7 +846,7 @@ export class CatalogRequestsService {
     const deployment = (await this.orgSettings.deployment()).cloudNetwork;
     const current = (await readOrgSettings(this.db, orgId)).cloudNetwork;
     // the org's sandbox network: the hosts its sandboxed devices reach now
-    const network = orgSandboxNetwork(deployment, current);
+    const network = orgSandboxNetwork(deployment, current, this.config.get().sandbox.limits.egress);
     const missing = hosts.filter((h) => !orgAllows(h, { network }));
     if (missing.length === 0) return;
     const base = current?.allowHosts ?? deployment.allowHosts;

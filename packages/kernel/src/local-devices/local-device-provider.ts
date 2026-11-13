@@ -266,7 +266,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     }
     return {
       orgId,
-      limits: await this.sandbox.deviceLimits({ orgId, deviceId }, { policy }),
+      limits: await this.sandbox.deviceLimits({ orgId, deviceId }, { policy, source: "local" }),
     };
   }
 }
