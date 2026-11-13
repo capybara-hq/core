@@ -105,7 +105,7 @@ beforeAll(async () => {
     { bytes: await packFake("fake-bootstrap-a") },
     { bytes: await packFake("fake-bootstrap-b") },
   ]);
-}, 300_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -241,5 +241,5 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
     expect(off.json().error.code).toBe("extension.required");
     // The test migrates 0050 onward and boots a kernel itself, the work other files do in a
     // beforeAll (120 s there): under a loaded full run it can exceed the 5 s default
-  }, 120_000);
+  });
 });

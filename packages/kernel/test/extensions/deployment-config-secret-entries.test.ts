@@ -34,7 +34,7 @@ interface Field {
 }
 
 /** Secret records drawn per item: `keys` in the view, `secretEntries` on PUT (spec §4.3). */
-describe("deployment config secret entries", { timeout: 120_000 }, () => {
+describe("deployment config secret entries", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let db: KernelSchemaDb;
@@ -75,7 +75,7 @@ describe("deployment config secret entries", { timeout: 120_000 }, () => {
       extensionConfigSources: extensionConfigSources(cfg, {}, "file"),
     });
     admin = await session(k, "root");
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await k?.close();

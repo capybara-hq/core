@@ -80,7 +80,7 @@ beforeAll(async () => {
   accounts = accountsFor(db);
   orgs = orgsFor(db);
   members = testMembers(db);
-}, 120_000);
+});
 afterAll(async () => {
   await host?.close();
   await sub?.close();

@@ -75,7 +75,7 @@ interface View {
 const writeInput = (text: string) => ({ items: [{ text, status: "pending" }] });
 const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
 
-describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout: 180_000 }, () => {
+describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
   let db: KernelSchemaDb;
@@ -205,7 +205,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     });
     const r = await at(0, "POST", "/api/v1/auth/login", { login: "root", password: PW });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
-  }, 600_000);
+  });
 
   afterAll(async () => {
     await usageQueue?.close();
@@ -213,7 +213,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     await raw?.destroy();
     await h?.stop();
     if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   let orgId: string;
   let base: string;

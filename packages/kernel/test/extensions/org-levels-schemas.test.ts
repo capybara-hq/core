@@ -71,7 +71,7 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   orgId = await createOrg(owner, "Acme");
   await enableExtensions(db, orgId, "orgrefined", "orgwrapped");
-}, 240_000);
+});
 
 afterAll(async () => {
   await k?.close();

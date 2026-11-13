@@ -23,9 +23,7 @@ const CHAN_THROWHINTS = fileURLToPath(
 type Schema = { properties: Record<string, Record<string, unknown>>; "x-ui"?: unknown };
 
 /** Config UI hints in the kernel (extension config forms spec §4.1, §4.4, §4.5). */
-describe("config UI hints: load-time validation, static schemas, issue message keys", {
-  timeout: 120_000,
-}, () => {
+describe("config UI hints: load-time validation, static schemas, issue message keys", () => {
   let pgc: TestContainer;
   let rd: TestContainer;
   let db: KernelSchemaDb;
@@ -75,7 +73,7 @@ describe("config UI hints: load-time validation, static schemas, issue message k
       },
     );
     admin = await session(k, "root");
-  }, 240_000);
+  });
 
   afterAll(async () => {
     await k?.close();

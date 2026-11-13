@@ -31,7 +31,7 @@ interface State {
  * 4. Clearing the config on replica 1 unloads the extension on both replicas (pending config);
  *    saving it again on replica 0 loads it on both.
  */
-describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
+describe("部署级插件配置双副本", () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let h: Harness;
@@ -98,13 +98,13 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
     });
     const r = await at(0, "POST", "/api/v1/auth/login", { login: "root", password: PW });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
-  }, 300_000);
+  });
 
   afterAll(async () => {
     await h?.stop();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop()]);
-  }, 120_000);
+  });
 
   it("1. 必填字段缺失时两个副本都待配置；补上后两个副本都不重启地加载", async () => {
     expect(await state(0)).toBe(503);

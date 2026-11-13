@@ -49,7 +49,7 @@ beforeAll(async () => {
   b = await startKernel(config(["api", "worker"]));
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
-}, 180_000);
+});
 
 afterAll(async () => {
   await Promise.all([a?.close().catch(() => {}), b?.close().catch(() => {})]);
@@ -57,7 +57,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-describe("lifecycle hooks across two replicas", { timeout: 60_000 }, () => {
+describe("lifecycle hooks across two replicas", () => {
   it("a delivery A cannot add is owed until B's relay delivers it, exactly once", async () => {
     const accounts = a.app.get(AccountsService);
     const owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "O" });
@@ -88,6 +88,7 @@ describe("lifecycle hooks across two replicas", { timeout: 60_000 }, () => {
       );
     await waitFor(async () => (await count("deliveries")) === 1, 30_000, "delivered by B's relay");
     await waitFor(async () => (await owed()) === 0, 10_000, "outbox row gone");
+    // nothing-happened window: the second replica must not deliver the job again
     await new Promise((r) => setTimeout(r, 1500));
     expect(await count("calls")).toBe(1);
     expect(await count("deliveries")).toBe(1);
