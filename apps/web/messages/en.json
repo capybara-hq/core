@@ -255,6 +255,7 @@
       "request_decided": "This request has already been decided.",
       "custom_disabled": "Super admins turned off custom creation; install from the catalog instead.",
       "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact a super admin.",
+      "connector_removed": "The connector this install was going to take back was removed during the switch-on. Try again.",
       "icon_not_found": "No icon.",
       "invalid_manifest": "The plugin package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
