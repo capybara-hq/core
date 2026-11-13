@@ -2,8 +2,9 @@
 "@capybara-hq/device": minor
 ---
 
-Auto mode: a device runs commands in one of two modes, `auto` (the default for a new login: as the
-owner, with every command reviewed by the deployment) or `sandbox` (today's strict
+Auto mode: a device runs commands in one of two modes, `auto` (the default for a new login when the
+organization allows it: as the owner, with every command reviewed by the deployment; a fresh login
+in an auto-forbidden organization writes sandbox mode) or `sandbox` (today's strict
 `sandbox-runtime` profile). `capybara-device mode [auto|sandbox]` shows or switches it; `policy`
 loses `set tier|isolation|localhost|remoteGrants` and keeps `show` and the allowlist commands;
 `status` prints the mode. In auto mode file operations reach any absolute path on the machine. A

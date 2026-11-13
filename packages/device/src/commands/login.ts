@@ -22,6 +22,7 @@ import {
   AUTO_MODE_RISK_TEXT,
   AUTO_POLICY_REFUSED_LOGIN_LINE,
   SANDBOX_MODE_LOGIN_LINE,
+  SANDBOX_POLICY_LOGIN_LINE,
 } from "./mode.js";
 
 export interface LoginDeps {
@@ -141,16 +142,24 @@ export async function login(
               : resolve(cmd.dir);
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
-        // The default mode is auto; an organization that forbids it gets sandbox mode written as
-        // this device's policy before the credential makes the login final, and the line that
-        // matches it. An existing policy is the owner's choice: the kernel refuses auto mode at
-        // every command until they switch the machine.
+        // The printed line follows this machine's persisted policy in both branches, not the
+        // organization's allowance: sandbox mode is also the state an earlier login in an
+        // auto-forbidden organization left behind. The default mode is auto; an organization that
+        // forbids it gets sandbox mode written as this device's policy before the credential makes
+        // the login final. An existing policy is the owner's choice: the kernel refuses auto mode
+        // at every command if the organization forbids it and the owner keeps auto.
         let mode: SandboxMode = "auto";
         if (granted.autoMode === "off") {
           try {
             mode = persistSandboxPolicy(deps.stateDir) ? "sandbox" : readPolicy(deps.stateDir).mode;
           } catch (e) {
             err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+          }
+        } else {
+          try {
+            mode = readPolicy(deps.stateDir).mode;
+          } catch (e) {
+            err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }
         }
         writeCredential(deps.stateDir, {
@@ -165,9 +174,11 @@ export async function login(
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
-        // The risk text is shown once at login (spec §8).
+        // The risk text is shown once at login (spec §8), and only when this machine runs auto.
         if (granted.autoMode === "off") {
           out(mode === "sandbox" ? SANDBOX_MODE_LOGIN_LINE : AUTO_POLICY_REFUSED_LOGIN_LINE);
+        } else if (mode === "sandbox") {
+          out(SANDBOX_POLICY_LOGIN_LINE);
         } else {
           out(AUTO_MODE_LOGIN_LINE);
           out(AUTO_MODE_RISK_TEXT);

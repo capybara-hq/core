@@ -22,10 +22,22 @@ export const MODE_AUTO_NEEDS_YES =
 /** Printed before the question `capybara-device mode auto` asks on a terminal. */
 export const MODE_AUTO_PROMPT = "Run agent commands on this computer as you, in auto mode? [y/N] ";
 
-/** The line `login` prints when the organization allows auto mode (the default). */
+/**
+ * The line `login` prints when the organization allows auto mode and this machine's policy is
+ * auto (the default).
+ */
 export const AUTO_MODE_LOGIN_LINE =
   "New logins start in auto mode: agent commands run as you on this machine, and the deployment " +
   "reviews every command. Switch with `capybara-device mode sandbox`.";
+
+/**
+ * The line `login` prints when the organization allows auto mode but this machine's persisted
+ * policy is sandbox mode (an earlier login in an auto-forbidden organization, or the owner's
+ * switch): the line follows the machine, not the allowance.
+ */
+export const SANDBOX_POLICY_LOGIN_LINE =
+  "This organization allows auto mode, but this machine's local policy is sandbox mode: agent " +
+  "commands run inside the OS sandbox here. Switch with `capybara-device mode auto`.";
 
 /** The line `login` prints when the organization forbids auto mode and the policy now says so. */
 export const SANDBOX_MODE_LOGIN_LINE =

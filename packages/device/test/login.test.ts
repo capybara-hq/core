@@ -20,11 +20,12 @@ import {
   AUTO_MODE_RISK_TEXT,
   AUTO_POLICY_REFUSED_LOGIN_LINE,
   SANDBOX_MODE_LOGIN_LINE,
+  SANDBOX_POLICY_LOGIN_LINE,
 } from "../src/commands/mode.js";
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { policySummary } from "../src/server-ops.js";
-import { policyPath, readPolicy } from "../src/state.js";
+import { policyLockPath, policyPath, readPolicy } from "../src/state.js";
 
 interface Seen {
   path: string;
@@ -210,6 +211,55 @@ describe("login", () => {
     expect(out).toContain(SANDBOX_MODE_LOGIN_LINE);
     expect(out).not.toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
   });
+
+  it("prints the sandbox-policy line when the org allows auto but this machine stays sandbox", async () => {
+    // An earlier login in an auto-forbidden org (or the owner's switch) left a sandbox policy.
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(policyPath(stateDir()), `${JSON.stringify({ mode: "sandbox" })}\n`, {
+      mode: 0o600,
+    });
+    // No autoMode field: the deployment allows auto mode.
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out).toContain(SANDBOX_POLICY_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_MODE_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    // The line follows the persisted policy, which login never rewrites.
+    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(helloMode()).toBe("sandbox");
+  });
+
+  it("prints the auto lines when this machine's policy is auto and the org allows it", async () => {
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      policyPath(stateDir()),
+      `${JSON.stringify({ allowedDomains: [], allowCredentials: [], cpu: null, memoryMb: null, mode: "auto" }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out).toContain(AUTO_MODE_LOGIN_LINE);
+    expect(out).toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(SANDBOX_POLICY_LOGIN_LINE);
+    expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+    expect(readPolicy(stateDir()).mode).toBe("auto");
+    expect(helloMode()).toBe("auto");
+  });
+
+  it("reports a policy-lock failure, keeps the refusal line and still writes the credential", async () => {
+    // A live holder (this test process) keeps policy.json.lock fresh, so login waits about 2 s
+    // for it instead of taking it over, then fails to write the sandbox policy.
+    mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(policyLockPath(stateDir()), String(process.pid), { mode: 0o600 });
+    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(err.join("\n")).toContain("Cannot set the local policy");
+    expect(out).toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
+    expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+    // The write never happened, but the credential still did: the login is final.
+    expect(existsSync(policyPath(stateDir()))).toBe(false);
+    expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
+  }, 10_000);
 
   it("logging in again after the files were lost recreates the directory and marker", async () => {
     tokenAnswers = [granted];
