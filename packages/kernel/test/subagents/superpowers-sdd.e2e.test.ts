@@ -154,7 +154,7 @@ beforeAll(async () => {
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -221,9 +221,7 @@ async function childConversations(parent: string) {
     .execute();
 }
 
-describe("phase C acceptance: superpowers subagent-driven-development", {
-  timeout: 180_000,
-}, () => {
+describe("phase C acceptance: superpowers subagent-driven-development", () => {
   it("superpowers is imported from a git marketplace and installed; an agent gets the SDD skills, the agent tool and the code-reviewer template", async () => {
     await srv.commit("superpowers", loadFixtureAsStrings("superpowers"));
     const added = await admin({

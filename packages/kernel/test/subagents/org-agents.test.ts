@@ -169,7 +169,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -408,7 +408,7 @@ describe("dispatching an org agent", () => {
       resumed: false,
     });
     expect(await audits("subagent.refused")).toEqual([]);
-  }, 60_000);
+  });
 
   it("a child is opened through its parent conversation and the analyst's visibility; the list keeps the row", async () => {
     const { conv } = await converse(member, "SCENARIO hello");
@@ -445,7 +445,7 @@ describe("dispatching an org agent", () => {
     for (const p of routes) expect(await status(p), p).toBe(404);
     const gone = await member({ method: "GET", url: `${base}/${conv}/subagents` });
     expect(gone.statusCode).toBe(404);
-  }, 60_000);
+  });
 
   it("the child's trajectory follows the parent conversation's agent: the analyst's owner 404, the lead's owner and an admin 200", async () => {
     // the lead belongs to a plain member here, so its owner and the admin are different people
@@ -478,7 +478,7 @@ describe("dispatching an org agent", () => {
       url: `/api/v1/orgs/${orgId}/trajectories/${conv}`,
     });
     expect(parent.statusCode, parent.body).toBe(200);
-  }, 60_000);
+  });
 
   it("a grandchild under the analyst's child is authorized by the root's agent: the analyst's owner 404 (depth 2)", async () => {
     await db
@@ -519,7 +519,7 @@ describe("dispatching an org agent", () => {
     const lead = await trajectory(member);
     expect(lead.statusCode, lead.body).toBe(200);
     expect((await trajectory(outsider)).statusCode).toBe(200);
-  }, 60_000);
+  });
 
   it("its own ask and the parent's deny give the stricter result; the approval goes to the starter and an always grant is stored for the analyst", async () => {
     const conv = await createConv(member, orgId, leadId);
@@ -575,7 +575,7 @@ describe("dispatching an org agent", () => {
     expect(grants).toEqual([
       { account_id: ids.member, agent_id: analystId, tool_key: "mcp__mine__create" },
     ]);
-  }, 60_000);
+  });
 });
 
 describe("the gates", () => {
@@ -602,18 +602,18 @@ describe("the gates", () => {
 
   it("a member of the shared parent who is not in the analyst's members list is refused (visibility)", async () => {
     await refusedWithout(outsider, ids.outsider, "visibility");
-  }, 60_000);
+  });
 
   it("dispatchable turned off after allowlisting is refused (dispatchable)", async () => {
     await patchAnalyst({ definition: ANALYST_DEF({ subagents: { dispatchable: false } }) });
     await refusedWithout(member, ids.member, "dispatchable");
-  }, 60_000);
+  });
 
   it("a deleted analyst is refused (deleted)", async () => {
     const del = await ana({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${analystId}` });
     expect(del.statusCode, del.body).toBe(204);
     await refusedWithout(member, ids.member, "deleted");
-  }, 60_000);
+  });
 
   it("a deleted parent agent's allowlist authorizes nothing (allowlist)", async () => {
     expect(await currentAgentDefinition(db, leadId)).not.toBeNull();
@@ -743,7 +743,7 @@ describe("follow-ups with SendMessage", () => {
     const freshStarted = ofType(await eventsOf(db, freshChild?.id as string), "subagent_started");
     expect(freshStarted[0]?.payload.definition.instructions).toBe(`${ANALYST}, v2.`);
     await quiesce(fresh.conv);
-  }, 90_000);
+  });
 
   it("a follow-up narrows the frozen tools to the analyst's current version (final review I1)", async () => {
     const first = await converse(member, "SCENARIO hello");
@@ -765,7 +765,7 @@ describe("follow-ups with SendMessage", () => {
       { kind: "connector", connectorId, tools: ["search"] },
     ]);
     await quiesce(first.conv);
-  }, 90_000);
+  });
 
   it("a member who loses visibility between dispatch and follow-up is refused; nothing starts", async () => {
     const first = await converse(member, "SCENARIO hello");
@@ -786,7 +786,7 @@ describe("follow-ups with SendMessage", () => {
     const refused = await audits("subagent.refused");
     expect(refused).toHaveLength(1);
     expect(refused[0]?.detail).toMatchObject({ gate: "visibility", resumed: true });
-  }, 90_000);
+  });
 
   it("a follow-up after the parent's owner removed the analyst from the allowlist is refused (allowlist, the parent's current version)", async () => {
     const first = await converse(member, "SCENARIO hello");
@@ -816,7 +816,7 @@ describe("follow-ups with SendMessage", () => {
     expect(finalText(events)).toBe("refused done");
     const refused = await audits("subagent.refused");
     expect(refused[0]?.detail).toMatchObject({ gate: "allowlist", resumed: true });
-  }, 90_000);
+  });
 
   it("the allowlist is read from the parent agent's current version, not the run's: removing the analyst mid-run refuses that run's message", async () => {
     // after the immediate Agent result the same run messages the (waiting) analyst; its model call
@@ -893,7 +893,7 @@ describe("follow-ups with SendMessage", () => {
     });
     expect(ok.statusCode, ok.body).toBe(200);
     await quiesce(conv);
-  }, 90_000);
+  });
 });
 
 describe("replay (spec §15.3)", () => {
@@ -967,5 +967,5 @@ describe("replay (spec §15.3)", () => {
     });
     const results = (res.json() as { results: EvalResultView[] }).results;
     expect(results.map((r) => [r.status, r.drift])).toEqual([["done", ["subagent_changed"]]]);
-  }, 90_000);
+  });
 });
