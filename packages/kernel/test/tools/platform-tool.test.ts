@@ -1,5 +1,5 @@
 import { ToolError } from "@capybara-hq/plugin-sdk";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiError } from "../../src/errors.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
@@ -726,7 +726,7 @@ describe("callPolicy: precheck before the card", () => {
     precheckMode = "hang";
     const run = new AbortController();
     const p = tool.callPolicy?.(input, { ...policyCtx, signal: run.signal });
-    while (precheckSignal === null) await new Promise((r) => setTimeout(r, 1));
+    await vi.waitFor(() => expect(precheckSignal).not.toBeNull());
     const seen = precheckSignal as AbortSignal;
     expect(seen.aborted).toBe(false);
     run.abort();

@@ -128,7 +128,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -139,7 +139,7 @@ afterAll(async () => {
 
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
-describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
+describe("Bash 按运行剩下的时间收紧超时", () => {
   it("请求的 timeout 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");

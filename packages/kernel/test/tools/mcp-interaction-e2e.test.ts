@@ -190,7 +190,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -317,7 +317,7 @@ describe("MCP elicitation", () => {
     ]);
     const evs = JSON.stringify(await eventsOf(db, convId));
     expect(evs.includes(TOKEN)).toBe(false);
-  }, 60_000);
+  });
 
   it("a message instead of the form: the kernel writes the skipped result; the remote is not called again", async () => {
     const agentId = await agentFor(await installConnector());
@@ -335,7 +335,7 @@ describe("MCP elicitation", () => {
     expect(answered.map((e) => [e.payload.questionId, e.payload.outcome])).toEqual([
       [q.payload.questionId, "skipped"],
     ]);
-  }, 60_000);
+  });
 
   it("URL 模式：卡片带链接与「已完成」；确认后远端收到 accept", async () => {
     const agentId = await agentFor(await installConnector());
@@ -348,7 +348,7 @@ describe("MCP elicitation", () => {
     });
     await answer(q.payload.questionId, { completed: true });
     expect(await lastResult(convId, 1)).toMatchObject({ content: "connected", isError: false });
-  }, 60_000);
+  });
 
   it("URL 模式未勾选「已完成」→ decline 给远端", async () => {
     const agentId = await agentFor(await installConnector());
@@ -356,7 +356,7 @@ describe("MCP elicitation", () => {
     const q = await askedBy(convId, "mcp__forms__connect");
     await answer(q.payload.questionId, { completed: false });
     expect(await lastResult(convId, 1)).toMatchObject({ content: "connect decline" });
-  }, 60_000);
+  });
 
   it("超出子集的表单：立即 decline，结果附说明，不暂停", async () => {
     const agentId = await agentFor(await installConnector());
@@ -366,7 +366,7 @@ describe("MCP elicitation", () => {
     expect(r?.content).toContain("nested decline");
     expect(r?.content).toContain(UNSUPPORTED_ELICITATION_NOTE);
     expect(ofType(await eventsOf(db, convId), "question_asked")).toEqual([]);
-  }, 60_000);
+  });
 
   it("-32042（URL elicitation required）：转成 URL 卡片；用户确认后重新调用成功", async () => {
     const agentId = await agentFor(await installConnector());
@@ -382,7 +382,7 @@ describe("MCP elicitation", () => {
     await answer(q.payload.questionId, { completed: true });
     expect(await lastResult(convId, 1)).toMatchObject({ content: "paid", isError: false });
     expect(payCalls).toBe(2);
-  }, 60_000);
+  });
 });
 
 describe("prompts 与 resources", () => {
@@ -438,7 +438,7 @@ describe("prompts 与 resources", () => {
     expect(noCred.statusCode, noCred.body).toBe(409);
     expect((noCred.json() as { error: { code: string } }).error.code).toBe("credential.missing");
     expect(httpBodies.join("\n").includes(TOKEN)).toBe(false);
-  }, 60_000);
+  });
 
   it("搜索 resources（名称 / URI 子串，不区分大小写）", async () => {
     const connectorId = await installConnector();
@@ -465,7 +465,7 @@ describe("prompts 与 resources", () => {
       ],
       unavailable: [],
     });
-  }, 60_000);
+  });
 
   it("消息附带资源：内核读取（打码、限长）存为额外文本块，并记录附件元数据", async () => {
     const connectorId = await installConnector();
@@ -521,7 +521,7 @@ describe("prompts 与 resources", () => {
       },
     });
     expect(tooMany.statusCode, tooMany.body).toBe(400);
-  }, 60_000);
+  });
 
   it("管理员停用了 read_resource 工具（Ruling A23）：资源不列出，附件被拒", async () => {
     const connectorId = await installConnector();
@@ -545,5 +545,5 @@ describe("prompts 与 resources", () => {
       "connector.resources_disabled",
     );
     expect(ofType(await eventsOf(db, convId), "user_message")).toEqual([]);
-  }, 60_000);
+  });
 });

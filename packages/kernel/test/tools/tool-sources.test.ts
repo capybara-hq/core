@@ -59,7 +59,7 @@ beforeAll(async () => {
       { roles: ["api", "worker"], extensions: [MODEL_FAKE, fakeExtensionEntry("fake-tools-ui")] },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
@@ -121,7 +121,7 @@ async function callIn(conv: string, req: Req): Promise<{ content: string; isErro
 const setSource = (conv: string, source: ConversationSource) =>
   sql`UPDATE capybara.conversations SET source = ${source} WHERE id = ${conv}`.execute(raw);
 
-describe("extension tools by conversation source", { timeout: 60_000 }, () => {
+describe("extension tools by conversation source", () => {
   it("forAgent hides a tool from the sources it leaves out, with the reason", async () => {
     for (const source of ["web", "channel_dm"] as const) {
       const r = await listed(source);

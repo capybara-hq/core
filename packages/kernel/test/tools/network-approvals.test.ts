@@ -87,7 +87,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();

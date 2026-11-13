@@ -107,7 +107,7 @@ beforeAll(async () => {
     ),
     { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -189,7 +189,7 @@ async function call(convId: string, key: string, input: unknown, n: number) {
   return r.payload;
 }
 
-describe("sandbox tools", { timeout: 60_000 }, () => {
+describe("sandbox tools", () => {
   it("bash: first use notice, runs in /workspace, display summary", async () => {
     const conv = await sandboxConversation();
     const r = await call(conv, "Bash", { description: "Test step", command: "pwd && echo hi" }, 1);
@@ -1124,7 +1124,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
   });
 });
 
-describe("sandbox provider unreachable", { timeout: 90_000 }, () => {
+describe("sandbox provider unreachable", () => {
   afterEach(() => setFakeSandboxFault(root, null));
 
   /** The warn records of unreachable-provider tool calls. */
@@ -1196,7 +1196,7 @@ describe("sandbox provider unreachable", { timeout: 90_000 }, () => {
   });
 });
 
-describe("a sandbox provider that refuses the open tier", { timeout: 90_000 }, () => {
+describe("a sandbox provider that refuses the open tier", () => {
   afterEach(async () => {
     await setFakeSandboxRefuseOpenEgress(root, false);
   });

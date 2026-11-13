@@ -206,7 +206,7 @@ beforeAll(async () => {
   kb = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api"] }));
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-}, 120_000);
+});
 
 afterAll(async () => {
   await kb?.close();

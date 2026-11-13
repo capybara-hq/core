@@ -63,7 +63,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   eventLog = eventLogFor(db, createBus(redis, sub, "kernel"));
-}, 120_000);
+});
 
 afterAll(async () => {
   await sub?.close();
@@ -174,7 +174,7 @@ const errorCode = async (p: Promise<unknown>) => {
   return null;
 };
 
-describe("decideGitPush", { timeout: 60_000 }, () => {
+describe("decideGitPush", () => {
   it("asks by default (the connector's git_push is ask); a fresh connector column says so", async () => {
     expect(await push()).toEqual({ decision: "ask", reason: "ask", repo: "acme/app" });
     // the repository is keyed lower-case without .git
@@ -221,7 +221,7 @@ describe("decideGitPush", { timeout: 60_000 }, () => {
   });
 });
 
-describe("git asks", { timeout: 60_000 }, () => {
+describe("git asks", () => {
   it("are approvals of kind git with the display-only approval_requested.git; one per call", async () => {
     const a = await ask();
     expect(a).toMatchObject({
@@ -376,7 +376,7 @@ describe("git asks", { timeout: 60_000 }, () => {
   });
 });
 
-describe("unattended runs", { timeout: 60_000 }, () => {
+describe("unattended runs", () => {
   let taskId: string;
   let taskRunId: string;
 

@@ -111,7 +111,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   wsUrl = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   crashNext = false;
@@ -320,7 +320,7 @@ async function crashedAlways(id: string): Promise<string> {
   return opId;
 }
 
-describe("network asks on the device policy intent", { timeout: 60_000 }, () => {
+describe("network asks on the device policy intent", () => {
   it("an always-allow decision records the request before the device is called", async () => {
     const sim = new Sim();
     sim.mode = "hold";

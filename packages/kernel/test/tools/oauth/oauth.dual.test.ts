@@ -31,7 +31,7 @@ let h: Harness | undefined;
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-}, 120_000);
+});
 
 afterAll(async () => {
   await h?.stop();
@@ -145,4 +145,4 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
     await mcp.stop();
     await as.stop();
   }
-}, 120_000);
+});

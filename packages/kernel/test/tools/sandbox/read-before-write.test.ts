@@ -82,7 +82,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -148,7 +148,7 @@ const NOT_READ = "File has not been read yet. Read it first before writing to it
 const MODIFIED =
   "File has been modified since it was read, either by the user or by another command. Read it again before writing to it.";
 
-describe("read before write", { timeout: 90_000 }, () => {
+describe("read before write", () => {
   /** A conversation with a stepper over `call` (n counts the finished runs). */
   async function session1() {
     const conv = await sandboxConversation();

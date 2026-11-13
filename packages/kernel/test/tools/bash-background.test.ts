@@ -22,6 +22,7 @@ import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.j
 import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor } from "../helpers/identity.js";
+import { waitFor } from "../helpers/runs.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -77,7 +78,7 @@ beforeAll(async () => {
     h.txHost,
     new BackgroundLaunchLock(new XactLock(h.db, h.txHost), h.txHost),
   );
-}, 120_000);
+});
 
 afterAll(async () => {
   redis?.disconnect();
@@ -217,11 +218,7 @@ const sandboxCreatedAt = async (env: string): Promise<Date> =>
   ).created_at;
 
 async function until(cond: () => Promise<boolean>, ms = 10_000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!(await cond())) {
-    if (Date.now() > end) throw new Error("condition not met in time");
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  await waitFor(async () => (await cond()) || null, ms, "condition");
 }
 
 /** Whether `pgrep -s <sid>` finds a process in the conversation's sandbox. */
@@ -240,7 +237,7 @@ async function alive(sid: string): Promise<boolean> {
 
 // each test spawns several node shims (setsid, pgrep, pkill) per launch and check: under a loaded
 // full run that takes seconds, past vitest's 5 s default
-describe("Bash run_in_background", { timeout: 30_000 }, () => {
+describe("Bash run_in_background", () => {
   it("returns the started text at once and records a running task", async () => {
     const t0 = Date.now();
     const c = ctx();
