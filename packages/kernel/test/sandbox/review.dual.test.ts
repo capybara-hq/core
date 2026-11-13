@@ -58,10 +58,11 @@ interface AskScene {
 async function openAskScene(): Promise<AskScene> {
   h = await createDualReplicaHarness({
     extensions: [MODEL_FAKE],
-    roles: [
-      ["api", "worker", "gateway"],
-      ["api", "worker"],
-    ],
+    // replica 0 is the only worker and gateway (it runs every job and owns the device's socket);
+    // replica 1 serves the API only. The first message is posted to replica 0, so the run, the ask
+    // and the resume are all processed by replica 0's worker, and a decision posted to replica 1
+    // can only reach it through PG / Redis, never an in-process cache.
+    roles: [["api", "worker", "gateway"], ["api"]],
     config: {
       auth: { cookieSecure: false },
       http: { publicUrl: "https://cap.example" },
@@ -413,7 +414,8 @@ describe("command ask (dual replica)", () => {
 
   it("decided only on the other replica: the parked run resumes once and the command runs once", async () => {
     const scene = await openAskScene();
-    // the run parked on whichever replica ran it; the owner's decision reaches only replica 1
+    // the run parked on replica 0 (the only worker); the owner's decision reaches only replica 1
+    // (api-only), so the resume must travel through PG / Redis to replica 0's worker
     const decision = await scene.call(
       1,
       "POST",
@@ -454,9 +456,10 @@ describe("command ask (dual replica)", () => {
     );
     expect(scene.execs()).toBe(1);
 
-    // the same rule class again: the grant is in PG, so the other replica allows it with no card
+    // the same rule class again, posted to replica 0 (the only worker, where the review runs): the
+    // grant was written by replica 1's decision, so this only passes if it is read from PG
     const again = await scene.call(
-      1,
+      0,
       "POST",
       `/api/v1/orgs/${scene.orgId}/conversations/${scene.conversationId}/messages`,
       { text: `tool:Bash:${JSON.stringify(PUSH)}` },

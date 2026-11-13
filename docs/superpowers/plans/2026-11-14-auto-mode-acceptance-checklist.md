@@ -39,18 +39,23 @@ Today's sandbox refused `.mcp.json`, `.claude/commands/`, `.vscode/`, `.idea/` a
 - [ ] Repeat in **sandbox** mode (`capybara-device mode sandbox`): the file tools stay inside the
       workspace; a `Read /etc/passwd` is refused with the workspace path; the clone still lands
       under the workspace. No protected-file refusal.
+- [ ] Repeat both variants on the **cloud Docker device** (the clone lands in the container's
+      workspace; `Read /etc/passwd` is refused in sandbox mode, allowed in auto mode).
 
 ## 2. A local server behind Docker's socket proxy (local, auto)
 
 Acceptance had local servers off because a listener on `127.0.0.1:2375` was detected.
 
-- [ ] With the Docker socket proxy running (`docker compose -f docker/compose.dev.yaml up -d`,
-      then `docker -H tcp://127.0.0.1:2375 version` works from the terminal), ask the agent:
-      "Run `curl http://127.0.0.1:2375/version`."
+- [ ] With the Docker socket proxy running (`docker compose -f docker/compose.dev.yaml
+      --profile sandbox up -d sandbox-proxy`, then `docker -H tcp://127.0.0.1:2375 version` works
+      from the terminal), ask the agent: "Run `curl http://127.0.0.1:2375/version`."
 - [ ] Expected: review `allow` (rule `allow.network`), the command runs, the JSON version prints;
       no ask, no downgrade to `ask`.
 - [ ] In **sandbox** mode the same command's review is still `allow`, but the device's network is
       the org's **白名单** (open it on the device page if the answer is a network refusal).
+- [ ] On the **cloud Docker device**, ask the same command: the review is still `allow`
+      (`allow.network`); the container has no proxy on its own loopback, so a connection refusal is
+      expected — never an `ask`.
 
 ## 3. A background `git clone` (local and cloud)
 
@@ -58,9 +63,12 @@ Acceptance had local servers off because a listener on `127.0.0.1:2375` was dete
 - [ ] Expected: the launch is reviewed **before** it starts (the launch row records `allow` /
       `allow.git`); the result says a background task started; `TaskOutput` shows the clone's
       output and the repository exists.
-- [ ] Ask for a dangerous background launch (`rm -rf /`): expect a `deny` with the reason and
-      **no** task started.
-- [ ] Repeat on the cloud Docker device.
+- [ ] On the **local macOS device**, ask for a background command the review holds without being
+      destructive (`sudo true`): expect an approval card (or a `deny` in a mode that holds it),
+      and **no** background task started. Do not run a destructive command on the owner's machine.
+- [ ] On the **cloud Docker device only** (a disposable container, never the local machine), ask
+      for a dangerous background launch (`rm -rf /`): expect a `deny` with the reason and **no**
+      task started.
 
 ## 4. `gh pr create` on a local device
 
@@ -86,9 +94,9 @@ Acceptance had local servers off because a listener on `127.0.0.1:2375` was dete
       a second that writes `/etc/<name>` outside the workspace.
 - [ ] Wait for a run (or trigger it).
 - [ ] Expected: **no** approval card and **no** waiting; the tool result carries the deny reason
-      ("This command needs approval … no one can approve it now; do it another way or leave it for
-      the person."), the record says `deny` by `rule` (`ask.sudo` / `ask.outside-write`), and the run
-      finishes rather than failing.
+      ("This command needs approval … and no one can approve it now; do the work another way or
+      leave it for the person."), the record says `deny` by `rule` (`ask.sudo` / `ask.outside-write`),
+      and the run finishes rather than failing.
 - [ ] Repeat on the cloud Docker device.
 
 ## 7. Session grant: 本会话允许同类
@@ -117,8 +125,9 @@ Acceptance had local servers off because a listener on `127.0.0.1:2375` was dete
 ## 9. Mode switch on the machine
 
 - [ ] On the local machine run `capybara-device mode`: it prints the current mode.
-- [ ] Run `capybara-device mode sandbox`: it prints that commands now run in the sandbox and every
-      command is still reviewed. The device page shows 沙箱.
+- [ ] Run `capybara-device mode sandbox`: it prints "Commands run in the OS sandbox; only the
+      workspace, skills and temporary files are writable and the network reaches the allowed
+      hosts." Every command is still reviewed in sandbox mode too. The device page shows 沙箱.
 - [ ] Run `capybara-device mode auto`: it asks for confirmation (or takes `--yes`) and then prints
       the auto-mode line. The device page shows 自动.
 - [ ] On the web device page, switch a local device to 沙箱: it takes effect; switching back to
@@ -131,22 +140,30 @@ Acceptance had local servers off because a listener on `127.0.0.1:2375` was dete
 
 ## Results
 
-| Step | Machine | Date | Result | Notes (card / output text, no secrets) |
-|---|---|---|---|---|
-| 1 clone | macOS local | | | |
-| 1 clone (sandbox) | macOS local | | | |
-| 2 local server | macOS local | | | |
-| 2 local server (sandbox) | macOS local | | | |
-| 3 background clone | macOS local | | | |
-| 3 background clone | cloud Docker | | | |
-| 4 `gh pr create` | macOS local | | | |
-| 5 `gh auth login` | cloud Docker | | | |
-| 6 scheduled `sudo` | cloud Docker | | | |
-| 6 scheduled outside write | cloud Docker | | | |
-| 7 本会话允许同类 | macOS local | | | |
-| 8 IM card | macOS local | | | |
-| 8 IM unattended | macOS local | | | |
-| 9 mode switch | macOS local | | | |
+Scenarios 5 and 6 are cloud-only by design: `gh auth login` would replace the owner's real `gh`
+credentials on a personal machine, and the scheduled-task deny is environment-independent (the
+kernel test covers it end to end).
+
+| Step | Machine | OS | Model | Date | Result | Notes (card / output text, no secrets) |
+|---|---|---|---|---|---|---|
+| 1 clone | macOS local | | | | | |
+| 1 clone | cloud Docker | | | | | |
+| 1 clone (sandbox) | macOS local | | | | | |
+| 1 clone (sandbox) | cloud Docker | | | | | |
+| 2 local server | macOS local | | | | | |
+| 2 local server | cloud Docker | | | | | |
+| 2 local server (sandbox) | macOS local | | | | | |
+| 2 local server (sandbox) | cloud Docker | | | | | |
+| 3 background clone | macOS local | | | | | |
+| 3 background clone | cloud Docker | | | | | |
+| 4 `gh pr create` | macOS local | | | | | |
+| 5 `gh auth login` | cloud Docker | | | | | |
+| 6 scheduled `sudo` | cloud Docker | | | | | |
+| 6 scheduled outside write | cloud Docker | | | | | |
+| 7 本会话允许同类 | macOS local | | | | | |
+| 8 IM card | macOS local | | | | | |
+| 8 IM unattended | macOS local | | | | | |
+| 9 mode switch | macOS local | | | | | |
 
 Sign-off: name, date, deployment build. File an issue for every step that does not match; attach
 the conversation id and the tool row, never a credential.

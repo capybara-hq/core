@@ -10,7 +10,10 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reviewRules } from "../../src/sandbox/review/index.js";
-import { readFakeSandboxLimits } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  readFakeSandboxLimits,
+  readFakeSandboxOps,
+} from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -108,6 +111,15 @@ console.error("fake gh: unsupported command " + args.join(" "));
 process.exit(2);
 `;
 
+/**
+ * A no-op `rm` first on the fake sandbox's PATH. The fixture has no isolation and runs commands
+ * with `/bin/sh -c` on the host, so scenario 3's denied `rm -rf /` must be harmless even if a
+ * launch-then-deny regression ever executes it. The review is textual, so the deny is unchanged.
+ */
+const FAKE_RM = `#!/bin/sh
+exit 0
+`;
+
 let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
@@ -149,6 +161,9 @@ beforeAll(async () => {
   await chmod(join(binDir, "git"), 0o755);
   await writeFile(join(binDir, "gh"), FAKE_GH);
   await chmod(join(binDir, "gh"), 0o755);
+  // a no-op `rm` beside the fake programs: an accidental execution of a denied command is harmless
+  await writeFile(join(binDir, "rm"), FAKE_RM);
+  await chmod(join(binDir, "rm"), 0o755);
 
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
@@ -345,7 +360,10 @@ describe("acceptance: auto mode on a real kernel", { timeout: 120_000 }, () => {
 
   it("scenario 3: a background git clone is reviewed before it launches and TaskOutput shows it", async () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
-    // a dangerous background launch is denied before anything starts
+    // a dangerous background launch is denied before anything starts. The command would be harmless
+    // if executed (`binDir` carries the no-op `rm`, see FAKE_RM); the assertions are what make a
+    // launch-then-deny regression red: a launch inserts its `background_tasks` row as soon as it
+    // starts, and every exec reaches the sandbox's own log.
     const denied = await call(
       conv,
       "Bash",
@@ -355,6 +373,16 @@ describe("acceptance: auto mode on a real kernel", { timeout: 120_000 }, () => {
     expect(denied.payload.isError).toBe(true);
     expect(denied.payload.review).toMatchObject({ decision: "deny", rule: "deny.root-delete" });
     expect(denied.payload.content).not.toContain("Started background task");
+    const tasks = await db
+      .selectFrom("background_tasks")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(tasks, "the denied launch created no background task").toEqual([]);
+    const execs = (await readFakeSandboxOps(root)).filter(
+      ([op, , , , , , conversationId]) => op === "exec" && conversationId === conv,
+    );
+    expect(execs, "the denied launch reached no command in the sandbox").toEqual([]);
 
     const launched = await call(
       conv,
@@ -369,6 +397,11 @@ describe("acceptance: auto mode on a real kernel", { timeout: 120_000 }, () => {
     expect(launched.payload.isError, launched.payload.content).toBe(false);
     // the launch itself carries the review decision: the command was judged before it ran
     expect(launched.payload.review).toMatchObject({ decision: "allow", rule: "allow.git" });
+    // the same log now holds this conversation's launch exec: the empty check above is not vacuous
+    const launchExecs = (await readFakeSandboxOps(root)).filter(
+      ([op, , , , , , conversationId]) => op === "exec" && conversationId === conv,
+    );
+    expect(launchExecs.length, "the allowed launch reached the sandbox").toBeGreaterThan(0);
     const taskId = /Started background task (bt_[A-Za-z0-9_-]+)/.exec(
       launched.payload.content,
     )?.[1];
@@ -445,10 +478,11 @@ describe("acceptance: auto mode on a real kernel", { timeout: 120_000 }, () => {
       url: "https://github.com/login/device",
       code: "1A2B-C3D4",
     });
-    // no event carries a token: the login's credential never reaches the log
-    const serialized = JSON.stringify(events);
-    expect(serialized).not.toMatch(/gh[pousr]_[A-Za-z0-9]{20,}/);
-    expect(serialized).not.toContain("loginCode");
+    // the kernel-internal device-code field never reaches the log (a real guard). No token
+    // assertion here: the fake `gh` prints only the device prompt, and the kernel copies raw exec
+    // output into the tool result, so a token in that output would surface by design; a regex over
+    // events could never fail and would pin nothing.
+    expect(JSON.stringify(events)).not.toContain("loginCode");
   });
 });
 

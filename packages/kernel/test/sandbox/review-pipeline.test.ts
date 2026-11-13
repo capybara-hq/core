@@ -249,7 +249,7 @@ const conversationOfTaskRun = async (taskId: string): Promise<string> => {
 async function fireScheduled(
   prompt: string,
   toolCalls: { name: string; input: Record<string, unknown> }[],
-): Promise<ConversationEvent[]> {
+): Promise<{ terminal: ConversationEvent[]; conversationId: string }> {
   const task = await store.insertTask(db, {
     id: randomUUID(),
     orgId,
@@ -289,16 +289,27 @@ async function fireScheduled(
     "the scheduled run ended",
   );
   scriptRules([]);
-  return terminal;
+  return { terminal, conversationId: conv };
 }
 
-/** The unattended ask turned deny: no card, the reason in the result, the run finishes. */
-function expectUnattendedDeny(
+/**
+ * The unattended ask turned deny: no card, no approval row in PG, the reason in the result, the run
+ * finishes. The `approvals` table is checked too: the absent event alone would pass on a change
+ * that wrote the row without emitting the event.
+ */
+async function expectUnattendedDeny(
+  conversationId: string,
   terminal: ConversationEvent[],
   rule: string,
   kind: "command" | "write" = "command",
-): Extract<ConversationEvent, { type: "tool_result" }> {
+): Promise<Extract<ConversationEvent, { type: "tool_result" }>> {
   expect(terminal.filter((e) => e.type === "approval_requested")).toEqual([]);
+  const rows = await db
+    .selectFrom("approvals")
+    .select("id")
+    .where("conversation_id", "=", conversationId)
+    .execute();
+  expect(rows, "the unattended deny created no approval row").toEqual([]);
   expect(terminal.some((e) => e.type === "tool_call_started")).toBe(false);
   expect(terminal.some((e) => e.type === "run_finished")).toBe(true);
   const r = terminal.find(
@@ -690,6 +701,13 @@ describe("the command review in the pipeline", { timeout: 120_000 }, () => {
     );
     scriptRules([]);
     expect(terminal.filter((e) => e.type === "approval_requested")).toEqual([]);
+    // no event and no row: the unattended branch never calls requestCommand
+    const approvals = await db
+      .selectFrom("approvals")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(approvals).toEqual([]);
     const r = terminal.find((e): e is ToolResult => e.type === "tool_result");
     expect(r?.payload.isError).toBe(true);
     expect(r?.payload.content).toContain("This command needs approval");
@@ -702,20 +720,20 @@ describe("the command review in the pipeline", { timeout: 120_000 }, () => {
   });
 
   it("a scheduled task hitting sudo gets no approval and no wait: the ask is a deny, the run continues", async () => {
-    const terminal = await fireScheduled("Update the system packages", [
+    const { terminal, conversationId } = await fireScheduled("Update the system packages", [
       { name: "Bash", input: { command: "sudo apt-get update", description: "Update packages" } },
     ]);
-    expectUnattendedDeny(terminal, "ask.sudo");
+    await expectUnattendedDeny(conversationId, terminal, "ask.sudo");
   });
 
   it("a scheduled task writing outside the workspace is denied at once with ask.outside-write", async () => {
-    const terminal = await fireScheduled("Write the shared config", [
+    const { terminal, conversationId } = await fireScheduled("Write the shared config", [
       {
         name: "Write",
         input: { file_path: "/etc/capybara-t15/note.txt", content: "x" },
       },
     ]);
-    expectUnattendedDeny(terminal, "ask.outside-write", "write");
+    await expectUnattendedDeny(conversationId, terminal, "ask.outside-write", "write");
   });
 
   it("an IM run by the device owner is attended: the ask waits for the card", async () => {
