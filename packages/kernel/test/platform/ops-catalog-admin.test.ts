@@ -38,7 +38,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   ops = env.k.app.get(PlatformOperations);
   org2 = await createOrg(env.root, ORG2_NAME);
-}, 240_000);
+});
 afterAll(async () => {
   await env?.stop();
 });

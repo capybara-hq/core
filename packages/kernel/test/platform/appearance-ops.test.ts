@@ -33,7 +33,7 @@ beforeAll(async () => {
   ops = env.k.app.get(PlatformOperations);
   ({ itemId, themeId } = await importLook(env));
   await enableExtensions(env.db, env.orgId, LOOK);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -61,7 +61,7 @@ const ctxOf = (accountId: string): OperationContext => ({
 
 const parse = (id: string, input: unknown) => op(id).input.parse(input);
 
-describe("suggested appearance operations", { timeout: 60_000 }, () => {
+describe("suggested appearance operations", () => {
   it("both operations are confirmed and never rememberable", () => {
     const platform = op(PLATFORM_OP);
     expect(platform.confirm).toBe("platform");

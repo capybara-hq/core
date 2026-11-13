@@ -24,7 +24,7 @@ beforeAll(async () => {
   env = await startOrgEnv();
   ops = env.k.app.get(PlatformOperations);
   conversations = env.k.app.get(ConversationsService);
-}, 240_000);
+});
 afterAll(async () => {
   await env?.stop();
 });

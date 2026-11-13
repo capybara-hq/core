@@ -108,7 +108,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -184,7 +184,7 @@ const setSetting = async (platformTool: "on" | "read-only" | "off") => {
   expect(res.statusCode, res.body).toBe(200);
 };
 
-describe("Platform tool end to end", { timeout: 180_000 }, () => {
+describe("Platform tool end to end", () => {
   it("(a) a member browses, searches and calls a read operation without an approval", async () => {
     const conv = await conversation(member);
     await conv.turn(platform({ action: "browse" }));

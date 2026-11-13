@@ -92,7 +92,7 @@ beforeAll(async () => {
   org2 = await createOrg(root, "Beta Corp");
   await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
     VALUES (${orgId}, ${memberId}, 'member')`.execute(db);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
