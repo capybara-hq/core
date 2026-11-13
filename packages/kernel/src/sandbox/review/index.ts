@@ -46,3 +46,4 @@ export type {
   RuleOutcome,
   SimpleCommand,
 } from "./types.js";
+export { isSessionGrantableRule } from "./types.js";

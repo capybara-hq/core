@@ -11,16 +11,20 @@ import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
 import {
+  COMMAND_ASK_TEXT_MAX_CHARS,
   GIT_ASK_MAX_REFS,
   GIT_REF_MAX_CHARS,
   NETWORK_ASK_MAX_HOSTS,
   NETWORK_HOST_MAX_CHARS,
+  type ReviewRecord,
   type ToolView,
 } from "../conversations/events.js";
 import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { clipText } from "../extensions/hooks.js";
 import { audit } from "../identity/audit.js";
+import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -37,6 +41,7 @@ import { type PendingPolicyOp, pendingPolicyOpsOf } from "../local-devices/polic
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { isSessionGrantableRule } from "../sandbox/review/types.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
 import {
@@ -71,10 +76,10 @@ export type ApprovalStatus =
   | "skipped";
 export type ApprovalScope = "once" | "session" | "always";
 /**
- * What an approval asks: a tool call, the device owner about refused network hosts, or the actor
- * about a git push the gateway held.
+ * What an approval asks: a tool call, the device owner about refused network hosts, the actor about
+ * a git push the gateway held, or a person about a command the review held (auto mode spec §5.4).
  */
-export type ApprovalKind = "tool" | "network" | "git";
+export type ApprovalKind = "tool" | "network" | "git" | "command";
 
 /**
  * The formatted `tool_result` of a command an ask kept (≤ 16 KB; larger output already archived),
@@ -87,6 +92,8 @@ export interface KeptToolResult {
   contentTypes?: string[];
   display?: ToolDisplay;
   view?: ToolView;
+  /** The command review's decision, kept with the result (display only). */
+  review?: ReviewRecord;
 }
 
 /**
@@ -155,6 +162,26 @@ export interface GitAskDetail {
 export type GitAskView = Omit<GitAskDetail, "result">;
 
 /**
+ * A command review ask's `detail` (auto mode spec §5.4): what the person is asked to allow before it
+ * runs — a shell command or a file write outside the workspace — with the rule and reason the review
+ * gave. Display only; the run waits for the decision.
+ */
+export interface CommandAskDetail {
+  deviceId: string;
+  deviceName: string;
+  mode: "auto" | "sandbox";
+  /** A shell command (`Bash`) or a file write outside the workspace (`Write` / `Edit`). */
+  kind: "command" | "write";
+  /** The command text (clipped), or the tool key of the write. */
+  command: string;
+  /** A write's target path. */
+  path?: string;
+  /** The rule that asked, or null for a classifier ask (which offers `once` only). */
+  rule: string | null;
+  reason: string;
+}
+
+/**
  * The model-visible note written after a network ask's kept result when its run is stopped before
  * the device owner answered (spec §6.7).
  */
@@ -180,6 +207,8 @@ export interface ApprovalRecord {
   detail: NetworkAskDetail | null;
   /** A git ask's host, repository, refs, kept result and outcome; null for any other kind. */
   git: GitAskDetail | null;
+  /** A command review ask's facts; null for any other kind. */
+  command: CommandAskDetail | null;
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -209,6 +238,33 @@ export interface ApprovalPublicRecord extends Omit<ApprovalRecord, "detail" | "g
   git: GitAskView | null;
 }
 
+/**
+ * A new command review ask (auto mode spec §5.4), made by the tool pipeline: the run waits for the
+ * device owner to allow the command once or, for a rule ask, for the rest of the conversation.
+ */
+export interface CommandAskInput {
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  /** The call's step (written to `approval_requested`). */
+  step: number;
+  callId: string;
+  /** The device's owner: the only person who may decide. */
+  requestedFor: string;
+  detail: CommandAskDetail;
+  /** `["once"]`, plus `["session"]` when the ask came from a rule hit (P-D2). */
+  scopes: ("once" | "session")[];
+  /** The call's attempt (default: after its other approvals, as a network ask takes it). */
+  attempt?: number;
+}
+
+/** What a command ask's decision took effect as, passed to the decision's transaction. */
+interface CommandDecision {
+  /** Null when denied. */
+  scope: "once" | "session" | null;
+  via: DecisionVia;
+}
+
 /** The record without an ask's kept command result (what routes and cards may show). */
 export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
   const strip = <T extends { result: KeptToolResult }>(d: T | null): Omit<T, "result"> | null => {
@@ -216,7 +272,17 @@ export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
     const { result: _result, ...rest } = d;
     return rest;
   };
-  return { ...r, detail: strip(r.detail), git: strip(r.git) };
+  return {
+    ...r,
+    // never offered, even from a row stored before the catch-all was excluded: a `command` ask
+    // remembers one concrete rule class, and a classifier ask (no rule) remembers nothing
+    scopes:
+      r.command !== null && !isSessionGrantableRule(r.command.rule)
+        ? r.scopes.filter((s) => s !== "session")
+        : r.scopes,
+    detail: strip(r.detail),
+    git: strip(r.git),
+  };
 }
 
 /** 审批详情（列表与详情接口返回）。 */
@@ -316,6 +382,12 @@ const NETWORK_ASK_SPEC_HASH = "network";
 export const GIT_ASK_TOOL_KEY = "Bash";
 /** The spec hash of a git ask (no tool definition is approved). */
 const GIT_ASK_SPEC_HASH = "git";
+/** The tool key a command ask is recorded under (a command runs in `Bash`; a write under `Write`). */
+export const COMMAND_ASK_TOOL_KEY = "Bash";
+/** The spec hash of a command ask (no tool definition is approved). */
+const COMMAND_ASK_SPEC_HASH = "command";
+/** The tool key a file-write ask is recorded under. */
+export const COMMAND_WRITE_TOOL_KEY = "Write";
 
 /** A new git push ask (sandbox git credentials spec §7), made by the tool pipeline. */
 export interface GitAskInput {
@@ -385,6 +457,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     kind: r.kind,
     detail: r.kind === "network" ? ((r.detail as NetworkAskDetail | null) ?? null) : null,
     git: r.kind === "git" ? ((r.detail as GitAskDetail | null) ?? null) : null,
+    command: r.kind === "command" ? ((r.detail as CommandAskDetail | null) ?? null) : null,
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,
@@ -746,8 +819,118 @@ export class ApprovalsService {
     return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
   }
 
-  /** 当前用户能处理的审批（新的在前，最多 {@link APPROVALS_LIST_MAX} 条）；`status` 缺省为全部。 */
-  async list(orgId: string, accountId: string, status?: ApprovalStatus): Promise<ApprovalView[]> {
+  /**
+   * A command review ask (auto mode spec §5.4): a pending approval of kind `command` for the
+   * device's owner, expiring like a tool approval, and its `approval_requested` (the display-only
+   * `command` field), in one transaction. The scopes are `once` always and `session` only for a
+   * rule ask (P-D2: `本会话允许同类` remembers the rule, and a classifier ask has none). It takes
+   * the attempt after the call's other approvals; one per call: a second request returns the first.
+   */
+  async requestCommand(input: CommandAskInput): Promise<ApprovalRecord> {
+    const d = input.detail;
+    if (input.scopes.length === 0 || !input.scopes.includes("once")) {
+      throw new Error('a command ask offers at least "once"');
+    }
+    if (input.scopes.includes("session") && !isSessionGrantableRule(d.rule)) {
+      throw new Error(
+        'a command ask offers "session" only for a concrete rule, never a catch-all or a classifier ask',
+      );
+    }
+    if (d.command.length === 0 || d.reason.length === 0) {
+      throw new Error("a command ask names the command and the review's reason");
+    }
+    const { record, toSeq } = await this.requestCommandIn(input);
+    if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
+    return record;
+  }
+
+  @Transactional()
+  private async requestCommandIn(
+    input: CommandAskInput,
+  ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
+    const hours = this.config.get().tools.approvalTimeoutHours;
+    const t = this.db.db;
+    // the conversation row first (as `requestIn`): it also serializes two asks of one call
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", input.conversationId)
+      .forUpdate()
+      .execute();
+    // only the device's owner is ever asked: never another account the caller names
+    const owner = await this.deviceOwnerOf(input.orgId, input.detail.deviceId);
+    if (owner === null || owner !== input.requestedFor) {
+      throw new Error(
+        `a command ask is for the owner of a live device of the org (device ${input.detail.deviceId})`,
+      );
+    }
+    const existing = await this.commandForCall(input.runId, input.callId);
+    if (existing !== null) return { record: existing, toSeq: null };
+    const last = await t
+      .selectFrom("approvals")
+      .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("run_id", "=", input.runId)
+      .where("call_id", "=", input.callId)
+      .executeTakeFirst();
+    const detail: CommandAskDetail = { ...input.detail };
+    const row = await t
+      .insertInto("approvals")
+      .values({
+        id: randomUUID(),
+        org_id: input.orgId,
+        conversation_id: input.conversationId,
+        run_id: input.runId,
+        call_id: input.callId,
+        attempt: input.attempt ?? Number(last?.attempt ?? 0) + 1,
+        kind: "command",
+        detail: JSON.stringify(detail),
+        tool_key: detail.kind === "write" ? COMMAND_WRITE_TOOL_KEY : COMMAND_ASK_TOOL_KEY,
+        spec_hash: COMMAND_ASK_SPEC_HASH,
+        connector_id: null,
+        input: JSON.stringify({}),
+        requested_for: input.requestedFor,
+        approver_role: null,
+        scopes: [...new Set(input.scopes)],
+        scope: null,
+        decided_by: null,
+        expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const rec = toRecord(row);
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "approval_requested",
+        runId: rec.runId,
+        idemKey: `approval_requested:${rec.id}`,
+        payload: {
+          step: input.step,
+          callId: rec.callId,
+          approvalId: rec.id,
+          toolKey: rec.toolKey,
+          expiresAt: rec.expiresAt,
+          command: {
+            kind: detail.kind,
+            // the approval's detail holds the whole command; the event is display only and clamped
+            command: clipText(detail.command, COMMAND_ASK_TEXT_MAX_CHARS),
+            ...(detail.path !== undefined && { path: detail.path }),
+            rule: detail.rule,
+            reason: clipText(detail.reason, COMMAND_ASK_TEXT_MAX_CHARS),
+            mode: detail.mode,
+          },
+          requestedFor: rec.requestedFor,
+          approverRole: null,
+        },
+      },
+    ]);
+    return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
+  }
+
+  /** 当前用户能处理的审批（新的在前，最多 {@link APPROVALS_LIST_MAX} 条）；`status` 缺省为全部。 */ async list(
+    orgId: string,
+    accountId: string,
+    status?: ApprovalStatus,
+  ): Promise<ApprovalView[]> {
     const role = await this.roleOf(orgId, accountId);
     const roles = role === null ? [] : ORG_ROLES.filter((r) => roleAtLeast(role, r));
     let q = this.db
@@ -825,6 +1008,9 @@ export class ApprovalsService {
     }
     if (kind.kind === "git") {
       return this.decideGit(orgId, id, accountId, body, actorTokenId, via);
+    }
+    if (kind.kind === "command") {
+      return this.decideCommand(orgId, id, accountId, body, actorTokenId, via);
     }
     const { record, toSeq } = await this.decideIn(orgId, id, accountId, body, actorTokenId);
     await this.announceDecided(record, toSeq);
@@ -994,6 +1180,76 @@ export class ApprovalsService {
       git = { outcome: scope, via };
     }
     const decided = await this.decideIn(orgId, id, accountId, body, actorTokenId, undefined, git);
+    await this.announceDecided(decided.record, decided.toSeq);
+    return decided.record;
+  }
+
+  /**
+   * A command review ask's decision (auto mode spec §5.4): only the device's owner (`requested_for`)
+   * decides, in a signed-in session (a personal access token is refused, as for network asks).
+   * `once` lets this call run; `session` is offered only for a rule ask and also records the rule as
+   * the conversation's grant (`command:<rule>`, P-D2: 本会话允许同类 remembers the rule, never a
+   * deny). The decision is written in its transaction; the run resumes after the commit.
+   */
+  private async decideCommand(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    actorTokenId: string | undefined,
+    via: DecisionVia,
+  ): Promise<ApprovalRecord> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const ask = toRecord(row);
+    if (ask.command === null) throw new Error(`command ask ${id} has no detail`);
+    if (ask.requestedFor !== accountId) {
+      // named only to the people the ask is shown to (the run's starter); any other member
+      // learns nothing about it, as `get` (approval.not_found)
+      const trigger = await this.db
+        .selectFrom("runs")
+        .select("trigger_account_id")
+        .where("id", "=", ask.runId)
+        .executeTakeFirst();
+      if (accountId !== trigger?.trigger_account_id) throw notFound();
+      const name = ask.requestedFor === null ? null : await this.displayNameOf(ask.requestedFor);
+      throw new ApiError(
+        "approval.not_yours",
+        `Only ${name ?? "the device's owner"} can allow this command on this device.`,
+      );
+    }
+    if (actorTokenId !== undefined) {
+      throw new ApiError(
+        "auth.session_required",
+        "Commands are decided in a signed-in session, not with a personal access token.",
+      );
+    }
+    let command: CommandDecision = { scope: null, via };
+    if (body.decision === "approve") {
+      const scope = body.scope ?? "once";
+      if (scope === "always" || !ask.scopes.includes(scope)) {
+        throw new ApiError(
+          "approval.scope_not_allowed",
+          `Scope "${scope}" is not allowed for this approval; allowed: ${ask.scopes.join(", ")}`,
+        );
+      }
+      command = { scope, via };
+    }
+    const decided = await this.decideIn(
+      orgId,
+      id,
+      accountId,
+      body,
+      actorTokenId,
+      undefined,
+      undefined,
+      command,
+    );
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
   }
@@ -1352,8 +1608,9 @@ export class ApprovalsService {
     actorTokenId: string | undefined,
     network?: NetworkDecision,
     git?: GitDecision,
+    command?: CommandDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
-    return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git);
+    return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git, command);
   }
 
   /**
@@ -1369,6 +1626,7 @@ export class ApprovalsService {
     actorTokenId: string | undefined,
     network?: NetworkDecision,
     git?: GitDecision,
+    command?: CommandDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     const t = this.db.db;
     // lock order: the conversation, the approval, then the run (as a stop of the waiting run)
@@ -1402,10 +1660,11 @@ export class ApprovalsService {
       throw new ApiError("approval.already_decided", "Approval has expired");
     }
     // a network ask is decided only through decideNetwork (its policy op went first), a git ask
-    // only through decideGit
+    // only through decideGit, a command ask only through decideCommand
     if (
       (before.kind === "network") !== (network !== undefined) ||
-      (before.kind === "git") !== (git !== undefined)
+      (before.kind === "git") !== (git !== undefined) ||
+      (before.kind === "command") !== (command !== undefined)
     ) {
       throw new Error(`approval ${id} is of kind ${before.kind}`);
     }
@@ -1415,11 +1674,13 @@ export class ApprovalsService {
       ? null
       : git !== undefined
         ? (git.outcome ?? "once")
-        : network === undefined
-          ? (body.scope ?? "once")
-          : network.outcome === "always" || network.outcome === "refused"
-            ? "always"
-            : "once";
+        : command !== undefined
+          ? (command.scope ?? "once")
+          : network === undefined
+            ? (body.scope ?? "once")
+            : network.outcome === "always" || network.outcome === "refused"
+              ? "always"
+              : "once";
     // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
     if (scope !== null && scope !== "once" && before.requestedFor === null) {
       throw new ApiError(
@@ -1434,6 +1695,18 @@ export class ApprovalsService {
       throw new ApiError(
         "approval.scope_not_allowed",
         `Scope "${scope}" is not allowed for this approval; allowed: ${before.scopes.join(", ")}`,
+      );
+    }
+    // 本会话允许同类 remembers one concrete rule class: a catch-all (`unsure.*`) or a classifier
+    // ask (no rule) never writes a `command:` grant, even from a row offered it before the fix
+    if (
+      command !== undefined &&
+      scope === "session" &&
+      !isSessionGrantableRule(before.command?.rule ?? null)
+    ) {
+      throw new ApiError(
+        "approval.scope_not_allowed",
+        'Scope "session" is not allowed for a command with no concrete rule',
       );
     }
     const updated = await t
@@ -1476,7 +1749,8 @@ export class ApprovalsService {
       }
     } else if (scope === "session") {
       // a sub-agent's grant is the root conversation's (agent map spec §7): the root and every
-      // agent of its tree, at any depth, are not asked again for the same call
+      // agent of its tree, at any depth, are not asked again for the same call. A command ask
+      // remembers the rule hit, not the command (auto mode spec §5.4, P-D2).
       await t
         .insertInto("conversation_tool_grants")
         .values({
@@ -1484,14 +1758,16 @@ export class ApprovalsService {
             ctx.parent_conversation_id === null
               ? before.conversationId
               : await rootConversationOf(t, ctx.parent_conversation_id),
-          tool_key: before.toolKey,
-          spec_hash: hash,
-          connector_id: connectorId,
+          tool_key:
+            command !== undefined ? `command:${before.command?.rule ?? ""}` : before.toolKey,
+          spec_hash: command !== undefined ? COMMAND_ASK_SPEC_HASH : hash,
+          connector_id: command !== undefined ? null : connectorId,
         })
         .onConflict((oc) =>
-          oc
-            .columns(["conversation_id", "tool_key"])
-            .doUpdateSet({ spec_hash: hash, connector_id: connectorId }),
+          oc.columns(["conversation_id", "tool_key"]).doUpdateSet({
+            spec_hash: command !== undefined ? COMMAND_ASK_SPEC_HASH : hash,
+            connector_id: command !== undefined ? null : connectorId,
+          }),
         )
         .execute();
     } else if (scope === "always" && before.requestedFor !== null) {
@@ -1514,7 +1790,13 @@ export class ApprovalsService {
         )
         .execute();
     }
-    if (approved && scope !== null && network === undefined && git === undefined) {
+    if (
+      approved &&
+      scope !== null &&
+      network === undefined &&
+      git === undefined &&
+      command === undefined
+    ) {
       await this.keepTrialGrant(before, accountId);
     }
     // 「这次允许」 of a push in a trial run: the task's grant for that repository; a standing
@@ -1566,6 +1848,35 @@ export class ApprovalsService {
       await this.resumes.resumeIn(before.runId, id);
       return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
     }
+    if (command !== undefined && before.command !== null) {
+      await audit(t, {
+        actorAccountId: accountId,
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        orgId,
+        action: approved ? "device.command_allowed" : "device.command_denied",
+        target: before.command.deviceId,
+        detail: {
+          approvalId: id,
+          deviceId: before.command.deviceId,
+          kind: before.command.kind,
+          rule: before.command.rule,
+          mode: before.command.mode,
+          // the hash of the whole command the approval holds: an audit can match it to the text
+          ...(before.command.kind === "command" && {
+            commandHash: sha256Hex(before.command.command),
+          }),
+          scope,
+          by: accountId,
+          via: command.via,
+          conversationId: before.conversationId,
+          runId: before.runId,
+          ...(reason !== undefined && { reason }),
+        },
+      });
+      // the run resumes after the decision commits (auto mode spec §5.4, multi-replica)
+      afterCommit(() => this.resumeDecided(before.runId, id));
+      return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
+    }
     await audit(t, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -1596,6 +1907,16 @@ export class ApprovalsService {
     // its suspend's re-check
     await this.resumes.resumeIn(before.runId, id);
     return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
+  }
+
+  /**
+   * Resumes the run of a decided command ask in its own transaction after the decision committed
+   * (`afterCommit` runs outside any transaction; `RunResume.resumeIn` requires one). Its outcome
+   * is the suspend's re-check if the run was still running.
+   */
+  @Transactional()
+  private async resumeDecided(runId: string, approvalId: string): Promise<void> {
+    await this.resumes.resumeIn(runId, approvalId);
   }
 
   /**
@@ -1809,6 +2130,20 @@ export class ApprovalsService {
       .where("run_id", "=", runId)
       .where("call_id", "=", callId)
       .where("kind", "=", "git")
+      .orderBy("attempt", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row ? toRecord(row) : null;
+  }
+
+  /** The command review ask of a tool call (at most one per call); null when it has none. */
+  async commandForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .where("kind", "=", "command")
       .orderBy("attempt", "desc")
       .limit(1)
       .executeTakeFirst();

@@ -16,14 +16,22 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
-import { type ToolView, ToolViewSchema } from "../conversations/events.js";
+import {
+  COMMAND_ASK_MAX_CHARS,
+  COMMAND_ASK_TEXT_MAX_CHARS,
+  type ReviewRecord,
+  type ToolView,
+  ToolViewSchema,
+} from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { clipText } from "../extensions/hooks.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
+import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -50,6 +58,12 @@ import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/mess
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import {
+  type CommandReview,
+  isSessionGrantableRule,
+  type ReviewVerdict,
+} from "../sandbox/review/index.js";
+import { CommandReviewService } from "../sandbox/review/review.service.js";
+import {
   appendMissingGrant,
   connectionGrantKey,
   UNATTENDED_CONNECTION_ERROR,
@@ -64,6 +78,7 @@ import {
   type ApprovalRecord,
   type ApprovalScope,
   ApprovalsService,
+  type CommandAskDetail,
   type NetworkAskDetail,
 } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
@@ -118,6 +133,38 @@ export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
 /** 等待审批期间 run 被中止。 */
 export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for approval.";
+/**
+ * The command review's deny text (auto mode spec §5.4, P-D12): the model-visible reason and what it
+ * can do instead. `kind` says whether a shell command or a file write was held.
+ */
+export const commandDeniedText = (reason: string, kind: "command" | "write"): string =>
+  kind === "write"
+    ? `This write is blocked by review: ${reason}. Write it another way or ask the user to allow it.`
+    : `Command blocked by review: ${reason}. Do the work another way or ask the user to run it.`;
+/**
+ * A command (or write) the review held in an unattended run: no one can answer, so it is a deny at
+ * once — no approval, no grant (P-D3).
+ */
+export const commandUnattendedText = (reason: string, kind: "command" | "write"): string =>
+  kind === "write"
+    ? `This write needs approval (${reason}), and no one can approve it now; do it another way or leave it for the person.`
+    : `This command needs approval (${reason}), and no one can approve it now; do the work another way or leave it for the person.`;
+/**
+ * A command longer than the ask ceiling (`COMMAND_ASK_MAX_CHARS`): it cannot be shown for approval,
+ * and an approval must bind the whole text, so the call is refused before any approval exists.
+ */
+export const commandTooLongReason = (chars: number): string =>
+  `The command is ${chars} characters long; commands over ${COMMAND_ASK_MAX_CHARS} are too long to review and approve.`;
+/** The model-visible result of a command over the ask ceiling (actionable, English). */
+export const commandTooLongText = (chars: number): string =>
+  `This command is too long to review (${chars} characters; the limit is ${COMMAND_ASK_MAX_CHARS}). Shorten it, or write it to a script file and run that instead.`;
+/** The person declined a held command or write (P-D12); `reason` is what they said, if anything. */
+export const commandDeclinedText = (reason: string | null, kind: "command" | "write"): string => {
+  const what = kind === "write" ? "this write" : "to run this command";
+  return reason === null
+    ? `The user declined ${what}. Continue without it or ask the user.`
+    : `The user declined ${what}: ${reason}. Continue without it or ask the user.`;
+};
 /** 等待用户输入期间 run 被中止。 */
 export const INPUT_CANCELLED_TEXT = "The run was stopped while waiting for user input.";
 /**
@@ -329,7 +376,12 @@ interface PipelineDeps {
   /** 策略为 `ask` 时建审批；续跑时读该调用的审批结果。 A refused network host: a network ask. */
   readonly approvals: Pick<
     ApprovalsService,
-    "request" | "forCall" | "networkForCall" | "requestNetwork"
+    | "request"
+    | "forCall"
+    | "networkForCall"
+    | "requestNetwork"
+    | "commandForCall"
+    | "requestCommand"
   >;
   /** 处理函数返回 `input_required` 时建输入请求；续跑时读该调用的各轮输入请求。 */
   readonly questions: Pick<QuestionsService, "ask" | "forCall">;
@@ -369,6 +421,16 @@ interface PipelineDeps {
    * it, their calls reach the builtins' guards, which refuse them.
    */
   readonly messages: Pick<SubagentMessages, "toChild" | "toParent"> | undefined;
+  /**
+   * The command review of a call the pipeline makes (auto mode spec §5.1, §5.4); absent (hand-built
+   * pipelines): no call is reviewed. It never throws: any failure is an ask.
+   */
+  readonly review: CommandReview | undefined;
+  /**
+   * The facts a reviewed call's device has (mode, owner, workspace root); absent (hand-built
+   * pipelines): no call is reviewed. Null facts (no device bound): the call is not reviewed.
+   */
+  readonly devices: Pick<ConversationDevices, "reviewFacts"> | undefined;
   /**
    * What a command's refused network hosts need (network ask-to-allow spec §6.2): the run tree's
    * network asks and the device's features and policy summary. Without them (hand-built test
@@ -449,6 +511,48 @@ export type ExecOutcome =
     };
 
 type ToolCall = { id: string; name: string; input: unknown };
+
+/**
+ * The tools the command review covers (auto mode spec §5.1): the shell and the file tools whose
+ * writes may leave the workspace. Any other tool call is not reviewed (the review service answers
+ * `allow` for it too; the pipeline skips the facts read).
+ */
+const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+
+/** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
+const reviewKindOf = (toolKey: string): "command" | "write" =>
+  toolKey === "Bash" ? "command" : "write";
+
+/** What the review stage found for one call (auto mode spec §5.4). */
+type ReviewOutcome =
+  /** Run the call; `review` is recorded on its result when the review ran. */
+  | { kind: "continue"; review?: ReviewRecord | undefined; commandAsk?: ApprovalRecord }
+  /** The run waits on the call's `command` approval. */
+  | { kind: "wait"; wait: WaitingFor }
+  /** The call ends now with this model-visible error result and its review record. */
+  | { kind: "result"; content: string; review: ReviewRecord };
+
+/** The review record of an allowed call. */
+const allowRecord = (v: ReviewVerdict): ReviewRecord => ({
+  decision: "allow",
+  by: v.by,
+  rule: v.rule,
+  reason: v.reason,
+});
+
+/** The review record of a denied call (the rule table's, the classifier's or a person's). */
+const denyRecord = (by: ReviewRecord["by"], rule: string | null, reason: string): ReviewRecord => ({
+  decision: "deny",
+  by,
+  rule,
+  reason,
+});
+
+/** A string field of a validated tool input, or "" (never another type). */
+const textField = (input: unknown, field: string): string => {
+  const v = (input as Record<string, unknown> | null)?.[field];
+  return typeof v === "string" ? v : "";
+};
 
 /**
  * 审计链（spec 3.6 R6）里「凭什么放行」：在审批下执行（审批 id、批准人、范围）、记住的授权放行、或策略本身放行。
@@ -595,7 +699,15 @@ export class ToolPipeline {
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
     @Inject(ToolOutputs) outputs: Pick<ToolOutputs, "save" | "load">,
     @Inject(ApprovalsService)
-    approvals: Pick<ApprovalsService, "request" | "forCall" | "networkForCall" | "requestNetwork">,
+    approvals: Pick<
+      ApprovalsService,
+      | "request"
+      | "forCall"
+      | "networkForCall"
+      | "requestNetwork"
+      | "commandForCall"
+      | "requestCommand"
+    >,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "ask" | "forCall">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) log: Logger,
@@ -610,6 +722,12 @@ export class ToolPipeline {
     @Inject(NetworkGrants)
     networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> },
     @Optional() @Inject(DevicePolicyService) devicePolicy?: Pick<DevicePolicyService, "summary">,
+    /** The command review (auto mode spec §5.4); absent in hand-built pipelines. */
+    @Optional() @Inject(CommandReviewService) review?: CommandReview,
+    /** The reviewed call's device facts; absent in hand-built pipelines. */
+    @Optional()
+    @Inject(ConversationDevices)
+    devices?: Pick<ConversationDevices, "reviewFacts">,
   ) {
     this.deps = {
       get db() {
@@ -646,6 +764,8 @@ export class ToolPipeline {
         return subagents ? { dispatch: (a: DispatchArgs) => subagents.dispatch(a) } : undefined;
       },
       messages,
+      review,
+      devices,
       network:
         networkGrants && devicePolicy
           ? { grants: networkGrants, devices: devicePolicy }
@@ -770,6 +890,7 @@ export class ToolPipeline {
           ...keptExtras(kept),
           content: withNetworkNotes(kept?.content ?? UNKNOWN_RESULT_TEXT, notes),
           isError: kept?.isError ?? true,
+          ...(kept?.review !== undefined && { review: kept.review }),
         });
         return undefined;
       }
@@ -780,12 +901,26 @@ export class ToolPipeline {
         approval?.status === "approved" && approval.specHash === started.payload.specHash
           ? approval
           : null;
+      // a command that ran under the person's `command` approval: its review record and
+      // authorization survive the lost result too (the ask is the whole truth on a resume)
+      const commandAsk = await this.deps.approvals.commandForCall(ctx.runId, call.id);
+      const command = commandAsk?.status === "approved" ? commandAsk : null;
+      const authorization =
+        approved !== null
+          ? approvalAuthorization(approved)
+          : command !== null
+            ? approvalAuthorization(command)
+            : null;
       const source = approved ? null : (await resolve()).tools.find((t) => t.key === key)?.source;
       await this.writeResult(
         ctx,
         call.id,
         key,
-        { content: UNKNOWN_RESULT_TEXT, isError: true },
+        {
+          content: UNKNOWN_RESULT_TEXT,
+          isError: true,
+          ...(command !== null && { review: this.personAllowRecord(command) }),
+        },
         [],
         {
           durationMs: null,
@@ -794,7 +929,7 @@ export class ToolPipeline {
             : source?.kind === "connector"
               ? source.connectorId
               : null,
-          ...(approved && { authorization: approvalAuthorization(approved) }),
+          ...(authorization !== null && { authorization }),
         },
       );
       return undefined;
@@ -819,8 +954,14 @@ export class ToolPipeline {
     attempt: number,
     resume: ToolResume | undefined,
   ): Promise<WaitingFor | undefined> {
+    // the command review's record for this call's result (absent: not reviewed, or no device)
+    let review: ReviewRecord | undefined;
     const fail = async (content: string, key = call.name): Promise<undefined> => {
-      await this.writeResult(ctx, call.id, key, { content, isError: true });
+      await this.writeResult(ctx, call.id, key, {
+        content,
+        isError: true,
+        ...(review !== undefined && { review }),
+      });
       return undefined;
     };
 
@@ -957,12 +1098,26 @@ export class ToolPipeline {
       return refused === null ? approvalWait(approval) : fail(refused, outKey);
     }
     // 走到这里即放行：在（与当前定义一致的）审批下执行，否则是授权或策略放行
-    const authorization: Authorization =
+    let authorization: Authorization =
       approval?.status === "approved" && approvedHere
         ? approvalAuthorization(approval)
         : typeof decision === "object" && "grant" in decision
           ? { grant: decision.grant }
           : { policy: "allow" };
+
+    // Auto mode spec §5.1: the command review, after argument validation and the tool policy (and
+    // its approval), before the plugin hooks and `tool_call_started`. A deny ends the call here; an
+    // ask parks the run on the command approval (attended) or is a deny at once (unattended). An
+    // already decided command approval resumes the call without re-reviewing.
+    const reviewed = await this.reviewCall(ctx, call, tool, input);
+    if (reviewed.kind === "wait") return reviewed.wait;
+    if (reviewed.kind === "result") {
+      review = reviewed.review;
+      return fail(reviewed.content, outKey);
+    }
+    review = reviewed.review;
+    if (reviewed.commandAsk !== undefined)
+      authorization = approvalAuthorization(reviewed.commandAsk);
 
     // tool.preExecute after policy and approval, before tool_call_started (F10)
     const hooks = this.deps.pluginHooks;
@@ -1020,7 +1175,11 @@ export class ToolPipeline {
           ctx,
           call.id,
           outKey,
-          { content: hookDeniedText(verdict.plugin, verdict.reason), isError: true },
+          {
+            content: hookDeniedText(verdict.plugin, verdict.reason),
+            isError: true,
+            ...(review !== undefined && { review }),
+          },
           [event],
           undefined,
           [hookDeniedAudit(site, event.payload, verdict)],
@@ -1223,6 +1382,7 @@ export class ToolPipeline {
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
         ...(display !== undefined && { display }),
         ...(view !== undefined && { view }),
+        ...(review !== undefined && { review }),
       });
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
@@ -1252,6 +1412,7 @@ export class ToolPipeline {
         ...(display !== undefined && { display }),
         ...(view !== undefined && { view }),
         ...(card !== undefined && { card }),
+        ...(review !== undefined && { review }),
       },
       pre,
       callAudit,
@@ -1280,6 +1441,168 @@ export class ToolPipeline {
   }
 
   /**
+   * The command review of one call (auto mode spec §5.1, §5.4), after argument validation and the
+   * tool policy (and its approval), before the plugin hooks and execution. The device facts come
+   * from the same `ConversationDevices.forTool` the tool enters; with no device (or a deployment
+   * without a review service) the call runs unreviewed and fails on its own if it cannot. A deny is
+   * final whatever the mode and approvals; an `ask` waits for the device owner's `command` approval
+   * when the run is attended, and is a deny at once when it is not. A command approval already
+   * asked is the whole truth on a resume: the call is never reviewed twice.
+   */
+  private async reviewCall(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    input: unknown,
+  ): Promise<ReviewOutcome> {
+    const review = this.deps.review;
+    const devices = this.deps.devices;
+    if (review === undefined || devices === undefined) return { kind: "continue" };
+    if (!REVIEWED_TOOL_KEYS.has(tool.key)) return { kind: "continue" };
+    const asked = await this.deps.approvals.commandForCall(ctx.runId, call.id);
+    if (asked !== null) return this.settledCommandAsk(asked, tool.key);
+    const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
+    const facts = await devices.reviewFacts(ctx.orgId, rootConversationId, ctx.conversationId);
+    if (facts === null) return { kind: "continue" }; // no device: the tool fails on its own
+    const kind = reviewKindOf(tool.key);
+    const attended = ctx.unattended == null && ctx.accountId === facts.ownerAccountId;
+    const verdict = await review.review({
+      orgId: ctx.orgId,
+      conversationId: rootConversationId,
+      runId: ctx.runId,
+      accountId: ctx.accountId,
+      toolKey: tool.key,
+      input,
+      mode: facts.mode,
+      workspace: facts.workspace,
+      attended,
+      step: ctx.step,
+      callId: call.id,
+      signal: ctx.signal,
+      ...(ctx.parent !== undefined && {
+        parentRunId: ctx.parent.runId,
+        ...(ctx.parent.budgetRunId !== undefined && { budgetRunId: ctx.parent.budgetRunId }),
+        parent: {
+          conversationId: ctx.parent.conversationId,
+          runId: ctx.parent.runId,
+          callId: ctx.parent.callId,
+        },
+      }),
+      agentId: ctx.agentId,
+      agentVersion: ctx.agentVersion,
+      ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+    });
+    if (verdict.decision === "allow") {
+      return { kind: "continue", review: allowRecord(verdict) };
+    }
+    if (verdict.decision === "deny") {
+      return {
+        kind: "result",
+        content: commandDeniedText(verdict.reason, kind),
+        review: denyRecord(verdict.by, verdict.rule, verdict.reason),
+      };
+    }
+    // ask
+    const command = kind === "command" ? textField(input, "command") : tool.key;
+    // a command over the ceiling cannot be shown in full, and an approval must bind exactly what
+    // runs: refuse it (no approval, no grant) rather than approve a text the person cannot see
+    if (kind === "command" && command.length > COMMAND_ASK_MAX_CHARS) {
+      const reason = commandTooLongReason(command.length);
+      return {
+        kind: "result",
+        content: commandTooLongText(command.length),
+        review: denyRecord(verdict.by, null, reason),
+      };
+    }
+    if (!attended) {
+      const reason = verdict.reason;
+      return {
+        kind: "result",
+        content: commandUnattendedText(reason, kind),
+        review: denyRecord(verdict.by, verdict.rule, reason),
+      };
+    }
+    const detail: CommandAskDetail = {
+      deviceId: facts.deviceId,
+      deviceName: facts.deviceName,
+      mode: facts.mode,
+      kind,
+      // the whole command the approval covers (the event keeps a clamped copy for display)
+      command,
+      ...(kind === "write" && { path: clipText(textField(input, "file_path"), 4096) }),
+      rule: verdict.rule,
+      reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
+    };
+    let ask: ApprovalRecord;
+    try {
+      ask = await this.deps.approvals.requestCommand({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: ctx.step,
+        callId: call.id,
+        requestedFor: facts.ownerAccountId,
+        detail,
+        // `once` always; `session` only for a concrete rule class, never an `unsure.*` catch-all (P-D2)
+        scopes: isSessionGrantableRule(verdict.rule) ? ["once", "session"] : ["once"],
+      });
+    } catch (err) {
+      // fail closed: an ask that cannot be created is a deny, never a run of the held call
+      this.deps.log.warn("command ask could not be created; denying the call", {
+        conversationId: ctx.conversationId,
+        callId: call.id,
+        err,
+      });
+      const reason = "The approval could not be created";
+      return {
+        kind: "result",
+        content: commandDeniedText(reason, kind),
+        review: denyRecord(verdict.by, verdict.rule, reason),
+      };
+    }
+    return { kind: "wait", wait: approvalWait(ask) };
+  }
+
+  /** The outcome of a call whose `command` approval was already asked (a resume). */
+  private settledCommandAsk(ask: ApprovalRecord, toolKey: string): ReviewOutcome {
+    const kind = reviewKindOf(toolKey);
+    const rule = ask.command?.rule ?? null;
+    if (ask.status === "pending") return { kind: "wait", wait: approvalWait(ask) };
+    if (ask.status === "approved") {
+      return { kind: "continue", commandAsk: ask, review: this.personAllowRecord(ask) };
+    }
+    if (ask.status === "denied") {
+      const reason = ask.denyReason;
+      return {
+        kind: "result",
+        content: commandDeclinedText(reason, kind),
+        review: denyRecord("person", rule, reason ?? "The user declined."),
+      };
+    }
+    const text =
+      ask.status === "expired" ? approvalExpiredText(approvalHours(ask)) : APPROVAL_CANCELLED_TEXT;
+    return { kind: "result", content: text, review: denyRecord("person", rule, text) };
+  }
+
+  /**
+   * The review record of a command (or write) the person allowed: its scope, and for a shell
+   * command the SHA-256 of the text the ask holds in full, so an audit can match record and text.
+   */
+  private personAllowRecord(ask: ApprovalRecord): ReviewRecord {
+    return {
+      decision: "allow",
+      by: "person",
+      rule: ask.command?.rule ?? null,
+      reason: ask.command?.reason ?? "The user allowed this call.",
+      ...((ask.scope === "once" || ask.scope === "session") && { scope: ask.scope }),
+      ...(ask.command !== null &&
+        ask.command.kind === "command" && {
+          commandHash: sha256Hex(ask.command.command),
+        }),
+    };
+  }
+
+  /**
    * A foreground command's refused network hosts (network ask-to-allow spec §6.2, §6.8, §8.3):
    * the `network_blocked` event, the missing grants of an unattended run, and either notes for the
    * result written now, or (device-layer hosts worth asking) `network_blocked` and the call's
@@ -1295,7 +1618,7 @@ export class ToolPipeline {
     input: unknown,
     report: { deviceId: string; blocked: NetworkBlockedHost[] },
     callAudit: CallAudit,
-    result: NetworkAskDetail["result"] & { text: string },
+    result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -1914,6 +2237,7 @@ export class ToolPipeline {
       display?: ToolDisplay;
       view?: ToolView;
       card?: ToolCard;
+      review?: ReviewRecord;
     },
     pre: AppendEvent[] = [],
     callAudit?: CallAudit,

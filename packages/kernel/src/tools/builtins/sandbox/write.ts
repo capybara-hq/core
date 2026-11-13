@@ -3,7 +3,7 @@ import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, TOOL_VIEW_DIFF_MAX_BYTES, viewPath } from "../../view.js";
 import {
   checkPathShape,
-  checkWritable,
+  checkToolWritable,
   clip,
   display,
   inSandbox,
@@ -35,7 +35,7 @@ const SPEC: ToolSpec = {
     "source files and data files. The path is absolute, under the workspace directory or the " +
     "temporary files directory (the skills directory is read-only). Read an existing file first; overwriting a file you have not read, or one changed " +
     "since you read it, fails. To change part of an existing file, use Edit instead; to give a file to " +
-    "the user, use Deliver.",
+    "the user, use Deliver. In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
   inputSchema: {
     type: "object",
     properties: {
@@ -80,8 +80,9 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
       checkPathShape((input as WriteInput).file_path, "file_path");
       let path = "";
       // a read-before-write refusal is the guard working: a result with the guard view
-      const ran = await inSandbox(deps, ctx, ({ deviceId, h, roots, p, signal }) => {
-        path = checkWritable((input as WriteInput).file_path, roots);
+      const ran = await inSandbox(deps, ctx, (s) => {
+        const { deviceId, h, p, signal } = s;
+        path = checkToolWritable((input as WriteInput).file_path, s);
         // stat, read the previous content, write: one holder at a time per file
         return withPathLease(deps, { deviceId }, path, signal, async (signal) => {
           const st = await p.stat(h, path, signal);

@@ -24,8 +24,9 @@ import {
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
-import { devicePathsChange } from "../../../runtime/context/device-paths.js";
+import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
+import type { SandboxMode } from "../../../sandbox/modes.js";
 import {
   type HeldProvider,
   SandboxLockLostError,
@@ -102,6 +103,8 @@ export interface SandboxToolDeps {
 export interface SandboxSession {
   /** The device the call runs in (path leases are taken on it). */
   deviceId: string;
+  /** The mode the device runs at now (auto mode spec §4.1): the file tools' path checks follow it. */
+  mode: SandboxMode;
   h: SandboxHandle;
   /** The instance's roots: every path the call builds or checks is under one of them. */
   roots: SandboxRoots;
@@ -132,7 +135,7 @@ const BUSY_TEXT =
   "The device is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
-/** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
+/** The message the kernel reports for a sandbox tool call with no provider, minus its final period. */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
 
 /** The error of a sandbox call in a deployment without a sandbox provider. */
@@ -310,12 +313,31 @@ export function checkPath(path: string, roots: SandboxRoots, field = "path"): st
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-/** A writing tool's `file_path`: the skills root is the read-only copy of the skill files. */
-export function checkWritable(path: string, roots: SandboxRoots): string {
-  const p = checkPath(path, roots, "file_path");
-  if (p === roots.skills || p.startsWith(`${roots.skills}/`)) {
+/**
+ * A file tool's path in the mode the device runs at now (auto mode spec §4.1, decision 1): auto
+ * mode accepts any clean absolute path on the machine (shape checks only, the review judges a write
+ * outside the workspace); sandbox mode keeps the roots ({@link checkPath}).
+ */
+export function checkToolPath(
+  path: string,
+  s: Pick<SandboxSession, "roots" | "mode">,
+  field = "path",
+): string {
+  if (s.mode !== "auto") return checkPath(path, s.roots, field);
+  checkPathShape(path, field);
+  return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+}
+
+/** {@link checkToolPath} for a writing tool: the skills directory stays read-only in both modes. */
+export function checkToolWritable(path: string, s: Pick<SandboxSession, "roots" | "mode">): string {
+  const p = checkToolPath(path, s, "file_path");
+  if (p === s.roots.skills || p.startsWith(`${s.roots.skills}/`)) {
+    const where =
+      s.mode === "auto"
+        ? "pass another path instead"
+        : `pass a path under ${s.roots.workspace} or ${s.roots.tmp} instead`;
     throw new ToolError(
-      `Path ${clip(p, 200)} is read-only (${roots.skills} holds skill files); pass a path under ${roots.workspace} or ${roots.tmp} instead.`,
+      `Path ${clip(p, 200)} is read-only (${s.roots.skills} holds skill files); ${where}.`,
     );
   }
   return p;
@@ -564,6 +586,8 @@ export async function inSandbox<T>(
 ): Promise<{ value: T; notices: string[] }> {
   try {
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
+    // the mode once per call: the path checks follow it and the device_paths event records it
+    const level = (await deps.devices.modeLevel?.(ctx.orgId, deviceId)) ?? null;
     return await deps.sandbox.withSandbox(
       {
         orgId: ctx.orgId,
@@ -578,8 +602,16 @@ export async function inSandbox<T>(
         },
       },
       async (h, p, info, signal) => {
-        const s: SandboxSession = { deviceId, h, roots: info.roots, p, signal };
-        await recordDevicePaths(deps, ctx, deviceId, info.roots);
+        // unknown mode: the strict (sandbox) path checks stay (fail closed)
+        const s: SandboxSession = {
+          deviceId,
+          mode: level?.mode ?? "sandbox",
+          h,
+          roots: info.roots,
+          p,
+          signal,
+        };
+        await recordDevicePaths(deps, ctx, info.roots, level);
         const notices: string[] = [];
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
@@ -607,16 +639,13 @@ export async function inSandbox<T>(
  * latest event write one event (its idempotency key).
  */
 async function recordDevicePaths(
-  deps: Pick<SandboxToolDeps, "eventLog" | "devices">,
+  deps: Pick<SandboxToolDeps, "eventLog">,
   ctx: BuiltinCallContext,
-  deviceId: string,
   roots: SandboxRoots,
+  level: DeviceModeLevel | null,
 ): Promise<void> {
   if (!deps.eventLog.latestOfType) return;
-  const [latest, level] = await Promise.all([
-    deps.eventLog.latestOfType(ctx.conversationId, "device_paths"),
-    deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
-  ]);
+  const latest = await deps.eventLog.latestOfType(ctx.conversationId, "device_paths");
   const change = devicePathsChange(latest, roots, ctx.runId, level ?? undefined);
   if (change) await deps.eventLog.append(ctx.conversationId, [change]);
 }

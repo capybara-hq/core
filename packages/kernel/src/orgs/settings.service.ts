@@ -430,7 +430,10 @@ export class OrgSettingsService {
    * - `autoMode`: `allowed` where the organization runs `off` (an absent value follows the
    *   platform); clearing it follows the platform too, never wider than the platform allows;
    * - `cloudNetwork`: `open` where the network is the allowlist, or (still on the allowlist) a
-   *   host the current list does not have (the deployment's list when the org gives none).
+   *   host the current allowlist does not have (the deployment's list when the org gives none).
+   *   An open cloud network does not make a host already allowed: a local device in sandbox mode
+   *   always reaches the allowlist, so a patch that switches to an allowlist carrying a host
+   *   outside the current one widens that device's network (auto mode spec §4.1, §5.2).
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.autoMode !== undefined) {
@@ -454,7 +457,7 @@ export class OrgSettingsService {
       const widens =
         nextMode === "open"
           ? modeOf(prev) !== "open"
-          : modeOf(prev) !== "open" && !hostsOf(next).every((h) => hostsOf(prev).includes(h));
+          : !hostsOf(next).every((h) => hostsOf(prev).includes(h));
       if (widens) {
         throw new ApiError(
           "org.sandbox_egress_not_allowed",

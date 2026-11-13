@@ -1739,3 +1739,53 @@ describe("network asks (network ask spec §6.5)", () => {
     });
   });
 });
+
+describe("command review asks and denials", () => {
+  it("the ask carries its detail and puts the reason on the row; the deny records it", () => {
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const events = [
+      user(1, "push it"),
+      calls(2, [
+        { id: "c", name: "Bash", input: { command: "git push origin main", description: "Push" } },
+      ]),
+      ev(3, "approval_requested", {
+        step: 0,
+        callId: "c",
+        approvalId: "ap",
+        toolKey: "Bash",
+        expiresAt,
+        command: {
+          kind: "command",
+          command: "git push origin main",
+          rule: "ask.force-push",
+          reason: "Pushes to a default branch; this needs approval.",
+          mode: "auto",
+        },
+      }),
+      ev(4, "approval_decided", {
+        approvalId: "ap",
+        callId: "c",
+        decision: "denied",
+        byAccountId: "a1",
+        reason: "not today",
+      }),
+      result(5, "c", "Bash", {
+        content:
+          "The user declined to run this command: not today. Continue without it or ask the user.",
+        isError: true,
+        review: { decision: "deny", by: "person", rule: "ask.force-push", reason: "not today" },
+      }),
+    ];
+    const out = buildTimeline(events, [], INFO, "en");
+    const ap = out.find((e) => e.kind === "approval");
+    expect(ap?.kind === "approval" && ap.item.command).toMatchObject({
+      kind: "command",
+      command: "git push origin main",
+      rule: "ask.force-push",
+      mode: "auto",
+    });
+    const tool = tools(out)[0]?.rows[0];
+    expect(tool?.row.extra).toBe("Pushes to a default branch; this needs approval.");
+    expect(tool?.review).toMatchObject({ decision: "deny", by: "person", rule: "ask.force-push" });
+  });
+});
