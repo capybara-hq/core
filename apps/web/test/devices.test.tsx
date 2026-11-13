@@ -282,9 +282,13 @@ describe("device detail", () => {
     const browser = expectNoFirstPaintFetch();
     const { container } = await renderRouteWithCache("/devices/e1", routes);
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
-    expect(screen.getAllByText("Build box").length).toBeGreaterThan(0);
+    // the name is the header's and the nameplate's (the head-slot gap is T14/design); each once
+    expect(screen.getByRole("heading", { level: 1, name: "Build box" })).toBeTruthy();
+    const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
+    expect(within(plate).getByText("Build box")).toBeTruthy();
     expect(screen.getByText(E.detail.filesAndSuspendNote)).toBeTruthy();
-    expect(screen.getAllByText(E.source.cloud).length).toBeGreaterThan(0);
+    // origin and state live in the nameplate alone (the facts rows no longer repeat them)
+    expect(screen.getByText(E.source.cloud)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -314,7 +318,7 @@ describe("device detail", () => {
         json(200, { device: env("e1", "Build box", { available: false, filesLost: true }) }),
     });
     await renderDetail();
-    expect((await screen.findAllByText(E.state.unavailable)).length).toBeGreaterThan(0);
+    expect(await screen.findByText(E.state.unavailable)).toBeTruthy();
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 
@@ -324,12 +328,15 @@ describe("device detail", () => {
     });
     await renderDetail();
     expect(await screen.findByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
+    // the files are gone: the "kept until deleted" note would contradict the warning
+    expect(screen.getByText(E.detail.filesLostNote)).toBeTruthy();
+    expect(screen.queryByText(E.detail.filesAndSuspendNote)).toBeNull();
   });
 
   it("a never-started device's page says 未启动", async () => {
     stubApi(routes);
     await renderDetail();
-    expect((await screen.findAllByText(E.state.notStarted)).length).toBeGreaterThan(0);
+    expect(await screen.findByText(E.state.notStarted)).toBeTruthy();
   });
 
   it("a missing device is the not-found state", async () => {
@@ -582,8 +589,9 @@ describe("local devices (environments spec §6, §9)", () => {
     const { client } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([device("e1", "Laptop")]));
     expect(await screen.findByText("grant-mbp")).toBeTruthy();
-    expect(screen.getAllByText(E.source.local).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(E.state.online).length).toBeGreaterThan(0);
+    // origin and state are the nameplate's alone
+    expect(screen.getByText(E.source.local)).toBeTruthy();
+    expect(screen.getByText(E.state.online)).toBeTruthy();
     expect(screen.getByText("macOS")).toBeTruthy();
     expect(screen.getByText(E.runMode.os)).toBeTruthy();
     expect(screen.getByText("v0.1.0")).toBeTruthy();

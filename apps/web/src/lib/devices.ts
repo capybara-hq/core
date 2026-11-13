@@ -17,9 +17,12 @@ export interface DeviceLimits {
   cpu: number;
   memoryMb: number;
   diskMb: number;
-  /** The mode the limits were made with. */
+  /** The mode the limits were made with. Mirrored from the kernel view; the web reads it nowhere. */
   mode: DeviceMode;
-  /** `open-public` for a cloud device in auto mode; the allowlist in sandbox mode. */
+  /**
+   * `open-public` for a cloud device in auto mode; the allowlist in sandbox mode. Mirrored from the
+   * kernel view; the web reads `mode.network` (the effective network) instead.
+   */
   network: { kind: DeviceNetworkKind; hosts: string[] };
 }
 
@@ -139,6 +142,7 @@ export interface Device {
   network?: DeviceNetwork | null;
   /** Its mode and network (auto mode spec §4.3). */
   mode: DeviceModeView;
+  /** Mirrored from the kernel view; isolation is gone from the device page, the web reads it nowhere. */
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; resetting the files makes it usable again. */
   filesLost: boolean;

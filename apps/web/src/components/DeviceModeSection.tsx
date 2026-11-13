@@ -60,6 +60,7 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
   const local = e.source === "local";
   const canApply =
     local && e.online === true && (e.network?.features.includes("policyOpId") ?? false);
+  const pending = change.isPending || narrow.isPending;
 
   const send = async (patch: DevicePolicyPatch, done: string) => {
     setFailure(null);
@@ -75,6 +76,7 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
 
   // The web only ever narrows: a local device at its machine, a cloud device here.
   const narrowToSandbox = async () => {
+    if (pending) return;
     setFailure(null);
     try {
       await narrow.mutateAsync(undefined);
@@ -84,6 +86,8 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
     }
   };
   const switchMode = (next: DeviceMode) => {
+    // A change already in flight: the scale is disabled, and a second op would be a duplicate.
+    if (pending) return;
     // Auto mode is switched on only at the machine: choosing it sends nothing.
     if (next !== "sandbox") return;
     if (local) {
@@ -92,7 +96,6 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
     }
     void narrowToSandbox();
   };
-  const pending = change.isPending || narrow.isPending;
 
   // A cloud device may narrow to sandbox here; once sandbox it is locked (no widening on the web).
   const cloudNarrowable = !local && m.mode === "auto" && m.allowedMode === "auto";
@@ -115,6 +118,8 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
     <Stack gap={16}>
       <ModeScale
         value={m.mode}
+        disabled={pending || disabledReason !== undefined}
+        {...(disabledReason !== undefined ? { disabledReason } : {})}
         {...(!local
           ? {
               descriptions: {
@@ -131,10 +136,18 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
                 sandbox: t("mode.description.sandbox"),
               },
               onSelect: switchMode,
-              ...(m.allowedMode === "sandbox"
-                ? { unavailable: { auto: t("mode.unavailable") } }
+              // Auto mode is switched on at the machine, not from the web: say why, never an
+              // enabled station whose click is silently dropped.
+              ...(m.mode === "sandbox"
+                ? {
+                    unavailable: {
+                      auto:
+                        m.allowedMode === "sandbox"
+                          ? t("mode.unavailable")
+                          : t("mode.autoOnMachine"),
+                    },
+                  }
                 : {}),
-              ...(disabledReason !== undefined ? { disabled: true, disabledReason } : {}),
               command: <KeycapCommand command={MODE_COMMAND} hint={t("mode.commandHint")} />,
             })}
       />
@@ -154,7 +167,7 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
         <LocalAllowlist device={e} pending={pending} onSend={send} />
       )}
       {!local && m.mode === "sandbox" && (
-        <CloudNetwork kind={m.network.kind} hosts={m.network.hosts} />
+        <CloudNetwork kind={m.network.kind} hosts={m.network.hosts} source={m.network.source} />
       )}
     </Stack>
   );
@@ -334,14 +347,24 @@ function LocalAllowlist({
 }
 
 /**
- * A cloud device's sandbox-mode network, read only (the organization sets it): 白名单 with its
- * hosts, or 开放（挡内网） when the organization opens it.
+ * A cloud device's sandbox-mode network, read only (the platform or the organization sets it):
+ * 白名单 with its hosts, or 开放（挡内网）. The sentence under the title follows the network the
+ * device actually has — an open network never claims an allowlist — and the hint names the layer
+ * the kernel reports as the source.
  */
-function CloudNetwork({ kind, hosts }: { kind: "open-public" | "allowlist"; hosts: string[] }) {
+function CloudNetwork({
+  kind,
+  hosts,
+  source,
+}: {
+  kind: "open-public" | "allowlist";
+  hosts: string[];
+  source: "org" | "platform";
+}) {
   const t = useTranslations("devices.network");
   const tk = useTranslations("devices.networkKind");
   return (
-    <ContentSection title={t("cloudTitle")} description={t("cloudDescription")}>
+    <ContentSection title={t("cloudTitle")} description={t(`cloudDescription.${kind}`)}>
       <Stack gap={8}>
         <Stack direction="row" gap={8} align="center">
           <Badge tone={kind === "open-public" ? "warn" : "default"}>{tk(kind)}</Badge>
@@ -352,7 +375,7 @@ function CloudNetwork({ kind, hosts }: { kind: "open-public" | "allowlist"; host
           )}
         </Stack>
         <Text variant="small" tone="muted">
-          {t("cloudHint")}
+          {t(`cloudHint.${source}`)}
         </Text>
       </Stack>
     </ContentSection>

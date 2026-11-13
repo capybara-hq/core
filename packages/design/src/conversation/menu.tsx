@@ -32,7 +32,7 @@ export type ConvMenuEntry =
       tag?: string;
       /** An attention mark after the tag, as a `warn` Badge ("开放"). */
       badge?: string;
-      /** The badge's tone: `fail` for a danger mark ("不使用沙箱"); default `warn`. */
+      /** The badge's tone: `fail` for a danger mark; default `warn`. */
       badgeTone?: "default" | "warn" | "fail";
       /** A choice of a set: a `menuitemradio` with `aria-checked` and a `check` at its end. */
       checked?: boolean;

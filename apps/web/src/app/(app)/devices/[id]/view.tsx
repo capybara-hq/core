@@ -50,8 +50,8 @@ import NotFound from "../../not-found";
 /**
  * `/devices/[id]`: one device (DetailPage, one centred column). Its head is the `DeviceNameplate`
  * band — name, origin, status light and mode mark on the left, program version and last seen on
- * the right — the page's one bright element; everything below is quiet. The facts keep 来源 /
- * 状态 / 创建时间 (a cloud device adds 提供方, 资源 and 网络, split into two rows: CPU · memory ·
+ * the right — the page's one bright element; everything below is quiet. The facts (each said once)
+ * are 创建时间, and for a cloud device 提供方, 资源 and 网络 (split into two rows: CPU · memory ·
  * disk, and 开放（挡内网） / 白名单), the files and suspension notes are each said once, and
  * `DeviceModeSection` holds the 自动 / 沙箱 scale, its network section (sandbox mode only) and the
  * recent changes. A local device adds its machine block (name, system, run mode, 断开这台机器) and
@@ -90,6 +90,8 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
       <DetailPage
         header={{ path: [...scope, { label: "devices", href: "/devices" }], title: "" }}
         loading={{
+          // the nameplate band reserves its space so nothing shifts when the device lands
+          facts: { rows: 2, keyWidth: "10ch" },
           content: [
             { kind: "key-value", rows: 4, keyWidth: "10ch" },
             { kind: "lines", lines: 2 },
@@ -195,9 +197,8 @@ function Detail({
           <KeyValue
             keyWidth="10ch"
             rows={[
-              { k: t("detail.source"), v: t(`source.${e.source}`) },
+              // origin and state are the nameplate's alone, never repeated as facts
               ...(local ? [] : [{ k: t("detail.provider"), v: e.provider ?? t("none") }]),
-              { k: t("detail.state"), v: t(`state.${state}`) },
               ...(local
                 ? []
                 : [
@@ -232,9 +233,11 @@ function Detail({
               })}
             </Text>
           )}
-          <Text variant="prose" tone="muted">
-            {t(local ? "detail.localFilesNote" : "detail.filesAndSuspendNote")}
-          </Text>
+          {!e.filesLost && (
+            <Text variant="prose" tone="muted">
+              {t(local ? "detail.localFilesNote" : "detail.filesAndSuspendNote")}
+            </Text>
+          )}
           <DeviceModeSection orgId={orgId} device={e} />
           {local && <MachineSection device={e} onRevoke={() => setOpen("revoke")} />}
         </Stack>

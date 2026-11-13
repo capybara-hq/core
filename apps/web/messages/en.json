@@ -343,8 +343,6 @@
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
       "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
-      "tier_on_device": "A local device's sandbox level is kept on its machine: change it on the device page, or run capybara-device policy set tier on the machine.",
-      "unsandboxed_not_allowed": "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with capybara-device policy set isolation sandbox.",
       "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
     },
     "device_sign_in": {
@@ -1610,9 +1608,7 @@
       "resetScheduled": "File reset scheduled for {name}; this page updates when it is done.",
       "localFilesNote": "Files stay on the machine and are not uploaded to the platform.",
       "deleteLocalHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm.",
-      "source": "Source",
       "provider": "Provider",
-      "state": "State",
       "resources": "Resources",
       "resourcesValue": "{cpu} CPU · {memory} memory · {disk} disk",
       "network": "Network",
@@ -1626,7 +1622,7 @@
       },
       "cloudDescription": {
         "auto": "Commands run in the container and can reach any public address; private networks are blocked.",
-        "sandbox": "Commands run in the container, with its network limited to the hosts the organization allows."
+        "sandbox": "Commands run in the container; its network follows the organization's sandbox network setting."
       },
       "name": {
         "auto": "Auto",
@@ -1636,8 +1632,9 @@
       "changedSandbox": "The device is in sandbox mode.",
       "pendingNextUse": "Takes effect at the next use; files are kept.",
       "lockedNarrowed": "This cloud device is set to sandbox mode; a mode can only be narrowed here, not widened back to auto.",
-      "lockedSandbox": "The organization hasn't enabled auto mode, so cloud devices run in sandbox mode.",
+      "lockedSandbox": "Auto mode is not enabled, so cloud devices run in sandbox mode.",
       "unavailable": "Auto mode is not enabled",
+      "autoOnMachine": "Switch to auto on the machine: run the command below.",
       "noMachine": "Connect a machine to switch its mode here.",
       "offline": "This device is offline; run the command below on the machine to switch its mode.",
       "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
@@ -1682,7 +1679,7 @@
       "removed": "{host} removed.",
       "add": "Add a domain",
       "addHelp": "An exact host (files.example.com) or a wildcard (*.example.com).",
-      "addDisabled": "This machine does not take new domains from the platform.",
+      "addDisabled": "This machine can't add domains from the platform.",
       "addSubmit": "Add",
       "added": "{host} added.",
       "hostInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com or *.example.com.",
@@ -1693,8 +1690,14 @@
       "title": "Network",
       "description": "In sandbox mode, commands reach only the domains this machine allows; changes are sent to the machine.",
       "cloudTitle": "Network",
-      "cloudDescription": "In sandbox mode this cloud device reaches only the domains the organization allows.",
-      "cloudHint": "The organization sets this in its settings.",
+      "cloudDescription": {
+        "open-public": "In sandbox mode this cloud device can reach any public address; private networks are blocked.",
+        "allowlist": "In sandbox mode this cloud device reaches only the domains the organization allows."
+      },
+      "cloudHint": {
+        "org": "The organization sets this in its settings.",
+        "platform": "The platform sets this."
+      },
       "cloudEmpty": "No domains are allowed."
     },
     "tier": {

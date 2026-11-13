@@ -343,8 +343,6 @@
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
       "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
       "tier_not_allowed": "这个沙箱级别超出了组织或平台允许的最高级别。",
-      "tier_on_device": "本地设备的沙箱级别保存在机器上，请在设备页面修改，或在机器上运行 capybara-device policy set tier。",
-      "unsandboxed_not_allowed": "这台设备不使用沙箱运行命令，组织不允许这样做。设备所有者可以在机器上运行 capybara-device policy set isolation sandbox 恢复沙箱。",
       "tier_not_granted": "这个定时任务没有开放级别的授权，不能使用开放级别的设备。"
     },
     "device_sign_in": {
@@ -1598,9 +1596,7 @@
       "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。",
       "localFilesNote": "文件保存在这台机器上，不会上传到平台。",
       "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。",
-      "source": "来源",
       "provider": "提供方",
-      "state": "状态",
       "resources": "资源",
       "resourcesValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk}",
       "network": "网络",
@@ -1614,7 +1610,7 @@
       },
       "cloudDescription": {
         "auto": "命令在容器里运行，可以访问公网，内网地址被挡住。",
-        "sandbox": "命令在容器里运行，网络仅限组织允许的域名。"
+        "sandbox": "命令在容器里运行，网络按组织的沙箱网络设置。"
       },
       "name": {
         "auto": "自动",
@@ -1624,8 +1620,9 @@
       "changedSandbox": "已切换到沙箱模式。",
       "pendingNextUse": "下次使用时生效，文件保留。",
       "lockedNarrowed": "这台云端设备已设为沙箱模式；这里只能收窄，不能切回自动。",
-      "lockedSandbox": "组织未开放自动模式，云端设备运行沙箱。",
-      "unavailable": "组织未开放自动模式",
+      "lockedSandbox": "未开放自动模式，云端设备运行沙箱。",
+      "unavailable": "未开放自动模式",
+      "autoOnMachine": "在机器上切换到自动：运行下面的命令。",
       "noMachine": "连接机器后才能在这里切换模式。",
       "offline": "这台设备离线；在机器上运行下面的命令即可切换。",
       "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。",
@@ -1670,7 +1667,7 @@
       "removed": "已移除 {host}。",
       "add": "添加域名",
       "addHelp": "完整主机名（files.example.com）或通配符（*.example.com）。",
-      "addDisabled": "这台机器不接受平台添加域名。",
+      "addDisabled": "这台机器不能从平台添加域名。",
       "addSubmit": "添加",
       "added": "已添加 {host}。",
       "hostInvalid": "请输入小写主机名，不带协议、端口或路径，例如 files.example.com 或 *.example.com。",
@@ -1681,8 +1678,14 @@
       "title": "网络",
       "description": "沙箱模式下，命令只能访问这台机器允许的域名。添加或移除会发送到机器。",
       "cloudTitle": "网络",
-      "cloudDescription": "沙箱模式下，这台云端设备只能访问组织允许的域名。",
-      "cloudHint": "组织在设置里修改这里。",
+      "cloudDescription": {
+        "open-public": "沙箱模式下，这台云端设备可以访问公网，内网地址被挡住。",
+        "allowlist": "沙箱模式下，这台云端设备只能访问组织允许的域名。"
+      },
+      "cloudHint": {
+        "org": "组织在设置里修改这里。",
+        "platform": "由平台设置。"
+      },
       "cloudEmpty": "没有允许的域名。"
     },
     "tier": {

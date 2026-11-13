@@ -2,6 +2,7 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { MODE_COMMAND } from "../src/components/DeviceModeSection";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -20,7 +21,12 @@ vi.mock("next/navigation", () => ({
 const BASE = "/api/v1/orgs/o1/devices";
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
-const COMMAND = "capybara-device mode auto|sandbox";
+const COMMAND = MODE_COMMAND;
+/** The KeyValue row whose key is `key` (the page's facts or the machine block). */
+const factRow = (key: string) =>
+  [...document.querySelectorAll('[data-part="key-value-row"]')].find(
+    (r) => r.querySelector("dt")?.textContent === key,
+  ) as HTMLElement | undefined;
 
 const LIMITS = {
   cpu: 2,
@@ -184,15 +190,20 @@ describe("the mode scale", () => {
     expect(calls.some((c) => String(c.body ?? "").includes('"auto"'))).toBe(false);
   });
 
-  it("a local sandbox device: choosing 自动 sends nothing (the machine decides)", async () => {
+  it("a local sandbox device: 自动 is unavailable, switched on the machine with the command", async () => {
     const calls = stubApi(
       detail(local({}, { mode: "sandbox", local: { reported: "sandbox", allowedDomains: [] } })),
     );
     await renderDetail();
     const group = await screen.findByRole("radiogroup", { name: "Run mode" });
+    const auto = within(group).getByRole("radio", { name: /^Auto/ }) as HTMLButtonElement;
+    // not a silently inert control: it says auto is switched on the machine, command below
+    expect(auto.disabled).toBe(true);
+    expect(auto.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText(E.mode.autoOnMachine)).toBeTruthy();
     // the machine's switch is a command, shown and copyable
     expect(screen.getByRole("button", { name: `Copy ${COMMAND}` })).toBeTruthy();
-    await userEvent.setup().click(within(group).getByRole("radio", { name: /^Auto/ }));
+    await userEvent.setup().click(screen.getByRole("button", { name: `Copy ${COMMAND}` }));
     await settle();
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
@@ -210,6 +221,58 @@ describe("the mode scale", () => {
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: "sandbox" });
     expect(calls.some((c) => String(c.body ?? "").includes('"auto"'))).toBe(false);
+  });
+
+  it("a mode change in flight disables the scale: a second click sends no second PATCH", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      ...detail(cloud()),
+      [`PATCH ${BASE}/e1`]: async () => {
+        await held;
+        return json(200, { device: cloud() });
+      },
+    });
+    await renderDetail();
+    const user = userEvent.setup();
+    let group = await screen.findByRole("radiogroup", { name: "Run mode" });
+    await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
+    group = screen.getByRole("radiogroup", { name: "Run mode" });
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLButtonElement;
+    expect(sandbox.disabled).toBe(true);
+    await user.click(sandbox);
+    await settle();
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+    await act(async () => release());
+  });
+
+  it("a policy change in flight disables the scale: a second click sends no second POST", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      ...detail(local()),
+      [`POST ${BASE}/e1/policy`]: async () => {
+        await held;
+        return json(200, { policy: { mode: "sandbox", allowedDomains: [] } });
+      },
+    });
+    await renderDetail();
+    const user = userEvent.setup();
+    let group = await screen.findByRole("radiogroup", { name: "Run mode" });
+    await user.click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    group = screen.getByRole("radiogroup", { name: "Run mode" });
+    const sandbox = within(group).getByRole("radio", { name: /^Sandbox/ }) as HTMLButtonElement;
+    expect(sandbox.disabled).toBe(true);
+    await user.click(sandbox);
+    await settle();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    await act(async () => release());
   });
 
   it("a cloud device in sandbox is locked: the web never widens it back", async () => {
@@ -290,13 +353,54 @@ describe("the network section exists in sandbox mode only", () => {
     expect(screen.queryByRole("heading", { name: E.network.title })).toBeNull();
   });
 
-  it("a cloud auto device has none; its network is a fact row", async () => {
+  it("a cloud auto device has none; its 网络 fact row is its network", async () => {
     stubApi(detail(cloud()));
     await renderDetail();
     await screen.findByRole("radiogroup", { name: "Run mode" });
     expect(screen.queryByRole("heading", { name: E.network.cloudTitle })).toBeNull();
-    expect(screen.getByText(E.detail.network)).toBeTruthy();
-    expect(screen.getAllByText(E.networkKind["open-public"]).length).toBeGreaterThan(0);
+    // the row itself, not the nameplate badge (the same words)
+    const row = factRow(E.detail.network);
+    expect(row).toBeTruthy();
+    expect(row?.querySelector("dd")?.textContent).toBe(E.networkKind["open-public"]);
+  });
+
+  it("the 网络 fact row follows the device's network, not a constant", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            mode: "sandbox",
+            network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await screen.findByRole("heading", { name: E.network.cloudTitle });
+    const row = factRow(E.detail.network);
+    expect(row).toBeTruthy();
+    expect(row?.querySelector("dd")?.textContent).toBe(E.networkKind.allowlist);
+  });
+
+  it("a cloud sandbox device on the open network says so, never that it is allowlisted", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            mode: "sandbox",
+            network: { kind: "open-public", hosts: [], source: "platform" },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const heading = await screen.findByRole("heading", { name: E.network.cloudTitle });
+    const section = heading.closest('[data-part="content-section"]') as HTMLElement;
+    expect(within(section).getByText(E.networkKind["open-public"])).toBeTruthy();
+    expect(within(section).getByText(E.network.cloudDescription["open-public"])).toBeTruthy();
+    // the old false claim: an open cloud device does not reach only the org's domains
+    expect(screen.queryByText(/reaches only the domains/)).toBeNull();
+    expect(within(section).queryByText(E.network.cloudDescription.allowlist)).toBeNull();
   });
 
   it("a cloud sandbox device shows the organization's allowlist read only", async () => {
@@ -317,7 +421,8 @@ describe("the network section exists in sandbox mode only", () => {
     await renderDetail();
     expect(await screen.findByRole("heading", { name: E.network.cloudTitle })).toBeTruthy();
     expect(screen.getByText("files.example.com · *.slack.com")).toBeTruthy();
-    expect(screen.getByText(E.network.cloudHint)).toBeTruthy();
+    expect(screen.getByText(E.network.cloudDescription.allowlist)).toBeTruthy();
+    expect(screen.getByText(E.network.cloudHint.org)).toBeTruthy();
     // read only: no add field
     expect(screen.queryByRole("textbox", { name: E.network.add })).toBeNull();
   });
@@ -335,8 +440,79 @@ describe("the facts", () => {
   it("has no limits rows for a local device", async () => {
     stubApi(detail(local()));
     await renderDetail();
-    await screen.findByText(E.detail.source);
+    await screen.findByText(E.detail.created);
     expect(screen.queryByText(E.detail.resources)).toBeNull();
+    expect(screen.queryByText(E.detail.network)).toBeNull();
+  });
+});
+
+describe("the recent changes", () => {
+  const change = (over: Record<string, unknown> = {}) => ({
+    at: T,
+    kind: "policy",
+    add: [],
+    remove: [],
+    mode: null,
+    by: "Ada",
+    via: "web",
+    outcome: "applied",
+    ...over,
+  });
+
+  it("says nothing when there is no change", async () => {
+    stubApi(detail(cloud()));
+    await renderDetail();
+    await screen.findByRole("radiogroup", { name: "Run mode" });
+    expect(screen.queryByRole("list", { name: E.recent.title })).toBeNull();
+  });
+
+  it("lists host and mode changes with who, where and what became of them", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            recent: [
+              change({ add: ["files.example.com"] }),
+              change({ remove: ["*.slack.com"] }),
+              change({ kind: "mode", mode: { to: "sandbox" } }),
+              change({
+                kind: "mode",
+                mode: { from: "auto", to: "sandbox" },
+                by: null,
+                via: "device",
+              }),
+              change({ add: ["x.example.com"], outcome: "failed" }),
+            ],
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.recent.title });
+    expect(within(list).getByText("Added files.example.com")).toBeTruthy();
+    expect(within(list).getByText("Removed *.slack.com")).toBeTruthy();
+    expect(within(list).getByText("Mode set to Sandbox")).toBeTruthy();
+    expect(within(list).getByText("Mode changed from Auto to Sandbox")).toBeTruthy();
+    // a change that did not take effect says so
+    expect(within(list).getByText(E.recent.outcome.failed)).toBeTruthy();
+    // a web change names its account and where it was made
+    const webRow = within(list)
+      .getAllByRole("listitem")
+      .find((r) => r.textContent?.includes("Added files.example.com")) as HTMLElement;
+    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain("Ada");
+    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain(E.recent.via.web);
+    // a change made on the machine names nobody (not even an unknown account)
+    const deviceRow = within(list)
+      .getAllByRole("listitem")
+      .find((r) => r.textContent?.includes("Mode changed from Auto to Sandbox")) as HTMLElement;
+    const meta = deviceRow.querySelector(".cb-item-list-meta")?.textContent ?? "";
+    expect(meta).toContain(E.recent.via.device);
+    expect(meta).not.toContain(E.recent.unknownBy);
+    expect(meta).not.toContain("Ada");
+    // no tier vocabulary in the list
+    for (const tier of ["strict", "dev", "open"] as const) {
+      expect(within(list).queryByText(E.tier[tier])).toBeNull();
+    }
   });
 });
 
@@ -398,7 +574,7 @@ describe("the query cache", () => {
     const browser = expectNoFirstPaintFetch();
     stubApi(detail(cloud()));
     await renderRouteWithCache("/devices/e1", lastStubRoutes());
-    expect((await screen.findAllByText(E.state.notStarted)).length).toBeGreaterThan(0);
+    expect(await screen.findByText(E.state.notStarted)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -419,8 +595,12 @@ describe("the query cache", () => {
     );
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Build box")).toBeNull();
+    // the loading frame reserves the nameplate's facts band
+    expect(document.querySelector('[data-part="loading-key-value"]')).not.toBeNull();
     await act(async () => release());
-    expect((await screen.findAllByText("Build box")).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { level: 1, name: "Build box" })).toBeTruthy();
+    const plate = document.querySelector('[data-part="device-nameplate"]') as HTMLElement;
+    expect(plate.textContent).toContain("Build box");
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 });
