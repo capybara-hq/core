@@ -67,7 +67,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
-}, 180_000);
+});
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -185,7 +185,7 @@ async function scheduledRun(deviceId: string, grants: string[]): Promise<string>
   return runId;
 }
 
-describe("DevicesService.sandboxLevel", { timeout: 30_000 }, () => {
+describe("DevicesService.sandboxLevel", () => {
   it("a local device carries its machine's facts; a scheduled run without tier:open is capped at dev", async () => {
     const deviceId = await localDevice({});
     expect(await devices.sandboxLevel(orgId, deviceId)).toEqual({

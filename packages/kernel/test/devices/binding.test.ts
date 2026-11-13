@@ -88,7 +88,7 @@ beforeAll(async () => {
   });
   expect(res.statusCode, res.body).toBe(201);
   agentId = (res.json() as { agent: { id: string } }).agent.id;
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -177,7 +177,7 @@ const text = (p: ToolResult["payload"]): string =>
 
 // Each test drives one to three agent runs end to end (queue, model, sandbox) and waits for them
 // with 30 s conditions; the 5 s default test timeout cut those waits short on a loaded machine.
-describe("conversations bound to devices", { timeout: 60_000 }, () => {
+describe("conversations bound to devices", () => {
   it("a new conversation is bound to the owner's default device", async () => {
     const m = await member();
     const conv = await newConversation(m.req);

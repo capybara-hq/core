@@ -72,7 +72,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
-}, 180_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -342,7 +342,7 @@ describe("devices API", () => {
     expect((await list(me.req)).lastUsedId).toBe(a.id);
   });
 
-  it("delete waits for running commands then destroys both", { timeout: 60_000 }, async () => {
+  it("delete waits for running commands then destroys both", async () => {
     const me = await member();
     const env = await create(me.req, "Busy");
     const conversationId = randomUUID();
@@ -399,7 +399,7 @@ describe("devices API", () => {
     expect((err as ApiError).code).toBe("device.not_found");
   });
 
-  it("reset files after files_lost", { timeout: 60_000 }, async () => {
+  it("reset files after files_lost", async () => {
     const me = await member();
     const env = await create(me.req, "Fragile");
     const conversationId = randomUUID();
@@ -526,7 +526,7 @@ describe("a device's sandbox tier (sandbox dev tiers spec §7.2)", () => {
     ]);
   });
 
-  it("a used instance is pending until its next use", { timeout: 60_000 }, async () => {
+  it("a used instance is pending until its next use", async () => {
     const me = await member();
     const env = await create(me.req, "Used");
     const conversationId = randomUUID();
