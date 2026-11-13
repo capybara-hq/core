@@ -347,12 +347,24 @@ export function connect(
   let attempt = 0;
   /** When a failing connection was last reported; reset once a connection stays up. */
   let lastReport: number | undefined;
+  /** The failure last reported: a different failure is reported at once, not after the interval. */
+  let lastReportText: string | undefined;
 
-  /** Reports why connecting keeps failing, at most once a minute. */
+  /**
+   * Reports why connecting keeps failing: a failure different from the last one is reported at
+   * once, the same one at most once a minute. A long outage therefore does not flood the log.
+   */
   const reportFailure = (why: string): void => {
     const t = now();
-    if (lastReport !== undefined && t - lastReport < FAILURE_REPORT_INTERVAL_MS) return;
+    if (
+      why === lastReportText &&
+      lastReport !== undefined &&
+      t - lastReport < FAILURE_REPORT_INTERVAL_MS
+    ) {
+      return;
+    }
     lastReport = t;
+    lastReportText = why;
     err(`${why} Retrying.`);
   };
 
@@ -381,8 +393,11 @@ export function connect(
         opened = true;
         heard();
         stable = setTimeout(() => {
+          // A connection that stayed up enough is a success: the next failure starts at the
+          // base delay, and is reported again even if it is the same message as before.
           attempt = 0;
           lastReport = undefined;
+          lastReportText = undefined;
         }, stableMs);
         sock.send(JSON.stringify(hello()));
         if (opts.policy !== undefined) policyCheck = setInterval(pushPolicy, policyCheckMs);

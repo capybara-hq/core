@@ -3,6 +3,12 @@ import { join } from "node:path";
 
 export const LAUNCHD_LABEL = "top.capybara.device";
 
+/**
+ * Minimum seconds between launchd restarts of the agent. Together with unconditional KeepAlive
+ * this restarts the program after any exit, without spinning when it crashes during startup.
+ */
+export const LAUNCHD_THROTTLE_INTERVAL_SECONDS = 30;
+
 export interface ServiceSpec {
   /** Absolute path of the node binary that runs the program. */
   nodePath: string;
@@ -22,7 +28,12 @@ function xml(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-/** The launchd agent: `node <bin> start`, at login, restarted when it exits with a failure (a clean stop stays stopped). */
+/**
+ * The launchd agent: `node <bin> start`, at login and after every exit. `KeepAlive` is
+ * unconditional on purpose: the program only exits for a shutdown or a terminal condition, and a
+ * clean exit must not leave the machine offline until someone bootstraps the agent again.
+ * `ThrottleInterval` keeps a fast crash loop from spinning.
+ */
 export function plistContent(spec: ServiceSpec): string {
   const env = Object.entries(spec.env)
     .map(([k, v]) => `    <key>${xml(k)}</key>\n    <string>${xml(v)}</string>`)
@@ -42,10 +53,9 @@ export function plistContent(spec: ServiceSpec): string {
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>${LAUNCHD_THROTTLE_INTERVAL_SECONDS}</integer>
   <key>EnvironmentVariables</key>
   <dict>
 ${env}
