@@ -15,7 +15,7 @@ import {
   snapshotDescription,
   weekdayOf,
 } from "../../../src/runtime/context/run-context.js";
-import { AGENT, Log, MODEL } from "./fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./fixtures.js";
 
 type Ctx = EventPayload<"run_context">;
 
@@ -297,7 +297,11 @@ describe("run context in requests", () => {
     from(log, "two", { name: "张三", role: "guest", anonymous: true });
     log.assistant("ok");
     from(log, "three", WANG);
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toBe(
       [
         "User (From Wang Fang, owner): one",

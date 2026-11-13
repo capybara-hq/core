@@ -43,6 +43,7 @@ import {
   acceptSummary,
   buildCompactionRequest,
   compactionBackoff,
+  compactionInputBudget,
   compactionPlan,
   shouldCompact,
 } from "./context/compaction.js";
@@ -912,7 +913,7 @@ async function maybeCompact(
     });
     return events;
   }
-  const { estimate: raw } = buildRequest(
+  const { request: built, estimate: raw } = buildRequest(
     deps,
     events,
     input,
@@ -923,8 +924,18 @@ async function maybeCompact(
     false,
   );
   const estimate = calibrate(raw, lastActual(events));
-  if (!shouldCompact(estimate, info, compaction.threshold)) return events;
-  const plan = compactionPlan(events, compaction.keepRecentTurns);
+  // The trigger's output cap is the step's own cap, min(agent max, model max) (spec §4.1), not the
+  // settings' maxOutputTokens — that one caps the summary call (spec §4.8).
+  const output = built.maxOutputTokens;
+  if (!shouldCompact(estimate, info.contextWindow, { ...compaction, maxOutputTokens: output })) {
+    return events;
+  }
+  // the input room left for the kept tail: the window minus the output cap and the reserve
+  // (compactionInputBudget), minus the system prompt and tool definitions every request carries
+  const tailBudget =
+    compactionInputBudget(info.contextWindow, output, compaction.reserveTokens) -
+    estimateTokens([], built.system, built.tools);
+  const plan = compactionPlan(events, compaction, tailBudget);
   if (!plan) return events;
 
   const { runId, step, signal, conversationId } = input;

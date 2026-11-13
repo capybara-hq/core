@@ -8,7 +8,7 @@ import {
   toolSetChange,
   toolsChangedText,
 } from "../../../src/runtime/context/tool-changes.js";
-import { AGENT, Log, MODEL } from "./fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./fixtures.js";
 
 /** A model_call that offered `tools` (and a ToolSearch `catalog`); `tools` undefined = older log. */
 function call(
@@ -155,7 +155,11 @@ describe("buildModelRequest renders tools_changed", () => {
     log.turn(3);
     log.turn(4);
     log.turn(5);
-    const plan = compactionPlan(log.events, 2);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 2 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toContain(
       `System reminder: ${toolsChangedText({ added: ["WebSearch"], removed: ["Agent"] })}`,
     );

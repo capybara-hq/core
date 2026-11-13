@@ -32,7 +32,7 @@ import {
   type TestKernel,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { AGENT, MODEL } from "../runtime/context/fixtures.js";
+import { AGENT, compactionSettings, MODEL, NO_TAIL_LIMIT } from "../runtime/context/fixtures.js";
 
 /**
  * 插件视图接口（单副本 api+worker，测试内联插件 ui-probe + 假扩展 fake-tools-ui）：
@@ -769,7 +769,7 @@ describe("工具显示摘要", () => {
     expect(json).not.toContain("Updated items");
     expect(json).not.toContain("更新条目");
     // 压缩记录（把全部内容转成纯文本给模型做摘要）里也没有摘要
-    const plan = compactionPlan(events, 0);
+    const plan = compactionPlan(events, compactionSettings({ keepRecentTurns: 0 }), NO_TAIL_LIMIT);
     expect(plan?.transcript).toContain("List updated (3 items)");
     expect(plan?.transcript).not.toContain("Updated items");
     expect(plan?.transcript).not.toContain("更新条目");
@@ -798,7 +798,9 @@ describe("工具显示摘要", () => {
     });
     expect(JSON.stringify(request)).toContain("probed");
     expect(JSON.stringify(request)).not.toContain("card-key-zz");
-    expect(compactionPlan(events, 0)?.transcript).not.toContain("card-key-zz");
+    expect(
+      compactionPlan(events, compactionSettings({ keepRecentTurns: 0 }), NO_TAIL_LIMIT)?.transcript,
+    ).not.toContain("card-key-zz");
   });
 
   it("插件给的摘要不合法 → 丢弃并告警，结果照常写入", async () => {

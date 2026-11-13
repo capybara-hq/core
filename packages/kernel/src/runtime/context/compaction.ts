@@ -1,9 +1,11 @@
-import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import type { CompactionSettings } from "../../identity/settings.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
 import { scheduleHeader, senderTranscriptLabel } from "./run-context.js";
+import { estimateTokens } from "./tokens.js";
 import { toolsChangedText } from "./tool-changes.js";
 
 /** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
@@ -25,23 +27,51 @@ const COMPACTION_INSTRUCTION = [
   "Write in the same language as the conversation. Output only the summary text.",
 ].join("\n");
 
-/** 估算 token 数达到上下文窗口的 `threshold`（如 0.8）时压缩。 */
-export function shouldCompact(
-  estimatedTokens: number,
-  model: ModelInfo,
-  threshold: number,
-): boolean {
-  return estimatedTokens >= model.contextWindow * threshold;
+/**
+ * The input room a request leaves below the window: the output cap and the safety reserve are never
+ * spent on input (context compaction spec §4.1).
+ */
+export function compactionInputBudget(window: number, maxOutput: number, reserve: number): number {
+  return window - maxOutput - reserve;
 }
 
 /**
- * 压缩计划：保留最近 `keepRecentTurns` 个「以 user_message 开头的轮次」原文，把更早、且尚未被
- * 上一条摘要覆盖的内容转成纯文本对话记录（上一条摘要放在记录开头，由新摘要合并）。
- * `coversUpToSeq` 为第一条保留的 user_message 之前的最大 seq。可压缩的内容为空时返回 null。
+ * Compaction trigger (context compaction spec §4.1): the calibrated estimate reaches the lower of
+ * `threshold × window` and the input budget, or it reaches the hard line `estimate + output >
+ * window`, which fires even when proactive early compaction is turned off (`enabled: false`).
+ */
+export function shouldCompact(
+  estimate: number,
+  window: number,
+  settings: CompactionSettings,
+): boolean {
+  const output = settings.maxOutputTokens;
+  if (estimate + output > window) return true;
+  if (!settings.enabled) return false;
+  return (
+    estimate >=
+    Math.min(
+      settings.threshold * window,
+      compactionInputBudget(window, output, settings.reserveTokens),
+    )
+  );
+}
+
+/**
+ * The compaction plan: keep the most recent `settings.keepRecentTurns` turns verbatim (a maximum,
+ * not a rule) and transcribe everything older that the previous summary does not cover yet (that
+ * summary goes first, for the new summary to merge).
+ *
+ * The kept tail shrinks turn by turn, down to the latest user turn, until its estimated tokens fit
+ * `budget` — the input room left after the output cap, the reserve, the system prompt and the tool
+ * definitions. A single turn over the budget is still kept (the hard fit guard handles the rest).
+ * `coversUpToSeq` is the largest seq before the first kept user_message. Returns null when there is
+ * nothing to summarize.
  */
 export function compactionPlan(
   events: ConversationEvent[],
-  keepRecentTurns: number,
+  settings: CompactionSettings,
+  budget: number,
 ): { coversUpToSeq: number; transcript: string } | null {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const prev = latestSummary(sorted);
@@ -52,11 +82,28 @@ export function compactionPlan(
   candidate.forEach((e, i) => {
     if (e.type === "user_message") userIdx.push(i);
   });
+  const keep = settings.keepRecentTurns;
   let boundary: number;
-  if (keepRecentTurns <= 0) boundary = candidate.length;
-  else if (userIdx.length < keepRecentTurns) boundary = 0;
-  else boundary = userIdx[userIdx.length - keepRecentTurns] as number;
+  if (keep <= 0) boundary = candidate.length;
+  else if (userIdx.length < keep) boundary = 0;
+  else boundary = userIdx[userIdx.length - keep] as number;
   boundary = keepToolPairs(candidate, userIdx, boundary);
+
+  // size-aware tail: drop earlier kept turns until the rest fits the budget, but never drop the
+  // latest user turn (a turn over the budget is trimmed by the hard fit guard, spec §4.3)
+  if (
+    userIdx.length > 0 &&
+    boundary < candidate.length &&
+    tailTokens(candidate, boundary) > budget
+  ) {
+    let chosen = boundary;
+    for (const start of userIdx) {
+      if (start <= boundary) continue;
+      chosen = keepToolPairs(candidate, userIdx, start);
+      if (tailTokens(candidate, chosen) <= budget) break;
+    }
+    boundary = chosen;
+  }
 
   const lines: string[] = [];
   for (const e of candidate.slice(0, boundary)) {
@@ -71,6 +118,20 @@ export function compactionPlan(
 
   const parts = prev ? [`[Earlier summary]\n${prev.payload.text}`, ...lines] : lines;
   return { coversUpToSeq, transcript: parts.join("\n\n") };
+}
+
+/**
+ * Estimated input tokens of the kept tail (the events rendered as the transcript renders them, then
+ * estimated with the request estimator).
+ */
+function tailTokens(candidate: ConversationEvent[], from: number): number {
+  let tokens = 0;
+  for (const e of candidate.slice(from)) {
+    const line = transcriptLine(e);
+    if (!line) continue;
+    tokens += estimateTokens([{ role: "user", content: [{ type: "text", text: line }] }], []);
+  }
+  return tokens;
 }
 
 /**

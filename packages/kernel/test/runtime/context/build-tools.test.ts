@@ -5,7 +5,7 @@ import { buildModelRequest, type RequestTool } from "../../../src/runtime/contex
 import { compactionPlan } from "../../../src/runtime/context/compaction.js";
 import { guardToolPairs } from "../../../src/runtime/context/pairing.js";
 import { estimateTokens } from "../../../src/runtime/context/tokens.js";
-import { AGENT, Log, MODEL } from "./fixtures.js";
+import { AGENT, compactionSettings, Log, MODEL, NO_TAIL_LIMIT } from "./fixtures.js";
 
 const spec = (name: string, description = `Tool ${name}.`): ToolSpec => ({
   name,
@@ -248,7 +248,11 @@ describe("压缩边界不切开工具调用与结果", () => {
     log.assistant("final", "end_turn", 2);
 
     // 只保留最近 1 轮：朴素边界会落在插话上（切开 c1 与其结果），应退到 q2
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan).not.toBeNull();
     expect(plan?.transcript).toContain("User: q1");
     expect(plan?.transcript).not.toContain("q2");
@@ -277,7 +281,9 @@ describe("压缩边界不切开工具调用与结果", () => {
     log.assistant([{ type: "tool_call", id: "c1", name: "t", input: {} }], "tool_use", 1);
     log.user("interjection");
     result(log, "c1", "out");
-    expect(compactionPlan(log.events, 1)).toBeNull();
+    expect(
+      compactionPlan(log.events, compactionSettings({ keepRecentTurns: 1 }), NO_TAIL_LIMIT),
+    ).toBeNull();
   });
 });
 
@@ -291,7 +297,11 @@ describe("压缩记录包含工具结果", () => {
     );
     result(log, "c1", "the answer", 1, true);
     log.user("q2");
-    const plan = compactionPlan(log.events, 1);
+    const plan = compactionPlan(
+      log.events,
+      compactionSettings({ keepRecentTurns: 1 }),
+      NO_TAIL_LIMIT,
+    );
     expect(plan?.transcript).toContain("Tool result mcp__docs__search (error): the answer");
   });
 });
