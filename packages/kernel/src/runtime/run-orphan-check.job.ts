@@ -72,7 +72,8 @@ const SINCE = sql<Date>`GREATEST(COALESCE(r.queued_at, r.created_at), COALESCE(r
 /**
  * One page of the active runs of chat and sub-agent conversations in `statuses` that entered their
  * state more than `minAgeMs` ago, by (state start, id), after `after` (an eval's hidden
- * conversation drives its runs itself).
+ * conversation drives its runs itself). A deleted org's runs are never candidates: its deletion
+ * purged its owed jobs on purpose, so their absence is no lost job and nothing is re-added.
  */
 export async function orphanCandidates(
   db: KernelSchemaDb,
@@ -84,6 +85,7 @@ export async function orphanCandidates(
   let q = db
     .selectFrom("runs as r")
     .innerJoin("conversations as c", "c.id", "r.conversation_id")
+    .innerJoin("orgs as o", "o.id", "c.org_id")
     .select([
       "r.id",
       "r.conversation_id",
@@ -96,6 +98,7 @@ export async function orphanCandidates(
     ])
     .where("r.status", "in", statuses)
     .where("c.kind", "in", ["chat", "subagent"])
+    .where("o.deleted_at", "is", null)
     .where(SINCE, "<", sql<Date>`now() - ${minAgeMs}::integer * interval '1 millisecond'`);
   if (after !== undefined) {
     q = q.where(sql<boolean>`(${SINCE}, r.id) > (${after.since}::timestamptz, ${after.runId})`);

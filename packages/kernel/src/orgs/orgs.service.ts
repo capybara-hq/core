@@ -17,6 +17,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
 import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
 
@@ -268,11 +269,13 @@ export class OrgsService {
       .where("id", "=", orgId)
       .execute();
     // the org's owed jobs go with it; dead letters stay for the overview, and the deletion's own
-    // cleanup work carries no org_id (transactional outbox spec §9)
+    // cleanup work carries no org_id (transactional outbox spec §9). Usage reports stay owed: the
+    // usage happened, and billing plugins are still told about a deleted org's usage
     await this.db
       .deleteFrom("outbox")
       .where("org_id", "=", orgId)
       .where("dead_at", "is", null)
+      .where("queue", "<>", USAGE_REPORT_QUEUE)
       .execute();
     // after the org is marked deleted, so it counts as no user of what it shared (P3-18)
     await this.ownedItems.onOrgDeleted(orgId, actor.id, {

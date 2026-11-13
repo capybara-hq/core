@@ -205,7 +205,8 @@ class OutboxService {
 New job names this design introduces, all on `cap-kernel-maintenance` (**designer's call**):
 `ensure-run` (calls `RunQueue.ensureRun`), `stop-tree` (stops a run's fork children or a deleted
 root's tree), `deliver-to-parent` (a finished child's delivery when it is not written in the child's
-terminal transaction), `device-op-resolve` (§7), `run-orphan-check` (§8.3).
+terminal transaction), `device-op-resolve` (§7). `run-orphan-check` (§8.3) is no job name: it is
+a `@LockedInterval`.
 
 ## 6. Run lifecycle
 
@@ -371,7 +372,9 @@ it removes the last user of the platform-migration retry.
 - No ordering is promised between jobs (BullMQ promises none today either); features that need an
   order keep encoding it in state checks, as now.
 - An org's deletion deletes its pending outbox rows in the same transaction (`org_id`), except rows
-  of the deletion's own cleanup work, which carry no `org_id` (**designer's call**).
+  of the deletion's own cleanup work, which carry no `org_id` (**designer's call**), and usage
+  report rows: the usage happened, so it is still reported. `run-orphan-check` skips a deleted
+  org's runs, whose owed jobs went with the org on purpose.
 
 ## 10. Enforcement
 
@@ -416,7 +419,8 @@ it removes the last user of the platform-migration retry.
 ## 12. Rollout (one PR each, in order)
 
 1. Outbox table, service, dispatcher, relay, dead letters in the overview, registry, the checks
-   (with the allowlist holding every current direct enqueue, each marked "moves in PR n").
+   (with a pending list, `KC_PENDING`, holding every current direct enqueue, each marked "moves in
+   PR n").
 2. Run lifecycle (§6) and `run-orphan-check`, deleting the run-queue orphan code, `kickRun` and the
    `Waits.sweep` passes.
 3. Usage reports and IM delivery; delete the usage sweep.
@@ -424,9 +428,11 @@ it removes the last user of the platform-migration retry.
    sweep and the platform migration.
 5. Scheduled tasks, offboarding, device destroys; delete the scan repair and the offboard sweep.
 6. Device intents (§7) with the device protocol change (plugin-sdk frames, `capybara-device`).
-7. Empty the allowlist; AGENTS.md and skill text.
+7. Empty `KC_PENDING`; AGENTS.md and skill text.
 
-Each PR removes its rows from the check's allowlist; the allowlist is empty at the end.
+Each PR removes its rows from `KC_PENDING`, which is empty at the end. The direct adds left in
+`KC_EXCEPTIONS` (§10: a processor's own retry with no DB write, the CLI's `addJobOnce`, …) are
+permanent exceptions, each with its reason.
 
 ## 13. Risks
 
