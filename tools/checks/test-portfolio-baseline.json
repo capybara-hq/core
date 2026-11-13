@@ -27,8 +27,6 @@
     "packages/kernel/test/agents/providers.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/agents/readiness.http.test.ts": "timeout override; small app file; removed by the T1 batch",
     "packages/kernel/test/agents/subagents-definition.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/attachments/attachments.http.test.ts": "timeout override; removed by the T1 batch",
-    "packages/kernel/test/attachments/media-step.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/background/background.http.test.ts": "timeout override; removed by the T1 batch",
     "packages/kernel/test/background/launch.test.ts": "setTimeout wait; timeout override; removed by the T1 batch",
     "packages/kernel/test/background/macos-device.test.ts": "fixed sleep; timeout override; removed by the T1 batch",

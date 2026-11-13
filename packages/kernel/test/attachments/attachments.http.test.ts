@@ -91,7 +91,7 @@ beforeAll(async () => {
       },
     ),
   );
-}, 180_000);
+});
 afterAll(async () => {
   await k?.close();
   await destroyDb?.();
@@ -202,7 +202,7 @@ const userBlocks = (r: ModelRequest) =>
     .flatMap((m) => (m.role === "user" ? m.content : []))
     .filter((b) => !(b.type === "text" && b.text === SENDER_LINE));
 
-describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000 }, () => {
+describe("上传 → finalize → 发消息 → 模型请求", () => {
   it("支持视觉的模型收到 base64 图片与 PDF；日志里只有引用", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "cat.png", "image/png", PNG);
@@ -334,7 +334,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
   });
 });
 
-describe("校验", { timeout: 30_000 }, () => {
+describe("校验", () => {
   it("GET /attachments/limits：组织成员可读上限；非成员 → 404", async () => {
     const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/attachments/limits` });
     expect(res.statusCode, res.body).toBe(200);
@@ -474,7 +474,7 @@ describe("校验", { timeout: 30_000 }, () => {
   });
 });
 
-describe("下载", { timeout: 30_000 }, () => {
+describe("下载", () => {
   it("对话所有者 302 到预签名地址；别的成员 → 404；绑定前只有上传者可下载", async () => {
     const id = await ready(owner, "cat.png", "image/png", PNG);
     const url = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
@@ -535,7 +535,7 @@ describe("下载", { timeout: 30_000 }, () => {
   });
 });
 
-describe("只有附件的消息", { timeout: 30_000 }, () => {
+describe("只有附件的消息", () => {
   it("text 为空 + files：202，日志与请求里都没有空文本块", async () => {
     const convId = await conversationWith("see-1");
     const img = await ready(owner, "cat.png", "image/png", PNG);
@@ -569,7 +569,7 @@ describe("只有附件的消息", { timeout: 30_000 }, () => {
   });
 });
 
-describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
+describe("大文本附件（Ruling M8）", () => {
   it("fetchMedia 按 caps 只取开头；模型收到截断并注明的文档；mediaInfo 带 etag", async () => {
     const big = Buffer.from("a,b\n".repeat(50_000)); // 200 000 字节
     const id = await ready(owner, "big.csv", "text/csv", big);
@@ -612,7 +612,7 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
   });
 });
 
-describe("openForConversation（沙箱同步用）", { timeout: 30_000 }, () => {
+describe("openForConversation（沙箱同步用）", () => {
   it("只返回绑定在该会话、已 ready、内容未被替换的附件", async () => {
     const id = await ready(owner, "notes.txt", "text/plain", TEXT);
     const convId = await conversationWith("see-1");
@@ -642,7 +642,7 @@ describe("openForConversation（沙箱同步用）", { timeout: 30_000 }, () => 
   });
 });
 
-describe("待上传配额", { timeout: 30_000 }, () => {
+describe("待上传配额", () => {
   it("同一账号在组织里已有 50 个未 finalize 的附件 → 429 attachment.too_many_pending", async () => {
     await db
       .insertInto("attachments")
@@ -678,7 +678,7 @@ describe("待上传配额", { timeout: 30_000 }, () => {
   });
 });
 
-describe("清理", { timeout: 30_000 }, () => {
+describe("清理", () => {
   it("超过 24 小时未绑定的附件（pending / ready）连同对象被删除；已绑定的保留", async () => {
     const stale = await ready(owner, "old.png", "image/png", PNG);
     const pending = await create(owner, {
