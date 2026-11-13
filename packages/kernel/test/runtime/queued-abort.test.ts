@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import type { ContextProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -6,8 +7,10 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionPointDefaults } from "../../src/extensions/point-defaults.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { RUN_STOP_JOB } from "../../src/orgs/offboarding.js";
+import { PluginContextService } from "../../src/runtime/plugin-context.service.js";
 import { RunContextService } from "../../src/runtime/run-context.service.js";
 import { RunControl } from "../../src/runtime/run-control.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
@@ -309,6 +312,7 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       const tried = catalog.mock.calls.flatMap((c, i) =>
         (c[0] as { runId?: string }).runId === runId ? [catalog.mock.results[i]?.value] : [],
       );
+      expect(tried.length).toBeGreaterThan(0);
       expect(await Promise.all(tried)).toEqual(tried.map(() => false));
       expect(forRun(context.mock.calls)).toEqual([]);
       expect(await afterAbort(conv, runId)).toEqual([]);
@@ -355,6 +359,96 @@ describe("a run resumed from waiting back to queued is stopped in PG too", () =>
       catalog.mockRestore();
       context.mockRestore();
       await db.updateTable("orgs").set({ name }).where("id", "=", orgId).execute();
+    }
+  }, 60_000);
+
+  it("a stop after the catalog record, before the run context append: no run context after run_aborted", async () => {
+    const conv = await createConv(req, orgId, askerId);
+    const runId = await resumedQueued(req, conv);
+    const service = k.app.get(SkillsCatalogService);
+    const real = service.record.bind(service);
+    const { name } = await db
+      .selectFrom("orgs")
+      .select("name")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    // the catalog recorded with the run still queued; then a stop ends it before the run context's
+    // append transaction takes the locks
+    const catalog = vi.spyOn(service, "record").mockImplementationOnce(async (input, opts) => {
+      const recorded = await real(input, opts);
+      // biome-ignore lint/suspicious/noExplicitAny: the stop's private PG half
+      const stopped = await (k.app.get(RunQueue) as any).abortQueuedIn(conv, runId, null);
+      expect(stopped).not.toBeNull();
+      // a changed context: an append after the end would show as a run_context event
+      await db
+        .updateTable("orgs")
+        .set({ name: `${name} renamed` })
+        .where("id", "=", orgId)
+        .execute();
+      return recorded;
+    });
+    const context = vi.spyOn(k.app.get(RunContextService), "record");
+    const plugin = vi.spyOn(k.app.get(PluginContextService), "record");
+    try {
+      await deliverResume(runId);
+      expect(catalog).toHaveBeenCalledTimes(1);
+      expect(await catalog.mock.results[0]?.value).toBe(true);
+      expect(await runStatus(runId)).toBe("aborted");
+      // the run context's transaction saw the end: nothing appended, the run does not go on
+      expect(context).toHaveBeenCalledTimes(1);
+      expect(await context.mock.results[0]?.value).toBe(false);
+      expect(plugin).not.toHaveBeenCalled();
+      expect(await afterAbort(conv, runId)).toEqual([]);
+    } finally {
+      catalog.mockRestore();
+      context.mockRestore();
+      plugin.mockRestore();
+      await db.updateTable("orgs").set({ name }).where("id", "=", orgId).execute();
+    }
+  }, 60_000);
+
+  it("a stop while the context providers are asked: no plugin_context after run_aborted", async () => {
+    const conv = await createConv(req, orgId, askerId);
+    const runId = await resumedQueued(req, conv);
+    // one context provider for this run, whose call is where the stop lands: the providers are
+    // asked outside any transaction, before the plugin context's append
+    const provider: ContextProvider = {
+      provide: async () => {
+        // biome-ignore lint/suspicious/noExplicitAny: the stop's private PG half
+        const stopped = await (k.app.get(RunQueue) as any).abortQueuedIn(conv, runId, null);
+        expect(stopped).not.toBeNull();
+        return { text: "remember this" };
+      },
+    } as ContextProvider;
+    const points = k.app.get(ExtensionPointDefaults);
+    const real = points.providersFor.bind(points);
+    const found = vi
+      .spyOn(points, "providersFor")
+      .mockImplementation(async <T>(org: string, point: string) =>
+        point === "context" && org === orgId
+          ? {
+              providers: [
+                { extension: "ctx-probe", impl: provider as T, orgConfig: {}, config: {} },
+              ],
+              failed: new Set<string>(),
+            }
+          : real<T>(org, point),
+      );
+    const plugin = vi.spyOn(k.app.get(PluginContextService), "record");
+    try {
+      await deliverResume(runId);
+      expect(await runStatus(runId)).toBe("aborted");
+      const tried = plugin.mock.calls.flatMap((c, i) =>
+        c[0].runId === runId ? [plugin.mock.results[i]?.value] : [],
+      );
+      expect(tried.length).toBe(1);
+      // the append transaction re-read the run under the locks: ended, nothing appended
+      expect(await tried[0]).toBe(false);
+      expect(await afterAbort(conv, runId)).toEqual([]);
+      expect(await types(conv)).not.toContain("plugin_context");
+    } finally {
+      found.mockRestore();
+      plugin.mockRestore();
     }
   }, 60_000);
 

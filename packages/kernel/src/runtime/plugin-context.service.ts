@@ -17,6 +17,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { latestPluginContexts, pluginContextIdemKey } from "./context/plugin-context.js";
+import { runEndedIn } from "./run-status.js";
 
 /** What a run start tells {@link PluginContextService.record}. */
 export interface PluginContextInput {
@@ -76,9 +77,13 @@ export class PluginContextService {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
-  /** Asks the providers and records what changed (see the class); notifies after the commit. */
-  async record(input: PluginContextInput): Promise<void> {
-    if (input.kind !== "chat") return;
+  /**
+   * Asks the providers and records what changed (see the class); notifies after the commit. False:
+   * the run had ended under the locks (a stop landed while the providers were asked), so nothing
+   * was appended and the run must not go on (as `RunContextService.record`).
+   */
+  async record(input: PluginContextInput): Promise<boolean> {
+    if (input.kind !== "chat") return true;
     let found: { providers: PointProvider<ContextProvider>[]; failed: Set<string> };
     try {
       found = await this.points.providersFor<ContextProvider>(input.orgId, "context");
@@ -90,7 +95,7 @@ export class PluginContextService {
         runId: input.runId,
         err,
       });
-      return;
+      return true;
     }
     const { providers } = found;
     const tools = providers.length > 0 ? await input.toolKeysByPlugin() : new Map();
@@ -120,9 +125,11 @@ export class PluginContextService {
         .filter((plugin) => !serving.has(plugin) && !found.failed.has(plugin)),
     );
     // nothing answered and nothing to switch off: no transaction, no row lock
-    if (texts.size === 0 && off.size === 0) return;
+    if (texts.size === 0 && off.size === 0) return true;
     const seq = await this.append(input, texts, off);
+    if (seq === "ended") return false;
     if (seq !== null) await this.eventLog.notify(input.conversationId, seq);
+    return true;
   }
 
   /** One provider's call, bounded by the run's signal and the time limit. */
@@ -175,14 +182,16 @@ export class PluginContextService {
    * answer's hash with the plugin's latest `plugin_context` and appends the ones that differ (a
    * plugin with no earlier event and no text writes nothing), plus an empty event for each plugin
    * in `off` whose latest text is not empty. Idem key per run and plugin, so a retried run
-   * start finds its events or nothing changed. Returns the last seq written.
+   * start finds its events or nothing changed. Returns the last seq written; `ended` when the run
+   * is terminal under the locks (the providers are asked outside the transaction, so a stop may
+   * have ended it meanwhile: nothing is appended after its end).
    */
   @Transactional()
   private async append(
     input: PluginContextInput,
     texts: Map<string, string>,
     off: Set<string>,
-  ): Promise<number | null> {
+  ): Promise<number | null | "ended"> {
     const t = this.db.db;
     await t
       .selectFrom("conversations")
@@ -190,6 +199,7 @@ export class PluginContextService {
       .where("id", "=", input.conversationId)
       .forUpdate()
       .executeTakeFirst();
+    if (await runEndedIn(t, input.runId)) return "ended";
     const rows = await t
       .selectFrom("conversation_events")
       .select(["seq", "payload"])

@@ -752,8 +752,9 @@ export class RunWorker {
       });
       if (!contexted) return "finished";
       // plugin context (memory plugin spec §6.1): after the run context, still before the run is
-      // running; the providers are asked outside any transaction, a chat run only
-      await this.pluginContext.record({
+      // running; the providers are asked outside any transaction, a chat run only, so a stop may
+      // end the run meanwhile: its append transaction re-reads the run under the locks
+      const pluginContexted = await this.pluginContext.record({
         orgId: conv.org_id,
         conversationId,
         runId,
@@ -770,6 +771,7 @@ export class RunWorker {
         // the run's own abort watch starts with its execution below: until then, the shutdown
         signal: state.shutdown.signal,
       });
+      if (!pluginContexted) return "finished";
       await this.hooks?.beforeRunning?.(runId, conversationId);
       // never over a terminal status: a run finished meanwhile stays finished
       const updated = await this.db
