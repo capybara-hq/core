@@ -115,6 +115,13 @@ describe("the route table", () => {
     expect(matchRoute("/devices/d1")?.entry.pattern).toBe("/devices/[id]");
     expect(matchRoute("/devices")?.entry.pattern).toBe("/devices");
   });
+
+  it("the device page has no extra prefetch step", () => {
+    const m = matchRoute("/devices/d1");
+    expect(m?.entry.pattern).toBe("/devices/[id]");
+    // the removed org-settings read is gone: the entry only prefetches the device itself
+    expect(m?.entry.then).toBeUndefined();
+  });
 });
 
 describe("prefetchRoute's then", () => {

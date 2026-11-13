@@ -343,8 +343,6 @@
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
       "tier_not_allowed": "This sandbox level is above the highest the organization or the platform allows.",
-      "tier_on_device": "A local device's sandbox level is kept on its machine: change it on the device page, or run capybara-device policy set tier on the machine.",
-      "unsandboxed_not_allowed": "This device runs commands without a sandbox, which your organization does not allow. Its owner can turn the sandbox back on with capybara-device policy set isolation sandbox.",
       "tier_not_granted": "This scheduled task has no grant for the open level, so it can't use a device at the open level."
     },
     "device_sign_in": {
@@ -1549,14 +1547,19 @@
       "online": "Online",
       "offline": "Offline"
     },
-    "isolation": {
-      "isolated": "Processes isolated between sessions",
-      "shared": "Processes not isolated between sessions"
+    "runMode": {
+      "os": "System sandbox",
+      "docker": "Docker"
     },
-    "egress": {
-      "none": "no network",
-      "allowlist": "allowlisted hosts",
-      "open": "open network"
+    "mark": {
+      "auto": "Auto",
+      "sandbox": "Sandbox",
+      "open": "Open (private networks blocked)",
+      "allowlist": "Allowlist"
+    },
+    "networkKind": {
+      "open-public": "Open (private networks blocked)",
+      "allowlist": "Allowlist"
     },
     "empty": "You have no devices yet.",
     "noCloud": {
@@ -1586,23 +1589,9 @@
       "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
     },
     "detail": {
-      "tabsLabel": "Device sections",
-      "tabs": {
-        "summary": "Summary"
-      },
-      "source": "Source",
-      "provider": "Provider",
-      "state": "State",
-      "isolation": "Isolation",
-      "limits": "Limits",
-      "limitsValue": "{cpu} CPU · {memory} memory · {disk} disk · {egress}",
-      "files": "Files",
-      "filesNote": "Files are kept until the device is deleted.",
-      "suspendNote": "Suspending ends the processes that are running.",
       "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",
       "filesLostNote": "The files of this device are gone at the provider. Rebuild the files to use it again.",
       "localFilesLostNote": "The files directory of this local device is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this device to recreate the directory.",
-      "created": "Created",
       "rename": "Rename",
       "renameTitle": "Rename device",
       "renameSubmit": "Save",
@@ -1618,36 +1607,71 @@
       "resetSubmit": "Rebuild files",
       "resetScheduled": "File reset scheduled for {name}; this page updates when it is done.",
       "localFilesNote": "Files stay on the machine and are not uploaded to the platform.",
-      "deleteLocalHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm."
+      "deleteLocalHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm.",
+      "provider": "Provider",
+      "resources": "Resources",
+      "resourcesValue": "{cpu} CPU · {memory} memory · {disk} disk",
+      "network": "Network",
+      "filesAndSuspendNote": "Files are kept until the device is deleted. Suspending ends the processes that are running.",
+      "created": "Created"
     },
     "mode": {
-      "os": "System sandbox",
-      "docker": "Docker"
+      "description": {
+        "auto": "Commands run on this machine as you, with its network; each command is reviewed.",
+        "sandbox": "Commands run in a sandbox that reaches only the workspace, temporary files and the device's allowed hosts."
+      },
+      "cloudDescription": {
+        "auto": "Commands run in the container and can reach any public address; private networks are blocked.",
+        "sandbox": "Commands run in the container; its network follows the organization's sandbox network setting."
+      },
+      "name": {
+        "auto": "Auto",
+        "sandbox": "Sandbox"
+      },
+      "commandHint": "Run this in the machine's terminal to switch its mode.",
+      "changedSandbox": "The device is in sandbox mode.",
+      "pendingNextUse": "Takes effect at the next use; files are kept.",
+      "lockedNarrowed": "This cloud device is set to sandbox mode; a mode can only be narrowed here, not widened back to auto.",
+      "lockedSandbox": "Auto mode is not enabled, so cloud devices run in sandbox mode.",
+      "unavailable": "Auto mode is not enabled",
+      "autoOnMachine": "Switch to auto on the machine: run the command below.",
+      "noMachine": "Connect a machine to switch its mode here.",
+      "offline": "This device is offline; run the command below on the machine to switch its mode.",
+      "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
+      "pendingFilesReset": "Takes effect after the files are reset."
+    },
+    "recent": {
+      "title": "Recent changes",
+      "add": "Added {hosts}",
+      "remove": "Removed {hosts}",
+      "mode": "Mode set to {mode}",
+      "modeFrom": "Mode changed from {from} to {to}",
+      "none": "No change",
+      "unknownBy": "Unknown account",
+      "via": {
+        "web": "web",
+        "im": "IM",
+        "device": "on the machine"
+      },
+      "outcome": {
+        "unknown": "Not confirmed by the machine",
+        "failed": "Did not take effect"
+      }
     },
     "machine": {
       "title": "Machine",
       "description": "The machine that runs this device's commands.",
       "name": "Name",
       "os": "System",
-      "mode": "Runs in",
-      "programVersion": "Program version",
-      "lastSeen": "Last seen",
-      "never": "Never",
       "none": "No machine is connected. Run capybara-device login on the machine to connect it.",
       "revoke": "Disconnect this machine",
       "revokeTitle": "Disconnect {name}?",
       "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
       "revokeSubmit": "Disconnect",
-      "revoked": "{name} disconnected."
+      "revoked": "{name} disconnected.",
+      "runMode": "Runs in"
     },
     "network": {
-      "title": "Network",
-      "description": "Which domains commands on this machine may reach, on top of what the organization allows.",
-      "remoteGrants": "Changes from the platform",
-      "remoteGrantsOwner": "Accepted from you",
-      "remoteGrantsOff": "Not accepted",
-      "remoteGrantsHint": "Set only on the machine: capybara-device policy set remoteGrants owner|off",
-      "remoteGrantsOffHint": "This machine accepts no widening from the platform, so adding domains and turning the limit off happen on the machine: capybara-device policy add allowedDomains files.example.com, or capybara-device policy set remoteGrants owner to allow changes from here.",
       "domains": "Allowed domains",
       "domainsEmpty": "No domains allowed on this machine yet.",
       "remove": "Remove",
@@ -1655,108 +1679,31 @@
       "removed": "{host} removed.",
       "add": "Add a domain",
       "addHelp": "An exact host (files.example.com) or a wildcard (*.example.com).",
-      "addDisabled": "This machine does not take new domains from the platform.",
+      "addDisabled": "This machine can't add domains from the platform.",
       "addSubmit": "Add",
       "added": "{host} added.",
       "hostInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com or *.example.com.",
       "hostPresent": "This domain is already allowed.",
       "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
       "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
-      "unknown": "The machine has not reported its network settings yet."
+      "unknown": "The machine has not reported its network settings yet.",
+      "title": "Network",
+      "description": "In sandbox mode, commands reach only the domains this machine allows; changes are sent to the machine.",
+      "cloudTitle": "Network",
+      "cloudDescription": {
+        "open-public": "In sandbox mode this cloud device can reach any public address; private networks are blocked.",
+        "allowlist": "In sandbox mode this cloud device reaches only the domains the organization allows."
+      },
+      "cloudHint": {
+        "org": "The organization sets this in its settings.",
+        "platform": "The platform sets this."
+      },
+      "cloudEmpty": "No domains are allowed."
     },
     "tier": {
       "strict": "Strict",
       "dev": "Development",
       "open": "Open"
-    },
-    "mark": {
-      "open": "Open",
-      "unsandboxed": "No sandbox"
-    },
-    "sandbox": {
-      "title": "Sandbox level",
-      "description": "How wide the sandbox is for commands on this device, up to the highest level the organization and the platform allow.",
-      "follow": "Follow the organization default ({tier})",
-      "followHint": "Changes when the organization changes its default level.",
-      "hint": {
-        "strict": "Only allowed domains; no local ports or unix sockets.",
-        "dev": "Also common developer hosts, local ports and unix sockets; for everyday development.",
-        "open": "Any public address and port."
-      },
-      "capped": {
-        "org": "Organization allows up to: {tier}",
-        "platform": "Platform allows up to: {tier}",
-        "any": "Allowed up to: {tier}"
-      },
-      "effective": "Effective level",
-      "lower": {
-        "org": "The organization allows up to {tier}.",
-        "platform": "The platform allows up to {tier}.",
-        "program": "The device program on this machine doesn't know sandbox levels, so commands run at the strict level. Upgrade capybara-device on the machine."
-      },
-      "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "pendingFilesReset": "Takes effect after the files are reset.",
-      "changed": "Sandbox level set to {tier}.",
-      "followed": "The device now follows the organization default.",
-      "remoteOff": "This machine takes no raise from the platform. To raise the level, run on the machine:",
-      "unknown": "The machine has not reported its sandbox level yet.",
-      "noMachine": "Connect a machine to change the sandbox level.",
-      "upgrade": "The device program on this machine can't change its sandbox level from the platform. Upgrade capybara-device on the machine.",
-      "localhost": "Local ports",
-      "localhostValue": {
-        "on": "Reachable",
-        "off-proxy-detected": "Off: a local proxy or Docker port was found",
-        "off": "Not reachable"
-      },
-      "localhostOverride": "To allow local ports anyway, run on the machine:",
-      "unixSockets": "Unix sockets",
-      "unixSocketsValue": {
-        "roots": "Within the device's directories",
-        "all-masked": "Available, system daemon sockets hidden",
-        "off": "Not available"
-      },
-      "linuxNote": "On Linux the development level opens unix sockets only when the device program can hide the system daemons' sockets; otherwise they stay off.",
-      "openConfirmTitle": "Set this device to the open level?",
-      "openConfirmSubmit": "Set to open",
-      "openRisk": "At the open level, agent commands on this device can reach any public address and port, including uploading files to outside sites. Prompt injection can make an agent do that. Turn it on only on your own development machine, with agents and material you trust.",
-      "cancel": "Cancel",
-      "unsandboxed": "No sandbox",
-      "unsandboxedOffHint": "Only on this machine: the platform can't turn it on for you. Run on the machine:",
-      "unsandboxedRisk": "Without a sandbox, agent commands run on this computer as you: they can read and write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network. Prompt injection can make an agent delete files or send your credentials away. Turn it on only on your own development machine, with agents and material you fully trust.",
-      "unsandboxedOn": "Commands on this device run on the computer as you, without a sandbox.",
-      "unsandboxedNotAllowed": "The organization doesn't allow devices without a sandbox, so agents can't use this device until the sandbox is back on.",
-      "restore": "Turn the sandbox back on",
-      "restored": "The sandbox is back on.",
-      "recent": {
-        "title": "Recent changes",
-        "add": "Added {hosts}",
-        "remove": "Removed {hosts}",
-        "tier": "Level set to {tier}",
-        "tierFollow": "Set to follow the organization default",
-        "tierFrom": "Level changed from {from} to {to}",
-        "followDefault": "the organization default",
-        "localhost": "Local ports: {value}",
-        "remoteGrants": "Changes from the platform: {value}",
-        "isolation": {
-          "none": "No sandbox",
-          "sandbox": "Sandbox back on"
-        },
-        "none": "No change",
-        "unknownBy": "Unknown account",
-        "via": {
-          "web": "web",
-          "im": "IM",
-          "device": "on the machine"
-        },
-        "outcome": {
-          "unknown": "Not confirmed by the machine",
-          "failed": "Did not take effect"
-        }
-      },
-      "openRiskCloud": "At the open level, agent commands on this cloud device can reach any public address and port, including uploading files and data to outside sites. Prompt injection can make an agent do that. Turn it on only with agents and material you trust.",
-      "unsandboxedOnMark": "On",
-      "unsandboxedRefused": "The device is set to run without a sandbox, but the current level is below open, so it refuses every command. Turn the sandbox back on to use it.",
-      "isolationResetNote": "This device runs without a sandbox now. Changing its level here turns the sandbox back on."
     }
   },
   "nav": {

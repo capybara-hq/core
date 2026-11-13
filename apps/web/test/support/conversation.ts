@@ -78,7 +78,24 @@ export const CONV = (id = "c1", extra: Record<string, unknown> = {}) => ({
   },
 });
 
-const ENV_LIMITS = { cpu: 2, memoryMb: 2048, diskMb: 10240, egress: "allowlist", allowHosts: [] };
+const ENV_LIMITS = {
+  cpu: 2,
+  memoryMb: 2048,
+  diskMb: 10240,
+  mode: "auto",
+  network: { kind: "open-public", hosts: [] },
+};
+/** A device's mode and network (kernel `DeviceModeView`): a cloud device in auto mode. */
+export const ENV_MODE = {
+  mode: "auto",
+  allowedMode: "auto",
+  allowedBy: "org",
+  network: { kind: "open-public", hosts: [], source: "org" },
+  local: null,
+  pendingNextUse: false,
+  pendingFilesReset: false,
+  recent: [],
+};
 export const envView = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
   id,
   name,
@@ -93,6 +110,7 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   filesLost: false,
   instance: null,
   limits: ENV_LIMITS,
+  mode: ENV_MODE,
   createdAt: "2026-11-07T08:00:00.000Z",
   ...over,
 });

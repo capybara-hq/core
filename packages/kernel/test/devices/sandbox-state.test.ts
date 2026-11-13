@@ -19,7 +19,7 @@ const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySu
   ...s,
 });
 
-const extra = { pendingNextUse: false, recent: [] };
+const extra = { pendingNextUse: false, pendingFilesReset: false, recent: [] };
 
 describe("deviceModeViewOf", () => {
   it("a cloud device: the allowed mode, the open network, no local settings", () => {
@@ -82,6 +82,21 @@ describe("deviceModeViewOf", () => {
     expect(deviceModeViewOf(policy, org, false, null, extra, true)).toMatchObject({
       mode: "sandbox",
       network: { kind: "allowlist", hosts: [], source: "platform" },
+    });
+  });
+
+  it("a pending change is pending at the next use or at a file reset, never both", () => {
+    const org = { cloudNetwork: { mode: "allowlist" as const, allowHosts: ["a.com"] } };
+    const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
+    const nextUse = { ...extra, pendingNextUse: true };
+    expect(deviceModeViewOf(policy, org, false, null, nextUse)).toMatchObject({
+      pendingNextUse: true,
+      pendingFilesReset: false,
+    });
+    const fileReset = { ...extra, pendingFilesReset: true };
+    expect(deviceModeViewOf(policy, org, false, null, fileReset)).toMatchObject({
+      pendingNextUse: false,
+      pendingFilesReset: true,
     });
   });
 
