@@ -60,7 +60,7 @@ export class OrgSettingsOperations implements OnModuleInit {
         errors: [
           {
             code: "org.sandbox_egress_not_allowed",
-            next: "Through this tool the org's cloud network may only be narrowed: an open network may become an allowlist of hosts the deployment already allows, and the allowlist may lose hosts, but neither may add a host or switch back to open. To widen it, ask an org admin to change it in the organization settings on the web.",
+            next: "Through this tool the org's cloud network may only be narrowed: the host list may keep or lose hosts, and an open network may become an allowlist of hosts that list already has, but no change may add a host or switch an allowlist back to open (the host list is the local sandbox-mode ceiling whatever the cloud mode). To widen it, ask an org admin to change it in the organization settings on the web.",
           },
           {
             code: "org.auto_mode_not_allowed",

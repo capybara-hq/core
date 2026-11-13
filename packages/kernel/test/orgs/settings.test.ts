@@ -12,6 +12,7 @@ import {
   type OrgSettingsService,
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
+import { orgAllowedDomains } from "../../src/sandbox/modes.js";
 import { DEVICES_AUTO_MODE_SETTING } from "../../src/sandbox/platform-auto-mode.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgSettingsFor, orgsFor } from "../helpers/identity.js";
@@ -27,6 +28,12 @@ const LIMITS = {
   allowHosts: ["registry.npmjs.org", "github.com"],
   cpu: 1,
   memoryMb: 2048,
+};
+
+/** The deployment side of {@link orgAllowedDomains}: the org's list, else this one. */
+const DEPLOYMENT = {
+  autoMode: "allowed" as const,
+  limits: { egress: LIMITS.egress, allowHosts: LIMITS.allowHosts },
 };
 
 /** A config holder: the startup config's `devices.autoMode` (unset here unless the test says so). */
@@ -274,6 +281,60 @@ describe("org cloudNetwork", () => {
     expect(
       await tokenUpdate({ cloudNetwork: { mode: "allowlist", allowHosts: [] } }),
     ).toMatchObject({ cloudNetwork: { mode: "allowlist", allowHosts: [] } });
+  });
+
+  it("a token can never widen the local ceiling with an open network's allowHosts", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    const ceiling = async () => orgAllowedDomains(DEPLOYMENT, await s.get(orgId));
+    // the org follows the deployment: open, with the deployment's hosts as its local ceiling
+    expect(await s.get(orgId)).not.toHaveProperty("cloudNetwork");
+    expect(await ceiling()).toEqual(LIMITS.allowHosts);
+    // `allowHosts` is the local sandbox-mode ceiling whatever the cloud mode, so an open target
+    // carrying a host outside the current list raises it: a token cannot set it
+    expect(
+      await codeOf(
+        tokenUpdate({ cloudNetwork: { mode: "open", allowHosts: ["files.slack.com"] } }),
+      ),
+    ).toBe("org.sandbox_egress_not_allowed");
+    expect(await s.get(orgId)).not.toHaveProperty("cloudNetwork");
+    expect(await ceiling()).toEqual(LIMITS.allowHosts);
+  });
+
+  it("a token keeps the ceiling with an open target of the current hosts (or none)", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    // no allowHosts: the deployment's list applies, nothing grows
+    expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBeUndefined();
+    // the deployment's own list under an open mode is the same ceiling
+    expect(
+      await tokenUpdate({
+        cloudNetwork: { mode: "open", allowHosts: [...LIMITS.allowHosts] },
+      }),
+    ).toMatchObject({ cloudNetwork: { mode: "open", allowHosts: LIMITS.allowHosts } });
+    expect(orgAllowedDomains(DEPLOYMENT, await s.get(orgId))).toEqual(LIMITS.allowHosts);
+  });
+
+  it("a token may drop hosts while staying open", async () => {
+    const s = settingsWith();
+    const tokenUpdate = (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+      s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
+    // a person opens the network with a list of their own
+    await s.update(
+      orgId,
+      { cloudNetwork: { mode: "open", allowHosts: ["a.example.com", "b.example.com"] } },
+      accountId,
+    );
+    expect(
+      await codeOf(tokenUpdate({ cloudNetwork: { mode: "open", allowHosts: ["a.example.com"] } })),
+    ).toBeUndefined();
+    expect(orgAllowedDomains(DEPLOYMENT, await s.get(orgId))).toEqual(["a.example.com"]);
+    expect(
+      await codeOf(tokenUpdate({ cloudNetwork: { mode: "open", allowHosts: [] } })),
+    ).toBeUndefined();
+    expect(orgAllowedDomains(DEPLOYMENT, await s.get(orgId))).toEqual([]);
   });
 
   it("a deployment kill switch (sandbox.limits.egress none) makes the default an empty allowlist", async () => {

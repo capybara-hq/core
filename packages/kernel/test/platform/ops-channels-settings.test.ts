@@ -349,6 +349,20 @@ describe("org settings", () => {
     const on = await viaToken({ autoMode: "allowed" });
     expect(on.statusCode).toBe(400);
     expect(on.json().error.code).toBe("org.auto_mode_not_allowed");
+    // mode "open" does not lift the host check: the list is the local ceiling under either mode
+    const openOutside = await viaToken({
+      cloudNetwork: { mode: "open", allowHosts: ["example.com"] },
+    });
+    expect(openOutside.statusCode).toBe(400);
+    expect(openOutside.json().error.code).toBe("org.sandbox_egress_not_allowed");
+    const openUnchanged = await viaToken({
+      cloudNetwork: { mode: "open", allowHosts: ["github.com"] },
+    });
+    expect(openUnchanged.statusCode, openUnchanged.body).toBe(200);
+    expect(openUnchanged.json().settings.cloudNetwork).toEqual({
+      mode: "open",
+      allowHosts: ["github.com"],
+    });
     // the org follows the deployment (open): a token may move it to an allowlist of hosts the
     // deployment already has (that list is the local sandbox-mode ceiling too)
     const outside = await viaToken({

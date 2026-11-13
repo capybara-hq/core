@@ -434,10 +434,10 @@ export class OrgSettingsService {
    *   `cloudNetwork.allowHosts` is also the local sandbox-mode ceiling (`orgAllowedDomains` in
    *   `sandbox/modes.ts` becomes `deviceLimits.localAllowedDomains`, which the device intersects
    *   with its own list): an org with no `cloudNetwork` still caps its local devices at the
-   *   deployment's list, so an allowlist carrying a host outside that list raises their ceiling
-   *   even though `open` itself reaches every public address. Switching from `open` is therefore
-   *   only a narrowing when every host is already in the deployment's list; the allowed change
-   *   always narrows the cloud network too (spec §4.2, §4.3).
+   *   deployment's list, and an org whose network is `open` still caps them at its own `allowHosts`.
+   *   The host comparison therefore applies to both shapes, whatever the target mode: a patch may
+   *   only keep or lower the host set. Switching from `open` is a widening by itself, and the host
+   *   set must not grow even when the target stays `open` (spec §4.2, §4.3).
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.autoMode !== undefined) {
@@ -459,9 +459,8 @@ export class OrgSettingsService {
       const hostsOf = (v: typeof prev): string[] => v?.allowHosts ?? defaultHosts;
       const nextMode = next?.mode ?? defaultMode;
       const widens =
-        nextMode === "open"
-          ? modeOf(prev) !== "open"
-          : !hostsOf(next).every((h) => hostsOf(prev).includes(h));
+        (nextMode === "open" && modeOf(prev) !== "open") ||
+        !hostsOf(next).every((h) => hostsOf(prev).includes(h));
       if (widens) {
         throw new ApiError(
           "org.sandbox_egress_not_allowed",
