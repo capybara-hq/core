@@ -412,7 +412,6 @@
     "packages/kernel/test/tools/member-policies.test.ts",
     "packages/kernel/test/tools/network-approvals.test.ts",
     "packages/kernel/test/tools/network-ask-intents.test.ts",
-    "packages/kernel/test/tools/network-ask.dual.test.ts",
     "packages/kernel/test/tools/network-ask.test.ts",
     "packages/kernel/test/tools/oauth/oauth.dual.test.ts",
     "packages/kernel/test/tools/oauth/oauth.http.test.ts",
@@ -451,7 +450,6 @@
     "packages/kernel/test/ui/slots-catalog.http.test.ts",
     "packages/kernel/test/ui/slots.http.test.ts",
     "packages/kernel/test/ui/ui-stream.dual.test.ts",
-    "packages/kernel/test/ui/ui-stream.test.ts",
     "packages/kernel/test/ui/views.http.test.ts"
   ]
 }

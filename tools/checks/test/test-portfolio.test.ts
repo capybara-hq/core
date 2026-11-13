@@ -18,6 +18,17 @@ describe("checkTestPortfolio", () => {
     expect(checkTestPortfolio({ root: fixture("clean") })).toEqual([]);
   });
 
+  it("flags a small file that boots through a helper, not one importing helpers/runs for waitFor", () => {
+    const root = fixture("boots");
+    const got = checkTestPortfolio({ root });
+    expect(got.map((f) => [f.rule, relative(root, f.file).split(sep).join("/")])).toEqual([
+      ["test-small-app-file", "packages/kernel/test/catalog/env.test.ts"],
+      ["test-small-app-file", "packages/kernel/test/catalog/http.test.ts"],
+      ["test-small-app-file", "packages/kernel/test/catalog/transitive.test.ts"],
+    ]);
+    expect(got.some((f) => f.file.endsWith("waits-only.test.ts"))).toBe(false);
+  });
+
   it("reports fixed waits, timeout overrides, a small app file and a double boot in order", () => {
     expect(checkTestPortfolio({ root: fixture("bad") })).toEqual([
       expect.objectContaining({ rule: "test-fixed-sleep" }),

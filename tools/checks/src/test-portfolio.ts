@@ -28,15 +28,16 @@ import {
  * - `test-timeout-override`: a `timeout:` property of an options object, or a numeric timeout
  *   argument to `it` / `test` / `describe` / `before*` / `after*` (third argument for the first
  *   three, second for the hooks, as Vitest defines them).
- * - `test-small-app-file`: a file that imports `helpers/runs` or `helpers/http-app`, or calls
- *   `buildKernel` / `startKernel`, with at most 5 `it` / `test` calls.
+ * - `test-small-app-file`: a file with at most 5 `it` / `test` calls that boots an app: an import
+ *   of `helpers/http-app`, a `buildKernel` / `startKernel` call, or a call to an exported helper
+ *   that boots (scanned below).
  * - `test-double-boot`: more than one `buildKernel(` / `startKernel(` call in one file.
  * - `test-portfolio-list-overlap`: a path listed twice (the second occurrence is reported).
  * - `test-portfolio-missing-file`: a listed path with no file (reported on the list file).
  *
  * The wait rules match numeric literals only, so `sleep(TIMEOUT)` or a computed delay is not
  * reported; the app rules judge the import path and identifier calls textually, so an aliased
- * helper or a wrapper that boots is not seen. The README states these blind spots.
+ * helper is not seen. The README states these blind spots.
  */
 export const KERNEL_TEST_DIR = "packages/kernel/test";
 export const PORTFOLIO_BASELINE_FILE = "tools/checks/test-portfolio-baseline.json";
@@ -54,7 +55,8 @@ const RULE = {
 } as const;
 
 const TEST_FILE = /\.test\.ts$/;
-const APP_IMPORT = /(?:^|\/)helpers\/(?:runs|http-app)(?:\.[cm]?[jt]s)?$/;
+const APP_IMPORT = /(?:^|\/)helpers\/http-app(?:\.[cm]?[jt]s)?$/;
+const ENV_FILE = /-env\.ts$/;
 const TEST_CALL = new Set(["it", "test"]);
 const TIMEOUT_CALL = new Set([
   "it",
@@ -105,8 +107,75 @@ function fixedSetTimeout(executor: unknown): number | undefined {
   return delay;
 }
 
+/** The exported functions of a module and their bodies (declarations and const arrows). */
+function exportedFunctions(parsed: ParsedFile): { name: string; body: unknown }[] {
+  const out: { name: string; body: unknown }[] = [];
+  for (const statement of parsed.program.body as Node[]) {
+    if (statement.type !== "ExportNamedDeclaration") continue;
+    const declaration = statement.declaration as Node | null | undefined;
+    if (!isNode(declaration)) continue;
+    if (declaration.type === "FunctionDeclaration") {
+      const id = declaration.id as Node | null;
+      if (id?.type === "Identifier" && typeof id.name === "string") {
+        out.push({ name: id.name, body: declaration.body });
+      }
+    } else if (declaration.type === "VariableDeclaration") {
+      for (const declarator of declaration.declarations as Node[]) {
+        const id = declarator.id as Node;
+        const init = declarator.init as unknown;
+        if (id.type !== "Identifier" || typeof id.name !== "string" || !isNode(init)) continue;
+        if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
+        out.push({ name: id.name, body: init.body });
+      }
+    }
+  }
+  return out;
+}
+
+/** Whether a function body calls one of `symbols` (by name). */
+const callsAny = (body: unknown, symbols: Set<string>): boolean => {
+  let found = false;
+  walk(body, (n) => {
+    if (found || n.type !== "CallExpression") return;
+    const name = callName(n.callee);
+    if (name !== undefined && symbols.has(name)) found = true;
+  });
+  return found;
+};
+
+/**
+ * The exported helpers that boot the kernel app: `buildKernel` / `startKernel` themselves, plus
+ * every exported function in `helpers/*.ts` or `*-env.ts` whose body calls one of them or another
+ * such helper (transitively). A test file calling one of these names boots an app.
+ */
+export function bootingSymbols(root: string): Set<string> {
+  const testDir = join(root, KERNEL_TEST_DIR);
+  const files = [...listSourceFiles(join(testDir, "helpers")), ...listSourceFiles(testDir)]
+    .map((s) => s.file)
+    .filter((f) => f.startsWith(join(testDir, "helpers") + sep) || ENV_FILE.test(f))
+    .filter((f, i, all) => all.indexOf(f) === i)
+    .sort();
+  const defined: { name: string; body: unknown }[] = [];
+  for (const file of files) {
+    const parsed = parseFile(file);
+    if (isParseError(parsed)) continue;
+    defined.push(...exportedFunctions(parsed));
+  }
+  const boots = new Set<string>(BOOT_CALL);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const { name, body } of defined) {
+      if (boots.has(name) || !callsAny(body, boots)) continue;
+      boots.add(name);
+      grew = true;
+    }
+  }
+  return boots;
+}
+
 /** Reports the problems of one parsed test file, per-file rules last. */
-function analyze(parsed: ParsedFile, file: string): Finding[] {
+function analyze(parsed: ParsedFile, file: string, bootSymbols: Set<string>): Finding[] {
   const out: Finding[] = [];
   const add = (at: Node, rule: string, message: string) =>
     out.push({ file, line: parsed.lineOf(at.start), rule, message });
@@ -140,6 +209,9 @@ function analyze(parsed: ParsedFile, file: string): Finding[] {
         const line = parsed.lineOf(n.start);
         appEvidence = appEvidence === undefined ? line : Math.min(appEvidence, line);
         if (boots === 2) secondBootLine = line;
+      } else if (bootSymbols.has(name)) {
+        const line = parsed.lineOf(n.start);
+        appEvidence = appEvidence === undefined ? line : Math.min(appEvidence, line);
       }
       if (TEST_CALL.has(name)) tests += 1;
       if (TIMEOUT_CALL.has(name)) {
@@ -242,7 +314,7 @@ export function changedTestFiles(cwd: string, base: string): Set<string> | undef
 }
 
 /** One finding per problem in the test files, in path order. */
-function checkFiles(root: string, paths: string[]): Finding[] {
+function checkFiles(root: string, paths: string[], bootSymbols: Set<string>): Finding[] {
   const out: Finding[] = [];
   for (const path of paths) {
     const file = join(root, path);
@@ -251,7 +323,7 @@ function checkFiles(root: string, paths: string[]): Finding[] {
       out.push(parsed);
       continue;
     }
-    out.push(...analyze(parsed, file));
+    out.push(...analyze(parsed, file, bootSymbols));
   }
   return out;
 }
@@ -334,7 +406,7 @@ export function checkTestPortfolio({ root, baseline, changed }: TestPortfolioOpt
           .filter((p) => existsSync(join(root, p)))
           .sort();
   const scanned = paths.filter((p) => !skipped.has(p));
-  return [...checkFiles(root, scanned), ...checkLists(root)];
+  return [...checkFiles(root, scanned, bootingSymbols(root)), ...checkLists(root)];
 }
 
 /**
@@ -354,6 +426,7 @@ export function listCandidates(root: string, area: string): string[] {
     .filter((p) => TEST_FILE.test(p))
     .sort();
   const findings: Finding[] = [];
+  const bootSymbols = bootingSymbols(root);
   for (const path of files) {
     const file = join(root, path);
     const parsed = parseFile(file);
@@ -361,7 +434,7 @@ export function listCandidates(root: string, area: string): string[] {
       findings.push(parsed);
       continue;
     }
-    findings.push(...analyze(parsed, file));
+    findings.push(...analyze(parsed, file, bootSymbols));
   }
   const small = findings.filter((f) => f.rule === RULE.smallApp);
   const rest = findings.filter((f) => f.rule !== RULE.smallApp);
