@@ -1635,13 +1635,13 @@
       "commandHint": "Run this in the machine's terminal to switch its mode.",
       "changedSandbox": "The device is in sandbox mode.",
       "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "lockedCloud": "A cloud device does not choose its mode: it runs auto when the organization allows it, else sandbox.",
-      "lockedNarrowed": "This cloud device is set to sandbox mode.",
+      "lockedNarrowed": "This cloud device is set to sandbox mode; a mode can only be narrowed here, not widened back to auto.",
       "lockedSandbox": "The organization hasn't enabled auto mode, so cloud devices run in sandbox mode.",
       "unavailable": "Auto mode is not enabled",
       "noMachine": "Connect a machine to switch its mode here.",
       "offline": "This device is offline; run the command below on the machine to switch its mode.",
-      "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine."
+      "upgrade": "The device program on this machine can't change its mode from the platform. Upgrade capybara-device on the machine.",
+      "pendingFilesReset": "Takes effect after the files are reset."
     },
     "recent": {
       "title": "Recent changes",

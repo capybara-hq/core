@@ -93,6 +93,7 @@ export const ENV_MODE = {
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   pendingNextUse: false,
+  pendingFilesReset: false,
   recent: [],
 };
 export const envView = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({

@@ -22,6 +22,7 @@ import {
   type DeviceMode,
   type DeviceModeChange,
   type DevicePolicyPatch,
+  setDeviceMode,
   updateDevicePolicy,
 } from "../lib/devices";
 import { allowHostProblem, normalizeHost } from "../lib/network-hosts";
@@ -36,8 +37,9 @@ export const MODE_COMMAND = "capybara-device mode auto|sandbox";
  * A device's 「运行模式」 and, in sandbox mode only, its network (auto mode spec §4): the two-state
  * 自动 / 沙箱 scale with one sentence each. A local device switches at its machine: the page shows
  * the `capybara-device mode` keycaps, and choosing 沙箱 narrows it here through the policy op
- * (choosing 自动 sends nothing). A cloud device has no choice: the scale is locked at the mode the
- * organization and the platform settle on, with the reason. In auto mode the network section is
+ * (choosing 自动 sends nothing). A cloud device narrows here too (auto → sandbox, a `PATCH`); once
+ * sandbox the scale is locked, because the web never widens a mode back (auto is switched on only
+ * at a machine, where one exists). In auto mode the network section is
  * gone (a local machine's network is a fact; a cloud auto device is 开放（挡内网）); in sandbox mode
  * a local device's allowlist is edited here, and a cloud device's network is read only from the
  * organization's setting. The recent mode and policy changes close the block.
@@ -48,6 +50,10 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
   const [failure, setFailure] = useState<unknown>(null);
   const change = useAppMutation({
     fn: (patch: DevicePolicyPatch) => updateDevicePolicy(orgId, e.id, patch),
+    invalidates: () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)],
+  });
+  const narrow = useAppMutation({
+    fn: () => setDeviceMode(orgId, e.id, "sandbox"),
     invalidates: () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)],
   });
   const m = e.mode;
@@ -67,12 +73,29 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
     }
   };
 
-  const switchMode = (next: DeviceMode) => {
-    // Auto mode is switched on only at the machine: the web only ever narrows to sandbox.
-    if (next !== "sandbox" || !canApply) return;
-    void send({ mode: "sandbox" }, t("mode.changedSandbox"));
+  // The web only ever narrows: a local device at its machine, a cloud device here.
+  const narrowToSandbox = async () => {
+    setFailure(null);
+    try {
+      await narrow.mutateAsync(undefined);
+      toast.success(t("mode.changedSandbox"));
+    } catch (err) {
+      setFailure(err);
+    }
   };
+  const switchMode = (next: DeviceMode) => {
+    // Auto mode is switched on only at the machine: choosing it sends nothing.
+    if (next !== "sandbox") return;
+    if (local) {
+      if (canApply) void send({ mode: "sandbox" }, t("mode.changedSandbox"));
+      return;
+    }
+    void narrowToSandbox();
+  };
+  const pending = change.isPending || narrow.isPending;
 
+  // A cloud device may narrow to sandbox here; once sandbox it is locked (no widening on the web).
+  const cloudNarrowable = !local && m.mode === "auto" && m.allowedMode === "auto";
   const disabledReason = !local
     ? undefined
     : e.machine === null
@@ -86,9 +109,7 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
     ? undefined
     : m.allowedMode === "sandbox"
       ? t("mode.lockedSandbox")
-      : m.mode === "sandbox"
-        ? t("mode.lockedNarrowed")
-        : t("mode.lockedCloud");
+      : t("mode.lockedNarrowed");
 
   return (
     <Stack gap={16}>
@@ -100,8 +121,9 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
                 auto: t("mode.cloudDescription.auto"),
                 sandbox: t("mode.cloudDescription.sandbox"),
               },
-              locked: true,
-              ...(lockedReason !== undefined ? { lockedReason } : {}),
+              ...(cloudNarrowable
+                ? { onSelect: switchMode }
+                : { locked: true, ...(lockedReason !== undefined ? { lockedReason } : {}) }),
             }
           : {
               descriptions: {
@@ -121,10 +143,15 @@ export function DeviceModeSection({ orgId, device: e }: { orgId: string; device:
           {t("mode.pendingNextUse")}
         </Text>
       )}
+      {m.pendingFilesReset && (
+        <Text variant="prose" tone="warn">
+          {t("mode.pendingFilesReset")}
+        </Text>
+      )}
       {failure !== null && <ApiErrorDetail error={failure} open />}
       <RecentChanges recent={m.recent} />
       {local && m.mode === "sandbox" && (
-        <LocalAllowlist device={e} pending={change.isPending} onSend={send} />
+        <LocalAllowlist device={e} pending={pending} onSend={send} />
       )}
       {!local && m.mode === "sandbox" && (
         <CloudNetwork kind={m.network.kind} hosts={m.network.hosts} />

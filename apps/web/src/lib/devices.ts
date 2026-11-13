@@ -102,6 +102,8 @@ export interface DeviceModeView {
   local: { reported: DeviceMode | null; allowedDomains: string[] } | null;
   /** A cloud device's instance runs an older mode or network: its next use applies this one. */
   pendingNextUse: boolean;
+  /** Its provider applies limits at a file reset, so only that applies the new mode or network. */
+  pendingFilesReset: boolean;
   /** Its last mode and policy changes, newest first. */
   recent: DeviceModeChange[];
 }
@@ -267,6 +269,13 @@ export interface DevicePolicyPatch {
 
 /** The most hosts one policy change adds. */
 export const MAX_POLICY_HOSTS = 20;
+
+/** Narrows a cloud device to sandbox mode (`PATCH …/devices/:id`). Auto mode is never set here. */
+export const setDeviceMode = (orgId: string, id: string, mode: "sandbox") =>
+  apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ mode }),
+  });
 
 /** Sent to the machine, which writes it and answers with the policy as written. */
 export const updateDevicePolicy = (orgId: string, id: string, patch: DevicePolicyPatch) =>

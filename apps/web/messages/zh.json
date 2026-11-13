@@ -1623,13 +1623,13 @@
       "commandHint": "在这台机器的终端里运行，切换模式。",
       "changedSandbox": "已切换到沙箱模式。",
       "pendingNextUse": "下次使用时生效，文件保留。",
-      "lockedCloud": "云端设备不能选择模式：组织允许自动模式时运行自动，否则运行沙箱。",
-      "lockedNarrowed": "这台云端设备已设为沙箱模式。",
+      "lockedNarrowed": "这台云端设备已设为沙箱模式；这里只能收窄，不能切回自动。",
       "lockedSandbox": "组织未开放自动模式，云端设备运行沙箱。",
       "unavailable": "组织未开放自动模式",
       "noMachine": "连接机器后才能在这里切换模式。",
       "offline": "这台设备离线；在机器上运行下面的命令即可切换。",
-      "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。"
+      "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。",
+      "pendingFilesReset": "重置文件后生效。"
     },
     "recent": {
       "title": "最近的修改",

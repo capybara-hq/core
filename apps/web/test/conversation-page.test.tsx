@@ -1258,6 +1258,7 @@ describe("the properties panel's device mark", () => {
       network: { kind: "allowlist", hosts: [], source: "platform" },
       local: { reported: "auto", allowedDomains: [] },
       pendingNextUse: false,
+      pendingFilesReset: false,
       recent: [],
     };
     const device = envView("e1", "Laptop", {

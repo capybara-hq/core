@@ -37,6 +37,7 @@ const MODE = {
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   pendingNextUse: false,
+  pendingFilesReset: false,
   recent: [],
 };
 const env = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({

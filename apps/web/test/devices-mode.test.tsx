@@ -45,6 +45,7 @@ const cloudMode = (over: Record<string, unknown> = {}) => ({
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   pendingNextUse: false,
+  pendingFilesReset: false,
   recent: [],
   ...over,
 });
@@ -55,6 +56,7 @@ const localMode = (over: Record<string, unknown> = {}) => ({
   network: { kind: "allowlist", hosts: [], source: "platform" },
   local: { reported: "auto", allowedDomains: [] },
   pendingNextUse: false,
+  pendingFilesReset: false,
   recent: [],
   ...over,
 });
@@ -195,12 +197,36 @@ describe("the mode scale", () => {
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
-  it("a cloud device has no choice: the scale is locked at the mode and says why", async () => {
-    stubApi(detail(cloud()));
+  it("a cloud auto device narrows to 沙箱 with a PATCH (never to auto)", async () => {
+    const calls = stubApi({
+      ...detail(cloud()),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
+    });
+    await renderDetail();
+    const group = await screen.findByRole("radiogroup", { name: "Run mode" });
+    const auto = within(group).getByRole("radio", { name: /^Auto/ });
+    expect(auto.getAttribute("aria-checked")).toBe("true");
+    await userEvent.setup().click(within(group).getByRole("radio", { name: /^Sandbox/ }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: "sandbox" });
+    expect(calls.some((c) => String(c.body ?? "").includes('"auto"'))).toBe(false);
+  });
+
+  it("a cloud device in sandbox is locked: the web never widens it back", async () => {
+    stubApi(
+      detail(
+        cloud({
+          mode: cloudMode({
+            mode: "sandbox",
+            network: { kind: "allowlist", hosts: [], source: "platform" },
+          }),
+        }),
+      ),
+    );
     const { container } = await renderDetail();
     const scale = container.querySelector('[data-part="mode-scale"]') as HTMLElement;
     expect(scale.getAttribute("data-locked")).toBe("true");
-    expect(scale.textContent).toContain(E.mode.lockedCloud);
+    expect(scale.textContent).toContain(E.mode.lockedNarrowed);
     const group = screen.getByRole("radiogroup", { name: "Run mode" });
     const stations = within(group).getAllByRole("radio");
     expect(stations.every((s) => (s as HTMLButtonElement).disabled)).toBe(true);
@@ -246,6 +272,13 @@ describe("the mode scale", () => {
     stubApi(detail(cloud({ mode: cloudMode({ pendingNextUse: true }) })));
     await renderDetail();
     expect(await screen.findByText(E.mode.pendingNextUse)).toBeTruthy();
+  });
+
+  it("a change that only a file reset applies has its own status line and offers 重建文件", async () => {
+    stubApi(detail(cloud({ mode: cloudMode({ pendingFilesReset: true }) })));
+    await renderDetail();
+    expect(await screen.findByText(E.mode.pendingFilesReset)).toBeTruthy();
+    expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 });
 

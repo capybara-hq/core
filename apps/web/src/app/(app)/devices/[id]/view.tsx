@@ -76,7 +76,12 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const [resetting, setResetting] = useState(false);
   const read = usePageQuery({
     ...deviceQuery(orgId, id),
-    refetchInterval: (q) => (resetting && q.state.data?.device.filesLost ? RESET_POLL_MS : false),
+    refetchInterval: (q) => {
+      const d = q.state.data?.device;
+      return resetting && d !== undefined && (d.filesLost || d.mode.pendingFilesReset)
+        ? RESET_POLL_MS
+        : false;
+    },
   });
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -154,7 +159,7 @@ function Detail({
           title: name,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...(e.filesLost && e.available && !local
+            ...((e.filesLost || e.mode.pendingFilesReset) && e.available && !local
               ? [
                   {
                     label: t("detail.resetFiles"),
