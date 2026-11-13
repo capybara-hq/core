@@ -4863,7 +4863,7 @@
         "none": "No organization loses access",
         "agents": "Agents: {names}",
         "noAgents": "No agent uses it",
-        "connectorsKept": "{count, plural, one {The connector it created stays} other {The # connectors it created stay}} as the organization's own, with credentials",
+        "connectorsKept": "{count, plural, one {The connector it created is kept but} other {The # connectors it created are kept but}} disabled with the plugin; their settings and credentials stay",
         "replaced": "These components have their own scope; after the change they follow the plugin again",
         "conflicts": "These organizations already have a skill with the same name, so this change is not possible. Rename or delete the skill there first",
         "groups": {
@@ -5025,7 +5025,7 @@
           "used_by_connectors": "still used by connectors",
           "used_by_plugins": "still required by plugins",
           "wanted_by_scope": "kept on by its own scope",
-          "org_owned": "kept as the organization's own"
+          "disabled_with_plugin": "disabled with its plugin; settings kept"
         },
         "dismiss": "Got it",
         "noneRemoved": "No component removed",
@@ -5389,10 +5389,11 @@
     },
     "switchOff": {
       "title": "Turn off {name}",
-      "hint": "Turning it off removes the components this plugin created for this organization that nothing else uses; pre-existing and still-used ones are kept.",
+      "hint": "Turning it off removes the components this plugin created for this organization that nothing else uses; pre-existing and still-used ones are kept. Connectors it created or took over are disabled with it, keeping their settings and credentials.",
       "skills": "{n, plural, one {Its skill goes} other {Its # skills go}} away from every agent.",
       "agents": "Agents affected",
       "removed": "Removed",
+      "disabled": "Disabled with the plugin",
       "kept": "Kept",
       "none": "No component is removed",
       "confirm": "Turn off",

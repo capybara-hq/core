@@ -68,8 +68,9 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  *    org admin installs it on B: extension enabled, connector created with a tool snapshot, skill
  *    stored; the agent calls the connector tool and the extension tool, and `Skill` reads the
  *    skill;
- * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), the
- *    extension and the skill are removed, the agent still runs (dependency components arrive with Task 5);
+ * 3. Uninstall: the connector is kept but switched off with the plugin (`kept`,
+ *    `disabled_with_plugin`), the extension and the skill are removed, the agent still runs without
+ *    either tool (dependency components arrive with Task 5);
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
  *    approval (moved up) -> install possible only after super admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
@@ -725,13 +726,13 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     expect(String(r3.content)).toContain("# crm-notes");
   });
 
-  it("3. 卸载：kept 列出之前已启用的插件与被 agent 引用的连接器，其余移除，agent 仍能运行", async () => {
+  it("3. 卸载：kept 列出之前已启用的插件与被停用的连接器，其余移除，agent 仍能运行", async () => {
     // the agent has the skill on but does not name it (skills default-on spec §11): it is removed
     const rep = await ok("boss", 0, "DELETE", `${base}/plugin-installs/${pluginInstallId}`);
     const byKey = (xs: { kind: string; ref: string }[]) =>
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
     expect(byKey(rep.kept as { kind: string; ref: string }[])).toEqual([
-      { kind: "connector", ref: connectorId, reason: "used_by_agents" },
+      { kind: "connector", ref: connectorId, reason: "disabled_with_plugin" },
       { kind: "extension", ref: "fake-dep-provider", reason: "pre_existing" },
     ]);
     // phase 2: the plugin's skill is a platform component; it goes off in the org with the plugin
@@ -749,13 +750,13 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     const listed = (await ok("boss", 1, "GET", `${base}/skills`)).skills as { id: string }[];
     expect(listed.map((x) => x.id)).not.toContain(appSkillId);
     expect((await ok("boss", 1, "GET", `${base}/plugin-installs`)).installs).toEqual([]);
-    // agent 仍能运行：连接器工具照常可用
+    // the connector is kept but switched off with the plugin (spec §5 rule 8): its tools are no
+    // longer offered, and a run naming one ends as usual with a tool error
     const conv = await newConv("boss", 1, agentId);
     const r = await call("boss", 0, conv, "mcp__docs__search", { q: "after" }, 1);
-    expect(r.isError, String(r.content)).toBe(false);
-    expect(String(r.content)).toContain("hits for after");
+    expect(r.isError).toBe(true);
     // the extension is off in the org now: the agent no longer has its tools (tools default-on
-    // spec §4); the run ends as usual and a call naming one is only a tool error
+    // spec §4)
     const dangling = await call(
       "boss",
       1,
@@ -903,6 +904,12 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     expect(done.summary).toMatchObject({ drifted: 0 });
 
     // 以 {kind:"app"} 保存的旧 agent 版本：直接把旧形写回库（改名前存的版本），两个副本都能运行
+    // The docs connector was switched off with its plugin in step 3: switch the plugin back on so
+    // the agent has the connector tool again (the install takes the disabled connector back)
+    const back = await at("boss", 0, "PUT", `${base}/catalog/${appItem}/switch`, {
+      enabled: true,
+    });
+    expect(back.status, JSON.stringify(back.json)).toBe(200);
     const ag = await ok("boss", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Legacy",

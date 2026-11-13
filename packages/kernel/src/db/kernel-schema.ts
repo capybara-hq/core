@@ -520,6 +520,12 @@ export interface ConnectorsTable {
   use_for_git: Generated<boolean>;
   /** 0127: the org's policy for pushes through this connector (virtual tool `git_push`). */
   git_push_policy: Generated<"allow" | "ask" | "deny">;
+  /**
+   * 0129: the plugin (catalog item) whose switch-off disabled this connector; null = not switched
+   * off by a plugin (an org admin's own disable, or enabled). Switching that plugin back on
+   * re-enables exactly the connectors it disabled.
+   */
+  disabled_by_plugin_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**
