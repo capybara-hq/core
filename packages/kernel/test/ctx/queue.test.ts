@@ -1,18 +1,18 @@
 import { startTestRedis } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createQueue } from "../../src/ctx/queue.js";
 
 let box: Awaited<ReturnType<typeof startTestRedis>>;
 const queues: Array<{ close(): Promise<void> }> = [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const until = async (cond: () => boolean, ms = 8000) => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (cond()) return;
-    await sleep(20);
-  }
-  throw new Error("until: timeout");
-};
+/** Waits until `cond` holds (the old polling loop's 8 s budget); an error from `cond` surfaces. */
+const until = (cond: () => boolean, ms = 8000) =>
+  vi.waitFor(
+    () => {
+      if (!cond()) throw new Error("condition not met yet");
+    },
+    { timeout: ms },
+  );
 const mk = (ns: string, runWorkers = true) => {
   const q = createQueue(box.url, ns, { runWorkers });
   queues.push(q);
