@@ -42,7 +42,6 @@ function PlatformPageData({ plugin, id }: { plugin: string; id: string }) {
     return (
       <DetailPage
         header={{ path: [...scope, { label: t("pluginPage.pathLabel") }], title: "" }}
-        tabs={{ label: id, items: [{ id: "view", label: id }], value: "view" }}
         loading={{ blocks: 1 }}
       />
     );
@@ -113,7 +112,6 @@ function PlatformPage({
   return (
     <DetailPage
       header={{ path: [...scope, { label: t("pluginPage.pathLabel") }, { label: title }], title }}
-      tabs={{ label: title, items: [{ id: "view", label: title }], value: "view" }}
     >
       {contribution ? (
         <ExtensionSlot

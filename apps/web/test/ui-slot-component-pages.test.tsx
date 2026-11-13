@@ -267,7 +267,7 @@ describe("nav entries of component pages and sections", () => {
     ClientHost.load = vi.fn(() => new Promise<unknown>(() => {}));
     renderHost(<NavProbe />, { set });
     await flush();
-    expect(text("pages")).toBe("fake-client/board,view-plugin/report");
+    expect(text("pages")).toBe("fake-client,view-plugin");
     expect(text("sections")).toBe("ext.fake-client.notes");
     expect(text("platform")).toBe("fake-client/console");
   });
@@ -275,7 +275,7 @@ describe("nav entries of component pages and sections", () => {
   it("are not offered in safe mode (views stay)", async () => {
     renderHost(<NavProbe />, { set, safe: true });
     await flush();
-    expect(text("pages")).toBe("view-plugin/report");
+    expect(text("pages")).toBe("view-plugin");
     expect(text("sections")).toBe("");
     expect(text("platform")).toBe("");
   });
@@ -289,14 +289,14 @@ describe("nav entries of component pages and sections", () => {
         } as never),
     });
     await flush();
-    expect(text("pages")).toBe("view-plugin/report");
+    expect(text("pages")).toBe("view-plugin");
     expect(text("sections")).toBe("");
     expect(text("platform")).toBe("");
     cleanup();
     sessionStorage.setItem(DISABLED_KEY, JSON.stringify([`fake-client/${BUILD}`]));
     renderHost(<NavProbe />, { set });
     await flush();
-    expect(text("pages")).toBe("view-plugin/report");
+    expect(text("pages")).toBe("view-plugin");
     expect(text("sections")).toBe("");
   });
 

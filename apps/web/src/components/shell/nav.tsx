@@ -175,6 +175,8 @@ export function activeNavOf(pathname: string): string {
   const ext = /^\/p\/([^/]+)\/([^/]+)/.exec(pathname);
   if (ext?.[1] !== undefined && ext[2] !== undefined)
     return `ext:${decode(ext[1])}/${decode(ext[2])}`;
+  const root = /^\/p\/([^/]+)\/?$/.exec(pathname);
+  if (root?.[1] !== undefined) return `ext:${decode(root[1])}`;
   if (under(pathname, "/settings")) return "settings";
   if (under(pathname, "/agents")) return "agents";
   if (under(pathname, "/skills")) return "skills";
@@ -232,9 +234,12 @@ export function useAdminInboxCount(enabled: boolean): number | undefined {
   return enabled ? data?.total : undefined;
 }
 
-/** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
-export const pluginPageHref = (plugin: string, id: string) =>
-  `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
+/**
+ * A plugin page's route: `/p/<plugin>/<id>`, or `/p/<plugin>` when the plugin has one page (the
+ * short address is its page).
+ */
+export const pluginPageHref = (plugin: string, id?: string) =>
+  `/p/${encodeURIComponent(plugin)}${id === undefined ? "" : `/${encodeURIComponent(id)}`}`;
 
 /**
  * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
@@ -262,13 +267,17 @@ function extensionItems(
 ): { id: string; label: string; href: string }[] {
   const lang = uiLocale(locale);
   const titles = pages.map((p) => p.title[lang]);
+  const perPlugin = new Map<string, number>();
+  for (const p of pages) perPlugin.set(p.plugin, (perPlugin.get(p.plugin) ?? 0) + 1);
   return pages.map((p) => {
     const title = p.title[lang];
     const shared = titles.filter((x) => x === title).length > 1;
+    // One page: the plugin alone is its address (and its nav item) — no second segment to carry.
+    const single = perPlugin.get(p.plugin) === 1;
     return {
-      id: `${p.plugin}/${p.id}`,
+      id: single ? p.plugin : `${p.plugin}/${p.id}`,
       label: shared ? `${title} · ${p.plugin}` : title,
-      href: pluginPageHref(p.plugin, p.id),
+      href: single ? pluginPageHref(p.plugin) : pluginPageHref(p.plugin, p.id),
     };
   });
 }
