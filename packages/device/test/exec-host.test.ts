@@ -10,39 +10,32 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type DeviceExecArgs,
-  type SandboxLimits,
-  UNSANDBOXED_NOT_ALLOWED_MESSAGE,
-} from "@capybara-hq/plugin-sdk";
+import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { HostExecutor } from "../src/exec/host.js";
 import { findMarked } from "../src/exec/procs.js";
 import { osRoots } from "../src/exec/shared.js";
 import {
-  execIsolation,
   FILE_OPS_DECISION_TTL_MS,
-  policyUnsandboxed,
   SANDBOX_BACK_ON,
   SwitchingExecutor,
 } from "../src/exec/switch.js";
-import { DEFAULT_POLICY, type Policy } from "../src/state.js";
+import { DEFAULT_POLICY, type Policy, type SandboxMode } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
 const tmp = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const never = new AbortController().signal;
 
-const LIMITS: SandboxLimits = {
+const limitsWith = (mode: SandboxMode, hosts: string[] = []): SandboxLimits => ({
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  egress: "allowlist",
-  allowHosts: [],
-  tier: "open",
-  devHosts: [],
-  allowUnsandboxed: true,
-};
+  mode,
+  network: { kind: "allowlist", hosts },
+});
+
+const LIMITS: SandboxLimits = limitsWith("auto");
 
 function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
   return {
@@ -129,14 +122,14 @@ describe("HostExecutor: commands without a sandbox", () => {
     });
   });
 
-  it("a cwd outside the roots, or leaving them by a link, is refused", async () => {
-    await expect(ex.exec(execArgs("pwd", { cwd: base }), never)).rejects.toMatchObject({
-      kind: "policy",
-    });
+  it("a cwd anywhere on the machine is allowed in auto mode", async () => {
+    expect((await ex.exec(execArgs("pwd", { cwd: base }), never)).stdout.trim()).toBe(base);
     symlinkSync(base, join(ex.roots.workspace, "out"));
-    await expect(
-      ex.exec(execArgs("pwd", { cwd: join(ex.roots.workspace, "out") }), never),
-    ).rejects.toMatchObject({ kind: "policy" });
+    expect(
+      (
+        await ex.exec(execArgs("pwd", { cwd: join(ex.roots.workspace, "out") }), never)
+      ).stdout.trim(),
+    ).toBe(base);
   });
 
   it("an already-aborted signal starts nothing", async () => {
@@ -250,104 +243,23 @@ describe("HostExecutor: commands without a sandbox", () => {
     expect(r.stdout).toMatch(/^(€)+$/);
   });
 
-  it("file operations stay inside the roots", async () => {
+  it("file operations reach the machine (auto mode): shape checks only", async () => {
     const f = join(ex.roots.workspace, "dir/a.txt");
     await ex.writeFile(f, Buffer.from("hello"));
     expect(await ex.stat(f)).toEqual({ size: 5, isDir: false });
     expect(Buffer.from((await ex.readFile(f, 3))?.data ?? []).toString()).toBe("hel");
     expect(await ex.readFile(join(ex.roots.tmp, "missing"), 10)).toBeNull();
+    // Outside the device directory, as the owner's own tools do.
     writeFileSync(join(base, "secret"), "S");
-    await expect(ex.readFile(join(base, "secret"), 10)).rejects.toMatchObject({ kind: "policy" });
-    await expect(
-      ex.writeFile(join(ex.roots.workspace, "out/x"), Buffer.from("x")),
-    ).rejects.toMatchObject({
+    expect(Buffer.from((await ex.readFile(join(base, "secret"), 10))?.data ?? []).toString()).toBe(
+      "S",
+    );
+    await ex.writeFile(join(base, "out/x"), Buffer.from("x"));
+    expect(readFileSync(join(base, "out/x"), "utf8")).toBe("x");
+    // Shape checks keep relative paths and `..` out.
+    await expect(ex.readFile("secret", 10)).rejects.toMatchObject({ kind: "policy" });
+    await expect(ex.readFile(`${base}/a/../secret`, 10)).rejects.toMatchObject({
       kind: "policy",
-    });
-    expect(existsSync(join(base, "x"))).toBe(false);
-  });
-});
-
-describe("execIsolation: when a command runs without a sandbox", () => {
-  const p = (over: Partial<Policy>): Policy => ({ ...DEFAULT_POLICY, ...over });
-  const NOT_SET =
-    "This device is set to run commands without a sandbox, but its tier is not set on this " +
-    "machine (it follows the organization's default); running without a sandbox needs tier " +
-    "open set on this machine. Run capybara-device policy set tier open, or turn the sandbox " +
-    "back on with capybara-device policy set isolation sandbox.";
-
-  it("only with isolation none, the local tier open, OS mode and open after the ceiling", () => {
-    const allowed = { tier: "open", allowUnsandboxed: true } as const;
-    expect(execIsolation(p({ tier: "open", isolation: "none" }), allowed, "os")).toEqual({
-      tier: "open",
-      isolation: "none",
-    });
-    expect(execIsolation(p({ tier: "open" }), { tier: "open" }, "os")).toEqual({
-      tier: "open",
-      isolation: "sandbox",
-    });
-    expect(policyUnsandboxed(p({ tier: "open", isolation: "none" }))).toBe(true);
-    expect(policyUnsandboxed(p({ isolation: "none" }))).toBe(false);
-  });
-
-  it("the org's default never makes a device unsandboxed: no local tier is refused", () => {
-    // The deployment sends the default and the ceiling; neither is the owner's local choice.
-    expect(
-      execIsolation(p({ isolation: "none" }), { tier: "open", defaultTier: "open" }, "os"),
-    ).toEqual({ tier: "open", isolation: "none", refusal: NOT_SET });
-    expect(
-      execIsolation(p({ isolation: "none" }), { tier: "open", defaultTier: "dev" }, "os"),
-    ).toEqual({ tier: "dev", isolation: "none", refusal: NOT_SET });
-  });
-
-  it("refuses unless the kernel allows this command to run without a sandbox", () => {
-    // absent (an older kernel) counts as not allowed: fail closed
-    for (const allowUnsandboxed of [undefined, false]) {
-      expect(
-        execIsolation(
-          p({ tier: "open", isolation: "none" }),
-          { tier: "open", ...(allowUnsandboxed !== undefined && { allowUnsandboxed }) },
-          "os",
-        ),
-      ).toEqual({ tier: "open", isolation: "none", refusal: UNSANDBOXED_NOT_ALLOWED_MESSAGE });
-    }
-    // a sandboxed command needs nothing from the kernel
-    expect(execIsolation(p({ tier: "open" }), { tier: "open" }, "os")).toEqual({
-      tier: "open",
-      isolation: "sandbox",
-    });
-  });
-
-  it("Docker mode ignores isolation", () => {
-    expect(
-      execIsolation(p({ tier: "open", isolation: "none" }), { tier: "open" }, "docker"),
-    ).toEqual({ tier: "open", isolation: "sandbox" });
-    expect(
-      execIsolation(p({ tier: "open", isolation: "none" }), { tier: "dev" }, "docker"),
-    ).toEqual({ tier: "dev", isolation: "sandbox" });
-  });
-
-  it("refuses, naming why, when a tier is below open", () => {
-    expect(
-      execIsolation(
-        p({ tier: "open", isolation: "none" }),
-        { tier: "dev", allowUnsandboxed: true },
-        "os",
-      ),
-    ).toEqual({
-      tier: "dev",
-      isolation: "none",
-      refusal:
-        "This device is set to run commands without a sandbox, but the organization allows at " +
-        "most the dev tier, and running without a sandbox needs tier open. The device's owner " +
-        "can turn the sandbox back on with capybara-device policy set isolation sandbox.",
-    });
-    expect(execIsolation(p({ tier: "dev", isolation: "none" }), { tier: "open" }, "os")).toEqual({
-      tier: "dev",
-      isolation: "none",
-      refusal:
-        "This device is set to run commands without a sandbox, but its tier is dev; running " +
-        "without a sandbox needs tier open set on this machine. Run capybara-device policy set " +
-        "tier open, or turn the sandbox back on with capybara-device policy set isolation sandbox.",
     });
   });
 });
@@ -359,8 +271,8 @@ describe("SwitchingExecutor", () => {
   let host: FakeExecutor;
   let switches: string[];
   let ex: SwitchingExecutor;
-  const tierArgs = (tier: SandboxLimits["tier"], tag = "t1") =>
-    execArgs("now", { tag, limits: { ...LIMITS, tier } });
+  const modeArgs = (mode: SandboxMode, tag = "t1") =>
+    execArgs("now", { tag, limits: limitsWith(mode) });
   const read = async () => Buffer.from((await ex.readFile("/f", 100))?.data ?? []).toString();
 
   const setup = () => {
@@ -374,107 +286,95 @@ describe("SwitchingExecutor", () => {
       sandboxed,
       host,
       () => policy,
-      (i) => switches.push(i),
+      (m) => switches.push(m),
     );
   };
   afterEach(() => ex?.dispose());
 
-  it("follows the policy at once: commands, file operations and the switch notice", async () => {
+  it("runs each command in the effective mode: the device's choice cut to the ceiling", async () => {
     setup();
     expect(ex.mode).toBe("os");
     expect(ex.roots).toBe(sandboxed.roots);
-    await ex.exec(tierArgs("open"), never);
-    expect(sandboxed.started).toEqual(["now"]);
-    expect(await read()).toBe("sandboxed");
-    policy = { ...policy, tier: "open", isolation: "none" };
-    // File operations follow the policy now, not the last command.
-    expect(await read()).toBe("host");
-    expect(switches).toEqual(["none"]);
-    await ex.exec(tierArgs("open"), never);
+    await ex.exec(modeArgs("auto"), never);
     expect(host.started).toEqual(["now"]);
-    // isolation none without the local tier open keeps file operations sandboxed.
-    policy = { ...DEFAULT_POLICY, isolation: "none" };
-    expect(await read()).toBe("sandboxed");
-    expect(switches).toEqual(["none", "sandbox"]);
+    await ex.exec(modeArgs("sandbox"), never);
+    expect(sandboxed.started).toEqual(["now"]);
+    // The machine's own sandbox mode wins over a ceiling that allows auto.
+    policy = { ...policy, mode: "sandbox" };
+    await ex.exec(modeArgs("auto"), never);
+    expect(sandboxed.started).toEqual(["now", "now"]);
+    expect(host.started).toEqual(["now"]);
   });
 
-  it("turning the sandbox back on kills the unsandboxed commands", async () => {
+  it("follows the policy at once for file operations and the switch notice", async () => {
     setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
-    await ex.exec(tierArgs("open"), never);
+    // No exec seen yet: the sandboxed helper, the safe default for a sandbox ceiling.
+    expect(await read()).toBe("sandboxed");
+    expect(switches).toEqual(["auto"]);
+    await ex.exec(modeArgs("auto"), never);
+    expect(await read()).toBe("host");
+    policy = { ...policy, mode: "sandbox" };
+    expect(await read()).toBe("sandboxed");
+    expect(switches).toEqual(["auto", "sandbox"]);
+  });
+
+  it("turning the sandbox back on kills the auto-mode commands", async () => {
+    setup();
+    await ex.exec(modeArgs("auto"), never);
     expect(host.killed).toEqual([]);
-    policy = { ...policy, isolation: "sandbox" };
+    policy = { ...policy, mode: "sandbox" };
     // The watch notices without another operation.
     const until = Date.now() + 3000;
     while (host.killed.length === 0 && Date.now() < until) await sleep(50);
     expect(host.killed).toEqual([["*"]]);
-    expect(switches).toEqual(["none", "sandbox"]);
-    await ex.exec(tierArgs("open"), never);
+    expect(switches).toEqual(["auto", "sandbox"]);
+    await ex.exec(modeArgs("auto"), never);
     expect(sandboxed.started).toEqual(["now"]);
     expect(host.killed).toEqual([["*"]]);
   });
 
-  it("a failed kill keeps the unsandboxed state and is tried again at the next sync", async () => {
+  it("a failed kill keeps the auto state and is tried again at the next sync", async () => {
     setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
     expect(await ex.sync()).toBe(true);
+    expect(switches).toEqual(["auto"]);
     let fail = true;
     host.killAll = async () => {
       host.killed.push(["*"]);
       if (fail) throw new Error("kill failed");
     };
-    policy = { ...policy, isolation: "sandbox" };
-    // Routing follows the policy at once, but the switch back waits for a successful kill.
+    policy = { ...policy, mode: "sandbox" };
+    // Routing follows the policy at once, but the switch waits for a successful kill.
     expect(await ex.sync()).toBe(false);
-    expect(switches).toEqual(["none"]);
+    expect(switches).toEqual(["auto"]);
     fail = false;
     expect(await ex.sync()).toBe(false);
     expect(host.killed).toEqual([["*"], ["*"]]);
-    expect(switches).toEqual(["none", "sandbox"]);
+    expect(switches).toEqual(["auto", "sandbox"]);
     // Settled: no more kills.
     await ex.sync();
     expect(host.killed).toHaveLength(2);
   });
 
-  it("refuses a command the policy wants unsandboxed below tier open, never runs it sandboxed", async () => {
-    setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
-    await expect(ex.exec(tierArgs("dev"), never)).rejects.toMatchObject({
-      kind: "policy",
-      message: expect.stringContaining("allows at most the dev tier"),
-    });
-    expect(sandboxed.started).toEqual([]);
-    expect(host.started).toEqual([]);
-  });
-
   it("execDecided runs the decision it is given", async () => {
     setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
-    await ex.execDecided(tierArgs("open"), never, { tier: "open", isolation: "none" }, policy);
+    await ex.execDecided(modeArgs("auto"), never, { mode: "auto" }, policy);
     expect(host.started).toEqual(["now"]);
-    await expect(
-      ex.execDecided(
-        tierArgs("dev"),
-        never,
-        { tier: "dev", isolation: "none", refusal: "no" },
-        policy,
-      ),
-    ).rejects.toMatchObject({ kind: "policy", message: "no" });
+    await ex.execDecided(modeArgs("auto"), never, { mode: "sandbox" }, policy);
+    expect(sandboxed.started).toEqual(["now"]);
   });
 
-  it("an unsandboxed command whose sandbox came back on while it started is refused", async () => {
+  it("an auto-mode command whose sandbox came back on while it started is refused", async () => {
     setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
     let start!: () => void;
     host.startGate = new Promise((r) => {
       start = r;
     });
-    const running = ex.exec(tierArgs("open"), never);
+    const running = ex.exec(modeArgs("auto"), never);
     await sleep(10);
     // the switch back lands while the command is starting: the kill finds nothing yet
-    policy = { ...policy, isolation: "sandbox" };
+    policy = { ...policy, mode: "sandbox" };
     await ex.sync();
-    expect(switches).toEqual(["none", "sandbox"]);
+    expect(switches).toEqual(["auto", "sandbox"]);
     start();
     await expect(running).rejects.toMatchObject({ kind: "policy", message: SANDBOX_BACK_ON });
     expect(host.started).toEqual([]);
@@ -483,38 +383,32 @@ describe("SwitchingExecutor", () => {
 
   it("file operations follow the commands' decision, not the policy alone", async () => {
     setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
-    // before any command no ceiling is known: sandboxed
+    await ex.exec(modeArgs("sandbox"), never);
     expect(await read()).toBe("sandboxed");
-    await ex.exec(tierArgs("open"), never);
+    await ex.exec(modeArgs("auto"), never);
     expect(await read()).toBe("host");
-    // the latest command was not allowed to run unsandboxed: neither are file operations
-    await expect(
-      ex.exec(execArgs("now", { limits: { ...LIMITS, allowUnsandboxed: false } }), never),
-    ).rejects.toMatchObject({ kind: "policy", message: UNSANDBOXED_NOT_ALLOWED_MESSAGE });
-    expect(await read()).toBe("sandboxed");
-    // a ceiling below open: the same
-    await expect(ex.exec(tierArgs("dev"), never)).rejects.toMatchObject({ kind: "policy" });
+    // the owner turns the sandbox back on: file operations follow at once
+    policy = { ...policy, mode: "sandbox" };
     expect(await read()).toBe("sandboxed");
   });
 
-  it("file operations follow a refused exec's limits and stop using the host when stale", async () => {
+  it("file operations use the last command's mode only inside its window", async () => {
     setup();
-    policy = { ...policy, tier: "open", isolation: "none" };
+    // Before any exec, and after the window, file operations use the sandboxed helper: they never
+    // pass command review, so an organization's sandbox ceiling is never exceeded (trust boundary).
+    expect(await read()).toBe("sandboxed");
     let now = 1_000_000;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     try {
-      await ex.exec(tierArgs("open"), never);
+      await ex.exec(modeArgs("auto"), never);
       expect(await read()).toBe("host");
-      // refused before the executor (as server-ops does): the limits still count
-      ex.noteLimits({ ...LIMITS, allowUnsandboxed: false });
-      expect(await read()).toBe("sandboxed");
-      await ex.exec(tierArgs("open"), never);
-      expect(await read()).toBe("host");
-      // no command for longer than the window: back to the sandboxed helper
       now += FILE_OPS_DECISION_TTL_MS;
       expect(await read()).toBe("host");
       now += 1;
+      // Stale: the sandboxed helper again, even though the local policy is auto.
+      expect(await read()).toBe("sandboxed");
+      // The same after a sandbox-ceiling command.
+      await ex.exec(modeArgs("sandbox"), never);
       expect(await read()).toBe("sandboxed");
     } finally {
       clock.mockRestore();

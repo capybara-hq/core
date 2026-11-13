@@ -10,6 +10,7 @@ import {
   readCredential,
   writeCredential,
 } from "../state.js";
+import { AUTO_MODE_LOGIN_LINE, AUTO_MODE_RISK_TEXT, SANDBOX_MODE_LOGIN_LINE } from "./mode.js";
 
 export interface LoginDeps {
   stateDir: string;
@@ -123,6 +124,14 @@ export async function login(
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
+        // The default mode is auto; an organization that forbids it gets the sandbox line. The
+        // risk text is shown once at login (spec §8).
+        if (granted.autoMode === "off") {
+          out(SANDBOX_MODE_LOGIN_LINE);
+        } else {
+          out(AUTO_MODE_LOGIN_LINE);
+          out(AUTO_MODE_RISK_TEXT);
+        }
         out(
           "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
         );

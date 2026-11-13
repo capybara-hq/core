@@ -51,8 +51,6 @@ export interface ConnectOptions {
   random?: () => number;
   now?: () => number;
   programVersion?: string;
-  /** The platform the policy summary describes (default: this process's; for tests). */
-  platform?: NodeJS.Platform;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
   stableMs?: number;
   /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
@@ -126,12 +124,11 @@ export function connect(
   let session: ((end: SessionEnd) => void) | undefined;
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
 
-  /** What the requests of this run have seen (the latest exec's tier limits), over reconnects. */
+  /** What the requests of this run have seen (the latest exec's mode), over reconnects. */
   const seen: SeenState = {};
   const ctx: OpContext = {
     seen,
     ...(opts.policy !== undefined && { policy: opts.policy }),
-    ...(opts.platform !== undefined && { platform: opts.platform }),
   };
 
   const running = new Map<string, AbortController>();
@@ -160,9 +157,9 @@ export function connect(
 
   /**
    * Pushes the policy summary when it differs from the one the deployment last got: the owner
-   * changed the policy on the machine (`capybara-device policy ...`), the localhost proxy guard
-   * flipped, or an exec brought a new tier ceiling. Without it the deployment would learn the
-   * change only at the next connect.
+   * changed the mode or the policy on the machine (`capybara-device mode` / `policy ...`), or an
+   * exec brought a new mode ceiling. Without it the deployment would learn the change only at the
+   * next connect.
    */
   const pushPolicy = (): void => {
     if (!isOpen()) return;
@@ -275,7 +272,7 @@ export function connect(
           sentPolicy = JSON.stringify((res.result as { policy: unknown }).policy);
         }
         deliver(res);
-        // an exec may have changed the facts (the proxy guard, the tier ceiling)
+        // an exec may have changed the ceiling (the effective mode)
         pushPolicy();
       }
       maybeFinishDrain();
@@ -316,9 +313,9 @@ export function connect(
 
   /**
    * The hello, built at each (re)connect: the OS mode reports blocked hosts per command (Docker
-   * mode has no per-host view); the device applies tiers (`limits.tier` / `defaultTier` /
-   * `devHosts`); the policy summary is the store's policy now, with the latest ceiling seen; then the
-   * outcomes of the latest policy ops by op id.
+   * mode has no per-host view); the device applies `limits.mode` / `limits.network` (`mode`); the
+   * policy summary is the store's policy now, with the effective mode and the latest ceiling seen;
+   * then the outcomes of the latest policy ops by op id.
    */
   const hello = (): DeviceHello => {
     const summary = summaryNow();
@@ -327,7 +324,7 @@ export function connect(
     if (executor.mode === "os") features.push("networkReport");
     // the policy op, logged by its op id (policy-ops.json next to the policy)
     if (opts.policy !== undefined) features.push("policyOp", "policyOpId");
-    features.push("tiers");
+    features.push("mode");
     return {
       type: "hello",
       protocol: DEVICE_PROTOCOL_VERSION,

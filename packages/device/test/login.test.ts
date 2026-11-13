@@ -15,6 +15,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { logout } from "../src/commands/logout.js";
+import {
+  AUTO_MODE_LOGIN_LINE,
+  AUTO_MODE_RISK_TEXT,
+  SANDBOX_MODE_LOGIN_LINE,
+} from "../src/commands/mode.js";
 import { pidPath, writePid } from "../src/pid.js";
 
 interface Seen {
@@ -144,6 +149,24 @@ describe("login", () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, maxFrameBytes: 4_194_304 } }];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(JSON.parse(readFileSync(credFile(), "utf8")).maxFrameBytes).toBe(4_194_304);
+  });
+
+  it("prints the auto-mode line and the risk text once", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out).toContain(AUTO_MODE_LOGIN_LINE);
+    expect(out).toContain(AUTO_MODE_RISK_TEXT);
+    // A deployment that does not say counts as allowing auto mode.
+    expect(out.filter((l) => l === AUTO_MODE_LOGIN_LINE)).toHaveLength(1);
+    expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
+  });
+
+  it("prints the sandbox line for an organization that forbids auto mode", async () => {
+    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out).toContain(SANDBOX_MODE_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_MODE_LOGIN_LINE);
+    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
   });
 
   it("logging in again after the files were lost recreates the directory and marker", async () => {

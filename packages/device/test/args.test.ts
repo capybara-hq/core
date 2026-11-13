@@ -36,6 +36,7 @@ describe("parseCommandLine", () => {
     expect(() => parseCommandLine(["drain", "--wait", "--timeout", "x"])).toThrow(UsageError);
     expect(() => parseCommandLine(["drain", "now"])).toThrow(UsageError);
     expect(parseCommandLine(["policy"])).toEqual({ command: "policy", action: "show" });
+    expect(parseCommandLine(["policy", "show"])).toEqual({ command: "policy", action: "show" });
     expect(parseCommandLine(["policy", "set", "cpu", "2"])).toEqual({
       command: "policy",
       action: "set",
@@ -54,28 +55,29 @@ describe("parseCommandLine", () => {
       key: "allowedDomains",
       value: "a.com",
     });
-    expect(parseCommandLine(["policy", "set", "network", "open", "--yes"])).toEqual({
-      command: "policy",
-      action: "set",
-      key: "network",
-      value: "open",
-      yes: true,
-    });
-    expect(parseCommandLine(["policy", "set", "network", "open", "-y"])).toMatchObject({
-      yes: true,
-    });
-    expect(parseCommandLine(["policy", "set", "remoteGrants", "off"])).toEqual({
-      command: "policy",
-      action: "set",
-      key: "remoteGrants",
-      value: "off",
-    });
-    expect(() => parseCommandLine(["policy", "--yes"])).toThrow(UsageError);
-    expect(() => parseCommandLine(["policy", "set", "network", "open", "--force"])).toThrow(
+    // `--yes` is gone from policy: the risk it confirmed moved to `mode auto`.
+    expect(() => parseCommandLine(["policy", "set", "isolation", "none", "--yes"])).toThrow(
       UsageError,
     );
+    expect(() => parseCommandLine(["policy", "--yes"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "add", "allowedDomains"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "remove", "a", "b", "c"])).toThrow(UsageError);
+    expect(parseCommandLine(["mode"])).toEqual({ command: "mode" });
+    expect(parseCommandLine(["mode", "auto"])).toEqual({ command: "mode", mode: "auto" });
+    expect(parseCommandLine(["mode", "sandbox"])).toEqual({ command: "mode", mode: "sandbox" });
+    expect(parseCommandLine(["mode", "auto", "--yes"])).toEqual({
+      command: "mode",
+      mode: "auto",
+      yes: true,
+    });
+    expect(parseCommandLine(["mode", "sandbox", "-y"])).toEqual({
+      command: "mode",
+      mode: "sandbox",
+      yes: true,
+    });
+    expect(() => parseCommandLine(["mode", "vm"])).toThrow(/auto or sandbox/);
+    expect(() => parseCommandLine(["mode", "--yes"])).toThrow(/needs a mode/);
+    expect(() => parseCommandLine(["mode", "auto", "now"])).toThrow(UsageError);
     expect(parseCommandLine(["service", "install"])).toEqual({
       command: "service",
       action: "install",

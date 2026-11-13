@@ -10,8 +10,8 @@ import {
   PolicyOpLog,
 } from "../src/policy-ops.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { REMOTE_GRANTS_OFF_MESSAGE, serveOp } from "../src/server-ops.js";
-import { DEFAULT_POLICY, policyOpsPath, policyPath, writePolicy } from "../src/state.js";
+import { MODE_ON_DEVICE_MESSAGE, serveOp } from "../src/server-ops.js";
+import { policyOpsPath, policyPath } from "../src/state.js";
 import { FakeExecutor, FakeKernel } from "./fake-kernel.js";
 
 const never = new AbortController().signal;
@@ -32,8 +32,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const serve = (req: KernelReq) =>
-  serveOp(new FakeExecutor(), req, never, { policy: store, platform: "darwin" });
+const serve = (req: KernelReq) => serveOp(new FakeExecutor(), req, never, { policy: store });
 const logged = (): unknown[] => JSON.parse(readFileSync(policyOpsPath(dir), "utf8"));
 
 describe("policy ops by op id", () => {
@@ -54,17 +53,17 @@ describe("policy ops by op id", () => {
   });
 
   it("a refused op is recorded refused with its message", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, remoteGrants: "off" });
-    const { res } = await serve(r("policy", { opId: "op_2", add: ["a.com"], source }));
+    // The deployment may never turn auto mode on: only the machine does.
+    const { res } = await serve(r("policy", { opId: "op_2", mode: "auto", source }));
     expect(res).toMatchObject({
       ok: false,
-      error: { kind: "policy", message: REMOTE_GRANTS_OFF_MESSAGE },
+      error: { kind: "policy", message: MODE_ON_DEVICE_MESSAGE },
     });
     expect(logged()).toEqual([
       {
         opId: "op_2",
         outcome: "refused",
-        message: REMOTE_GRANTS_OFF_MESSAGE,
+        message: MODE_ON_DEVICE_MESSAGE,
         kind: "policy",
         time: expect.any(String),
       },
@@ -86,12 +85,10 @@ describe("policy ops by op id", () => {
     expect(after.mtimeMs).toBe(before.mtimeMs);
     expect(store.current().allowedDomains).toEqual(["a.com"]);
     // a refusal is answered with its stored message
-    writePolicy(dir, { ...DEFAULT_POLICY, remoteGrants: "off" });
-    const refused = await serve(r("policy", { opId: "op_2", add: ["c.com"], source }, "r3"));
-    writePolicy(dir, { ...DEFAULT_POLICY, remoteGrants: "owner" });
-    const repeat = await serve(r("policy", { opId: "op_2", add: ["c.com"], source }, "r4"));
+    const refused = await serve(r("policy", { opId: "op_2", mode: "auto", source }, "r3"));
+    const repeat = await serve(r("policy", { opId: "op_2", mode: "auto", source }, "r4"));
     expect(repeat.res).toEqual({ ...refused.res, id: "r4" });
-    expect(store.current().allowedDomains).toEqual([]);
+    expect(store.current().allowedDomains).toEqual(["a.com"]);
   });
 
   it("a policy op without a valid opId is refused and applies nothing", async () => {
@@ -117,12 +114,11 @@ describe("policy ops by op id", () => {
       ok: true,
       result: { outcome: "applied", policy: { allowedDomains: ["a.com"] } },
     });
-    writePolicy(dir, { ...DEFAULT_POLICY, remoteGrants: "off" });
-    await serve(r("policy", { opId: "op_2", add: ["b.com"], source }));
+    await serve(r("policy", { opId: "op_2", mode: "auto", source }));
     const refused = await serve(r("policyStatus", { opId: "op_2" }));
     expect(refused.res).toMatchObject({
       ok: true,
-      result: { outcome: "refused", message: REMOTE_GRANTS_OFF_MESSAGE },
+      result: { outcome: "refused", message: MODE_ON_DEVICE_MESSAGE },
     });
     // an op the device was stopped in the middle of stays started
     new PolicyOpLog(dir).record({ opId: "op_3", outcome: "started" });
@@ -223,13 +219,13 @@ describe("the hello and op outcomes", () => {
   it("the hello announces policyOpId only with a policy store", async () => {
     start(true);
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "tiers"]);
+    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode"]);
     expect(hello.recentOps).toEqual([]);
     conn?.stop();
     await conn?.done;
     start(false);
     const bare = await kernel.waitFor("hello", () => kernel.of("hello", 1)[0]);
-    expect(bare.features).toEqual(["networkReport", "tiers"]);
+    expect(bare.features).toEqual(["networkReport", "mode"]);
     expect(bare.recentOps).toBeUndefined();
   });
 });
