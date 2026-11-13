@@ -25,15 +25,21 @@ import {
  * - `test-fixed-sleep`: a call to `sleep` with a numeric literal argument.
  * - `test-fixed-settimeout`: a `new Promise(…)` whose executor calls `setTimeout` with a numeric
  *   literal delay.
- * - `test-timeout-override`: a `timeout:` property of an options object, or a numeric timeout
- *   argument to `it` / `test` / `describe` / `before*` / `after*` (third argument for the first
- *   three, second for the hooks, as Vitest defines them).
+ * - `test-timeout-override`: a `timeout:` property of the options object of `it` / `test` /
+ *   `describe` / `before*` / `after*` (the argument before the test function, or the second
+ *   argument of a hook), or a numeric timeout argument to those calls (third argument for the
+ *   first three, second for the hooks, as Vitest defines them). A `timeout:` key elsewhere (a
+ *   tool input such as Bash `{ timeout: 5000 }`, an expected literal) is not reported.
  * - `test-small-app-file`: a file with at most 5 `it` / `test` calls that boots an app: an import
  *   of `helpers/http-app`, a `buildKernel` / `startKernel` call, or a call to an exported helper
  *   that boots (scanned below).
  * - `test-double-boot`: more than one `buildKernel(` / `startKernel(` call in one file.
  * - `test-portfolio-list-overlap`: a path listed twice (the second occurrence is reported).
  * - `test-portfolio-missing-file`: a listed path with no file (reported on the list file).
+ * - `test-portfolio-baseline-unjustified`: a grandfather entry (the baseline's `files` object
+ *   maps a repo-relative path to the reason it stays) with an empty reason.
+ * - `test-portfolio-baseline-stale`: a grandfather entry whose file no longer violates (or no
+ *   longer exists); it is removed together with its batch, so it must not linger.
  *
  * The wait rules match numeric literals only, so `sleep(TIMEOUT)` or a computed delay is not
  * reported; the app rules judge the import path and identifier calls textually, so an aliased
@@ -52,6 +58,8 @@ const RULE = {
   doubleBoot: "test-double-boot",
   overlap: "test-portfolio-list-overlap",
   missing: "test-portfolio-missing-file",
+  unjustified: "test-portfolio-baseline-unjustified",
+  stale: "test-portfolio-baseline-stale",
 } as const;
 
 const TEST_FILE = /\.test\.ts$/;
@@ -95,6 +103,41 @@ const callName = (callee: unknown): string | undefined => {
 /** The timeout argument position Vitest uses: `it(name, fn, timeout)` vs `beforeAll(fn, timeout)`. */
 const timeoutIndex = (name: string): number =>
   name.startsWith("before") || name.startsWith("after") ? 1 : 2;
+
+const isHook = (name: string): boolean => name.startsWith("before") || name.startsWith("after");
+
+/** A node that can be the test function argument: an arrow, a function expression or an identifier. */
+const isFunctionArgument = (n: unknown): boolean =>
+  isNode(n) &&
+  (n.type === "ArrowFunctionExpression" ||
+    n.type === "FunctionExpression" ||
+    n.type === "Identifier");
+
+/**
+ * The options object of a Vitest call: the argument before its test function (`it(name, options,
+ * fn)`), or the second argument of a hook (`beforeAll(fn, options)`).
+ */
+function optionsObject(name: string, args: unknown[]): Node | undefined {
+  let candidate: unknown;
+  if (isHook(name)) {
+    candidate = args[1];
+  } else {
+    const fn = args.findIndex(isFunctionArgument);
+    candidate = fn > 1 ? args[fn - 1] : undefined;
+  }
+  return isNode(candidate) && candidate.type === "ObjectExpression" ? candidate : undefined;
+}
+
+/** The `timeout:` property of an options object, when it has one. */
+function timeoutProperty(options: Node): Node | undefined {
+  for (const prop of options.properties as Node[]) {
+    if (prop.type !== "Property" || prop.computed) continue;
+    const key = prop.key as Node;
+    const name = key.type === "Identifier" ? (key.name as string) : stringValue(key);
+    if (name === "timeout") return prop;
+  }
+  return undefined;
+}
 
 /** Whether a `new Promise(…)` executor calls `setTimeout` with a numeric literal delay. */
 function fixedSetTimeout(executor: unknown): number | undefined {
@@ -224,6 +267,15 @@ function analyze(parsed: ParsedFile, file: string, bootSymbols: Set<string>): Fi
             `${name}(…) raises its timeout to ${timeout} ms; the project's timeout is the upper bound`,
           );
         }
+        const options = optionsObject(name, args);
+        const property = options === undefined ? undefined : timeoutProperty(options);
+        if (property !== undefined) {
+          add(
+            property,
+            RULE.timeout,
+            "a `timeout:` option overrides the project's timeout for this test",
+          );
+        }
       }
       return;
     }
@@ -238,13 +290,6 @@ function analyze(parsed: ParsedFile, file: string, bootSymbols: Set<string>): Fi
         );
       }
       return;
-    }
-    if (n.type === "Property" && !n.computed) {
-      const key = n.key as Node;
-      const name = key.type === "Identifier" ? (key.name as string) : stringValue(key);
-      if (name === "timeout") {
-        add(n, RULE.timeout, "a `timeout:` option overrides the project's timeout for this test");
-      }
     }
   });
 
@@ -278,13 +323,23 @@ function allTestFiles(root: string): string[] {
     .sort();
 }
 
-/** The grandfather list: a checked-in `{ "files": string[] }` of repo-relative test paths. */
-export function readBaseline(root: string): string[] {
+/** One grandfather entry: the repo-relative test path and why it still violates. */
+export interface BaselineEntry {
+  path: string;
+  reason: string;
+}
+
+/** The grandfather list: a checked-in `{ "files": { "<path>": "<reason>" } }` object. */
+export function readBaseline(root: string): BaselineEntry[] {
   const file = join(root, PORTFOLIO_BASELINE_FILE);
   if (!existsSync(file)) return [];
   const parsed = JSON.parse(readFileSync(file, "utf8")) as { files?: unknown };
-  if (!Array.isArray(parsed.files)) return [];
-  return parsed.files.filter((f): f is string => typeof f === "string");
+  const files = parsed.files;
+  if (typeof files !== "object" || files === null || Array.isArray(files)) return [];
+  return Object.entries(files).map(([path, reason]) => ({
+    path,
+    reason: typeof reason === "string" ? reason.trim() : "",
+  }));
 }
 
 /**
@@ -391,13 +446,15 @@ function checkLists(root: string): Finding[] {
 export interface TestPortfolioOptions {
   root: string;
   /** The grandfather list; defaults to {@link PORTFOLIO_BASELINE_FILE} under `root`. */
-  baseline?: string[];
+  baseline?: BaselineEntry[];
   /** Repo-relative files to scan (diff mode); absent scans the whole tree. */
   changed?: Set<string>;
 }
 
 export function checkTestPortfolio({ root, baseline, changed }: TestPortfolioOptions): Finding[] {
-  const skipped = new Set(baseline ?? readBaseline(root));
+  const entries = baseline ?? readBaseline(root);
+  // Only a justified entry grants the file-level skip; an unjustified one is itself a finding.
+  const skipped = new Set(entries.filter((e) => e.reason !== "").map((e) => e.path));
   const paths =
     changed === undefined
       ? allTestFiles(root)
@@ -405,8 +462,44 @@ export function checkTestPortfolio({ root, baseline, changed }: TestPortfolioOpt
           .filter((p) => p.startsWith(`${KERNEL_TEST_DIR}/`) && TEST_FILE.test(p))
           .filter((p) => existsSync(join(root, p)))
           .sort();
-  const scanned = paths.filter((p) => !skipped.has(p));
-  return [...checkFiles(root, scanned, bootingSymbols(root)), ...checkLists(root)];
+  const scanned = new Set(paths);
+  const findings = checkFiles(root, paths, bootingSymbols(root));
+
+  // Count findings per file so the baseline rules can tell a justified entry from a stale one.
+  const perFile = new Map<string, number>();
+  const out: Finding[] = [];
+  for (const finding of findings) {
+    const path = repoPath(root, finding.file);
+    perFile.set(path, (perFile.get(path) ?? 0) + 1);
+    if (!skipped.has(path)) out.push(finding);
+  }
+
+  const baselineFile = join(root, PORTFOLIO_BASELINE_FILE);
+  const lines = existsSync(baselineFile) ? readFileSync(baselineFile, "utf8").split("\n") : [];
+  let line = 1;
+  for (const entry of entries) {
+    line = entryLine(lines, entry.path, line);
+    if (entry.reason === "") {
+      out.push({
+        file: baselineFile,
+        line,
+        rule: RULE.unjustified,
+        message: `"${entry.path}" is grandfathered without a reason; say why it stays or run its T1/T2 batch`,
+      });
+    }
+    // In diff mode only a changed file can be judged stale; a full run judges every entry.
+    const judgeable = changed === undefined || scanned.has(entry.path);
+    if (judgeable && (perFile.get(entry.path) ?? 0) === 0) {
+      out.push({
+        file: baselineFile,
+        line,
+        rule: RULE.stale,
+        message: `"${entry.path}" is grandfathered but no longer violates; remove it`,
+      });
+    }
+  }
+
+  return [...out, ...checkLists(root)];
 }
 
 /**

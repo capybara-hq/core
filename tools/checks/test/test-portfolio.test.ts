@@ -41,7 +41,25 @@ describe("checkTestPortfolio", () => {
   });
 
   it("skips a file listed in the grandfather list", () => {
-    expect(checkTestPortfolio({ root: fixture("bad"), baseline: [badFile] })).toEqual([]);
+    expect(
+      checkTestPortfolio({
+        root: fixture("bad"),
+        baseline: [{ path: badFile, reason: "timeout override: removed by the T1 batch" }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports a grandfather entry without a reason and one that no longer violates", () => {
+    const root = fixture("baseline");
+    const got = checkTestPortfolio({ root });
+    expect(got.map((f) => f.rule)).toEqual([
+      "test-fixed-sleep",
+      "test-portfolio-baseline-stale",
+      "test-portfolio-baseline-unjustified",
+    ]);
+    expect(got[1]?.file).toBe(`${root}/tools/checks/test-portfolio-baseline.json`);
+    expect(got[1]?.message).toContain("clean.test.ts");
+    expect(got[2]?.message).toContain("unjustified.test.ts");
   });
 
   it("scans only the changed files in diff mode", () => {
@@ -87,15 +105,11 @@ describe("checkTestPortfolio", () => {
     ]);
   });
 
-  it("passes the real tree, and the grandfather list is exactly the violations", () => {
+  it("passes the real tree, and every grandfather entry is justified and still violates", () => {
     expect(checkTestPortfolio({ root: repoRoot })).toEqual([]);
-    const baseline = new Set(readBaseline(repoRoot));
-    const violations = new Set(
-      checkTestPortfolio({ root: repoRoot, baseline: [] }).map((f) =>
-        relative(repoRoot, f.file).split(sep).join("/"),
-      ),
-    );
-    expect(violations.size).toBeGreaterThan(0);
-    expect([...baseline].sort()).toEqual([...violations].sort());
+    const entries = readBaseline(repoRoot);
+    expect(entries.length).toBeGreaterThan(0);
+    // With the grandfather list empty the tree still has violations: the list is not vacuous.
+    expect(checkTestPortfolio({ root: repoRoot, baseline: [] }).length).toBeGreaterThan(0);
   });
 });
