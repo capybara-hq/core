@@ -15,9 +15,16 @@ const MEMBER = {
   account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
 };
-const settings = (mode: "none" | "allowlist" | "open") => ({
+// The deployment's default cloud network is the allowlist only under the platform's kill switch
+// (`sandbox.limits.egress: none`); otherwise the org's own list is what blocks the command.
+const settings = (platformOff: boolean) => ({
   settings: { toolSearch: "on" },
-  deployment: { sandboxEgress: { mode, allowHosts: [] } },
+  deployment: {
+    autoMode: { mode: "allowed", source: "default" },
+    cloudNetwork: platformOff
+      ? { mode: "allowlist", allowHosts: [] }
+      : { mode: "open", allowHosts: [] },
+  },
 });
 const facts = [
   { host: "files.slack.com", layer: "org" as const },
@@ -34,7 +41,7 @@ afterEach(() => {
 describe("org-layer network facts (network ask spec §5.3)", () => {
   it("a member asks the admins with a note: the request carries the conversation and agent", async () => {
     const calls = stubApi({
-      [`GET ${ORG}/settings`]: () => json(200, settings("allowlist")),
+      [`GET ${ORG}/settings`]: () => json(200, settings(false)),
       [`GET ${ORG}/conversations/c1`]: () =>
         json(200, { conversation: { id: "c1", agentId: "ag1" } }),
       [`POST ${ORG}/catalog-requests/network`]: () =>
@@ -66,7 +73,7 @@ describe("org-layer network facts (network ask spec §5.3)", () => {
 
   it("a refused request shows the kernel's reason and keeps the dialog open", async () => {
     stubApi({
-      [`GET ${ORG}/settings`]: () => json(200, settings("allowlist")),
+      [`GET ${ORG}/settings`]: () => json(200, settings(false)),
       [`GET ${ORG}/conversations/c1`]: () =>
         json(200, { conversation: { id: "c1", agentId: "ag1" } }),
       [`POST ${ORG}/catalog-requests/network`]: () =>
@@ -87,7 +94,7 @@ describe("org-layer network facts (network ask spec §5.3)", () => {
   });
 
   it("an org admin gets a link to the org settings with the host prefilled", async () => {
-    stubApi({ [`GET ${ORG}/settings`]: () => json(200, settings("allowlist")) });
+    stubApi({ [`GET ${ORG}/settings`]: () => json(200, settings(false)) });
     renderFacts(ME);
     const link = await screen.findByRole("link", { name: N.openSettings });
     expect(link.getAttribute("href")).toBe("/settings/sandbox?allowHost=files.slack.com");
@@ -95,7 +102,7 @@ describe("org-layer network facts (network ask spec §5.3)", () => {
   });
 
   it("with the platform's sandbox network off, only a super admin can turn it on: no request", async () => {
-    stubApi({ [`GET ${ORG}/settings`]: () => json(200, settings("none")) });
+    stubApi({ [`GET ${ORG}/settings`]: () => json(200, settings(true)) });
     renderFacts();
     expect(await screen.findByText(N.platformOff)).toBeTruthy();
     expect(screen.queryByRole("button", { name: N.ask })).toBeNull();

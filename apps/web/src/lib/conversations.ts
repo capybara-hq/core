@@ -172,10 +172,11 @@ type EventBody =
         cacheReadTokens: number;
         cacheWriteTokens: number;
         /**
-         * Set when the usage is not the step's call: `compaction`, `title`, or `web_fetch` (a
-         * `WebFetch` extraction call, with that call's `callId`).
+         * Set when the usage is not the step's call: `compaction`, `title`, `web_fetch` (a
+         * `WebFetch` extraction call, with that call's `callId`) or `review` (the command-review
+         * classifier, also with the reviewed call's `callId`).
          */
-        purpose?: "compaction" | "title" | "web_fetch";
+        purpose?: "compaction" | "title" | "web_fetch" | "review";
         callId?: string;
       };
     }

@@ -1,7 +1,7 @@
 import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
-import type { SandboxTier } from "./devices";
+import type { DevicesAutoModeView } from "./org-settings";
 import type { UiArrangementEntry } from "./ui";
 
 /**
@@ -308,29 +308,16 @@ export interface DeploymentSettings {
    */
   clientExtensions?: ClientExtensionsSetting;
   /**
-   * The platform's sandbox levels in effect (kernel `PlatformTiersView`) and where each comes
-   * from: `env` / `file` / `nacos` are the startup config (read-only here), `db` the admin
-   * console's choice, `default`. Absent from a kernel before the setting.
+   * The platform's auto-mode switch in effect and where it comes from (kernel `DevicesAutoModeView`):
+   * `env` / `file` / `nacos` are the startup config (read-only here), `db` the admin console's
+   * choice, `default`.
    */
-  sandboxTiers?: PlatformTiersView;
+  devicesAutoMode?: DevicesAutoModeView;
 }
 
-/** Where a platform sandbox level field comes from. */
-export type PlatformTierSource = "env" | "file" | "nacos" | "db" | "default";
-
-/** The platform's sandbox levels (`GET /api/v1/admin/settings` `sandboxTiers`). */
-export interface PlatformTiersView {
-  max: SandboxTier;
-  default: SandboxTier;
-  allowUnsandboxed: boolean;
-  sources: Record<"max" | "default" | "allowUnsandboxed", PlatformTierSource>;
-}
-
-/** A change of the platform's sandbox levels: each given field replaces it, null clears it. */
-export interface PlatformTiersPatch {
-  max?: SandboxTier | null;
-  default?: SandboxTier | null;
-  allowUnsandboxed?: boolean | null;
+/** A change of the platform's auto-mode switch: `mode` replaced, null clears it (the default). */
+export interface DevicesAutoModePatch {
+  mode: "allowed" | "off" | null;
 }
 
 /** The kill switch as stored (kernel `ClientExtensionsSetting`). */
@@ -350,7 +337,7 @@ export type DeploymentSettingsPatch = Partial<
     | "sandboxLimitOverrides"
     | "subagentLimitOverrides"
     | "clientExtensions"
-    | "sandboxTiers"
+    | "devicesAutoMode"
   >
 > & {
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
@@ -360,7 +347,8 @@ export type DeploymentSettingsPatch = Partial<
   uiArrangement?: Record<string, UiArrangementEntry | null>;
   /** Each given field replaces the stored one (`disabled` is the whole list). */
   clientExtensions?: Partial<ClientExtensionsSetting>;
-  sandboxTiers?: PlatformTiersPatch;
+  /** The platform's auto-mode switch: `mode` replaced, null clears it (the default). */
+  devicesAutoMode?: DevicesAutoModePatch;
 };
 
 export interface NewAccountInput {

@@ -85,8 +85,8 @@ const ROUTES: Routes = {
     json(200, {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
       deployment: {
-        sandboxEgress: { mode: "allowlist", allowHosts: [] },
-        sandboxTiers: { max: "dev", default: "dev", allowUnsandboxed: true, devHosts: [] },
+        autoMode: { mode: "allowed", source: "default" },
+        cloudNetwork: { mode: "open", allowHosts: [] },
       },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
     }),
@@ -207,7 +207,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it.each([
     // the radio cards of tool search; the read-only note only for a member
     ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
-    // the tool policy, sandbox level and egress radios, the resources' key-value
+    // the tool policy, auto mode and cloud network radios, the resources' key-value
     ["/settings/sandbox", `GET ${O}/settings`, { radios: 3, kv: 1, items: 0, switches: 0 }],
     // the 用途默认 tab: the kernel's six purposes as item rows, each with its model select
     [
@@ -335,8 +335,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     });
     const { client } = await renderRouteWithCache("/settings/sandbox", ROUTES);
     const user = userEvent.setup();
+    const tools = (
+      await screen.findByRole("heading", { name: en.orgSettings.sandbox.title })
+    ).closest("section") as HTMLElement;
     await user.click(
-      screen.getByRole("radio", { name: new RegExp(`^${en.orgSettings.sandbox.allow}`) }),
+      within(tools).getByRole("radio", {
+        name: new RegExp(`^${en.orgSettings.sandbox.allow}`),
+      }),
     );
     const row = screen.getByRole("region", { name: "Pending changes" });
     await user.click(within(row).getByRole("button", { name: en.orgSettings.save }));

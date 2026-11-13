@@ -1,15 +1,12 @@
 "use client";
 
 import {
-  Disclosure,
   Field,
   FormSection,
   KeyValue,
   RadioGroup,
-  Select,
   SettingsPage,
   Stack,
-  SwitchField,
   Text,
   Textarea,
   useToast,
@@ -22,15 +19,14 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
-import { SANDBOX_TIERS, type SandboxTier, tierAbove } from "../../../../lib/devices";
+import { allowHostProblem } from "../../../../lib/network-hosts";
 import {
+  type CloudNetworkSetting,
   canUpdateOrg,
   type OrgSettings,
   type OrgSettingsPatch,
   type OrgSettingsResponse,
   parseHostList,
-  type SandboxEgressSetting,
-  type SandboxTierSetting,
   updateOrgSettings,
 } from "../../../../lib/org-settings";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -42,18 +38,15 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
- * sandbox tools (run directly / ask for approval), the sandbox levels (sandbox dev tiers spec
- * §11.2: 最高级别 as three cards, 开放 disabled with 平台未开放 when the platform's max is lower and
- * carrying the risk text; 新设备默认 at most the highest; 允许成员的设备不使用沙箱 under 开放 when
- * the platform allows it), sandbox egress (follow the deployment / custom
- * allowlist / no network, ruling M19) and sandbox resources (cpu / memory, read-only: super
- * admins override them per organization in the deployment settings, C19). Members can see, admins
- * can change; changes show an ActionRow. The org-settings PATCH is shared with the general page:
- * this page sends only its own fields. From the query cache (the layout prefetched it on a first
- * load; the general page shares it); a save writes the answer into the cache.
+ * sandbox tools (run directly / ask for approval), the org's auto-mode switch (auto mode spec §4.3:
+ * the org may follow the platform or turn it off; 「平台未开放」 when the platform turned it off)
+ * and the network of its cloud devices in sandbox mode (开放挡内网 / an allowlist whose hosts default
+ * to the platform's list), plus the sandbox resources (cpu / memory, read-only: super admins
+ * override them per organization in the deployment settings, C19). Members can see, admins can
+ * change; changes show an ActionRow. The org-settings PATCH is shared with the general page: this
+ * page sends only its own fields. From the query cache (the layout prefetched it on a first load;
+ * the general page shares it); a save writes the answer into the cache.
  */
-
-type EgressMode = "default" | SandboxEgressSetting["mode"];
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
@@ -69,7 +62,6 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const scope = usePagePath("org");
   const t = useTranslations("orgSettings");
   const ts = useTranslations("sandboxSettings");
-  const td = useTranslations("devices.tier");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -80,11 +72,9 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const read = usePageQuery(orgSettingsQuery(orgId));
   const [draft, setDraft] = useState<{
     sandboxToolPolicy?: NonNullable<OrgSettings["sandboxToolPolicy"]>;
-    egressMode?: EgressMode;
+    autoMode?: "allowed" | "off";
+    cloudMode?: CloudNetworkSetting["mode"];
     hostsText?: string;
-    tierMax?: SandboxTier;
-    tierDefault?: SandboxTier;
-    allowUnsandboxed?: boolean;
   }>({});
   // The answer is the new settings; the read-only parts it leaves out keep their cached values.
   const update = useAppMutation({
@@ -98,17 +88,19 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         ...(res.sandboxLimits !== undefined ? { sandboxLimits: res.sandboxLimits } : {}),
       })),
   });
-  // `?allowHost=`: once the settings are in, an org admin's draft becomes a custom allowlist with
-  // the hosts appended (those not listed yet); nothing is saved until the person saves.
+  // `?allowHost=`: once the settings are in, an org admin's draft becomes an allowlist with the
+  // hosts appended (those not listed yet); nothing is saved until the person saves.
   const [prefilled, setPrefilled] = useState<string[] | null>(null);
   const loaded = read.kind === "ready" ? read.data : null;
   useEffect(() => {
     if (prefilled !== null || loaded === null || !manage || allowHosts.length === 0) return;
-    const deploymentEgress = loaded.deployment?.sandboxEgress;
-    const own = loaded.settings.sandboxEgress;
-    // no list to add to: the platform has no network
-    if (deploymentEgress === undefined || deploymentEgress.mode === "none") return;
-    const base = own?.allowHosts ?? deploymentEgress.allowHosts;
+    const platformNetwork = loaded.deployment?.cloudNetwork;
+    // the kernel always answers with the deployment defaults; no list to add to without them
+    if (platformNetwork === undefined) return;
+    // no list to add to: the platform turned the network off
+    if (platformNetwork.mode === "allowlist") return;
+    const own = loaded.settings.cloudNetwork;
+    const base = own?.allowHosts ?? platformNetwork.allowHosts;
     const added = allowHosts.filter((h) => !base.includes(h));
     if (added.length === 0) {
       setPrefilled([]);
@@ -117,7 +109,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     setPrefilled(added);
     setDraft((d) => ({
       ...d,
-      egressMode: "allowlist",
+      cloudMode: "allowlist",
       hostsText: [...base, ...added].join("\n"),
     }));
   }, [loaded, manage, allowHosts, prefilled]);
@@ -134,8 +126,8 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         nav={nav}
         activeNav="sandbox"
         // The static sections: the tool policy (two cards, and the read-only note for a member),
-        // egress (three cards and the "new sandboxes only" note) and the resources (three rows and
-        // the same note).
+        // auto mode (two cards), the cloud network (two cards and the host list) and the resources
+        // (three rows and the same note).
         loading={{
           sections: [
             {
@@ -144,14 +136,17 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
               description: t("sandbox.description"),
             },
             {
-              fields: [{ control: "radio-cards", options: 3 }, { control: "select" }],
-              title: t("tiers.title"),
-              description: t("tiers.description"),
+              fields: [{ control: "radio-cards", options: 2 }],
+              title: t("autoMode.title"),
+              description: t("autoMode.description"),
             },
             {
-              fields: [{ control: "radio-cards", options: 3, help: true }],
-              title: t("egress.title"),
-              description: t("egress.description"),
+              fields: [
+                { control: "radio-cards", options: 2 },
+                { control: "textarea", rows: 8 },
+              ],
+              title: t("cloudNetwork.title"),
+              description: t("cloudNetwork.description"),
             },
             {
               fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
@@ -165,65 +160,57 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   }
   const data = read.data;
   const saved = data.settings;
-  const { deployment, sandboxLimits } = data;
+  // The kernel always sends the deployment defaults; without them "follow the platform" has no
+  // meaning, so the page fails visibly instead of guessing.
+  const deployment = data.deployment;
+  if (deployment === undefined) {
+    return (
+      <ErrorFrame
+        reset={() => void qc.invalidateQueries({ queryKey: orgSettingsQuery(orgId).queryKey })}
+      />
+    );
+  }
+  const { sandboxLimits } = data;
   const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
-  // Following the deployment leaves sandboxEgress unset; a custom allowlist starts from the org's or the deployment's list
-  const savedEgress = saved?.sandboxEgress;
-  // An org allowlist under a deployment that went to "none" is effectively none (kernel effectiveSandboxEgress)
-  const savedMode: EgressMode =
-    savedEgress?.mode === "allowlist" && deployment?.sandboxEgress.mode === "none"
-      ? "none"
-      : (savedEgress?.mode ?? "default");
-  const egressMode = draft.egressMode ?? savedMode;
-  const baseHosts = savedEgress?.allowHosts ?? deployment?.sandboxEgress.allowHosts ?? [];
+  // The auto-mode switch: the platform's answer wins; the org may narrow it, never widen it
+  const platformOff = deployment.autoMode.mode === "off";
+  const savedAutoMode: "allowed" | "off" = platformOff
+    ? "off"
+    : (saved.autoMode ?? deployment.autoMode.mode);
+  const autoMode = platformOff ? "off" : (draft.autoMode ?? savedAutoMode);
+  const autoChanged =
+    !platformOff && draft.autoMode !== undefined && draft.autoMode !== savedAutoMode;
+  // The cloud-device network (sandbox mode): absent follows the platform's default; the platform's
+  // kill switch forces an empty allowlist and cannot be reopened here.
+  const platformNetwork = deployment.cloudNetwork;
+  const networkOff = platformNetwork.mode === "allowlist";
+  const savedCloudMode: CloudNetworkSetting["mode"] = networkOff
+    ? "allowlist"
+    : (saved.cloudNetwork?.mode ?? platformNetwork.mode);
+  const cloudMode = networkOff ? "allowlist" : (draft.cloudMode ?? savedCloudMode);
+  const baseHosts = saved.cloudNetwork?.allowHosts ?? platformNetwork.allowHosts;
   const hostsText = draft.hostsText ?? baseHosts.join("\n");
   const hosts = parseHostList(hostsText);
-  const egressChanged =
-    egressMode !== savedMode ||
-    (egressMode === "allowlist" && draft.hostsText !== undefined && !sameList(hosts, baseHosts));
-  const egressValue: SandboxEgressSetting | null =
-    egressMode === "default"
-      ? null
-      : egressMode === "none"
-        ? { mode: "none" }
-        : { mode: "allowlist", allowHosts: hosts };
-  // The levels: the org's own setting over the platform's (absent = follow the platform)
-  const platformTiers = deployment?.sandboxTiers;
-  const ownTier = saved.sandboxTier;
-  const savedMax = ownTier?.max ?? platformTiers?.max ?? "dev";
-  const tierMax = draft.tierMax ?? savedMax;
-  const clampTo = (tier: SandboxTier, max: SandboxTier) => (tierAbove(tier, max) ? max : tier);
-  const savedDefault = clampTo(ownTier?.default ?? platformTiers?.default ?? "dev", savedMax);
-  const tierDefault = clampTo(draft.tierDefault ?? savedDefault, tierMax);
-  const savedAllow = ownTier?.allowUnsandboxed ?? platformTiers?.allowUnsandboxed ?? false;
-  const allowUnsandboxed = draft.allowUnsandboxed ?? savedAllow;
-  const tierChanged =
-    tierMax !== savedMax || tierDefault !== savedDefault || allowUnsandboxed !== savedAllow;
-  // Only the fields the person set, kept explicit once changed; a default above the new highest
-  // level comes down with it.
-  const tierValue: SandboxTierSetting = {
-    ...ownTier,
-    ...(draft.tierMax !== undefined || ownTier?.max !== undefined ? { max: tierMax } : {}),
-    ...(draft.tierDefault !== undefined ||
-    ownTier?.default !== undefined ||
-    tierDefault !== savedDefault
-      ? { default: tierDefault }
-      : {}),
-    ...(draft.allowUnsandboxed !== undefined ? { allowUnsandboxed } : {}),
-  };
+  const badHost = hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
+  const hostsInvalid = badHost !== undefined || hosts.length > 200;
+  const cloudChanged =
+    cloudMode !== savedCloudMode ||
+    (cloudMode === "allowlist" && draft.hostsText !== undefined && !sameList(hosts, baseHosts));
+  const cloudValue: CloudNetworkSetting =
+    cloudMode === "open" ? { mode: "open" } : { mode: "allowlist", allowHosts: hosts };
   // Only the changed fields
   const patch: OrgSettingsPatch = {
-    ...(tierChanged ? { sandboxTier: tierValue } : {}),
+    ...(autoChanged && draft.autoMode !== undefined ? { autoMode: draft.autoMode } : {}),
+    ...(cloudChanged ? { cloudNetwork: cloudValue } : {}),
     ...(sandboxPolicy !== (saved.sandboxToolPolicy ?? "allow")
       ? { sandboxToolPolicy: sandboxPolicy }
       : {}),
-    ...(egressChanged ? { sandboxEgress: egressValue } : {}),
   };
   const unsaved = Object.keys(patch).length;
-  const devHosts = platformTiers?.devHosts ?? [];
   const dirty = unsaved > 0;
 
   async function save() {
+    if (hostsInvalid) return;
     try {
       await update.mutateAsync(patch);
       setDraft({});
@@ -243,6 +230,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         ? {
             actionRow: {
               unsaved,
+              ...(hostsInvalid ? { errors: 1 } : {}),
               cancel: {
                 label: tc("cancel"),
                 onSelect: () => {
@@ -250,7 +238,12 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
                   setPrefilled([]);
                 },
               },
-              primary: { label: t("save"), onSelect: () => void save(), loading: update.isPending },
+              primary: {
+                label: t("save"),
+                onSelect: () => void save(),
+                loading: update.isPending,
+                disabled: hostsInvalid,
+              },
             },
           }
         : {})}
@@ -285,126 +278,92 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
           )}
         </Stack>
       </FormSection>
-      {platformTiers !== undefined && (
-        <FormSection
-          id="sandbox-tiers"
-          title={t("tiers.title")}
-          description={t("tiers.description")}
-        >
-          <Stack gap={12}>
-            <RadioGroup
-              label={t("tiers.max")}
-              variant="card"
-              value={tierMax}
-              disabled={!manage}
-              onChange={(v) => setDraft((d) => ({ ...d, tierMax: v as SandboxTier }))}
-              options={SANDBOX_TIERS.map((tier) => {
-                const closed = tierAbove(tier, platformTiers.max);
-                return {
-                  value: tier,
-                  label: td(tier),
-                  description: closed ? t("tiers.platformClosed") : t(`tiers.${tier}Hint`),
-                  ...(closed ? { disabled: true } : {}),
-                };
-              })}
-            />
-            {tierMax === "open" && platformTiers.allowUnsandboxed && (
-              <Stack gap={4}>
-                <SwitchField
-                  label={t("tiers.allowUnsandboxed")}
-                  checked={allowUnsandboxed}
-                  disabled={!manage}
-                  onChange={(next) => setDraft((d) => ({ ...d, allowUnsandboxed: next }))}
-                />
-                <Text variant="small" tone="muted">
-                  {t("tiers.allowUnsandboxedHint")}
-                </Text>
-              </Stack>
-            )}
-            <Field label={t("tiers.default")} help={t("tiers.defaultHelp")}>
-              <Select
-                value={tierDefault}
-                disabled={!manage}
-                onChange={(ev) =>
-                  setDraft((d) => ({ ...d, tierDefault: ev.target.value as SandboxTier }))
-                }
-                options={SANDBOX_TIERS.filter((tier) => !tierAbove(tier, tierMax)).map((tier) => ({
-                  value: tier,
-                  label: td(tier),
-                }))}
+      <FormSection
+        id="auto-mode"
+        title={t("autoMode.title")}
+        description={t("autoMode.description")}
+      >
+        <Stack gap={8}>
+          <RadioGroup
+            label={t("autoMode.title")}
+            variant="card"
+            value={autoMode}
+            disabled={!manage || platformOff}
+            onChange={(v) => setDraft((d) => ({ ...d, autoMode: v as "allowed" | "off" }))}
+            options={(["allowed", "off"] as const).map((v) => {
+              const closed = v === "allowed" && platformOff;
+              return {
+                value: v,
+                label: t(`autoMode.${v}`),
+                description: closed ? t("autoMode.platformClosed") : t(`autoMode.${v}Hint`),
+                ...(closed ? { disabled: true } : {}),
+              };
+            })}
+          />
+          {!manage && (
+            <Text variant="small" tone="muted">
+              {t("readonly")}
+            </Text>
+          )}
+        </Stack>
+      </FormSection>
+      <FormSection
+        id="cloud-network"
+        title={t("cloudNetwork.title")}
+        description={t("cloudNetwork.description")}
+      >
+        <Stack gap={8}>
+          <RadioGroup
+            label={t("cloudNetwork.title")}
+            variant="card"
+            value={cloudMode}
+            disabled={!manage || networkOff}
+            onChange={(v) =>
+              setDraft((d) => ({ ...d, cloudMode: v as CloudNetworkSetting["mode"] }))
+            }
+            options={(["open", "allowlist"] as const).map((v) => ({
+              value: v,
+              label: t(`cloudNetwork.${v}`),
+              description: t(`cloudNetwork.${v}Hint`),
+            }))}
+          />
+          {networkOff && (
+            <Text variant="small" tone="muted">
+              {t("cloudNetwork.platformClosed")}
+            </Text>
+          )}{" "}
+          {cloudMode === "allowlist" && (
+            <Field
+              label={t("cloudNetwork.hosts")}
+              help={t("cloudNetwork.hostsHelp")}
+              {...(badHost !== undefined
+                ? { error: t("cloudNetwork.invalidHost", { host: badHost }) }
+                : {})}
+            >
+              <Textarea
+                code
+                rows={8}
+                value={hostsText}
+                disabled={!manage || networkOff}
+                onChange={(e) => setDraft((d) => ({ ...d, hostsText: e.target.value }))}
               />
             </Field>
-            {!manage && (
-              <Text variant="small" tone="muted">
-                {t("readonly")}
-              </Text>
-            )}
-          </Stack>
-        </FormSection>
-      )}
-      {deployment !== undefined && (
-        <FormSection
-          id="sandbox-egress"
-          title={t("egress.title")}
-          description={t("egress.description")}
-        >
-          <Stack gap={8}>
-            <RadioGroup
-              label={t("egress.title")}
-              variant="card"
-              value={egressMode}
-              disabled={!manage}
-              onChange={(v) => setDraft((d) => ({ ...d, egressMode: v as EgressMode }))}
-              options={(
-                [
-                  "default",
-                  // 部署不联网时组织不能放开
-                  ...(deployment.sandboxEgress.mode === "none" ? [] : (["allowlist"] as const)),
-                  "none",
-                ] as const
-              ).map((v) => ({
-                value: v,
-                label: t(`egress.${v}`),
-                description:
-                  v === "default"
-                    ? t(`egress.defaultHint.${deployment.sandboxEgress.mode}`, {
-                        count: deployment.sandboxEgress.allowHosts.length,
-                      })
-                    : t(`egress.${v}Hint`),
-              }))}
-            />
-            {egressMode === "allowlist" && (
-              <Field label={t("egress.hosts")} help={t("egress.hostsHelp")}>
-                <Textarea
-                  code
-                  rows={8}
-                  value={hostsText}
-                  disabled={!manage}
-                  onChange={(e) => setDraft((d) => ({ ...d, hostsText: e.target.value }))}
-                />
-              </Field>
-            )}
-            {devHosts.length > 0 &&
-              tierMax !== "strict" &&
-              (egressMode === "allowlist" ||
-                (egressMode === "default" && deployment.sandboxEgress.mode === "allowlist")) && (
-                <Disclosure summary={t("egress.devHosts", { count: devHosts.length })}>
-                  <Text variant="small" tone="muted">
-                    {devHosts.join(", ")}
-                  </Text>
-                </Disclosure>
-              )}
-            {egressMode === "allowlist" && prefilled !== null && prefilled.length > 0 && (
-              <Text variant="small" tone="muted">
-                {t("egress.prefilled", { hosts: prefilled.join(", ") })}
-              </Text>
-            )}
+          )}
+          {prefilled !== null && prefilled.length > 0 && (
             <Text variant="small" tone="muted">
-              {t("egress.newOnly")}
+              {t("cloudNetwork.prefilled", { hosts: prefilled.join(", ") })}
             </Text>
-          </Stack>
-        </FormSection>
-      )}
+          )}
+          <Text variant="small" tone="muted">
+            {t("cloudNetwork.publicOnly")}
+          </Text>
+          {!manage && (
+            <Text variant="small" tone="muted">
+              {t("readonly")}
+            </Text>
+          )}
+        </Stack>
+      </FormSection>
       {sandboxLimits !== undefined && (
         <FormSection
           id="sandbox-limits"
