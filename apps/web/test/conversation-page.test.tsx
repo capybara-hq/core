@@ -1250,20 +1250,22 @@ describe("the conversation page's server gate", () => {
 });
 
 describe("the properties panel's device mark", () => {
-  it("a device without a sandbox (or one refused for it) carries the fail tone", async () => {
-    const sandbox = {
-      tier: null,
-      effectiveTier: "dev",
-      ceiling: "dev",
-      cappedBy: "org",
-      defaultTier: "dev",
-      allowUnsandboxed: false,
-      isolation: "none",
+  it("a local auto-mode device carries the quiet 自动 mark in warn", async () => {
+    const mode = {
+      mode: "auto",
+      allowedMode: "auto",
+      allowedBy: "org",
+      network: { kind: "allowlist", hosts: [], source: "platform" },
+      local: { reported: "auto", allowedDomains: [] },
       pendingNextUse: false,
-      pendingFilesReset: false,
       recent: [],
     };
-    const device = envView("e1", "Laptop", { sandbox });
+    const device = envView("e1", "Laptop", {
+      source: "local",
+      provider: "@local",
+      online: true,
+      mode,
+    });
     api({
       [`GET ${BASE}`]: () => json(200, CONV("c1", { deviceId: "e1" })),
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -1277,8 +1279,8 @@ describe("the properties panel's device mark", () => {
       if (b === null) throw new Error("no mark yet");
       return b;
     });
-    expect(badge.textContent).toBe(en.devices.mark.unsandboxed);
-    expect(badge.getAttribute("data-tone")).toBe("fail");
+    expect(badge.textContent).toBe(en.devices.mark.auto);
+    expect(badge.getAttribute("data-tone")).toBe("warn");
     window.history.replaceState(null, "", "/");
   });
 });

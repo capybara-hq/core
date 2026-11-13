@@ -2,7 +2,6 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import zh from "../messages/zh.json";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -23,7 +22,23 @@ const BASE = "/api/v1/orgs/o1/devices";
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
 
-const LIMITS = { cpu: 2, memoryMb: 2048, diskMb: 10240, egress: "allowlist", allowHosts: [] };
+const LIMITS = {
+  cpu: 2,
+  memoryMb: 2048,
+  diskMb: 10240,
+  mode: "auto",
+  network: { kind: "open-public", hosts: [] },
+};
+/** A device's mode and network (kernel `DeviceModeView`): a cloud device in auto mode. */
+const MODE = {
+  mode: "auto",
+  allowedMode: "auto",
+  allowedBy: "org",
+  network: { kind: "open-public", hosts: [], source: "org" },
+  local: null,
+  pendingNextUse: false,
+  recent: [],
+};
 const env = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
   id,
   name,
@@ -37,6 +52,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   filesLost: false,
   instance: null,
   limits: LIMITS,
+  mode: MODE,
   createdAt: T,
   ...over,
 });
@@ -74,7 +90,7 @@ const routes = {
 };
 
 describe("devices list", () => {
-  it("lists cards: the default is 个人设备, with state and isolation", async () => {
+  it("lists cards: the default is 个人设备, with state and mode mark", async () => {
     stubApi(routes);
     const { container } = await renderList();
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
@@ -84,15 +100,10 @@ describe("devices list", () => {
     expect(
       within(cards[0] as HTMLElement).getByText(E.state.running, { exact: false }),
     ).toBeTruthy();
-    expect(
-      within(cards[0] as HTMLElement).getByText(E.isolation.shared, { exact: false }),
-    ).toBeTruthy();
+    expect(within(cards[0] as HTMLElement).getByText(E.mark.open)).toBeTruthy();
     expect(within(cards[1] as HTMLElement).getByText("Build box")).toBeTruthy();
     expect(
       within(cards[1] as HTMLElement).getByText(E.state.filesLost, { exact: false }),
-    ).toBeTruthy();
-    expect(
-      within(cards[1] as HTMLElement).getByText(E.isolation.isolated, { exact: false }),
     ).toBeTruthy();
     expect(screen.getByRole("link", { name: "Build box" }).getAttribute("href")).toBe(
       "/devices/e2",
@@ -271,9 +282,8 @@ describe("device detail", () => {
     const { container } = await renderRouteWithCache("/devices/e1", routes);
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     expect(screen.getAllByText("Build box").length).toBeGreaterThan(0);
-    expect(screen.getByText(E.detail.filesNote)).toBeTruthy();
-    expect(screen.getByText(E.detail.suspendNote)).toBeTruthy();
-    expect(screen.getByText(E.source.cloud)).toBeTruthy();
+    expect(screen.getByText(E.detail.filesAndSuspendNote)).toBeTruthy();
+    expect(screen.getAllByText(E.source.cloud).length).toBeGreaterThan(0);
     await settle();
     expect(browser).toEqual([]);
   });
@@ -291,9 +301,9 @@ describe("device detail", () => {
     });
     await vi.waitFor(() => expect(template("DetailPage")).not.toBeNull());
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    expect(screen.queryByText(E.detail.filesNote)).toBeNull();
+    expect(screen.queryByText(E.detail.filesAndSuspendNote)).toBeNull();
     await act(async () => release());
-    expect(await screen.findByText(E.detail.filesNote)).toBeTruthy();
+    expect(await screen.findByText(E.detail.filesAndSuspendNote)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
@@ -303,7 +313,7 @@ describe("device detail", () => {
         json(200, { device: env("e1", "Build box", { available: false, filesLost: true }) }),
     });
     await renderDetail();
-    expect(await screen.findByText(E.state.unavailable)).toBeTruthy();
+    expect((await screen.findAllByText(E.state.unavailable)).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 
@@ -318,7 +328,7 @@ describe("device detail", () => {
   it("a never-started device's page says 未启动", async () => {
     stubApi(routes);
     await renderDetail();
-    expect(await screen.findByText(E.state.notStarted)).toBeTruthy();
+    expect((await screen.findAllByText(E.state.notStarted)).length).toBeGreaterThan(0);
   });
 
   it("a missing device is the not-found state", async () => {
@@ -445,7 +455,7 @@ describe("device detail", () => {
   it("no reset button while the files are intact", async () => {
     stubApi(routes);
     await renderDetail();
-    await screen.findByText(E.detail.filesNote);
+    await screen.findByText(E.detail.filesAndSuspendNote);
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 });
@@ -571,13 +581,13 @@ describe("local devices (environments spec §6, §9)", () => {
     const { client } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([device("e1", "Laptop")]));
     expect(await screen.findByText("grant-mbp")).toBeTruthy();
-    expect(screen.getByText(E.source.local)).toBeTruthy();
-    expect(screen.getByText(E.state.online)).toBeTruthy();
+    expect(screen.getAllByText(E.source.local).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(E.state.online).length).toBeGreaterThan(0);
     expect(screen.getByText("macOS")).toBeTruthy();
-    expect(screen.getByText(E.mode.os)).toBeTruthy();
+    expect(screen.getByText(E.runMode.os)).toBeTruthy();
     expect(screen.getByText("v0.1.0")).toBeTruthy();
     // the cloud facts do not apply to a machine
-    expect(screen.queryByText(E.detail.suspendNote)).toBeNull();
+    expect(screen.queryByText(E.detail.filesAndSuspendNote)).toBeNull();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.machine.revoke }));
     const dialog = await screen.findByRole("dialog");
@@ -612,7 +622,7 @@ describe("local devices (environments spec §6, §9)", () => {
   });
 });
 
-describe("device network (network ask-to-allow spec §7)", () => {
+describe("device network in sandbox mode (auto mode spec §4.4)", () => {
   const N = E.network;
   const MACHINE = {
     id: "m1",
@@ -623,13 +633,16 @@ describe("device network (network ask-to-allow spec §7)", () => {
     lastSeenAt: T,
   };
   const policy = (over: Record<string, unknown> = {}) => ({
-    effectiveTier: "strict",
-    isolation: "sandbox",
-    localhost: "off",
-    unixSockets: "off",
+    mode: "sandbox",
     allowedDomains: ["files.example.com"],
-    remoteGrants: "owner",
     ...over,
+  });
+  const mode = (pol: Record<string, unknown> = {}) => ({
+    ...MODE,
+    mode: "sandbox",
+    network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
+    local: { reported: "sandbox", allowedDomains: ["files.example.com"] },
+    ...pol,
   });
   const local = (
     net: { features?: string[]; policy?: unknown } = {},
@@ -645,6 +658,7 @@ describe("device network (network ask-to-allow spec §7)", () => {
         policy: policy(),
         ...net,
       },
+      mode: mode(),
       ...over,
     });
 
@@ -652,7 +666,12 @@ describe("device network (network ask-to-allow spec §7)", () => {
     let removed = false;
     const calls = stubApi({
       [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local(removed ? { policy: policy({ allowedDomains: [] }) } : {}) }),
+        json(200, {
+          device: local(
+            removed ? { policy: policy({ allowedDomains: [] }) } : {},
+            removed ? { mode: mode({ local: { reported: "sandbox", allowedDomains: [] } }) } : {},
+          ),
+        }),
       [`POST ${BASE}/e1/policy`]: () => {
         removed = true;
         return json(200, { policy: policy({ allowedDomains: [] }) });
@@ -675,8 +694,7 @@ describe("device network (network ask-to-allow spec §7)", () => {
   it("adds a wildcard domain and refuses an invalid one before sending", async () => {
     const calls = stubApi({
       [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
-      [`POST ${BASE}/e1/policy`]: () =>
-        json(200, { policy: policy({ allowedDomains: ["files.example.com", "*.slack.com"] }) }),
+      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
     });
     await renderDetail();
     const user = userEvent.setup();
@@ -692,23 +710,22 @@ describe("device network (network ask-to-allow spec §7)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ add: ["*.slack.com"] });
   });
 
-  it("remoteGrants off disables adding with the command to run on the machine", async () => {
+  it("an empty allowlist is one muted line, not an empty-state page", async () => {
     stubApi({
       [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({ policy: policy({ remoteGrants: "off" }) }) }),
+        json(200, {
+          device: local(
+            { policy: policy({ allowedDomains: [] }) },
+            {
+              mode: mode({ local: { reported: "sandbox", allowedDomains: [] } }),
+            },
+          ),
+        }),
     });
     await renderDetail();
-    expect(await screen.findByText(N.remoteGrantsOffHint)).toBeTruthy();
-    expect(screen.getByText(N.remoteGrantsOff)).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
-    // narrowing is still accepted
-    expect(
-      (
-        screen.getByRole("button", {
-          name: N.removeLabel.replace("{host}", "files.example.com"),
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(false);
+    expect(await screen.findByText(N.domainsEmpty)).toBeTruthy();
+    // the add field stays: the flow is the only way to widen the list
+    expect(screen.getByRole("textbox", { name: N.add })).toBeTruthy();
   });
 
   it("a program without policyOpId says to upgrade it", async () => {
@@ -748,446 +765,5 @@ describe("device network (network ask-to-allow spec §7)", () => {
     await renderDetail();
     expect(await screen.findByText(N.dockerNote)).toBeTruthy();
     expect((screen.getByRole("textbox", { name: N.add }) as HTMLInputElement).disabled).toBe(true);
-  });
-});
-
-describe("device sandbox level (sandbox dev tiers spec §11.1)", () => {
-  const S = E.sandbox;
-  const SETTINGS = "/api/v1/orgs/o1/settings";
-  const MACHINE = {
-    id: "m1",
-    name: "grant-mbp",
-    os: "darwin",
-    mode: "os",
-    programVersion: "0.1.0",
-    lastSeenAt: T,
-  };
-  const sandbox = (over: Record<string, unknown> = {}) => ({
-    tier: null,
-    effectiveTier: "dev",
-    ceiling: "open",
-    cappedBy: null,
-    defaultTier: "dev",
-    allowUnsandboxed: true,
-    isolation: "sandbox",
-    pendingNextUse: false,
-    pendingFilesReset: false,
-    recent: [],
-    ...over,
-  });
-  const policy = (over: Record<string, unknown> = {}) => ({
-    effectiveTier: "dev",
-    isolation: "sandbox",
-    localhost: "on",
-    unixSockets: "roots",
-    allowedDomains: [],
-    remoteGrants: "owner",
-    ...over,
-  });
-  const cloud = (sb: Record<string, unknown> = {}, over: Record<string, unknown> = {}) =>
-    env("e1", "Build box", { sandbox: sandbox(sb), ...over });
-  const local = (
-    sb: Record<string, unknown> = {},
-    pol: Record<string, unknown> = {},
-    over: Record<string, unknown> = {},
-  ) =>
-    env("e1", "Laptop", {
-      source: "local",
-      provider: "@local",
-      online: true,
-      machine: MACHINE,
-      network: {
-        features: ["networkReport", "policyOp", "policyOpId", "tiers"],
-        policy: policy(pol),
-      },
-      sandbox: sandbox(sb),
-      ...over,
-    });
-  const orgSettings = (platformMax: string) =>
-    json(200, {
-      settings: { toolSearch: "on", sandboxTier: { max: "dev" } },
-      deployment: {
-        sandboxEgress: { mode: "allowlist", allowHosts: [] },
-        sandboxTiers: { max: platformMax, default: "dev", allowUnsandboxed: true, devHosts: [] },
-      },
-    });
-  const radio = (name: string) =>
-    screen.getByRole("radio", {
-      name: new RegExp(`^${name.replace(/[()]/g, "\\$&")}`),
-    }) as HTMLInputElement;
-
-  it("a card above the org's ceiling is disabled with 组织最高允许; follow-default is checked", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () => json(200, { device: cloud({ ceiling: "dev" }) }),
-      [`GET ${SETTINGS}`]: () => orgSettings("open"),
-    });
-    await renderDetail({ locale: "zh" });
-    await screen.findByRole("radiogroup", { name: "沙箱级别" });
-    expect(radio("跟随组织默认（开发）").checked).toBe(true);
-    expect(radio("开放").disabled).toBe(true);
-    expect(screen.getByText("组织最高允许：开发")).toBeTruthy();
-    expect(radio("开发").disabled).toBe(false);
-  });
-
-  it("a card above the platform's ceiling says 平台最高允许 (first paint, no browser read)", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () => json(200, { device: cloud({ ceiling: "dev" }) }),
-      [`GET ${SETTINGS}`]: () => orgSettings("dev"),
-    });
-    await renderDetail({ locale: "zh" });
-    expectNoFirstPaintFetch();
-    expect(await screen.findByText("平台最高允许：开发")).toBeTruthy();
-  });
-
-  it("each capped card names the ceiling that caps it", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: cloud({ ceiling: "strict", defaultTier: "strict", effectiveTier: "strict" }),
-        }),
-      [`GET ${SETTINGS}`]: () => orgSettings("dev"),
-    });
-    await renderDetail({ locale: "zh" });
-    expect(await screen.findByText("组织最高允许：严格")).toBeTruthy();
-    expect(screen.getByText("平台最高允许：开发")).toBeTruthy();
-    expect(radio("开发").disabled).toBe(true);
-    expect(radio("开放").disabled).toBe(true);
-  });
-
-  it("a lower effective level says why", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: cloud({
-            tier: "open",
-            effectiveTier: "dev",
-            ceiling: "dev",
-            cappedBy: "platform",
-          }),
-        }),
-      [`GET ${SETTINGS}`]: () => orgSettings("dev"),
-    });
-    await renderDetail({ locale: "zh" });
-    expect(await screen.findByText("平台最高只允许开发。")).toBeTruthy();
-  });
-
-  it("a cloud device's level is a PATCH; 开放 asks first with the risk text", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () => json(200, { device: cloud() }),
-      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
-    });
-    const { client } = await renderDetail();
-    client.setQueryData(["org", "o1", "devices"], list([cloud()]));
-    const user = userEvent.setup();
-    await screen.findByRole("radiogroup", { name: S.title });
-    await user.click(radio(en.devices.tier.strict));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1));
-    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ tier: "strict" });
-    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
-    await user.click(radio(en.devices.tier.open));
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(S.openRiskCloud);
-    expect(dialog.textContent).not.toContain(S.openRisk);
-    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
-    await user.click(within(dialog).getByRole("button", { name: S.openConfirmSubmit }));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
-    expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({ tier: "open" });
-  });
-
-  it("following an open default asks first, then sends tier null", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local({ tier: "dev", defaultTier: "open" }, { tier: "dev" }),
-        }),
-      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
-    });
-    await renderDetail();
-    await screen.findByRole("radiogroup", { name: S.title });
-    const user = userEvent.setup();
-    await user.click(radio(S.follow.replace("{tier}", en.devices.tier.open)));
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(S.openRisk);
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: S.openConfirmSubmit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ tier: null });
-  });
-
-  it("choosing follow-default sends tier null", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: cloud({ tier: "strict", effectiveTier: "strict" }) }),
-      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
-    });
-    await renderDetail();
-    await screen.findByRole("radiogroup", { name: S.title });
-    await userEvent.setup().click(radio(S.follow.replace("{tier}", en.devices.tier.dev)));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ tier: null });
-  });
-
-  it("cloud pending notes: next use keeps the files; a file reset offers 重建文件", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: cloud({ pendingNextUse: true, pendingFilesReset: true }) }),
-    });
-    await renderDetail({ locale: "zh" });
-    expect(await screen.findByText("下次使用时生效，文件保留。")).toBeTruthy();
-    expect(screen.getByText("重置文件后生效。")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重建文件" })).toBeTruthy();
-  });
-
-  it("a local device's level goes to the machine; the dev facts of this machine are listed", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({}, { localhost: "off-proxy-detected" }) }),
-      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ tier: "strict" }) }),
-    });
-    await renderDetail();
-    expect(await screen.findByText(S.localhostValue["off-proxy-detected"])).toBeTruthy();
-    expect(screen.getByText(S.unixSocketsValue.roots)).toBeTruthy();
-    expect(screen.getByText("capybara-device policy set localhost allow")).toBeTruthy();
-    await userEvent.setup().click(radio(en.devices.tier.strict));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ tier: "strict" });
-  });
-
-  it("remoteGrants off: raising is disabled with the CLI command; narrowing stays", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            { tier: "dev", effectiveTier: "dev" },
-            { tier: "dev", remoteGrants: "off" },
-          ),
-        }),
-    });
-    await renderDetail();
-    expect(await screen.findByText(S.remoteOff)).toBeTruthy();
-    expect(
-      screen.getByText("capybara-device policy set tier <strict|dev|open|default>"),
-    ).toBeTruthy();
-    expect(radio(en.devices.tier.open).disabled).toBe(true);
-    expect(radio(en.devices.tier.strict).disabled).toBe(false);
-  });
-
-  it("a program without tiers says it runs strict and to upgrade", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            { effectiveTier: "strict" },
-            {},
-            {
-              network: {
-                features: ["networkReport", "policyOp", "policyOpId"],
-                policy: policy(),
-              },
-            },
-          ),
-        }),
-    });
-    await renderDetail();
-    expect(await screen.findByText(S.lower.program)).toBeTruthy();
-    expect(radio(en.devices.tier.strict).disabled).toBe(true);
-  });
-
-  it("不使用沙箱 off: the risk text and the local commands, nothing sent", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({ tier: "open", effectiveTier: "open" }, { tier: "open" }) }),
-    });
-    await renderDetail({ locale: "zh" });
-    expect(
-      await screen.findByText(/不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行/),
-    ).toBeTruthy();
-    const code = screen.getByText(/capybara-device policy set isolation none/);
-    expect(code.textContent).toContain("capybara-device policy set tier open");
-    expect(screen.getByRole("button", { name: "复制" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "恢复沙箱" })).toBeNull();
-    // copying and choosing levels never send isolation none (spec §14 Q1)
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "复制" }));
-    expect(calls.every((c) => c.method === "GET")).toBe(true);
-  });
-
-  it("不使用沙箱 on: a danger mark and 恢复沙箱 sends isolation sandbox", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            { tier: "open", effectiveTier: "open", isolation: "none" },
-            { tier: "open", isolation: "none" },
-          ),
-        }),
-      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ tier: "open" }) }),
-    });
-    await renderDetail({ locale: "zh" });
-    const restore = await screen.findByRole("button", { name: "恢复沙箱" });
-    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("已开启");
-    expect(screen.getByText("这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。")).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(restore);
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ isolation: "sandbox" });
-    await user.click(radio("严格"));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
-    expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({ tier: "strict" });
-    // no request ever turns the sandbox off
-    expect(calls.some((c) => String(c.body ?? "").includes('"none"'))).toBe(false);
-  });
-
-  it("不使用沙箱 refused: the machine says none while the level is below open", async () => {
-    const calls = stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            { tier: "open", effectiveTier: "dev", isolation: "sandbox", cappedBy: "org" },
-            { tier: "open", effectiveTier: "dev", isolation: "none" },
-          ),
-        }),
-      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy({ isolation: "sandbox" }) }),
-    });
-    await renderDetail({ locale: "zh" });
-    const restore = await screen.findByRole("button", { name: "恢复沙箱" });
-    expect(document.querySelector('.cb-badge[data-tone="fail"]')?.textContent).toBe("已开启");
-    expect(screen.getByText(zh.devices.sandbox.unsandboxedRefused)).toBeTruthy();
-    await userEvent.setup().click(restore);
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ isolation: "sandbox" });
-  });
-
-  it("a Docker-mode or capped device has no 不使用沙箱 row", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            { tier: "open", effectiveTier: "open" },
-            { tier: "open" },
-            {
-              machine: { ...MACHINE, mode: "docker" },
-            },
-          ),
-        }),
-    });
-    await renderDetail();
-    await screen.findByRole("radiogroup", { name: S.title });
-    expect(screen.queryByText(S.unsandboxedRisk)).toBeNull();
-  });
-
-  it("recent changes list levels, isolation and hosts with who, where, unconfirmed and failed", async () => {
-    stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local({
-            allowUnsandboxed: false,
-            recent: [
-              {
-                at: T,
-                kind: "policy",
-                add: ["files.slack.com"],
-                remove: [],
-                tier: { to: "dev" },
-                isolation: null,
-                localhost: null,
-                remoteGrants: null,
-                by: "Grant",
-                via: "im",
-                outcome: "unknown",
-              },
-              {
-                at: T,
-                kind: "policy",
-                add: ["api.example.com"],
-                remove: [],
-                tier: null,
-                isolation: null,
-                localhost: null,
-                remoteGrants: null,
-                by: "Grant",
-                via: "web",
-                outcome: "failed",
-              },
-              {
-                at: T,
-                kind: "isolation",
-                add: [],
-                remove: [],
-                tier: null,
-                isolation: "none",
-                localhost: null,
-                remoteGrants: null,
-                by: null,
-                via: "device",
-                outcome: "applied",
-              },
-              {
-                at: T,
-                kind: "policy",
-                add: ["github.com"],
-                remove: [],
-                tier: { from: null, to: "open" },
-                isolation: null,
-                localhost: "on",
-                remoteGrants: "off",
-                by: "Owner",
-                via: "device",
-                outcome: "applied",
-              },
-            ],
-          }),
-        }),
-    });
-    await renderDetail();
-    expect(
-      await screen.findByText(
-        `${S.recent.add.replace("{hosts}", "files.slack.com")} · ${S.recent.tier.replace("{tier}", en.devices.tier.dev)}`,
-      ),
-    ).toBeTruthy();
-    expect(screen.getByText(/Grant · IM/)).toBeTruthy();
-    expect(screen.getByText(S.recent.outcome.unknown)).toBeTruthy();
-    expect(screen.getByText(S.recent.outcome.failed)).toBeTruthy();
-    expect(screen.getByText(S.recent.isolation.none)).toBeTruthy();
-    expect(screen.getAllByText(new RegExp(`· ${S.recent.via.device}$`))).toHaveLength(2);
-    // a change made on the machine: the tier's from and to, the localhost access and the remote
-    // grants, by its owner, on the machine
-    expect(
-      screen.getByText(
-        [
-          S.recent.add.replace("{hosts}", "github.com"),
-          S.recent.tierFrom
-            .replace("{from}", S.recent.followDefault)
-            .replace("{to}", en.devices.tier.open),
-          S.recent.localhost.replace("{value}", S.localhostValue.on),
-          S.recent.remoteGrants.replace("{value}", en.devices.network.remoteGrantsOff),
-        ].join(" · "),
-      ),
-    ).toBeTruthy();
-    expect(screen.getByText(new RegExp(`Owner · ${S.recent.via.device}$`))).toBeTruthy();
-  });
-
-  it("device cards mark 开放 (warn) and 不使用沙箱 (danger)", async () => {
-    stubApi({
-      [`GET ${BASE}`]: () =>
-        json(
-          200,
-          list([
-            cloud({ tier: "open", effectiveTier: "open" }),
-            local({ effectiveTier: "open", isolation: "none" }, {}, { id: "e2" }),
-            env("e3", "Plain", { sandbox: sandbox() }),
-          ]),
-        ),
-    });
-    await renderList({ locale: "zh" });
-    await screen.findByText("Laptop");
-    const parts = [...document.querySelectorAll(".cb-object-card-meta-part")].map((n) => [
-      n.textContent,
-      n.getAttribute("data-tone"),
-    ]);
-    expect(parts).toEqual([
-      ["开放", "warn"],
-      ["不使用沙箱", "fail"],
-    ]);
   });
 });

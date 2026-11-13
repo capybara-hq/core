@@ -8,7 +8,7 @@ import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useDeviceName } from "../../../components/use-device-name";
-import { type Device, deviceSandboxMark, deviceState } from "../../../lib/devices";
+import { type Device, deviceModeMark, deviceState } from "../../../lib/devices";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
@@ -17,7 +17,8 @@ import NotFound from "../not-found";
 /**
  * `/devices` (设备): the person's devices as cards (the default shows as 个人设备): source
  * (云端设备 / 本地设备), state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用; a connected one 在线 /
- * 离线) and whether sessions are isolated; a card opens the device's page. 新建设备 opens a
+ * 离线) and the mode mark (自动 / 沙箱 for a local device, 开放（挡内网） / 白名单 for a cloud one); a
+ * card opens the device's page. 新建设备 opens a
  * dialog (a cloud sandbox or a connected device); without a sandbox provider the page says the
  * platform has no cloud sandbox and the dialog only connects a device; the cloud devices it
  * still has are listed as 不可用 under a notice (they can be deleted). From the query cache (the
@@ -86,7 +87,7 @@ function DeviceCard({ device: e }: { device: Device }) {
   const t = useTranslations("devices");
   const nameOf = useDeviceName();
   const state = deviceState(e);
-  const mark = deviceSandboxMark(e);
+  const mark = deviceModeMark(e);
   return (
     <ObjectCard
       avatar={{ icon: "cpu" }}
@@ -97,9 +98,10 @@ function DeviceCard({ device: e }: { device: Device }) {
         state === "filesLost" || state === "unavailable"
           ? { label: t(`state.${state}`), tone: "warn" as const }
           : t(`state.${state}`),
-        t(e.sessionIsolation ? "isolation.isolated" : "isolation.shared"),
-        // 开放 (warn) or 不使用沙箱 (danger), sandbox dev tiers spec §11.1
-        ...(mark !== null ? [{ label: t(`mark.${mark.kind}`), tone: mark.tone }] : []),
+        // 自动 (warn) or 沙箱; a cloud device 开放（挡内网） (warn) or 白名单 (auto mode spec §4)
+        ...(mark.tone === "warn"
+          ? [{ label: t(`mark.${mark.kind}`), tone: "warn" as const }]
+          : [t(`mark.${mark.kind}`)]),
       ]}
     />
   );

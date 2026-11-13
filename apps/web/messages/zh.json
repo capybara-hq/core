@@ -1537,14 +1537,19 @@
       "online": "在线",
       "offline": "离线"
     },
-    "isolation": {
-      "isolated": "会话之间隔离进程",
-      "shared": "会话之间不隔离进程"
+    "runMode": {
+      "os": "系统沙箱",
+      "docker": "Docker"
     },
-    "egress": {
-      "none": "无网络",
-      "allowlist": "仅允许名单内的主机",
-      "open": "开放网络"
+    "mark": {
+      "auto": "自动",
+      "sandbox": "沙箱",
+      "open": "开放（挡内网）",
+      "allowlist": "白名单"
+    },
+    "networkKind": {
+      "open-public": "开放（挡内网）",
+      "allowlist": "白名单"
     },
     "empty": "你还没有设备。",
     "noCloud": {
@@ -1574,23 +1579,9 @@
       "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
     },
     "detail": {
-      "tabsLabel": "设备分区",
-      "tabs": {
-        "summary": "概要"
-      },
-      "source": "来源",
-      "provider": "提供方",
-      "state": "状态",
-      "isolation": "隔离",
-      "limits": "限制",
-      "limitsValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk} · {egress}",
-      "files": "文件",
-      "filesNote": "文件保留到设备被删除。",
-      "suspendNote": "暂停会结束正在运行的进程。",
       "demotedNote": "这是平台更换沙箱提供方之前你的个人设备。平台换回{provider}后，它会重新成为你的默认设备，文件也随之回来。",
       "filesLostNote": "该设备的文件已在提供方丢失。重建文件后才能再次使用。",
       "localFilesLostNote": "这个本地设备在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个设备，即可重建目录后继续使用。",
-      "created": "创建时间",
       "rename": "重命名",
       "renameTitle": "重命名设备",
       "renameSubmit": "保存",
@@ -1606,36 +1597,72 @@
       "resetSubmit": "重建文件",
       "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。",
       "localFilesNote": "文件保存在这台机器上，不会上传到平台。",
-      "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。"
+      "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。",
+      "source": "来源",
+      "provider": "提供方",
+      "state": "状态",
+      "resources": "资源",
+      "resourcesValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk}",
+      "network": "网络",
+      "filesAndSuspendNote": "文件保留到设备被删除。暂停会结束正在运行的进程。",
+      "created": "创建时间"
     },
     "mode": {
-      "os": "系统沙箱",
-      "docker": "Docker"
+      "description": {
+        "auto": "命令以你的身份在这台机器上运行，可以联网；每条命令都经过审查。",
+        "sandbox": "命令在沙箱里运行，只能访问工作区、临时目录和设备允许的域名。"
+      },
+      "cloudDescription": {
+        "auto": "命令在容器里运行，可以访问公网，内网地址被挡住。",
+        "sandbox": "命令在容器里运行，网络仅限组织允许的域名。"
+      },
+      "name": {
+        "auto": "自动",
+        "sandbox": "沙箱"
+      },
+      "commandHint": "在这台机器的终端里运行，切换模式。",
+      "changedSandbox": "已切换到沙箱模式。",
+      "pendingNextUse": "下次使用时生效，文件保留。",
+      "lockedCloud": "云端设备不能选择模式：组织允许自动模式时运行自动，否则运行沙箱。",
+      "lockedNarrowed": "这台云端设备已设为沙箱模式。",
+      "lockedSandbox": "组织未开放自动模式，云端设备运行沙箱。",
+      "unavailable": "组织未开放自动模式",
+      "noMachine": "连接机器后才能在这里切换模式。",
+      "offline": "这台设备离线；在机器上运行下面的命令即可切换。",
+      "upgrade": "这台机器上的设备程序不支持从平台修改模式。请在机器上升级 capybara-device。"
+    },
+    "recent": {
+      "title": "最近的修改",
+      "add": "添加 {hosts}",
+      "remove": "移除 {hosts}",
+      "mode": "模式改为{mode}",
+      "modeFrom": "模式从{from}改为{to}",
+      "none": "没有改动",
+      "unknownBy": "未知账号",
+      "via": {
+        "web": "网页",
+        "im": "IM",
+        "device": "本机"
+      },
+      "outcome": {
+        "unknown": "机器未确认",
+        "failed": "未生效"
+      }
     },
     "machine": {
       "title": "机器",
       "description": "运行这个设备命令的机器。",
       "name": "名称",
       "os": "系统",
-      "mode": "运行方式",
-      "programVersion": "程序版本",
-      "lastSeen": "最近在线",
-      "never": "从未",
       "none": "没有连接的机器。在机器上运行 capybara-device login 连接。",
       "revoke": "断开这台机器",
       "revokeTitle": "断开 {name}？",
       "revokeHint": "这台机器的连接凭据会被撤销，正在运行的命令会结束。机器上的文件会保留。要再次连接，在机器上运行 capybara-device login。",
       "revokeSubmit": "断开",
-      "revoked": "已断开 {name}。"
+      "revoked": "已断开 {name}。",
+      "runMode": "运行方式"
     },
     "network": {
-      "title": "网络",
-      "description": "在组织允许的范围内，这台机器上的命令还能访问哪些域名。",
-      "remoteGrants": "接受平台修改",
-      "remoteGrantsOwner": "接受你的修改",
-      "remoteGrantsOff": "不接受",
-      "remoteGrantsHint": "只能在机器上设置：capybara-device policy set remoteGrants owner|off",
-      "remoteGrantsOffHint": "这台机器不接受平台放宽网络，添加域名和不限网络都要在机器上操作：capybara-device policy add allowedDomains files.example.com；或运行 capybara-device policy set remoteGrants owner 允许在这里修改。",
       "domains": "允许的域名",
       "domainsEmpty": "这台机器还没有允许任何域名。",
       "remove": "移除",
@@ -1650,101 +1677,18 @@
       "hostPresent": "这个域名已经允许。",
       "upgrade": "这台机器上的设备程序不支持从平台修改网络设置。请在机器上升级 capybara-device。",
       "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
-      "unknown": "机器还没有上报它的网络设置。"
+      "unknown": "机器还没有上报它的网络设置。",
+      "title": "网络",
+      "description": "沙箱模式下，命令只能访问这台机器允许的域名。添加或移除会发送到机器。",
+      "cloudTitle": "网络",
+      "cloudDescription": "沙箱模式下，这台云端设备只能访问组织允许的域名。",
+      "cloudHint": "组织在设置里修改这里。",
+      "cloudEmpty": "没有允许的域名。"
     },
     "tier": {
       "strict": "严格",
       "dev": "开发",
       "open": "开放"
-    },
-    "mark": {
-      "open": "开放",
-      "unsandboxed": "不使用沙箱"
-    },
-    "sandbox": {
-      "title": "沙箱级别",
-      "description": "这台设备上的命令在多宽的沙箱里运行，不超过组织和平台允许的最高级别。",
-      "follow": "跟随组织默认（{tier}）",
-      "followHint": "组织修改默认级别时，这台设备随之改变。",
-      "hint": {
-        "strict": "只能访问允许的域名，不能访问本机端口和 Unix 套接字。",
-        "dev": "还能访问常用开发域名、本机端口和 Unix 套接字，适合日常开发。",
-        "open": "可以访问任何公网地址和端口。"
-      },
-      "capped": {
-        "org": "组织最高允许：{tier}",
-        "platform": "平台最高允许：{tier}",
-        "any": "最高允许：{tier}"
-      },
-      "effective": "实际级别",
-      "lower": {
-        "org": "组织最高只允许{tier}。",
-        "platform": "平台最高只允许{tier}。",
-        "program": "这台机器上的设备程序不支持沙箱级别，命令按严格级别运行。请在机器上升级 capybara-device。"
-      },
-      "pendingNextUse": "下次使用时生效，文件保留。",
-      "pendingFilesReset": "重置文件后生效。",
-      "changed": "沙箱级别已改为{tier}。",
-      "followed": "已改为跟随组织默认。",
-      "remoteOff": "这台机器不接受平台提高级别。要提高级别，在机器上运行：",
-      "unknown": "机器还没有上报它的沙箱级别。",
-      "noMachine": "连接机器后才能修改沙箱级别。",
-      "upgrade": "这台机器上的设备程序不支持从平台修改沙箱级别。请在机器上升级 capybara-device。",
-      "localhost": "本机端口",
-      "localhostValue": {
-        "on": "可访问",
-        "off-proxy-detected": "已关闭：检测到本机代理或 Docker 端口",
-        "off": "不可访问"
-      },
-      "localhostOverride": "要仍然允许访问本机端口，在机器上运行：",
-      "unixSockets": "Unix 套接字",
-      "unixSocketsValue": {
-        "roots": "设备目录内可用",
-        "all-masked": "可用，系统守护进程的套接字已隐藏",
-        "off": "不可用"
-      },
-      "linuxNote": "在 Linux 上，只有设备程序能隐藏系统守护进程的套接字时，开发级别才开放 Unix 套接字；否则保持关闭。",
-      "openConfirmTitle": "把这台设备设为开放级别？",
-      "openConfirmSubmit": "设为开放",
-      "openRisk": "开放级别下，智能体在这台设备上运行的命令可以访问任何公网地址和端口，包括把文件上传到外部网站。提示注入能让智能体这样做。只在你自己的开发机上、并且信任所用的智能体和资料时开启。",
-      "cancel": "取消",
-      "unsandboxed": "不使用沙箱",
-      "unsandboxedOffHint": "只能在这台机器上开启，平台无法替你打开。在机器上运行：",
-      "unsandboxedRisk": "不使用沙箱时，智能体的命令直接以你的身份在这台电脑上运行：能读写你的所有文件、使用你的登录凭据（SSH 密钥、云账号、钥匙串）、Docker 和任意网络。提示注入能让智能体删除文件或把凭据发出去。只在你自己的开发机上、并且完全信任所用的智能体和资料时开启。",
-      "unsandboxedOn": "这台设备的命令直接以你的身份在这台电脑上运行，没有沙箱。",
-      "unsandboxedNotAllowed": "组织不允许不使用沙箱的设备，智能体暂时不能使用这台设备。恢复沙箱后即可继续使用。",
-      "restore": "恢复沙箱",
-      "restored": "已恢复沙箱。",
-      "recent": {
-        "title": "最近的修改",
-        "add": "添加 {hosts}",
-        "remove": "移除 {hosts}",
-        "tier": "级别改为{tier}",
-        "tierFollow": "改为跟随组织默认",
-        "tierFrom": "级别从{from}改为{to}",
-        "followDefault": "组织默认",
-        "localhost": "本机端口：{value}",
-        "remoteGrants": "接受平台修改：{value}",
-        "isolation": {
-          "none": "不使用沙箱",
-          "sandbox": "恢复沙箱"
-        },
-        "none": "没有改动",
-        "unknownBy": "未知账号",
-        "via": {
-          "web": "网页",
-          "im": "IM",
-          "device": "本机"
-        },
-        "outcome": {
-          "unknown": "机器未确认",
-          "failed": "未生效"
-        }
-      },
-      "openRiskCloud": "开放级别下，智能体在这台云端设备上运行的命令可以访问任何公网地址和端口，包括把文件和数据上传到外部网站。提示注入能让智能体这样做。只在信任所用的智能体和资料时开启。",
-      "unsandboxedOnMark": "已开启",
-      "unsandboxedRefused": "这台设备在本机上被设为不使用沙箱，但当前级别低于开放，命令会被拒绝。恢复沙箱后才能使用。",
-      "isolationResetNote": "这台设备现在不使用沙箱。在这里修改级别会同时恢复沙箱。"
     }
   },
   "nav": {
