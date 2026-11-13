@@ -12,7 +12,7 @@ export type CalendarRange = "week" | "month";
 export type CalendarScope = "mine" | "all";
 export type CalendarItemState = "upcoming" | "running" | "completed" | "failed" | "skipped";
 
-/** What the address says (`?view=calendar&range=week|month&date=YYYY-MM-DD&scope=all`). */
+/** What the address says (`?view=list`, or the calendar's `?range=week|month&date=YYYY-MM-DD&scope=all`). */
 export interface SchedulesUrl {
   view: SchedulesView;
   range: CalendarRange;
@@ -66,27 +66,28 @@ function param(search: SearchLike, name: string): string | undefined {
 
 /**
  * The effective state of the page: the address wins, then the cookie (the view and the range), then
- * the list and the week. The admin scope is never remembered.
+ * the calendar and the week. The admin scope is never remembered.
  */
 export function schedulesUrlOf(search: SearchLike, cookie?: string): SchedulesUrl {
   const remembered = parseViewCookie(cookie);
   const date = param(search, "date");
   return {
-    view: parseView(param(search, "view")) ?? remembered.view ?? "list",
+    view: parseView(param(search, "view")) ?? remembered.view ?? "calendar",
     range: parseRange(param(search, "range")) ?? remembered.range ?? "week",
     date: isDay(date) ? date : null,
     scope: param(search, "scope") === "all" ? "all" : "mine",
   };
 }
 
-/** The address of a state (`/schedules` for the list; the calendar with what differs). */
+/** The address of a state (`?view=list` for the list; the calendar with what differs). */
 export function schedulesSearch(s: SchedulesUrl): string {
-  if (s.view === "list") return "";
-  const q = new URLSearchParams({ view: "calendar" });
+  if (s.view === "list") return "?view=list";
+  const q = new URLSearchParams();
   if (s.range === "month") q.set("range", "month");
   if (s.date !== null) q.set("date", s.date);
   if (s.scope === "all") q.set("scope", "all");
-  return `?${q}`;
+  const query = q.toString();
+  return query === "" ? "" : `?${query}`;
 }
 
 // ---- days and instants in a zone ----
