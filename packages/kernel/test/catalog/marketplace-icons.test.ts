@@ -80,7 +80,7 @@ beforeAll(async () => {
   market = await startFakeMarketplace({ manifest: { schemaVersion: 1, name: "M", plugins: [] } });
   git = await startFakeGitServer();
   env = await startOrgEnv({ marketplaces: { allowInsecureLoopback: true } });
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -157,7 +157,7 @@ describe("pure rules", () => {
   });
 });
 
-describe("marketplace entry icons", { timeout: 60_000 }, () => {
+describe("marketplace entry icons", () => {
   it("URL icons are downloaded on refresh, stored and served; bad ones are skipped, the refresh still succeeds", async () => {
     market.setManifest({
       schemaVersion: 1,

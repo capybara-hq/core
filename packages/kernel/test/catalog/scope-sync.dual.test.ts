@@ -35,7 +35,7 @@ let queue: Queue | undefined;
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-}, 120_000);
+});
 
 afterAll(async () => {
   await queue?.close();
@@ -192,5 +192,5 @@ describe("plugin scope sync (dual replica)", () => {
       .where("action", "in", ["plugin.org_install_failed", "plugin.scope_sync_failed"])
       .execute();
     expect(failed).toEqual([]);
-  }, 120_000);
+  });
 });

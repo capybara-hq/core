@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { usableTemplates } from "../../src/agents/templates.js";
+import { PlatformComponents, type PreparedSync } from "../../src/catalog/platform-components.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -7,23 +8,33 @@ import { makeZip, SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
   importPlugin,
+  install,
   type OrgEnv,
   resetOrgCatalog,
+  seedPlugin,
   startOrgEnv,
 } from "./org-env.js";
-import { bundlePlugin, skillFiles } from "./packages.js";
+import { bundlePlugin, mcpTemplate, skillFiles } from "./packages.js";
 
 /**
- * Plugin scope phase 2, Task 8 (spec §7.2): a platform skill or agent template updated on its own.
- * The upload keeps the plugin provenance, writes the next version flagged `updated_on_own`, serves
- * in orgs at once, and the next plugin update preview marks it.
+ * The platform components of a plugin version and their own life:
+ *
+ * - platform skills carry a catalog version's source format and the per-skill pinned suggestion
+ *   (phase B, spec §9.1), also through a platform plugin update, and the skills API shows them;
+ * - a platform skill or agent template updated on its own (plugin scope phase 2, Task 8, spec §7.2):
+ *   the upload keeps the plugin provenance, writes the next version flagged `updated_on_own`,
+ *   serves in orgs at once, and the next plugin update preview marks it;
+ * - a plugin import writes its platform component rows in the import's transaction (transactional
+ *   outbox Task 15, spec §8.1, design review `catalog-import-heal-job`): the files are copied
+ *   before it, keyed by content, so a failed import leaves no item, no rows and nothing a retry
+ *   would copy again; no job heals an item afterwards.
  */
 
 let env: OrgEnv;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -32,6 +43,57 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetOrgCatalog(env);
 });
+
+/** Installs the plugin in the org. */
+async function installOk(itemId: string): Promise<string> {
+  const r = await install(env.boss, env, itemId, {});
+  expect(r.statusCode, r.body).toBe(201);
+  return r.json().installed.pluginInstallId as string;
+}
+
+/** The platform skill versions. */
+const versionsOf = () =>
+  env.db
+    .selectFrom("platform_skill_versions as v")
+    .innerJoin("platform_skills as s", "s.id", "v.skill_id")
+    .select(["s.name", "v.version", "v.source_format", "v.suggest_pinned"])
+    .orderBy("s.name")
+    .orderBy("v.version")
+    .execute();
+
+/** Previews and confirms the platform update to `version`; returns the skill changes. */
+async function updateTo(itemId: string, version: string): Promise<string[]> {
+  const p = await env.root({
+    method: "POST",
+    url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+    payload: { version },
+  });
+  expect(p.statusCode, p.body).toBe(200);
+  const r = await env.root({
+    method: "PUT",
+    url: `/api/v1/admin/catalog/items/${itemId}/update`,
+    payload: { version, diffHash: p.json().diffHash },
+  });
+  expect(r.statusCode, r.body).toBe(200);
+  return (p.json().components as { kind: string; change: string }[])
+    .filter((c) => c.kind === "skill")
+    .map((c) => c.change);
+}
+
+const seedSuperpowers = (o: { version?: string; addTo?: string; legacyPinned?: string[] } = {}) =>
+  seedPlugin(env, {
+    name: "superpowers",
+    skills: ["brainstorming", "using-superpowers"],
+    templates: false,
+    legacyPinned: o.legacyPinned ?? ["using-superpowers"],
+    sourceFormat: "claude-code",
+    ...(o.version !== undefined && { version: o.version }),
+    ...(o.addTo !== undefined && { addTo: o.addTo }),
+    // a 2.0.0 changes both skills' files, so the upgrade writes a new version of each
+    ...(o.version === "2.0.0" && {
+      skillScripts: { brainstorming: "print(2)\n", "using-superpowers": "print(2)\n" },
+    }),
+  });
 
 const reviewerMd = (body: string) =>
   `---\nname: reviewer\ndescription: Reviews kit work.\n---\n${body}\n`;
@@ -119,7 +181,168 @@ async function previewV2(
   return r.json() as PlatformUpdatePreview;
 }
 
-describe("a platform component updated on its own (spec §7.2)", { timeout: 120_000 }, () => {
+/** Plugin `kit`: skills alpha and beta, agent template reviewer, connector template kit-mcp. */
+const kit = () =>
+  bundlePlugin({
+    name: "kit",
+    version: "1.0.0",
+    skills: ["beta"],
+    templates: { "kit-mcp": mcpTemplate() },
+    files: {
+      ...skillFiles("alpha", SKILL_MD("alpha", "Alpha things.")),
+      "agents/reviewer.md": "---\nname: reviewer\ndescription: Reviews kit work.\n---\nReview.\n",
+    },
+  });
+
+async function prepare(): Promise<{ stagingId: string; reviewHash: string }> {
+  const r = await env.root({
+    method: "POST",
+    url: "/api/v1/admin/catalog/import/file",
+    headers: { "content-type": "application/octet-stream" },
+    payload: Buffer.from(await kit()),
+  });
+  expect(r.statusCode, r.body).toBe(200);
+  const body = r.json() as { stagingId: string; review: { reviewHash: string } };
+  return { stagingId: body.stagingId, reviewHash: body.review.reviewHash };
+}
+
+const confirm = (p: { stagingId: string; reviewHash: string }) =>
+  env.root({
+    method: "POST",
+    url: `/api/v1/admin/catalog/imports/${p.stagingId}/confirm`,
+    payload: { reviewHash: p.reviewHash },
+  });
+
+/** Every object under the platform components' prefix. */
+async function platformObjects(): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.k.app
+      .get(StorageService)
+      .deployment()
+      .list("platform/", cursor === undefined ? {} : { cursor });
+    keys.push(...page.items.map((o) => o.key));
+    cursor = page.cursor ?? undefined;
+  } while (cursor !== undefined);
+  return keys.sort();
+}
+
+/** The object prefixes the platform version rows reference. */
+async function referencedPrefixes(): Promise<string[]> {
+  const skills = await env.db
+    .selectFrom("platform_skill_versions")
+    .select("object_prefix")
+    .execute();
+  const agents = await env.db
+    .selectFrom("platform_agent_template_versions")
+    .select("object_prefix")
+    .execute();
+  return [...skills, ...agents]
+    .flatMap((r) => (r.object_prefix === null ? [] : [r.object_prefix]))
+    .sort();
+}
+
+/** The platform rows of the import fail after they are written, in its transaction. */
+function failPlatformWrite(): void {
+  const original = PlatformComponents.prototype.applySyncIn;
+  vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockImplementationOnce(async function (
+    this: PlatformComponents,
+    p: PreparedSync,
+  ) {
+    await original.call(this, p);
+    throw new Error("injected platform write failure");
+  });
+}
+
+const kitItem = () =>
+  env.db
+    .selectFrom("catalog_items")
+    .select(["id", "platform_synced_version"])
+    .where("name", "=", "kit")
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+
+describe("org skills from a Claude Code plugin", () => {
+  it("the org catalog view carries the latest version's source format", async () => {
+    const item = await seedSuperpowers();
+    const r = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
+    expect(r.statusCode, r.body).toBe(200);
+    const view = (r.json().items as { id: string; sourceFormat: string }[]).find(
+      (i) => i.id === item,
+    );
+    expect(view?.sourceFormat).toBe("claude-code");
+  });
+
+  it("a claude-code version's platform skills record source_format; a stored pinned flag suggests nothing", async () => {
+    const item = await seedSuperpowers();
+    await installOk(item);
+    // suggest_pinned stays in the table but nothing writes it any more (skills default-on)
+    expect(await versionsOf()).toEqual([
+      { name: "brainstorming", version: 1, source_format: "claude-code", suggest_pinned: false },
+      {
+        name: "using-superpowers",
+        version: 1,
+        source_format: "claude-code",
+        suggest_pinned: false,
+      },
+    ]);
+  });
+
+  it("an update that only moves the stored pinned flag changes nothing", async () => {
+    const item = await seedSuperpowers();
+    await installOk(item);
+    // 1.1.0: the same files, the old flag moved to brainstorming
+    await seedSuperpowers({ version: "1.1.0", addTo: item, legacyPinned: ["brainstorming"] });
+    expect(await updateTo(item, "1.1.0")).toEqual(["same", "same"]);
+    expect(await versionsOf()).toEqual([
+      { name: "brainstorming", version: 1, source_format: "claude-code", suggest_pinned: false },
+      {
+        name: "using-superpowers",
+        version: 1,
+        source_format: "claude-code",
+        suggest_pinned: false,
+      },
+    ]);
+  });
+
+  it("an update to new files writes new versions, none with a pinned suggestion", async () => {
+    const item = await seedSuperpowers();
+    await installOk(item);
+    await seedSuperpowers({ version: "2.0.0", addTo: item });
+    expect(await updateTo(item, "2.0.0")).toEqual(["upgrade", "upgrade"]);
+    expect((await versionsOf()).map((v) => [v.name, v.version, v.suggest_pinned])).toEqual([
+      ["brainstorming", 1, false],
+      ["brainstorming", 2, false],
+      ["using-superpowers", 1, false],
+      ["using-superpowers", 2, false],
+    ]);
+  });
+
+  it("GET skills returns plugin, sourceFormat and builtin, and no pinning fields", async () => {
+    const item = await seedSuperpowers();
+    await installOk(item);
+    const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/skills` });
+    expect(r.statusCode, r.body).toBe(200);
+    const skills = r.json().skills as Record<string, unknown>[];
+    expect(skills).toMatchObject([
+      { name: "brainstorming", plugin: "superpowers", sourceFormat: "claude-code", builtin: false },
+      {
+        name: "using-superpowers",
+        plugin: "superpowers",
+        sourceFormat: "claude-code",
+        builtin: false,
+      },
+    ]);
+    for (const s of skills) {
+      expect(s).not.toHaveProperty("suggestPinned");
+      expect(s).not.toHaveProperty("entryBytes");
+      expect(s).not.toHaveProperty("tokenEstimate");
+    }
+  });
+});
+
+describe("a platform component updated on its own (spec §7.2)", () => {
   it("a skill zip becomes the next version: plugin kept, updated_on_own, served in orgs at once, the next update marks it", async () => {
     const item = await importKit();
     const alpha = await skillOf("alpha");
@@ -295,5 +518,90 @@ describe("a platform component updated on its own (spec §7.2)", { timeout: 120_
     ]);
     expect((await versions("skill", "missing")).json().error.code).toBe("component.not_found");
     expect((await versions("skill", alpha.id, env.boss)).statusCode).toBe(403);
+  });
+});
+
+describe("platform components in the import's transaction", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a failure writing platform components rolls the import back", async () => {
+    const p = await prepare();
+    failPlatformWrite();
+    const c = await confirm(p);
+    expect(c.statusCode, c.body).toBe(500);
+    // nothing of the import committed: no item, no version, no platform rows; the staging stays
+    expect(await kitItem()).toBeUndefined();
+    expect(await env.db.selectFrom("catalog_item_versions").select("item_id").execute()).toEqual(
+      [],
+    );
+    expect(await env.db.selectFrom("platform_skills").select("id").execute()).toEqual([]);
+    expect(await env.db.selectFrom("platform_agent_templates").select("id").execute()).toEqual([]);
+    expect(await env.db.selectFrom("platform_connector_templates").select("id").execute()).toEqual(
+      [],
+    );
+    expect(
+      await env.db
+        .selectFrom("plugin_import_staging")
+        .select("id")
+        .where("id", "=", p.stagingId)
+        .executeTakeFirst(),
+    ).toEqual({ id: p.stagingId });
+  });
+
+  it("retrying the import after that failure succeeds and writes no duplicate objects", async () => {
+    const first = await prepare();
+    failPlatformWrite();
+    expect((await confirm(first)).statusCode).toBe(500);
+    // the files were copied before the transaction: they stay, keyed by their content
+    const copied = await platformObjects();
+    // alpha and beta (SKILL.md and scripts/run.py each), the reviewer template
+    expect(copied.length).toBe(5);
+
+    // the same staging confirmed again
+    const again = await confirm(first);
+    expect(again.statusCode, again.body).toBe(201);
+    expect(await platformObjects()).toEqual(copied);
+    // every object is one a version row references
+    const prefixes = await referencedPrefixes();
+    expect(prefixes).toHaveLength(3);
+    for (const key of copied) expect(prefixes.some((p) => key.startsWith(p))).toBe(true);
+
+    // a fresh prepare of the same content after a failure reuses the objects too
+    await resetOrgCatalog(env);
+    const before = await prepare();
+    failPlatformWrite();
+    expect((await confirm(before)).statusCode).toBe(500);
+    const copiedAgain = await platformObjects();
+    const fresh = await prepare();
+    const c = await confirm(fresh);
+    expect(c.statusCode, c.body).toBe(201);
+    expect(await platformObjects()).toEqual(copiedAgain);
+  });
+
+  it("an imported item has its platform rows when the import returns", async () => {
+    const itemId = await importPlugin(env, await kit());
+    expect(await kitItem()).toEqual({ id: itemId, platform_synced_version: "1.0.0" });
+    const names = async (table: "platform_skills" | "platform_agent_templates") =>
+      (
+        await env.db
+          .selectFrom(table)
+          .select("name")
+          .where("catalog_item_id", "=", itemId)
+          .orderBy("name")
+          .execute()
+      ).map((r) => r.name);
+    expect(await names("platform_skills")).toEqual(["alpha", "beta"]);
+    expect(await names("platform_agent_templates")).toEqual(["reviewer"]);
+    expect(
+      (
+        await env.db
+          .selectFrom("platform_connector_templates")
+          .select("template_id")
+          .where("catalog_item_id", "=", itemId)
+          .execute()
+      ).map((r) => r.template_id),
+    ).toEqual(["kit-mcp"]);
   });
 });

@@ -30,7 +30,7 @@ let env: OrgEnv;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -87,7 +87,7 @@ async function inbox(): Promise<{
 
 const ofType = async (type: string) => (await inbox()).items.filter((i) => i.type === type);
 
-describe("platform inbox", { timeout: 90_000 }, () => {
+describe("platform inbox", () => {
   it("is for super admins only, and empty when nothing waits", async () => {
     expect((await env.boss({ method: "GET", url: "/api/v1/admin/inbox" })).statusCode).toBe(403);
     expect((await env.mem({ method: "GET", url: "/api/v1/admin/inbox" })).statusCode).toBe(403);

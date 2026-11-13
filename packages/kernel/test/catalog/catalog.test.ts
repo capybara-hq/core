@@ -127,7 +127,7 @@ beforeAll(async () => {
     .deployment()
     .put("warmup/probe", warm, { contentType: "text/plain", size: warm.byteLength });
   await k.app.get(StorageService).deployment().delete("warmup/probe");
-}, 240_000);
+});
 
 afterAll(async () => {
   await k?.close();
@@ -208,7 +208,7 @@ describe("items", () => {
       },
     ]);
     expect(audit[0]?.detail).not.toHaveProperty("kind");
-  }, 20_000);
+  });
 
   it("from npm: source npm with the integrity; a mismatching integrity is 502 and writes nothing", async () => {
     const item = await confirmed(

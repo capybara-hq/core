@@ -160,7 +160,7 @@ const npmEntry = (
   source: { npm: { package: pkg, version, integrity: sri(tgz) } },
 });
 
-describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, () => {
+describe("M6 第三段双副本验收（平台目录）", () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let s3: TestS3;
@@ -374,7 +374,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
       100,
     );
     bootPids.push(h.replicas[0].pid, h.replicas[1].pid);
-  }, 600_000);
+  });
 
   afterAll(async () => {
     // 先关测试自己的连接池：harness 停机时强制删库，池里的空闲连接会被管理员命令断开
@@ -384,7 +384,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
     await bootstrap?.cleanup();
     if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
-  }, 120_000);
+  });
 
   /**
    * The custom marketplace: the fake-tools-ui plugin with every component; with `withTampered` also a

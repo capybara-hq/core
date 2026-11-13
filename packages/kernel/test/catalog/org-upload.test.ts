@@ -47,7 +47,7 @@ beforeAll(async () => {
     .values({ org_id: orgA, account_id: guestId, role: "guest" })
     .execute();
   guest = await session(env.k, "guest");
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -202,7 +202,7 @@ describe("org plugin upload without an extension", () => {
     expect(errorOf(await send(guest, orgA))).toEqual([403, "forbidden"]);
     // boss is not a member of org B: as OrgGuard, the org is not disclosed
     expect(errorOf(await send(env.boss, orgB))).toEqual([404, "org.not_found"]);
-  }, 20_000);
+  });
 
   it("names of bootstrap and marketplace plugins are reserved (ruling P3-28)", async () => {
     // a bootstrap plugin of the bundled manifest

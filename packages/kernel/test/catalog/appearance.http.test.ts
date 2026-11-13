@@ -30,7 +30,7 @@ beforeAll(async () => {
     PLAIN,
   );
   await enableExtensions(env.db, env.orgId, LOOK, PLAIN);
-}, 240_000);
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -61,7 +61,7 @@ const applyOrg = (req: OrgEnv["boss"], extension: string, dryRun?: boolean) =>
 
 const UNKNOWN = { what: "shell.future", reason: "unknown-slot" };
 
-describe("suggested appearance", { timeout: 60_000 }, () => {
+describe("suggested appearance", () => {
   it("a dry run lists the changes and writes nothing", async () => {
     const r = await applyPlatform(itemId, true);
     expect(r.statusCode, r.body).toBe(200);

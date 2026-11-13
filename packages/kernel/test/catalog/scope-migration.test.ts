@@ -98,13 +98,13 @@ beforeAll(async () => {
     (name, sha256, version, source, desired_state, installed_by, catalog_item_id, required)
     values ('req', ${SHA}, '0.1.0', 'bootstrap', 'enabled', 'a1', ${REQUIRED}, true)`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
-}, 120_000);
+});
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-}, 120_000);
+});
 
 describe("0075 plugin scope", () => {
   it("allow becomes optional, with a switch on for the org that installed it", async () => {
@@ -149,7 +149,7 @@ describe("0078 granted but never installed", () => {
       schema: "capybara",
       dir: copyMigrations((f) => f <= "0078_scope_grant_switches.sql"),
     });
-  }, 120_000);
+  });
 
   it("a granted org without a live install gets a switch off; an installed one keeps its switch on", async () => {
     expect((await scopeOrgs(APPROVAL)).sort()).toEqual([B, C].sort());
@@ -182,7 +182,7 @@ describe("0079 installs mid-flight at the scope migration", () => {
       schema: "capybara",
       dir: copyMigrations((f) => f <= "0079_scope_live_install_switches.sql"),
     });
-  }, 120_000);
+  });
 
   it("an upgrading install of an optional item gets a switch on", async () => {
     expect((await item(UPGRADING))?.scope).toBe("optional");

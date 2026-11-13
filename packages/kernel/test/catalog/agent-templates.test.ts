@@ -39,7 +39,7 @@ const capture = captureProviderRequests();
 beforeAll(async () => {
   capture.install();
   env = await startOrgEnv();
-}, 240_000);
+});
 
 afterAll(async () => {
   capture.restore();
@@ -145,8 +145,8 @@ async function lead(templateIds: string[]): Promise<{ id: string; definition: Ag
 }
 
 // Each case imports plugins through the object store and the kernel end to end: about 1 s alone,
-// several times that in a full parallel run, past the local 5 s default (CI has 30 s).
-describe("agent templates in plugins", { timeout: 30_000 }, () => {
+// several times that in a full parallel run, the integration project's 30 s bound carries them.
+describe("agent templates in plugins", () => {
   it("a plugin with agents/reviewer.md imports with the template in the review and reviewHash", async () => {
     const one = await prepare(
       await agentPlugin("1.0.0", {
@@ -487,5 +487,5 @@ describe("agent templates in plugins", { timeout: 30_000 }, () => {
     expect(system).not.toContain("Review v2.");
     const child = await eventsOf(env.db, subagentId);
     expect(child.filter((e) => e.type === "subagent_started")).toHaveLength(1);
-  }, 90_000);
+  });
 });
