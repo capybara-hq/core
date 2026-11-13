@@ -717,6 +717,15 @@ describe("超级管理员端点", () => {
       threshold: 0.7,
       keepRecentTurns: 2,
     });
+
+    // an org's settings answer carries the stored platform values, so its page can show what
+    // following the platform means after the admin changed them
+    const org = await orgs.create({ name: "Compaction Org" }, admin);
+    const orgRead = await adminReq({ method: "GET", url: `/api/v1/orgs/${org.id}/settings` });
+    expect(orgRead.statusCode).toBe(200);
+    expect(
+      (orgRead.json() as { deployment: { compaction: unknown } }).deployment.compaction,
+    ).toEqual({ ...DEFAULT_COMPACTION, threshold: 0.7, keepRecentTurns: 2 });
   });
 
   it("PUT /admin/settings sandboxLimitOverrides：合并后可读回；cpu / memoryMb 越界 → 400", async () => {

@@ -151,13 +151,15 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
   ];
 };
 
+/** Whether a query key starts with `prefix`. */
+const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
+  prefix.every((p, i) => k[i] === p);
+
 /**
  * After a change of the platform's sandbox levels: every cached org's settings (the platform's
  * levels ride on them) and devices (their effective level) are stale.
  */
 export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
-  const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
-    prefix.every((p, i) => k[i] === p);
   return qc.invalidateQueries({
     predicate: ({ queryKey: k }) =>
       k[0] === "org" &&
@@ -165,6 +167,18 @@ export function invalidateSandboxTiers(qc: QueryClient): Promise<void> {
       (under(k, keys.org(k[1]).orgSettings()) ||
         under(k, keys.org(k[1]).devices()) ||
         under(k, keys.org(k[1]).device(String(k[3])))),
+  });
+}
+
+/**
+ * After a change of the platform's conversation compaction defaults: every cached org's settings
+ * are stale (the org settings page's "follow the platform" state and the values it shows ride on
+ * them, as `deployment.compaction`).
+ */
+export function invalidateCompactionSettings(qc: QueryClient): Promise<void> {
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" && typeof k[1] === "string" && under(k, keys.org(k[1]).orgSettings()),
   });
 }
 

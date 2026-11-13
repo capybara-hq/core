@@ -3,6 +3,7 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -77,10 +78,12 @@ afterEach(() => {
 });
 
 describe("对话压缩 settings", () => {
-  it("platform: saves only the changed threshold", async () => {
+  it("platform: saves only the changed threshold and refreshes the cached org settings", async () => {
     resetNavigation("/admin/settings");
     const calls = adminRoutes();
-    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const { client } = await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    // an org's settings carry the platform compaction values the org page follows
+    client.setQueryData(keys.org("o1").orgSettings(), { settings: {} });
     const section = await sectionOf(T.title);
     const threshold = textbox(section, T.threshold.label);
     expect(threshold.value).toBe("0.9");
@@ -94,6 +97,9 @@ describe("对话压缩 settings", () => {
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
       compaction: { threshold: 0.7 },
     });
+    await waitFor(() =>
+      expect(client.getQueryState(keys.org("o1").orgSettings())?.isInvalidated).toBe(true),
+    );
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
@@ -128,13 +134,21 @@ describe("对话压缩 settings", () => {
     await user.click(follow);
     expect(follow.checked).toBe(false);
     expect(textbox(section, T.threshold.label).disabled).toBe(false);
+    // turning follow off and on again without an edit is no change at all
+    await user.click(follow);
+    expect(follow.checked).toBe(true);
+    expect(screen.queryByRole("region", { name: "Pending changes" })).toBeNull();
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+    await user.click(follow);
     const threshold = textbox(section, T.threshold.label);
     await user.clear(threshold);
     await user.type(threshold, "0.6");
     const row = screen.getByRole("region", { name: "Pending changes" });
     await user.click(within(row).getByRole("button", { name: en.orgSettings.save }));
+    // only the field the admin edited: the rest keep following the platform, so a later
+    // platform change (such as reserveTokens) still reaches the org
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-      compaction: { ...PLATFORM, threshold: 0.6 },
+      compaction: { threshold: 0.6 },
     });
   });
 

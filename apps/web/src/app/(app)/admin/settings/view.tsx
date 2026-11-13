@@ -54,6 +54,7 @@ import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
+  invalidateCompactionSettings,
   invalidateSandboxTiers,
   settingsChangeKeys,
 } from "../../../../lib/query/admin";
@@ -212,6 +213,8 @@ function AdminSettings({
       if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
       // the platform's sandbox levels cap every org's levels and devices
       if (patch.sandboxTiers !== undefined) await invalidateSandboxTiers(qc);
+      // the platform's compaction defaults are what an org that follows the platform shows
+      if (patch.compaction !== undefined) await invalidateCompactionSettings(qc);
       return r;
     },
     invalidates: (patch) => settingsChangeKeys(patch),

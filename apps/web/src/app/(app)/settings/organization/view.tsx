@@ -147,8 +147,9 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           title={tcp("title")}
           description={tcp("description")}
           loading={{
+            // row for row with the loaded section: follow checkbox, enabled switch, four numbers
             fields: [
-              { control: "input" },
+              { control: "radios", options: 1 },
               { control: "switch", help: true },
               { control: "input", help: true },
               { control: "input", help: true },
@@ -167,13 +168,26 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const locale = draft.locale ?? saved.locale ?? "en";
   const platformTool = draft.platformTool ?? saved.platformTool ?? "on";
   const timeZone = draft.timeZone ?? saved.timeZone ?? "UTC";
-  // The org's compaction override: absent follows the platform, null (an explicit choice) too;
-  // the fields show what the org gets, so "follow the platform" shows the platform's values.
+  // The org's compaction override: absent follows the platform, null (an explicit choice) too.
+  // The draft holds only the fields the admin set, merged over the stored override, so fields
+  // left alone keep following the platform; the fields show the values the org actually gets.
   const platformCompaction = read.data.deployment?.compaction ?? COMPACTION_DEFAULTS;
+  const compactionDraft = draft.compaction;
   const compactionOverride =
-    draft.compaction === undefined ? saved.compaction : (draft.compaction ?? undefined);
+    compactionDraft === undefined
+      ? saved.compaction
+      : compactionDraft === null
+        ? undefined
+        : { ...saved.compaction, ...compactionDraft };
   const compaction = effectiveCompaction(platformCompaction, compactionOverride);
   const followingPlatform = compactionOverride === undefined;
+  // An empty draft (follow turned off, nothing edited yet) is no change: the kernel treats an
+  // empty override as following the platform anyway.
+  const compactionPatch =
+    compactionDraft === undefined ||
+    (compactionDraft !== null && Object.keys(compactionDraft).length === 0)
+      ? undefined
+      : compactionDraft;
   // 只提交改过的项
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
@@ -183,7 +197,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
     ...(timeZone !== (saved.timeZone ?? "UTC")
       ? { timeZone: timeZone === "UTC" ? null : timeZone }
       : {}),
-    ...(draft.compaction !== undefined ? { compaction: draft.compaction } : {}),
+    ...(compactionPatch !== undefined ? { compaction: compactionPatch } : {}),
   };
   const unsaved = Object.keys(patch).length;
   const dirty = unsaved > 0;
@@ -298,9 +312,24 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
         follow={{
           checked: followingPlatform,
           disabled: !manage,
-          onChange: (next) => setDraft((d) => ({ ...d, compaction: next ? null : compaction })),
+          onChange: (next) =>
+            setDraft((d) => {
+              const { compaction: current, ...rest } = d;
+              // following: clear a stored override (nothing to do when there is none); not
+              // following: keep the stored override (no change) or start an empty draft
+              const compaction = next
+                ? saved.compaction === undefined
+                  ? undefined
+                  : null
+                : (current ?? (saved.compaction === undefined ? {} : undefined));
+              return compaction === undefined ? rest : { ...rest, compaction };
+            }),
         }}
-        onChange={(p) => setDraft((d) => ({ ...d, compaction: { ...compaction, ...p } }))}
+        onChange={(p) =>
+          // only the fields the admin edits: the rest keep following the platform (or the stored
+          // override), and a later platform change reaches the org
+          setDraft((d) => ({ ...d, compaction: { ...(d.compaction ?? {}), ...p } }))
+        }
       />
       {manage ? <ExtensionSlot slot="org.settings.section" args={{ orgId }} /> : null}
       {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
