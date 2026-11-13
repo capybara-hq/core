@@ -199,7 +199,7 @@ beforeAll(async () => {
     } as Pick<NetworkGrants, "forExec" | "unattendedTier" | "unsandboxed" | "recordMissing">,
     log,
   );
-}, 120_000);
+});
 afterAll(async () => {
   await sub?.close();
   redis?.disconnect();
@@ -524,7 +524,7 @@ describe("LocalDevicesModule", () => {
   let krd: TestContainer;
   beforeAll(async () => {
     [pgc, krd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  }, 120_000);
+  });
   afterAll(async () => {
     await Promise.all([pgc?.stop(), krd?.stop()]);
   });

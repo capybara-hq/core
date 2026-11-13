@@ -79,7 +79,7 @@ beforeAll(async () => {
     .id;
   orgId = await createOrg(await session(k, "owner"));
   url = `ws://127.0.0.1:${k.port}/device/connect`;
-}, 180_000);
+});
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
@@ -408,7 +408,7 @@ describe("DevicePolicyService.apply", () => {
     ]);
     // the summary stays what the machine last reported
     expect((await policies.summary(d.deviceId))?.policy).toEqual(POLICY);
-  }, 60_000);
+  });
 
   it("a device refusing with kind policy is refused with its message; nothing is stored", async () => {
     const d = await device();
