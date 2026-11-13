@@ -70,6 +70,43 @@ export const GIT_REF_MAX_CHARS = 255;
 export const GIT_REPO_MAX_CHARS = 191;
 /** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
+/** The most characters a command ask's command / reason carries (display only). */
+export const COMMAND_ASK_TEXT_MAX_CHARS = 2000;
+
+/**
+ * A command review's decision on a tool call (auto mode spec §5.4): display only, never model-visible
+ * beyond the result's own text. `by` says who decided — the rule table, the classifier, or the person
+ * through a `command` approval; `scope` is the person's choice (`once` / `session`).
+ */
+const ReviewRecordSchema = z
+  .object({
+    decision: z.enum(["allow", "deny"]),
+    by: z.enum(["rule", "classifier", "person"]),
+    rule: z.string().nullable(),
+    reason: z.string(),
+    scope: z.enum(["once", "session"]).optional(),
+  })
+  .strict();
+
+/** The display-only `approval_requested.command` facts of a `command` ask (auto mode spec §5.4). */
+export const CommandAskSchema = z
+  .object({
+    /** A shell command or a file write. */
+    kind: z.enum(["command", "write"]),
+    /** The command text, or the tool key of the write. */
+    command: z.string().max(COMMAND_ASK_TEXT_MAX_CHARS),
+    /** A file write's target path. */
+    path: z.string().max(4096).optional(),
+    rule: z.string().max(200).nullable(),
+    reason: z.string().max(COMMAND_ASK_TEXT_MAX_CHARS),
+    mode: z.enum(["auto", "sandbox"]),
+  })
+  .strict();
+
+/** A command review record as the log carries it (the pipeline writes {@link ReviewRecordSchema}). */
+export type ReviewRecord = z.infer<typeof ReviewRecordSchema>;
+/** A command ask's display facts, as `approval_requested.command` carries them. */
+export type CommandAsk = z.infer<typeof CommandAskSchema>;
 /** 一条 `media_excluded` 事件最多的附件数。 */
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
 /** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
@@ -683,6 +720,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       outputId: z.string().optional(),
       contentTypes: z.array(z.string()).optional(),
       /**
+       * The command review's decision on the call (auto mode spec §5.4): display only (request
+       * building reads only `callId` / `content` / `isError`, so replays never re-review). `by`
+       * says who decided: the rule table, the classifier, or the person through a `command` ask.
+       */
+      review: ReviewRecordSchema.optional(),
+      /**
        * `ToolSearch` 本次加载的工具 key（没有匹配时不写）。已加载集合 = 会话中全部 tool_result 的
        * `loadedTools` 并集（含已被摘要覆盖的部分），构建请求时由日志还原，不放进程内存。
        */
@@ -753,6 +796,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           refs: z.array(z.string().min(1).max(GIT_REF_MAX_CHARS)).max(GIT_ASK_MAX_REFS),
         })
         .optional(),
+      /**
+       * A command review ask (auto mode spec §5.4): what is held and why. Display only, never
+       * model-visible, as `network` and `git`; the model sees the call's `tool_result` only.
+       */
+      command: CommandAskSchema.optional(),
       ...ApproverFields,
     }),
   ),

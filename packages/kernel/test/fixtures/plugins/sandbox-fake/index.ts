@@ -15,7 +15,7 @@ import {
   type SandboxHandle,
   type SandboxLimits,
   type SandboxProvider,
-  validateSandboxPath,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
@@ -619,12 +619,20 @@ export function createFakeSandbox(
       }
     }
   };
+  /**
+   * The host path of a device path. `/workspace`, `/skills` and `/tmp` map to the instance's
+   * directories; in auto mode any other clean absolute path maps under the instance's `machine`
+   * directory (the machine's file system, auto mode spec §4.1); sandbox mode keeps the roots.
+   */
   const real = async (h: SandboxHandle, p: string) => {
-    const errors = validateSandboxPath(p);
+    const errors = validateSandboxPathShape(p);
     if (errors.length > 0) throw new Error(errors.join("; "));
     const m = await mounts(h);
-    const r = Object.keys(m).find((k) => p === k || p.startsWith(`${k}/`)) as string;
-    return join(m[r] as string, p.slice(r.length));
+    const r = Object.keys(m).find((k) => p === k || p.startsWith(`${k}/`));
+    if (r !== undefined) return join(m[r] as string, p.slice(r.length));
+    const meta = await fakeSandboxMeta(root, h.id);
+    if (meta?.limits.mode === "auto") return join(instanceDir(root, h.id), "machine", p.slice(1));
+    throw new Error(`Sandbox path must be under /workspace, /skills or /tmp: ${p}`);
   };
 
   const provider: SandboxProvider = {

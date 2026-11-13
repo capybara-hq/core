@@ -22,6 +22,7 @@ import {
   hookRequestOf,
   hookScope,
 } from "../../runtime/hook-calls.js";
+import { appendCounted } from "../../runtime/model-call.js";
 import type { StepLog } from "../../runtime/step-log.js";
 import type { RuleHit } from "./types.js";
 
@@ -316,7 +317,7 @@ export interface ReviewHookFacts {
 export interface ReviewClassifierDeps {
   purposes: Pick<ModelPurposesService, "chat" | "chatLimits">;
   eventLog: Pick<EventLog, "notify">;
-  stepLog: Pick<StepLog, "appendReported" | "appendAudited">;
+  stepLog: Pick<StepLog, "appendReported" | "appendCounted" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
   /** Extension hooks (absent: none fire). */
@@ -331,6 +332,10 @@ export interface RunClassifierArgs {
   step: number;
   callId: string;
   signal: AbortSignal;
+  /** A sub-agent's call: the parent run whose `subagent_tokens_used` the usage counts on. */
+  parentRunId?: string | undefined;
+  /** The budget window of the run tree (agent map spec §6), when known. */
+  budgetRunId?: string | undefined;
   hookFacts: ReviewHookFacts;
   input: ReviewClassifierInput;
   /** Called with the resolved target and final request just before it is sent (a test seam). */
@@ -459,7 +464,9 @@ export async function runClassifier(
 
 /**
  * Appends the call's `usage` event (purpose `review`, the call's run, step and `callId`; idempotent
- * per call) and owes its `usage.report` delivery in the same transaction.
+ * per call) and owes its `usage.report` delivery in the same transaction. A sub-agent's call also
+ * counts on its parent run's `subagent_tokens_used`, in the same transaction
+ * ({@link appendCounted}, as the `WebFetch` extraction does).
  */
 async function logUsage(
   deps: ReviewClassifierDeps,
@@ -479,8 +486,18 @@ async function logUsage(
       callId: args.callId,
     },
   };
-  const { toSeq } = await deps.stepLog.appendReported(args.conversationId, [event]);
-  if (toSeq !== null) await deps.eventLog.notify(args.conversationId, toSeq);
+  // the helper owes the usage delivery, counts a sub-agent's tokens and notifies
+  await appendCounted(
+    deps,
+    {
+      conversationId: args.conversationId,
+      ...(args.parentRunId !== undefined && {
+        parentRunId: args.parentRunId,
+        ...(args.budgetRunId !== undefined && { budgetRunId: args.budgetRunId }),
+      }),
+    },
+    [event],
+  );
 }
 
 /**

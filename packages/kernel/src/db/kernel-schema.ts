@@ -612,10 +612,10 @@ export interface ApprovalsTable {
   >;
   /**
    * 0114: what is asked: a tool call ('tool') or a refused network domain ('network'); 0126: a
-   * git push the gateway held ('git').
+   * git push the gateway held ('git'); 0130: a command review ask ('command').
    */
-  kind: Generated<"tool" | "network" | "git">;
-  /** 0114: a network or git ask's facts, kept result and outcome (null for tool approvals). */
+  kind: Generated<"tool" | "network" | "git" | "command">;
+  /** 0114: a network or git ask's facts, kept result and outcome; 0130: a command ask's facts. */
   detail: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 

@@ -67,6 +67,12 @@ export interface ReviewInput {
   agentVersion?: number | undefined;
   conversationKind?: ConversationKindForHooks | undefined;
   parent?: HookParentScope | undefined;
+  /**
+   * A sub-agent's call: the parent run (and its budget window) whose `subagent_tokens_used` the
+   * classifier's usage counts on, as the `WebFetch` extraction does.
+   */
+  parentRunId?: string | undefined;
+  budgetRunId?: string | undefined;
 }
 
 /** The per-call facts of one review (`review(input & ReviewCall)`). */
@@ -130,7 +136,8 @@ export class CommandReviewService implements CommandReview {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(ModelPurposesService)
     private readonly purposes: Pick<ModelPurposesService, "chat" | "chatLimits" | "resolve">,
-    @Inject(StepLog) private readonly stepLog: Pick<StepLog, "appendReported" | "appendAudited">,
+    @Inject(StepLog)
+    private readonly stepLog: Pick<StepLog, "appendReported" | "appendCounted" | "appendAudited">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
@@ -240,6 +247,10 @@ export class CommandReviewService implements CommandReview {
         step: input.step,
         callId: input.callId,
         signal: input.signal,
+        ...(input.parentRunId !== undefined && {
+          parentRunId: input.parentRunId,
+          ...(input.budgetRunId !== undefined && { budgetRunId: input.budgetRunId }),
+        }),
         hookFacts: {
           accountId: input.accountId,
           agentId: input.agentId,

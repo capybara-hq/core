@@ -144,7 +144,15 @@ export interface PipelineTestDeps {
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check" | "failure" | "success">;
   outputs: Pick<ToolOutputs, "save" | "load">;
-  approvals: Pick<ApprovalsService, "request" | "forCall" | "networkForCall" | "requestNetwork">;
+  approvals: Pick<
+    ApprovalsService,
+    | "request"
+    | "forCall"
+    | "networkForCall"
+    | "requestNetwork"
+    | "commandForCall"
+    | "requestCommand"
+  >;
   questions: Pick<QuestionsService, "ask" | "forCall">;
   config: () => unknown;
   log: Logger;

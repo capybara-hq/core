@@ -1820,7 +1820,7 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
       },
     );
     const conv = await createConv(owner, orgId, agentId);
-    const bash = { command: "echo hi && exit 3", description: "Greet and fail" };
+    const bash = { command: "echo hi && false", description: "Greet and fail" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
     const write = { file_path: "/workspace/n.txt", content: "a\nb\n" };
@@ -1954,6 +1954,35 @@ describe("reconstructRequest: the device mode (auto mode spec §4.2)", {
     const last = JSON.stringify(sent.at(-1));
     expect(last).toContain("Mode: auto. Commands run in the device's container;");
     expect(last).toContain("Mode: sandbox. Commands run in the device's container;");
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+  });
+});
+
+describe("reconstructRequest: the command review (auto mode spec §5.4–§5.5)", {
+  timeout: 120_000,
+}, () => {
+  it("a denied command's result replays with zero drift; the review record is not in requests", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "Bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "rm -rf /", description: "Clean the root" };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const results = (await eventsOf(db, conv)).filter(
+      (e): e is Extract<ConversationEvent, { type: "tool_result" }> => e.type === "tool_result",
+    );
+    const denied = results.at(-1);
+    expect(denied?.payload.isError).toBe(true);
+    // the reason is part of the result the model sees (new content in a new result: no DriftReason)
+    expect(denied?.payload.content).toContain("Command blocked by review:");
+    expect(denied?.payload.review).toMatchObject({ decision: "deny", by: "rule" });
+    // the record itself is display only: the request carries the result text, never `review`
+    expect(JSON.stringify(sent)).toContain("Command blocked by review:");
+    expect(JSON.stringify(sent)).not.toContain('"review"');
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
   });
