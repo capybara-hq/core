@@ -313,6 +313,14 @@ export class OrgCatalogService {
     if (!v) throw itemNotFound();
     const m = v.manifest as PluginManifest;
     const templates = await readCatalogTemplates(this.storage, v);
+    // Which templates are on in this org now: the install asks for the input of those, a
+    // default-off one an admin switched on included
+    const on = await connectorTemplatesOn(
+      this.db,
+      orgId,
+      itemId,
+      templates.map((t) => t.id),
+    );
     // where each template's page finds its setup guide (spec 2026-11-09-setup-guides-v2 §9.3)
     const guideOf = (templateId: string) => {
       const g = templateGuideOf(m, templateId);
@@ -329,7 +337,7 @@ export class OrgCatalogService {
       item,
       hasIcon: m.icon !== undefined,
       extension: m.extension ? m.name : null,
-      templates: templates.map((t) => orgTemplateView(t.id, t.file, guideOf(t.id))),
+      templates: templates.map((t) => orgTemplateView(t.id, t.file, guideOf(t.id), on.has(t.id))),
       dependencies: [
         ...(m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
         ...implied.map((d) => ({ name: d.name, range: d.range, implied: true as const })),
@@ -339,7 +347,7 @@ export class OrgCatalogService {
       missingTemplates:
         item.installed !== null && item.state === "needs_config"
           ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? []).map(
-              (t) => orgTemplateView(t.id, t.file, guideOf(t.id)),
+              (t) => orgTemplateView(t.id, t.file, guideOf(t.id), true),
             )
           : [],
     };

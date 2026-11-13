@@ -733,6 +733,29 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     const r = await install(env.boss, env, itemId, ghBody);
     expect(r.statusCode, r.body).toBe(201);
     expect(await liveConnectors()).toHaveLength(1);
+    // an admin switches the default-off template on in this org: the detail says so, and the
+    // install asks for its input like any other on template
+    const patId = (
+      await env.db
+        .selectFrom("platform_connector_templates")
+        .select("id")
+        .where("template_id", "=", "pat")
+        .executeTakeFirstOrThrow()
+    ).id;
+    const sw = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/components/connector_template/${patId}/switch`,
+      payload: { enabled: true },
+    });
+    expect(sw.statusCode, sw.body).toBe(200);
+    const again = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+    });
+    const pat = (again.json().templates as { id: string; on: boolean }[]).find(
+      (t) => t.id === "pat",
+    );
+    expect(pat?.on).toBe(true);
   });
 
   it("a defaultEnabled false template moved from its own scope back to follow: the preview lists the orgs it turns off in", async () => {

@@ -232,6 +232,53 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     expect((list.json() as { installs: unknown[] }).installs).toHaveLength(1);
   });
 
+  it("switching the plugin back on reuses the connector an earlier switch-off kept, instead of creating a second one", async () => {
+    const a = await seedPlugin(env, { name: "fake-connector", extension: true });
+    await env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+    const ra = await install(env.boss, env, a, pluginBody());
+    expect(ra.statusCode, ra.body).toBe(201);
+    const [conn] = await liveConnectors();
+    // an agent that leaves the connector on keeps it through the switch-off
+    const agent = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Helper",
+          instructions: "x",
+          model: { provider: "model-fake", model: "fake-1" },
+        },
+        visibility: "org",
+      },
+    });
+    expect(agent.statusCode, agent.body).toBe(201);
+    const preview = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${a}/switch`,
+      payload: { enabled: false },
+    });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const done = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${a}/switch`,
+      payload: { enabled: false, confirm: (preview.json() as { confirm: string }).confirm },
+    });
+    expect(done.statusCode, done.body).toBe(200);
+    expect(await liveConnectors()).toHaveLength(1);
+    // switching back on: the kept connector is taken back, not duplicated (its slug would clash)
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${a}/switch`,
+      payload: { enabled: true, inputs: pluginBody() },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    expect((await liveConnectors()).map((c) => c.id)).toEqual([conn?.id]);
+  });
+
   it("中途崩溃留下的 installing：未超时 409；超过 catalog.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
     const appId = await seedPlugin(env, {
       name: "fake-tools-ui",

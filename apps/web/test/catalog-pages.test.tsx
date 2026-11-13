@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
+import { defaultSlug, installTemplates, slugOf } from "../src/components/CatalogInstallWizard";
 import {
   MARKETPLACE_ERROR_KINDS,
   MARKETPLACE_SKIP_REASONS,
@@ -1548,6 +1548,77 @@ describe("/admin/plugins/import: install a new plugin, update an installed one (
     );
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ version: "2.0.0" });
   });
+
+  // A confirmed staging is gone in the kernel: reading it again is a 404, and the page used to do
+  // that while the navigation was still landing (a red error card flashed). The wizard must stop
+  // reading what its confirm consumed.
+  it("a confirmed update does not read the consumed staging again: no refetch, no error flash", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st7");
+    let previews = 0;
+    const calls = stubApi(
+      updateRoutes({
+        "GET /api/v1/admin/catalog/imports/st7/update-preview": () => {
+          previews += 1;
+          return previews === 1
+            ? json(200, UPDATE_PREVIEW())
+            : json(404, { error: { code: "plugin.staging_not_found", message: "x" } });
+        },
+        "POST /api/v1/admin/catalog/imports/st7/update": () =>
+          json(201, {
+            item: { ...INSTALLED, latestVersion: "2.0.0" },
+            update: {
+              itemId: ID,
+              version: "2.0.0",
+              components: [],
+              extension: null,
+              connectorOrgs: [],
+            },
+          }),
+      }),
+    );
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await screen.findByText("csv-tools");
+    await user.click(screen.getByRole("checkbox", { name: r.ack }));
+    await user.click(screen.getByRole("button", { name: r.confirmUpdate }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
+    await waitFor(() => expect(previewReads(calls)).toHaveLength(1));
+    expect(screen.queryByText(`${en.errors.plugin.staging_not_found}`)).toBeNull();
+  });
+
+  it("a confirmed install does not turn into an update of the item it just created: no preview read, no error flash", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st9");
+    let installed = false;
+    const calls = stubApi({
+      "GET /api/v1/admin/catalog/imports/st9": () =>
+        json(200, {
+          stagingId: "st9",
+          review: { ...REVIEW, sensitive: false, extension: extension({ sensitive: false }) },
+        }),
+      "POST /api/v1/admin/catalog/imports/st9/confirm": () => {
+        installed = true;
+        return json(201, { item: { id: ID, name: "crm" }, deploy: null });
+      },
+      // the catalog now holds the item the confirm created
+      "GET /api/v1/admin/catalog/items": () =>
+        json(200, { items: installed ? [INSTALLED] : [], nextOffset: null }),
+      "GET /api/v1/admin/catalog/imports/st9/update-preview": () =>
+        json(404, { error: { code: "plugin.staging_not_found", message: "x" } }),
+    });
+    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await user.click(screen.getByRole("button", { name: r.confirm }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
+    expect(previewReads(calls)).toEqual([]);
+    expect(screen.queryByText(`${en.errors.plugin.staging_not_found}`)).toBeNull();
+    // the wizard stays the install wizard while the navigation lands
+    expect(screen.queryByText(r.steps.update)).toBeNull();
+    expect(screen.getByText(r.steps.confirm)).toBeTruthy();
+  });
 });
 
 describe("descriptions in the UI language (descriptionZh)", () => {
@@ -2998,6 +3069,19 @@ describe("/extensions: switching on refused by the plugin", () => {
       ).toBe("/plugins");
     },
   );
+});
+
+describe("安装向导会问哪些连接器模板", () => {
+  const tpl = (id: string, defaultOff: boolean, on?: boolean) =>
+    ({ id, defaultOff, ...(on !== undefined && { on }) }) as never;
+  it("默认开着的模板问；默认关的模板只有在组织里被打开后才问", () => {
+    expect(
+      installTemplates([tpl("gh", false), tpl("pat", true), tpl("slack", true)]).map((t) => t.id),
+    ).toEqual(["gh"]);
+    expect(installTemplates([tpl("slack", true, true)]).map((t) => t.id)).toEqual(["slack"]);
+    // an older kernel without `on`: a default-off template is not asked for
+    expect(installTemplates([tpl("pat", true)]).map((t) => t.id)).toEqual([]);
+  });
 });
 
 describe("安装向导的默认 slug", () => {

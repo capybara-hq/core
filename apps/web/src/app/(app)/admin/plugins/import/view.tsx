@@ -18,7 +18,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { useCapabilityLabel } from "../../../../../components/ExtensionTabs";
@@ -227,6 +227,17 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<Problem>();
   const [result, setResult] = useState<PluginConfirmResult | null>(null);
+  /**
+   * The confirm consumed the staging (the kernel answers 404 for it from then on): no staged read
+   * may run again, or the page flashes the not-found state before the navigation lands.
+   */
+  const [stagedConsumed, setStagedConsumed] = useState(false);
+  /**
+   * Install or update, frozen when the last step is entered. The confirm's invalidations refetch
+   * the catalog, which makes a just-installed plugin look installed: without the freeze the wizard
+   * would switch to the update panel while it is still leaving.
+   */
+  const mode = useRef<boolean | null>(null);
   /** The update preview was read again after a stale confirm (said once above it). */
   const [updateNotice, setUpdateNotice] = useState<string>();
   /** The import was committed but the update failed (409 `plugin.imported_not_updated`). */
@@ -262,7 +273,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
       keys.deployment().marketplaceEntriesAll(),
       ...extensionChangeKeys(orgId),
     ],
-    onSuccess: (_, v) => qc.removeQueries({ queryKey: stagedImportQuery(v.stagingId).queryKey }),
+    onSuccess: () => setStagedConsumed(true),
   });
   // An installed plugin's import and update: the same caches as a confirmed import, and both
   // staged reads are gone
@@ -275,12 +286,20 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
       keys.deployment().marketplaceEntriesAll(),
       ...extensionChangeKeys(orgId),
     ],
-    onSuccess: (_, v) => forgetStaged(v.stagingId),
+    onSuccess: () => setStagedConsumed(true),
   });
-  const forgetStaged = (stagingId: string) => {
-    qc.removeQueries({ queryKey: stagedImportQuery(stagingId).queryKey });
-    qc.removeQueries({ queryKey: stagedUpdatePreviewQuery(stagingId).queryKey });
-  };
+  // The staged reads are dropped when this page unmounts, never while it still observes them:
+  // removing them earlier would read them again (404) and flash the not-found state before the
+  // navigation lands. `plugin.imported_not_updated` consumes the staging too, though that path
+  // stays on this page, so the consumption is state, not the mutation's own success.
+  useEffect(() => {
+    if (!stagedConsumed || prepared === null) return;
+    const stagingId = prepared.stagingId;
+    return () => {
+      qc.removeQueries({ queryKey: stagedImportQuery(stagingId).queryKey });
+      qc.removeQueries({ queryKey: stagedUpdatePreviewQuery(stagingId).queryKey });
+    };
+  }, [stagedConsumed, prepared, qc]);
 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
@@ -295,6 +314,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     setResult(null);
     setSubmitError(undefined);
     setFetchError(undefined);
+    setStagedConsumed(false);
+    mode.current = null;
     setStep(0);
     router.replace("/admin/plugins/import");
   };
@@ -345,12 +366,14 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         null);
   const modePending = review !== null && catalogRead.data === undefined && !catalogRead.isError;
   const updating = installedItem !== null;
+  /** What the last step shows: install or update, fixed when that step was entered. */
+  const shownUpdating = mode.current ?? updating;
   const installedName = installedItem === null ? "" : displayNameOf(installedItem, locale);
   // The update preview of the staged version (step 3 of an update)
   const upq = stagedUpdatePreviewQuery(prepared?.stagingId ?? "");
   const updateRead = useQuery({
     ...upq,
-    enabled: updating && step === 2 && prepared !== null,
+    enabled: shownUpdating && step === 2 && prepared !== null && !stagedConsumed,
     retry: false,
     retryOnMount: retryOnMountOf(upq.queryKey),
   });
@@ -441,7 +464,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           from: d?.from ?? updatePreview.from,
           code: d?.code ?? e.code,
         });
-        forgetStaged(prepared.stagingId);
+        setStagedConsumed(true);
         await Promise.all(
           pluginScopeChangeKeys(orgId).map((queryKey) => qc.invalidateQueries({ queryKey })),
         );
@@ -490,12 +513,15 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
             ...(!fromElsewhere && { secondary: { label: tw("back"), onSelect: back } }),
             primary: {
               label: tw("next"),
-              onSelect: () => setStep(2),
+              onSelect: () => {
+                mode.current = updating;
+                setStep(2);
+              },
               loading: modePending,
               disabled: modePending,
             },
           }
-        : updating
+        : shownUpdating
           ? {
               cancel,
               secondary: {
@@ -534,12 +560,12 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     <WizardPage
       header={{
         path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
-        title: updating ? t("titleUpdate", { name: installedName }) : t("title"),
+        title: shownUpdating ? t("titleUpdate", { name: installedName }) : t("title"),
       }}
       steps={[
         t("steps.source"),
         t("steps.review"),
-        updating ? t("steps.update") : t("steps.confirm"),
+        shownUpdating ? t("steps.update") : t("steps.confirm"),
       ]}
       current={step}
       actionRow={actionRow}
@@ -625,7 +651,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
       {step === 1 && review !== null && (
         <PluginReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
       )}
-      {step === 2 && review !== null && updating && (
+      {step === 2 && review !== null && shownUpdating && (
         <Stack gap={16}>
           <Text variant="small" tone="muted">
             {t("updateHint", { version: versionLabel(review.version) })}
@@ -674,7 +700,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           {submitError !== undefined && <ProminentError problem={submitError} />}
         </Stack>
       )}
-      {step === 2 && review !== null && !updating && (
+      {step === 2 && review !== null && !shownUpdating && (
         <Stack gap={16}>
           <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
           {review.extension === undefined ? (

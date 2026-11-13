@@ -27,6 +27,7 @@ export const DESIGN_SUBSET = [
   "KeyValue",
   "Logo",
   "PropertySection",
+  "Select",
   "Spinner",
   "Stack",
   "Text",

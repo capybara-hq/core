@@ -10,6 +10,7 @@ export const DESIGN_NAMES = [
   "KeyValue",
   "Logo",
   "PropertySection",
+  "Select",
   "Spinner",
   "Stack",
   "Text",
@@ -103,6 +104,23 @@ export interface PropertySectionProps {
   onRetry?(): void;
   children?: ReactNode;
 }
+export interface SelectOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+export interface SelectProps {
+  options: SelectOption[];
+  value?: string;
+  /** The chosen value, as a native select's change event carries it (`.target.value`). */
+  onChange?: (e: { target: { value: string } }) => void;
+  disabled?: boolean;
+  /** Shown while the value matches no option. */
+  placeholder?: string;
+  density?: "comfortable" | "compact";
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
+}
 export interface ViewBlocksProps {
   view: UiView;
 }
@@ -133,5 +151,6 @@ export const Stack = forward<StackProps>("Stack");
 export const Text = forward<TextProps>("Text");
 export const Tooltip = forward<TooltipProps>("Tooltip");
 export const PropertySection = forward<PropertySectionProps>("PropertySection");
+export const Select = forward<SelectProps>("Select");
 /** The host's renderer of a `UiView`. */
 export const ViewBlocks = forward<ViewBlocksProps>("ViewBlocks");

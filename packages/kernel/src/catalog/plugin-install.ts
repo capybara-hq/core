@@ -804,6 +804,9 @@ export class PluginInstaller {
       for (const ct of templates) {
         // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
         if (actor === null) throw systemNeedsInput(manifest.name);
+        // An earlier switch-off kept this template's connector: the install takes it back, so its
+        // input is not asked for here (the connector keeps its endpoint and credentials)
+        if ((await this.liveTemplateConnector(orgId, itemId, ct.id)) !== undefined) continue;
         connectors.set(
           ct.id,
           this.planConnector(
@@ -1164,8 +1167,23 @@ export class PluginInstaller {
       }
       step = "connectors";
       for (const ct of plan.templates) {
+        // An earlier switch-off kept this template's connector (its agents use it): the plugin
+        // takes it back instead of creating a second one, whose default slug the first holds
+        const existing = await this.liveTemplateConnector(orgId, itemId, ct.id);
+        if (existing !== undefined) {
+          await record({
+            kind: "connector",
+            ref: existing,
+            created: false,
+            skillVersion: null,
+            templateId: ct.id,
+          });
+          continue;
+        }
         const ci = plan.connectors.get(ct.id);
-        if (!ci) throw new ApiError("internal", `Connector template ${ct.id} was not planned`);
+        // No input was needed (a live connector was taken back above, or the template was skipped
+        // at plan time): nothing to create
+        if (!ci) continue;
         if (actor === null) throw systemNeedsInput(manifest.name);
         const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await record({
@@ -2249,6 +2267,28 @@ export class PluginInstaller {
       version: a.version,
       templates: all.filter((t) => on.has(t.id) && !made.has(t.id)),
     };
+  }
+
+  /**
+   * The org's live connector made from one of the plugin's connector templates, if any: an
+   * uninstall keeps a connector its agents use, and the plugin's next switch-on reuses it.
+   */
+  private async liveTemplateConnector(
+    orgId: string,
+    itemId: string,
+    templateId: string,
+  ): Promise<string | undefined> {
+    const row = await this.db
+      .selectFrom("connectors as c")
+      .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
+      .select("c.id")
+      .where("c.org_id", "=", orgId)
+      .where("c.deleted_at", "is", null)
+      .where("p.catalog_item_id", "=", itemId)
+      .where("p.template_id", "=", templateId)
+      .orderBy("c.created_at")
+      .executeTakeFirst();
+    return row?.id;
   }
 
   /**
