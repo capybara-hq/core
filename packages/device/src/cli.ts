@@ -43,11 +43,15 @@ async function askOnTerminal(question: string): Promise<string> {
   }
 }
 
-/** Logged when commands start or stop running in auto mode. */
-export const AUTO_MODE_ON = "Commands on this device now run in auto mode.";
+/**
+ * Logged when the local policy switches between auto and sandbox. It names the local choice, not
+ * the effective mode: the organization's ceiling still cuts it (a device whose org forbids auto
+ * runs in the sandbox even with this policy).
+ */
+export const AUTO_MODE_ON =
+  "This machine's local policy is auto mode; the deployment's ceiling applies.";
 export const AUTO_MODE_OFF =
-  "Commands on this device run in the sandbox again; commands still running in auto mode were " +
-  "stopped.";
+  "This machine's local policy is sandbox mode; commands still running in auto mode were stopped.";
 
 /**
  * The executor for the credential's mode; the program's state directory is unreadable to

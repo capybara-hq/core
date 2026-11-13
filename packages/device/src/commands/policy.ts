@@ -13,7 +13,9 @@ export interface PolicyDeps {
 const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb", "mode"] as const;
 
 /** What OS mode does not enforce yet, shown with `show` and with a limits change. */
-export const NOT_ENFORCED_NOTE = "Note: in OS mode cpu and memoryMb are not enforced yet.";
+export const NOT_ENFORCED_NOTE =
+  "Note: in OS mode cpu and memoryMb are not enforced yet; allowCredentials is ignored (auto " +
+  "mode already has the owner's credentials, sandbox mode gets none).";
 
 /** Shown when a Docker-mode device's policy is shown or given allowed domains. */
 export const DOCKER_DOMAIN_NOTE =
@@ -88,12 +90,26 @@ function edit(
 }
 
 /** What `policy show` says the mode gives on this machine (English, one line each). */
-export function describeMode(policy: Policy): string[] {
+export function describeMode(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
   if (policy.mode === "auto") {
+    if (runMode === "docker") {
+      return [
+        "Mode: auto. Commands run in the device's container on its default bridge, and the " +
+          "platform's file tools reach any path in the container; the deployment reviews every " +
+          "command and blocks or asks about dangerous ones.",
+        "Allowed domains apply in OS mode's sandbox only (capybara-device mode sandbox).",
+      ];
+    }
     return [
       "Mode: auto. Commands run as you on this machine, with their files, credentials and " +
         "network; the deployment reviews every command and blocks or asks about dangerous ones.",
       "Allowed domains apply in sandbox mode only (capybara-device mode sandbox).",
+    ];
+  }
+  if (runMode === "docker") {
+    return [
+      "Mode: sandbox. Commands run in the device's container with no network; only the " +
+        "workspace, skills and temporary files are reachable.",
     ];
   }
   return [
@@ -126,7 +142,7 @@ export async function policyCommand(
   if (cmd.action === "show") {
     const policy = store.current();
     out(JSON.stringify(policy, null, 2));
-    for (const l of describeMode(policy)) out(l);
+    for (const l of describeMode(policy, docker ? "docker" : "os")) out(l);
     if (docker) out(DOCKER_DOMAIN_NOTE);
     out(NOT_ENFORCED_NOTE);
     return 0;

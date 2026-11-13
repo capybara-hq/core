@@ -202,9 +202,13 @@ describe("policy command", () => {
     expect(r.out).toContain("Mode: auto.");
   });
 
-  it("describeMode explains auto and sandbox", () => {
+  it("describeMode explains auto and sandbox, on the machine and in a container", () => {
     expect(describeMode(policy({ mode: "auto" }))[0]).toMatch(/Commands run as you/);
+    expect(describeMode(policy({ mode: "auto" }), "docker")[0]).toMatch(/container/);
     expect(describeMode(policy({ mode: "sandbox" }))[0]).toMatch(/OS sandbox|Only the workspace/);
+    expect(describeMode(policy({ mode: "sandbox" }), "docker")[0]).toMatch(
+      /container with no network/,
+    );
   });
 
   it("a Docker-mode device says allowed domains do not apply there", async () => {

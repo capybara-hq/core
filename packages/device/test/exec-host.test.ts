@@ -308,8 +308,11 @@ describe("SwitchingExecutor", () => {
 
   it("follows the policy at once for file operations and the switch notice", async () => {
     setup();
-    expect(await read()).toBe("host");
+    // No exec seen yet: the sandboxed helper, the safe default for a sandbox ceiling.
+    expect(await read()).toBe("sandboxed");
     expect(switches).toEqual(["auto"]);
+    await ex.exec(modeArgs("auto"), never);
+    expect(await read()).toBe("host");
     policy = { ...policy, mode: "sandbox" };
     expect(await read()).toBe("sandboxed");
     expect(switches).toEqual(["auto", "sandbox"]);
@@ -389,18 +392,24 @@ describe("SwitchingExecutor", () => {
     expect(await read()).toBe("sandboxed");
   });
 
-  it("file operations follow a stale sandbox ceiling only for its window", async () => {
+  it("file operations use the last command's mode only inside its window", async () => {
     setup();
+    // Before any exec, and after the window, file operations use the sandboxed helper: they never
+    // pass command review, so an organization's sandbox ceiling is never exceeded (trust boundary).
+    expect(await read()).toBe("sandboxed");
     let now = 1_000_000;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     try {
+      await ex.exec(modeArgs("auto"), never);
+      expect(await read()).toBe("host");
+      now += FILE_OPS_DECISION_TTL_MS;
+      expect(await read()).toBe("host");
+      now += 1;
+      // Stale: the sandboxed helper again, even though the local policy is auto.
+      expect(await read()).toBe("sandboxed");
+      // The same after a sandbox-ceiling command.
       await ex.exec(modeArgs("sandbox"), never);
       expect(await read()).toBe("sandboxed");
-      now += FILE_OPS_DECISION_TTL_MS;
-      expect(await read()).toBe("sandboxed");
-      now += 1;
-      // The ceiling is stale: the owner's own auto mode decides again.
-      expect(await read()).toBe("host");
     } finally {
       clock.mockRestore();
     }

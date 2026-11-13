@@ -13,10 +13,10 @@ export type { ExecMode } from "./types.js";
 /**
  * How long the latest command's limits decide file operations. The kernel judges the mode at each
  * exec, and file operations carry no limits, so a decision older than this no longer counts: file
- * operations fall back to the device's own mode (sandbox when the owner chose it, else auto), until
- * the next command decides again. A minute covers a turn's file operations around its commands
- * while bounding how long an organization's change takes to reach a device that runs no more
- * commands.
+ * operations fall back to the sandboxed helper (the safe default for an organization whose ceiling
+ * is sandbox), until the next command decides again. A minute covers a turn's file operations
+ * around its commands while bounding how long an organization's change takes to reach a device
+ * that runs no more commands.
  */
 export const FILE_OPS_DECISION_TTL_MS = 60_000;
 
@@ -32,12 +32,13 @@ export const SANDBOX_BACK_ON =
  * The OS-mode executor the program serves: each command runs in the sandbox or, in auto mode,
  * directly on the machine ({@link effectiveMode}). The policy is read per operation, so a change
  * applies at the next command. File operations use the host executor's direct IO (any absolute
- * path in auto mode, the roots in the sandbox) following the same decision; before any command, or
- * once its limits are stale, the owner's own mode decides. When the policy turns the sandbox back
- * on, every auto-mode command still running (and what it left in the background) is killed, and
- * one still starting is refused right before its spawn; while auto mode is on, the policy is also
- * checked every second so that happens without waiting for the next operation. Kills reach both
- * executors' commands.
+ * path in auto mode, the roots in the sandbox) only while the latest command's decision is fresh;
+ * before any command, or once its limits are stale, the sandboxed helper runs (file operations
+ * never pass command review, so the org's ceiling may not be exceeded). When the policy turns the
+ * sandbox back on, every auto-mode command still running (and what it left in the background) is
+ * killed, and one still starting is refused right before its spawn; while auto mode is on, the
+ * policy is also checked every second so that happens without waiting for the next operation.
+ * Kills reach both executors' commands.
  */
 export class SwitchingExecutor implements Executor {
   readonly mode = "os" as const;
@@ -99,15 +100,16 @@ export class SwitchingExecutor implements Executor {
   }
 
   /**
-   * The executor for file operations now: the commands' decision on the policy now and the latest
-   * exec's limits; the owner's mode before any exec or once those limits are stale.
+   * The executor for file operations now. File operations carry no limits and never pass command
+   * review, so they only follow an exec's decision when it is fresh: the sandboxed helper before
+   * any exec and once those limits are stale (the safe default for an organization whose ceiling
+   * is sandbox), else `effectiveMode(policy, limits)`.
    */
   private async files(): Promise<Executor> {
     const policy = this.policy();
     await this.sync(policy);
-    if (policy.mode === "sandbox") return this.sandboxed;
-    if (this.lastLimits === undefined) return this.host;
-    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return this.host;
+    if (policy.mode === "sandbox" || this.lastLimits === undefined) return this.sandboxed;
+    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return this.sandboxed;
     return effectiveMode(policy, this.lastLimits) === "auto" ? this.host : this.sandboxed;
   }
 

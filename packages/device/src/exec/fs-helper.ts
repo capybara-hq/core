@@ -7,8 +7,10 @@
  * argv: `<mode> <op> <path> <maxBytes> <root>...`, mode `auto` | `sandbox`, op `read` | `stat` |
  * `write` (data on stdin). A missing or unknown mode is refused. In sandbox mode the roots are
  * enforced; in auto mode any clean absolute path is accepted (shape checks: absolute, no `..`
- * segments, no control characters). stdout: one JSON object, `{ "r": <result> }` or
- * `{ "e": "policy" | "error", "m": <message> }`. read → `null` | `{ b64, truncated }`; stat →
+ * segments, no control characters). The `auto` branch is required by this contract but has no
+ * production caller today: the OS executor runs the helper in sandbox mode only, and auto mode
+ * reads and writes directly through `HostExecutor`. stdout: one JSON object, `{ "r": <result> }`
+ * or `{ "e": "policy" | "error", "m": <message> }`. read → `null` | `{ b64, truncated }`; stat →
  * `null` | `{ size, isDir }`; write → `null`. Non-regular files (FIFOs, sockets, devices) are
  * refused without blocking (`O_NONBLOCK`).
  */
